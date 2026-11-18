@@ -68,6 +68,8 @@
     font-size:12px;color:var(--soft);cursor:pointer;white-space:nowrap}
   .mi:hover{background:var(--raised);color:var(--text)}
   .mi .k{margin-left:auto;font-size:10px;color:var(--mute)}
+  .mi.mmap.on{background:var(--accent-bg);color:var(--accent)}
+  .mhead{padding:5px 9px 3px;font-size:10px;color:var(--mute);letter-spacing:.04em}
   .msep{height:1px;background:var(--border);margin:4px 2px}
 
   /* 面板容器 */
@@ -132,8 +134,9 @@
     font-size:12px;white-space:nowrap;
   }
   #selBar.on{display:flex}
-  .dot{width:7px;height:7px;border-radius:50%;background:var(--ok)}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--ok);flex:0 0 auto}
   .dot.none{background:var(--mute)}
+  .dot.warn{background:var(--warn)}
 
   /* 状态栏 */
   #status{
@@ -149,17 +152,30 @@
   .tog:hover{border-color:var(--border-hi)}
 
   /* ── 内容编辑器 ── */
-  #ctMaps{
+  #ctList{
     width:220px;flex:0 0 auto;background:var(--panel);
-    border-right:1px solid var(--border);padding:8px;display:flex;flex-direction:column;gap:4px;overflow:auto;
+    border-right:1px solid var(--border);padding:8px;display:flex;flex-direction:column;gap:3px;overflow:auto;
   }
-  .mapRow{
-    display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:6px;
-    cursor:pointer;color:var(--soft);
+  .listHead{display:flex;align-items:center;gap:8px;padding:0 2px 6px}
+  .listHead .badge{margin-left:auto}
+  .instRow{
+    display:flex;align-items:center;gap:7px;padding:6px 9px;border-radius:6px;
+    cursor:pointer;color:var(--soft);border:1px solid transparent;
   }
-  .mapRow:hover{background:var(--raised)}
-  .mapRow.on{background:var(--accent-bg);color:var(--accent);border:1px solid var(--accent)}
-  .mapRow .nm{flex:1}
+  .instRow:hover{background:var(--raised)}
+  .instRow.on{background:var(--accent-bg);border-color:var(--accent);color:var(--accent)}
+  .instRow .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .instRow .iid{font-size:10px;color:var(--mute);font-family:ui-monospace,monospace}
+  .instRow .dot{margin-left:1px}
+  .instRow.on .iid{color:var(--accent)}
+  .filter{
+    margin-top:6px;padding:5px 9px;border:1px dashed var(--border-hi);border-radius:6px;
+    font-size:11px;color:var(--dim);cursor:pointer;text-align:center;
+  }
+  .filter:hover{color:var(--warn);border-color:var(--warn)}
+  .filter.on{color:var(--warn);border-style:solid;border-color:var(--warn);background:rgba(214,161,58,.1)}
+  /* 黄点含义说明常驻列表底部，别挤在筛选按钮下面（筛选态会把它顶上去） */
+  .listNote{margin-top:auto;padding:6px 2px;font-size:10px;color:var(--mute);line-height:1.5}
   .badge{
     font-size:10px;padding:1px 6px;border-radius:9px;
     background:rgba(214,161,58,.15);border:1px solid rgba(214,161,58,.5);color:var(--warn);
@@ -175,11 +191,6 @@
     border-left:1px solid var(--border);display:flex;flex-direction:column;overflow:auto;
   }
   .rHead{padding:8px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px}
-  /* 地图级校验清单：只列本图未完成的实例，点一条即跳过去填 */
-  .todo{padding:8px 12px;border-bottom:1px solid var(--border);background:rgba(214,161,58,.06);
-    display:flex;flex-direction:column;gap:4px}
-  .todoRow{font-size:11px;color:var(--warn);padding:4px 6px;border-radius:4px;cursor:pointer}
-  .todoRow:hover{background:rgba(214,161,58,.12)}
   .rBody{padding:10px 12px;display:flex;flex-direction:column;gap:10px}
   .blk{border:1px solid var(--border);border-radius:8px;padding:8px 10px;display:flex;flex-direction:column;gap:7px}
   .blk > .sec{margin-bottom:2px}
@@ -282,8 +293,15 @@
   <span class="sep"></span>
   <!-- 地图级动作全部收在这个下拉里：全局横带只留「当前地图」这一个入口 -->
   <div id="mapWrap">
-    <button class="btn" id="mapBtn"><span>TEST</span><span class="car">▾</span></button>
+    <button class="btn" id="mapBtn"><span id="mapCur">TEST</span><span class="car">▾</span></button>
     <div id="mapMenu">
+      <!-- 上半：切地图（地图是全局的，所以在顶栏而不是内容面板里） -->
+      <div class="mhead">切换地图</div>
+      <div class="mi mmap on" data-map="TEST">TEST <span class="k">1/3</span></div>
+      <div class="mi mmap" data-map="level1">level1 <span class="k">0/2</span></div>
+      <div class="mi mmap" data-map="cave">cave <span class="k">2/4</span></div>
+      <div class="msep"></div>
+      <!-- 下半：地图动作 -->
       <div class="mi" data-act="new">新建地图</div>
       <div class="mi" data-act="open">打开地图…</div>
       <div class="mi" data-act="save">保存 <span class="k">Ctrl+S</span></div>
@@ -341,11 +359,23 @@
 </div>
 
 <div class="panel" id="panel-ct">
-  <div id="ctMaps">
-    <div class="sec">地图</div>
-    <div class="mapRow on" data-map="TEST"><span class="nm">TEST</span><span class="badge">1/3</span></div>
-    <div class="mapRow" data-map="level1"><span class="nm">level1</span><span class="badge done">0/2</span></div>
-    <div class="mapRow" data-map="cave"><span class="nm">cave</span><span class="badge">2/4</span></div>
+  <!-- 左列 = 当前地图下的实例列表（地图本身在顶栏切换） -->
+  <div id="ctList">
+    <div class="listHead">
+      <span class="sec">TEST 实例</span>
+      <span class="badge">1/3 未填</span>
+    </div>
+    <div class="instRow on" data-ent="e_3" data-todo="1">
+      <span class="nm">商人</span><span class="iid">e_3</span><span class="dot warn"></span>
+    </div>
+    <div class="instRow" data-ent="e_5">
+      <span class="nm">小怪</span><span class="iid">e_5</span><span class="dot"></span>
+    </div>
+    <div class="instRow" data-ent="e_9">
+      <span class="nm">传送门</span><span class="iid">e_9</span><span class="dot"></span>
+    </div>
+    <div class="filter">只看未填 (1)</div>
+    <div class="listNote">行尾黄点 = 有功能未填；点画布上的实体选中同一行。</div>
   </div>
 
   <div id="ctCanvas">
@@ -357,68 +387,13 @@
   </div>
 
   <div id="ctRight">
-    <div class="todo">
-      <span class="sec">TEST 未完成 1</span>
-      <div class="todoRow" data-ent="e_3">商人 TEST.e_3 · 商店未填</div>
-    </div>
-
     <div class="rHead">
-      <span style="color:var(--text);font-size:14px">商人</span>
-      <span class="pill">TEST.e_3</span>
-      <span class="badge" style="margin-left:auto">本实例 1 项未填</span>
+      <span id="rHeadName">商人</span>
+      <span class="pill" id="rHeadId">TEST.e_3</span>
+      <span class="badge" id="rHeadBadge">本实例 1 项未填</span>
     </div>
-
-    <div class="rBody">
-      <div class="blk">
-        <div class="sec">固定功能</div>
-        <div class="kv"><label>生命</label><input value="12"></div>
-        <div class="kv"><label>伤害</label><input value="4"></div>
-        <div class="tiny">固定功能由代码实现，只能改值。</div>
-      </div>
-
-      <div class="blk">
-        <div class="sec">附加功能</div>
-
-        <div class="fnRow on" data-fn="dialogue">
-          <span class="ord">①</span><span class="fn">对话</span>
-          <span class="cname">问好</span>
-          <label class="par"><input type="checkbox" class="parCb"> 并行</label>
-          <button class="libBtn">库</button><span class="tiny del">✕</span>
-        </div>
-
-        <div class="fnRow" data-fn="shop">
-          <span class="ord">②</span><span class="fn">商店</span>
-          <span class="cname empty">未填</span>
-          <label class="par"><input type="checkbox" class="parCb"> 并行</label>
-          <button class="libBtn">库</button><span class="tiny del">✕</span>
-        </div>
-
-        <div class="fnRow" data-fn="quest">
-          <span class="ord">③</span><span class="fn">接任务</span>
-          <span class="cname">矿洞委托</span>
-          <label class="par"><input type="checkbox" class="parCb" checked> 并行</label>
-          <button class="libBtn">库</button><span class="tiny del">✕</span>
-        </div>
-
-        <div class="addRow">+ 添加功能 …</div>
-      </div>
-
-      <div class="blk" id="ctForm">
-        <div class="sec">对话内容 · 问好</div>
-        <div class="kv"><label>内容名</label><input value="问好"></div>
-        <div class="kv"><label>ID</label>
-          <input value="TEST-merchant-e_3-dialogue-7K2QX9" readonly style="color:var(--mute);font-family:ui-monospace,monospace;font-size:11px">
-        </div>
-        <div class="kv"><label>讲话人</label><input value="商人"></div>
-        <div class="sec" style="margin-top:4px">台词</div>
-        <div class="lines">
-          <div class="lineRow"><input value="要点些什么吗？"><span class="tiny">✕</span></div>
-          <div class="lineRow"><input value="今天货很全。"><span class="tiny">✕</span></div>
-          <div class="addRow" style="padding:4px">+ 一行</div>
-        </div>
-        <div class="tiny">「说完还能再说 / 只说一次」属功能内部逻辑，由项目侧代码决定。</div>
-      </div>
-    </div>
+    <!-- 右栏全部由 renderInst() 按当前实例重建：固定功能 / 附加功能 / 内容表单 -->
+    <div class="rBody" id="ctBody"></div>
   </div>
 </div>
 
@@ -446,29 +421,21 @@
     </div>
 
     <div>
-      <div class="sec" style="margin-bottom:6px">实例分布 · 共 5 个 / 3 张地图</div>
-      <div class="mapHead">TEST <span class="n">× 3</span></div>
+      <div class="sec" style="margin-bottom:6px">实例分布 · 共 3 个 / 3 张地图</div>
+      <div class="mapHead">TEST <span class="n">× 1</span></div>
       <div class="distRow"><span class="ids">TEST.e_3</span>
         <label class="ikv">生命 <input value="12"></label>
         <label class="ikv">伤害 <input value="4"></label>
         <button class="locBtn" data-map="TEST" data-ent="e_3">定位</button></div>
-      <div class="distRow"><span class="ids">TEST.e_7</span>
-        <label class="ikv">生命 <input value="10"></label>
-        <label class="ikv">伤害 <input value="3"></label>
-        <button class="locBtn" data-map="TEST" data-ent="e_7">定位</button></div>
-      <div class="distRow"><span class="ids">TEST.e_11</span>
-        <label class="ikv">生命 <input value="10"></label>
-        <label class="ikv">伤害 <input value="3"></label>
-        <button class="locBtn" data-map="TEST" data-ent="e_11">定位</button></div>
       <div class="mapHead">level1 <span class="n">× 1</span></div>
       <div class="distRow"><span class="ids">level1.e_2</span>
-        <label class="ikv">生命 <input value="10"></label>
+        <label class="ikv">生命 <input value="9"></label>
         <label class="ikv">伤害 <input value="3"></label>
         <button class="locBtn" data-map="level1" data-ent="e_2">定位</button></div>
       <div class="mapHead">cave <span class="n">× 1</span></div>
       <div class="distRow"><span class="ids">cave.e_6</span>
-        <label class="ikv">生命 <input value="16"></label>
-        <label class="ikv">伤害 <input value="6"></label>
+        <label class="ikv">生命 <input value="14"></label>
+        <label class="ikv">伤害 <input value="5"></label>
         <button class="locBtn" data-map="cave" data-ent="e_6">定位</button></div>
     </div>
 
@@ -482,12 +449,23 @@
     <div class="lh"><span style="color:var(--text)">选择已有对话</span>
       <span class="tiny">选中即复制进当前实例，生成新 ID</span></div>
     <div class="lb">
-      <div class="libItem" data-pick="1">
+      <!-- data-fn 与功能行对齐：弹层只列同功能的内容条目 -->
+      <div class="libItem" data-fn="dialogue">
         <span class="nm">问好</span><span class="id">TEST-merchant-e_1-dialogue-A3F9K2</span></div>
-      <div class="libItem" data-pick="1">
+      <div class="libItem" data-fn="dialogue">
         <span class="nm">矿洞警告</span><span class="id">cave-miner-e_6-dialogue-Q7LZ4M</span></div>
-      <div class="libItem" data-pick="1">
+      <div class="libItem" data-fn="dialogue">
         <span class="nm">讨价还价</span><span class="id">level1-merchant-e_2-dialogue-B8WY3E</span></div>
+      <div class="libItem" data-fn="shop">
+        <span class="nm">杂货</span><span class="id">TEST-merchant-e_1-shop-B2N8WD</span></div>
+      <div class="libItem" data-fn="shop">
+        <span class="nm">矿洞补给</span><span class="id">cave-miner-e_6-shop-K4M2PT</span></div>
+      <div class="libItem" data-fn="quest">
+        <span class="nm">矿洞委托</span><span class="id">cave-miner-e_3-quest-Q9XW2S</span></div>
+      <div class="libItem" data-fn="portal">
+        <span class="nm">去 level1</span><span class="id">TEST-portal-e_9-portal-T5RB3N</span></div>
+      <div class="libItem" data-fn="chest">
+        <span class="nm">矿石箱</span><span class="id">TEST-chest-e_11-chest-V7NY6H</span></div>
     </div>
     <div class="lf">
       <button class="btn" id="libCancel">取消</button>
@@ -525,12 +503,16 @@
     document.getElementById('statusMsg').textContent = HINT[name] || '';
   }
   tabs.forEach(function(t){ t.addEventListener('click', function(){ show(t.dataset.panel); }); });
-  // 支持 #ct / #as 直达某个面板，`#ct-lib` 顺手把库弹层也打开（便于分享与截图）
-  var deep = (location.hash || '').replace('#', '');
+  // 支持 #ct / #as 直达某个面板；`#ct-lib` 顺手打开库弹层；`#ct&map=cave` 预选地图
+  var hashParts = (location.hash || '').replace('#', '').split('&');
+  var deep = hashParts[0] || '';
   var deepLib = deep.slice(-4) === '-lib';
   if (deepLib) deep = deep.slice(0, -4);
   if (panels[deep]) show(deep);
-  if (deepLib) document.getElementById('libMask').classList.add('on');
+  var deepMap = '';
+  hashParts.forEach(function(p){
+    if (p.indexOf('map=') === 0) deepMap = p.slice(4);
+  });
 
   // ── 地图下拉：新建/打开/保存 + 地图级动作 ──
   var mapBtn = document.getElementById('mapBtn');
@@ -542,10 +524,86 @@
   Array.prototype.forEach.call(mapMenu.querySelectorAll('.mi'), function(mi){
     mi.addEventListener('click', function(){
       mapMenu.classList.remove('on');
-      // 演示：只回一句状态，不实现真实动作
+      // 地图切换：全局状态，顶栏标题、内容面板左列标题、资产面板的当前图都跟着走
+      if (mi.dataset.map) {
+        setMap(mi.dataset.map);
+        return;
+      }
       document.getElementById('statusMsg').textContent = '（演示）地图动作：' + mi.textContent.trim();
     });
   });
+  var MAP_INST = {
+    'TEST':   [['e_3','商人','warn'],['e_5','小怪',''],['e_9','传送门','']],
+    'level1': [['e_2','商人',''],['e_7','小怪','']],
+    'cave':   [['e_6','商人','warn'],['e_8','小怪','warn'],['e_11','宝箱',''],['e_12','触发区','']]
+  };
+  var MAP_TODO = {'TEST':'1/3','level1':'0/2','cave':'2/4'};
+  // 实例数据：固定功能参数 + 已挂的附加功能。演示只用这一份，按实例 id 取。
+  var INST_DATA = {
+    'e_3': {hp:12, atk:4, fns:[
+      {fn:'对话', name:'问好', kind:'dialogue', par:false,
+       fields:[['内容名','问好'],['讲话人','商人']], lines:['要点些什么吗？','今天货很全。']},
+      {fn:'商店', name:'', kind:'shop', par:false, fields:null},
+      {fn:'接任务', name:'矿洞委托', kind:'quest', par:true,
+       fields:[['内容名','矿洞委托'],['任务 id','q_mine_01']], lines:[]}
+    ]},
+    'e_5': {hp:8, atk:2, fns:[]},
+    'e_9': {hp:1, atk:0, fns:[
+      {fn:'传送', name:'去 level1', kind:'portal', par:false,
+       fields:[['内容名','去 level1'],['目标地图','level1'],['落点','e_1']], lines:[]}
+    ]},
+    'e_2': {hp:9, atk:3, fns:[
+      {fn:'对话', name:'打招呼', kind:'dialogue', par:false,
+       fields:[['内容名','打招呼'],['讲话人','商人']], lines:['第一次来吧？']}
+    ]},
+    'e_7': {hp:6, atk:2, fns:[]},
+    'e_6': {hp:14, atk:5, fns:[
+      {fn:'对话', name:'矿洞警告', kind:'dialogue', par:false,
+       fields:[['内容名','矿洞警告'],['讲话人','矿工']], lines:['前面塌方了。','绕路吧。']},
+      {fn:'商店', name:'', kind:'shop', par:false, fields:null}
+    ]},
+    'e_8': {hp:20, atk:7, fns:[
+      {fn:'对话', name:'', kind:'dialogue', par:false, fields:null}
+    ]},
+    'e_11': {hp:1, atk:0, fns:[
+      {fn:'开箱', name:'矿石箱', kind:'chest', par:false,
+       fields:[['内容名','矿石箱'],['掉落','铁矿石 ×3']], lines:[]}
+    ]},
+    'e_12': {hp:1, atk:0, fns:[]}
+  };
+  var curMap = 'TEST';
+  function setMap(name){
+    curMap = name;
+    document.getElementById('mapCur').textContent = name;
+    Array.prototype.forEach.call(mapMenu.querySelectorAll('.mmap'), function(o){
+      o.classList.toggle('on', o.dataset.map === name);
+    });
+    document.querySelector('#ctList .listHead .sec').textContent = name + ' 实例';
+    document.querySelector('#ctList .listHead .badge').textContent = MAP_TODO[name] + ' 未填';
+    // 重建左列实例行（演示里只换文字与标记，画布预览仍是同一张示意）
+    var box = document.getElementById('ctList');
+    Array.prototype.forEach.call(box.querySelectorAll('.instRow'), function(o){ o.remove(); });
+    var anchor = box.querySelector('.filter');
+    MAP_INST[name].forEach(function(it, i){
+      var d = document.createElement('div');
+      d.className = 'instRow' + (i === 0 ? ' on' : '');
+      d.dataset.ent = it[0];
+      if (it[2] === 'warn') d.dataset.todo = '1';
+      d.innerHTML = '<span class="nm">' + it[1] + '</span>' +
+        '<span class="iid">' + it[0] + '</span>' +
+        '<span class="dot ' + it[2] + '"></span>';
+      d.addEventListener('click', function(){ selectInst(it[0]); });
+      box.insertBefore(d, anchor);
+    });
+    instRows = box.querySelectorAll('.instRow');
+    resetFilter();
+    // 演示只有一张示意画布：非 TEST 地图时点明预览与左列不同源，避免误读
+    document.querySelector('#ctCanvas .hint').textContent =
+      (name === 'TEST') ? '只读预览 · 点击实例选中'
+                        : '只读预览（示意）· ' + name + ' 的实例见左列';
+    selectInst(MAP_INST[name][0][0]);
+    document.getElementById('statusMsg').textContent = '已切到 ' + name + ' · ' + MAP_INST[name].length + ' 个实例';
+  }
   document.addEventListener('click', function(){ mapMenu.classList.remove('on'); });
 
   // ── 关卡：层下拉 ──
@@ -616,89 +674,178 @@
     show('ct');
   });
 
-  // ── 内容：选地图 / 选实例 ──
-  var mapRows = document.querySelectorAll('.mapRow');
-  Array.prototype.forEach.call(mapRows, function(r){
-    r.addEventListener('click', function(){
-      Array.prototype.forEach.call(mapRows, function(o){ o.classList.remove('on'); });
-      r.classList.add('on');
+  // ── 内容：右栏按当前实例重建 ──
+  // 右栏不是静态模板：固定功能、附加功能、内容表单三者都取决于选中了哪个实例，
+  // 所以整体重绘（演示规模小，重绘比增量同步更不容易走偏）。
+  var ORD = ['①','②','③','④','⑤','⑥','⑦','⑧','⑨'];
+  var ctBody = document.getElementById('ctBody');
+  var curInst = null;
+  function renderInst(id){
+    curInst = id;
+    var d = INST_DATA[id] || {hp:0, atk:0, fns:[]};
+    ctBody.innerHTML = '';
+
+    // 1) 固定功能：类型自带，只能改值
+    var blk1 = document.createElement('div');
+    blk1.className = 'blk';
+    blk1.innerHTML =
+      '<div class="sec">固定功能</div>' +
+      '<div class="kv"><label>生命</label><input value="' + d.hp + '"></div>' +
+      '<div class="kv"><label>伤害</label><input value="' + d.atk + '"></div>' +
+      '<div class="tiny">固定功能由代码实现，只能改值。</div>';
+    ctBody.appendChild(blk1);
+
+    // 2) 附加功能：可增删的通用功能列表
+    var blk2 = document.createElement('div');
+    blk2.className = 'blk';
+    blk2.innerHTML = '<div class="sec">附加功能</div>';
+    if (d.fns.length === 0) {
+      blk2.innerHTML += '<div class="tiny">（这个实例还没有附加功能）</div>';
+    }
+    d.fns.forEach(function(f, i){
+      var row = document.createElement('div');
+      row.className = 'fnRow' + (i === 0 ? ' on' : '');
+      row.dataset.fn = f.kind;
+      row.innerHTML =
+        '<span class="ord">' + (ORD[i] || (i + 1)) + '</span>' +
+        '<span class="fn">' + f.fn + '</span>' +
+        '<span class="cname' + (f.name ? '' : ' empty') + '">' + (f.name || '未填') + '</span>' +
+        '<label class="par"><input type="checkbox" class="parCb"' + (f.par ? ' checked' : '') + '> 并行</label>' +
+        '<button class="libBtn">库</button><span class="tiny del">✕</span>';
+      row.addEventListener('click', function(ev){
+        if (ev.target.classList.contains('libBtn') || ev.target.classList.contains('del')) return;
+        Array.prototype.forEach.call(blk2.querySelectorAll('.fnRow'), function(o){ o.classList.remove('on'); });
+        row.classList.add('on');
+        renderForm(f);
+      });
+      row.querySelector('.par').addEventListener('click', function(ev){ ev.stopPropagation(); });
+      row.querySelector('.libBtn').addEventListener('click', function(ev){
+        ev.stopPropagation();
+        openLib(row, f);
+      });
+      row.querySelector('.del').addEventListener('click', function(ev){
+        ev.stopPropagation();
+        d.fns.splice(i, 1);
+        renderInst(id);
+        document.getElementById('statusMsg').textContent = '已移除该功能（内容条目留在库里）';
+      });
+      blk2.appendChild(row);
     });
-  });
+    var add = document.createElement('div');
+    add.className = 'addRow';
+    add.textContent = '+ 添加功能 …';
+    add.addEventListener('click', function(){
+      document.getElementById('statusMsg').textContent = '（演示）添加功能：从清单 functions 声明里选一项';
+    });
+    blk2.appendChild(add);
+    ctBody.appendChild(blk2);
+
+    // 3) 选中的那项功能的内容表单
+    var first = d.fns[0];
+    if (first) renderForm(first);
+  }
+
+  // 内容表单：字段按声明渲染（演示用 fields 数组模拟声明）
+  function renderForm(f){
+    var blk = document.createElement('div');
+    blk.className = 'blk';
+    blk.id = 'ctForm';
+    var code = f.kind.toUpperCase().slice(0, 1) + 'WEB' + curInst.replace(/\D/g, '') + 'X9';
+    if (!f.fields) {
+      blk.innerHTML = '<div class="sec">' + f.fn + ' 内容</div>' +
+        '<div class="tiny" style="color:var(--warn)">这一项还没填。点「库」复制一条已有的，或直接新建。</div>';
+      ctBody.appendChild(blk);
+      return;
+    }
+    var html = '<div class="sec">' + f.fn + '内容 · ' + f.name + '</div>';
+    f.fields.forEach(function(kv){
+      html += '<div class="kv"><label>' + kv[0] + '</label><input value="' + kv[1] + '"></div>';
+    });
+    html += '<div class="kv"><label>ID</label>' +
+      '<input value="' + curMap + '-' + curInst + '-' + f.kind + '-' + code +
+      '" readonly style="color:var(--mute);font-family:ui-monospace,monospace;font-size:11px"></div>';
+    if (f.lines && f.lines.length) {
+      html += '<div class="sec" style="margin-top:4px">台词</div><div class="lines">';
+      f.lines.forEach(function(t){
+        html += '<div class="lineRow"><input value="' + t + '"><span class="tiny">✕</span></div>';
+      });
+      html += '<div class="addRow" style="padding:4px">+ 一行</div></div>';
+    }
+    html += '<div class="tiny">「说完还能再说 / 只说一次」属功能内部逻辑，由项目侧代码决定。</div>';
+    blk.innerHTML = html;
+    ctBody.appendChild(blk);
+  }
+
+  // ── 内容：实例列表 ↔ 画布 双向选中 ──
   var ctEnts = document.querySelectorAll('#ctCanvas .ent');
-  function pickCtEnt(target){
-    Array.prototype.forEach.call(ctEnts, function(o){ o.classList.toggle('sel', o === target); });
+  var instRows = document.querySelectorAll('.instRow');
+  // 单一选中入口：行、画布上的实体、定位按钮都走这里，避免两处状态不同步
+  function selectInst(id){
+    Array.prototype.forEach.call(ctEnts, function(o){ o.classList.toggle('sel', o.dataset.ent === id); });
+    Array.prototype.forEach.call(instRows, function(o){ o.classList.toggle('on', o.dataset.ent === id); });
+    var hit = null;
+    Array.prototype.forEach.call(instRows, function(o){ if (o.dataset.ent === id) hit = o; });
+    if (!hit) return;
+    document.getElementById('rHeadName').textContent = hit.querySelector('.nm').textContent;
+    document.getElementById('rHeadId').textContent = curMap + '.' + id;
+    var bg = document.getElementById('rHeadBadge');
+    var todo = hit.dataset.todo === '1';
+    bg.textContent = todo ? '本实例有未填项' : '已填齐';
+    bg.classList.toggle('done', !todo);
+    renderInst(id);
   }
   Array.prototype.forEach.call(ctEnts, function(e){
-    e.addEventListener('click', function(){ pickCtEnt(e); });
+    e.addEventListener('click', function(){ selectInst(e.dataset.ent); });
   });
-  // 校验清单条目 → 跳转选中对应实例
-  Array.prototype.forEach.call(document.querySelectorAll('.todoRow'), function(tr){
-    tr.addEventListener('click', function(){
-      var want = tr.dataset.ent;
-      Array.prototype.forEach.call(ctEnts, function(o){
-        if (o.dataset.ent === want) pickCtEnt(o);
-      });
-      document.getElementById('statusMsg').textContent = '已定位 ' + want + '，在下方补内容';
+  Array.prototype.forEach.call(instRows, function(r){
+    r.addEventListener('click', function(){ selectInst(r.dataset.ent); });
+  });
+  // 「只看未填」：按行尾标记过滤实例列表
+  var onlyTodo = false;
+  var filterBtn = document.querySelector('.filter');
+  function resetFilter(){
+    onlyTodo = false;
+    filterBtn.classList.remove('on');
+    filterBtn.textContent = '只看未填 (' + document.querySelectorAll('.instRow[data-todo]').length + ')';
+    Array.prototype.forEach.call(instRows, function(r){ r.style.display = ''; });
+  }
+  filterBtn.addEventListener('click', function(){
+    onlyTodo = !onlyTodo;
+    filterBtn.classList.toggle('on', onlyTodo);
+    var n = document.querySelectorAll('.instRow[data-todo]').length;
+    filterBtn.textContent = onlyTodo ? '显示全部 (' + instRows.length + ')' : '只看未填 (' + n + ')';
+    Array.prototype.forEach.call(instRows, function(r){
+      r.style.display = (onlyTodo && !r.dataset.todo) ? 'none' : '';
     });
   });
 
-  // ── 资产目录「定位」：跳到内容编辑器并选中该图该实例（须在上述变量声明之后） ──
+  // ── 资产目录「定位」：切到该图 → 在实例列表里选中该实例 ──
+  // 定位是跨面板跳转：先让当前地图变成目标图，再选中实例，否则会出现
+  // 「右栏说 cave.e_6、左列还是 TEST」的错位。
   Array.prototype.forEach.call(document.querySelectorAll('.locBtn'), function(b){
     b.addEventListener('click', function(){
       var m = b.dataset.map, ent = b.dataset.ent;
-      Array.prototype.forEach.call(mapRows, function(o){
-        o.classList.toggle('on', o.dataset.map === m);
-      });
       show('ct');
-      var hit = null;
-      Array.prototype.forEach.call(ctEnts, function(o){
-        if (o.dataset.ent === ent) hit = o;
+      if (curMap !== m) setMap(m);
+      var exists = false;
+      Array.prototype.forEach.call(document.querySelectorAll('.instRow'), function(o){
+        if (o.dataset.ent === ent) exists = true;
       });
-      if (hit) {
-        pickCtEnt(hit);
+      if (exists) {
+        selectInst(ent);
         document.getElementById('statusMsg').textContent = '已定位 ' + m + '.' + ent;
       } else {
-        // 演示里预览画布只画了 TEST 的三个实例，其余地图只切到该图
-        document.getElementById('statusMsg').textContent = '已切到 ' + m + '，该实例在画布外（演示未画）';
+        document.getElementById('statusMsg').textContent = '已切到 ' + m + '，但没找到实例 ' + ent;
       }
     });
   });
 
-  // 功能行选中 → 展开表单（演示里只切换高亮）
-  var fnRows = document.querySelectorAll('.fnRow');
-  Array.prototype.forEach.call(fnRows, function(r){
-    r.addEventListener('click', function(ev){
-      if (ev.target.classList.contains('libBtn') || ev.target.classList.contains('del')) return;
-      Array.prototype.forEach.call(fnRows, function(o){ o.classList.remove('on'); });
-      r.classList.add('on');
-    });
-  });
-  // 并行勾选：勾选=与前一项同时触发。第一项没有「前一项」，取消时回到普通
-  Array.prototype.forEach.call(document.querySelectorAll('.fnRow .par'), function(lb){
-    lb.addEventListener('click', function(ev){ ev.stopPropagation(); });
-  });
-  // 删除功能行 → 重新编号
-  var ORD = ['①','②','③','④','⑤','⑥','⑦','⑧','⑨'];
-  function renumber(){
-    Array.prototype.forEach.call(document.querySelectorAll('#panel-ct .fnRow'), function(r, i){
-      r.querySelector('.ord').textContent = ORD[i] || String(i + 1);
-      r.querySelector('.ord').dataset.n = String(i + 1);
-    });
-  }
-  Array.prototype.forEach.call(document.querySelectorAll('.fnRow .del'), function(x){
-    x.addEventListener('click', function(ev){
-      ev.stopPropagation();
-      var row = x.closest('.fnRow');
-      row.parentNode.removeChild(row);
-      renumber();
-      document.getElementById('statusMsg').textContent = '已移除该功能（内容条目留在库里）';
-    });
-  });
-
+  // 功能行选中 → 展开表单；删除行 → 重建右栏（旧函数已由 renderInst 内联处理）
   // ── 库弹层：选中一条 → 复制进当前实例，生成新 ID ──
   var libMask = document.getElementById('libMask');
   var libPicked = null;
   var libForRow = null;
+  var libKind = '';
   Array.prototype.forEach.call(document.querySelectorAll('.libItem'), function(it){
     it.addEventListener('click', function(){
       Array.prototype.forEach.call(document.querySelectorAll('.libItem'), function(o){ o.classList.remove('on'); });
@@ -706,15 +853,30 @@
       libPicked = it;
     });
   });
-  Array.prototype.forEach.call(document.querySelectorAll('.libBtn'), function(b){
-    b.addEventListener('click', function(ev){
-      ev.stopPropagation();
-      libForRow = b.closest('.fnRow');
-      libPicked = null;
-      Array.prototype.forEach.call(document.querySelectorAll('.libItem'), function(o){ o.classList.remove('on'); });
-      libMask.classList.add('on');
+  function openLib(row, f){
+    libForRow = row;
+    libKind = f.kind;
+    libPicked = null;
+    Array.prototype.forEach.call(document.querySelectorAll('.libItem'), function(o){ o.classList.remove('on'); });
+    filterLib(libKind);
+    document.querySelector('#libBox .lh > span').textContent = '选择已有' + f.fn + '内容';
+    libMask.classList.add('on');
+  }
+  // 弹层只列同功能的内容条目：跨功能复用无意义（字段声明都不同）
+  function filterLib(kind){
+    Array.prototype.forEach.call(document.querySelectorAll('.libItem'), function(o){
+      o.style.display = (o.dataset.fn === kind) ? '' : 'none';
     });
-  });
+  }
+  // 深链接直接开弹层时没有「当前功能行」，默认按第一项功能的 kind 过滤
+  function openLibDefault(){
+    var first = document.querySelector('#ctBody .fnRow');
+    var kind = first ? first.dataset.fn : 'dialogue';
+    var label = first ? first.querySelector('.fn').textContent : '对话';
+    filterLib(kind);
+    document.querySelector('#libBox .lh > span').textContent = '选择已有' + label + '内容';
+    libMask.classList.add('on');
+  }
   document.getElementById('libCancel').addEventListener('click', function(){ libMask.classList.remove('on'); });
   document.getElementById('libOk').addEventListener('click', function(){
     libMask.classList.remove('on');
@@ -729,13 +891,7 @@
     var cn = libForRow.querySelector('.cname');
     cn.textContent = nm;
     cn.classList.remove('empty');
-    libForRow.querySelector('.cname').title = newId;
-    var formId = document.querySelector('#ctForm input[readonly]');
-    if (formId) formId.value = newId;
-    var formName = document.querySelector('#ctForm .kv input');
-    if (formName) formName.value = nm;
-    var sec = document.querySelector('#ctForm > .sec');
-    if (sec) sec.textContent = '功能内容 · ' + nm;
+    cn.title = newId;
     Array.prototype.forEach.call(document.querySelectorAll('.fnRow'), function(o){ o.classList.remove('on'); });
     libForRow.classList.add('on');
     document.getElementById('statusMsg').textContent = '已复制「' + nm + '」为新内容 ' + newId;
@@ -748,6 +904,19 @@
     if (libMask.classList.contains('on')) { libMask.classList.remove('on'); return; }
     if (cur !== 'lv') show('lv');
   });
+
+  // 深链接选图放在最后：setMap 依赖上面已初始化的列表与画布节点
+  if (deepMap && MAP_INST[deepMap]) {
+    setMap(deepMap);
+  } else {
+    // 默认图：右栏是重绘出来的，必须显式渲染一次；否则内容面板打开是空的
+    var firstRow = document.querySelector('.instRow');
+    if (firstRow) selectInst(firstRow.dataset.ent);
+  }
+  // hash 里带 todo=1 时预置「只看未填」，便于把某个校验状态直接分享出去
+  if (hashParts.indexOf('todo=1') >= 0) filterBtn.click();
+  // 库弹层放在最后开：需要右栏已渲染，才能取到当前功能行做同功能过滤
+  if (deepLib) openLibDefault();
 })();
 </script>
 </body>
