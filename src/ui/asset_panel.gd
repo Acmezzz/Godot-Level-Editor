@@ -15,7 +15,7 @@ const ContentStore := preload("res://src/content/content_store.gd")
 
 var manifest := {}
 var save_manifest: Callable
-var host = null  # 宿主 app（定位跳转/确认框复用其链路）
+var host = null  # 宿主 app（确认框复用其链路）
 
 var asset_list: ItemList
 var stats_grid: GridContainer
@@ -110,7 +110,7 @@ func build() -> void:
 	det.add_child(Kit.divider())
 	det.add_child(Kit.section_label("数值模板（stats）"))
 	stats_grid = GridContainer.new()
-	stats_grid.columns = 7
+	stats_grid.columns = 6
 	stats_grid.add_theme_constant_override("h_separation", 8)
 	stats_grid.add_theme_constant_override("v_separation", 6)
 	det.add_child(stats_grid)
@@ -247,7 +247,7 @@ func _add_size_row() -> void:
 	row.add_child(Kit.hint_label("0 = 从 prefab 碰撞形状解析", 220))
 	extra.add_child(row)
 
-## 实例分布（模型阶段 1 §5 + v2 §4）：每实例一行——id/坐标 + 各数值就地可改 + 定位。
+## 实例分布（模型阶段 1 §5 + v2 §4）：每实例一行——id/坐标 + 各数值就地可改。
 ## 数值 = 三层合并（实例 > 定义 > 清单），与属性面板/游戏运行时同一算法（DefModel.effective_stats）。
 ## 改值 = 写该实例的 props.stats 覆盖（不是改类型模板）；当前打开的地图走画布内存，
 ## 其余地图直接落盘——两处入口改的都是同一份数据，只是路径不同。
@@ -319,7 +319,7 @@ func _instance_distribution(sid: String) -> Dictionary:
 			out[map_name] = rows
 	return out
 
-## 分布行：id · 各数值就地可改 · 定位。数值框直接写该实例的 props.stats 覆盖。
+## 分布行：id · 各数值就地可改。数值框直接写该实例的 props.stats 覆盖。
 func _dist_row(map_name: String, r: Dictionary, sdefs: Array) -> Control:
 	var row := Kit.hbox(10)
 	var rid := str(r.get("id", ""))
@@ -373,7 +373,7 @@ func _dist_row(map_name: String, r: Dictionary, sdefs: Array) -> Control:
 			cell.add_child(box)
 			cells.add_child(cell)
 		row.add_child(Kit.spacer())
-	row.add_child(Kit.button("定位", func(): host._focus_ent_in_map(map_name, rid), "ghost"))
+
 	return row
 
 ## 写单实例数值：当前地图走画布（撤销栈/脏标记与属性面板同路），其余地图直接落盘。
@@ -450,7 +450,7 @@ func _asset_editor_rows(grid: GridContainer, edef: Dictionary) -> void:
 		c.queue_free()
 	if _dedupe_stat_ids(edef):
 		save_manifest.call()
-	for h in ["名称", "id", "类型", "默认", "最小", "最大", ""]:
+	for h in ["名称", "id", "类型", "默认", "最小", "最大"]:
 		grid.add_child(Kit.text_label(h, Th.TEXT_MUTE, Th.FS_META))
 	for sf in edef.get("stats", []):
 		var nm := LineEdit.new()
@@ -518,12 +518,6 @@ func _asset_editor_rows(grid: GridContainer, edef: Dictionary) -> void:
 			save_manifest.call())
 		grid.add_child(mins)
 		grid.add_child(maxs)
-		var sdel := Kit.button("✕", func():
-			(edef.get("stats", []) as Array).erase(sf)
-			save_manifest.call()
-			_asset_editor_rows(grid, edef), "icon")
-		sdel.tooltip_text = "删除这个数值项（实例上的覆盖值会变成孤立数据）"
-		grid.add_child(sdel)
 
 # —— 字段定义行 ——
 func _asset_field_rows(grid: GridContainer, edef: Dictionary) -> void:

@@ -533,8 +533,6 @@ func _fit_view() -> void:
 signal entity_selected(spr: Sprite2D)
 
 var selected_entity: Sprite2D = null
-var flash_id := ""      # 下拉选目标时的闪烁高亮（ent_id）
-var flash_until := 0    # 高亮过期时刻（msec）
 var selected_multi: Array = []   # 框选集合（Del / 复制粘贴用）
 @warning_ignore("unused_private_class_variable")
 var _clipboard: Array = []       # 复制模板 [{scene, dx, dy, props}]
@@ -800,9 +798,6 @@ func extract() -> Dictionary:
 ## —— 拆到 src/canvas/canvas_draw.gd 的委托（调用点保持不变） ——
 func _draw() -> void:
 	_canvas_draw_ctrl._draw()
-
-func flash_entity(id: String, ms: int = 2600) -> void:
-	_canvas_draw_ctrl.flash_entity(id, ms)
 
 func set_hover_entity(id: String) -> void:
 	_canvas_draw_ctrl.set_hover_entity(id)

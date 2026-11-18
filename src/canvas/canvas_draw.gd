@@ -227,21 +227,8 @@ func _draw() -> void:
 				cvs.draw_rect(er, Color(0.6, 1.0, 0.6, 0.4), true)
 		var gr := Rect2(Vector2(org) * cvs.tile_px, Vector2(cvs._region_clip.get("size", Vector2i.ONE)) * cvs.tile_px)
 		cvs.draw_rect(gr, Color(1.0, 0.85, 0.3, 0.9), false, 2.0)
-	# 目标闪烁高亮：展开下拉/选中候选时，画布上黄框呼吸 + 连线
-	if cvs.flash_id != "":
-		if Time.get_ticks_msec() > cvs.flash_until:
-			cvs.flash_id = ""
-		else:
-			for e3 in cvs.entities.get_children():
-				var s3 := e3 as Sprite2D
-				if s3 and str(s3.get_meta("ent_id", "")) == cvs.flash_id:
-					var k := 0.5 + 0.5 * sin(Time.get_ticks_msec() * 0.012)
-					var fr := Rect2(s3.position - Vector2(cvs.tile_px, cvs.tile_px) * 1.1, Vector2(cvs.tile_px, cvs.tile_px) * 2.2)
-					cvs.draw_rect(fr, Color(1.0, 0.85, 0.3, 0.4 + 0.5 * k), false, 2.0 + k)
-					if cvs.selected_entity and is_instance_valid(cvs.selected_entity):
-						cvs.draw_line(cvs.selected_entity.position, s3.position, Color(1.0, 0.85, 0.3, 0.5 + 0.4 * k), 2.0)
 	# 常驻悬停高亮（实体大纲列表悬停）：青色框 + 十字，稳定不闪，和"看的是哪个"对得上
-	if cvs.hover_id != "" and cvs.hover_id != cvs.flash_id:
+	if cvs.hover_id != "":
 		for e5 in cvs.entities.get_children():
 			var s5 := e5 as Sprite2D
 			if s5 == null or str(s5.get_meta("ent_id", "")) != cvs.hover_id:
@@ -279,19 +266,7 @@ func _draw_trigger_zones() -> void:
 		cvs.draw_string(ThemeDB.fallback_font, rect.position + Vector2(3, -3),
 			label, HORIZONTAL_ALIGNMENT_LEFT, rect.size.x * cvs.zoom, 10, col)
 
-# 目标闪烁高亮入口（属性面板下拉调用；ms=持续毫秒，hover 轮询用短时长续期）
-func flash_entity(id: String, ms: int = 2600) -> void:
-	if id == "":
-		cvs.flash_id = ""
-		cvs.queue_redraw()
-		return
-	cvs.flash_id = id
-	cvs.flash_until = Time.get_ticks_msec() + ms
-	cvs.queue_redraw()
-
 ## 常驻悬停高亮（实体大纲列表用）：一直到被设为""才熄灭，不自动过期。
-## 和 flash 分开是因为列表悬停是持续态——用计时器会闪一下就没了。
-
 func set_hover_entity(id: String) -> void:
 	if cvs.hover_id == id:
 		return

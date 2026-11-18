@@ -48,7 +48,7 @@ func _run() -> void:
 		"asset":
 			app._set_mode("asset", "crawler")
 		"asset_dist":
-			# 批次 D-2：实例分布行 = id + 各数值就地可改 + 定位
+			# 批次 D-2：实例分布行 = id + 各数值就地可改
 			app._set_mode("asset", "crawler")
 			await process_frame
 			await process_frame

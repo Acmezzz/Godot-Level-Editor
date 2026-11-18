@@ -638,12 +638,5 @@ func _scene_name(sid: String) -> String:
 func _open_map_by_name(map_name: String) -> void:
 	_side_actions_ctrl._open_map_by_name(map_name)
 
-func _focus_entity(ent_id: String) -> void:
-	_side_actions_ctrl._focus_entity(ent_id)
-
-## 跨图定位（资产分布「定位」按钮）：切图 + 聚焦实例
-func _focus_ent_in_map(map_name: String, ent_id: String) -> void:
-	_side_actions_ctrl._focus_ent_in_map(map_name, ent_id)
-
 func _delete_entities_by_id(ids: Array) -> void:
 	_side_actions_ctrl._delete_entities_by_id(ids)

@@ -50,31 +50,6 @@ func _open_map_by_name(map_name: String) -> void:
 		return
 	app._load_map_file(p)
 
-## 点击实体大纲条目 → 视野对准该实体。
-## 不清空已有框选：列表里 Ctrl/Shift 多选后还要能做批量操作，
-## 一次点击就把选择重置掉会让「多选 → 批量编辑」没法用。
-
-func _focus_entity(ent_id: String) -> void:
-	if not app.map_loaded:
-		return
-	for e in app.canvas.entities.get_children():
-		var spr := e as Sprite2D
-		if spr and str(spr.get_meta("ent_id", "")) == ent_id:
-			app.canvas.cam_pos = spr.position
-			app.canvas._update_cam()
-			app.canvas.flash_entity(ent_id, 3000)
-			# 已在框选集合里就保留整组；否则设为单选
-			if not app.canvas.selected_multi.has(spr):
-				app.canvas.selected_entity = spr
-				app.canvas.selected_multi = [spr]
-			else:
-				app.canvas.selected_entity = spr
-			app.canvas.entity_selected.emit(spr)
-			app._set_status(" 已定位 " + ent_id)
-			return
-	app._set_status(" 找不到实体 " + ent_id)
-
-
 func _delete_entities_by_id(ids: Array) -> void:
 	if not app.map_loaded or ids.is_empty():
 		return
@@ -97,13 +72,3 @@ func _delete_entities_by_id(ids: Array) -> void:
 		app.selected_spr = null
 	app.canvas._mark()
 	app._set_status(" 已删除 %d 个实体" % victims.size())
-
-
-## 跨图定位：切到目标图并聚焦实例（资产分布「定位」按钮用）。
-func _focus_ent_in_map(map_name: String, ent_id: String) -> void:
-	if map_name == "" or ent_id == "":
-		return
-	if map_name != app.cur_map_name:
-		await _open_map_by_name(map_name)
-	if map_name == app.cur_map_name:
-		_focus_entity(ent_id)
