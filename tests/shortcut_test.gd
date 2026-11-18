@@ -96,14 +96,28 @@ func _run() -> void:
 		errs += 1
 		print("FAIL esc cancels paste preview")
 
-	# —— 未匹配的键不再被无条件吞掉：工具键 1-5 仍生效 ——
+	# —— v2 §2.5：数字键 1-6 已作废（没有工具概念）。按下后不得改变画笔语义 ——
+	var tool_before: String = cvs.tool
 	_press(KEY_2, false)
 	await process_frame
-	if cvs.tool == "erase":
-		print("PASS tool keys still work")
+	if cvs.tool == tool_before:
+		print("PASS tool keys are gone")
 	else:
 		errs += 1
-		print("FAIL tool keys ", cvs.tool)
+		print("FAIL tool keys still change state: ", tool_before, " -> ", cvs.tool)
+
+	# —— 层决定画笔语义：实体层 = 放置，瓦片层 = 涂刷 ——
+	cvs.active_layer = cvs._ent_layer_index()
+	cvs.tool = ""
+	app._apply_state("", cvs._ent_layer_index())
+	var ent_ok: bool = cvs.tool == "stamp"
+	app._apply_state("", 0)
+	var tile_ok: bool = cvs.tool == "paint"
+	if ent_ok and tile_ok:
+		print("PASS layer decides brush semantics")
+	else:
+		errs += 1
+		print("FAIL layer decides brush: ent=", cvs.tool, " ent_ok=", ent_ok, " tile_ok=", tile_ok)
 
 	if errs == 0:
 		print("SHORTCUT_TEST_OK")
@@ -111,10 +125,10 @@ func _run() -> void:
 		print("SHORTCUT_TEST_FAIL")
 	quit(errs)
 
-## 切到实体层+属性工具并选中第一个实体（模拟真实操作路径）
+## 切到实体层并选中第一个实体（模拟真实操作路径；v2：不再需要挑工具）
 func _pick_first(cvs) -> void:
 	cvs.active_layer = cvs._ent_layer_index()
-	cvs.tool = "select"
+	cvs.tool = "stamp"
 	cvs.selected_multi = [cvs.entities.get_children()[0]]
 	cvs.selected_entity = null
 

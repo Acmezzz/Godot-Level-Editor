@@ -35,6 +35,7 @@ func fill_tiles() -> void:
 ## 多图集：顶层（_atlas == -1）= 图集列表；钻入后加返回行再进图集体
 func _fill_multi(tl: ItemList, tiles: Array, tsz: int) -> void:
 	if _atlas < 0:
+		_set_grid(tl, 1, 0)
 		for i in tiles.size():
 			var t: Dictionary = tiles[i]
 			var n := str(t.get("name", "图集 %d" % i))
@@ -56,6 +57,7 @@ func _fill_single(tl: ItemList, t: Dictionary, ai: int, tsz: int) -> void:
 	var fb := str(t.get("name", ""))
 	_build_cats(pal, fb)
 	if _cat != "":
+		_set_grid(tl, 3, 56)
 		var back2 := tl.add_item("← 返回类别")
 		tl.set_item_metadata(back2, {"back": true})
 		for p in pal:
@@ -65,13 +67,22 @@ func _fill_single(tl: ItemList, t: Dictionary, ai: int, tsz: int) -> void:
 			var it := tl.add_item(str(p.get("name", "%d,%d" % [cell.x, cell.y])), _tex(ai, cell, tsz))
 			tl.set_item_metadata(it, {"auto": false, "cell": cell, "atlas": ai})
 		return
-	_add_mru_rows(tl, tsz)
+	# 类别视图与 MRU 行是「一行一个名字」，用单列吃满宽度——用 3 列网格会被截成「→ 岩块…」
+	_set_grid(tl, 1, 0)
 	if pal.is_empty():
+		# 没配 palette = 全图集平铺，那种视图必须是网格；MRU 行混进网格会被压成豆点，故跳过
+		_set_grid(tl, 3, 56)
 		_fill_full_atlas(tl, img, tsz, ai)
 		return
+	_add_mru_rows(tl, tsz)
 	for c in _cats:
 		var ii2 := tl.add_item("→ %s（%d）" % [str(c.name), int(c.count)])
 		tl.set_item_metadata(ii2, {"cat": str(c.name)})
+
+## 列布局切换：类别视图单列吃满，资产视图三列网格（v2 左栏 200px 下 4 列会溢出）
+func _set_grid(tl: ItemList, cols: int, col_w: int) -> void:
+	tl.max_columns = cols
+	tl.fixed_column_width = col_w
 
 ## 点击路由：类别视图点类别 → 钻入；资产视图点返回行 → 回类别列表；点瓦片 → 原有选瓦片流程
 func on_tile_click(i: int, at: Vector2, mb: int) -> void:

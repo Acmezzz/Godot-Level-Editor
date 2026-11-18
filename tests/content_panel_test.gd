@@ -358,14 +358,16 @@ func _all_label_text(node: Node) -> String:
 
 func _cleanup() -> void:
 	var root_dir := str(project["_content_dir"])
-	for kind in ContentStore.KINDS:
-		var dir := root_dir.path_join(kind)
-		var handle := DirAccess.open(dir)
-		if handle == null:
-			continue
-		for filename in handle.get_files():
-			DirAccess.remove_absolute(dir.path_join(filename))
-		DirAccess.remove_absolute(dir)
+	# 批次 B：种类不再有白名单——直接清空内容根下的全部子目录
+	var root_handle := DirAccess.open(root_dir)
+	if root_handle != null:
+		for kind in root_handle.get_directories():
+			var dir := root_dir.path_join(str(kind))
+			var handle := DirAccess.open(dir)
+			if handle != null:
+				for filename in handle.get_files():
+					DirAccess.remove_absolute(dir.path_join(filename))
+			DirAccess.remove_absolute(dir)
 	var base := str(project["_dir"])
 	if DirAccess.dir_exists_absolute(base):
 		DirAccess.remove_absolute(base)

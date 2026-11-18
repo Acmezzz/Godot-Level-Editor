@@ -163,32 +163,29 @@ func _run() -> void:
 				app.selected_spr = first_exit
 				app._open_map_point_picker("level1", "target_map", "target_point", pr)
 		"ents_page":
-			app._set_palette_page("entities")
+			# v2：切到实体层 = 唯一的「换到实体资产」入口（页签按钮已删）
+			app._on_layer(app.canvas._ent_layer_index())
+		"layer_menu":
+			# v2 §2.2：层下拉展开，应看到每一层一行 + 👁/🔒
+			app._layout_ctrl._toggle_layer_menu()
+			await process_frame
+			await process_frame
+			print("MEASURE layer_menu_rows=%d visible=%s" % [
+				app._layout_ctrl._layer_menu_body.get_child_count(),
+				str(app._layout_ctrl._layer_menu.visible)])
 		"props_multi":
 			var pick2 := []
 			for e in app.canvas.entities.get_children():
 				if e.has_meta("scene"):
 					pick2.append(e)
 			if pick2.size() > 1:
-				app._apply_state("select", app.canvas._ent_layer_index())
+				app._apply_state("", app.canvas._ent_layer_index())
 				app.canvas.selected_multi = pick2.slice(0, 2)
 				app.canvas.selected_entity = pick2[0]
 				app._on_entity_selected(pick2[0])
-		"dock":
+		"dock", "dock_wide":
+			# v2：内容抽屉已删——这个入口现在落在内容编辑器面板上
 			app._set_content_dock(true)
-		"dock_wide":
-			# R4 抽屉「放大」态：写作时展开占半屏
-			app._set_content_dock(true)
-			await process_frame
-			app.content_dock.toggle_wide()
-			print("MEASURE dock_width=%d wide=%s" % [int(app.content_dock.custom_minimum_size.x), str(app.content_dock._wide)])
-			for i in 4:
-				await process_frame
-			var mp = app.content_dock.get_parent()
-			print("MEASURE main size=%s pos=%s" % [str(mp.size), str(mp.global_position)])
-			for ch in mp.get_children():
-				print("MEASURE child %s x=%d w=%d min=%d vis=%s" % [ch.get_class(), int(ch.global_position.x), int(ch.size.x), int(ch.get_combined_minimum_size().x), str(ch.visible)])
-			print("MEASURE side x=%d w=%d win=%d" % [int(app.side_panel.global_position.x), int(app.side_panel.size.x), int(app.size.x)])
 		"help":
 			# R4 快捷键速查（? 键）
 			app._open_shortcut_help()
@@ -204,17 +201,8 @@ func _run() -> void:
 				app.canvas.selected_entity = pickx[0]
 				app._on_entity_selected(pickx[0])
 		"dock_commit":
-			# P0-2 实证：校验徽章只追加不清旧——连调 _validate 三次数行数
+			# v2：抽屉已删，此探针改去内容编辑器（批次 C 会重写它）
 			app._set_content_dock(true)
-			await process_frame
-			var dk = app.content_dock
-			dk._data = {"id": "probe"}
-			var b0: int = dk.body.get_child_count()
-			dk._validate()
-			dk._validate()
-			dk._validate()
-			var b1: int = dk.body.get_child_count()
-			print("MEASURE dock_badges before=%d after=%d growth=%d" % [b0, b1, b1 - b0])
 		"bgdlg":
 			app._open_bg_dialog()
 		"manifest":
@@ -264,20 +252,22 @@ func _run() -> void:
 			if rpop != null:
 				print("MEASURE rename_popup=%dx%d content_min=%s" % [int(rpop.size.x), int(rpop.size.y), str(rpop.get_contents_minimum_size().ceil())])
 		"tab_nav":
-			# P0-5 实证：焦点在按钮上时注入 Tab，看快捷键通道是否吞掉导航
-			if app._cut_btn != null and not app._cut_btn.disabled:
-				app._cut_btn.grab_focus()
+			# P0-5 实证：焦点在按钮上时注入 Tab，看快捷键通道是否吞掉导航。
+			# v2：剪贴板按钮已删，改用面板入口做同样的探针。
+			var probe_btn: Button = app._panel_btns.get("content", null)
+			if probe_btn != null and not probe_btn.disabled:
+				probe_btn.grab_focus()
 				await process_frame
-				print("MEASURE focus_before=%s ents=%d" % [str(app._cut_btn.has_focus()), app.canvas.entities.get_child_count()])
-				var ev := InputEventKey.new()
-				ev.physical_keycode = KEY_TAB
-				ev.keycode = KEY_TAB
-				ev.pressed = true
-				Input.parse_input_event(ev)
+				print("MEASURE focus_before=%s ents=%d" % [str(probe_btn.has_focus()), app.canvas.entities.get_child_count()])
+				var ev2 := InputEventKey.new()
+				ev2.physical_keycode = KEY_TAB
+				ev2.keycode = KEY_TAB
+				ev2.pressed = true
+				Input.parse_input_event(ev2)
 				for i in 4:
 					await process_frame
 				print("MEASURE sel_after=%s focus_moved=%s" % [
-					str(app.canvas.selected_entity != null), str(not app._cut_btn.has_focus())])
+					str(app.canvas.selected_entity != null), str(not probe_btn.has_focus())])
 		"measure":
 			# P0-1 实证：_bg_btn 从未加入布局 → 无父节点
 			print("MEASURE bg_btn_parent_null=%s" % str(app._layout_ctrl._bg_btn == null or app._layout_ctrl._bg_btn.get_parent() == null))

@@ -1,5 +1,9 @@
 extends RefCounted
 ## _tool_ops_ctrl：从 src/canvas/editor_canvas.gd 拆出的控制器（审查 8.3 表）。宿主状态经 alias 引用。
+##
+## v2 §2.2：没有工具概念。`_apply_tool` 现在是「按当前层的语义执行一次左键」：
+##   实体层 = 放置当前资产；其余层 = 涂刷（碰撞层走 set_collision_cell）。
+## 擦除（右键）与矩形填充（Shift+拖动）同样只看层。
 
 var cvs   # 宿主引用
 
@@ -10,27 +14,10 @@ func _apply_tool(pos: Vector2) -> void:
 		cvs._hint("当前图层已锁定：解锁后再编辑")
 		return
 	var c = cvs._cell_of(pos)
-	match cvs.tool:
-		"paint":
-			if cvs.active_layer >= cvs._ent_layer_index():
-				cvs._hint("实体层不能涂瓦片：先切到地形/装饰/碰撞层")
-				return
-			_paint(c)
-		"erase": _erase_at(pos)
-		"spawn":
-			if cvs.map_root == null:
-				cvs._hint("无地图：先新建或打开一张地图")
-				return
-			cvs._push_undo()
-			cvs.spawn.position = Vector2(c.x * cvs.tile_px + cvs.tile_px / 2.0, c.y * cvs.tile_px + cvs.tile_px / 2.0)
-			cvs._mark()
-		"stamp":
-			if cvs.active_layer != cvs._ent_layer_index():
-				cvs._hint("放置实体要在实体层（图层栏选\"实体\"）")
-				return
-			_stamp(c)
-		"select": cvs._select_entity_at(pos)
-		"rect": pass
+	if cvs.active_layer == cvs._ent_layer_index():
+		_stamp(c)
+	else:
+		_paint(c)
 
 
 func _brush_cells(c: Vector2i) -> Array:
@@ -70,22 +57,24 @@ func _erase_at(pos: Vector2) -> void:
 		var hit: Sprite2D = cvs._entity_hit(pos)
 		if hit:
 			# B2b：释放统一为 remove_child + free——queue_free 帧末才消失，同帧擦除→保存会把刚删实体写进文件
+			if cvs.selected_entity == hit:
+				cvs.selected_entity = null
+			cvs.selected_multi.erase(hit)
 			cvs.entities.remove_child(hit)
 			hit.free()
+			cvs.entity_selected.emit(cvs.selected_entity)
 			cvs._mark()
-			return
+		return
+	# 批次 9：碰撞层擦除走统一入口（类型元数据一并清）
+	if cvs._is_grid_layer(cvs.active_layer):
+		for bc in _brush_cells(cvs._cell_of(pos)):
+			cvs.set_collision_cell(bc, false)
 	else:
-		# 批次 9：碰撞层擦除走统一入口（类型元数据一并清）
-		if cvs._is_grid_layer(cvs.active_layer):
-			for bc in _brush_cells(cvs._cell_of(pos)):
-				cvs.set_collision_cell(bc, false)
-		else:
-			var layer = cvs._layer_node(cvs.active_layer)
-			for bc in _brush_cells(cvs._cell_of(pos)):
-				layer.erase_cell(bc)
-		cvs._mark()
+		var layer = cvs._layer_node(cvs.active_layer)
+		for bc in _brush_cells(cvs._cell_of(pos)):
+			layer.erase_cell(bc)
+	cvs._mark()
 
-# 提示（走 cvs.cursor_info 到状态栏）
 
 func _stamp(c: Vector2i) -> void:
 	if cvs.map_root == null:
@@ -96,13 +85,14 @@ func _stamp(c: Vector2i) -> void:
 		cvs._hint("当前图层已锁定：解锁后再放置")
 		return
 	if cvs.stamp_scene == "":
-		cvs._hint("先在实体栏选一个资产再盖章")
+		cvs._hint("先在左栏资产列表选一个实体再放置")
 		return
 	cvs._push_undo()
 	var spr := Sprite2D.new()
 	spr.texture = cvs.thumbs.get(cvs.stamp_scene)
 	spr.position = Vector2(c.x * cvs.tile_px + cvs.tile_px / 2.0, c.y * cvs.tile_px + cvs.tile_px / 2.0)
 	spr.set_meta("scene", cvs.stamp_scene)
+	spr.set_meta("functions", [])
 	# 触发区没有缩略图，落下去要带默认矩形与触发方式，否则就是个看不见的空实体
 	if cvs.BuiltinKinds.is_builtin(cvs.stamp_scene):
 		spr.texture = null
@@ -114,14 +104,13 @@ func _stamp(c: Vector2i) -> void:
 	cvs._fit_sprite(spr, cvs.stamp_scene)
 	cvs._assign_id(spr)
 	cvs._mark()
-	# A2.1（批次 12）：放置即选中（"放置→配置"不断档）；工具保持盖章，可连放
+	# A2.1（批次 12）：放置即选中（"放置→配置"不断档）；连放不受影响
 	cvs.entity_selected.emit(spr)
 
 
 func _has_terrain_at(c: Vector2i) -> bool:
 	return cvs.terrain.get_cell_source_id(c) != -1
 
-## 碰撞层在清单里的索引（没有 grid 层时返回 -1）
 
 func _rect_fill(a: Vector2i, b: Vector2i) -> void:
 	if cvs.is_layer_locked(cvs.active_layer):

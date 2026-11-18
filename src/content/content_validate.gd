@@ -12,22 +12,28 @@ const DefModel := preload("res://src/content/def_model.gd")
 
 ## 触发区支持的触发模式。
 const TRIGGER_MODES := ["enter", "interact", "auto"]
+## 保留具体结构校验的四类；其它功能目录走通用校验。
+const KNOWN_KINDS := ["dialogues", "events", "shops", "defs"]
 
 ## 全量校验。manifest 可选；缺省时种类/物品检查退化为宽松模式。
 static func validate_all(m: Dictionary, manifest: Dictionary = {}) -> Array:
 	var issues: Array = []
 	var bad := {}
-	var dialogues := ContentStore.read_all(m, "dialogues", bad.get("dialogues", []))
-	_collect_bad(bad, issues)
-	var events := ContentStore.read_all(m, "events", bad.get("events", []))
-	_collect_bad(bad, issues)
-	var shops := ContentStore.read_all(m, "shops", bad.get("shops", []))
-	_collect_bad(bad, issues)
-	var defs := ContentStore.read_all(m, "defs", bad.get("defs", []))
+	# 目录由功能声明/磁盘驱动；schema 是动作声明而非内容条目，单独按单例读取。
+	var by_kind := {}
+	for kind in ContentStore.list_kinds(m):
+		# bad 的两层容器都要显式落进字典：Array/Dictionary 虽是引用类型，
+		# 但 bad.get(kind, []) 在缺键时返回的是临时数组，append 不会写回 bad。
+		bad[kind] = []
+		by_kind[kind] = ContentStore.read_all(m, kind, bad[kind])
 	_collect_bad(bad, issues)
 	var schema := ContentStore.read(m, "schema", ContentStore.SCHEMA_ID)
 	var known_items := ShopModel.item_index(manifest)
 
+	var dialogues: Dictionary = by_kind.get("dialogues", {})
+	var events: Dictionary = by_kind.get("events", {})
+	var shops: Dictionary = by_kind.get("shops", {})
+	var defs: Dictionary = by_kind.get("defs", {})
 	for id in dialogues:
 		_append(issues, DialogueModel.validate(dialogues[id]), "dialogues", id)
 	for id in events:
@@ -37,6 +43,21 @@ static func validate_all(m: Dictionary, manifest: Dictionary = {}) -> Array:
 	for id in defs:
 		_append(issues, DefModel.validate(defs[id], manifest), "defs", id)
 		_check_component_refs(defs[id], manifest, dialogues, events, shops, issues, id)
+	# 新增功能目录：条目带 function 字段 → 只做通用校验。
+	# 可解析性已由 read_all 的 bad 收集覆盖；这里只查文件内 id 与文件名一致。
+	for kind in by_kind:
+		if KNOWN_KINDS.has(str(kind)):
+			continue
+		for id in (by_kind[kind] as Dictionary):
+			var entry: Dictionary = by_kind[kind][id]
+			if not entry.has("function"):
+				continue
+			if str(entry.get("id", "")) != str(id):
+				issues.append({
+					"level": "error", "map": "", "ent_id": "", "scene": "",
+					"field": "content/%s/%s/id" % [str(kind), str(id)],
+					"message": "内容条目的 id 与文件名不一致: %s ≠ %s" % [str(entry.get("id", "")), str(id)],
+				})
 
 	var all := Store.read_all(m)
 	for map_name in all:

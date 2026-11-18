@@ -6,31 +6,39 @@ var app   # 宿主引用
 func _init(host) -> void:
 	app = host
 ## 唯一写入口。参数留空表示「保持当前值」。
+## v2 §2.2：工具不再是用户可选的状态——它由层类型派生。
+## 这里接受 tool 只是为了兼容吸管等内部调用，最终值仍按层归一。
 func _apply_state(tool := "", layer := -1) -> void:
 	if layer >= 0 and layer != app.canvas.active_layer:
 		var moved_from: int = app.canvas.active_layer
 		app.canvas.active_layer = layer
 		if _is_tiles_layer(layer):
 			app.last_tiles_layer = layer
-		# 图层是被工具"顺带"改掉的，要说清楚，否则用户会觉得图层莫名跳了
-		if tool != "" and moved_from != layer:
-			app._set_status("已切到「%s」图层（该工具在此层才可用）" % app._layer_label(layer))
-	if tool != "":
+		if moved_from != layer:
+			app._set_status("已切到「%s」图层：%s" % [app._layer_label(layer), _gesture_hint(layer)])
+	if layer >= 0:
+		app.canvas.tool = _default_tool_for_layer(layer)
+	elif tool != "":
 		app.canvas.tool = tool
 	_sync_ui()
 
+## 层类型对应的唯一「画笔」语义：实体层放置/选中，其余层涂刷。
+func _default_tool_for_layer(i: int) -> String:
+	return "stamp" if _layer_type(i) == "entities" else "paint"
+
+## 状态栏给一句「这一层怎么用」，替代被删掉的工具按钮
+func _gesture_hint(i: int) -> String:
+	if _layer_type(i) == "entities":
+		return "左键放置 / 选中拖动，右键删除，Ctrl+拖动框选"
+	return "左键拖动涂，右键擦除，Shift+拖动填矩形，Ctrl+拖动框选"
+
 
 func _sync_ui() -> void:
-	# 工具按钮高亮：以 app.canvas.tool 为唯一依据，不依赖是谁点的
-	for k in app.tool_buttons.keys():
-		var b := app.tool_buttons[k] as Button
-		if b:
-			b.button_pressed = (k == app.canvas.tool)
-	# 调色板页签跟随图层类型
+	# 调色板跟随图层类型（v2：这是唯一一套切换，页签按钮已删）
 	var lt := _layer_type(app.canvas.active_layer)
-	if lt == "tiles":
+	if lt == "tiles" or lt == "grid":
 		app._set_palette_page("tiles")
-	elif lt == "entities":
+	else:
 		app._set_palette_page("entities")
 	app._refresh_tool_meta()
 	app._sync_layer_buttons()
@@ -47,30 +55,16 @@ func _layer_type(i: int) -> String:
 func _is_tiles_layer(i: int) -> bool:
 	return _layer_type(i) == "tiles"
 
-## 某种工具要求的图层类型；"" = 无要求（属性/出生点在哪层都能用）
+## v2：工具概念已废除。下面三个 `_*_for_tool` 只剩「旧调用点兼容」的意义——
+## 它们不再驱动任何界面，也不再让状态在工具与图层之间互相拉扯。
+## 保留函数体是为了 app.gd 的委托与若干测试仍能调用而不报错。
 
-func _layer_kind_for_tool(tool_name: String) -> String:
-	match tool_name:
-		"paint", "rect": return "tiles"
-		"stamp": return "entities"
-		"erase": return ""        # 擦除按当前层语义走（瓦片层擦瓦片、实体层删实体）
-		_: return ""
+func _layer_kind_for_tool(_tool_name: String) -> String:
+	return ""
 
-## 工具切换到 target 时该落在哪个图层。
-## 原则：能留在当前层就留（不抢用户正在编辑的层），只有工具确实用不了才挪。
 
-func _layer_for_tool(tool_name: String, cur_layer: int) -> int:
-	var want := _layer_kind_for_tool(tool_name)
-	if want == "":
-		return cur_layer
-	if _layer_type(cur_layer) == want:
-		return cur_layer
-	# 当前是碰撞层（grid）时，瓦片类工具可以留在碰撞层上继续画——grid 也吃瓦片写入
-	if want == "tiles" and _layer_type(cur_layer) == "grid":
-		return cur_layer
-	if want == "entities":
-		return app.canvas._ent_layer_index()
-	return app.last_tiles_layer if _is_tiles_layer(app.last_tiles_layer) else _first_tiles_layer()
+func _layer_for_tool(_tool_name: String, cur_layer: int) -> int:
+	return cur_layer
 
 
 func _first_tiles_layer() -> int:
@@ -80,34 +74,23 @@ func _first_tiles_layer() -> int:
 			return i
 	return 0
 
-## 工具按钮 / 快捷键入口
+## 旧工具入口：不切层，只把画笔语义按当前层归一（数字键已删，仅吸管等内部调用还在用）
 
-func _set_tool(name: String) -> void:
-	_apply_state(name, _layer_for_tool(name, app.canvas.active_layer))
+func _set_tool(_name: String) -> void:
+	_apply_state("", app.canvas.active_layer)
 
-## 图层下拉入口
+## 层下拉入口：切层就是唯一的「换画笔」动作
 
 func _on_layer(i: int) -> void:
 	# 切到碰撞层：它默认是隐藏的，进来就自动显示——否则用户看不见自己在画什么
 	if app.canvas._is_grid_layer(i) and not app.canvas.is_layer_visible(i):
 		app.canvas.set_layer_hidden(i, false)
-	# 切层后若当前工具在该层用不了，换成该层的默认工具，并把按钮高亮同步过去
-	_apply_state(_tool_for_layer(i), i)
+	_apply_state("", i)
 
-## 某图层下应该用什么工具（当前工具可用就保留）
+## 某图层下应该用什么工具——v2 起由层类型唯一决定，没有「保留当前工具」这回事
 
 func _tool_for_layer(i: int) -> String:
-	var lt := _layer_type(i)
-	var cur: String = app.canvas.tool
-	if lt == "entities":
-		# 实体层只认盖章 / 属性 / 出生点；涂刷、矩形在这里无意义
-		if cur == "stamp" or cur == "select" or cur == "spawn":
-			return cur
-		return "stamp"
-	# 瓦片 / 碰撞层：盖章在这里放不了东西
-	if cur == "stamp":
-		return "paint"
-	return cur
+	return _default_tool_for_layer(i)
 
 ## 资产栏点瓦片：设好待画瓦片，切到瓦片工具，并保证落在能画的图层
 

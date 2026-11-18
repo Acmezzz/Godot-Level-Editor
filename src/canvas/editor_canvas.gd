@@ -15,7 +15,9 @@ const INVISIBLE_CELL := K.INVISIBLE_CELL
 const BuiltinKinds := preload("res://src/content/builtin_kinds.gd")   # 内置种类（trigger_zone 等）
 const MapStoreRef := preload("res://src/map_store.gd")   # K26b 引用扫描用
 
-var tool := "paint"            # paint/erase/rect/stamp/spawn
+## v2 §2.2：工具概念已废除。这个字段只保留给少量仍在读它的既有代码（选区/绘制分支
+## 已全部改为按层判断）。`_apply_state` 会按层类型把它归一成 "paint" / "stamp"。
+var tool := "paint"
 var active_layer := 0          # 按清单 layers 顺序，最后一个是实体
 var paint_cell := Vector2i(0, 0)  # 当前瓦片（纯手动，不自动变形）
 var brush_size := 1               # 笔刷边长（格）
@@ -149,6 +151,9 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	selected_entity = null
 	selected_multi.clear()
 	_drag_paint = false
+	_drag_box = false
+	_drag_rect = false
+	_drag_spawn = false
 	# 输入/区域状态一并复位：上个图的粘贴预览、区域选区、右键擦除、拖拽中状态
 	# 不能带进这张图（BUG-06）；拖拽标志不重置会让 undo 后松手推出冗余快照（P-13）。
 	# P-17：图层显隐/锁定是按图的编辑状态，跨图泄漏会让人对着空气解锁——换图时清空。
@@ -268,6 +273,10 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 		spr.position = Vector2(int(e.get("x", 0)) * tile + tile / 2.0, int(e.get("y", 0)) * tile + tile / 2.0)
 		spr.set_meta("scene", sid)
 		spr.set_meta("props", e.get("props", {}))
+		# 实例功能绑定：只做存取，UI 由内容编辑器负责；缺失/类型不对时置空数组，
+		# 让 extract 始终能写出 functions 键（含空数组），不清空就残留旧图绑定。
+		var fns = e.get("functions", [])
+		spr.set_meta("functions", fns if fns is Array else [])
 		# 触发区没有缩略图，靠尺寸矩形呈现；位置按矩形中心对齐
 		if BuiltinKinds.is_builtin(sid):
 			spr.texture = null
@@ -390,6 +399,21 @@ func _fit_sprite(spr: Sprite2D, scene_id: String) -> void:
 	if k > 1.0:
 		k = maxf(1.0, floorf(k))
 	spr.scale = Vector2(k, k)
+
+## v2：出生点从「工具」降级为画布上的可拖对象。
+## 命中容差用半格——它只有一个绿十字那么大，严格点中几乎不可能。
+func _on_spawn(pos: Vector2) -> bool:
+	if spawn == null or not is_instance_valid(spawn):
+		return false
+	return pos.distance_to(spawn.position) <= tile_px * 0.6
+
+## 拖动出生点：位置对齐到格中心（数据只存格坐标，浮点位置保存会被取整回去）
+func _drag_spawn_to(pos: Vector2) -> void:
+	if spawn == null or not is_instance_valid(spawn):
+		return
+	var c := _cell_of(pos)
+	spawn.position = Vector2(c.x * tile_px + tile_px / 2.0, c.y * tile_px + tile_px / 2.0)
+	queue_redraw()
 
 # —— 坐标换算 ——
 ## P-11 转发：tool_ops 擦除与选区共用同一命中规则
@@ -644,6 +668,11 @@ var redo_stack := []
 # —— 输入状态 ——
 var _panning := false
 var _drag_paint := false
+## v2：拖动语义由层 + 修饰键决定，三种拖动各自一位（互斥）——
+## 连续涂 / Shift 矩形填充 / Ctrl 框选。原来由 cvs.tool 区分，工具删掉后改由这里承载。
+var _drag_box := false
+var _drag_rect := false
+var _drag_spawn := false
 var _rmb_erase := false
 @warning_ignore("unused_private_class_variable")
 var _drag_start := Vector2.ZERO

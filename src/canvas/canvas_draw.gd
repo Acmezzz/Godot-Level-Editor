@@ -27,41 +27,42 @@ func _draw() -> void:
 		while y0 <= endv.y:
 			cvs.draw_line(Vector2(origin.x, y0), Vector2(endv.x, y0), Color(1, 1, 1, 0.07), 1.0, true)
 			y0 += cvs.tile_px
-	# 幽灵预览
+	# 幽灵预览：只看「当前层 + 手上拿着什么」，没有工具要判断
+	var on_ent_layer: bool = cvs.active_layer == cvs._ent_layer_index()
 	if Rect2(Vector2(map_rect.position) * cvs.tile_px, Vector2(map_rect.size) * cvs.tile_px).has_point(pos):
-		match cvs.tool:
-			"paint":
-				# 笔刷范围轮廓 + 中心格瓦片幽灵
-				var tsz := float(cvs.tile_px)
-				var brect := _brush_rect(c)
-				cvs.draw_rect(brect, Color(1, 1, 1, 0.5), false, 1.0)
-				# 无图集（headless 测试/清单缺图）时不画幽灵，避免 draw_texture_rect_region 空纹理警告
-				if cvs.atlas_tex != null:
-					cvs.draw_texture_rect_region(cvs.atlas_tex,
-						Rect2(Vector2(c) * cvs.tile_px, Vector2(tsz, tsz)),
-						Rect2(Vector2(cvs.paint_cell) * cvs.tile_px, Vector2(tsz, tsz)),
-						Color(1, 1, 1, 0.5))
-			"erase":
-				cvs.draw_rect(_brush_rect(c), Color(1, 0.3, 0.3, 0.7), false, 2.0)
-			"stamp":
+		if on_ent_layer:
+			# 实体层：手上拿着资产就画它的幽灵，否则画「点这里会选中」的提示框
+			if cvs.stamp_thumb:
 				# 幽灵按实体的真实占位尺寸画，和落下去之后一样大，便于对位
-				if cvs.stamp_thumb:
-					var dsz = cvs.entity_display_size(cvs.stamp_scene)
-					var gts = cvs.stamp_thumb.get_size()
-					var k := minf(dsz.x / maxf(gts.x, 1.0), dsz.y / maxf(gts.y, 1.0))
-					var center = Vector2(c) * cvs.tile_px + Vector2(cvs.tile_px, cvs.tile_px) * 0.5
-					cvs.draw_texture_rect(cvs.stamp_thumb, Rect2(center - gts * k * 0.5, gts * k),
-						false, Color(1, 1, 1, 0.5))
-					# 占位框：告诉用户这个实体在游戏里占多大
-					cvs.draw_rect(Rect2(center - dsz * 0.5, dsz), Color(0.35, 0.95, 0.95, 0.6), false, 1.0)
-				elif BuiltinKinds.is_builtin(cvs.stamp_scene):
-					# 内置种类没有贴图：按落下后的默认 2×2 画矩形幽灵，否则光标处什么都看不到
-					var gsz := Vector2(cvs.tile_px * 2, cvs.tile_px * 2)
-					cvs.draw_rect(Rect2(Vector2(c) * cvs.tile_px, gsz), Color(0.55, 0.85, 1.0, 0.35), true)
-					cvs.draw_rect(Rect2(Vector2(c) * cvs.tile_px, gsz), Color(0.55, 0.85, 1.0, 0.8), false, 1.5)
-			"spawn":
-				cvs.draw_rect(Rect2(Vector2(c) * cvs.tile_px, Vector2(cvs.tile_px, cvs.tile_px)), Color(0.3, 1, 0.5, 0.6), false, 2.0)
-		if cvs.tool == "rect" and cvs._drag_paint:
+				var dsz = cvs.entity_display_size(cvs.stamp_scene)
+				var gts = cvs.stamp_thumb.get_size()
+				var k := minf(dsz.x / maxf(gts.x, 1.0), dsz.y / maxf(gts.y, 1.0))
+				var center = Vector2(c) * cvs.tile_px + Vector2(cvs.tile_px, cvs.tile_px) * 0.5
+				cvs.draw_texture_rect(cvs.stamp_thumb, Rect2(center - gts * k * 0.5, gts * k),
+					false, Color(1, 1, 1, 0.5))
+				# 占位框：告诉用户这个实体在游戏里占多大
+				cvs.draw_rect(Rect2(center - dsz * 0.5, dsz), Color(0.35, 0.95, 0.95, 0.6), false, 1.0)
+			elif cvs.BuiltinKinds.is_builtin(cvs.stamp_scene):
+				# 内置种类没有贴图：按落下后的默认 2×2 画矩形幽灵，否则光标处什么都看不到
+				var gsz := Vector2(cvs.tile_px * 2, cvs.tile_px * 2)
+				cvs.draw_rect(Rect2(Vector2(c) * cvs.tile_px, gsz), Color(0.55, 0.85, 1.0, 0.35), true)
+				cvs.draw_rect(Rect2(Vector2(c) * cvs.tile_px, gsz), Color(0.55, 0.85, 1.0, 0.8), false, 1.5)
+			else:
+				cvs.draw_rect(Rect2(Vector2(c) * cvs.tile_px, Vector2(cvs.tile_px, cvs.tile_px)),
+					Color(0.55, 0.85, 1.0, 0.5), false, 1.0)
+		else:
+			# 瓦片 / 碰撞层：笔刷范围轮廓 + 中心格瓦片幽灵（碰撞层不画瓦片图，只画范围）
+			var tsz := float(cvs.tile_px)
+			var brect := _brush_rect(c)
+			var tint := Color(1.0, 0.45, 0.45, 0.55) if cvs._is_grid_layer(cvs.active_layer) else Color(1, 1, 1, 0.5)
+			cvs.draw_rect(brect, tint, false, 1.0)
+			# 无图集（headless 测试/清单缺图）时不画幽灵，避免 draw_texture_rect_region 空纹理警告
+			if cvs.atlas_tex != null and not cvs._is_grid_layer(cvs.active_layer):
+				cvs.draw_texture_rect_region(cvs.atlas_tex,
+					Rect2(Vector2(c) * cvs.tile_px, Vector2(tsz, tsz)),
+					Rect2(Vector2(cvs.paint_cell) * cvs.tile_px, Vector2(tsz, tsz)),
+					Color(1, 1, 1, 0.5))
+		if cvs._drag_rect:
 			var a = cvs._cell_of(cvs._drag_start)
 			var r := Rect2(Vector2(mini(a.x, c.x), mini(a.y, c.y)) * cvs.tile_px,
 				Vector2(abs(a.x - c.x) + 1, abs(a.y - c.y) + 1) * cvs.tile_px)
@@ -79,11 +80,14 @@ func _draw() -> void:
 	var spos = cvs.spawn.position
 	var screen_rect := Rect2(spos - Vector2(ss[0], ss[1]) * 0.5, Vector2(ss[0], ss[1]))
 	cvs.draw_rect(screen_rect, Color(0.35, 0.65, 1.0, 0.40), false, 1.0)
+	# 出生点标记：只在实体层画成「可拖」的样子，其余层画淡一些——避免在地形层误导成可点
+	var spawn_draggable: bool = cvs.active_layer == cvs._ent_layer_index()
 	var half = cvs.tile_px * 0.5
 	var srect := Rect2(spos - Vector2(half, half), Vector2(cvs.tile_px, cvs.tile_px))
-	cvs.draw_rect(srect, Color(0.3, 1.0, 0.5, 0.9), false, 2.0)
-	cvs.draw_line(Vector2(spos.x - 6, spos.y), Vector2(spos.x + 6, spos.y), Color(0.3, 1.0, 0.5, 0.9), 2.0)
-	cvs.draw_line(Vector2(spos.x, spos.y - 6), Vector2(spos.x, spos.y + 6), Color(0.3, 1.0, 0.5, 0.9), 2.0)
+	var spawn_col := Color(0.3, 1.0, 0.5, 0.9) if spawn_draggable else Color(0.3, 1.0, 0.5, 0.35)
+	cvs.draw_rect(srect, spawn_col, false, 2.0)
+	cvs.draw_line(Vector2(spos.x - 6, spos.y), Vector2(spos.x + 6, spos.y), spawn_col, 2.0)
+	cvs.draw_line(Vector2(spos.x, spos.y - 6), Vector2(spos.x, spos.y + 6), spawn_col, 2.0)
 	# 传送门等引用连线：props.target_entity 指向同图另一实例（黄线）
 	# PF-03：先建 {ent_id: spr} 索引——O(n²) 双重遍历改为 O(n)
 	var by_id = cvs._ent_by_id_index()   # D5：脏标记缓存
@@ -126,8 +130,8 @@ func _draw() -> void:
 	if cvs.selected_entity and is_instance_valid(cvs.selected_entity):
 		var sr := Rect2(cvs.selected_entity.position - Vector2(cvs.tile_px, cvs.tile_px) * 0.75, Vector2(cvs.tile_px, cvs.tile_px) * 1.5)
 		cvs.draw_rect(sr, Color(1.0, 0.85, 0.3, 0.9), false, 2.0)
-	# 框选拖拽矩形（光标模式）
-	if cvs._drag_paint and cvs.tool == "select":
+	# 框选拖拽矩形（Ctrl+拖动，实体层或瓦片层都画同一个框）
+	if cvs._drag_box:
 		var br := Rect2(cvs._drag_start.min(pos), (cvs._drag_start - pos).abs())
 		cvs.draw_rect(br, Color(1.0, 0.85, 0.3, 0.15), true)
 		cvs.draw_rect(br, Color(1.0, 0.85, 0.3, 0.8), false, 1.5)
@@ -140,7 +144,7 @@ func _draw() -> void:
 	# 多选集合的外接框：明确标出「这一块可以整体拖动」。
 	# 框内空白处按下就能拖，鼠标悬停在框内时加亮，给出可操作性暗示。
 	var multi = cvs._valid_multi()
-	if multi.size() > 1 and cvs.tool == "select" and cvs._ent_layer_index() == cvs.active_layer:
+	if multi.size() > 1 and cvs._ent_layer_index() == cvs.active_layer:
 		var mb = cvs._multi_bounds(multi).grow(cvs.tile_px * cvs.K.GROUP_HOT)
 		var hot = mb.has_point(pos)
 		cvs.draw_rect(mb, Color(1.0, 0.85, 0.3, 0.22 if hot else 0.10), true)
@@ -166,8 +170,8 @@ func _draw() -> void:
 		cvs.draw_line(Vector2(s4.position.x, r4.position.y), Vector2(s4.position.x, r4.end.y), Color(0.35, 0.95, 0.95, 0.25), 1.0)
 	# 触发区：没有贴图，用半透明矩形 + 事件名标签表示；绑定事件的用实色，未绑定的用警示色
 	_draw_trigger_zones()
-	# 区域选区轮廓（瓦片层的光标模式）
-	if cvs._region_sel.size.x > 0 and cvs.tool == "select" and cvs._ent_layer_index() != cvs.active_layer:
+	# 区域选区轮廓（瓦片层 Ctrl+拖动框选的结果）
+	if cvs._region_sel.size.x > 0 and cvs._ent_layer_index() != cvs.active_layer:
 		var rr := Rect2(Vector2(cvs._region_sel.position) * cvs.tile_px, Vector2(cvs._region_sel.size) * cvs.tile_px)
 		cvs.draw_rect(rr, Color(1.0, 0.85, 0.3, 0.8), false, 2.0)
 	# 区域粘贴预览：三层幽灵跟随鼠标，左键落位

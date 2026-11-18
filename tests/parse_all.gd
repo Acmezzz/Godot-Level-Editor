@@ -31,6 +31,7 @@ const SRC := [
 	"res://src/content/event_model.gd", "res://src/content/shop_model.gd",
 	"res://src/content/def_model.gd", "res://src/content/content_validate.gd",
 	"res://src/content/builtin_kinds.gd", "res://src/content/content_templates.gd",
+	"res://src/content/content_id.gd",
 ]
 
 const TESTS := [

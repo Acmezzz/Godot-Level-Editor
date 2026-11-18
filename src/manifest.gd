@@ -253,3 +253,49 @@ static func prefab_collision_size(project_dir: String, prefab_rel: String) -> Ve
 	for k in sizes:
 		return sizes[k]
 	return Vector2.ZERO
+
+## ---- 功能声明读取（批次 B） ----
+## 顶层 functions 可为 {fnId: {name, fields, ...}} 或 [{id, ...}]。
+## 两种写法归一成 {fnId: {id, name, fields}}；声明缺失返回空字典，不报错。
+static func functions(m: Dictionary) -> Dictionary:
+	var out := {}
+	var decl = m.get("functions", null)
+	if decl is Dictionary:
+		for key in (decl as Dictionary):
+			var fid := str(key)
+			if fid == "":
+				continue
+			var body = (decl as Dictionary)[key]
+			var src: Dictionary = body if body is Dictionary else {}
+			out[fid] = {
+				"id": fid,
+				"name": str(src.get("name", fid)) if str(src.get("name", "")) != "" else fid,
+				"fields": src.get("fields", []) if src.get("fields", []) is Array else [],
+			}
+	elif decl is Array:
+		for item in (decl as Array):
+			if not (item is Dictionary):
+				continue
+			var src2: Dictionary = item
+			var fid2 := str(src2.get("id", ""))
+			if fid2 == "":
+				continue
+			out[fid2] = {
+				"id": fid2,
+				"name": str(src2.get("name", fid2)) if str(src2.get("name", "")) != "" else fid2,
+				"fields": src2.get("fields", []) if src2.get("fields", []) is Array else [],
+			}
+	return out
+
+## 单个功能声明；缺失时返回空字典。
+static func function_decl(m: Dictionary, fn_id: String) -> Dictionary:
+	var all := functions(m)
+	return all.get(fn_id, {}) if all.get(fn_id, {}) is Dictionary else {}
+
+## 功能字段声明数组（与实体 stats/fields 同构）；缺失时返回空数组。
+static func function_fields(m: Dictionary, fn_id: String) -> Array:
+	return function_decl(m, fn_id).get("fields", [])
+
+## 功能显示名；缺省用 fn_id。
+static func function_name(m: Dictionary, fn_id: String) -> String:
+	return str(function_decl(m, fn_id).get("name", fn_id))

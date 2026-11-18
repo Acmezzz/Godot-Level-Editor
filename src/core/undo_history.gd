@@ -53,6 +53,13 @@ func _def_field(spr: Sprite2D) -> Dictionary:
 	var def_id := str(spr.get_meta("def_id", ""))
 	return {"def": def_id} if def_id != "" else {}
 
+## 实例功能绑定：整段深拷贝写入 functions；缺省写空数组，让"清空绑定"也能落盘。
+## 新写入只走 functions；def 仅在实体还留着旧 def_id 时由 _def_field 原样带出。
+func _functions_field(spr: Sprite2D) -> Dictionary:
+	var raw = spr.get_meta("functions", [])
+	var arr: Array = raw if raw is Array else []
+	return {"functions": arr.duplicate(true)}
+
 func extract() -> Dictionary:
 	if cvs.map_root == null or not is_instance_valid(cvs.map_root):
 		return {}   # 重建窗口期（load_data 的 await 一帧）：不产出快照，防 free 后访问
@@ -117,7 +124,7 @@ func extract() -> Dictionary:
 				"y": floori((cell_pos.y - cvs.tile_px / 2.0) / cvs.tile_px),
 				"flip_h": bool(spr.flip_h),
 				"props": clean,
-			}.merged(_def_field(spr), true))
+			}.merged(_def_field(spr), true).merged(_functions_field(spr), true))
 	var used = cvs.terrain.get_used_rect()
 	if used.size == Vector2i.ZERO:
 		used = Rect2i(Vector2i.ZERO, Vector2i(120, 56))
