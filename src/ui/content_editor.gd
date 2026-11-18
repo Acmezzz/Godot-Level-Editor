@@ -306,7 +306,8 @@ func _rebuild_rows() -> void:
 		_rows_box.remove_child(c)
 		c.queue_free()
 	var ents := _entities()
-	var map_name := str(app.cur_map_name) if str(app.cur_map_name) != "" else "未命名"
+	# 标题以画布实际加载的地图为准（app.cur_map_name 在切图协程里可能短暂超前/滞后）
+	var map_name := str(app.canvas.cur_map_name) if str(app.canvas.cur_map_name) != "" else "未命名"
 	_left_title.text = "%s 实例" % map_name
 
 	if ents.is_empty():
@@ -524,7 +525,7 @@ func _preview_input(event: InputEvent) -> void:
 		var mm := event as InputEventMouseMotion
 		# 中键拖动平移：pan 是屏幕偏移，手势语义与画布 cam_pos 相同（跟手走）
 		if _preview_panning:
-			_preview_pan -= mm.relative
+			_preview_pan += mm.relative
 			_preview.queue_redraw()
 			return
 		_set_preview_hover(_preview, mm.position)

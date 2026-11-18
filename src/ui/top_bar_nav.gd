@@ -77,6 +77,8 @@ func _on_map_selected(id: int) -> void:
 	if p == "" or not FileAccess.file_exists(p):
 		app._set_status("地图不存在: " + nm)
 		return
-	app._open_map_by_name(nm)
+	# 切图是协程（可能有未保存确认弹窗）：必须等加载完成再回调宿主刷新，
+	# 否则内容/资产页会在旧画布内容上刷新（列表与地图名对不上）。
+	await app._open_map_by_name(nm)
 	if after_switch.is_valid():
 		after_switch.call()
