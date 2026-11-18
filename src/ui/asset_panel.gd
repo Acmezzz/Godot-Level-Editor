@@ -200,52 +200,12 @@ func _show_detail(sid: String) -> void:
 		child.queue_free()
 	extra.add_child(Kit.section_label("资产标识"))
 	extra.add_child(Kit.hint_label("id: %s   —— 稳定键，被地图数据全项目引用，不可在此重命名" % sid))
-	_add_size_row()
 	_add_distribution_section(sid)
 	var del := Kit.button("删除此资产", func(): _delete_asset_checked(sid), "ghost")
 	del.add_theme_color_override("font_color", Th.ERR)
 	del.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	extra.add_child(del)
 	_loading = false
-
-## T5：占位尺寸行——0×0 = 未设置（从 prefab 碰撞形状解析）；非零写入 editorSize: [w, h]
-func _add_size_row() -> void:
-	extra.add_child(Kit.section_label("编辑器占位尺寸 editorSize"))
-	var row := Kit.hbox(8)
-	var w_spin := SpinBox.new()
-	w_spin.min_value = 0
-	w_spin.max_value = 999
-	w_spin.step = 1
-	var h_spin := SpinBox.new()
-	h_spin.min_value = 0
-	h_spin.max_value = 999
-	h_spin.step = 1
-	var es = _edef.get("editorSize", null)
-	if es is Array and (es as Array).size() >= 2:
-		w_spin.value = float(es[0])
-		h_spin.value = float(es[1])
-	var apply := func(_v: float):
-		var w := int(w_spin.value)
-		var h := int(h_spin.value)
-		if w <= 0 or h <= 0:
-			_edef.erase("editorSize")
-		else:
-			_edef["editorSize"] = [w, h]
-		save_manifest.call()
-	w_spin.value_changed.connect(apply)
-	h_spin.value_changed.connect(apply)
-	w_spin.custom_minimum_size = Vector2(96, 0)
-	h_spin.custom_minimum_size = Vector2(96, 0)
-	w_spin.tooltip_text = "画布占位框宽（像素）。0 = 不设置，回退 prefab 碰撞形状"
-	h_spin.tooltip_text = "画布占位框高（像素）。0 = 不设置，回退 prefab 碰撞形状"
-	row.add_child(w_spin)
-	var times := Kit.text_label("×", Th.TEXT_MUTE, Th.FS_SMALL)
-	times.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	row.add_child(times)
-	row.add_child(h_spin)
-	# 自动换行 Label 不给死宽度会被测成 0 宽、一字一行竖排（实证 P0）
-	row.add_child(Kit.hint_label("0 = 从 prefab 碰撞形状解析", 220))
-	extra.add_child(row)
 
 ## 实例分布（模型阶段 1 §5 + v2 §4）：每实例一行——id/坐标 + 各数值就地可改。
 ## 数值 = 三层合并（实例 > 定义 > 清单），与属性面板/游戏运行时同一算法（DefModel.effective_stats）。
