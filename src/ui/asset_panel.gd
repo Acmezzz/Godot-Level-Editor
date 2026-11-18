@@ -13,17 +13,10 @@ const MapStore := preload("res://src/map_store.gd")
 const DefModel := preload("res://src/content/def_model.gd")
 const ContentStore := preload("res://src/content/content_store.gd")
 
-## 快速总表的内容宽度：6 列（图鉴 / 实体 / 生命 / 伤害 / 速度 / 范围）
-## 「详情」列已删——实体名按钮本身就是进图鉴的入口，独立「打开」列是重复入口
-const QUICK_W := 660.0
-
 var manifest := {}
 var save_manifest: Callable
 var host = null  # 宿主 app（定位跳转/确认框复用其链路）
 
-var quick_view: VBoxContainer
-var detail_view: HBoxContainer
-var quick_grid: GridContainer
 var asset_list: ItemList
 var stats_grid: GridContainer
 var fields_grid: GridContainer
@@ -46,52 +39,11 @@ func _notification(what: int) -> void:
 # —— UI 构建 ——
 func build() -> void:
 	add_theme_constant_override("separation", 0)
-	# 顶栏（标题/项目徽章/返回）已收进项目页外壳 project_shell.gd，这里只做内容区
+	# 顶栏（标题/项目徽章）已收进项目页外壳 project_shell.gd，这里只做内容区
 
-	# —— 快速总表 ——
-	# 内容整体居中：表格在宽屏上贴着左边会显得散，居中后视线落点更稳。
-	quick_view = Kit.vbox(0)
-	quick_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	add_child(quick_view)
-
-	var q_margin := MarginContainer.new()
-	q_margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	q_margin.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	q_margin.add_theme_constant_override("margin_left", 18)
-	q_margin.add_theme_constant_override("margin_right", 18)
-	q_margin.add_theme_constant_override("margin_top", 14)
-	q_margin.add_theme_constant_override("margin_bottom", 14)
-	quick_view.add_child(q_margin)
-
-	var q_col := Kit.vbox(10)
-	# 表格宽度：够放 7 列，但不随窗口无限拉宽
-	q_col.custom_minimum_size = Vector2(QUICK_W, 0)
-	q_col.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	q_col.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	q_margin.add_child(q_col)
-
-	var q_head := Kit.hbox(8)
-	q_head.add_child(Kit.text_label("快速调整", Th.TEXT, Th.FS_MD))
-	q_head.add_child(Kit.text_label("常用数值可直接在本表修改，点击实体名进入图鉴", Th.TEXT_MUTE, Th.FS_SMALL))
-	q_col.add_child(q_head)
-
-	var quick_scroll := ScrollContainer.new()
-	# 宽度由 q_col 的 custom_minimum_size 定；竖直方向吃掉剩余空间
-	quick_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	quick_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	quick_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	q_col.add_child(quick_scroll)
-	quick_grid = GridContainer.new()
-	quick_grid.columns = 6
-	quick_grid.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	quick_grid.add_theme_constant_override("h_separation", 10)
-	quick_grid.add_theme_constant_override("v_separation", 6)
-	quick_scroll.add_child(quick_grid)
-
-	# —— 图鉴详情 ——
-	detail_view = Kit.hbox(0)
+	# —— 图鉴详情（资产视图的唯一页面：左列图鉴列表 + 右侧详情） ——
+	var detail_view := Kit.hbox(0)
 	detail_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	detail_view.visible = false
 	add_child(detail_view)
 
 	var left_wrap := PanelContainer.new()
@@ -105,7 +57,6 @@ func build() -> void:
 	detail_view.add_child(left_wrap)
 	var left := Kit.vbox(8)
 	left_wrap.add_child(left)
-	left.add_child(Kit.button("←  返回总表", func(): show_quick(), "ghost"))
 	left.add_child(Kit.section_label("图鉴"))
 	asset_list = ItemList.new()
 	asset_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -183,87 +134,16 @@ func build() -> void:
 		_edef["name"] = t)
 	name_edit.text_submitted.connect(func(_t: String): _commit_name())
 	name_edit.focus_exited.connect(_commit_name)
-	refresh_quick()
 
-## U-01：名称提交（写盘 + 快速总表那一格刷新）
+## U-01：名称提交（写盘）
 func _commit_name() -> void:
 	if _edef.is_empty() or _loading:
 		return
 	save_manifest.call()
-	refresh_quick()
 
 # —— 视图切换 ——
-func show_quick() -> void:
-	detail_view.visible = false
-	quick_view.visible = true
-	refresh_quick()
-
 func show_detail(sid: String) -> void:
-	quick_view.visible = false
-	detail_view.visible = true
 	refresh_list(sid)
-
-# —— 快速总表 ——
-func refresh_quick() -> void:
-	if quick_grid == null:
-		return
-	for child in quick_grid.get_children():
-		quick_grid.remove_child(child)
-		child.queue_free()
-	# 表头：带底色 + 小字号，和数据行区分开
-	for header in ["图鉴", "实体", "生命", "伤害", "速度", "范围"]:
-		var h := Kit.text_label(header, Th.TEXT_MUTE, Th.FS_META)
-		h.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		quick_grid.add_child(h)
-	# 行高统一：有数值和无数值的行混排时，靠固定高度保持网格节奏
-	var row_h := 38.0
-	for edef in manifest.get("entities", []):
-		var sid := str(edef.get("id", ""))
-		# 首格：缩略图 + 名称按钮（合在一起，视线不用横向跳）
-		# 宽度交给列头最小宽度统一控制，行内不再自己撑宽，否则会把「详情」列挤出画面
-		var entry := Kit.hbox(6)
-		entry.custom_minimum_size = Vector2(0, row_h)
-		var icon_tex := _asset_texture(edef)
-		if icon_tex != null:
-			var icon := TextureRect.new()
-			icon.texture = icon_tex
-			icon.custom_minimum_size = Vector2(30, 30)
-			icon.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-			icon.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-			entry.add_child(icon)
-		var open := Kit.button(str(edef.get("name", sid)), func(): show_detail(sid), "ghost")
-		open.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		open.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		entry.add_child(open)
-		quick_grid.add_child(entry)
-		var idl := Kit.text_label(sid, Th.TEXT_MUTE, Th.FS_META)
-		idl.custom_minimum_size = Vector2(0, row_h)
-		idl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		quick_grid.add_child(idl)
-		# 四个常用数值
-		var stats := _stats_by_id(edef)
-		for stat_id in ["hp", "damage", "speed", "range"]:
-			var stat: Dictionary = stats.get(stat_id, {})
-			if stat.is_empty():
-				var dash := Kit.text_label("—", Th.TEXT_MUTE, Th.FS_SMALL)
-				dash.custom_minimum_size = Vector2(84, row_h)
-				dash.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-				quick_grid.add_child(dash)
-				continue
-			var spin := SpinBox.new()
-			spin.custom_minimum_size = Vector2(84, row_h)
-			spin.min_value = float(stat.get("min", 0.0))
-			spin.max_value = maxf(float(stat.get("max", 999.0)), spin.min_value)
-			spin.step = 1.0 if str(stat.get("type", "float")) == "int" else 0.1
-			spin.value = clampf(float(stat.get("default", 0.0)), spin.min_value, spin.max_value)
-			# U-02：初始显示被钳制就同步回写，数据不再停在越界值上
-			stat["default"] = roundi(spin.value) if str(stat.get("type", "float")) == "int" else spin.value
-			spin.value_changed.connect(func(value: float):
-				stat["default"] = roundi(value) if str(stat.get("type", "float")) == "int" else value
-			)
-			spin.focus_exited.connect(func():
-				save_manifest.call())
-			quick_grid.add_child(spin)
 
 # —— 图鉴列表 ——
 func refresh_list(focus_sid := "") -> void:
@@ -560,9 +440,8 @@ func _delete_asset_checked(sid: String) -> void:
 	manifest.get("entities", []).erase(_edef)
 	save_manifest.call()
 	_edef = {}
-	detail_view.visible = false
-	quick_view.visible = true
-	refresh_quick()
+	# 删除后留在图鉴：刷新列表并落到第一项（没有则给空态提示）
+	refresh_list()
 
 # —— stats 模板行 ——
 func _asset_editor_rows(grid: GridContainer, edef: Dictionary) -> void:

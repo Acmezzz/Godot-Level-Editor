@@ -108,10 +108,8 @@ func show_view(view: String, focus := "") -> void:
 	_title.text = "项目 · %s" % _label_of(view)
 	match view:
 		"asset":
-			if focus == "":
-				asset_panel.show_quick()
-			else:
-				asset_panel.show_detail(focus)
+			# 图鉴是唯一页面：焦点定位或落到第一项
+			asset_panel.show_detail(focus)
 			_set_status("资产模板改动后点「保存」写回清单，下次试玩生效")
 		"content":
 			# focus 语义在此视图 = 实例 id（右栏定位），空则保留上次选中
