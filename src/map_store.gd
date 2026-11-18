@@ -27,10 +27,6 @@ static func _read_cached(path: String, m: Dictionary) -> Dictionary:
 		_cache[path] = {"mtime": mt, "data": result.data}
 	return result.data if result.ok else {}
 
-## D2 缓存全清（测试/外部批量改动后可调用）
-static func cache_clear() -> void:
-	_cache.clear()
-
 ## 统一文本解码、版本升级与结构校验；错误时不返回可编辑数据。
 static func decode_text(text: String, source := "", manifest := {}) -> Dictionary:
 	var parsed = JSON.parse_string(text)
