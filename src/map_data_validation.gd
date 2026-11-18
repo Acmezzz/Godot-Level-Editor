@@ -1,0 +1,73 @@
+extends RefCounted
+## Structural validation for map JSON, independent of scene-tree state.
+
+static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
+	var issues: Array[Dictionary] = []
+	for key in ["terrain", "decor", "collision", "entities"]:
+		if data.has(key) and not (data[key] is Array):
+			_add(issues, "error", key, "must be an array")
+	var meta = data.get("meta", {})
+	if not (meta is Dictionary):
+		_add(issues, "error", "meta", "must be an object")
+	else:
+		for key in ["w", "h"]:
+			if meta.has(key) and not (meta[key] is int or meta[key] is float):
+				_add(issues, "error", "meta." + key, "must be a number")
+	var spawn = data.get("spawn", [2, 2])
+	if not (spawn is Array) or spawn.size() < 2 or not _is_number_pair(spawn):
+		_add(issues, "error", "spawn", "must contain two numeric coordinates")
+	if data.get("entities", null) is Array:
+		_validate_entities(data.entities, manifest, issues)
+	for key in ["terrain", "decor"]:
+		if data.get(key, null) is Array:
+			for i in data[key].size():
+				var cell = data[key][i]
+				if not (cell is Array) or cell.size() < 4 or not _is_number_prefix(cell, 4):
+					_add(issues, "error", "%s[%d]" % [key, i], "must contain x, y, atlas_x, atlas_y")
+	if data.get("collision", null) is Array:
+		for i in data.collision.size():
+			var cell = data.collision[i]
+			if not (cell is Array) or cell.size() < 2 or not _is_number_prefix(cell, 2):
+				_add(issues, "error", "collision[%d]" % i, "must contain x and y")
+	return issues
+
+static func _validate_entities(entities: Array, manifest: Dictionary, issues: Array[Dictionary]) -> void:
+	var known := {}
+	for definition in manifest.get("entities", []):
+		if definition is Dictionary:
+			known[str(definition.get("id", ""))] = definition
+	var ids := {}
+	for i in entities.size():
+		var entity = entities[i]
+		var path := "entities[%d]" % i
+		if not (entity is Dictionary):
+			_add(issues, "error", path, "must be an object")
+			continue
+		var id := str(entity.get("id", ""))
+		if id != "" and ids.has(id):
+			_add(issues, "error", path + ".id", "duplicate entity id: " + id)
+		if id != "":
+			ids[id] = true
+		for key in ["x", "y"]:
+			if entity.has(key) and not (entity[key] is int or entity[key] is float):
+				_add(issues, "error", path + "." + key, "must be numeric")
+		if not entity.has("scene") or str(entity.get("scene", "")) == "":
+			_add(issues, "error", path + ".scene", "must name an entity type")
+		elif not known.is_empty() and not known.has(str(entity.scene)):
+			_add(issues, "warning", path + ".scene", "entity type is not in the current manifest")
+		if entity.has("props") and not (entity.props is Dictionary):
+			_add(issues, "error", path + ".props", "must be an object")
+
+static func _is_number_pair(values: Array) -> bool:
+	return _is_number_prefix(values, 2)
+
+static func _is_number_prefix(values: Array, count: int) -> bool:
+	if values.size() < count:
+		return false
+	for i in count:
+		if not (values[i] is int or values[i] is float):
+			return false
+	return true
+
+static func _add(issues: Array[Dictionary], severity: String, path: String, message: String) -> void:
+	issues.append({"severity": severity, "path": path, "message": message})
