@@ -295,7 +295,7 @@ func _build_palette_column() -> PanelContainer:
 	grid_hint.visible = false
 
 	# 类型：solid / one_way / ladder / hazard（与 game 侧 map_loader 消费的类型一一对应）
-	var type_row := app.UiKitScript.hbox(8)
+	var type_row: HBoxContainer = app.UiKitScript.hbox(8)
 	type_row.add_child(app.UiKitScript.text_label("类型", app.UiThemeScript.TEXT_DIM, app.UiThemeScript.FS_SMALL))
 	var type_opt := OptionButton.new()
 	type_opt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -312,7 +312,7 @@ func _build_palette_column() -> PanelContainer:
 	grid_hint.add_child(type_row)
 
 	# 形状：矩形 / r45 / l45（斜坡只对实心/单向有意义，其余类型仍按整格处理）
-	var shape_row := app.UiKitScript.hbox(8)
+	var shape_row: HBoxContainer = app.UiKitScript.hbox(8)
 	shape_row.add_child(app.UiKitScript.text_label("形状", app.UiThemeScript.TEXT_DIM, app.UiThemeScript.FS_SMALL))
 	var shape_opt := OptionButton.new()
 	shape_opt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
