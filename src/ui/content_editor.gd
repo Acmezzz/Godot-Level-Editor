@@ -382,11 +382,19 @@ func select_inst(ent_id: String) -> void:
 		return
 	_selected_ent = ent_id
 	_selected_fn = -1
-	# 选中同步到关卡画布：切回关卡编辑器时选中框落在同一实例上
+	# 选中同步到关卡画布：切回关卡编辑器时选中框落在同一实例上。
+	# 画布上已有框选组（>1）时不能把 selected_multi 覆写成 [spr]——
+	# _box_select 会经 entity_selected 走到这里，覆写就等于「框选完立刻塌缩成单选」，
+	# 整组拖动随即失效（用户报的「能框选但不能移动」）。只把单选指针挪过去即可。
 	var spr := _find_ent(ent_id)
 	if spr != null and app.canvas != null:
 		app.canvas.selected_entity = spr
-		app.canvas.selected_multi = [spr]
+		# 只有「本次选中就是这个多选集合的成员」才保留集合；其它入口（新放置实体等）
+		# 仍按单选收拢，避免旧框选残留在 selected_multi 里。
+		var keep_multi: bool = app.canvas.selected_multi.size() > 1 \
+			and app.canvas.selected_multi.has(spr)
+		if not keep_multi:
+			app.canvas.selected_multi = [spr]
 	_rebuild_rows()
 	_rebuild_right()
 	if _preview != null:
@@ -408,8 +416,8 @@ func _preview_scale(c: Control) -> float:
 		return 0.0
 	return minf((c.size.x - 48) / w, (c.size.y - 48) / h)
 
-## 预览绘制：只画网格 + 实例缩略图/色块 + 选中框，不画地形瓦片
-## （内容编辑关心「哪个实例」，地形只会让缩略图更难看清）。
+## 预览绘制：网格 + 真实地形/装饰瓦片 + 实例缩略图/色块 + 选中框。
+## 地形必须画出来：只画实体点时，用户看不出实例压在什么地形上。
 func _draw_preview(c: Control) -> void:
 	c.draw_rect(Rect2(Vector2.ZERO, c.size), Th.BG_VOID)
 	if not _map_ready():
@@ -439,6 +447,29 @@ func _draw_preview(c: Control) -> void:
 			c.draw_line(Vector2(origin.x, py), Vector2(origin.x + map_px.x, py), grid_col, 1.0)
 	c.draw_rect(Rect2(origin, map_px), Color(1, 1, 1, 0.25), false, 1.0)
 
+	# 地形 / 装饰真实瓦片：预览必须看得出实例压在哪块地上，只画网格等于丢了一半信息。
+	# 数据优先取画布实时 TileMapLayer（刚涂的立刻可见），退回 map_data 的序列化数组；
+	# 两种来源都归一成 [x, y, atlas, ax, ay]，兼容旧 4 元 [x, y, ax, ay]。
+	var texs: Array = app.canvas.atlas_texs
+	for kind in ["terrain", "decor"]:
+		var fallback: Color = Th.MAP_TERRAIN if str(kind) == "terrain" else Th.MAP_DECOR
+		for t in _preview_tiles(str(kind)):
+			# 只画地图边界内的格：画布允许在边界外涂，预览出框会显得脏
+			var cx := int(t[0])
+			var cy := int(t[1])
+			if cx < 0 or cy < 0 or cx >= mw or cy >= mh:
+				continue
+			var ai := int(t[2])
+			var src := Rect2(Vector2(float(t[3]), float(t[4])) * tile, Vector2(tile, tile))
+			var dst := Rect2(origin + Vector2(float(t[0]), float(t[1])) * step, Vector2(step, step))
+			var atex: Texture2D = null
+			if ai >= 0 and ai < texs.size():
+				atex = texs[ai] as Texture2D
+			if atex != null:
+				c.draw_texture_rect_region(atex, dst, src)
+			else:
+				c.draw_rect(dst, fallback, true)
+
 	for row in _entities():
 		var spr: Sprite2D = row.spr
 		if spr == null or not is_instance_valid(spr):
@@ -456,6 +487,32 @@ func _draw_preview(c: Control) -> void:
 		if str(row.id) == _selected_ent:
 			var pad := 3.0
 			c.draw_rect(rect.grow(pad), Th.WARN, false, 2.0)
+
+## 预览用的瓦片列表，统一为 [x, y, atlas, ax, ay]。
+## 首选画布实时 TileMapLayer（编辑中的改动立刻反映），图层不可用时退回 map_data 数组。
+func _preview_tiles(kind: String) -> Array:
+	var out: Array = []
+	if not _map_ready():
+		return out
+	var layer: TileMapLayer = app.canvas.terrain if kind == "terrain" else app.canvas.decor
+	if layer != null and is_instance_valid(layer):
+		for c in layer.get_used_cells():
+			var ac: Vector2i = layer.get_cell_atlas_coords(c)
+			if ac == Vector2i(-1, -1):
+				continue
+			out.append([c.x, c.y, layer.get_cell_source_id(c), ac.x, ac.y])
+		return out
+	for raw in app.canvas.map_data.get(kind, []):
+		if not (raw is Array):
+			continue
+		var a: Array = raw
+		if a.size() < 4:
+			continue
+		if a.size() >= 5:
+			out.append([int(a[0]), int(a[1]), int(a[2]), int(a[3]), int(a[4])])
+		else:
+			out.append([int(a[0]), int(a[1]), 0, int(a[2]), int(a[3])])
+	return out
 
 ## 预览点击：命中半径取实体显示尺寸的一半（与它看起来的大小一致）。
 ## 禁用拖拽/涂刷——本面板只做选中，位置属关卡编辑器（§9）。

@@ -16,6 +16,8 @@ var _opened_mtime := 0   # A4.3：打开地图时记录的磁盘 mtime（保存�
 var _last_alive_poll := 0   # PF-04：存活轮询节流
 var _play_pid := 0
 var _play_started_msec: int = 0
+## 最近一次在新建/重命名弹窗里确认的名字（顶栏常驻名字框已移除，这里记住值供预填）
+var _name_memo := ""
 
 ## 地图文件生命周期（审查 8.2 块 4：从 app.gd 拆出）——新建/打开/保存/改名迁移/自动保存/试玩/尺寸/导出
 func confirm_discard(action: String) -> bool:
@@ -54,17 +56,52 @@ func confirm_action(title: String, text: String, ok_text := "确定", danger := 
 		await app.get_tree().process_frame
 	dlg.queue_free()
 	return answer[0]
+
+## 新建地图：名字与区域都在弹窗里输入（顶栏已无常驻名字框）
 func on_new() -> void:
-	var n: String = app.map_name_edit.text.strip_edges()
+	var shell: Dictionary = app._popup_body("新建地图", "名字同时作文件名与显示名；区域用于关卡清单分组（如 tundra / cave）。")
+	var pop: PopupPanel = shell.pop
+	var body: VBoxContainer = shell.body
+	var name_edit := LineEdit.new()
+	# 记住上次填的名字，但已存在的名字不预填（否则一按确定必然撞重名）
+	if _name_memo != "" and not FileAccess.file_exists(EditorManifest.map_path(app.manifest, _name_memo)):
+		name_edit.text = _name_memo
+	name_edit.placeholder_text = "地图名"
+	body.add_child(UiKitScript.field_row("地图名", name_edit))
+	var area_edit := LineEdit.new()
+	area_edit.placeholder_text = "如 tundra / cave"
+	body.add_child(UiKitScript.field_row("区域", area_edit))
+	var err_label := UiKitScript.text_label("", UiThemeScript.WARN, UiThemeScript.FS_SMALL)
+	err_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	err_label.custom_minimum_size = Vector2(app.POPUP_BODY_W, 0)
+	body.add_child(err_label)
+	var btn_row := UiKitScript.hbox(8)
+	btn_row.alignment = BoxContainer.ALIGNMENT_END
+	btn_row.add_child(UiKitScript.button("取消", func(): pop.hide(), "ghost"))
+	btn_row.add_child(UiKitScript.button("确定",
+		func(): create_map_from_dialog(name_edit, area_edit, err_label, pop), "primary"))
+	area_edit.text_submitted.connect(func(_t: String): create_map_from_dialog(name_edit, area_edit, err_label, pop))
+	body.add_child(btn_row)
+	app._open_popup(pop)
+
+## 新建弹窗确定：校验 → 未保存确认 → 载入空图 → 追加进关卡清单并写盘
+func create_map_from_dialog(name_edit: LineEdit, area_edit: LineEdit, err_label: Label, pop: PopupPanel) -> void:
+	var n: String = name_edit.text.strip_edges()
 	if n == "":
-		app._set_status(" 先填地图名再点新建")
+		err_label.text = "先填地图名"
 		return
 	if not EditorManifest.is_valid_map_name(n):
-		app._set_status(" 地图名不合法：不能含 / \\ : * ? \" < > | 或以 . 开头")
+		err_label.text = "地图名不合法：不能含 / \\ : * ? \" < > | 或以 . 开头"
 		return
 	if FileAccess.file_exists(EditorManifest.map_path(app.manifest, n)):
-		app._set_status(" 同名地图已存在：点【打开】编辑它，或换个名字新建")
+		err_label.text = "同名地图已存在：换个名字，或直接打开它"
 		return
+	err_label.text = ""
+	_name_memo = n
+	var area := area_edit.text.strip_edges()
+	# 先收新建弹窗再开确认框：确认框是模态窗口，会让新建弹窗失焦自动 hide，
+	# 而 hide 连带 queue_free——之后确认框还要 await，留着也会被释放。
+	pop.hide()
 	if not await confirm_discard("新建"):
 		return
 	app.canvas.set_thumbs(app._entity_thumbs())
@@ -75,12 +112,112 @@ func on_new() -> void:
 	}, n)
 	app.cur_map_name = n
 	app.cur_map_path = EditorManifest.map_path(app.manifest, n)
+	_opened_mtime = 0
 	app._sync_play_cfg_to_map()
 	app._set_map_loaded(true)
 	app.canvas.undo_stack.clear()
 	app.canvas.redo_stack.clear()
+	_append_level_entry(n, area)
 	app._set_status(" 新建空地图 " + n + "（先保存再试玩）")
 	app._refresh_side_panel()
+
+## 新地图编入关卡清单：追加 {map,name,order,area,unlock,secret} 后直接写盘
+func _append_level_entry(n: String, area: String) -> void:
+	var levels: Dictionary = app.LevelList.load_levels(app.manifest)
+	var arr: Array = levels.get("levels", [])
+	var existing := {}
+	for lv in arr:
+		if str((lv as Dictionary).get("map", "")) == n:
+			existing = lv
+	if not existing.is_empty():
+		# 清单里已有同名条目（占位/旧记录）：就地补区域，不再追加重复项
+		existing["area"] = area
+	else:
+		var order := 1
+		for lv in arr:
+			order = maxi(order, int((lv as Dictionary).get("order", 0)) + 1)
+		arr.append({"map": n, "name": n, "order": order, "area": area, "unlock": "", "secret": false})
+	levels["levels"] = arr
+	app.LevelList.save_levels(app.manifest, levels)
+
+## 重命名当前地图：弹窗输入新名（顶栏名字框已移除，就地改名入口改到这里）
+func on_rename() -> void:
+	if not app.map_loaded:
+		app._set_status("无地图：先新建或打开一张地图")
+		return
+	var old_name: String = _effective_map_name()
+	if old_name == "":
+		app._set_status("当前地图没有名字，无法重命名")
+		return
+	var shell: Dictionary = app._popup_body("重命名地图", "只改文件名与显示名，跨图引用不迁移。")
+	var pop: PopupPanel = shell.pop
+	var body: VBoxContainer = shell.body
+	var name_edit := LineEdit.new()
+	# 当前名就是上次「新建」时填的名字（打开/改名也会同步 _name_memo）
+	name_edit.text = old_name
+	name_edit.placeholder_text = "地图名"
+	body.add_child(UiKitScript.field_row("新名字", name_edit))
+	var err_label := UiKitScript.text_label("", UiThemeScript.WARN, UiThemeScript.FS_SMALL)
+	err_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	err_label.custom_minimum_size = Vector2(app.POPUP_BODY_W, 0)
+	body.add_child(err_label)
+	var btn_row := UiKitScript.hbox(8)
+	btn_row.alignment = BoxContainer.ALIGNMENT_END
+	btn_row.add_child(UiKitScript.button("取消", func(): pop.hide(), "ghost"))
+	btn_row.add_child(UiKitScript.button("确定",
+		func(): rename_current_from_dialog(old_name, name_edit, err_label, pop), "primary"))
+	body.add_child(btn_row)
+	app._open_popup(pop)
+
+## 重命名弹窗确定：校验 → MapStore.rename_map → 同步当前名/路径与关卡清单
+func rename_current_from_dialog(old_name: String, name_edit: LineEdit, err_label: Label, pop: PopupPanel) -> void:
+	var nn: String = name_edit.text.strip_edges()
+	if nn == "" or nn == old_name:
+		pop.hide()
+		return
+	if not EditorManifest.is_valid_map_name(nn):
+		err_label.text = "地图名不合法：不能含 / \\ : * ? \" < > | 或以 . 开头"
+		return
+	var err: String = ""
+	var old_path := EditorManifest.map_path(app.manifest, old_name)
+	if old_path != "" and FileAccess.file_exists(old_path):
+		err = app.MapStore.rename_map(app.manifest, old_name, nn)
+	elif FileAccess.file_exists(EditorManifest.map_path(app.manifest, nn)):
+		err = "同名地图已存在"
+	if err != "":
+		err_label.text = "改名失败：" + err
+		return
+	pop.hide()
+	_name_memo = nn
+	app.cur_map_name = nn
+	app.cur_map_path = EditorManifest.map_path(app.manifest, nn)
+	app.canvas.cur_map_name = nn
+	if app.canvas.map_data.has("meta"):
+		app.canvas.map_data["meta"]["name"] = nn
+	_opened_mtime = FileAccess.get_modified_time(app.cur_map_path)
+	app._sync_play_cfg_to_map()
+	_rename_level_entry(old_name, nn)
+	app._refresh_side_panel()
+	app._set_status("已改名：%s → %s（引用未迁移）" % [old_name, nn])
+
+## 关卡清单跟着改名走，避免清单条目指向已不存在的旧文件名
+func _rename_level_entry(old_name: String, new_name: String) -> void:
+	var levels: Dictionary = app.LevelList.load_levels(app.manifest)
+	var touched := false
+	for lv in levels.get("levels", []):
+		if str((lv as Dictionary).get("map", "")) != old_name:
+			continue
+		lv["map"] = new_name
+		if str(lv.get("name", "")) == old_name:
+			lv["name"] = new_name
+		touched = true
+	if str(levels.get("start", "")) == old_name:
+		levels["start"] = new_name
+		touched = true
+	# 没有清单文件时 load_levels 返回的是建议清单，不能凭空落盘
+	if not touched and not FileAccess.file_exists(app.LevelList.file_path(app.manifest)):
+		return
+	app.LevelList.save_levels(app.manifest, levels)
 
 func on_open() -> void:
 	if not await confirm_discard("打开另一张地图"):
@@ -115,7 +252,7 @@ func load_map_file(p: String) -> void:
 	app.cur_map_name = base
 	app._sync_play_cfg_to_map()
 	app.cur_map_path = p
-	app.map_name_edit.text = base
+	_name_memo = base
 	app._set_map_loaded(true)
 	app.canvas.undo_stack.clear()
 	app.canvas.redo_stack.clear()
@@ -131,14 +268,27 @@ func _format_issues(issues: Array) -> String:
 		lines.append("%s: %s" % [str(issue.get("path", "map")), str(issue.get("message", "invalid data"))])
 	return "; ".join(lines)
 
+## 当前地图名的单一来源：侧栏改名只写 canvas.cur_map_name（不碰 app），这里统一回填
+func _effective_map_name() -> String:
+	var n: String = str(app.cur_map_name).strip_edges()
+	var cname: String = str(app.canvas.cur_map_name)
+	if cname != "" and cname != n:
+		var cpath := EditorManifest.map_path(app.manifest, cname)
+		if FileAccess.file_exists(cpath):
+			app.cur_map_name = cname
+			app.cur_map_path = cpath
+			_opened_mtime = FileAccess.get_modified_time(cpath)
+			return cname
+	return n
+
 ## 保存当前地图；返回是否成功（试玩前依赖它决定是否继续）
 func on_save() -> bool:
 	if not app.map_loaded:
 		app._set_status(" 无地图：先新建或打开一张地图")
 		return false
-	var n: String = app.map_name_edit.text.strip_edges()
+	var n: String = _effective_map_name()
 	if n == "":
-		app._set_status(" 先填地图名再保存")
+		app._set_status(" 当前地图没有名字：先「新建地图」并填名字")
 		return false
 	if not EditorManifest.is_valid_map_name(n):
 		app._set_status(" 地图名不合法：不能含 / \\ : * ? \" < > | 或以 . 开头")
@@ -148,12 +298,6 @@ func on_save() -> bool:
 	var path := EditorManifest.map_path(app.manifest, n)
 	if path == "":
 		app._set_status(" 地图名不合法: " + n)
-		return false
-	var renamed: bool = app.cur_map_name != "" and app.cur_map_name != n
-	var old_name: String = app.cur_map_name
-	# 改名且目标已存在 → 不静默覆盖别人的地图
-	if renamed and FileAccess.file_exists(path):
-		app._set_status(" 已存在同名地图 %s，保存被拒绝（换个名字或先打开它）" % n)
 		return false
 	# A4.3：外部变更检测——打开后磁盘 mtime 变了 = 别处改过这份文件（本次保存会覆盖外部改动）
 	var ext_changed := _opened_mtime > 0 and FileAccess.file_exists(path) \
@@ -172,14 +316,6 @@ func on_save() -> bool:
 	app.canvas.modified_flag = false
 	_last_autosave_msec = Time.get_ticks_msec()
 	var msg := " 已保存 %s（%d 瓦片 / %d 实体）" % [n, data.terrain.size(), data.entities.size()]
-	if renamed:
-		# 自动迁移其他地图里指向旧名的出口，避免死链
-		var mig := MapValidate.migrate_map_rename(app.manifest, old_name, n)
-		if mig.get("failed", []).is_empty():
-			var cnt: int = (mig.get("changed", []) as Array).size()
-			msg += "；已迁移 %d 处跨图引用" % cnt
-		else:
-			msg += "；迁移失败的地图: " + ", ".join(mig.get("failed", []))
 	# T23：保存即校验——问题在你按 Ctrl+S 的那一秒出现，而不是三天后
 	var v_issues = MapValidate.validate_map(app.manifest, n, data)
 	var v_errs := 0
@@ -221,8 +357,8 @@ func on_play(spawn_tiles: Vector2i = Vector2i(-1, -1)) -> void:
 	if not app.map_loaded:
 		app._set_status(" 无地图：先新建或打开一张地图")
 		return
-	if app.map_name_edit.text.strip_edges() == "":
-		app._set_status(" 试玩前先填地图名并保存")
+	if _effective_map_name() == "":
+		app._set_status(" 试玩前先「新建地图」并填名字")
 		return
 	if not on_save():
 		app._set_status(" 试玩中止：地图未保存成功")

@@ -18,6 +18,10 @@ func _rename_map_by_name(old_name: String, new_name: String) -> void:
 	if app.canvas.cur_map_name == old_name:
 		app.canvas.cur_map_name = new_name
 		app.canvas.map_data["meta"]["name"] = new_name
+	# app 侧的地图身份也要同步：保存/试玩都以 app.cur_map_name 为准，不同步会写回旧文件名
+	if app.cur_map_name == old_name:
+		app.cur_map_name = new_name
+		app.cur_map_path = app.MapStore.path_for(app.manifest, new_name)
 	_refresh_side_panel()
 	app._set_status("已改名：%s → %s（引用未迁移）" % [old_name, new_name])
 
@@ -103,16 +107,18 @@ func _refresh_world(all = {}) -> void:
 ## 保存关卡清单到 <项目>/editor/levels.json
 
 func _save_levels(data: Dictionary) -> void:
-	# 先剔除已不存在的地图条目，避免清单指向空气
-	var maps = app.MapStore.list_maps(app.manifest)
+	# 只剔除真正无效的条目（map 名为空）。地图文件尚未落盘的关卡必须保留：
+	# 用户可以在清单里先设计关卡，再新建对应地图；UI 已有「⚠ 文件缺失」提示兜底。
 	var kept := []
 	var dropped := []
 	for lv in data.get("levels", []):
-		var nm := str(lv.get("map", ""))
-		if maps.has(nm):
+		var nm := str(lv.get("map", "")).strip_edges()
+		if nm != "":
 			kept.append(lv)
 		else:
-			dropped.append(nm)
+			dropped.append("（空 map 名）")
+	for i in kept.size():
+		(kept[i] as Dictionary)["order"] = i + 1
 	data["levels"] = kept
 	if not app.LevelList.save_levels(app.manifest, data):
 		app._set_status("关卡清单保存失败")
@@ -120,7 +126,7 @@ func _save_levels(data: Dictionary) -> void:
 	var mode_text := "大地图" if str(data.get("mode", "")) == "metroidvania" else "选关"
 	app._set_status("关卡清单已保存（%s 模式，%d 关）" % [mode_text, kept.size()])
 	if not dropped.is_empty():
-		app.status.text += "；已剔除不存在的地图: " + ", ".join(dropped)
+		app.status.text += "；已剔除 %d 条无效条目（空地图名）" % dropped.size()
 	_refresh_levels_view()
 	_refresh_world()
 

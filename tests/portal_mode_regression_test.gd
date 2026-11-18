@@ -15,7 +15,6 @@ class TestHost extends Control:
 	var props_panel: VBoxContainer
 	var props_scroll: ScrollContainer
 	var selected_spr: Sprite2D
-	var map_name_edit: LineEdit
 	var map_loaded := true
 	var cur_map_name := "source"
 	var cur_map_path := ""
@@ -84,9 +83,6 @@ func _run() -> void:
 	host.props_panel = VBoxContainer.new()
 	host.add_child(host.props_panel)
 	host.props_scroll = null
-	host.map_name_edit = LineEdit.new()
-	host.map_name_edit.text = "source"
-	host.add_child(host.map_name_edit)
 	host._props_panel_ctrl = PropsPanelScript.new(host)
 	host._picker_ctrl = PickerScript.new(host)
 	host._map_file_ctrl = MapFileScript.new(host)

@@ -20,7 +20,6 @@ var level_list: ItemList
 var mode_opt: OptionButton
 var start_opt: OptionButton
 var world_view = null
-var _area_edit: LineEdit
 var _world_hint: Label
 
 func build() -> void:
@@ -55,7 +54,10 @@ func _build_levels_section() -> void:
 	level_list = ItemList.new()
 	level_list.custom_minimum_size = Vector2(0, 168)
 	level_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	level_list.item_clicked.connect(func(i: int, _at: Vector2, _mb: int):
+	level_list.tooltip_text = "单击选中；双击或回车打开该地图"
+	# 单击 = 选中（供重命名/排序/移除使用），双击/回车 = 打开地图。
+	# 若用 item_clicked，单击选中行就会切走出项目页，重命名根本来不及点。
+	level_list.item_activated.connect(func(i: int):
 		var md = level_list.get_item_metadata(i)
 		# BUG-15：占位项没有 metadata，null 早退
 		if md == null:
@@ -63,10 +65,15 @@ func _build_levels_section() -> void:
 		var nm := str(md)
 		if nm != "":
 			level_open_requested.emit(nm))
-	level_list.item_selected.connect(func(i: int): _sync_area_edit(i))
 	add_child(level_list)
 
 	var lv_btns := Kit.hbox(4)
+	var add_btn := Kit.button("+ 添加关卡", _add_level, "plain")
+	add_btn.tooltip_text = "把一张已有地图编入关卡清单（追加到末尾并立即保存）"
+	lv_btns.add_child(add_btn)
+	var ren_btn := Kit.button("重命名", _rename_level, "ghost")
+	ren_btn.tooltip_text = "改选中关卡的显示名（只改清单里的 name，不改地图文件名）"
+	lv_btns.add_child(ren_btn)
 	for spec in [["↑", -1], ["↓", 1]]:
 		lv_btns.add_child(Kit.button(str(spec[0]), func(): _move_level(int(spec[1])), "plain"))
 	lv_btns.add_child(Kit.button("移除", _remove_level, "ghost"))
@@ -74,16 +81,6 @@ func _build_levels_section() -> void:
 	lv_btns.add_child(Kit.button("从地图文件生成清单", func(): rebuild_from_maps(), "ghost"))
 	lv_btns.add_child(Kit.button("刷新拓扑", func(): world_refresh_requested.emit(), "ghost"))
 	add_child(lv_btns)
-
-	var area_row := Kit.hbox(6)
-	area_row.add_child(Kit.text_label("区域", Th.TEXT_MUTE, Th.FS_SMALL))
-	_area_edit = LineEdit.new()
-	_area_edit.placeholder_text = "如 tundra / cave（回车提交）"
-	_area_edit.custom_minimum_size = Vector2(220, 0)
-	_area_edit.text_submitted.connect(func(_t: String): _apply_level_edit())
-	area_row.add_child(_area_edit)
-	area_row.add_child(Kit.spacer())
-	add_child(area_row)
 
 ## —— 下段：世界拓扑 ——
 func _build_world_section() -> void:
@@ -108,24 +105,135 @@ func _level_selected() -> int:
 	var sel := level_list.get_selected_items()
 	return int(sel[0]) if sel.size() > 0 else -1
 
-func _sync_area_edit(i: int) -> void:
-	if i < 0 or i >= (levels.get("levels", []) as Array).size():
-		_area_edit.text = ""
+## 添加关卡：从「地图文件里还没编入清单」的地图里挑一张，追加到清单末尾。
+## 区域/解锁/密钥等归属设计信息在新建地图时填，这里只做编入动作。
+func _add_level() -> void:
+	var host = _host_app()
+	if manifest_ref.is_empty() or host == null:
+		push_warning("levels_panel: 无宿主 app，添加关卡不可用")
 		return
-	_area_edit.text = str(((levels.get("levels", []) as Array)[i] as Dictionary).get("area", ""))
+	var maps: Array = host.MapStore.list_maps(manifest_ref)
+	var arr: Array = levels.get("levels", [])
+	var used := {}
+	for lv in arr:
+		used[str((lv as Dictionary).get("map", ""))] = true
+	var free_maps: Array = []
+	for nm in maps:
+		if not used.has(str(nm)):
+			free_maps.append(str(nm))
+	if free_maps.is_empty():
+		var why := "项目里还没有地图文件。" if maps.is_empty() else "已有地图都已编入关卡清单。"
+		var shell0: Dictionary = host._popup_body("添加关卡", why)
+		var pop0: PopupPanel = shell0.pop
+		var b0: VBoxContainer = shell0.body
+		b0.add_child(Kit.wrap_label("先用地图菜单「新建地图」创建新地图，或点「从地图文件生成清单」重建清单。", 320))
+		var ok_row := Kit.hbox(8)
+		ok_row.add_child(Kit.spacer())
+		ok_row.add_child(Kit.button("知道了", func(): pop0.hide(), "primary"))
+		b0.add_child(ok_row)
+		host._open_popup(pop0)
+		return
+	var shell: Dictionary = host._popup_body("添加关卡", "选择要编入关卡清单的地图。清单顺序可用 ↑↓ 调整。")
+	var pop: PopupPanel = shell.pop
+	var body: VBoxContainer = shell.body
+	var opt := OptionButton.new()
+	opt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	for nm in free_maps:
+		opt.add_item(str(nm))
+	opt.select(0)
+	body.add_child(Kit.field_row("地图", opt))
+	body.add_child(Kit.popup_buttons(
+		func(): _do_add_level(str(opt.get_item_text(opt.selected)), pop),
+		func(): pop.hide()))
+	host._open_popup(pop)
 
-func _apply_level_edit() -> void:
+func _do_add_level(map_name: String, pop: PopupPanel) -> void:
+	if map_name == "":
+		pop.hide()
+		return
+	var arr: Array = levels.get("levels", [])
+	arr.append({
+		"map": map_name, "name": map_name, "order": arr.size() + 1,
+		"area": "", "unlock": "", "secret": false,
+	})
+	levels["levels"] = arr
+	if str(levels.get("start", "")) == "":
+		levels["start"] = map_name
+	pop.hide()
+	# 先刷新本地，再发信号请宿主保存并回读；最后复位选中（回读会清选中）
+	set_levels(levels, manifest_ref)
+	levels_changed.emit(levels.duplicate(true))
+	level_list.select(arr.size() - 1)
+	level_list.ensure_current_is_visible()
+
+## 重命名：改条目的显示名 name（不动 map 文件名，不动落盘路径）
+func _rename_level() -> void:
 	var i := _level_selected()
 	if i < 0:
+		_status("先选中一行再重命名")
 		return
 	var arr: Array = levels.get("levels", [])
 	if i >= arr.size():
 		return
-	var nv := _area_edit.text.strip_edges()
-	if nv == str((arr[i] as Dictionary).get("area", "")):
+	var host = _host_app()
+	if host == null:
 		return
-	(arr[i] as Dictionary)["area"] = nv
+	var cur := str((arr[i] as Dictionary).get("name", (arr[i] as Dictionary).get("map", "")))
+	var shell: Dictionary = host._popup_body("重命名关卡", "只改清单里显示的名字，地图文件名不变。")
+	var pop: PopupPanel = shell.pop
+	var body: VBoxContainer = shell.body
+	var edit := LineEdit.new()
+	edit.text = cur
+	edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	edit.placeholder_text = "关卡显示名"
+	body.add_child(Kit.field_row("名称", edit))
+	body.add_child(Kit.hint_label("留空 = 恢复显示地图名 %s" % str((arr[i] as Dictionary).get("map", "")), 320))
+	body.add_child(Kit.popup_buttons(
+		func(): _do_rename_level(i, edit.text, pop),
+		func(): pop.hide()))
+	edit.text_submitted.connect(func(_t: String): _do_rename_level(i, edit.text, pop))
+	host._open_popup(pop)
+	edit.call_deferred("grab_focus")
+	edit.call_deferred("select_all")
+
+func _do_rename_level(i: int, new_name: String, pop: PopupPanel) -> void:
+	var arr: Array = levels.get("levels", [])
+	if i < 0 or i >= arr.size():
+		pop.hide()
+		return
+	var nm := new_name.strip_edges()
+	if nm == "":
+		nm = str((arr[i] as Dictionary).get("map", ""))
+	(arr[i] as Dictionary)["name"] = nm
+	pop.hide()
+	# 先刷新本地，再发信号请宿主保存并回读；最后复位选中（回读会清选中）
 	set_levels(levels, manifest_ref)
+	levels_changed.emit(levels.duplicate(true))
+	level_list.select(i)
+	level_list.ensure_current_is_visible()
+
+## 宿主 app：本面板在项目页与地图菜单弹窗两处复用，构造时都不传 app 引用。
+## 由挂载链向上找带 _popup_body 的宿主节点（app.gd 根节点 / 弹窗都在它之下）。
+## 弹窗关闭时会被 queue_free，这里缓存一份，避免关窗后仍向上找链。
+var _host_cache = null
+
+func _host_app():
+	if _host_cache != null and is_instance_valid(_host_cache):
+		var cached: Node = _host_cache
+		if cached.is_inside_tree():
+			return cached
+	var n: Node = get_parent()
+	while n != null:
+		if n.has_method("_popup_body") and n.has_method("_set_status"):
+			_host_cache = n
+			return n
+		n = n.get_parent()
+	return null
+
+func _status(msg: String) -> void:
+	var a = _host_app()
+	if a != null:
+		a._set_status(msg)
 
 func _move_level(dir: int) -> void:
 	var i := _level_selected()
@@ -142,6 +250,7 @@ func _move_level(dir: int) -> void:
 	levels["levels"] = arr
 	set_levels(levels, manifest_ref)
 	level_list.select(j)
+	level_list.ensure_current_is_visible()
 
 func _remove_level() -> void:
 	var i := _level_selected()
@@ -202,10 +311,8 @@ func set_levels(data: Dictionary, m: Dictionary = {}) -> void:
 		level_list.set_item_metadata(idx, map_name2)
 		if not exists:
 			level_list.set_item_custom_fg_color(idx, Th.ERR)
-	if not arr.is_empty() and level_list.item_count > 0:
-		_area_edit.text = ""
 	if arr.is_empty():
-		var pi := level_list.add_item("（清单为空：点「从地图文件生成清单」）")
+		var pi := level_list.add_item("（清单为空：点「+ 添加关卡」或「从地图文件生成清单」）")
 		level_list.set_item_selectable(pi, false)
 
 ## 世界图：graph = LevelList.build_world_graph() 结果；unreachable 标红汇总

@@ -17,15 +17,21 @@ func fill_all() -> void:
 	fill_tiles()
 	fill_entities()
 
-## 瓦片调色板：多图集 → 图集级导航（图集列表 → 图集类别/全图）；单图集行为不变
-## 装饰层例外（图一反馈）：装饰与地形共用图集时不显示「岩块件套（13）」这类
-## 地形类别行——直接平铺清单条目，类别导航属地形层。
+## 瓦片调色板：多图集 → 图集级导航；单图集行为不变。
+## 装饰层没有独立资产清单，不该显示地形图集的东西——清空并给提示。
 func fill_tiles() -> void:
 	var tl: ItemList = app.tile_list
+	# 切层重填前先清掉上一次的空状态覆盖，别让它盖住瓦片
+	if tl.has_meta("_empty_node"):
+		var old_empty = tl.get_meta("_empty_node")
+		if is_instance_valid(old_empty):
+			old_empty.queue_free()
+		tl.remove_meta("_empty_node")
 	tl.clear()
-	if _on_decor_layer():
-		_cat = ""   # 装饰层不做类别钻入，也不吃 MRU 状态
 	_decor_filled = _on_decor_layer()
+	if _decor_filled:
+		_show_empty(tl, "装饰层未配置资产", "清单里给装饰层配好独立图集后，瓦片会出现在这里")
+		return
 	var tiles: Array = app.manifest.get("tiles", [])
 	if tiles.is_empty():
 		_show_empty(tl, "清单未定义瓦片")
@@ -98,15 +104,6 @@ func _fill_single(tl: ItemList, t: Dictionary, ai: int, tsz: int) -> void:
 		# 没配 palette = 全图集平铺，那种视图必须是网格；MRU 行混进网格会被压成豆点，故跳过
 		_set_grid(tl, 3, 56)
 		_fill_full_atlas(tl, img, tsz, ai)
-		return
-	# 装饰层（图一反馈）：跳过类别行直接平铺清单条目——「→ 岩块件套（13）」这种
-	# 地形类别行不该出现在装饰层。三列网格，MRU 也不掺进来。
-	if _on_decor_layer():
-		_set_grid(tl, 3, 56)
-		for p in pal:
-			var dcell := Vector2i(int(p.cell[0]), int(p.cell[1]))
-			var dit := tl.add_item(str(p.get("name", "%d,%d" % [dcell.x, dcell.y])), _tex(ai, dcell, tsz))
-			tl.set_item_metadata(dit, {"auto": false, "cell": dcell, "atlas": ai})
 		return
 	_add_mru_rows(tl, tsz)
 	for c in _cats:

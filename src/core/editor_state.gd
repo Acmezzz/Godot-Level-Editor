@@ -29,19 +29,19 @@ func _default_tool_for_layer(i: int) -> String:
 ## 状态栏给一句「这一层怎么用」，替代被删掉的工具按钮
 func _gesture_hint(i: int) -> String:
 	if _layer_type(i) == "entities":
-		return "左键放置 / 选中拖动，右键删除，Ctrl+拖动框选"
-	return "左键拖动涂，右键擦除，Shift+拖动填矩形，Ctrl+拖动框选"
+		return "左键放置 / 选中拖动，右键删除，开「框选」后拖动框选"
+	return "左键拖动涂，右键擦除，开「框选」后拖动框选"
 
 
 func _sync_ui() -> void:
 	# 调色板跟随图层类型（v2：这是唯一一套切换，页签按钮已删）
-	# grid 层（碰撞）没有瓦片资产可涂——左栏切到碰撞控件页（类型/形状/自动生成）。
+	# grid 层（碰撞）没有瓦片资产、也没有专属控件——左栏留空（两个列表都藏起来）。
 	var lt := _layer_type(app.canvas.active_layer)
 	if lt == "grid":
-		app._set_palette_page("collision")
+		app._set_palette_page("")
 	elif lt == "tiles":
 		app._set_palette_page("tiles")
-		# 装饰层跳过类别钻入（图一）：装饰↔地形切换时重填瓦片列表
+		# 装饰层没有独立资产（图一）：装饰↔地形切换时重填瓦片列表
 		app._palette_ctrl.sync_layer_view()
 	else:
 		app._set_palette_page("entities")
@@ -60,44 +60,10 @@ func _layer_type(i: int) -> String:
 func _is_tiles_layer(i: int) -> bool:
 	return _layer_type(i) == "tiles"
 
-## v2：工具概念已废除。下面三个 `_*_for_tool` 只剩「旧调用点兼容」的意义——
-## 它们不再驱动任何界面，也不再让状态在工具与图层之间互相拉扯。
-## 保留函数体是为了 app.gd 的委托与若干测试仍能调用而不报错。
-
-func _layer_kind_for_tool(_tool_name: String) -> String:
-	return ""
-
-
-func _layer_for_tool(_tool_name: String, cur_layer: int) -> int:
-	return cur_layer
-
-
-func _first_tiles_layer() -> int:
-	var layers: Array = app.manifest.get("layers", [])
-	for i in layers.size():
-		if str(layers[i].get("type", "tiles")) == "tiles":
-			return i
-	return 0
-
-## 旧工具入口：不切层，只把画笔语义按当前层归一（数字键已删，仅吸管等内部调用还在用）
-
-func _set_tool(_name: String) -> void:
-	_apply_state("", app.canvas.active_layer)
-
 ## 层下拉入口：切层就是唯一的「换画笔」动作
 
 func _on_layer(i: int) -> void:
-	# 切到碰撞层：它默认是隐藏的，进来就自动显示——否则用户看不见自己在画什么
-	if app.canvas._is_grid_layer(i) and not app.canvas.is_layer_visible(i):
-		app.canvas.set_layer_hidden(i, false)
 	_apply_state("", i)
-
-## 某图层下应该用什么工具——v2 起由层类型唯一决定，没有「保留当前工具」这回事
-
-func _tool_for_layer(i: int) -> String:
-	return _default_tool_for_layer(i)
-
-## 资产栏点瓦片：设好待画瓦片，切到瓦片工具，并保证落在能画的图层
 
 func _on_tile_pick(i: int, _at: Vector2 = Vector2.ZERO, _mb: int = 0) -> void:
 	if not app.map_loaded:

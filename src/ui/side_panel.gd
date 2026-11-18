@@ -29,9 +29,6 @@ const CollapsibleScript := preload("res://src/ui/collapsible.gd")
 var maps: Array = []          # [{name, w, h, ents}]（map_list 选中项下标 → 此数组）
 var issues: Array = []        # MapValidate 输出
 
-## 检查器槽位：属性面板容器挂这里（R2：左栏那份整体移到右栏，内容不动）
-var inspector_slot: VBoxContainer
-var _input_label: Label
 var _fold_entities
 var _fold_issues
 var _fold_maps
@@ -58,24 +55,6 @@ func build() -> void:
 	# 否则检查器标题/属性区/三个折叠区会全部叠在同一个位置上。
 	var stack := Kit.vbox(0)
 	add_child(stack)
-
-	# —— 检查器（主体）：选中什么就检查什么。属性面板整体迁到这里（R2） ——
-	var insp_head := PanelContainer.new()
-	var ih_sb := Th.box(Th.BG_BASE, Th.BORDER, 0, 10, 6)
-	ih_sb.set_border_width_all(0)
-	ih_sb.border_width_bottom = 1
-	insp_head.add_theme_stylebox_override("panel", ih_sb)
-	stack.add_child(insp_head)
-	var ih := Kit.hbox(6)
-	insp_head.add_child(ih)
-	_input_label = Kit.section_label("检查器")
-	_input_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	ih.add_child(_input_label)
-
-	inspector_slot = Kit.vbox(0)
-	inspector_slot.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	inspector_slot.custom_minimum_size = Vector2(0, 220)
-	stack.add_child(inspector_slot)
 
 	# —— 三个项目级折叠区（收起只占一行，记住展开态） ——
 	stack.add_child(Kit.divider())
@@ -205,10 +184,6 @@ func _build_issue_body(box: VBoxContainer) -> void:
 			var it: Dictionary = issues[i]
 			issue_focus_requested.emit(str(it.get("map", "")), str(it.get("ent_id", ""))))
 	box.add_child(issue_list)
-
-## 骨架扩展：属性面板由 editor_layout 建好后挂进来（保持 props_panel 容器与其控制器不被拆开）
-func attach_inspector(node: Control) -> void:
-	inspector_slot.add_child(node)
 
 ## 折叠区展开/收起（外部可编程切换，例如校验完成后自动展开）
 func set_section_expanded(which: String, on: bool) -> void:

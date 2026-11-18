@@ -10,7 +10,6 @@ const UiThemeScript := preload("res://src/ui/ui_theme.gd")
 const UiKitScript := preload("res://src/ui/ui_kit.gd")
 const MapValidate := preload("res://src/map_validate.gd")
 const MapStore := preload("res://src/map_store.gd")
-const MapExport := preload("res://src/map_export.gd")
 const LevelList := preload("res://src/level_list.gd")
 const ContentStore := preload("res://src/content/content_store.gd")
 const ContentTemplates := preload("res://src/content/content_templates.gd")
@@ -21,8 +20,8 @@ var cur_map_path := ""
 var cur_map_name := ""
 var tile_list: ItemList
 var ent_list: ItemList
-## 碰撞层专属左栏页（v2 §2.2）：碰撞类型/形状/自动生成——层决定左栏显示什么
-var coll_page: VBoxContainer
+## 碰撞层左栏说明（该层没有可选资产）
+var grid_hint: VBoxContainer
 var status: Label
 ## v2：工具概念已废除——画笔行为由层类型决定，笔刷尺寸/碰撞类型不再有 UI 入口，
 ## 这两个字段保留为画布状态的直写点（默认值即唯一值）。
@@ -42,7 +41,6 @@ var _side_actions_ctrl   # core/side_actions.gd 控制器（审查 8.2-5 侧栏�
 var _palette_ctrl   # ui/palette_panel.gd 控制器（调色板两级导航）
 var selected_spr: Sprite2D = null
 var map_loaded := false          # 防呆：是否已载入地图
-var map_name_edit: LineEdit
 ## 顶栏地图菜单锚点（v2 §2.4：地图名本身就是下拉按钮）
 var _map_btn: Button
 ## 顶栏三个面板入口（关卡 / 内容 / 资产），_sync_panel_buttons 同步按下态
@@ -168,6 +166,10 @@ func _on_new() -> void:
 
 func _on_open() -> void:
 	_map_file_ctrl.on_open()
+
+## 顶栏名字输入框已删：改名走地图菜单弹窗
+func _on_rename() -> void:
+	_map_file_ctrl.on_rename()
 
 func _maybe_autosave() -> void:
 	_map_file_ctrl.maybe_autosave()
@@ -393,20 +395,6 @@ func _shortcut_input(event: InputEvent) -> void:
 				_set_mode("content")
 				get_viewport().set_input_as_handled()
 
-## A6：Tab 循环选中实体（画布子节点顺序；无实体时不动）
-func _cycle_entity_selection() -> void:
-	var ents := canvas.entities.get_children()
-	if ents.is_empty():
-		return
-	var idx := ents.find(canvas.selected_entity)
-	var nxt := ents[(idx + 1) % ents.size()]
-	var nxt_spr := nxt as Sprite2D
-	if nxt_spr == null:
-		return
-	canvas.selected_multi.clear()
-	canvas.selected_entity = nxt_spr
-	canvas.entity_selected.emit(nxt_spr)
-
 # —— 工具 / 图层 / 资产 三者联动 ——
 #
 # 这三者本来是互相触发的，谁都能改另外两方，结果互相覆盖：
@@ -427,11 +415,6 @@ func _layer_label(i: int) -> String:
 	return str(layers[i].get("name", layers[i].get("id", "?")))
 
 ## 把界面从 canvas 的真实状态刷出来（单向：状态 → UI，不反向写状态）
-## 碰撞图层的显隐（走统一图层接口；地形/装饰/实体也走同一个）
-
-func _collision_visible() -> bool:
-	var ci := canvas._collision_layer_index()
-	return ci >= 0 and canvas.is_layer_visible(ci)
 
 func _toggle_grid() -> void:
 	canvas.show_grid = not canvas.show_grid
@@ -441,15 +424,13 @@ func _toggle_grid() -> void:
 func _toggle_bg() -> void:
 	_map_file_ctrl.toggle_bg()
 
-func _toggle_collision() -> void:
-	# 直接切碰撞图层的可见性——和地形/装饰用同一个图层接口
-	var ci := canvas._collision_layer_index()
-	if ci < 0:
-		_set_status("清单没有碰撞图层")
+## 框选开关：打开后画布左键拖动进入框选（不用快捷键）
+func _toggle_select_mode() -> void:
+	if canvas == null:
 		return
-	canvas.set_layer_hidden(ci, canvas.is_layer_visible(ci))
+	canvas.select_mode = not canvas.select_mode
+	_set_status("框选已%s —— 左键拖动框选，选中后可整组拖动" % ("打开" if canvas.select_mode else "关闭"))
 	_refresh_view_toggles()
-	_sync_layer_buttons()
 
 ## 视图开关按钮的按下态与画布状态保持同步
 func _cut() -> void:
@@ -538,6 +519,8 @@ func _open_asset_editor(sid: String) -> void:
 
 func _set_map_loaded(loaded: bool) -> void:
 	map_loaded = loaded
+	if _map_btn:
+		_map_btn.text = "%s ▾" % (cur_map_name if loaded and cur_map_name != "" else "地图 ▾")
 	if _canvas_empty:
 		_canvas_empty.visible = not loaded
 	if not loaded:
@@ -566,34 +549,10 @@ var _map_view: VBoxContainer = null
 var project_shell = null        # ProjectShell（项目页外壳，含三个视图）
 # 三个视图面板由 project_shell 持有；这里保留别名方便既有调用点
 var asset_panel = null
-var asset_view: Control = null
 var content_panel = null
-var content_view: Control = null
-var manifest_view: Control = null
 var manifest_panel = null
-## v2：内容抽屉已从界面上删除（功能迁入内容编辑器）。字段保留为 null，
-## 供既有 _set_content_dock / _selected_def_id 调用点安全短路。
-var content_dock = null
 
-const ContentDockScript := preload("res://src/ui/content_dock.gd")
-
-## 内容入口（v2 §3）：抽屉不再上屏，改为切到内容编辑器面板。
-## 旧调用点（props_panel 的「在工作台编辑」按钮等）因此自动落到新落点。
-func _set_content_dock(on: bool, def_id := "") -> void:
-	if on:
-		_set_mode("content")
-
-## 当前选中实体用的内容组 id；没有时为空
-func _selected_def_id() -> String:
-	if selected_spr == null or not is_instance_valid(selected_spr):
-		return ""
-	return str(selected_spr.get_meta("def_id", ""))
-
-## 内容组被编辑后，把引用它的实体标记为脏（内容在 defs 里，地图本身不变）
-func _mark_def_used(_def_id: String) -> void:
-	canvas._mark()
-
-## 为当前选中实体创建内容组（defs 资源）并挂上去，然后打开抽屉。
+## 为当前选中实体创建内容组（defs 资源）并挂上去。
 ## 粒度是"这个实体"，id 里带地图名与实体 id，一眼看出归属；仍可被别的实体复用。
 func _create_def_for_selected(sid: String) -> void:
 	if selected_spr == null or not is_instance_valid(selected_spr):
@@ -617,14 +576,7 @@ func _create_def_for_selected(sid: String) -> void:
 	selected_spr.set_meta("def_id", new_id)
 	canvas._mark()
 	_rebuild_props_panel()
-	_set_content_dock(true, new_id)
 	_set_status(" 已创建内容组 %s" % new_id)
-
-## 跳到全屏内容库并定位到某资源（抽屉里的"在内容库中打开"）
-func _open_content_at(kind_key: String, res_id: String) -> void:
-	_set_mode("content")
-	content_panel.show_kind(kind_key)
-	content_panel.refresh_list(res_id)
 
 ## 模式切换：mode = map（关卡编辑器）/ content（内容编辑器）/ asset（资产目录）/ manifest。
 ## 三个面板是平级关系（v2 §1），顶栏三个入口直接切，Esc 回关卡编辑器。
@@ -683,26 +635,8 @@ func _sync_ui() -> void:
 func _layer_type(i: int) -> String:
 	return _editor_state_ctrl._layer_type(i)
 
-func _is_tiles_layer(i: int) -> bool:
-	return _editor_state_ctrl._is_tiles_layer(i)
-
-func _layer_kind_for_tool(tool_name: String) -> String:
-	return _editor_state_ctrl._layer_kind_for_tool(tool_name)
-
-func _layer_for_tool(tool_name: String, cur_layer: int) -> int:
-	return _editor_state_ctrl._layer_for_tool(tool_name, cur_layer)
-
-func _first_tiles_layer() -> int:
-	return _editor_state_ctrl._first_tiles_layer()
-
-func _set_tool(tool_name: String) -> void:
-	_editor_state_ctrl._set_tool(tool_name)
-
 func _on_layer(i: int) -> void:
 	_editor_state_ctrl._on_layer(i)
-
-func _tool_for_layer(i: int) -> String:
-	return _editor_state_ctrl._tool_for_layer(i)
 
 func _on_tile_pick(i: int, _at: Vector2 = Vector2.ZERO, _mb: int = 0) -> void:
 	_editor_state_ctrl._on_tile_pick(i, _at, _mb)

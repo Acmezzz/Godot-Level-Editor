@@ -2,12 +2,10 @@ extends VBoxContainer
 ## 项目工作台外壳（重构 R1）：资产 / 内容 / 清单三个全屏视图共用一个壳。
 ##
 ## 设计基线：资产 / 内容 / 清单统一进项目工作台（旧的三全屏模式取消）。
-##   左上是固定的「← 返回画布」（Esc 同效），左列三个视图页签可横跳，
-##   底栏状态消息常驻，Ctrl+S 按当前视图分派保存目标。
+##   左上与画布顶栏同一套「关卡 / 内容 / 资产」模式切换（Esc 回画布），
+##   左列三个视图页签可横跳，底栏状态消息常驻，Ctrl+S 按当前视图分派保存目标。
 ##
 ## 各视图只负责自己的内容区（原来是各自带顶栏的全屏界面，顶栏已收进本壳）。
-
-signal closed
 
 const Kit := preload("res://src/ui/ui_kit.gd")
 const Th := preload("res://src/ui/ui_theme.gd")
@@ -36,6 +34,7 @@ var levels_panel = null
 
 var _view := "asset"
 var _tabs := {}
+var _mode_btns := {}
 var _holder: Control
 var _title: Label
 var _status: Label
@@ -65,7 +64,7 @@ func build() -> void:
 	add_child(_build_status_bar())
 	_build_views()
 
-## 顶栏：返回 + 当前视图名 + 项目徽章 + 保存
+## 顶栏：模式切换（关卡/内容/资产）+ 当前视图名 + 项目徽章 + 保存
 func _build_top_bar() -> PanelContainer:
 	var wrap := PanelContainer.new()
 	var sb := Th.box(Th.BG_BASE, Th.BORDER, 0, 12, 8)
@@ -74,9 +73,13 @@ func _build_top_bar() -> PanelContainer:
 	wrap.add_theme_stylebox_override("panel", sb)
 	var bar := Kit.hbox(10)
 	wrap.add_child(bar)
-	var back := Kit.button("←  返回画布", func(): close(), "ghost")
-	back.tooltip_text = "回到关卡编辑（Esc 同效）"
-	bar.add_child(back)
+	for spec in [["map", "关卡"], ["content", "内容"], ["asset", "资产"]]:
+		var mode := str(spec[0])
+		var btn: Button = Kit.button(str(spec[1]), func(): app._set_mode(mode), "toggle")
+		btn.tooltip_text = {"map": "回到关卡画布", "content": "给实例挂功能、填内容",
+			"asset": "资产图鉴与实例分布"}.get(mode, "")
+		_mode_btns[mode] = btn
+		bar.add_child(btn)
 	bar.add_child(Kit.vdivider())
 	_title = Kit.text_label("项目", Th.TEXT, Th.FS_LG)
 	bar.add_child(_title)
@@ -185,7 +188,7 @@ func _build_views() -> void:
 	asset_panel.manifest = manifest
 	asset_panel.save_manifest = save_manifest
 	asset_panel.host = app
-	asset_panel.closed.connect(func(): close())
+	asset_panel.closed.connect(func(): app._set_mode("map"))
 	_holder.add_child(asset_panel)
 	asset_panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	asset_panel.build()
@@ -193,7 +196,7 @@ func _build_views() -> void:
 	content_panel = ContentPanelScript.new()
 	content_panel.manifest = manifest
 	content_panel.app = app
-	content_panel.closed.connect(func(): close())
+	content_panel.closed.connect(func(): app._set_mode("map"))
 	# 批次 C：内容视图换用新内容编辑器；旧 content_panel 保留文件、保留构建（既有调用点
 	# app.content_panel / show_kind 仍能安全调用），但不再挂进 _holder 的可见位。
 	# 挂到 _holder 并隐藏：脱离树的 Node 永不释放（孤儿），隐藏节点不绘制也不吃输入。
@@ -210,11 +213,11 @@ func _build_views() -> void:
 	manifest_panel.manifest = manifest
 	manifest_panel.save_manifest = save_manifest
 	manifest_panel.host = app
-	manifest_panel.closed.connect(func(): close())
+	manifest_panel.closed.connect(func(): app._set_mode("map"))
 
 	levels_panel = LevelsPanelScript.new()
 	levels_panel.manifest_ref = manifest
-	levels_panel.level_open_requested.connect(func(nm: String): close(); app._open_map_by_name(nm))
+	levels_panel.level_open_requested.connect(func(nm: String): app._set_mode("map"); app._open_map_by_name(nm))
 	levels_panel.levels_changed.connect(func(d: Dictionary): app._save_levels(d))
 	levels_panel.world_refresh_requested.connect(func(): app._refresh_world())
 
@@ -246,6 +249,9 @@ func show_view(view: String, focus := "") -> void:
 		var key := str(spec[0])
 		if _tabs.has(key):
 			(_tabs[key] as Button).button_pressed = key == view
+	# 顶栏模式切换：清单视图没有对应模式，三个都不按下（清单入口在左列页签）
+	for k in _mode_btns.keys():
+		(_mode_btns[k] as Button).button_pressed = str(k) == view
 	asset_panel.visible = view == "asset"
 	content_editor.root.visible = view == "content"
 	_manifest_scroll.visible = view == "manifest"
@@ -290,9 +296,6 @@ func save_current() -> void:
 		_:
 			save_manifest.call()
 			_set_status("资产清单已保存")
-
-func close() -> void:
-	closed.emit()
 
 func _set_status(msg: String) -> void:
 	if _status != null:

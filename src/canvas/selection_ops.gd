@@ -43,6 +43,11 @@ func _entity_at(pos: Vector2) -> Sprite2D:
 func _box_select(a: Vector2, b: Vector2) -> void:
 	if cvs.map_root == null:
 		return
+	# 框选开关下「单击」也会走到这里：拉出的框比半格还小就按点选处理，
+	# 否则在框选模式里点一下反而把选区清空（点不到格子中心就选不中任何东西）。
+	if (a - b).length() < cvs.tile_px * 0.5:
+		_select_entity_at(b)
+		return
 	cvs.selected_multi.clear()
 	var r := Rect2(a.min(b), (a - b).abs())
 	for e in cvs.entities.get_children():
@@ -70,14 +75,18 @@ func _multi_bounds(targets: Array) -> Rect2:
 			r = r.expand(p)
 	return r
 
+## 框选组的外接框热区外扩量（像素）。框选开关打开时再放宽半格——
+## 框选后最常见的下一步就是拖它。绘制（canvas_draw）也读这里，保证所见即所点。
+func _multi_hot() -> float:
+	return cvs.tile_px * (cvs.K.GROUP_HOT + (0.5 if cvs.select_mode else 0.0))
+
 ## 点是否落在「已有框选集合」的外接框内。
 ## 用于区分「拖动整组」和「重新框选」：落在框内就当作移动整组。
 func _inside_multi_box(pos: Vector2) -> bool:
 	var targets: Array = cvs._valid_multi()
 	if targets.size() < 2:
 		return false
-	var box := _multi_bounds(targets)
-	return box.grow(cvs.tile_px * cvs.K.GROUP_HOT).has_point(pos)
+	return _multi_bounds(targets).grow(_multi_hot()).has_point(pos)
 
 ## —— 实体拖拽移动：按下记录起点，移动只改预览，松手吸附格点并标脏 ——
 func _begin_entity_drag(spr: Sprite2D, pos: Vector2) -> void:

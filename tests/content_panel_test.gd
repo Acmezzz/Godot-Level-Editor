@@ -5,7 +5,6 @@ extends SceneTree
 ## 不依赖真实游戏项目，也不建完整 app。
 
 const ContentPanelScript := preload("res://src/ui/content_panel.gd")
-const ContentDockScript := preload("res://src/ui/content_dock.gd")
 const ContentStore := preload("res://src/content/content_store.gd")
 const ContentTemplates := preload("res://src/content/content_templates.gd")
 const Kit := preload("res://src/ui/ui_kit.gd")
@@ -20,8 +19,6 @@ class TestHost extends Control:
 		pop.add_child(col)
 		return {"pop": pop, "root": col, "body": col}
 	func _open_popup(_pop: PopupPanel) -> void: pass
-	func _mark_def_used(_def_id: String) -> void: pass
-	func _open_content_at(_kind: String, _id: String) -> void: pass
 
 var failures: Array[String] = []
 var project: Dictionary
@@ -49,7 +46,6 @@ func _run() -> void:
 	await _test_component_jump()
 	await _test_event_ref_dropdown()
 	await _test_delete_with_references()
-	await _test_content_dock()
 	panel.queue_free()
 	await process_frame
 	_cleanup()
@@ -224,129 +220,6 @@ func _find_accept_dialog(node: Node) -> AcceptDialog:
 		if found != null:
 			return found
 	return null
-
-## 内容抽屉：实例为主的内容入口。
-## 1) 槽位必须列出对话/互动事件/商店三个组件；
-## 2) 在抽屉里新建的资源要带实体归属 id 并立刻绑定到内容组；
-## 3) 一次性/可重复是内容组里的播放语义，同一份资源共享、每个实例可覆盖。
-func _test_content_dock() -> void:
-	ContentStore.write(project, "defs", "grp.map1.e_7", {
-		"version": 1, "id": "grp.map1.e_7", "kind": "npc", "name": "e_7",
-		"components": {}})
-	var host := TestHost.new()
-	host.manifest = project
-	root.add_child(host)
-	var dock = ContentDockScript.new(host)
-	host.add_child(dock)
-	await process_frame
-
-	dock.open_for("grp.map1.e_7")
-	await process_frame
-	var labels := _all_label_text(dock.body)
-	for slot_label in ["对话", "互动事件", "商店"]:
-		_check(labels.contains(slot_label), "dock lists the %s slot" % slot_label)
-	_check(labels.contains("未配置"), "an empty content group says each slot is unconfigured")
-
-	# 新建：id 必须带内容组归属，且立刻写进 components
-	var before := ContentStore.list_ids(project, "dialogues")
-	await _dock_new_dialogue(dock)
-	var created := _newest_id(project, "dialogues", before)
-	_check(created != "", "creating from the dock writes a dialogue resource")
-	_check(created.begins_with("grp.map1.e_7"), "created id carries the instance ownership prefix")
-	var bound := ContentStore.read(project, "defs", "grp.map1.e_7")
-	_check(_first_id(bound, "dialogue") == created,
-		"the new dialogue is bound to the content group immediately")
-	_check(not ContentStore.read(project, "dialogues", created).is_empty(),
-		"the created dialogue is usable straight away, not an empty shell")
-
-	# 就地编辑：抽屉里改台词要落盘到同一份共享资源
-	dock.commit()
-	var loaded := ContentStore.read(project, "dialogues", created)
-	_check(str(loaded.get("start", "")) == "n1", "in-place editing loads a ready-to-use dialogue")
-
-	# 一次性语义：写到内容组里，不删文件
-	dock._set_item_field("dialogue", 0, "once", true)
-	await process_frame
-	bound = ContentStore.read(project, "defs", "grp.map1.e_7")
-	var comp := _slot_items(bound, "dialogue")
-	_check(comp.size() == 1 and bool((comp[0] as Dictionary).get("once", false)),
-		"once-only playback is recorded on the component")
-	_check(not ContentStore.read(project, "dialogues", created).is_empty(),
-		"a once-only dialogue keeps its file — it is a mode, not a deletion")
-	dock._set_item_field("dialogue", 0, "once", false)
-	await process_frame
-	bound = ContentStore.read(project, "defs", "grp.map1.e_7")
-	comp = _slot_items(bound, "dialogue")
-	_check(not (comp[0] as Dictionary).has("once"), "repeatable dialogue clears the once flag")
-
-	# 多段：同一槽位可挂多份，顺序即优先级
-	var before_multi := ContentStore.list_ids(project, "dialogues")
-	await _dock_new_dialogue(dock)
-	var second := _newest_id(project, "dialogues", before_multi)
-	bound = ContentStore.read(project, "defs", "grp.map1.e_7")
-	comp = _slot_items(bound, "dialogue")
-	_check(comp.size() == 2, "a slot can hold more than one dialogue")
-	_check(str((comp[1] as Dictionary).get("id", "")) == second,
-		"a newly created entry is appended after the existing ones")
-	dock._set_item_field("dialogue", 1, "when", "met_smith")
-	await process_frame
-	bound = ContentStore.read(project, "defs", "grp.map1.e_7")
-	comp = _slot_items(bound, "dialogue")
-	_check(str((comp[1] as Dictionary).get("when", "")) == "met_smith",
-		"a per-entry condition is stored on that entry only")
-	_check(not (comp[0] as Dictionary).has("when"),
-		"setting a condition on one entry does not leak to the others")
-	dock._move_item("dialogue", 1, -1)
-	await process_frame
-	bound = ContentStore.read(project, "defs", "grp.map1.e_7")
-	comp = _slot_items(bound, "dialogue")
-	_check(str((comp[0] as Dictionary).get("id", "")) == second,
-		"moving an entry up changes match priority")
-	dock._remove_item("dialogue", 0)
-	await process_frame
-	bound = ContentStore.read(project, "defs", "grp.map1.e_7")
-	comp = _slot_items(bound, "dialogue")
-	_check(comp.size() == 1 and str((comp[0] as Dictionary).get("id", "")) == created,
-		"removing an entry leaves the others intact")
-
-	# 共享：同一份对话可被另一个内容组引用
-	ContentStore.write(project, "defs", "grp.map1.e_8", {
-		"version": 1, "id": "grp.map1.e_8", "kind": "npc", "name": "e_8", "components": {}})
-	dock.open_for("grp.map1.e_8")
-	await process_frame
-	dock._append_item("dialogue", {"id": created})
-	await process_frame
-	var shared := ContentStore.read(project, "defs", "grp.map1.e_8")
-	_check(_first_id(shared, "dialogue") == created,
-		"a second instance can share the same dialogue resource")
-
-	if is_instance_valid(host):
-		host.queue_free()
-	await process_frame
-
-## 槽位条目（归一化后）：兼容单对象与数组两种写法
-func _slot_items(definition: Dictionary, comp: String) -> Array:
-	var raw = (definition.get("components", {}) as Dictionary).get(comp, [])
-	if raw is Dictionary:
-		return [raw]
-	return raw if raw is Array else []
-
-func _first_id(definition: Dictionary, comp: String) -> String:
-	var items := _slot_items(definition, comp)
-	if items.is_empty():
-		return ""
-	return str((items[0] as Dictionary).get("id", ""))
-
-## 点抽屉里「新建」按钮（槽位行第一个「新建」）
-func _dock_new_dialogue(dock) -> void:
-	dock._new_for("dialogue", "dialogues")
-	await process_frame
-
-func _newest_id(project: Dictionary, kind: String, before: Array) -> String:
-	for res_id in ContentStore.list_ids(project, kind):
-		if not before.has(res_id):
-			return str(res_id)
-	return ""
 
 func _all_label_text(node: Node) -> String:
 	var out := ""

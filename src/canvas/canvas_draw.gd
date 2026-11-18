@@ -62,11 +62,6 @@ func _draw() -> void:
 					Rect2(Vector2(c) * cvs.tile_px, Vector2(tsz, tsz)),
 					Rect2(Vector2(cvs.paint_cell) * cvs.tile_px, Vector2(tsz, tsz)),
 					Color(1, 1, 1, 0.5))
-		if cvs._drag_rect:
-			var a = cvs._cell_of(cvs._drag_start)
-			var r := Rect2(Vector2(mini(a.x, c.x), mini(a.y, c.y)) * cvs.tile_px,
-				Vector2(abs(a.x - c.x) + 1, abs(a.y - c.y) + 1) * cvs.tile_px)
-			cvs.draw_rect(r, Color(1, 1, 0.3, 0.8), false, 2.0)
 	# 碰撞叠加由 CollisionView 节点绘制（图层接口控制显隐），这里不再特例绘制。
 	# 地图边界（meta w×h，关卡的实际范围）
 	var meta: Dictionary = cvs.map_data.get("meta", {})
@@ -145,7 +140,7 @@ func _draw() -> void:
 	# 框内空白处按下就能拖，鼠标悬停在框内时加亮，给出可操作性暗示。
 	var multi = cvs._valid_multi()
 	if multi.size() > 1 and cvs._ent_layer_index() == cvs.active_layer:
-		var mb = cvs._multi_bounds(multi).grow(cvs.tile_px * cvs.K.GROUP_HOT)
+		var mb = cvs._multi_bounds(multi).grow(cvs._multi_hot())
 		var hot = mb.has_point(pos)
 		cvs.draw_rect(mb, Color(1.0, 0.85, 0.3, 0.22 if hot else 0.10), true)
 		cvs.draw_rect(mb, Color(1.0, 0.85, 0.3, 0.9 if hot else 0.5), false, 2.0 if hot else 1.0)

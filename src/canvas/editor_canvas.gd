@@ -24,6 +24,9 @@ var brush_size := 1               # 笔刷边长（格）
 var stamp_scene := ""
 var stamp_thumb: Texture2D
 var show_grid := true
+## 框选开关（左栏「框选」按钮）：打开后任意层普通左键拖动都进入框选；
+## 关闭时保留 Ctrl+拖动作为兼容入口。输入分派见 canvas_input.gd。
+var select_mode := false
 var zoom := 2.0
 var manifest: Dictionary
 var map_data := {}
@@ -105,12 +108,12 @@ func set_layer_hidden(i: int, now_hidden: bool) -> void:
 		node.visible = not now_hidden
 	queue_redraw()
 
-## 图层当前是否可见（未隐藏）。碰撞层是唯一默认隐藏的图层：地形铺满图时
-## 几乎每格都有碰撞，默认亮着会把地形整个染成红色；其它图层默认可见。
+## 图层当前是否可见（未隐藏）。所有图层默认可见——包括碰撞层：用户明确要求
+## 开图就能看到碰撞（整图染红是可接受的代价）。显隐只由 layer_hidden 记录决定。
 func is_layer_visible(i: int) -> bool:
 	if layer_hidden.has(i):
 		return not bool(layer_hidden[i])
-	return not _is_grid_layer(i)
+	return true
 
 func set_layer_locked(i: int, locked: bool) -> void:
 	layer_locked[i] = locked
@@ -152,7 +155,6 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	selected_multi.clear()
 	_drag_paint = false
 	_drag_box = false
-	_drag_rect = false
 	_drag_spawn = false
 	# 输入/区域状态一并复位：上个图的粘贴预览、区域选区、右键擦除、拖拽中状态
 	# 不能带进这张图（BUG-06）；拖拽标志不重置会让 undo 后松手推出冗余快照（P-13）。
@@ -635,7 +637,6 @@ func set_collision_cell(c: Vector2i, on: bool, type := "solid", shape := "") -> 
 		collision.erase_cell(c)
 		_collision_meta.erase(c)
 
-# —— 矩形填充（拖拽结束调用） ——
 # —— 修改标记 ——
 func _mark() -> void:
 	modified_flag = true
@@ -668,10 +669,9 @@ var redo_stack := []
 # —— 输入状态 ——
 var _panning := false
 var _drag_paint := false
-## v2：拖动语义由层 + 修饰键决定，三种拖动各自一位（互斥）——
-## 连续涂 / Shift 矩形填充 / Ctrl 框选。原来由 cvs.tool 区分，工具删掉后改由这里承载。
+## v2：拖动语义由层 + 修饰键决定，两种拖动各自一位（互斥）——
+## 连续涂 / 框选。原来由 cvs.tool 区分，工具删掉后改由这里承载。
 var _drag_box := false
-var _drag_rect := false
 var _drag_spawn := false
 var _rmb_erase := false
 @warning_ignore("unused_private_class_variable")
@@ -710,6 +710,10 @@ func _multi_bounds(targets: Array) -> Rect2:
 
 func _inside_multi_box(pos: Vector2) -> bool:
 	return _selection_ops_ctrl._inside_multi_box(pos)
+
+## 框选组热区外扩量（像素）：绘制与命中共用，保证所见即所点
+func _multi_hot() -> float:
+	return _selection_ops_ctrl._multi_hot()
 
 func _begin_entity_drag(spr: Sprite2D, pos: Vector2) -> void:
 	_selection_ops_ctrl._begin_entity_drag(spr, pos)
@@ -812,6 +816,3 @@ func _stamp(c: Vector2i) -> void:
 
 func _has_terrain_at(c: Vector2i) -> bool:
 	return _tool_ops_ctrl._has_terrain_at(c)
-
-func _rect_fill(a: Vector2i, b: Vector2i) -> void:
-	_tool_ops_ctrl._rect_fill(a, b)

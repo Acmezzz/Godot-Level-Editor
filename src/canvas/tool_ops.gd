@@ -3,7 +3,7 @@ extends RefCounted
 ##
 ## v2 §2.2：没有工具概念。`_apply_tool` 现在是「按当前层的语义执行一次左键」：
 ##   实体层 = 放置当前资产；其余层 = 涂刷（碰撞层走 set_collision_cell）。
-## 擦除（右键）与矩形填充（Shift+拖动）同样只看层。
+## 擦除（右键）同样只看层。矩形填充已按用户要求删除。
 
 var cvs   # 宿主引用
 
@@ -110,20 +110,3 @@ func _stamp(c: Vector2i) -> void:
 
 func _has_terrain_at(c: Vector2i) -> bool:
 	return cvs.terrain.get_cell_source_id(c) != -1
-
-
-func _rect_fill(a: Vector2i, b: Vector2i) -> void:
-	if cvs.is_layer_locked(cvs.active_layer):
-		cvs._hint("当前图层已锁定：解锁后再填充")
-		return
-	# 撤销快照在真正填充前推（BUG-12：原来 press 即推，点击不动也产生空撤销步）
-	cvs._push_undo()
-	var layer = cvs._layer_node(cvs.active_layer)
-	var grid = cvs._is_grid_layer(cvs.active_layer)
-	for y in range(mini(a.y, b.y), maxi(a.y, b.y) + 1):
-		for x in range(mini(a.x, b.x), maxi(a.x, b.x) + 1):
-			if grid:
-				cvs.set_collision_cell(Vector2i(x, y), true, cvs.collision_type, cvs.collision_shape)
-			else:
-				layer.set_cell(Vector2i(x, y), cvs.paint_atlas, cvs.paint_cell)
-	cvs._mark()

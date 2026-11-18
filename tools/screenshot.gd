@@ -164,7 +164,7 @@ func _run() -> void:
 				app.canvas._update_cam()
 				app.canvas.queue_redraw()
 		"coll_layer":
-			# 切到碰撞层：碰撞可视化应作为普通图层显示
+			# 切到碰撞层：碰撞可视化应作为普通图层显示，左栏不再有瓦片资产
 			var ci := -1
 			var L: Array = app.manifest.get("layers", [])
 			for k in L.size():
@@ -173,20 +173,16 @@ func _run() -> void:
 			app._on_layer(ci)
 			await process_frame
 			await process_frame
-			print("MEASURE coll_page=%s tile_list=%s ents=%s" % [
-				str(app.coll_page != null and app.coll_page.visible),
+			print("MEASURE coll_visible=%s tile_list=%s ents=%s" % [
+				str(app.canvas.is_layer_visible(ci)),
 				str(app.tile_list.visible), str(app.ent_list.visible)])
 		"decor_layer":
-			# 图一修复：装饰层左栏不再显示地形类别行（直接平铺图集条目）
+			# 装饰层没有独立资产清单：左栏应为空状态，不显示地形瓦片
 			app._on_layer(1)
 			await process_frame
 			await process_frame
 			var tl: ItemList = app.tile_list
-			var cat_rows := 0
-			for i in tl.item_count:
-				if str(tl.get_item_text(i)).begins_with("→") or str(tl.get_item_text(i)).begins_with("←"):
-					cat_rows += 1
-			print("MEASURE decor_cat_rows=%d items=%d" % [cat_rows, tl.item_count])
+			print("MEASURE decor_items=%d" % tl.item_count)
 		"picker":
 			# 跨图选点：完整地图 + 缩放 + 当前目标居中
 			var first_exit = null
@@ -220,9 +216,6 @@ func _run() -> void:
 				app.canvas.selected_multi = pick2.slice(0, 2)
 				app.canvas.selected_entity = pick2[0]
 				app._on_entity_selected(pick2[0])
-		"dock", "dock_wide":
-			# v2：内容抽屉已删——这个入口现在落在内容编辑器面板上
-			app._set_content_dock(true)
 		"help":
 			# R4 快捷键速查（? 键）
 			app._open_shortcut_help()
@@ -237,80 +230,6 @@ func _run() -> void:
 				app.canvas.selected_multi = pickx.slice(0, 3)
 				app.canvas.selected_entity = pickx[0]
 				app._on_entity_selected(pickx[0])
-		"dock_commit":
-			# v2：抽屉已删，此探针改去内容编辑器（批次 C 会重写它）
-			app._set_content_dock(true)
-		"bgdlg":
-			app._open_bg_dialog()
-		"manifest":
-			app._set_mode("manifest")
-		"manifest_over":
-			app._set_mode("manifest")
-			var mp = app.manifest_panel
-			for i in 40:
-				mp._add_item()
-			await process_frame
-			print("MEASURE manifest_min_h=%d win_h=%d" % [int(mp.get_combined_minimum_size().y), int(root.size.y)])
-		"content":
-			app._set_mode("content")
-		"content_event":
-			app._set_mode("content")
-			await process_frame
-			app.content_panel.show_kind("events")
-		"content_shop":
-			app._set_mode("content")
-			await process_frame
-			app.content_panel.show_kind("shops")
-		"content_def":
-			app._set_mode("content")
-			await process_frame
-			app.content_panel.show_kind("defs")
-		"rename_size":
-			# P0-4 实证：先开尺寸弹窗（走两段式定尺寸），关掉，再开改名弹窗量尺寸
-			app._open_size_dialog()
-			for i in 6:
-				await process_frame
-			var spop: PopupPanel = null
-			for c in app.get_children():
-				if c is PopupPanel:
-					spop = c
-			if spop != null:
-				print("MEASURE size_popup=%dx%d" % [int(spop.size.x), int(spop.size.y)])
-				spop.hide()
-			for i in 4:
-				await process_frame
-			app.side_panel._ask_rename("probe_map")
-			for i in 6:
-				await process_frame
-			var rpop: PopupPanel = null
-			for c in app.side_panel.get_children():
-				if c is PopupPanel:
-					rpop = c
-			if rpop != null:
-				print("MEASURE rename_popup=%dx%d content_min=%s" % [int(rpop.size.x), int(rpop.size.y), str(rpop.get_contents_minimum_size().ceil())])
-		"tab_nav":
-			# P0-5 实证：焦点在按钮上时注入 Tab，看快捷键通道是否吞掉导航。
-			# v2：剪贴板按钮已删，改用面板入口做同样的探针。
-			var probe_btn: Button = app._panel_btns.get("content", null)
-			if probe_btn != null and not probe_btn.disabled:
-				probe_btn.grab_focus()
-				await process_frame
-				print("MEASURE focus_before=%s ents=%d" % [str(probe_btn.has_focus()), app.canvas.entities.get_child_count()])
-				var ev2 := InputEventKey.new()
-				ev2.physical_keycode = KEY_TAB
-				ev2.keycode = KEY_TAB
-				ev2.pressed = true
-				Input.parse_input_event(ev2)
-				for i in 4:
-					await process_frame
-				print("MEASURE sel_after=%s focus_moved=%s" % [
-					str(app.canvas.selected_entity != null), str(not probe_btn.has_focus())])
-		"measure":
-			# P0-1 实证：_bg_btn 从未加入布局 → 无父节点
-			print("MEASURE bg_btn_parent_null=%s" % str(app._layout_ctrl._bg_btn == null or app._layout_ctrl._bg_btn.get_parent() == null))
-		_:
-			pass
-
 	# 等几帧让布局与绘制稳定
 	for i in 6:
 		await process_frame

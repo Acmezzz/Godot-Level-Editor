@@ -9,8 +9,8 @@ var _meta_cursor: Label
 var _dirty_badge: PanelContainer
 # 画布视图开关（网格 / 碰撞叠加 / 背景）
 var _grid_btn: Button
-var _collision_btn: Button
 var _bg_btn: Button
+var _select_btn: Button
 ## 层下拉（v2：左栏唯一输入决定者）。按钮显示当前层名，弹层里每层一行 + 👁/🔒。
 var _layer_btn: Button
 var _layer_menu: PopupPanel
@@ -122,23 +122,18 @@ func _build_global_bar() -> PanelContainer:
 		app.UiThemeScript.TEXT, app.UiThemeScript.FS_MD))
 	bar.add_child(app.UiKitScript.vdivider())
 
-	# —— 地图身份 + 地图级动作：一个控件打包两件事 ——
-	# 地图名框仍要可编辑（保存时写回），所以它是「下拉按钮 + 名字框」的组合：
-	# 按钮点开菜单，名字框就地改名。三键文件动作全部收进菜单。
-	app.map_name_edit = LineEdit.new()
-	app.map_name_edit.placeholder_text = "地图名"
-	app.map_name_edit.custom_minimum_size = Vector2(120, 0)
-	app.map_name_edit.tooltip_text = "地图名（保存时写回）"
-	bar.add_child(app.map_name_edit)
-	app._map_btn = app.UiKitScript.button("▾", Callable(), "ghost")
+	# —— 地图身份 + 地图级动作：一个按钮打包两件事 ——
+	# 名字不在顶栏就地编辑（那是垃圾交互），新建/打开时输入；按钮显示当前地图名，点开菜单。
+	app._map_btn = app.UiKitScript.button("地图 ▾", Callable(), "plain")
 	app._map_btn.tooltip_text = "地图菜单：新建 / 打开 / 保存 · 导出 / 尺寸 / 背景组"
-	app._map_btn.custom_minimum_size = Vector2(26, 0)
+	app._map_btn.custom_minimum_size = Vector2(120, 0)
 	bar.add_child(app._map_btn)
 	var map_menu := PopupMenu.new()
 	map_menu.add_item("新建地图", 1)
 	map_menu.add_item("打开地图…", 2)
 	map_menu.add_item("保存", 3)
 	map_menu.add_separator()
+	map_menu.add_item("重命名地图…", 10)
 	map_menu.add_item("导出当前地图", 4)
 	map_menu.add_item("调整地图尺寸", 5)
 	map_menu.add_item("选择背景图组", 6)
@@ -199,6 +194,9 @@ func _on_map_menu_id(id: int) -> void:
 				ce.open_validate_popup(true)
 			else:
 				app._run_validate(true)
+		10:
+			# 顶栏名字输入框已删：改名只能从菜单进弹窗
+			app._on_rename()
 
 ## 关卡清单与世界拓扑（v2 §2.4）：从项目页清单视图迁入地图菜单。
 ## 弹窗里复用 levels_panel.gd——面板不做 IO，保存/开图仍走原有信号链。
@@ -291,13 +289,10 @@ func _popup_below(pm: PopupMenu, anchor: Control) -> void:
 
 ## 左侧资产栏：两组调色板各自撑半高，中间用细线分段
 
-var _palette_col: PanelContainer
-
 func _build_palette_column() -> PanelContainer:
 	var col := PanelContainer.new()
 	# v2 §6：左栏 200px（原 252）。它是「选一次、用很久」的低频操作，宽度让步给画布。
 	col.custom_minimum_size = Vector2(200, 0)
-	_palette_col = col
 	var sb = app.UiThemeScript.box(app.UiThemeScript.BG_PANEL, app.UiThemeScript.BORDER, 0, 10, 10)
 	sb.set_border_width_all(0)
 	sb.border_width_right = 1
@@ -357,52 +352,17 @@ func _build_palette_column() -> PanelContainer:
 	holder.add_child(app.ent_list)
 	full.call(app.ent_list)
 
-	# 碰撞层专属页（v2 §2.2 层决定行为）：grid 层没有资产可涂，涂的是隐形碰撞块，
-	# 类型/形状在左栏就地选，自动生成碰撞也在这里——旧右栏删掉后它一度没有入口。
-	var coll: VBoxContainer = app.UiKitScript.vbox(8)
-	coll.visible = false
-	holder.add_child(coll)
-	full.call(coll)
-	app.coll_page = coll
-	var hint: Label = app.UiKitScript.hint_label("碰撞层没有瓦片资产：左键拖涂，右键擦除。\n自动生成会按地形轮廓整层铺块。", 176)
-	coll.add_child(hint)
-	var trow: HBoxContainer = app.UiKitScript.hbox(6)
-	coll.add_child(app.UiKitScript.text_label("类型", app.UiThemeScript.TEXT_MUTE, app.UiThemeScript.FS_SMALL))
-	var topt := OptionButton.new()
-	for t in [["solid", "实心"], ["ladder", "梯子"], ["hazard", "危险"], ["one_way", "单向平台"]]:
-		topt.add_item(str(t[1]))
-		topt.set_item_metadata(topt.item_count - 1, str(t[0]))
-	topt.item_selected.connect(func(idx: int):
-		app.canvas.collision_type = str(topt.get_item_metadata(idx)))
-	topt.select(0)
-	topt.tooltip_text = "涂上去的碰撞类型；梯子/危险由游戏侧按组消费"
-	trow.add_child(topt)
-	coll.add_child(trow)
-	var srow: HBoxContainer = app.UiKitScript.hbox(6)
-	coll.add_child(app.UiKitScript.text_label("形状", app.UiThemeScript.TEXT_MUTE, app.UiThemeScript.FS_SMALL))
-	var sopt := OptionButton.new()
-	for sh in [["", "整格"], ["r45", "斜坡 ╱"], ["l45", "斜坡 ╲"], ["one_way", "上边缘单向"]]:
-		sopt.add_item(str(sh[1]))
-		sopt.set_item_metadata(sopt.item_count - 1, str(sh[0]))
-	sopt.item_selected.connect(func(idx: int):
-		app.canvas.collision_shape = str(sopt.get_item_metadata(idx)))
-	sopt.select(0)
-	sopt.tooltip_text = "整格 / 斜坡 / 上边缘单向；斜坡画三角，单向只挡从上方进入"
-	srow.add_child(sopt)
-	coll.add_child(srow)
-	var gen: Button = app.UiKitScript.button("自动生成碰撞…", func(): app._open_collision_gen(), "plain")
-	gen.tooltip_text = "按地形轮廓整层生成（全部/仅边缘，可替换或叠加）"
-	gen.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	coll.add_child(gen)
-	var clear: Button = app.UiKitScript.button("清空本层碰撞", func():
-		app.canvas._push_undo()
-		for c2 in app.canvas.collision.get_used_cells():
-			app.canvas.collision.erase_cell(c2)
-		app.canvas._collision_meta.clear()
-		app.canvas._mark(), "ghost")
-	clear.tooltip_text = "擦掉本层全部碰撞块（Ctrl+Z 可撤销）"
-	clear.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	coll.add_child(clear)
+	# 碰撞层：左栏没有可选资产（碰撞块是画上去的，不是挑出来的）。
+	# 留一条说明，免得空白让人以为界面坏了。
+	var grid_hint: VBoxContainer = app.UiKitScript.vbox(8)
+	grid_hint.visible = false
+	var gh: Control = app.UiKitScript.empty_state("▨", "碰撞层直接画", "左键拖动涂碰撞块，右键擦除。碰撞就是这一层的内容。")
+	gh.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	grid_hint.add_child(gh)
+	gh.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	holder.add_child(grid_hint)
+	full.call(grid_hint)
+	app.grid_hint = grid_hint
 
 	# 属性面板迁到右栏检查器（R2）：左栏只管「给画布喂什么」（图层 + 调色板），
 	# 三个控制器仍在这里建，供 app 的委托调用不变。
@@ -419,15 +379,14 @@ func _build_palette_column() -> PanelContainer:
 	app.props_scroll.add_child(app.props_panel)
 	return col
 
-## 资产列表跟随层类型（v2 §2.2）：地形/装饰 → 瓦片，碰撞（grid）→ 碰撞控件，实体层 → 实体。
-## 这是「层下拉接管一切」的落点——没有第二个切换入口，也就不可能与按钮状态打架。
+## 资产列表跟随层类型（v2 §2.2）：地形/装饰 → 瓦片，碰撞（grid）无资产 → 空，实体层 → 实体。
 func _set_palette_page(which: String) -> void:
 	if app.tile_list:
 		app.tile_list.visible = which == "tiles"
 	if app.ent_list:
 		app.ent_list.visible = which == "entities"
-	if app.coll_page:
-		app.coll_page.visible = which == "collision"
+	if app.grid_hint:
+		app.grid_hint.visible = which == ""
 
 ## 图层类型小工具（editor_layout 自用，避免依赖 app 的私有方法）
 func _layer_type_of(i: int) -> String:
@@ -453,6 +412,10 @@ func _build_status_bar() -> PanelContainer:
 	app.status.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	h.add_child(app.status)
 
+	# 框选开关（不用快捷键）：打开后左键拖动就是框选，再点关闭回到涂刷/放置
+	_select_btn = app.UiKitScript.button("框选", app._toggle_select_mode, "toggle")
+	_select_btn.tooltip_text = "打开后左键拖动框选；关闭则正常涂刷 / 放置"
+	h.add_child(_select_btn)
 	# 视图开关：常驻在状态栏右侧，看一眼就知道网格/碰撞显示开着没
 	_grid_btn = app.UiKitScript.button("网格", app._toggle_grid, "toggle")
 	_grid_btn.tooltip_text = "显示 / 隐藏网格"
@@ -526,6 +489,8 @@ func _refresh_view_toggles() -> void:
 		_grid_btn.button_pressed = app.canvas.show_grid
 	if _bg_btn:
 		_bg_btn.button_pressed = app.canvas != null and app.canvas.bg_visible
+	if _select_btn:
+		_select_btn.button_pressed = app.canvas != null and app.canvas.select_mode
 	_refresh_layer_panel()
 	_refresh_sel_bar()
 
@@ -668,14 +633,6 @@ func _build_hidden_side_panel(parent: HBoxContainer) -> void:
 func _build_theme() -> void:
 	app.theme = app.UiThemeScript.build()
 
-
-func _btn(t: String, cb: Callable) -> Button:
-	return app.UiKitScript.button(t, cb, "plain")
-
-
-func _label(t: String) -> Label:
-	return app.UiKitScript.text_label(t, app.UiThemeScript.TEXT_DIM, app.UiThemeScript.FS_BASE)
-
 ## 原地切换徽章状态（继承 → 覆盖）
 
 func _set_badge(p: PanelContainer, text: String, color: Color) -> void:
@@ -726,6 +683,7 @@ func _open_shortcut_help() -> void:
 		["撤销", "Ctrl+Z 撤销 · Ctrl+Y / Ctrl+Shift+Z 重做"],
 		["剪贴板", "Ctrl+C 复制 · Ctrl+V 粘贴 · Ctrl+X 剪切 · Ctrl+D 原位复制"],
 		["编辑", "Del 删除选中 · F 水平翻转 · 方向键 微调 1 格（Shift = 4 格）"],
+		["框选", "点状态栏「框选」开关后左键拖动框选；选中后可直接整组拖动"],
 		["文件", "Ctrl+S 保存 · Ctrl+N 新建 · Ctrl+O 打开"],
 		["返回", "Esc 回到关卡编辑器 / 取消区域粘贴预览"],
 		["视图", "滚轮 缩放 · 中键/空格拖拽 平移 · Home 适应窗口 · = / - 缩放"],
@@ -739,8 +697,8 @@ func _open_shortcut_help() -> void:
 		line.add_child(app.UiKitScript.wrap_label(str(r[1]), app.POPUP_BODY_W - 64))
 		shell.body.add_child(line)
 	shell.body.add_child(app.UiKitScript.hint_label(
-		"左键放置、右键擦除；笔刷大小与碰撞类型在对应层上自动生效，没有工具要选。" +
-		"输入框内（地图名、字段名、台词）不触发画布快捷键。",
+		"左键放置/涂刷、右键擦除；层下拉决定当前画笔，没有工具要选。" +
+		"新建/打开地图时填名字，不再在顶栏就地改名。",
 		app.POPUP_BODY_W))
 	var close_btn: Button = app.UiKitScript.button("关闭", func(): pop.hide(), "primary")
 	close_btn.size_flags_horizontal = Control.SIZE_SHRINK_END
@@ -750,17 +708,13 @@ func _open_shortcut_help() -> void:
 
 func _build_project_view() -> void:
 	app.project_shell = app.ProjectShellScript.new(app)
-	app.project_shell.closed.connect(func(): app._set_mode("map"))
 	app.project_shell.set_anchors_preset(Control.PRESET_FULL_RECT)
 	app.project_shell.visible = false
 	app.add_child(app.project_shell)
 	app.project_shell.build()
 	# 别名：三个视图面板的既有调用点（app.asset_panel / content_panel / manifest_panel）保持不变
 	app.asset_panel = app.project_shell.asset_panel
-	app.asset_view = app.asset_panel
 	app.content_panel = app.project_shell.content_panel
-	app.content_view = app.content_panel
 	app.manifest_panel = app.project_shell.manifest_panel
-	app.manifest_view = app.manifest_panel
 
 ## 清单写回：剥内部键（_开头 / tiles[].atlas_abs），写前 JSON 校验
