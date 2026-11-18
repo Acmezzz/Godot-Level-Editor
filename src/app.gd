@@ -635,8 +635,10 @@ func _duplicate_map_by_name(old_name: String, new_name: String) -> void:
 func _scene_name(sid: String) -> String:
 	return _side_actions_ctrl._scene_name(sid)
 
+## 协程透传：内部有未保存确认弹窗（await）。调用方必须也 await，
+## 否则弹窗一弹出就返回，新图还没加载完（顶栏切图刷新曾踩过这个坑）。
 func _open_map_by_name(map_name: String) -> void:
-	_side_actions_ctrl._open_map_by_name(map_name)
+	await _side_actions_ctrl._open_map_by_name(map_name)
 
 func _delete_entities_by_id(ids: Array) -> void:
 	_side_actions_ctrl._delete_entities_by_id(ids)
