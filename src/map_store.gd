@@ -237,15 +237,6 @@ static func find_entity(data: Dictionary, ent_id: String) -> Dictionary:
 			return ent
 	return {}
 
-## 下一个可用实体编号（e_N）；扫描已有 id 而不是依赖顺序
-static func next_entity_id(data: Dictionary) -> String:
-	var mx := 0
-	for ent in data.get("entities", []):
-		var eid := str(ent.get("id", "")) if ent is Dictionary else ""
-		if eid.begins_with("e_"):
-			mx = maxi(mx, int(eid.substr(2)))
-	return "e_%d" % (mx + 1)
-
 ## 已有地图名列表（不含扩展名，排序）
 static func list_maps(m: Dictionary) -> Array:
 	var out := []
@@ -314,22 +305,3 @@ static func read_all(m: Dictionary, bad_out: Array = []) -> Dictionary:
 			continue
 		out[name] = data
 	return out
-
-## 解绑一次跨图出口（纯数据操作，不写盘）；返回是否改动。
-## 只在对方确实指回来时清理，避免误伤已被重新配对的数据。
-static func clear_exit_pair(data: Dictionary, exit_id: String, peer_map: String, peer_id: String, m: Dictionary = {}) -> bool:
-	if data.is_empty() or exit_id == "":
-		return false
-	for ent in data.get("entities", []):
-		if not (ent is Dictionary):
-			continue
-		if not ManifestScript.has_role(m, str(ent.get("scene", "")), "exit") or str(ent.get("id", "")) != exit_id:
-			continue
-		var props: Dictionary = ent.get("props", {})
-		if str(props.get("target_map", "")) == peer_map and str(props.get("target_point", "")) == peer_id:
-			props.erase("target_map")
-			props.erase("target_point")
-			ent["props"] = props
-			return true
-		return false
-	return false

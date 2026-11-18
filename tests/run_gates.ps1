@@ -6,8 +6,6 @@
 
 $ErrorActionPreference = 'Stop'
 $failures = [System.Collections.Generic.List[string]]::new()
-# portal_mode_regression_test 以环境变量定位游戏工程——运行器自己补上，免得外部忘设
-$env:BIRD_PROJECT = $BirdProject
 
 function Invoke-GodotGate([string]$Project, [string[]]$GateArgs, [string]$Label) {
     Write-Host "=== $Label ==="
@@ -34,7 +32,7 @@ function Invoke-GodotGate([string]$Project, [string[]]$GateArgs, [string]$Label)
 
 $editorGates = @('parse_all', 'regress', 'data_layer_test', 'content_model_test',
                  'def_regression_test', 'entity_copy_regression_test',
-                 'props_undo_regression_test', 'shortcut_test', 'portal_mode_regression_test')
+                 'props_undo_regression_test', 'shortcut_test')
 foreach ($gate in $editorGates) {
     Invoke-GodotGate $EditorProject @('--script', "res://tests/$gate.gd") "editor/$gate"
 }

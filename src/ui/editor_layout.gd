@@ -292,9 +292,8 @@ func _build_palette_column() -> PanelContainer:
 	app._coll_shape_opt = shape_opt
 
 	# 左栏只管「给画布喂什么」（图层 + 调色板）；
-	# 碰撞生成 / 跨图选点器 / 地图文件 / 状态控制器仍在这里建，供 app 的委托调用不变。
+	# 碰撞生成 / 地图文件 / 状态控制器仍在这里建，供 app 的委托调用不变。
 	app._props_panel_ctrl = preload("res://src/ui/props_panel.gd").new(app)
-	app._picker_ctrl = preload("res://src/ui/cross_map_picker.gd").new(app)
 	app._map_file_ctrl = preload("res://src/ui/map_file.gd").new(app)
 	app._editor_state_ctrl = preload("res://src/core/editor_state.gd").new(app)
 	return col

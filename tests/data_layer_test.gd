@@ -1,14 +1,13 @@
 extends SceneTree
 
-## 数据层合并回归：原 crossmap_test / t_coverage / cross_map_semantics_regression /
-## map_data_validation / map_transaction / manifest_contract 六个脚本合并为一个。
+## 数据层合并回归：原 t_coverage / map_data_validation / map_transaction /
+## manifest_contract 等脚本合并为一个。
 ## 纯数据路径：临时目录造图，不建 UI；BIRD_PROJECT 缺省时跳过真实项目断言。
 
 const Store := preload("res://src/map_store.gd")
 const Validator := preload("res://src/map_data_validation.gd")
 const Manifest := preload("res://src/manifest.gd")
 const Export := preload("res://src/map_export.gd")
-const CrossMap := preload("res://src/cross_map.gd")
 const Playtest := preload("res://src/playtest.gd")
 
 var failures: Array[String] = []
@@ -23,7 +22,6 @@ func _run() -> void:
 	_test_store_basics()
 	_test_names_and_paths()
 	_test_command_quoting()
-	_test_plan_pick()
 	_test_export()
 	_test_playtest_guard()
 	_test_entity_editor_size()
@@ -213,23 +211,6 @@ func _test_store_basics() -> void:
 	Store.read_all(empty, bad2)
 	_check(bad2.is_empty(), "read_all on a missing directory reports nothing")
 
-	_check(Store.next_entity_id({"entities": [{"id": "e_1"}, {"id": "e_3"}]}) == "e_4",
-		"next_entity_id fills the first gap")
-	_check(Store.next_entity_id({}) == "e_1", "next_entity_id starts at e_1 when empty")
-	_check(Store.next_entity_id({"entities": ["junk", {"scene": "x"}, {"id": "e_2"}]}) == "e_3",
-		"next_entity_id tolerates garbage entries")
-
-	var d := {"entities": [{"scene": "exit", "id": "x1",
-		"props": {"target_map": "m2", "target_point": "p1"}}]}
-	_check(Store.clear_exit_pair(d, "x1", "m2", "p1"), "clear_exit_pair clears a matching pair")
-	_check((d.entities[0].props as Dictionary).is_empty(), "cleared exit leaves props empty")
-	var d2 := {"entities": [{"scene": "exit", "id": "x1",
-		"props": {"target_map": "m3", "target_point": "p9"}}]}
-	_check(not Store.clear_exit_pair(d2, "x1", "m2", "p1"), "clear_exit_pair leaves a mismatched exit")
-	var d3 := {"entities": [{"scene": "portal", "id": "x1",
-		"props": {"target_map": "m2", "target_point": "p1"}}]}
-	_check(not Store.clear_exit_pair(d3, "x1", "m2", "p1"), "clear_exit_pair leaves non-exit entities")
-	_check(not Store.clear_exit_pair({}, "x1", "m2", "p1"), "clear_exit_pair tolerates empty data")
 	_remove_project(m)
 
 ## 地图名校验与路径穿越拒绝；命令变量替换不会重复加引号。
@@ -252,71 +233,6 @@ func _test_command_quoting() -> void:
 		"godotExe": "%projectpath%/tools/godot.exe"}
 	var cmd := Manifest.resolved_play_command(m, "D:/proj/maps/a.json")
 	_check(cmd.begins_with("\"D:/proj/tools/godot.exe\""), "godotExe overrides the first command token")
-## 落点选择计划：拒绝分支、新建落点、复用落点、出口配对、三种 unbind 计划。
-func _test_plan_pick() -> void:
-	var m := _temp_project("planpick")
-	Store.write(m, "target", _map([
-		{"scene": "exit", "id": "e_1", "x": 2, "y": 2,
-			"props": {"target_map": "far", "target_point": "e_9"}},
-		_point("sp_1"),
-	], "target"))
-	Store.write(m, "own", _map([{"scene": "exit", "id": "e_2", "x": 1, "y": 1, "props": {}}], "own"))
-
-	_check(not CrossMap.plan_pick(m, "", "own", "e_2", "exit", "", "", Vector2i.ZERO).ok,
-		"plan_pick rejects an empty target map")
-	_check(not CrossMap.plan_pick(m, "own", "own", "e_2", "exit", "", "", Vector2i.ZERO).ok,
-		"plan_pick rejects linking a map to itself")
-	_check(not CrossMap.plan_pick(m, "target", "own", "e_2", "exit", "zz", "crawler", Vector2i.ZERO).ok,
-		"plan_pick rejects a non-reusable scene as target")
-	_check(not CrossMap.plan_pick(m, "target", "own", "e_2", "portal", "e_1", "exit", Vector2i.ZERO).ok,
-		"plan_pick rejects pairing a portal with an exit")
-	_check(not CrossMap.plan_pick(m, "ghost", "own", "e_2", "exit", "", "", Vector2i.ZERO).ok,
-		"plan_pick rejects a missing target map")
-
-	var created := CrossMap.plan_pick(m, "target", "own", "e_2", "exit", "", "", Vector2i(7, 7))
-	var new_ok: bool = created.ok and str(created.acted) == "new" and str(created.id).begins_with("e_")
-	if new_ok:
-		for ent in created.data.get("entities", []):
-			if str(ent.get("id", "")) == str(created.id):
-				new_ok = str(ent.get("scene", "")) == "spawn_point" and int(ent.get("x", -1)) == 7
-	_check(new_ok, "plan_pick plans a new spawn point at the requested cell")
-
-	var reused := CrossMap.plan_pick(m, "target", "own", "e_2", "exit", "sp_1", "spawn_point", Vector2i.ZERO)
-	_check(reused.ok and str(reused.acted) == "reuse", "plan_pick reuses an existing spawn point")
-
-	var paired := CrossMap.plan_pick(m, "target", "own", "e_2", "exit", "e_1", "exit", Vector2i.ZERO)
-	var pair_ok: bool = paired.ok and str(paired.acted) == "pair"
-	if pair_ok:
-		var peer = Store.find_entity(paired.data, "e_1")
-		pair_ok = str(peer.get("props", {}).get("target_map", "")) == "own" \
-			and str(peer.get("props", {}).get("target_point", "")) == "e_2"
-		pair_ok = pair_ok and (paired.unbind as Array).size() == 1 \
-			and str((paired.unbind as Array)[0][0]) == "far"
-	_check(pair_ok, "plan_pick rewrites the peer exit and schedules the stale unbind")
-
-	# 旧对端在本地图：只进 unbind_local，由调用方清内存，不写盘
-	Store.write(m, "target", _map([
-		{"scene": "exit", "id": "e_1", "x": 2, "y": 2,
-			"props": {"target_map": "own", "target_point": "e_2"}},
-	], "target"))
-	var local := CrossMap.plan_pick(m, "target", "own", "e_3", "exit", "e_1", "exit", Vector2i.ZERO)
-	_check(local.ok and (local.unbind_local as Array).has("e_2"),
-		"plan_pick schedules a local unbind for a same-map stale peer")
-
-	# 旧对端在目标图内部：要写盘的 data 里旧出口 props 必须被清掉
-	Store.write(m, "target", _map([
-		{"scene": "exit", "id": "e_1", "x": 2, "y": 2,
-			"props": {"target_map": "target", "target_point": "e_5"}},
-		{"scene": "exit", "id": "e_5", "x": 4, "y": 4,
-			"props": {"target_map": "target", "target_point": "e_1"}},
-	], "target"))
-	var in_target := CrossMap.plan_pick(m, "target", "own", "e_3", "exit", "e_1", "exit", Vector2i.ZERO)
-	var cleared := false
-	if in_target.ok:
-		var stale = Store.find_entity(in_target.data, "e_5")
-		cleared = not stale.is_empty() and str(stale.get("props", {}).get("target_map", "")) == ""
-	_check(cleared, "plan_pick clears the stale peer inside the destination map")
-	_remove_project(m)
 
 ## 预览图与统计：尺寸、实体计数、越界实体不崩溃。
 func _test_export() -> void:
@@ -384,13 +300,6 @@ func _test_entity_editor_size() -> void:
 func _marker_map(map_name: String, marker: String) -> Dictionary:
 	return {"meta": {"name": map_name, "w": 8, "h": 6, "marker": marker},
 		"spawn": [1, 1], "terrain": [], "decor": [], "collision": [], "entities": []}
-
-func _exit(ent_id: String, target_map: String, target_point: String) -> Dictionary:
-	return {"scene": "exit", "id": ent_id, "x": 1, "y": 1,
-		"props": {"target_map": target_map, "target_point": target_point}}
-
-func _point(ent_id: String) -> Dictionary:
-	return {"scene": "spawn_point", "id": ent_id, "x": 2, "y": 2, "props": {}}
 
 func _read_bytes(path: String) -> PackedByteArray:
 	var file := FileAccess.open(path, FileAccess.READ)

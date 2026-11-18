@@ -22,7 +22,6 @@ var _coll_shape_opt: OptionButton
 var status: Label
 var last_tiles_layer := 0       # 最近使用的瓦片层（选瓦片时切回它）
 var _props_panel_ctrl   # ui/props_panel.gd 控制器（只剩「从地形生成碰撞」弹窗）
-var _picker_ctrl   # ui/cross_map_picker.gd 控制器
 var _map_file_ctrl   # ui/map_file.gd 控制器
 var _editor_state_ctrl   # core/editor_state.gd 控制器（审查 8.2-4 状态流）
 var _layout_ctrl   # ui/editor_layout.gd 控制器（审查 8.2-2 界面搭建）
@@ -495,13 +494,6 @@ func _set_map_loaded(loaded: bool) -> void:
 	_refresh_dirty_badge()
 	_refresh_tool_meta()
 	_refresh_sel_bar()
-
-# —— 跨图选点器（拆到 ui/cross_map_picker.gd，调用点保持不变） ——
-func _clear_exit_pair(map_name: String, exit_id: String, peer_map: String, peer_id: String) -> void:
-	_picker_ctrl.clear_exit_pair(map_name, exit_id, peer_map, peer_id)
-
-func _open_map_point_picker(tmap: String, map_fid: String, point_fid: String, props: Dictionary) -> void:
-	_picker_ctrl.open_map_point_picker(tmap, map_fid, point_fid, props)
 
 # —— 模式切换：关卡 / 内容 / 资产 三个平级面板 + 旧的项目页外壳 ——
 var _map_view: VBoxContainer = null

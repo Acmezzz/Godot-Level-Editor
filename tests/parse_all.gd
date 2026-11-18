@@ -7,7 +7,7 @@ const SRC := [
 	"res://src/app.gd",
 	"res://src/manifest.gd", "res://src/manifest_validation.gd",
 	"res://src/map_data_validation.gd", "res://src/playtest.gd",
-	"res://src/map_store.gd", "res://src/cross_map.gd",
+	"res://src/map_store.gd",
 	"res://src/map_export.gd",
 	"res://src/core/constants.gd", "res://src/core/editor_state.gd",
 	"res://src/core/undo_history.gd", "res://src/core/side_actions.gd",
@@ -18,7 +18,7 @@ const SRC := [
 	"res://src/ui/map_thumb.gd",
 	"res://src/ui/asset_panel.gd",
 	"res://src/ui/editor_layout.gd", "res://src/ui/props_panel.gd",
-	"res://src/ui/cross_map_picker.gd", "res://src/ui/map_file.gd",
+	"res://src/ui/map_file.gd",
 	"res://src/ui/palette_panel.gd", "res://src/ui/project_shell.gd",
 	"res://src/ui/top_bar_nav.gd",
 	"res://src/ui/content_editor.gd",
@@ -33,7 +33,7 @@ const TESTS := [
 	"res://tests/data_layer_test.gd", "res://tests/content_model_test.gd",
 	"res://tests/def_regression_test.gd", "res://tests/entity_copy_regression_test.gd",
 	"res://tests/props_undo_regression_test.gd",
-	"res://tests/portal_mode_regression_test.gd", "res://tests/shortcut_test.gd",
+	"res://tests/shortcut_test.gd",
 ]
 
 func _init() -> void:

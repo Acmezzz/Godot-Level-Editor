@@ -158,18 +158,6 @@ func _run() -> void:
 			await process_frame
 			var tl: ItemList = app.tile_list
 			print("MEASURE decor_items=%d" % tl.item_count)
-		"picker":
-			# 跨图选点：完整地图 + 缩放 + 当前目标居中
-			var first_exit = null
-			for e in app.canvas.entities.get_children():
-				if str(e.get_meta("scene", "")) == "exit":
-					first_exit = e
-					break
-			if first_exit != null:
-				var pr: Dictionary = first_exit.get_meta("props", {})
-				app.canvas.selected_entity = first_exit
-				app.selected_spr = first_exit
-				app._open_map_point_picker("level1", "target_map", "target_point", pr)
 		"ents_page":
 			# v2：切到实体层 = 唯一的「换到实体资产」入口（页签按钮已删）
 			app._on_layer(app.canvas._ent_layer_index())
