@@ -14,8 +14,6 @@ const MapStore := preload("res://src/map_store.gd")
 
 ## 序号圈字符；超出后回落到数字
 const ORD := ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨"]
-## 顶栏地图菜单里追加的地图项 id 从这里开始，避开 1..6 的文件动作
-const MAP_MENU_BASE := 100
 const LEFT_W := 220
 const RIGHT_W := 360
 ## 预览悬停高亮色：青色，和选中框的黄（Th.WARN）区分开
@@ -28,15 +26,12 @@ var root: Control = null
 
 var _selected_ent := ""
 var _selected_fn := -1
-var _only_todo := false
 ## 预览区鼠标悬停的实例 id（青色高亮，与点击选中的黄框区分）
 var _hover_ent := ""
 
 # 左列
 var _left_title: Label = null
-var _badge: PanelContainer = null
 var _rows_box: VBoxContainer = null
-var _filter_btn: Button = null
 # 中列
 var _preview: Control = null
 # 右列
@@ -46,9 +41,6 @@ var _r_badge: PanelContainer = null
 var _r_body: VBoxContainer = null
 # 表单里需要就地更新的那处：首次改动创建内容后只改 ID 文本，不重建表单（重建会丢焦点）
 var _form_id_edit: LineEdit = null
-# 顶栏地图菜单
-var _map_menu: PopupMenu = null
-var _map_menu_base_count := 0
 ## 「+ 添加功能」弹层：控制器级单例，跨 _rebuild_right 复用
 var _add_menu: PopupMenu = null
 
@@ -73,8 +65,6 @@ func build() -> Control:
 	cols.add_child(_build_left())
 	cols.add_child(_build_middle())
 	cols.add_child(_build_right())
-	# 顶栏地图下拉挂未填徽章（批次 C 第 5 条）：不改 editor_layout，只在建好后追加
-	_hook_map_menu()
 	return root
 
 # ──────────── 左列：本图实例列表 ────────────
@@ -93,8 +83,6 @@ func _build_left() -> Control:
 	_left_title = Kit.section_label("实例")
 	_left_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(_left_title)
-	_badge = Kit.badge("0/0 未填", Th.OK)
-	head.add_child(_badge)
 	col.add_child(head)
 
 	var scroll := ScrollContainer.new()
@@ -105,11 +93,7 @@ func _build_left() -> Control:
 	scroll.add_child(_rows_box)
 	col.add_child(scroll)
 
-	_filter_btn = Kit.button("只看未填 (0)", func(): _toggle_filter(), "toggle")
-	_filter_btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
-	_filter_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	col.add_child(_filter_btn)
-	col.add_child(Kit.hint_label("行尾黄点 = 有功能未填；点画布上的实体选中同一行。", LEFT_W - 24))
+	col.add_child(Kit.hint_label("点画布上的实体选中同一行。", LEFT_W - 24))
 	return wrap
 
 # ──────────── 中列：只读画布预览 ────────────
@@ -201,7 +185,6 @@ func refresh_list(focus := "") -> void:
 	if root == null:
 		return
 	manifest = app.manifest
-	_sync_map_menu()
 	if not _map_ready():
 		_clear_all_for_empty()
 		return
@@ -241,7 +224,7 @@ func _map_ready() -> bool:
 	return app.map_loaded and app.canvas != null and is_instance_valid(app.canvas) \
 		and app.canvas.entities != null and is_instance_valid(app.canvas.entities)
 
-## 本图实例快照（按 ent_id 排序，保持稳定顺序）：[{spr, id, scene, name, fns, todo}]
+## 本图实例快照（按 ent_id 排序，保持稳定顺序）：[{spr, id, scene, name, fns}]
 func _entities() -> Array:
 	var out: Array = []
 	if not _map_ready():
@@ -259,7 +242,6 @@ func _entities() -> Array:
 			"scene": sid,
 			"name": str(app._scene_name(sid)),
 			"fns": list,
-			"todo": _fn_todo_count(list),
 		})
 	out.sort_custom(func(a, b): return _ent_less(str(a.id), str(b.id)))
 	return out
@@ -271,14 +253,6 @@ func _ent_less(a: String, b: String) -> bool:
 	if a.begins_with("e_") and b.begins_with("e_") and na != nb:
 		return na < nb
 	return a < b
-
-## 未填 = 附加功能里有 content == "" 的项（固定功能参数缺失本批次不判）
-func _fn_todo_count(fns: Array) -> int:
-	var n := 0
-	for f in fns:
-		if f is Dictionary and str((f as Dictionary).get("content", "")) == "":
-			n += 1
-	return n
 
 func _find_ent(ent_id: String) -> Sprite2D:
 	if ent_id == "" or not _map_ready():
@@ -317,28 +291,15 @@ func _rebuild_rows() -> void:
 		_rows_box.remove_child(c)
 		c.queue_free()
 	var ents := _entities()
-	var todo_n := 0
-	for row in ents:
-		if int(row.todo) > 0:
-			todo_n += 1
 	var map_name := str(app.cur_map_name) if str(app.cur_map_name) != "" else "未命名"
 	_left_title.text = "%s 实例" % map_name
-	Kit.set_badge(_badge, "%d/%d 未填" % [todo_n, ents.size()], Th.WARN if todo_n > 0 else Th.OK)
-	_filter_btn.text = ("显示全部 (%d)" if _only_todo else "只看未填 (%d)") % (ents.size() if _only_todo else todo_n)
-	_filter_btn.button_pressed = _only_todo
 
 	if ents.is_empty():
 		_rows_box.add_child(Kit.empty_state("▦", "这张图没有实例",
 			"去关卡编辑器放几个实体再回来挂功能"))
 		return
-	var shown := 0
 	for row in ents:
-		if _only_todo and int(row.todo) == 0:
-			continue
-		shown += 1
 		_rows_box.add_child(_build_row(row))
-	if shown == 0:
-		_rows_box.add_child(Kit.hint_label("没有未填的实例了。", LEFT_W - 24))
 
 ## 实例行：类型名 + e_N + 状态点。整行是按钮，点击走 select_inst（与画布双向同步）。
 func _build_row(row: Dictionary) -> Control:
@@ -371,22 +332,9 @@ func _build_row(row: Dictionary) -> Control:
 	iid.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	h.add_child(iid)
 
-	var dot := Control.new()
-	dot.custom_minimum_size = Vector2(8, 8)
-	dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var warn := int(row.todo) > 0
-	dot.draw.connect(func():
-		dot.draw_circle(Vector2(4, 4), 4.0, Th.WARN if warn else Th.OK))
-	h.add_child(dot)
-
 	# 按钮内容行撑满高度：ghost 按钮默认按文字定高，空文字会塌成 0
 	b.custom_minimum_size = Vector2(0, 26)
 	return b
-
-func _toggle_filter() -> void:
-	_only_todo = not _only_todo
-	_rebuild_rows()
 
 ## 单一选中入口：左列行、中列画布预览、外部定位都走这里，避免两处状态不同步。
 func select_inst(ent_id: String) -> void:
@@ -634,9 +582,6 @@ func _clear_all_for_empty() -> void:
 	_selected_fn = -1
 	_hover_ent = ""
 	_left_title.text = "实例"
-	Kit.set_badge(_badge, "0/0 未填", Th.OK)
-	_filter_btn.text = "只看未填 (0)"
-	_filter_btn.button_pressed = false
 	if _rows_box != null:
 		for c in _rows_box.get_children():
 			_rows_box.remove_child(c)
@@ -675,10 +620,7 @@ func _rebuild_right() -> void:
 	var ent_id := str(spr.get_meta("ent_id", ""))
 	_r_name.text = str(app._scene_name(sid))
 	_r_id.text = "%s.%s" % [str(app.cur_map_name), ent_id]
-	var todo := _fn_todo_count(_current_fns())
-	_r_badge.visible = true
-	Kit.set_badge(_r_badge, ("本实例 %d 项未填" % todo) if todo > 0 else "已填齐",
-		Th.WARN if todo > 0 else Th.OK)
+	_r_badge.visible = false
 
 	_r_body.add_child(_build_fixed_block(sid))
 	_r_body.add_child(Kit.divider())
@@ -1105,15 +1047,9 @@ func _ensure_failed() -> void:
 		_r_badge.visible = true
 		Kit.set_badge(_r_badge, "写盘失败", Th.ERR)
 
-## 只刷左列/徽章，不重建右栏——表单重建会丢输入焦点，改一个字段就跳走无法连续输入。
+## 只刷左列/预览，不重建右栏——表单重建会丢输入焦点，改一个字段就跳走无法连续输入。
 func _refresh_status_only() -> void:
 	_rebuild_rows()
-	if _r_body != null:
-		var spr := _current_spr()
-		if spr != null:
-			var todo := _fn_todo_count(_current_fns())
-			Kit.set_badge(_r_badge, ("本实例 %d 项未填" % todo) if todo > 0 else "已填齐",
-				Th.WARN if todo > 0 else Th.OK)
 	if _preview != null:
 		_preview.queue_redraw()
 
@@ -1209,91 +1145,4 @@ func _duplicate_from_lib(fn_id: String, old_id: String, new_name: String) -> voi
 	_write_fns(spr, fns)
 	_refresh_all()
 	app._set_status(" 已复制「%s」为新内容 %s" % [nm, new_id])
-
-# ──────────── 顶栏地图下拉：切图 + 未填徽章 ────────────
-
-## 地图菜单条目：[{name, todo, total}]，供外部（project_shell / app 钩子）读取。
-## 按清单 + 磁盘地图文件枚举，todo = 该图还有未填功能的实例数。
-func map_menu_entries() -> Array:
-	var out: Array = []
-	if str(manifest.get("_dir", "")) == "":
-		return out
-	for name in MapStore.list_maps(manifest):
-		var map_name := str(name)
-		var total := 0
-		var todo := 0
-		if map_name == str(app.cur_map_name) and _map_ready():
-			# 当前图读内存态：磁盘还没有本次改动，按盘算徽章会滞后
-			for row in _entities():
-				total += 1
-				if int(row.todo) > 0:
-					todo += 1
-		else:
-			var data: Dictionary = MapStore.read(manifest, map_name)
-			for e in data.get("entities", []):
-				if not (e is Dictionary):
-					continue
-				total += 1
-				if _fn_todo_count((e as Dictionary).get("functions", []) if (e as Dictionary).get("functions", []) is Array else []) > 0:
-					todo += 1
-		out.append({"name": map_name, "todo": todo, "total": total})
-	return out
-
-## 往顶栏地图菜单追加「切图」段：editor_layout 建的菜单 id 1..6 是文件动作，
-## 地图项从 MAP_MENU_BASE 起编号，避免撞号。菜单是 app 的直接子节点（PopupMenu）。
-## 用 about_to_popup 在弹出前重建——地图/未填数随时可能变，静态追加必然过期。
-func _hook_map_menu() -> void:
-	_map_menu = null
-	# 菜单是顶栏里的嵌套子节点（不是 app 的直接子节点），必须递归找；
-	# 以「第一项 id == 1（新建地图）」认出 editor_layout 建的那个 PopupMenu。
-	for c in app.find_children("*", "PopupMenu", true, false):
-		var pm := c as PopupMenu
-		if pm != null and pm.item_count >= 6 and pm.get_item_id(0) == 1:
-			_map_menu = pm
-			break
-	if _map_menu == null:
-		return
-	# 记下原有条目数（6 个动作 + 1 条分隔线），之后只截断这一段以后的追加项
-	_map_menu_base_count = _map_menu.item_count
-	if not _map_menu.id_pressed.is_connected(_on_map_entry):
-		_map_menu.id_pressed.connect(_on_map_entry)
-	# 弹出前重建地图段：不改 editor_layout 的菜单定义，也不需要在 app.gd 加钩子
-	if not _map_menu.about_to_popup.is_connected(_sync_map_menu):
-		_map_menu.about_to_popup.connect(_sync_map_menu)
-	_sync_map_menu()
-
-## 重建菜单里的地图段。当前地图打勾，未填数挂在条目名后（与左列徽章同口径）。
-func _sync_map_menu() -> void:
-	if _map_menu == null:
-		return
-	# 按索引截断：分隔线的 id 是 -1，按 id 判断会把 editor_layout 原有的分隔线也删掉
-	while _map_menu.item_count > _map_menu_base_count:
-		_map_menu.remove_item(_map_menu.item_count - 1)
-	_map_menu.add_separator()
-	var entries := map_menu_entries()
-	if entries.is_empty():
-		_map_menu.add_item("（还没有地图）")
-		_map_menu.set_item_disabled(_map_menu.item_count - 1, true)
-		return
-	var cur := str(app.cur_map_name)
-	var n := 0
-	for row in entries:
-		var name := str(row.name)
-		var todo := int(row.todo)
-		var label := name + (("  ·  %d 未填" % todo) if todo > 0 else "")
-		_map_menu.add_item(label, MAP_MENU_BASE + n)
-		if name == cur:
-			_map_menu.set_item_as_checkable(_map_menu.item_count - 1, true)
-			_map_menu.set_item_checked(_map_menu.item_count - 1, true)
-		n += 1
-
-## 菜单点击：地图段走切图（确认丢弃未保存改动由 _open_map_by_name 内部处理）。
-func _on_map_entry(id: int) -> void:
-	if id < MAP_MENU_BASE:
-		return
-	var entries := map_menu_entries()
-	var idx := id - MAP_MENU_BASE
-	if idx < 0 or idx >= entries.size():
-		return
-	app._open_map_by_name(str(entries[idx].name))
 
