@@ -493,7 +493,7 @@ func _dist_row(map_name: String, r: Dictionary, sdefs: Array) -> Control:
 			cell.add_child(box)
 			cells.add_child(cell)
 		row.add_child(Kit.spacer())
-	row.add_child(Kit.button("定位", func(): host._focus_issue(map_name, rid), "ghost"))
+	row.add_child(Kit.button("定位", func(): host._focus_ent_in_map(map_name, rid), "ghost"))
 	return row
 
 ## 写单实例数值：当前地图走画布（撤销栈/脏标记与属性面板同路），其余地图直接落盘。

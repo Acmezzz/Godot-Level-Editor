@@ -8,7 +8,7 @@ const SRC := [
 	"res://src/manifest.gd", "res://src/manifest_validation.gd",
 	"res://src/map_data_validation.gd", "res://src/playtest.gd",
 	"res://src/map_store.gd", "res://src/cross_map.gd",
-	"res://src/map_validate.gd", "res://src/map_export.gd",
+	"res://src/map_export.gd",
 	"res://src/core/constants.gd", "res://src/core/editor_state.gd",
 	"res://src/core/undo_history.gd", "res://src/core/side_actions.gd",
 	"res://src/canvas/editor_canvas.gd", "res://src/canvas/collision_view.gd",
@@ -24,7 +24,7 @@ const SRC := [
 	"res://src/ui/content_editor.gd",
 	"res://src/content/content_store.gd", "res://src/content/dialogue_model.gd",
 	"res://src/content/event_model.gd", "res://src/content/shop_model.gd",
-	"res://src/content/def_model.gd", "res://src/content/content_validate.gd",
+	"res://src/content/def_model.gd",
 	"res://src/content/builtin_kinds.gd", "res://src/content/content_templates.gd",
 	"res://src/content/content_id.gd",
 ]

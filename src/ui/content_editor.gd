@@ -37,8 +37,6 @@ var _left_title: Label = null
 var _badge: PanelContainer = null
 var _rows_box: VBoxContainer = null
 var _filter_btn: Button = null
-## 「校验本图」入口按钮（v2 §7.3 出口迁到内容编辑器左列）
-var _val_btn: Button = null
 # 中列
 var _preview: Control = null
 # 右列
@@ -111,13 +109,6 @@ func _build_left() -> Control:
 	_filter_btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	_filter_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	col.add_child(_filter_btn)
-	# 校验本图（v2 §7.3：MapValidate/ContentValidate 的出口 = 内容编辑器的地图级清单）。
-	# 旧右栏的问题页签随检查器一起删了，全图校验入口迁到这里。
-	_val_btn = Kit.button("校验本图", func(): open_validate_popup(false), "ghost")
-	_val_btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
-	_val_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_val_btn.tooltip_text = "校验当前地图 + 内容资源，问题条目可点击定位"
-	col.add_child(_val_btn)
 	col.add_child(Kit.hint_label("行尾黄点 = 有功能未填；点画布上的实体选中同一行。", LEFT_W - 24))
 	return wrap
 
@@ -161,10 +152,10 @@ func _build_middle() -> Control:
 	_preview.ctrl = self
 	_preview.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_preview.mouse_filter = Control.MOUSE_FILTER_STOP
-	_preview.tooltip_text = "只读预览 · 悬停高亮 · 点击实例选中"
+	_preview.tooltip_text = "只读预览 · 滚轮缩放 · 点击实例选中"
 	wrap.add_child(_preview)
 
-	var hint := Kit.text_label("只读预览 · 悬停高亮 · 点击实例选中", Th.TEXT_MUTE, Th.FS_META)
+	var hint := Kit.text_label("只读预览 · 滚轮缩放 · 点击实例选中", Th.TEXT_MUTE, Th.FS_META)
 	hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hint.position = Vector2(12, 10)
 	wrap.add_child(hint)
@@ -214,6 +205,11 @@ func refresh_list(focus := "") -> void:
 	if not _map_ready():
 		_clear_all_for_empty()
 		return
+	# 切图后上一张图的缩放/平移对这张图没有意义：zoom 归 1（整图塞进控件）
+	if _preview_map != str(app.cur_map_name):
+		_preview_map = str(app.cur_map_name)
+		_preview_zoom = 1.0
+		_preview_pan = Vector2.ZERO
 	var ents := _entities()
 	# 悬停 id 随切图/删实体失效：留着会指向不存在的实例，清干净
 	if _hover_ent != "" and _find_ent(_hover_ent) == null:
@@ -418,9 +414,14 @@ func select_inst(ent_id: String) -> void:
 
 # ──────────── 中列：重绘式预览 ────────────
 
-## 预览缩放：把整张地图塞进控件（留 24px 边距），不跟随关卡画布的 zoom/相机。
-## 内容编辑只看「有哪些实例、在哪」，不需要精确对位。
-func _preview_scale(c: Control) -> float:
+## 预览缩放：fit 缩放 × 用户滚轮缩放（zoom 0.2~8），pan 为视图原点的屏幕偏移。
+## 滚轮缩放以鼠标为锚点（指着的地图点缩放前后不动）；坐标换算全部走 _preview_origin。
+var _preview_zoom := 1.0
+var _preview_pan := Vector2.ZERO
+var _preview_map := ""   # 预览缩放所属地图：切图时重置 zoom/pan
+
+## fit 缩放：把整张地图塞进控件（留 24px 边距），不跟随关卡画布的 zoom/相机。
+func _preview_fit(c: Control) -> float:
 	if not _map_ready() or c.size.x <= 1 or c.size.y <= 1:
 		return 0.0
 	var meta: Dictionary = app.canvas.map_data.get("meta", {})
@@ -431,6 +432,17 @@ func _preview_scale(c: Control) -> float:
 	if w <= 0 or h <= 0:
 		return 0.0
 	return minf((c.size.x - 48) / w, (c.size.y - 48) / h)
+
+func _preview_scale(c: Control) -> float:
+	return _preview_fit(c) * _preview_zoom
+
+## 预览视图原点：居中原点 + 用户 pan 偏移（绘制与命中测试共用同一变换）
+func _preview_origin(c: Control, s: float) -> Vector2:
+	var meta: Dictionary = app.canvas.map_data.get("meta", {})
+	var tile_px: float = float(app.canvas.tile_px)
+	var map_px := Vector2(float(int(meta.get("w", 95))) * tile_px,
+		float(int(meta.get("h", 56))) * tile_px) * s
+	return (c.size - map_px) * 0.5 + _preview_pan
 
 ## 预览绘制：网格 + 真实地形/装饰瓦片 + 实例缩略图/色块 + 选中框。
 ## 地形必须画出来：只画实体点时，用户看不出实例压在什么地形上。
@@ -448,7 +460,7 @@ func _draw_preview(c: Control) -> void:
 	var mh := int(meta.get("h", 56))
 	var tile := float(app.canvas.tile_px)
 	var map_px := Vector2(float(mw) * tile, float(mh) * tile) * s
-	var origin := (c.size - map_px) * 0.5
+	var origin := _preview_origin(c, s)
 
 	# 地图底 + 网格：缩略后逐格线过密就不画（避免一整片灰）
 	c.draw_rect(Rect2(origin, map_px), Th.BG_BASE)
@@ -542,7 +554,7 @@ func _preview_tiles(kind: String) -> Array:
 	return out
 
 ## 预览点击/悬停：命中半径取实体显示尺寸的一半（与它看起来的大小一致）。
-## 禁用拖拽/涂刷——本面板只做选中，位置属关卡编辑器（§9）。
+## 滚轮缩放（以鼠标为锚点）；拖拽/涂刷禁用——本面板只做选中，位置属关卡编辑器（§9）。
 func _preview_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
 		_set_preview_hover(_preview, (event as InputEventMouseMotion).position)
@@ -550,6 +562,10 @@ func _preview_input(event: InputEvent) -> void:
 	if not (event is InputEventMouseButton):
 		return
 	var mb := event as InputEventMouseButton
+	if mb.pressed and (mb.button_index == MOUSE_BUTTON_WHEEL_UP
+			or mb.button_index == MOUSE_BUTTON_WHEEL_DOWN):
+		_zoom_preview_at(mb.position, 1.15 if mb.button_index == MOUSE_BUTTON_WHEEL_UP else 1.0 / 1.15)
+		return
 	if mb.button_index != MOUSE_BUTTON_LEFT or not mb.pressed:
 		return
 	if _preview == null or not _map_ready():
@@ -557,6 +573,23 @@ func _preview_input(event: InputEvent) -> void:
 	var hit := _hit_ent_at(mb.position)
 	if hit != "":
 		select_inst(hit)
+
+## 滚轮缩放预览：缩放前后鼠标指着的地图点不动。pan 屏幕偏移 = 新原点 − 新居中原点。
+func _zoom_preview_at(pos: Vector2, factor: float) -> void:
+	if _preview == null or not _map_ready():
+		return
+	var s_old := _preview_scale(_preview)
+	if s_old <= 0.0:
+		return
+	var origin_old := _preview_origin(_preview, s_old)
+	_preview_zoom = clampf(_preview_zoom * factor, 0.2, 8.0)
+	var s_new := _preview_scale(_preview)
+	if is_equal_approx(s_new, s_old):
+		return
+	_preview_pan = Vector2.ZERO
+	var center_new := _preview_origin(_preview, s_new)
+	_preview_pan = pos - (pos - origin_old) * (s_new / s_old) - center_new
+	_preview.queue_redraw()
 
 ## 光标下的实体 id（"" = 空白处）。后画的在上层，命中测试要反向遍历
 ## （同一格叠多个时取最上面那个）。坐标均为预览控件本地坐标。
@@ -569,7 +602,7 @@ func _hit_ent_at(pos: Vector2) -> String:
 	var meta: Dictionary = app.canvas.map_data.get("meta", {})
 	var map_px := Vector2(float(int(meta.get("w", 95))) * app.canvas.tile_px,
 		float(int(meta.get("h", 56))) * app.canvas.tile_px) * s
-	var origin := (_preview.size - map_px) * 0.5
+	var origin := _preview_origin(_preview, s)
 	var world := (pos - origin) / s
 	var ents := _entities()
 	for i in range(ents.size() - 1, -1, -1):
@@ -1263,68 +1296,4 @@ func _on_map_entry(id: int) -> void:
 	if idx < 0 or idx >= entries.size():
 		return
 	app._open_map_by_name(str(entries[idx].name))
-
-# ──────────── 校验（v2 §7.3：MapValidate / ContentValidate 的出口 = 地图级清单） ────────────
-
-var _val_pop: PopupPanel = null
-
-## 打开校验问题清单弹窗。all_maps=false 校验当前图（画布内存快照，未保存改动也覆盖），
-## true 校验全部地图 + 内容资源。条目可点：带实例定位信息的跳关卡编辑器聚焦实体。
-func open_validate_popup(all_maps: bool) -> void:
-	if _val_pop != null and is_instance_valid(_val_pop):
-		_val_pop.queue_free()
-	var issues: Array = app._collect_issues(all_maps)
-	var n_err := 0
-	for it in issues:
-		if str(it.get("level", "")) == "error":
-			n_err += 1
-	if issues.is_empty():
-		app._set_status(" 校验通过：没有发现任何问题")
-		return
-	var pop := PopupPanel.new()
-	var col: VBoxContainer = app.UiKitScript.vbox(10)
-	col.custom_minimum_size = Vector2(560, 0)
-	pop.add_child(col)
-	var head: HBoxContainer = app.UiKitScript.hbox(8)
-	head.add_child(app.UiKitScript.text_label("校验问题 %s：%d 项（%d 个错误）" % [
-		"全部地图" if all_maps else "本图", issues.size(), n_err],
-		app.UiThemeScript.TEXT, app.UiThemeScript.FS_MD))
-	head.add_child(app.UiKitScript.spacer())
-	head.add_child(app.UiKitScript.button("关闭", func(): pop.hide(), "ghost"))
-	col.add_child(head)
-	var scroll := ScrollContainer.new()
-	scroll.custom_minimum_size = Vector2(560, minf(app.get_viewport_rect().size.y - 220, 420))
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	col.add_child(scroll)
-	var rows: VBoxContainer = app.UiKitScript.vbox(3)
-	rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	scroll.add_child(rows)
-	for it in issues:
-		var level := str(it.get("level", "warn"))
-		var map_n := str(it.get("map", ""))
-		var eid := str(it.get("ent_id", ""))
-		var msg := str(it.get("message", ""))
-		var field := str(it.get("field", ""))
-		var mark := "●" if level == "error" else "○"
-		var row: Button = app.UiKitScript.button("%s %s%s  %s" % [mark,
-			(map_n + " · ") if map_n != "" else "", field, msg], Callable(), "ghost")
-		row.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		row.add_theme_color_override("font_color",
-			app.UiThemeScript.ERR if level == "error" else app.UiThemeScript.TEXT_DIM)
-		if map_n != "" and eid != "":
-			row.tooltip_text = "点击定位到该实例"
-			row.pressed.connect(func():
-				pop.hide()
-				app._focus_issue(map_n, eid))
-		else:
-			row.tooltip_text = field + "\n" + msg
-		rows.add_child(row)
-	_val_pop = pop
-	app.add_child(pop)
-	pop.popup_centered(Vector2i(1, 1))
-	var want := pop.get_contents_minimum_size().ceil()
-	var vp: Vector2 = app.get_viewport_rect().size
-	want.x = minf(want.x, vp.x - 40)
-	want.y = minf(want.y, vp.y - 40)
-	pop.popup_centered(Vector2i(want))
 

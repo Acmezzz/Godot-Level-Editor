@@ -1,6 +1,5 @@
 extends RefCounted
 ## 地图文件生命周期控制器。状态经宿主访问；写盘暂仍走 FileAccess（S-02 收敛在后续批次）。
-const MapValidate := preload("res://src/map_validate.gd")
 const MapExport := preload("res://src/map_export.gd")
 const UiKitScript := preload("res://src/ui/ui_kit.gd")
 const UiThemeScript := preload("res://src/ui/ui_theme.gd")
@@ -307,17 +306,6 @@ func on_save() -> bool:
 	app.canvas.modified_flag = false
 	_last_autosave_msec = Time.get_ticks_msec()
 	var msg := " 已保存 %s（%d 瓦片 / %d 实体）" % [n, data.terrain.size(), data.entities.size()]
-	# T23：保存即校验——问题在你按 Ctrl+S 的那一秒出现，而不是三天后
-	var v_issues = MapValidate.validate_map(app.manifest, n, data)
-	var v_errs := 0
-	for it in v_issues:
-		if str(it.get("level", "")) == "error":
-			v_errs += 1
-	if v_errs > 0:
-		msg += "；⚠ 本图 %d 个错误" % v_errs
-		# 有错误就把校验区推上来并填好列表：状态栏只报数，点得到才有用
-	elif v_issues.size() > 0:
-		msg += "；本图 %d 个警告" % v_issues.size()
 	if ext_changed:
 		msg += "；注意：磁盘文件在打开后被外部修改过，本次保存覆盖了外部改动"
 	app._set_status(msg)

@@ -99,34 +99,8 @@ func _delete_entities_by_id(ids: Array) -> void:
 	app._set_status(" 已删除 %d 个实体" % victims.size())
 
 
-## 收集校验问题（不落 UI）：内容编辑器弹窗与校验入口共用同一份数据源。
-func _collect_issues(all_maps: bool) -> Array:
-	var issues: Array = []
-	if all_maps:
-		issues = app.MapValidate.validate_all(app.manifest)
-	else:
-		if not app.map_loaded:
-			return []
-		var data = app.canvas.extract()
-		issues = app.MapValidate.validate_map(app.manifest, app.cur_map_name, data)
-	# 内容资源（对话/事件/商店/定义）与地图引用一起校验：只做一遍，避免单图模式漏掉跨资源问题
-	var ContentValidate := preload("res://src/content/content_validate.gd")
-	issues.append_array(ContentValidate.validate_all(app.manifest, app.manifest))
-	return issues
-
-## 校验入口：结果写状态栏（问题详情可从内容编辑器的校验弹窗看）。
-func _run_validate(all_maps: bool) -> void:
-	var issues: Array = _collect_issues(all_maps)
-	if issues.is_empty() and not app.map_loaded:
-		return
-	var errors := 0
-	for it in issues:
-		if str(it.get("level", "")) == "error":
-			errors += 1
-	app._set_status(" 校验完成：%d 个问题（%d 个错误）" % [issues.size(), errors])
-
-
-func _focus_issue(map_name: String, ent_id: String) -> void:
+## 跨图定位：切到目标图并聚焦实例（资产分布「定位」按钮用）。
+func _focus_ent_in_map(map_name: String, ent_id: String) -> void:
 	if map_name == "" or ent_id == "":
 		return
 	if map_name != app.cur_map_name:

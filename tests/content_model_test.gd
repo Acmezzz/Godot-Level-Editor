@@ -11,7 +11,6 @@ var DialogueModel
 var EventModel
 var ShopModel
 var DefModel
-var ContentValidate
 
 func _init() -> void:
 	call_deferred("_run")
@@ -22,7 +21,6 @@ func _run() -> void:
 	EventModel = _module("res://src/content/event_model.gd")
 	ShopModel = _module("res://src/content/shop_model.gd")
 	DefModel = _module("res://src/content/def_model.gd")
-	ContentValidate = _module("res://src/content/content_validate.gd")
 	if failures.is_empty():
 		_test_ids()
 		_test_store_roundtrip()
@@ -30,7 +28,6 @@ func _run() -> void:
 		_test_event()
 		_test_shop()
 		_test_definition()
-		_test_validate_all()
 	if failures.is_empty():
 		print("CONTENT_MODEL_OK")
 	else:
@@ -224,38 +221,6 @@ func _test_multi_slot(manifest: Dictionary) -> void:
 	var empty_slot := {"version": 1, "kind": "npc", "components": {"dialogue": []}}
 	_check(_has_msg(DefModel.validate(empty_slot, manifest), "没有任何条目"),
 		"an empty slot is reported instead of silently ignored")
-
-func _test_validate_all() -> void:
-	var m := _project("validate")
-	var manifest := {
-		"entities": [{"id": "npc", "name": "NPC"}, {"id": "trigger_zone", "name": "触发区"}],
-	}
-	m["_dir"] = str(m["_dir"])
-	var base := str(m["_dir"])
-	ContentStore.write(m, "dialogues", "dlg.one", {"version": 1, "id": "dlg.one",
-		"start": "n1", "nodes": [{"id": "n1", "text": "嗨。", "next": "end"}, {"id": "end", "end": true}]})
-	ContentStore.write(m, "shops", "shop.one", {"version": 1, "id": "shop.one",
-		"entries": [{"item": "item.ghost", "price": 3}]})
-	ContentStore.write(m, "defs", "town.one", {"version": 1, "id": "town.one", "kind": "npc",
-		"components": {"dialogue": {"id": "dlg.missing"}, "shop": {"id": "shop.one"}}})
-	ContentStore.write(m, "events", "evt.one", {"version": 1, "id": "evt.one",
-		"steps": [{"type": "dialogue", "dialogue": "dlg.one"}]})
-	var schema := {"actions": {"dialogue": {"params": {"dialogue": {"type": "dialogue_ref", "required": true}}}}}
-	ContentStore.write(m, "schema", "actions", schema)
-
-	# 地图：一个错误种类定义 + 一个缺事件触发区 + 一个合法定义
-	Store.write(m, "m1", _map([
-		{"scene": "npc", "id": "e_1", "x": 1, "y": 1, "def": "town.one", "props": {}},
-		{"scene": "npc", "id": "e_2", "x": 2, "y": 2, "def": "town.missing", "props": {}},
-		{"scene": "trigger_zone", "id": "e_3", "x": 3, "y": 3,
-			"props": {"w": 2, "h": 1, "mode": "enter", "event": "evt.missing"}},
-	]))
-	var issues: Array = ContentValidate.validate_all(m, manifest)
-	_check(_has(issues, "dlg.missing", "不存在"), "missing dialogue reference is reported")
-	_check(_has(issues, "town.missing", "不存在"), "missing definition reference is reported")
-	_check(_has(issues, "evt.missing", "不存在"), "missing trigger event is reported")
-	_check(_has(issues, "town.one", "种类") == false, "matching kind produces no kind error")
-	_cleanup(m, ["m1"])
 
 func _has_msg(issues: Array, needle: String) -> bool:
 	for issue in issues:

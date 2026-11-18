@@ -114,8 +114,6 @@ func _run() -> void:
 		"play":
 			app.play_cfg = {"abilities": ["dash"], "hp": 3}
 			app._open_play_cfg()
-		"validate":
-			app._run_validate(true)
 		"layers":
 			# 可见/锁定按钮的两种状态各拍一张对照（未启用 vs 已启用）
 			app.canvas.set_layer_locked(app.canvas.active_layer, true)

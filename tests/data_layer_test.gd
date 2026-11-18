@@ -5,7 +5,6 @@ extends SceneTree
 ## 纯数据路径：临时目录造图，不建 UI；BIRD_PROJECT 缺省时跳过真实项目断言。
 
 const Store := preload("res://src/map_store.gd")
-const Validate := preload("res://src/map_validate.gd")
 const Validator := preload("res://src/map_data_validation.gd")
 const Manifest := preload("res://src/manifest.gd")
 const Export := preload("res://src/map_export.gd")
@@ -24,9 +23,6 @@ func _run() -> void:
 	_test_store_basics()
 	_test_names_and_paths()
 	_test_command_quoting()
-	_test_validate_and_migrate()
-	_test_relationship_semantics()
-	_test_single_map_validation()
 	_test_plan_pick()
 	_test_export()
 	_test_playtest_guard()
@@ -220,7 +216,6 @@ func _test_store_basics() -> void:
 	var all := Store.read_all(m, bad)
 	_check(bad.size() == 1 and str(bad[0].get("name", "")) == "bad", "read_all reports the corrupt map")
 	_check(all.has("ok1"), "read_all still loads healthy maps")
-	_check(_has(Validate.validate_all(m), "bad", "地图文件损坏"), "validation reports the corrupt map")
 
 	var empty := {"_maps_dir": str(m._dir).path_join("no_such_dir")}
 	_check(Store.list_maps(empty) == [], "list_maps returns empty for a missing directory")
@@ -267,91 +262,6 @@ func _test_command_quoting() -> void:
 		"godotExe": "%projectpath%/tools/godot.exe"}
 	var cmd := Manifest.resolved_play_command(m, "D:/proj/maps/a.json")
 	_check(cmd.begins_with("\"D:/proj/tools/godot.exe\""), "godotExe overrides the first command token")
-## 跨图校验与改名迁移：悬空门、一对多、死链、单向出口、无目标图、旧格式升级。
-func _test_validate_and_migrate() -> void:
-	var m := _temp_project("migrate")
-	Store.write(m, "a", _map([
-		{"scene": "portal", "id": "e_1", "x": 1, "y": 1, "props": {"target_point": "e_99"}},
-		{"scene": "portal", "id": "e_2", "x": 2, "y": 2, "props": {"target_point": "e_3"}},
-		{"scene": "portal", "id": "e_3", "x": 3, "y": 3, "props": {"target_point": "e_2"}},
-		{"scene": "portal", "id": "e_4", "x": 4, "y": 4, "props": {"target_point": "e_3"}},
-	], "a"))
-	Store.write(m, "b", _map([
-		{"scene": "exit", "id": "e_1", "x": 1, "y": 1,
-			"props": {"target_map": "nope", "target_point": "e_1"}},
-	], "b"))
-	Store.write(m, "c", _map([
-		{"scene": "exit", "id": "e_1", "x": 1, "y": 1,
-			"props": {"target_map": "d", "target_point": "e_1"}},
-	], "c"))
-	Store.write(m, "d", _map([{"scene": "exit", "id": "e_1", "x": 1, "y": 1, "props": {}}], "d"))
-	Store.write(m, "e", _map([
-		{"scene": "exit", "id": "e_1", "x": 1, "y": 1,
-			"props": {"target_map": "c", "target_point": "e_1"}},
-	], "e"))
-
-	var issues := Validate.validate_all(m)
-	_check(_has(issues, "a", "不存在的实体", "e_1"), "dangling portal target is detected")
-	_check(_has(issues, "a", "被多个门引用", "e_3"), "one-to-many portal targeting is detected")
-	_check(_has(issues, "b", "目标地图不存在", "e_1"), "exit to a missing map is detected")
-	_check(_has(issues, "c", "没有指回来", "e_1"), "one-way exit is detected")
-	_check(_has(issues, "d", "没有配置目标地图", "e_1"), "exit without target map is detected")
-
-	# 旧图没有 version：读出时应升级并取整坐标，同时保留未知字段
-	Store.write(m, "old", _map([
-		{"scene": "portal", "id": "e_1", "x": 2.7, "y": 3.2, "props": {}},
-	], "old"))
-	var old_data := Store.read(m, "old")
-	_check(int(old_data.get("version", 0)) == 3, "reading an old map upgrades its version")
-	var old_ent: Dictionary = old_data.entities[0]
-	_check(int(old_ent.get("x", 0)) == 2 and int(old_ent.get("y", 0)) == 3,
-		"upgrade rounds entity coordinates")
-	_remove_project(m)
-
-## 世界图关系语义：exit→落点是合法单向，exit→exit 必须精确互指，无效边不算可达。
-func _test_relationship_semantics() -> void:
-	var m := _temp_project("semantics")
-	Store.write(m, "a", _map([
-		_exit("e_pair_a", "b", "e_pair_b"),
-		_exit("e_oneway", "b", "p_b"),
-		_exit("e_broken", "b", "e_broken_b"),
-		_exit("e_invalid", "d", "missing_point"),
-		{"scene": "exit", "id": "e_unconfigured", "x": 1, "y": 1,
-			"props": {"target_point": "p_local"}},
-		_point("p_local"),
-	], "a"))
-	Store.write(m, "b", _map([
-		_exit("e_pair_b", "a", "e_pair_a"),
-		_exit("e_broken_b", "c", "p_c"),
-		_point("p_b"),
-	], "b"))
-	Store.write(m, "c", _map([_point("p_c")], "c"))
-	Store.write(m, "d", _map([], "d"))
-
-	var issues := Validate.validate_all(m)
-	_check(not _has(issues, "a", "没有指回来", "e_oneway"),
-		"an exit targeting a destination spawn point is a valid one-way link")
-	_check(_has(issues, "a", "没有指回来", "e_broken"),
-		"an exit targeting another exit still needs an exact reciprocal link")
-	_check(_has(issues, "a", "没有被任何门/出口使用", "p_local"),
-		"an unconfigured exit does not consume a same-map spawn point")
-	_check(not _has(issues, "b", "没有被任何门/出口使用", "p_b"),
-		"a cross-map one-way link consumes its destination spawn point")
-	_remove_project(m)
-
-## 单图校验模式：悬空门 + 指向不存在地图的出口都要报出来。
-func _test_single_map_validation() -> void:
-	var m := _temp_project("single")
-	var data := _map([
-		{"scene": "portal", "id": "e_p", "x": 1, "y": 1, "props": {"target_point": "e_99"}},
-		{"scene": "exit", "id": "e_1", "x": 2, "y": 2,
-			"props": {"target_map": "ghost", "target_point": "e_1"}},
-	], "solo")
-	var issues := Validate.validate_map(m, "solo", data)
-	_check(_has(issues, "solo", "传送门指向不存在的实体"), "single-map mode detects a dangling portal")
-	_check(_has(issues, "solo", "目标地图不存在或无法读取"), "single-map mode detects an exit to a missing map")
-	_remove_project(m)
-
 ## 落点选择计划：拒绝分支、新建落点、复用落点、出口配对、三种 unbind 计划。
 func _test_plan_pick() -> void:
 	var m := _temp_project("planpick")

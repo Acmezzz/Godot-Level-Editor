@@ -7,7 +7,6 @@ const SettingsCfg := "user://settings.cfg"
 const ProjectShellScript := preload("res://src/ui/project_shell.gd")
 const UiThemeScript := preload("res://src/ui/ui_theme.gd")
 const UiKitScript := preload("res://src/ui/ui_kit.gd")
-const MapValidate := preload("res://src/map_validate.gd")
 const MapStore := preload("res://src/map_store.gd")
 
 var manifest := {}
@@ -650,15 +649,9 @@ func _open_map_by_name(map_name: String) -> void:
 func _focus_entity(ent_id: String) -> void:
 	_side_actions_ctrl._focus_entity(ent_id)
 
+## 跨图定位（资产分布「定位」按钮）：切图 + 聚焦实例
+func _focus_ent_in_map(map_name: String, ent_id: String) -> void:
+	_side_actions_ctrl._focus_ent_in_map(map_name, ent_id)
+
 func _delete_entities_by_id(ids: Array) -> void:
 	_side_actions_ctrl._delete_entities_by_id(ids)
-
-func _run_validate(all_maps: bool) -> void:
-	_side_actions_ctrl._run_validate(all_maps)
-
-## 校验问题的纯数据出口（内容编辑器弹窗用；不落隐藏侧栏的 UI）
-func _collect_issues(all_maps: bool) -> Array:
-	return _side_actions_ctrl._collect_issues(all_maps)
-
-func _focus_issue(map_name: String, ent_id: String) -> void:
-	_side_actions_ctrl._focus_issue(map_name, ent_id)
