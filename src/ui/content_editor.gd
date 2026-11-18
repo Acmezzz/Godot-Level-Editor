@@ -117,6 +117,7 @@ class PreviewControl extends Control:
 			return
 		if what == NOTIFICATION_MOUSE_EXIT:
 			ctrl._set_preview_hover(self, Vector2.INF)
+			ctrl._preview_panning = false   # 拖出预览区松不了中键：出界即复位
 		elif what == NOTIFICATION_MOUSE_ENTER:
 			ctrl._set_preview_hover(self, get_local_mouse_position())
 
@@ -136,10 +137,12 @@ func _build_middle() -> Control:
 	_preview.ctrl = self
 	_preview.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_preview.mouse_filter = Control.MOUSE_FILTER_STOP
-	_preview.tooltip_text = "只读预览 · 滚轮缩放 · 点击实例选中"
+	# 缩放/平移后地图不能画出控件边界（曾盖到左列）——同关卡画布的 SubViewport 裁剪语义
+	_preview.clip_contents = true
+	_preview.tooltip_text = "只读预览 · 滚轮缩放 · 中键拖动 · 点击实例选中"
 	wrap.add_child(_preview)
 
-	var hint := Kit.text_label("只读预览 · 滚轮缩放 · 点击实例选中", Th.TEXT_MUTE, Th.FS_META)
+	var hint := Kit.text_label("只读预览 · 滚轮缩放 · 中键拖动 · 点击实例选中", Th.TEXT_MUTE, Th.FS_META)
 	hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hint.position = Vector2(12, 10)
 	wrap.add_child(hint)
@@ -367,6 +370,7 @@ func select_inst(ent_id: String) -> void:
 var _preview_zoom := 1.0
 var _preview_pan := Vector2.ZERO
 var _preview_map := ""   # 预览缩放所属地图：切图时重置 zoom/pan
+var _preview_panning := false   # 中键按住拖动平移（手势同关卡画布）
 
 ## fit 缩放：把整张地图塞进控件（留 24px 边距），不跟随关卡画布的 zoom/相机。
 func _preview_fit(c: Control) -> float:
@@ -502,10 +506,16 @@ func _preview_tiles(kind: String) -> Array:
 	return out
 
 ## 预览点击/悬停：命中半径取实体显示尺寸的一半（与它看起来的大小一致）。
-## 滚轮缩放（以鼠标为锚点）；拖拽/涂刷禁用——本面板只做选中，位置属关卡编辑器（§9）。
+## 手势对齐关卡画布：滚轮缩放（鼠标锚点）、中键按住拖动平移、左键点击选中。
 func _preview_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
-		_set_preview_hover(_preview, (event as InputEventMouseMotion).position)
+		var mm := event as InputEventMouseMotion
+		# 中键拖动平移：pan 是屏幕偏移，手势语义与画布 cam_pos 相同（跟手走）
+		if _preview_panning:
+			_preview_pan -= mm.relative
+			_preview.queue_redraw()
+			return
+		_set_preview_hover(_preview, mm.position)
 		return
 	if not (event is InputEventMouseButton):
 		return
@@ -513,6 +523,9 @@ func _preview_input(event: InputEvent) -> void:
 	if mb.pressed and (mb.button_index == MOUSE_BUTTON_WHEEL_UP
 			or mb.button_index == MOUSE_BUTTON_WHEEL_DOWN):
 		_zoom_preview_at(mb.position, 1.15 if mb.button_index == MOUSE_BUTTON_WHEEL_UP else 1.0 / 1.15)
+		return
+	if mb.button_index == MOUSE_BUTTON_MIDDLE:
+		_preview_panning = mb.pressed
 		return
 	if mb.button_index != MOUSE_BUTTON_LEFT or not mb.pressed:
 		return
