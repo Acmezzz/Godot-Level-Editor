@@ -257,7 +257,8 @@ func _add_definition_section(sid: String) -> void:
 		dock_row.add_child(create_btn)
 	else:
 		var open_btn := UiKitScript.button("编辑内容（对话/事件/商店）",
-			func(): app._set_content_dock(true, cur_def), "primary")
+			# 批次 C：内容抽屉已删，落到内容编辑器并按实例定位（focus = 实例 id）
+			func(): app._set_mode("content", str(app.selected_spr.get_meta("ent_id", ""))), "primary")
 		open_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		dock_row.add_child(open_btn)
 	app.props_panel.add_child(dock_row)

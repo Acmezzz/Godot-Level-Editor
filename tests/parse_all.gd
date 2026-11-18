@@ -22,6 +22,7 @@ const SRC := [
 	"res://src/ui/cross_map_picker.gd", "res://src/ui/map_file.gd",
 	"res://src/ui/palette_panel.gd", "res://src/ui/content_panel.gd",
 	"res://src/ui/content_dock.gd", "res://src/ui/project_shell.gd",
+	"res://src/ui/content_editor.gd",
 	"res://src/ui/manifest_panel.gd", "res://src/ui/levels_panel.gd", "res://src/ui/collapsible.gd",
 	"res://src/ui/content_editors/dialogue_editor.gd",
 	"res://src/ui/content_editors/event_editor.gd",

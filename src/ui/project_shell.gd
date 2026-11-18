@@ -13,6 +13,7 @@ const Kit := preload("res://src/ui/ui_kit.gd")
 const Th := preload("res://src/ui/ui_theme.gd")
 const AssetPanelScript := preload("res://src/ui/asset_panel.gd")
 const ContentPanelScript := preload("res://src/ui/content_panel.gd")
+const ContentEditorScript := preload("res://src/ui/content_editor.gd")
 const ManifestPanelScript := preload("res://src/ui/manifest_panel.gd")
 const LevelsPanelScript := preload("res://src/ui/levels_panel.gd")
 
@@ -29,6 +30,7 @@ var save_manifest: Callable
 
 var asset_panel = null
 var content_panel = null
+var content_editor = null
 var manifest_panel = null
 var levels_panel = null
 
@@ -38,6 +40,11 @@ var _holder: Control
 var _title: Label
 var _status: Label
 var _manifest_scroll: ScrollContainer
+## 内容视图专属的地图切换（v2 §3.2：地图是全局状态，在顶栏切）。
+## 为什么不在关卡顶栏那个菜单上加：内容视图下整个 _map_view 隐藏，那个菜单根本点不到。
+var _map_switch_btn: Button
+var _map_switch_menu: PopupMenu
+var _map_switch_box: Control
 
 func _init(host) -> void:
 	app = host
@@ -75,10 +82,66 @@ func _build_top_bar() -> PanelContainer:
 	bar.add_child(_title)
 	bar.add_child(Kit.badge(str(manifest.get("projectName", "?")), Th.ACCENT))
 	bar.add_child(Kit.spacer())
+	# 地图切换（仅内容视图显示）：未填徽章挂在每个地图项上，与左列同口径
+	bar.add_child(_build_map_switch())
 	var save := Kit.button("保存", func(): save_current(), "primary")
 	save.tooltip_text = "保存当前视图对应的数据（Ctrl+S）"
 	bar.add_child(save)
 	return wrap
+
+## 顶栏地图切换：内容视图下唯一的地图入口（关卡编辑器用画布顶栏那个菜单）。
+## 不用 editor_layout 的菜单：内容视图下整个 _map_view 隐藏，那个按钮点不到。
+func _build_map_switch() -> Control:
+	var box := HBoxContainer.new()
+	box.add_theme_constant_override("separation", 0)
+	_map_switch_btn = Kit.button("地图 ▾", Callable(), "ghost")
+	_map_switch_btn.tooltip_text = "切换当前地图（每个地图名后跟未填数）"
+	_map_switch_menu = PopupMenu.new()
+	_map_switch_menu.id_pressed.connect(_on_map_switch_id)
+	_map_switch_btn.pressed.connect(func():
+		_refresh_map_switch()
+		var at := Vector2i(_map_switch_btn.get_screen_position()) + Vector2i(0, int(_map_switch_btn.size.y))
+		_map_switch_menu.popup(Rect2i(at, Vector2i.ZERO)))
+	box.add_child(_map_switch_btn)
+	box.add_child(_map_switch_menu)
+	box.visible = false
+	_map_switch_box = box
+	return box
+
+## 地图项文字：`名字 · n 未填`；当前地图打勾。内容视图每次进入都重建一次。
+func _refresh_map_switch() -> void:
+	if _map_switch_menu == null or content_editor == null:
+		return
+	_map_switch_menu.clear()
+	var entries: Array = content_editor.map_menu_entries()
+	if entries.is_empty():
+		_map_switch_menu.add_item("（还没有地图）")
+		_map_switch_menu.set_item_disabled(0, true)
+		return
+	var cur := str(app.cur_map_name)
+	var n := 0
+	for row in entries:
+		var nm := str(row.name)
+		var todo := int(row.todo)
+		_map_switch_menu.add_item(nm + (("  ·  %d 未填" % todo) if todo > 0 else ""), n)
+		if nm == cur:
+			_map_switch_menu.set_item_as_checkable(n, true)
+			_map_switch_menu.set_item_checked(n, true)
+		n += 1
+	_map_switch_btn.text = ("%s ▾" % cur) if cur != "" else "地图 ▾"
+
+func _on_map_switch_id(id: int) -> void:
+	if content_editor == null:
+		return
+	var entries: Array = content_editor.map_menu_entries()
+	if id < 0 or id >= entries.size():
+		return
+	var nm := str(entries[id].name)
+	if nm == str(app.cur_map_name):
+		return
+	# 切图会连带丢弃未保存改动，确认框由 _open_map_by_name 内部处理
+	app._open_map_by_name(nm)
+	show_view("content")
 
 ## 侧列：三个视图页签竖排，当前视图高亮
 func _build_side_column() -> PanelContainer:
@@ -131,9 +194,17 @@ func _build_views() -> void:
 	content_panel.manifest = manifest
 	content_panel.app = app
 	content_panel.closed.connect(func(): close())
+	# 批次 C：内容视图换用新内容编辑器；旧 content_panel 保留文件、保留构建（既有调用点
+	# app.content_panel / show_kind 仍能安全调用），但不再挂进 _holder 的可见位。
+	# 挂到 _holder 并隐藏：脱离树的 Node 永不释放（孤儿），隐藏节点不绘制也不吃输入。
+	content_panel.build()
 	_holder.add_child(content_panel)
 	content_panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	content_panel.build()
+	content_panel.visible = false
+	content_editor = ContentEditorScript.new(app)
+	var editor_root: Control = content_editor.build()
+	_holder.add_child(editor_root)
+	editor_root.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 
 	manifest_panel = ManifestPanelScript.new()
 	manifest_panel.manifest = manifest
@@ -176,8 +247,9 @@ func show_view(view: String, focus := "") -> void:
 		if _tabs.has(key):
 			(_tabs[key] as Button).button_pressed = key == view
 	asset_panel.visible = view == "asset"
-	content_panel.visible = view == "content"
+	content_editor.root.visible = view == "content"
 	_manifest_scroll.visible = view == "manifest"
+	_map_switch_box.visible = view == "content"
 	_title.text = "项目 · %s" % _label_of(view)
 	match view:
 		"asset":
@@ -187,8 +259,10 @@ func show_view(view: String, focus := "") -> void:
 				asset_panel.show_detail(focus)
 			_set_status("资产模板改动后点「保存」写回清单，下次试玩生效")
 		"content":
-			content_panel.refresh_list(focus)
-			_set_status("内容资源编辑后点「保存」写盘；左侧搜索框按 id 或显示名过滤")
+			# focus 语义在此视图 = 实例 id（右栏定位），空则保留上次选中
+			content_editor.refresh_list(focus)
+			_refresh_map_switch()
+			_set_status("点实例挂功能、填内容；改动即时写盘（Esc 回关卡编辑器）")
 		"manifest":
 			manifest_panel.refresh()
 			# 关卡/世界与清单同一刷新链：进入视图时同步一次（图被改名/删除后清单要跟上）
@@ -207,8 +281,9 @@ func _label_of(view: String) -> String:
 func save_current() -> void:
 	match _view:
 		"content":
-			content_panel.commit()
-			_set_status("内容已保存：%s / %s" % [content_panel.kind, content_panel.id])
+			# 新内容编辑器改动即时写盘，commit 只回报成功与否（旧面板不参与）
+			content_editor.commit()
+			_set_status("内容已保存（改动即时写盘）")
 		"manifest":
 			save_manifest.call()
 			_set_status("清单已保存（背景图组 / 物品）")
