@@ -51,27 +51,8 @@ const FS_MD := 14
 const FS_LG := 17
 
 ## 构造完整主题。所有控件类型一次性配齐，避免局部漏样式而回落到 Godot 默认灰。
-## —— 世界地图 / 跨图缩略图令牌（U-19/U-22：两个视图不再自带色板） ——
-const WM_NODE_BG := Color(0.16, 0.19, 0.25, 0.95)
-const WM_NODE_BG_SEL := Color(0.16, 0.35, 0.28, 0.98)
-const WM_NODE_BG_HOVER := Color(0.22, 0.26, 0.34, 0.98)
-const WM_NODE_BORDER := Color(1, 1, 1, 0.28)
-const WM_NODE_BORDER_SEL := Color(0.55, 0.95, 0.65, 1.0)
-const WM_TEXT := Color(0.95, 0.96, 0.98)
-const WM_TEXT_META := Color(0.65, 0.7, 0.78)
-const WM_AREA := Color(0.75, 0.8, 0.95)
-const WM_ERR := Color(1.0, 0.4, 0.35)
-const WM_EDGE_PAIRED := Color(0.45, 0.85, 1.0, 0.75)
-const WM_EDGE_ONEWAY := Color(1.0, 0.55, 0.35, 0.8)
-const MAP_BG := Color(0.055, 0.065, 0.085)
-const MAP_FIELD := Color(0.075, 0.085, 0.115)
 const MAP_TERRAIN := Color(0.35, 0.65, 0.40, 0.95)
 const MAP_DECOR := Color(0.20, 0.40, 0.25, 0.80)
-const MAP_BORDER := Color(1, 1, 1, 0.30)
-const MAP_HOVER := Color(1, 0.85, 0.3, 0.95)
-const MAP_HOVER_FILL := Color(1, 0.85, 0.3, 0.22)
-const MAP_SPAWN := Color(1, 1, 1, 0.75)
-const MAP_ENT_FALLBACK := Color(0.75, 0.75, 0.8)
 
 static func build() -> Theme:
 	var th := Theme.new()

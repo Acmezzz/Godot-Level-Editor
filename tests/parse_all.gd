@@ -15,7 +15,6 @@ const SRC := [
 	"res://src/canvas/selection_ops.gd", "res://src/canvas/canvas_draw.gd",
 	"res://src/canvas/canvas_input.gd", "res://src/canvas/tool_ops.gd",
 	"res://src/canvas/tileset_cache.gd",
-	"res://src/ui/map_thumb.gd",
 	"res://src/ui/asset_panel.gd",
 	"res://src/ui/editor_layout.gd", "res://src/ui/props_panel.gd",
 	"res://src/ui/map_file.gd",

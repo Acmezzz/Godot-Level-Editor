@@ -194,21 +194,3 @@ static func popup_buttons(on_ok: Callable, on_cancel: Callable,
 ## 表单左标签固定两档：常用字段 72，长字段名 96。全库统一，视觉节奏才整齐。
 const LABEL_W := 72
 const LABEL_W_LONG := 96
-
-## 弹窗外壳（静态版，供没有 app 上下文的场景使用）：
-## 标题 + 副标题 + 内容列（固定宽度），返回 {pop, root, body}。
-## 与 app._popup_body 同样的形状，宿主侧那个多走两段式居中。
-static func popup_shell(title: String, subtitle := "", host = null) -> Dictionary:
-	if host != null and host.has_method("_popup_body"):
-		return host._popup_body(title, subtitle)
-	var pop := PopupPanel.new()
-	var col := vbox(10)
-	col.custom_minimum_size = Vector2(360, 0)
-	pop.add_child(col)
-	col.add_child(text_label(title, UiTheme.TEXT, UiTheme.FS_MD))
-	if subtitle != "":
-		col.add_child(hint_label(subtitle, 360))
-	var body := vbox(8)
-	body.custom_minimum_size = Vector2(360, 0)
-	col.add_child(body)
-	return {"pop": pop, "root": col, "body": body}

@@ -603,12 +603,6 @@ func _asset_field_rows(grid: GridContainer, edef: Dictionary) -> void:
 		fdel.tooltip_text = "删除这个字段（地图里已填的值会变成孤立数据）"
 		grid.add_child(fdel)
 
-func _stats_by_id(edef: Dictionary) -> Dictionary:
-	var out := {}
-	for s in edef.get("stats", []):
-		out[str(s.get("id", ""))] = s
-	return out
-
 ## 去重历史遗留的重复 stat id；返回是否有改动
 func _dedupe_stat_ids(edef: Dictionary) -> bool:
 	var seen := {}
