@@ -8,3 +8,6 @@ tools/shots/
 # 临时日志与截图（开发期产物）
 .tmp_*.log
 .tmp_*.png
+.tmp_*.png.import
+.tmp_*.gd
+.tmp_*.gd.uid
