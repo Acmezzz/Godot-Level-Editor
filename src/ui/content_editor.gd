@@ -18,6 +18,8 @@ const ORD := ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨"]
 const MAP_MENU_BASE := 100
 const LEFT_W := 220
 const RIGHT_W := 360
+## 预览悬停高亮色：青色，和选中框的黄（Th.WARN）区分开
+const HOVER_COL := Color(0.35, 0.95, 0.95, 0.95)
 
 var app
 var manifest := {}
@@ -27,6 +29,8 @@ var root: Control = null
 var _selected_ent := ""
 var _selected_fn := -1
 var _only_todo := false
+## 预览区鼠标悬停的实例 id（青色高亮，与点击选中的黄框区分）
+var _hover_ent := ""
 
 # 左列
 var _left_title: Label = null
@@ -132,6 +136,15 @@ class PreviewControl extends Control:
 		if ctrl != null:
 			ctrl._preview_input(event)
 
+	## 鼠标离开预览区：清掉悬停高亮，避免光标移出后框还停在原处
+	func _notification(what: int) -> void:
+		if ctrl == null:
+			return
+		if what == NOTIFICATION_MOUSE_EXIT:
+			ctrl._set_preview_hover(self, Vector2.INF)
+		elif what == NOTIFICATION_MOUSE_ENTER:
+			ctrl._set_preview_hover(self, get_local_mouse_position())
+
 
 func _build_middle() -> Control:
 	var wrap := Control.new()
@@ -148,10 +161,10 @@ func _build_middle() -> Control:
 	_preview.ctrl = self
 	_preview.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_preview.mouse_filter = Control.MOUSE_FILTER_STOP
-	_preview.tooltip_text = "只读预览 · 点击实例选中"
+	_preview.tooltip_text = "只读预览 · 悬停高亮 · 点击实例选中"
 	wrap.add_child(_preview)
 
-	var hint := Kit.text_label("只读预览 · 点击实例选中", Th.TEXT_MUTE, Th.FS_META)
+	var hint := Kit.text_label("只读预览 · 悬停高亮 · 点击实例选中", Th.TEXT_MUTE, Th.FS_META)
 	hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hint.position = Vector2(12, 10)
 	wrap.add_child(hint)
@@ -202,6 +215,9 @@ func refresh_list(focus := "") -> void:
 		_clear_all_for_empty()
 		return
 	var ents := _entities()
+	# 悬停 id 随切图/删实体失效：留着会指向不存在的实例，清干净
+	if _hover_ent != "" and _find_ent(_hover_ent) == null:
+		_hover_ent = ""
 	# 选中项失效（切图/删实体）时回到第一行：右栏不该对着已不存在的实例
 	if focus != "" and _find_ent(focus) != null:
 		_selected_ent = focus
@@ -470,6 +486,7 @@ func _draw_preview(c: Control) -> void:
 			else:
 				c.draw_rect(dst, fallback, true)
 
+	var hover_rect := Rect2()
 	for row in _entities():
 		var spr: Sprite2D = row.spr
 		if spr == null or not is_instance_valid(spr):
@@ -484,9 +501,19 @@ func _draw_preview(c: Control) -> void:
 			# 内置种类（触发区等）没有缩略图：画半透明块，尺寸就是它在游戏里的占位
 			c.draw_rect(rect, Color(Th.ACCENT, 0.35), true)
 			c.draw_rect(rect, Color(Th.ACCENT_HI, 0.8), false, 1.0)
+		# 悬停框记下来，循环结束后再画：否则被后画的实体盖住，悬停看起来像没生效
+		if str(row.id) == _hover_ent and str(row.id) != _selected_ent:
+			hover_rect = rect
 		if str(row.id) == _selected_ent:
 			var pad := 3.0
 			c.draw_rect(rect.grow(pad), Th.WARN, false, 2.0)
+	# 悬停高亮：青色淡框 + 细十字（与选中的黄色实框区分），最后画保证在最上层
+	if hover_rect.size.x > 0.0:
+		var hr := hover_rect.grow(2.0)
+		var hc := hr.get_center()
+		c.draw_rect(hr, HOVER_COL, false, 1.5)
+		c.draw_line(Vector2(hr.position.x, hc.y), Vector2(hr.end.x, hc.y), Color(HOVER_COL, 0.35), 1.0)
+		c.draw_line(Vector2(hc.x, hr.position.y), Vector2(hc.x, hr.end.y), Color(HOVER_COL, 0.35), 1.0)
 
 ## 预览用的瓦片列表，统一为 [x, y, atlas, ax, ay]。
 ## 首选画布实时 TileMapLayer（编辑中的改动立刻反映），图层不可用时退回 map_data 数组。
@@ -514,9 +541,12 @@ func _preview_tiles(kind: String) -> Array:
 			out.append([int(a[0]), int(a[1]), 0, int(a[2]), int(a[3])])
 	return out
 
-## 预览点击：命中半径取实体显示尺寸的一半（与它看起来的大小一致）。
+## 预览点击/悬停：命中半径取实体显示尺寸的一半（与它看起来的大小一致）。
 ## 禁用拖拽/涂刷——本面板只做选中，位置属关卡编辑器（§9）。
 func _preview_input(event: InputEvent) -> void:
+	if event is InputEventMouseMotion:
+		_set_preview_hover(_preview, (event as InputEventMouseMotion).position)
+		return
 	if not (event is InputEventMouseButton):
 		return
 	var mb := event as InputEventMouseButton
@@ -524,17 +554,24 @@ func _preview_input(event: InputEvent) -> void:
 		return
 	if _preview == null or not _map_ready():
 		return
+	var hit := _hit_ent_at(mb.position)
+	if hit != "":
+		select_inst(hit)
+
+## 光标下的实体 id（"" = 空白处）。后画的在上层，命中测试要反向遍历
+## （同一格叠多个时取最上面那个）。坐标均为预览控件本地坐标。
+func _hit_ent_at(pos: Vector2) -> String:
+	if _preview == null or not _map_ready():
+		return ""
 	var s := _preview_scale(_preview)
 	if s <= 0.0:
-		return
+		return ""
 	var meta: Dictionary = app.canvas.map_data.get("meta", {})
 	var map_px := Vector2(float(int(meta.get("w", 95))) * app.canvas.tile_px,
 		float(int(meta.get("h", 56))) * app.canvas.tile_px) * s
 	var origin := (_preview.size - map_px) * 0.5
-	var world := (mb.position - origin) / s
-	# 后画的在上层，命中测试要反向遍历（同一格叠多个时选最上面那个）
+	var world := (pos - origin) / s
 	var ents := _entities()
-	var hit := ""
 	for i in range(ents.size() - 1, -1, -1):
 		var row: Dictionary = ents[i]
 		var spr: Sprite2D = row.spr
@@ -543,15 +580,26 @@ func _preview_input(event: InputEvent) -> void:
 		var half: Vector2 = app.canvas.entity_display_size_of(spr) * 0.5
 		if absf(world.x - spr.position.x) <= maxf(half.x, 4.0) \
 				and absf(world.y - spr.position.y) <= maxf(half.y, 4.0):
-			hit = str(row.id)
-			break
-	if hit != "":
-		select_inst(hit)
+			return str(row.id)
+	return ""
+
+## 更新预览悬停实体并重绘（只在 id 变化时重绘，鼠标在空白处滑动不刷帧）。
+## pos 传 Vector2.INF 表示「离开预览区」，直接清理。
+func _set_preview_hover(c, pos: Vector2) -> void:
+	var hit := "" if pos == Vector2.INF else _hit_ent_at(pos)
+	if hit == _hover_ent:
+		return
+	_hover_ent = hit
+	if c != null and is_instance_valid(c):
+		c.queue_redraw()
+	elif _preview != null:
+		_preview.queue_redraw()
 
 ## 没开地图：清空三列并给引导。不伪造空行，让「先去开图」是唯一明确动作。
 func _clear_all_for_empty() -> void:
 	_selected_ent = ""
 	_selected_fn = -1
+	_hover_ent = ""
 	_left_title.text = "实例"
 	Kit.set_badge(_badge, "0/0 未填", Th.OK)
 	_filter_btn.text = "只看未填 (0)"
@@ -1221,7 +1269,7 @@ func _on_map_entry(id: int) -> void:
 var _val_pop: PopupPanel = null
 
 ## 打开校验问题清单弹窗。all_maps=false 校验当前图（画布内存快照，未保存改动也覆盖），
-## true 校验全部地图 + 关卡清单 + 内容资源。条目可点：带实例定位信息的跳关卡编辑器聚焦实体。
+## true 校验全部地图 + 内容资源。条目可点：带实例定位信息的跳关卡编辑器聚焦实体。
 func open_validate_popup(all_maps: bool) -> void:
 	if _val_pop != null and is_instance_valid(_val_pop):
 		_val_pop.queue_free()

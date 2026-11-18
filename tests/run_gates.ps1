@@ -33,7 +33,7 @@ function Invoke-GodotGate([string]$Project, [string[]]$GateArgs, [string]$Label)
 }
 
 $editorGates = @('parse_all', 'regress', 'data_layer_test', 'content_model_test',
-                 'content_panel_test', 'def_regression_test', 'entity_copy_regression_test',
+                 'def_regression_test', 'entity_copy_regression_test',
                  'props_undo_regression_test', 'shortcut_test', 'portal_mode_regression_test')
 foreach ($gate in $editorGates) {
     Invoke-GodotGate $EditorProject @('--script', "res://tests/$gate.gd") "editor/$gate"

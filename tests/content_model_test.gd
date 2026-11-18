@@ -157,21 +157,17 @@ func _test_event() -> void:
 	_check(_has_msg(EventModel.validate(empty_steps, schema), "至少"), "empty event is reported")
 
 func _test_shop() -> void:
-	var known := {"item.ore": true, "item.sword": true}
 	var good := {"version": 1, "id": "shop.good", "entries": [
 		{"item": "item.ore", "price": 12, "stock": 5},
 		{"item": "item.sword", "price": 80, "stock": -1},
 	]}
-	_check(ShopModel.validate(good, known).is_empty(), "valid shop passes validation")
+	_check(ShopModel.validate(good).is_empty(), "valid shop passes validation")
 	var dup := good.duplicate(true)
 	dup.entries.append({"item": "item.ore", "price": 1})
-	_check(_has_msg(ShopModel.validate(dup, known), "重复"), "duplicate shop item is reported")
-	var unknown_item := good.duplicate(true)
-	unknown_item.entries.append({"item": "item.ghost", "price": 1})
-	_check(_has_msg(ShopModel.validate(unknown_item, known), "不存在"), "unknown shop item is reported")
+	_check(_has_msg(ShopModel.validate(dup), "重复"), "duplicate shop item is reported")
 	var negative := good.duplicate(true)
 	negative.entries[0].price = -3
-	_check(_has_msg(ShopModel.validate(negative, known), "价格"), "negative price is reported")
+	_check(_has_msg(ShopModel.validate(negative), "价格"), "negative price is reported")
 
 func _test_definition() -> void:
 	var manifest := {"entities": [{"id": "npc", "name": "NPC"}, {"id": "enemy"}]}
@@ -233,7 +229,6 @@ func _test_validate_all() -> void:
 	var m := _project("validate")
 	var manifest := {
 		"entities": [{"id": "npc", "name": "NPC"}, {"id": "trigger_zone", "name": "触发区"}],
-		"items": [{"id": "item.ore", "name": "矿石"}],
 	}
 	m["_dir"] = str(m["_dir"])
 	var base := str(m["_dir"])
@@ -257,7 +252,6 @@ func _test_validate_all() -> void:
 	]))
 	var issues: Array = ContentValidate.validate_all(m, manifest)
 	_check(_has(issues, "dlg.missing", "不存在"), "missing dialogue reference is reported")
-	_check(_has(issues, "shop.one", "item.ghost"), "unknown shop item is reported by cross validation")
 	_check(_has(issues, "town.missing", "不存在"), "missing definition reference is reported")
 	_check(_has(issues, "evt.missing", "不存在"), "missing trigger event is reported")
 	_check(_has(issues, "town.one", "种类") == false, "matching kind produces no kind error")

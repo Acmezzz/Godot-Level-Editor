@@ -61,13 +61,6 @@ static func component_kind(manifest: Dictionary, comp_name: String) -> String:
 		return str((decl.get(comp_name, {}) as Dictionary).get("kind", ""))
 	return str(COMPONENT_KIND.get(comp_name, ""))
 
-## 组件 → 中文显示名：声明优先，缺省回退槽位名本身
-static func component_label(manifest: Dictionary, comp_name: String) -> String:
-	var decl := components_decl(manifest)
-	if not (decl as Dictionary).is_empty():
-		return str((decl.get(comp_name, {}) as Dictionary).get("label", comp_name))
-	return comp_name
-
 ## 组件是否可挂多份：声明优先，缺省回退内置 MULTI_SLOTS
 static func component_multi(manifest: Dictionary, comp_name: String) -> bool:
 	var decl := components_decl(manifest)
@@ -183,16 +176,6 @@ static func effective_stats(definition: Dictionary, manifest_def: Dictionary, in
 	if inst_stats is Dictionary:
 		for sid in (inst_stats as Dictionary):
 			out[str(sid)] = (inst_stats as Dictionary)[sid]
-	return out
-
-## 实例应使用的外观/尺寸来源：定义优先，缺省回退清单实体定义。
-static func visual_source(definition: Dictionary, manifest_def: Dictionary) -> Dictionary:
-	var out := {}
-	for key in ["prefab", "thumb", "editorSize"]:
-		if definition.has(key):
-			out[key] = definition[key]
-		elif manifest_def.has(key):
-			out[key] = manifest_def[key]
 	return out
 
 static func _kind_known(kind: String, manifest: Dictionary) -> bool:

@@ -5,14 +5,10 @@ extends Control
 
 const SettingsCfg := "user://settings.cfg"
 const ProjectShellScript := preload("res://src/ui/project_shell.gd")
-const SidePanelScript := preload("res://src/ui/side_panel.gd")
 const UiThemeScript := preload("res://src/ui/ui_theme.gd")
 const UiKitScript := preload("res://src/ui/ui_kit.gd")
 const MapValidate := preload("res://src/map_validate.gd")
 const MapStore := preload("res://src/map_store.gd")
-const LevelList := preload("res://src/level_list.gd")
-const ContentStore := preload("res://src/content/content_store.gd")
-const ContentTemplates := preload("res://src/content/content_templates.gd")
 
 var manifest := {}
 var canvas: EditorCanvas
@@ -20,19 +16,13 @@ var cur_map_path := ""
 var cur_map_name := ""
 var tile_list: ItemList
 var ent_list: ItemList
-## 碰撞层左栏说明（该层没有可选资产）
+## 碰撞层左栏：说明 + 类型/形状选择器
 var grid_hint: VBoxContainer
+var _coll_type_opt: OptionButton
+var _coll_shape_opt: OptionButton
 var status: Label
-## v2：工具概念已废除——画笔行为由层类型决定，笔刷尺寸/碰撞类型不再有 UI 入口，
-## 这两个字段保留为画布状态的直写点（默认值即唯一值）。
 var last_tiles_layer := 0       # 最近使用的瓦片层（选瓦片时切回它）
-var _hover_list: ItemList = null  # 打开中的目标候选列表（悬停高亮轮询用）
-var _hover_ids: Array = []
-## 属性面板容器保留为「无界面的构建目标」：props_panel 的控制器仍要一个 VBox 来装配，
-## 但它不上屏（v2 §7.1 删右栏检查器）。参数编辑走内容编辑器与资产目录。
-var props_panel: VBoxContainer
-var props_scroll: ScrollContainer
-var _props_panel_ctrl   # ui/props_panel.gd 控制器
+var _props_panel_ctrl   # ui/props_panel.gd 控制器（只剩「从地形生成碰撞」弹窗）
 var _picker_ctrl   # ui/cross_map_picker.gd 控制器
 var _map_file_ctrl   # ui/map_file.gd 控制器
 var _editor_state_ctrl   # core/editor_state.gd 控制器（审查 8.2-4 状态流）
@@ -185,12 +175,6 @@ func _open_size_dialog() -> void:
 
 func _open_export_dialog() -> void:
 	_map_file_ctrl.open_export_dialog()
-
-func _open_bg_dialog() -> void:
-	_map_file_ctrl.open_bg_dialog()
-
-# —— 右侧侧边面板（地图列表 / 实体大纲 / 校验） ——
-var side_panel = null
 
 # —— 试玩配置（每图独立）：初始能力/血量，存编辑器用户数据不污染地图 JSON ——
 var play_cfg := {}                 # 当前图配置 {abilities:[], hp:int}
@@ -421,9 +405,6 @@ func _toggle_grid() -> void:
 	_refresh_view_toggles()
 
 
-func _toggle_bg() -> void:
-	_map_file_ctrl.toggle_bg()
-
 ## 框选开关：打开后画布左键拖动进入框选（不用快捷键）
 func _toggle_select_mode() -> void:
 	if canvas == null:
@@ -474,16 +455,6 @@ const POPUP_BODY_W := 340
 func _process(_delta: float) -> void:
 	_maybe_autosave()
 	_poll_playtest()
-	if _hover_list == null or not is_instance_valid(_hover_list):
-		return
-	if not _hover_list.is_visible_in_tree():
-		return
-	var mp := _hover_list.get_local_mouse_position()
-	var idx := _hover_list.get_item_at_position(mp, true)
-	if idx >= 0 and idx < _hover_ids.size():
-		var hid := str(_hover_ids[idx])
-		if hid != "":
-			canvas.flash_entity(hid, 250)
 
 # 按 ent_id 找实体精灵（画布 Entities 子节点里查）
 func _ent_by_id(id: String) -> Sprite2D:
@@ -492,17 +463,13 @@ func _ent_by_id(id: String) -> Sprite2D:
 			return e as Sprite2D
 	return null
 
-# —— 实体属性面板（拆到 ui/props_panel.gd，这里只留委托：调用点保持不变） ——
-func _open_align_menu() -> void:
-	_props_panel_ctrl.open_align_menu()
-
+# —— 实体属性（面板已删，只剩碰撞生成弹窗与选中状态维护） ——
 func _open_collision_gen() -> void:
 	_props_panel_ctrl.open_collision_gen()
 
 func _on_entity_selected(spr: Sprite2D) -> void:
-	# 右栏检查器已删（v2 §2.3）：属性控制器仍要吃选中事件（它维护 selected_spr 等状态），
-	# 但用户看到的是画布下沿那条极简信息条。
-	_props_panel_ctrl.on_entity_selected(spr)
+	# 用户看到的是画布下沿那条极简信息条；参数编辑走内容编辑器与资产目录。
+	selected_spr = spr
 	_refresh_sel_bar()
 	# v2 §3.2 双向同步的另一半：画布选中的实例，切到内容编辑器时左列要定位到它。
 	# 载入地图会以 null 清选（P-10），先挡掉。
@@ -511,16 +478,9 @@ func _on_entity_selected(spr: Sprite2D) -> void:
 		if eid != "":
 			project_shell.content_editor.select_inst(eid)
 
-func _rebuild_props_panel() -> void:
-	_props_panel_ctrl.rebuild()
-
-func _open_asset_editor(sid: String) -> void:
-	_set_mode("asset", sid)
-
 func _set_map_loaded(loaded: bool) -> void:
 	map_loaded = loaded
-	if _map_btn:
-		_map_btn.text = "%s ▾" % (cur_map_name if loaded and cur_map_name != "" else "地图 ▾")
+	# 顶栏「设置 ▾」是固定文案，不再兼作地图名显示（地图名在右侧切换按钮上）
 	if _canvas_empty:
 		_canvas_empty.visible = not loaded
 	if not loaded:
@@ -532,7 +492,6 @@ func _set_map_loaded(loaded: bool) -> void:
 		_sync_ui()
 		# 地图载入后：清掉引导态，换成「未选中实体」的提示
 		selected_spr = null
-		_rebuild_props_panel()
 	_refresh_dirty_badge()
 	_refresh_tool_meta()
 	_refresh_sel_bar()
@@ -547,38 +506,10 @@ func _open_map_point_picker(tmap: String, map_fid: String, point_fid: String, pr
 # —— 模式切换：关卡 / 内容 / 资产 三个平级面板 + 旧的项目页外壳 ——
 var _map_view: VBoxContainer = null
 var project_shell = null        # ProjectShell（项目页外壳，含三个视图）
-# 三个视图面板由 project_shell 持有；这里保留别名方便既有调用点
+# 视图面板由 project_shell 持有；这里保留别名方便既有调用点
 var asset_panel = null
-var content_panel = null
-var manifest_panel = null
 
-## 为当前选中实体创建内容组（defs 资源）并挂上去。
-## 粒度是"这个实体"，id 里带地图名与实体 id，一眼看出归属；仍可被别的实体复用。
-func _create_def_for_selected(sid: String) -> void:
-	if selected_spr == null or not is_instance_valid(selected_spr):
-		return
-	var map_name := str(canvas.cur_map_name)
-	var ent_id := str(selected_spr.get_meta("ent_id", ""))
-	var base := "grp.%s.%s" % [map_name, ent_id] if map_name != "" and ent_id != "" else "grp"
-	var existing: Array = ContentStore.list_ids(manifest, "defs")
-	var new_id := base
-	var i := 2
-	while existing.has(new_id):
-		new_id = "%s.%d" % [base, i]
-		i += 1
-	var template := ContentTemplates.for_kind("defs")
-	template["kind"] = sid
-	template["name"] = str(ent_id) if ent_id != "" else new_id
-	if not ContentStore.write(manifest, "defs", new_id, template):
-		_set_status(" 内容组创建失败，检查 content/defs 目录权限")
-		return
-	canvas._push_undo()
-	selected_spr.set_meta("def_id", new_id)
-	canvas._mark()
-	_rebuild_props_panel()
-	_set_status(" 已创建内容组 %s" % new_id)
-
-## 模式切换：mode = map（关卡编辑器）/ content（内容编辑器）/ asset（资产目录）/ manifest。
+## 模式切换：mode = map（关卡编辑器）/ content（内容编辑器）/ asset（资产目录）。
 ## 三个面板是平级关系（v2 §1），顶栏三个入口直接切，Esc 回关卡编辑器。
 func _set_mode(mode: String, focus_sid := "") -> void:
 	var on_map := mode == "map"
@@ -589,7 +520,6 @@ func _set_mode(mode: String, focus_sid := "") -> void:
 		return
 	project_shell.visible = not on_map
 	if on_map:
-		_rebuild_props_panel()
 		return
 	project_shell.show_view(mode, focus_sid)
 
@@ -703,8 +633,6 @@ func _sync_play_cfg_to_map() -> void:
 func _build_project_view() -> void:
 	_layout_ctrl._build_project_view()
 ## —— 拆到 src/core/side_actions.gd 的委托（调用点保持不变） ——
-func _refresh_side_panel() -> void:
-	_side_actions_ctrl._refresh_side_panel()
 
 ## T16/K18（批次 10）：地图改名/复制——委托 side_actions 控制器
 func _rename_map_by_name(old_name: String, new_name: String) -> void:
@@ -712,15 +640,6 @@ func _rename_map_by_name(old_name: String, new_name: String) -> void:
 
 func _duplicate_map_by_name(old_name: String, new_name: String) -> void:
 	_side_actions_ctrl._duplicate_map_by_name(old_name, new_name)
-
-func _refresh_world() -> void:
-	_side_actions_ctrl._refresh_world()
-
-func _save_levels(data: Dictionary) -> void:
-	_side_actions_ctrl._save_levels(data)
-
-func _refresh_entity_outline() -> void:
-	_side_actions_ctrl._refresh_entity_outline()
 
 func _scene_name(sid: String) -> String:
 	return _side_actions_ctrl._scene_name(sid)

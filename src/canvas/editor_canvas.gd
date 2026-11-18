@@ -10,14 +10,10 @@ signal cursor_info(text: String)
 
 const K := preload("res://src/core/constants.gd")   # S-01：共享常量统一在 core/constants.gd
 const TilesetCache := preload("res://src/canvas/tileset_cache.gd")   # PF-02：TileSet 构建缓存
-const BgPreview := preload("res://src/canvas/bg_preview.gd")   # 背景图组画布预览（视差背景）
 const INVISIBLE_CELL := K.INVISIBLE_CELL
 const BuiltinKinds := preload("res://src/content/builtin_kinds.gd")   # 内置种类（trigger_zone 等）
 const MapStoreRef := preload("res://src/map_store.gd")   # K26b 引用扫描用
 
-## v2 §2.2：工具概念已废除。这个字段只保留给少量仍在读它的既有代码（选区/绘制分支
-## 已全部改为按层判断）。`_apply_state` 会按层类型把它归一成 "paint" / "stamp"。
-var tool := "paint"
 var active_layer := 0          # 按清单 layers 顺序，最后一个是实体
 var paint_cell := Vector2i(0, 0)  # 当前瓦片（纯手动，不自动变形）
 var brush_size := 1               # 笔刷边长（格）
@@ -70,9 +66,6 @@ func _update_cam() -> void:
 		return  # 无视口（headless 测试）时跳过相机更新
 	var half := vp.get_visible_rect().size * 0.5
 	vp.canvas_transform = Transform2D(0.0, Vector2(zoom, zoom), 0.0, half - cam_pos * zoom)
-	# 背景预览层跟随相机做视差模拟（世界坐标 = 基准 + 相机位移 × (1-系数)）
-	if _bg_ctrl != null:
-		_bg_ctrl.update_parallax()
 
 # —— 图层节点：按清单 layers 顺序解析（grid 型 = 碰撞） ——
 func _layer_node(i: int) -> TileMapLayer:
@@ -299,9 +292,6 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	map_root.add_child(spawn)
 	# 地图装载后同步碰撞可视节点与图层可见性（按图层索引恢复，不只是节点 flag）
 	coll_view.refresh()
-	# 背景图组预览：按 map_data.bgGroup 重建（无配置 = 只剩底色）
-	if _bg_ctrl != null:
-		_bg_ctrl.rebuild()
 	for i in manifest.get("layers", []).size() + 1:
 		var dn := _layer_display_node(i)
 		if dn:
@@ -330,7 +320,6 @@ func _ready() -> void:
 	_canvas_draw_ctrl = preload("res://src/canvas/canvas_draw.gd").new(self)
 	_canvas_input_ctrl = preload("res://src/canvas/canvas_input.gd").new(self)
 	_tool_ops_ctrl = preload("res://src/canvas/tool_ops.gd").new(self)
-	_bg_ctrl = BgPreview.new(self)
 	# 视口尺寸变化时重绘底色（否则窗口缩放后底板会露出旧底色）
 	get_viewport().size_changed.connect(func(): queue_redraw())
 	queue_redraw()
@@ -540,14 +529,17 @@ var _clipboard: Array = []       # 复制模板 [{scene, dx, dy, props}]
 var _region_sel := Rect2i(-1, 0, 0, 0)  # 区域框选结果（瓦片层 Ctrl+C 用）
 var _region_clip := {}           # 三层区域快照 {terrain[], decor[], collision[], size}
 var _paste_mode := false         # 区域粘贴预览态（幽灵跟随鼠标）
+# 区域拖动搬迁（框选后按住区内拖动）：按下只快照，松手才擦源写目标
+var _move_snap := {}
+var _move_from := Vector2i.ZERO
+var _move_grab := Vector2.ZERO
+var _move_cell_delta := Vector2i.ZERO
+var _move_active := false
 var _selection_ops_ctrl   # SelectionOps：实体选区/剪贴板/区域复制粘贴控制器（审查 8.3-E）
 var _undo_history_ctrl   # UndoHistory：快照式撤销/重做控制器（审查 8.3-F）
 var _canvas_draw_ctrl   # CanvasDraw：绘制块（审查 8.3-H，行数验收迫使拆出）
 var _canvas_input_ctrl   # CanvasInput：鼠标输入路由（审查 8.3-G，行数验收迫使拆出）
 var _tool_ops_ctrl   # ToolOps：工具执行（审查 8.3-D，行数验收迫使拆出）
-var _bg_ctrl   # BgPreview：背景图组预览（视差背景，编辑器侧）
-# 背景显隐（状态栏「背景」开关；只影响预览，不改地图数据）
-var bg_visible := true
 var _last_copy_region := false   # 最近一次复制是区域还是实体（Ctrl+V 分发）
 
 # —— 光标模式：框选 / 删除 / 复制粘贴（实体） ——
@@ -753,6 +745,19 @@ func bulk_update(scene_id: String, stat_set: Dictionary, stat_clear: Array, prop
 
 func copy_region() -> void:
 	_selection_ops_ctrl.copy_region()
+
+## 区域拖动搬迁（框选后按住区内拖动）
+func _in_region_sel(pos: Vector2) -> bool:
+	return _selection_ops_ctrl._in_region_sel(pos)
+
+func _begin_region_move(pos: Vector2) -> void:
+	_selection_ops_ctrl._begin_region_move(pos)
+
+func _move_region_preview(pos: Vector2) -> void:
+	_selection_ops_ctrl._move_region_preview(pos)
+
+func _finish_region_move() -> void:
+	_selection_ops_ctrl._finish_region_move()
 
 func cut_region() -> void:
 	_selection_ops_ctrl.cut_region()

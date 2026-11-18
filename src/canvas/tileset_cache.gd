@@ -4,30 +4,11 @@ extends RefCounted
 ## 并重建 TileSet——同一图集路径的结果缓存复用，路径变了（换项目）才重建。
 ## 静态缓存：同进程内多个画布实例（如测试里连续建 app）共享同一份 TileSet 资源。
 
-static var _src := ""
-static var _tsz := -1
-static var _img: Image = null
-static var _tex: ImageTexture = null
-static var _ts: TileSet = null
-## 多图集缓存（批次 9）：键 = 全部图集路径 + tileSize
+## 批次 9 多图集缓存：键 = 全部图集路径 + tileSize
 static var _mkey := ""
 static var _mimgs: Array = []
 static var _mtexs: Array = []
 static var _mts: TileSet = null
-
-## 按 atlas 路径取或建 TileSet；返回 {img, tex, ts}，失败返回空字典。
-## B9：缓存键含 tileSize——同路径换 tileSize 不再拿到旧 TileSet。
-static func get_or_build(atlas_path: String, tsz: int) -> Dictionary:
-	if _src == atlas_path and _tsz == tsz and _ts != null:
-		return {"img": _img, "tex": _tex, "ts": _ts}
-	var got := get_or_build_multi([atlas_path], tsz)
-	if got.is_empty():
-		return {}
-	_src = atlas_path
-	_img = got.imgs[0]
-	_tex = got.texs[0]
-	_ts = got.ts
-	return {"img": _img, "tex": _tex, "ts": _ts}
 
 ## 批次 9 多图集：按 tiles[] 顺序构建 TileSet（source_id = 图集索引），返回
 ## {imgs, texs, ts}；任一图集读不到返回空字典。缓存键 = 路径列表 + tileSize。

@@ -1,32 +1,22 @@
 extends SceneTree
 
-## 定义层回归（合并原 def_resolution_test + def_panel_test）：
+## 定义层回归：
 ## 1) 地图实体的 def 必须在 加载 → 快照 → 复制粘贴 链路中保留；
-## 2) 属性面板必须能按种类筛选定义、写入 def_id、撤销恢复、展示组件徽章。
-## 用真实 EditorCanvas / PropsPanel，只依赖临时内容目录。
+## 2) 触发区（内置种类）尺寸/绑定必须穿过快照；调色板必须列出无缩略图的内置种类。
+## 用真实 EditorCanvas，只依赖临时内容目录。
 
 const CanvasScript := preload("res://src/canvas/editor_canvas.gd")
-const PropsPanelScript := preload("res://src/ui/props_panel.gd")
 const ContentStore := preload("res://src/content/content_store.gd")
 
-## 属性面板依赖的宿主接口（与 app.gd 对应成员同名）
+## 调色板依赖的宿主接口（与 app.gd 对应成员同名）
 class TestHost extends Control:
 	var manifest := {
 		"tileSize": 16, "layers": [], "tiles": [],
 		"entities": [{"id": "npc", "name": "NPC", "fields": []}],
 	}
 	var canvas
-	var props_panel := VBoxContainer.new()
-	var props_scroll: ScrollContainer
-	var selected_spr: Sprite2D
-	var _props_panel_ctrl
 	var ent_list: ItemList
-	const POPUP_BODY_W := 340
 	func _set_status(_message: String) -> void: pass
-	func _set_badge(_panel: PanelContainer, _text: String, _color: Color) -> void: pass
-	func _open_asset_editor(_sid: String) -> void: pass
-	func _rebuild_props_panel() -> void: _props_panel_ctrl.rebuild()
-	func _open_popup(_pop: Control) -> void: pass
 	## 调色板会问缩略图；测试里一律没有贴图，正好覆盖"无图也要列出内置种类"
 	func _entity_thumbs() -> Dictionary: return {}
 
@@ -51,7 +41,6 @@ func _run() -> void:
 	_test_resolution()
 	_test_trigger_zone()
 	await _test_palette_lists_builtin()
-	_test_panel()
 	_cleanup()
 	if failures.is_empty():
 		print("DEF_REGRESSION_OK")
@@ -187,73 +176,6 @@ func _test_palette_lists_builtin() -> void:
 	holder.queue_free()
 	await process_frame
 
-## 属性面板：定义下拉按种类筛选、切换写入 def_id、撤销恢复、组件徽章。
-func _test_panel() -> void:
-	var host := TestHost.new()
-	root.add_child(host)
-	host.manifest.merge(project, true)
-	host.canvas = CanvasScript.new()
-	host.add_child(host.canvas)
-	host.canvas.manifest = host.manifest
-	host.canvas.set_thumbs({})
-	host.add_child(host.props_panel)
-	host._props_panel_ctrl = PropsPanelScript.new(host)
-	await host.canvas.load_data(_map_data([
-		{"scene": "npc", "id": "e_1", "x": 2, "y": 2, "props": {}},
-	]), "panel")
-	host.selected_spr = _entity(host.canvas, "e_1")
-	host._props_panel_ctrl.rebuild()
-	await process_frame
-
-	var opt := _find_option_button(host.props_panel)
-	_check(opt != null, "definition section renders a dropdown")
-	if opt != null:
-		var labels: Array[String] = []
-		for i in opt.item_count:
-			labels.append(opt.get_item_text(i))
-		_check(labels.has("(不使用定义)"), "dropdown offers the no-definition option")
-		var has_smith := false
-		var has_bat := false
-		for label in labels:
-			has_smith = has_smith or label.contains("town.smith")
-			has_bat = has_bat or label.contains("cave.bat")
-		_check(has_smith, "dropdown lists definitions matching the entity kind")
-		_check(not has_bat, "dropdown hides definitions of a different kind")
-
-		var idx := -1
-		for i in opt.item_count:
-			if opt.get_item_text(i).contains("town.smith"):
-				idx = i
-		_check(idx > 0, "matching definition has a selectable index")
-		if idx > 0:
-			opt.select(idx)
-			opt.item_selected.emit(idx)
-			await process_frame
-			_check(str(_current_entity(host).get_meta("def_id", "")) == "town.smith",
-				"selecting a definition writes def_id onto the entity")
-			_check(str(_find_ent(host.canvas.extract(), "e_1").get("def", "")) == "town.smith",
-				"selected definition survives extraction")
-			_check(host.canvas.undo(), "definition assignment is undoable")
-			await process_frame
-			# 撤销会重建画布节点，选中引用必须重新取，否则面板走空状态
-			_check(str(_current_entity(host).get_meta("def_id", "")) == "",
-				"undo removes the definition assignment")
-
-	host.selected_spr = _current_entity(host)
-	_check(host.selected_spr != null and is_instance_valid(host.selected_spr),
-		"entity reference is valid after undo rebuild")
-	if host.selected_spr != null:
-		host.selected_spr.set_meta("def_id", "town.smith")
-		host._props_panel_ctrl.rebuild()
-		await process_frame
-		var text := _all_label_text(host.props_panel)
-		_check(text.contains("对话") and text.contains("dlg.smith"), "dialogue component badge is shown")
-		_check(text.contains("商店") and text.contains("shop.smith"), "shop component badge is shown")
-
-	if is_instance_valid(host):
-		host.queue_free()
-	await process_frame
-
 func _map_data(entities: Array) -> Dictionary:
 	return {"meta": {"name": "defs", "w": 10, "h": 6}, "spawn": [1, 1],
 		"terrain": [], "decor": [], "collision": [], "entities": entities}
@@ -269,26 +191,6 @@ func _find_ent(data: Dictionary, ent_id: String) -> Dictionary:
 		if str(ent.get("id", "")) == ent_id:
 			return ent
 	return {}
-
-func _current_entity(host: TestHost) -> Sprite2D:
-	return _entity(host.canvas, "e_1")
-
-func _find_option_button(node: Node) -> OptionButton:
-	if node is OptionButton:
-		return node as OptionButton
-	for child in node.get_children():
-		var found := _find_option_button(child)
-		if found != null:
-			return found
-	return null
-
-func _all_label_text(node: Node) -> String:
-	var out := ""
-	if node is Label:
-		out += (node as Label).text + "\n"
-	for child in node.get_children():
-		out += _all_label_text(child)
-	return out
 
 func _cleanup() -> void:
 	for kind in ["defs"]:

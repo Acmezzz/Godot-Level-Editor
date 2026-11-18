@@ -169,6 +169,33 @@ func _draw() -> void:
 	if cvs._region_sel.size.x > 0 and cvs._ent_layer_index() != cvs.active_layer:
 		var rr := Rect2(Vector2(cvs._region_sel.position) * cvs.tile_px, Vector2(cvs._region_sel.size) * cvs.tile_px)
 		cvs.draw_rect(rr, Color(1.0, 0.85, 0.3, 0.8), false, 2.0)
+	# 区域拖动预览：整块幽灵按当前格偏移跟手，松手才真搬
+	if cvs._move_active and not cvs._move_snap.is_empty():
+		var md: Vector2i = cvs._move_cell_delta
+		for t in cvs._move_snap.get("terrain", []):
+			if cvs.atlas_tex != null:
+				cvs.draw_texture_rect_region(cvs.atlas_tex,
+					Rect2(Vector2(Vector2i(int(t[0]), int(t[1])) + md) * cvs.tile_px, Vector2(cvs.tile_px, cvs.tile_px)),
+					Rect2(Vector2(int(t[3]), int(t[4])) * cvs.tile_px, Vector2(cvs.tile_px, cvs.tile_px)),
+					Color(1, 1, 1, 0.6))
+		for t in cvs._move_snap.get("decor", []):
+			if cvs.atlas_tex != null:
+				cvs.draw_texture_rect_region(cvs.atlas_tex,
+					Rect2(Vector2(Vector2i(int(t[0]), int(t[1])) + md) * cvs.tile_px, Vector2(cvs.tile_px, cvs.tile_px)),
+					Rect2(Vector2(int(t[3]), int(t[4])) * cvs.tile_px, Vector2(cvs.tile_px, cvs.tile_px)),
+					Color(1, 1, 1, 0.6))
+		for t in cvs._move_snap.get("collision", []):
+			var mc: Vector2i = Vector2i(int(t[0]), int(t[1])) + md
+			cvs.draw_rect(Rect2(Vector2(mc) * cvs.tile_px, Vector2(cvs.tile_px, cvs.tile_px)), Color(1.0, 0.25, 0.25, 0.45), true)
+		for s in cvs._move_snap.get("ents", []):
+			if is_instance_valid(s):
+				var tex0: Texture2D = cvs.thumbs.get(str((s as Sprite2D).get_meta("scene", "")))
+				var er0 := Rect2((s as Sprite2D).position + Vector2(md) * cvs.tile_px - Vector2(cvs.tile_px, cvs.tile_px) * 0.5,
+					Vector2(cvs.tile_px, cvs.tile_px))
+				if tex0 != null:
+					cvs.draw_texture_rect(tex0, er0, false, Color(1, 1, 1, 0.6))
+		var gr0 := Rect2(Vector2(cvs._region_sel.position + md) * cvs.tile_px, Vector2(cvs._region_sel.size) * cvs.tile_px)
+		cvs.draw_rect(gr0, Color(0.45, 1.0, 0.75, 0.9), false, 2.0)
 	# 区域粘贴预览：三层幽灵跟随鼠标，左键落位
 	if cvs._paste_mode and not cvs._region_clip.is_empty():
 		var org = cvs._cell_of(pos)

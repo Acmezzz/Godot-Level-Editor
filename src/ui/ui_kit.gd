@@ -169,11 +169,8 @@ static func set_badge(p: PanelContainer, text: String, color: Color) -> void:
 			break
 
 # —— 符号常量 ——
-## 符号表（R4 统一，按设计文档 §0 口径）：▶ 只给「播放/预演」；→ / ↳ 导航（有下级、下一步）；
-## ← 返回；✕ 删除；↑/↓ 排序；+ 新建；👁/🔒 图层显隐与锁定。别再混 × ＋ ●/○ 🗑。
-const SYM_PLAY := "▶"
-const SYM_NEXT := "→"
-const SYM_BACK := "←"
+## 符号表（R4 统一，按设计文档 §0 口径）：✕ 删除；↑/↓ 排序；+ 新建；👁/🔒 图层显隐与锁定。
+## 别再混 × ＋ ●/○ 🗑。
 const SYM_DEL := "✕"
 
 ## 行级删除钮：统一 ✕ + ghost + tooltip（删除必须有 tooltip 说明删的是什么）

@@ -54,7 +54,7 @@ func _run() -> void:
 			await process_frame
 			print("MEASURE dist_rows=%d" % (app.asset_panel._dist_rows.get_child_count() if app.asset_panel._dist_rows != null else -1))
 		"map_menu":
-			# 批次 D-3：地图菜单里应能看到「关卡清单与世界拓扑」「清单设置」
+			# 地图设置菜单：应看到新建/打开/保存/重命名/导出/尺寸/校验（无清单入口）
 			var pm: PopupMenu = null
 			for c in app.find_children("*", "PopupMenu", true, false):
 				if c.item_count >= 6 and c.get_item_id(0) == 1:
@@ -65,9 +65,6 @@ func _run() -> void:
 				for i in pm.item_count:
 					labels.append(pm.get_item_text(i))
 				print("MEASURE map_menu=", labels)
-			app._layout_ctrl._open_levels_dialog()
-		"levels_dlg":
-			app._layout_ctrl._open_levels_dialog()
 		"asset_quick":
 			app._set_mode("asset")
 		"project":
@@ -75,8 +72,6 @@ func _run() -> void:
 			app._set_mode("asset")
 		"project_content":
 			app._set_mode("content")
-		"project_manifest":
-			app._set_mode("manifest")
 		"project_measure":
 			# R1 实证：外壳三视图切换 + Esc 回画布 + 状态栏常驻
 			app._set_mode("asset")
@@ -84,11 +79,11 @@ func _run() -> void:
 			var sh = app.project_shell
 			print("MEASURE shell_visible=%s map_visible=%s views=%d size=%s" % [
 				str(sh.visible), str(app._map_view.visible), sh.get_child_count(), str(sh.size)])
-			for v in ["asset", "content", "manifest"]:
+			for v in ["asset", "content"]:
 				sh.show_view(v)
 				await process_frame
-				print("MEASURE view=%s visible_tabs=%s holder_child=%d" % [
-					v, str(sh._tabs[v].button_pressed), sh._holder.get_child_count()])
+				print("MEASURE view=%s mode_btn=%s holder_child=%d" % [
+					v, str(sh._mode_btns[v].button_pressed), sh._holder.get_child_count()])
 			# Esc → 回画布
 			var ev := InputEventKey.new()
 			ev.keycode = KEY_ESCAPE
@@ -98,7 +93,6 @@ func _run() -> void:
 				await process_frame
 			print("MEASURE after_esc shell_visible=%s map_visible=%s" % [
 				str(app.project_shell.visible), str(app._map_view.visible)])
-			app._set_mode("manifest")
 		"topbar":
 			pass
 		"props":
@@ -113,9 +107,6 @@ func _run() -> void:
 				app._on_entity_selected(first)
 		"size":
 			app._open_size_dialog()
-		"align":
-			app.canvas.selected_multi = [1, 2]
-			app._open_align_menu()
 		"collide":
 			app._open_collision_gen()
 		"export":
@@ -123,22 +114,8 @@ func _run() -> void:
 		"play":
 			app.play_cfg = {"abilities": ["dash"], "hp": 3}
 			app._open_play_cfg()
-		"levels":
-			app._set_mode("manifest")
-		"world":
-			app._set_mode("manifest")
 		"validate":
 			app._run_validate(true)
-			app.side_panel.select_tab(2)
-		"entities":
-			app.side_panel.select_tab(1)
-		"ent_hover":
-			# 实体清单悬停 → 画布上被悬停的实体应出现青色高亮框
-			app.side_panel.select_tab(1)
-			await process_frame
-			var lst = app.side_panel.ent_list
-			if lst.item_count > 0:
-				app.side_panel.entity_hover_requested.emit(str(lst.get_item_metadata(0)))
 		"layers":
 			# 可见/锁定按钮的两种状态各拍一张对照（未启用 vs 已启用）
 			app.canvas.set_layer_locked(app.canvas.active_layer, true)

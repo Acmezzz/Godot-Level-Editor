@@ -9,7 +9,6 @@ const Validate := preload("res://src/map_validate.gd")
 const Validator := preload("res://src/map_data_validation.gd")
 const Manifest := preload("res://src/manifest.gd")
 const Export := preload("res://src/map_export.gd")
-const LevelList := preload("res://src/level_list.gd")
 const CrossMap := preload("res://src/cross_map.gd")
 const Playtest := preload("res://src/playtest.gd")
 
@@ -28,10 +27,8 @@ func _run() -> void:
 	_test_validate_and_migrate()
 	_test_relationship_semantics()
 	_test_single_map_validation()
-	_test_level_unlock_validation()
 	_test_plan_pick()
 	_test_export()
-	_test_level_list_and_graph()
 	_test_playtest_guard()
 	_test_entity_editor_size()
 	if failures.is_empty():
@@ -300,10 +297,6 @@ func _test_validate_and_migrate() -> void:
 	_check(_has(issues, "c", "没有指回来", "e_1"), "one-way exit is detected")
 	_check(_has(issues, "d", "没有配置目标地图", "e_1"), "exit without target map is detected")
 
-	_check(Validate.migrate_map_rename(m, "c", "c2").get("ok", false), "rename migration succeeds")
-	var e_props: Dictionary = Store.read(m, "e").entities[0].get("props", {})
-	_check(str(e_props.get("target_map", "")) == "c2", "rename rewrites inbound target_map")
-
 	# 旧图没有 version：读出时应升级并取整坐标，同时保留未知字段
 	Store.write(m, "old", _map([
 		{"scene": "portal", "id": "e_1", "x": 2.7, "y": 3.2, "props": {}},
@@ -344,21 +337,6 @@ func _test_relationship_semantics() -> void:
 		"an unconfigured exit does not consume a same-map spawn point")
 	_check(not _has(issues, "b", "没有被任何门/出口使用", "p_b"),
 		"a cross-map one-way link consumes its destination spawn point")
-
-	var levels := {"levels": [
-		{"map": "a", "order": 1}, {"map": "b", "order": 2},
-		{"map": "c", "order": 3}, {"map": "d", "order": 4},
-	]}
-	var graph := LevelList.build_world_graph(m, levels, Store.read_all(m))
-	var ab := _edge(graph, "a", "b")
-	_check(int(ab.get("paired_count", 0)) == 1, "only the exact reciprocal pair counts as paired")
-	_check(int(ab.get("one_way_count", 0)) == 1, "the spawn-point link counts as one-way")
-	_check(int(ab.get("broken_count", 0)) == 1, "the unpaired exit-to-exit link counts as broken")
-	_check(not bool(ab.get("paired", true)), "a mixed connection is not labeled wholly paired")
-	var ad := _edge(graph, "a", "d")
-	_check(int(ad.get("invalid_count", 0)) == 1, "an exit to a missing point counts as invalid")
-	_check(LevelList.unreachable_maps(graph, "a").has("d"),
-		"an invalid link does not make a map reachable")
 	_remove_project(m)
 
 ## 单图校验模式：悬空门 + 指向不存在地图的出口都要报出来。
@@ -374,15 +352,6 @@ func _test_single_map_validation() -> void:
 	_check(_has(issues, "solo", "目标地图不存在或无法读取"), "single-map mode detects an exit to a missing map")
 	_remove_project(m)
 
-## 关卡清单校验：解锁前置地图不存在必须报错（与「缺失地图文件」区分开）。
-func _test_level_unlock_validation() -> void:
-	var m := _temp_project("unlock")
-	Store.write(m, "l1", _map([], "l1"))
-	var bad := {"mode": "level_select", "start": "l1",
-		"levels": [{"map": "l1", "order": 1, "unlock": "ghost"}]}
-	_check(_has(Validate.validate_levels(m, bad), "l1", "解锁前置地图不存在"),
-		"missing unlock prerequisite is reported")
-	_remove_project(m)
 ## 落点选择计划：拒绝分支、新建落点、复用落点、出口配对、三种 unbind 计划。
 func _test_plan_pick() -> void:
 	var m := _temp_project("planpick")
@@ -466,83 +435,6 @@ func _test_export() -> void:
 	var data2 := data.duplicate(true)
 	data2["entities"].append({"scene": "crawler", "id": "e_9", "x": 999, "y": 999, "props": {}})
 	_check(Export.render_preview(data2, 4).get_width() == 32, "out-of-bounds entity is skipped")
-## 关卡清单读写、校验与世界拓扑（含孤立可达性）。
-func _test_level_list_and_graph() -> void:
-	var base := "user://data_layer_levels"
-	var maps_dir := base.path_join("maps")
-	DirAccess.make_dir_recursive_absolute(maps_dir)
-	var m := {"_dir": base, "_maps_dir": maps_dir}
-	# 上次运行残留的 levels.json 会让「无清单生成建议」断言假失败，先删
-	var stale := LevelList.file_path(m)
-	if FileAccess.file_exists(stale):
-		DirAccess.remove_absolute(stale)
-	for f in ["l1", "l2", "l3"]:
-		Store.write(m, f, _map([], f))
-
-	var d := LevelList.load_levels(m)
-	var arr: Array = d.get("levels", [])
-	_check(arr.size() == 3, "levels are suggested from the maps directory")
-	_check(str(d.get("start", "")) != "", "a start level is suggested")
-
-	d["mode"] = LevelList.MODE_LEVEL_SELECT
-	d["start"] = "l2"
-	for i in arr.size():
-		(arr[i] as Dictionary)["unlock"] = "l1" if i > 0 else ""
-	_check(LevelList.save_levels(m, d), "levels save succeeds")
-	var back := LevelList.load_levels(m)
-	_check(str(back.get("mode", "")) == LevelList.MODE_LEVEL_SELECT, "levels mode round-trips")
-	_check(str(back.get("start", "")) == "l2", "levels start round-trips")
-	_check((back.get("levels", []) as Array).size() == 3, "levels entries round-trip")
-	_check(str(LevelList.entry_of(back, "l2").get("map", "")) == "l2", "entry_of finds a level")
-
-	var bad := {"mode": LevelList.MODE_METROIDVANIA, "start": "ghost", "levels": [
-		{"map": "l1", "order": 1}, {"map": "l1", "order": 2}, {"map": "nope", "order": 3}]}
-	var issues := Validate.validate_levels(m, bad)
-	var has_missing := false
-	var has_duplicate := false
-	var has_start := false
-	var has_unlisted := false
-	for issue in issues:
-		var msg := str(issue.get("message", ""))
-		has_missing = has_missing or msg.contains("不存在的地图文件")
-		has_duplicate = has_duplicate or msg.contains("重复出现")
-		has_start = has_start or msg.contains("起始关指向不存在")
-		has_unlisted = has_unlisted or msg.contains("未加入关卡清单")
-	_check(has_missing, "levels validation detects a missing map file")
-	_check(has_duplicate, "levels validation detects duplicate entries")
-	_check(has_start, "levels validation detects a bad start level")
-	_check(has_unlisted, "levels validation warns about unlisted maps")
-
-	# 拓扑：l1 ↔ l2 双向连通，l3 孤立
-	Store.write(m, "l1", _map([
-		{"scene": "exit", "id": "e_1", "x": 1, "y": 1,
-			"props": {"target_map": "l2", "target_point": "e_1"}},
-	], "l1"))
-	Store.write(m, "l2", _map([
-		{"scene": "exit", "id": "e_1", "x": 1, "y": 1,
-			"props": {"target_map": "l1", "target_point": "e_1"}},
-	], "l2"))
-	var graph := LevelList.build_world_graph(m, back)
-	_check((graph.get("nodes", []) as Array).size() == 3, "world graph lists every map")
-	_check((graph.get("edges", []) as Array).size() == 2, "world graph lists one edge per direction")
-	var paired := 0
-	for edge in graph.get("edges", []):
-		if bool((edge as Dictionary).get("paired", false)):
-			paired += 1
-	_check(paired == 2, "both directions are marked paired")
-	var unreachable := LevelList.unreachable_maps(graph, "l1")
-	_check(unreachable.size() == 1 and str(unreachable[0]) == "l3",
-		"reachability finds the isolated map")
-
-	if FileAccess.file_exists(stale):
-		DirAccess.remove_absolute(stale)
-	for f in ["l1", "l2", "l3"]:
-		var p := Store.path_for(m, f)
-		if FileAccess.file_exists(p):
-			DirAccess.remove_absolute(p)
-	DirAccess.remove_absolute(maps_dir)
-	DirAccess.remove_absolute(base)
-
 ## 试玩启动守卫：命令首参解析四态，缺可执行文件时提前拒绝（不真的拉起进程）。
 func _test_playtest_guard() -> void:
 	_check(Playtest._first_token("game.exe --flag") == "game.exe", "bare exe token parses")
@@ -599,12 +491,6 @@ func _exit(ent_id: String, target_map: String, target_point: String) -> Dictiona
 
 func _point(ent_id: String) -> Dictionary:
 	return {"scene": "spawn_point", "id": ent_id, "x": 2, "y": 2, "props": {}}
-
-func _edge(graph: Dictionary, from_map: String, to_map: String) -> Dictionary:
-	for edge in graph.get("edges", []):
-		if str(edge.get("from", "")) == from_map and str(edge.get("to", "")) == to_map:
-			return edge
-	return {}
 
 func _read_bytes(path: String) -> PackedByteArray:
 	var file := FileAccess.open(path, FileAccess.READ)

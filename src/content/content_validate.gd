@@ -28,7 +28,6 @@ static func validate_all(m: Dictionary, manifest: Dictionary = {}) -> Array:
 		by_kind[kind] = ContentStore.read_all(m, kind, bad[kind])
 	_collect_bad(bad, issues)
 	var schema := ContentStore.read(m, "schema", ContentStore.SCHEMA_ID)
-	var known_items := ShopModel.item_index(manifest)
 
 	var dialogues: Dictionary = by_kind.get("dialogues", {})
 	var events: Dictionary = by_kind.get("events", {})
@@ -39,7 +38,7 @@ static func validate_all(m: Dictionary, manifest: Dictionary = {}) -> Array:
 	for id in events:
 		_append(issues, EventModel.validate(events[id], schema), "events", id)
 	for id in shops:
-		_append(issues, ShopModel.validate(shops[id], known_items), "shops", id)
+		_append(issues, ShopModel.validate(shops[id]), "shops", id)
 	for id in defs:
 		_append(issues, DefModel.validate(defs[id], manifest), "defs", id)
 		_check_component_refs(defs[id], manifest, dialogues, events, shops, issues, id)
@@ -61,7 +60,7 @@ static func validate_all(m: Dictionary, manifest: Dictionary = {}) -> Array:
 
 	var all := Store.read_all(m)
 	for map_name in all:
-		_validate_map_entities(all[map_name], str(map_name), manifest, defs, events, issues, known_items)
+		_validate_map_entities(all[map_name], str(map_name), manifest, defs, events, issues)
 	# K13：孤儿内容资源——没有任何引用源（defs 槽位/触发区/事件步骤）指向的资源，
 	# 游戏里永远不会出现。反向引用扫描，warn 级（引用可能由游戏代码写）。
 	var referenced := {}
@@ -140,7 +139,7 @@ static func _check_component_refs(definition: Dictionary, manifest: Dictionary, 
 			})
 
 static func _validate_map_entities(data: Dictionary, map_name: String, manifest: Dictionary,
-		defs: Dictionary, events: Dictionary, issues: Array, _known_items: Dictionary) -> void:
+		defs: Dictionary, events: Dictionary, issues: Array) -> void:
 	for ent in data.get("entities", []):
 		if not (ent is Dictionary):
 			continue

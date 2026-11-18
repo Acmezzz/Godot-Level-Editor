@@ -5,10 +5,9 @@ var app   # 宿主引用
 
 func _init(host) -> void:
 	app = host
-## 唯一写入口。参数留空表示「保持当前值」。
-## v2 §2.2：工具不再是用户可选的状态——它由层类型派生。
-## 这里接受 tool 只是为了兼容吸管等内部调用，最终值仍按层归一。
-func _apply_state(tool := "", layer := -1) -> void:
+## 唯一写入口。v2 §2.2：没有工具概念——层类型即画笔语义。
+## 第一个参数保留只为兼容吸管的 tool_requested(tool, layer) 信号，值被忽略。
+func _apply_state(_tool := "", layer := -1) -> void:
 	if layer >= 0 and layer != app.canvas.active_layer:
 		var moved_from: int = app.canvas.active_layer
 		app.canvas.active_layer = layer
@@ -16,17 +15,7 @@ func _apply_state(tool := "", layer := -1) -> void:
 			app.last_tiles_layer = layer
 		if moved_from != layer:
 			app._set_status("已切到「%s」图层：%s" % [app._layer_label(layer), _gesture_hint(layer)])
-	if layer >= 0:
-		app.canvas.tool = _default_tool_for_layer(layer)
-	elif tool != "":
-		app.canvas.tool = tool
 	_sync_ui()
-
-## 层类型对应的唯一「画笔」语义：实体层放置/选中，其余层涂刷。
-func _default_tool_for_layer(i: int) -> String:
-	return "stamp" if _layer_type(i) == "entities" else "paint"
-
-## 状态栏给一句「这一层怎么用」，替代被删掉的工具按钮
 func _gesture_hint(i: int) -> String:
 	if _layer_type(i) == "entities":
 		return "左键放置 / 选中拖动，右键删除，开「框选」后拖动框选"
@@ -39,6 +28,7 @@ func _sync_ui() -> void:
 	var lt := _layer_type(app.canvas.active_layer)
 	if lt == "grid":
 		app._set_palette_page("")
+		_sync_collision_controls()
 	elif lt == "tiles":
 		app._set_palette_page("tiles")
 		# 装饰层没有独立资产（图一）：装饰↔地形切换时重填瓦片列表
@@ -48,6 +38,19 @@ func _sync_ui() -> void:
 	app._refresh_tool_meta()
 	app._sync_layer_buttons()
 	app._refresh_view_toggles()
+
+## 碰撞类型/形状下拉与画布笔刷状态对齐（画布是唯一真相）
+func _sync_collision_controls() -> void:
+	if app._coll_type_opt != null:
+		for i in app._coll_type_opt.item_count:
+			if str(app._coll_type_opt.get_item_metadata(i)) == app.canvas.collision_type:
+				app._coll_type_opt.select(i)
+				break
+	if app._coll_shape_opt != null:
+		for i in app._coll_shape_opt.item_count:
+			if str(app._coll_shape_opt.get_item_metadata(i)) == app.canvas.collision_shape:
+				app._coll_shape_opt.select(i)
+				break
 
 
 func _layer_type(i: int) -> String:

@@ -141,7 +141,6 @@ func extract() -> Dictionary:
 		"version": 3,   # 批次 9：与 FORMAT_VERSION 同步（load_data 的 upgrade 会兜底）
 		"meta": meta,
 		"spawn": [sp.x, sp.y],
-		"bgGroup": str(cvs.map_data.get("bgGroup", "")),
 		"terrain": tcells,
 		"decor": dcells,
 		"collision": ccells,

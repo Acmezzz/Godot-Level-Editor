@@ -456,6 +456,103 @@ func bulk_update(scene_id: String, stat_set: Dictionary, stat_clear: Array, prop
 	return hits.size()
 
 
+## —— 框选区域拖动搬迁（瓦片 / 装饰 / 碰撞三层 + 区域内实体） ——
+## 按下时只快照，不立刻搬；松手才「推撤销 → 擦源 → 写目标」。
+## 这样拖动中数据没被改过，中途松手/取消都不会留下半截状态。
+## 状态字段挂宿主 cvs（本项目控制器一律经 cvs 读写宿主状态）：
+##   cvs._move_snap / _move_from / _move_grab / _move_cell_delta / _move_active
+
+## 点是否落在已有区域选区里（用来区分「拖走这块」和「重新框选」）
+func _in_region_sel(pos: Vector2) -> bool:
+	if cvs._region_sel.size.x <= 0 or cvs._region_sel.size.y <= 0:
+		return false
+	return cvs._region_sel.has_point(cvs._cell_of(pos))
+
+func _snapshot_region(sel: Rect2i) -> Dictionary:
+	var snap := {"terrain": [], "decor": [], "collision": [], "ents": [], "size": sel.size}
+	for y in range(sel.position.y, sel.end.y):
+		for x in range(sel.position.x, sel.end.x):
+			var c := Vector2i(x, y)
+			var tac: Vector2i = cvs.terrain.get_cell_atlas_coords(c)
+			if tac != Vector2i(-1, -1):
+				snap["terrain"].append([x, y, cvs.terrain.get_cell_source_id(c), tac.x, tac.y])
+			var dc: Vector2i = cvs.decor.get_cell_atlas_coords(c)
+			if dc != Vector2i(-1, -1):
+				snap["decor"].append([x, y, cvs.decor.get_cell_source_id(c), dc.x, dc.y])
+			if cvs.collision.get_cell_source_id(c) != -1:
+				var cm = cvs._collision_meta.get(c, null)
+				if cm != null:
+					snap["collision"].append([x, y, str(cm.get("type", "solid")), str(cm.get("shape", ""))])
+				else:
+					snap["collision"].append([x, y])
+	for e in cvs.entities.get_children():
+		var spr := e as Sprite2D
+		if spr == null or not spr.has_meta("scene"):
+			continue
+		if sel.has_point(cvs._cell_of(spr.position)):
+			snap["ents"].append(spr)
+	return snap
+
+func _begin_region_move(pos: Vector2) -> void:
+	if cvs.is_layer_locked(cvs.active_layer):
+		cvs._hint("当前图层已锁定：解锁后再移动区域")
+		return
+	if cvs._any_layer_locked():
+		cvs._hint("有图层处于锁定状态：解锁后再移动区域")
+		return
+	cvs._move_snap = _snapshot_region(cvs._region_sel)
+	cvs._move_from = cvs._region_sel.position
+	cvs._move_grab = pos
+	cvs._move_cell_delta = Vector2i.ZERO
+	cvs._move_active = true
+
+
+func _move_region_preview(pos: Vector2) -> void:
+	var d: Vector2i = cvs._cell_of(pos) - cvs._cell_of(cvs._move_grab)
+	if d != cvs._move_cell_delta:
+		cvs._move_cell_delta = d
+		cvs.queue_redraw()
+
+
+func _finish_region_move() -> void:
+	var active: bool = cvs._move_active
+	var snap: Dictionary = cvs._move_snap
+	var from: Vector2i = cvs._move_from
+	var delta: Vector2i = cvs._move_cell_delta
+	cvs._move_active = false
+	cvs._move_snap = {}
+	cvs._move_cell_delta = Vector2i.ZERO
+	if not active or delta == Vector2i.ZERO:
+		return
+	cvs._push_undo()
+	# 先清源（三层 + 区域内实体位置回原点后再搬）
+	for t in snap.get("terrain", []):
+		cvs.terrain.erase_cell(Vector2i(int(t[0]), int(t[1])))
+	for t in snap.get("decor", []):
+		cvs.decor.erase_cell(Vector2i(int(t[0]), int(t[1])))
+	for t in snap.get("collision", []):
+		cvs.set_collision_cell(Vector2i(int(t[0]), int(t[1])), false)
+	# 再写目标
+	for t in snap.get("terrain", []):
+		cvs.terrain.set_cell(Vector2i(int(t[0]), int(t[1])) + delta, int(t[2]), Vector2i(int(t[3]), int(t[4])))
+	for t in snap.get("decor", []):
+		cvs.decor.set_cell(Vector2i(int(t[0]), int(t[1])) + delta, int(t[2]), Vector2i(int(t[3]), int(t[4])))
+	for t in snap.get("collision", []):
+		var ta := t as Array
+		if ta.size() >= 4:
+			cvs.set_collision_cell(Vector2i(int(ta[0]), int(ta[1])) + delta, true, str(ta[2]), str(ta[3]))
+		else:
+			cvs.set_collision_cell(Vector2i(int(ta[0]), int(ta[1])) + delta, true)
+	for s in snap.get("ents", []):
+		if is_instance_valid(s):
+			(s as Sprite2D).position += Vector2(delta) * cvs.tile_px
+	# 选区跟着搬到新位置，方便接着拖第二下
+	cvs._region_sel.position = from + delta
+	cvs._mark()
+	cvs.queue_redraw()
+	cvs._hint("已移动区域 %dx%d 偏移 (%d,%d)（Ctrl+Z 撤销）" % [
+		cvs._region_sel.size.x, cvs._region_sel.size.y, delta.x, delta.y])
+
 func copy_region() -> void:
 	if cvs.map_root == null:
 		return

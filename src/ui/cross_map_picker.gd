@@ -189,4 +189,3 @@ func _apply_plan(plan: Dictionary, tmap: String, own_map: String, own_id: String
 		app._set_status("已与 %s 建立双向连接（保存当前地图后生效）" % tmap)
 	else:
 		app._set_status("已复用 %s 的传送落点 %s（保存当前地图后生效）" % [tmap, chosen_id])
-	app._rebuild_props_panel()

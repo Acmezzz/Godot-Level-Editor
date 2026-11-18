@@ -154,7 +154,6 @@ func _init() -> void:
 		print("FAIL stats save roundtrip")
 	# —— 区域复制粘贴（三层快照） ——
 	cvs.active_layer = 0
-	cvs.tool = "paint"
 	cvs.paint_cell = Vector2i(0, 0)
 	cvs._paint(Vector2i(10, 10))
 	cvs.collision.set_cell(Vector2i(11, 10), 0, Vector2i(4, 0))
@@ -320,7 +319,6 @@ func _init() -> void:
 		print("FAIL cut undo restores ", cvs.entities.get_children().size(), " vs ", before_cut)
 	# —— 区域剪切：清空瓦片/碰撞/实体 + 一次撤销步还原 ——
 	cvs.active_layer = 0
-	cvs.tool = "paint"
 	cvs.paint_cell = Vector2i(0, 0)
 	cvs._paint(Vector2i(20, 20))
 	cvs._paint(Vector2i(21, 20))
@@ -346,7 +344,6 @@ func _init() -> void:
 	cvs.active_layer = 0
 	cvs.set_layer_locked(0, true)
 	var before_lock: int = cvs.terrain.get_used_cells().size()
-	cvs.tool = "paint"
 	cvs.paint_cell = Vector2i(0, 0)
 	cvs._apply_tool(Vector2(60 * 16 + 8, 60 * 16 + 8))
 	if cvs.terrain.get_used_cells().size() == before_lock:
@@ -631,19 +628,6 @@ func _init() -> void:
 		errs += 1
 		print("FAIL locked entity blocks stamp")
 	cvs.set_layer_locked(cvs._ent_layer_index(), false)
-	# —— T-13：bgGroup 序列化往返（extract 保留引用键） ——
-	cvs.map_data["bgGroup"] = "g1"
-	if str(cvs.extract().get("bgGroup", "")) == "g1":
-		print("PASS extract carries bgGroup")
-	else:
-		errs += 1
-		print("FAIL extract carries bgGroup")
-	cvs.map_data["bgGroup"] = ""
-	if str(cvs.extract().get("bgGroup", "")) == "":
-		print("PASS extract empty bgGroup")
-	else:
-		errs += 1
-		print("FAIL extract empty bgGroup")
 	# —— T-14：实体翻转（flip_h 数据模型 + 一个撤销步还原） ——
 	cvs.selected_entity = null
 	cvs.selected_multi = []

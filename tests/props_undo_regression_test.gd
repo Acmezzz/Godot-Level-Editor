@@ -1,88 +1,32 @@
 extends SceneTree
 
-const CanvasScript := preload("res://src/canvas/editor_canvas.gd")
-const PropsPanelScript := preload("res://src/ui/props_panel.gd")
+## 实例 functions 绑定回归（v2 §5.3）：经 extract → load_data 往返不丢（批次 B 引入的持久化契约）。
+## （原属性表单撤销回归：表单已随 props_panel 删除；字符串字段/stats 的撤销
+## 语义由 undo_history 的快照测试与 shortcut_test 覆盖。）
 
-class TestHost extends Control:
-	var manifest := {
+const CanvasScript := preload("res://src/canvas/editor_canvas.gd")
+
+var canvas
+var failures: Array[String] = []
+
+func _init() -> void:
+	call_deferred("_run")
+
+func _run() -> void:
+	canvas = CanvasScript.new()
+	root.add_child(canvas)
+	canvas.manifest = {
 		"tileSize": 16,
 		"layers": [],
 		"tiles": [],
 		"entities": [{
 			"id": "test_entity",
 			"name": "Test Entity",
-			"fields": [{"id": "label", "name": "Label", "type": "string"}],
-			"stats": [{"id": "hp", "name": "HP", "default": 1, "min": 1, "max": 9, "type": "int"}],
+			"fields": [],
+			"stats": [],
 		}]
 	}
-	var canvas
-	var props_panel := VBoxContainer.new()
-	var props_scroll: ScrollContainer
-	var selected_spr: Sprite2D
-	var _props_panel_ctrl
-	const POPUP_BODY_W := 340
-	func _set_status(_message: String) -> void: pass
-	func _set_badge(_panel: PanelContainer, _text: String, _color: Color) -> void: pass
-	func _open_asset_editor(_sid: String) -> void: pass
-	func _rebuild_props_panel() -> void: _props_panel_ctrl.rebuild()
-
-var failures: Array[String] = []
-var host: TestHost
-
-func _init() -> void:
-	call_deferred("_run")
-
-func _run() -> void:
-	host = TestHost.new()
-	root.add_child(host)
-	host.canvas = CanvasScript.new()
-	host.add_child(host.canvas)
-	host.canvas.manifest = host.manifest
-	host.canvas.set_thumbs({})
-	host.add_child(host.props_panel)
-	host._props_panel_ctrl = PropsPanelScript.new(host)
-	host.canvas.entity_selected.connect(func(spr: Sprite2D): host.selected_spr = spr)
-	var data := {
-		"meta": {"name": "undo", "w": 8, "h": 6}, "spawn": [1, 1],
-		"terrain": [], "decor": [], "collision": [],
-		"entities": [{"scene": "test_entity", "id": "e_1", "x": 2, "y": 2,
-			"props": {"label": "start"}}],
-	}
-	await host.canvas.load_data(data, "undo")
-	host.selected_spr = host.canvas.entities.get_child(0) as Sprite2D
-
-	host._props_panel_ctrl.rebuild()
-	await process_frame
-
-	var label := _find_line_edit(host.props_panel)
-	_check(label != null, "production property panel creates the string field")
-	if label != null:
-		label.grab_focus()
-		for value in ["s", "sta", "staged"]:
-			label.text = value
-			label.emit_signal("text_changed", value)
-		_check(str(_current_entity().get_meta("props", {}).get("label", "")) == "staged",
-			"typing updates the selected entity property")
-		_check(host.canvas.undo(), "one undo is available after a string edit session")
-		await process_frame
-		_check(str(_current_entity().get_meta("props", {}).get("label", "")) == "start",
-			"one undo restores the value from before typing began")
-		_check(host.canvas.undo_stack.is_empty(), "multiple typed characters form one undo step")
-
-	host.selected_spr = _current_entity()
-	host._props_panel_ctrl.rebuild()
-	await process_frame
-	var hp_spin := _find_spin_box(host.props_panel)
-	_check(hp_spin != null, "production property panel creates the stat override field")
-	if hp_spin != null:
-		hp_spin.value = 4
-		_check(float(_current_entity().get_meta("props", {}).get("stats", {}).get("hp", 0.0)) == 4.0,
-			"changing a stat creates an instance override")
-		_check(host.canvas.undo(), "one undo is available after changing a stat")
-		await process_frame
-		_check(not (_current_entity().get_meta("props", {}).get("stats", {}) as Dictionary).has("hp"),
-			"undo removes the stat override and restores inheritance")
-
+	canvas.set_thumbs({})
 	# —— v2 §5.3：functions 绑定经 extract → load_data 往返不丢（批次 B 引入的持久化契约） ——
 	var fn_data := {
 		"meta": {"name": "undo", "w": 8, "h": 6}, "spawn": [1, 1],
@@ -90,8 +34,8 @@ func _run() -> void:
 		"entities": [{"scene": "test_entity", "id": "e_1", "x": 2, "y": 2, "props": {},
 			"functions": [{"fn": "dialogue", "content": "TEST-test_entity-e_1-dialogue-DEMO01", "name": "问好", "order": 1, "parallel": true}]}],
 	}
-	await host.canvas.load_data(fn_data, "undo")
-	var ex: Dictionary = host.canvas.extract()
+	await canvas.load_data(fn_data, "undo")
+	var ex: Dictionary = canvas.extract()
 	var ex_fns: Array = (ex.entities[0] as Dictionary).get("functions", [])
 	_check(ex_fns.size() == 1
 		and str((ex_fns[0] as Dictionary).get("fn", "")) == "dialogue"
@@ -99,21 +43,21 @@ func _run() -> void:
 		"extract keeps the instance function binding (fn/content)")
 	_check(bool((ex_fns[0] as Dictionary).get("parallel", false)),
 		"extract keeps the parallel flag")
-	await host.canvas.load_data(ex, "undo")
+	await canvas.load_data(ex, "undo")
 	var fns_meta: Array = (_current_entity().get_meta("functions", []) as Array)
 	_check(fns_meta.size() == 1 and str((fns_meta[0] as Dictionary).get("name", "")) == "问好",
 		"load_data restores the binding into sprite meta")
-	host.canvas._push_undo()
+	canvas._push_undo()
 	_current_entity().set_meta("functions", [])
-	host.canvas._mark()
-	_check(host.canvas.undo(), "undo available after clearing the binding")
+	canvas._mark()
+	_check(canvas.undo(), "undo available after clearing the binding")
 	await process_frame
 	var restored: Array = (_current_entity().get_meta("functions", []) as Array)
 	_check(restored.size() == 1 and str((restored[0] as Dictionary).get("fn", "")) == "dialogue",
 		"undo restores a cleared function binding")
 
-	if is_instance_valid(host):
-		host.queue_free()
+	if is_instance_valid(canvas):
+		canvas.queue_free()
 	await process_frame
 	if failures.is_empty():
 		print("PROPS_UNDO_REGRESSION_OK")
@@ -124,27 +68,9 @@ func _run() -> void:
 		quit(1)
 
 func _current_entity() -> Sprite2D:
-	for node in host.canvas.entities.get_children():
+	for node in canvas.entities.get_children():
 		if str(node.get_meta("ent_id", "")) == "e_1":
 			return node as Sprite2D
-	return null
-
-func _find_line_edit(node: Node) -> LineEdit:
-	if node is LineEdit:
-		return node as LineEdit
-	for child in node.get_children():
-		var found := _find_line_edit(child)
-		if found != null:
-			return found
-	return null
-
-func _find_spin_box(node: Node) -> SpinBox:
-	if node is SpinBox:
-		return node as SpinBox
-	for child in node.get_children():
-		var found := _find_spin_box(child)
-		if found != null:
-			return found
 	return null
 
 func _check(condition: bool, message: String) -> void:

@@ -48,6 +48,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		if cvs._drag_entity != null:
 			cvs._move_drag_preview(pos)
 			return
+		if cvs._move_active:
+			cvs._move_region_preview(pos)
+			return
 		if cvs._drag_spawn:
 			cvs._drag_spawn_to(pos)
 		if cvs._rmb_erase:
@@ -143,6 +146,10 @@ func _on_tile_layer_press(pos: Vector2, b: InputEventMouseButton) -> void:
 		return
 	# 框选开关：优先于涂刷，否则每次起手都会先落一笔
 	if cvs.select_mode or b.ctrl_pressed:
+		# 区内起手 = 搬走这块（否则框完之后只能复制，不能移动）
+		if cvs._in_region_sel(pos):
+			cvs._begin_region_move(pos)
+			return
 		cvs._drag_paint = true
 		cvs._drag_box = true
 		cvs._drag_start = pos
@@ -166,6 +173,9 @@ func _on_right_press(pos: Vector2) -> void:
 
 
 func _on_left_release(pos: Vector2) -> void:
+	if cvs._move_active:
+		cvs._finish_region_move()
+		return
 	if cvs._drag_spawn:
 		cvs._drag_spawn = false
 		cvs._mark()

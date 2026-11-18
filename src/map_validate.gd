@@ -46,41 +46,6 @@ static func validate_map(m: Dictionary, map_name: String, data: Dictionary) -> A
 	_collect_landing_blocked(m, map_name, data, issues)
 	return issues
 
-## 关卡清单校验：清单条目与地图文件的一致性、入口与解锁引用
-static func validate_levels(m: Dictionary, levels: Dictionary) -> Array:
-	var issues: Array = []
-	var maps := Store.list_maps(m)
-	var seen := {}
-	var arr: Array = levels.get("levels", [])
-	for lv in arr:
-		if not (lv is Dictionary):
-			continue
-		var map_name := str(lv.get("map", ""))
-		if map_name == "":
-			issues.append(_level_issue("error", "", "关卡条目缺少 map 字段"))
-			continue
-		if seen.has(map_name):
-			issues.append(_level_issue("error", map_name, "关卡清单里重复出现该地图"))
-		seen[map_name] = true
-		if not maps.has(map_name):
-			issues.append(_level_issue("error", map_name, "关卡清单指向不存在的地图文件"))
-		var unlock := str(lv.get("unlock", ""))
-		# P-07：自解锁必然恒真跳过旧检查——单独报错
-		if unlock == map_name:
-			issues.append(_level_issue("error", map_name, "解锁前置不能是自己"))
-		elif unlock != "" and not seen.has(unlock) and not maps.has(unlock):
-			issues.append(_level_issue("error", map_name, "解锁前置地图不存在: " + unlock))
-	var start := str(levels.get("start", ""))
-	if start == "":
-		issues.append(_level_issue("warn", "", "关卡清单没有设置起始关"))
-	elif not maps.has(start):
-		issues.append(_level_issue("error", start, "起始关指向不存在的地图"))
-	# 有地图但不在清单里
-	for map_name in maps:
-		if not seen.has(map_name):
-			issues.append(_level_issue("warn", map_name, "地图存在但未加入关卡清单"))
-	return issues
-
 static func _level_issue(level: String, map_name: String, msg: String) -> Dictionary:
 	return {"level": level, "map": map_name, "ent_id": "", "scene": "", "field": "levels", "message": msg}
 
@@ -255,30 +220,5 @@ static func _collect_landing_blocked(m: Dictionary, map_name: String, data: Dict
 			cells.append(["落点 %s" % str(ent.get("id", "")), int(ent.get("x", 0)), int(ent.get("y", 0))])
 	for entry in cells:
 		if solid.has(Vector2i(int(entry[1]), int(entry[2]))):
-			issues.append(_issue("error", map_name, {"id": str(entry[0]), "scene": ""}, "",
+				issues.append(_issue("error", map_name, {"id": str(entry[0]), "scene": ""}, "",
 				"%s所在格有碰撞（%d,%d）——落点被堵，游戏内会卡死/无法到达" % [str(entry[0]), int(entry[1]), int(entry[2])]))
-
-## 地图改名后，把所有其他地图里 target_map == old 的出口改成 new。
-## 返回 {ok, changed: [[map, ent_id], ...], failed: [map, ...]}
-static func migrate_map_rename(m: Dictionary, old_name: String, new_name: String) -> Dictionary:
-	var changed: Array = []
-	var failed: Array = []
-	for map_name in Store.list_maps(m):
-		if map_name == old_name:
-			continue
-		var data := Store.read(m, map_name)
-		if data.is_empty():
-			continue
-		var touched := false
-		for ent in data.get("entities", []):
-			if not (ent is Dictionary) or not ManifestScript.has_role(m, str(ent.get("scene", "")), "exit"):
-				continue
-			var props: Dictionary = ent.get("props", {})
-			if str(props.get("target_map", "")) == old_name:
-				props["target_map"] = new_name
-				ent["props"] = props
-				touched = true
-				changed.append([map_name, str(ent.get("id", ""))])
-		if touched and not Store.write(m, map_name, data):
-			failed.append(map_name)
-	return {"ok": failed.is_empty(), "changed": changed, "failed": failed}
