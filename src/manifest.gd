@@ -80,6 +80,10 @@ static func load_from(project_dir: String) -> Dictionary:
 	data["_warnings"] = warnings
 	# 内置种类（如 trigger_zone）由编辑器提供，不需要游戏工程声明
 	preload("res://src/content/builtin_kinds.gd").merge_into(data)
+	# 分层身份码：实体段。老清单实体没有就补发（保存清单时随 entities 写回）
+	for e in data.get("entities", []):
+		if e is Dictionary and str(e.get("code", "")) == "":
+			e["code"] = preload("res://src/content/content_id.gd").new_entity_code()
 	return data
 
 ## 试玩命令 = 模板 + 变量替换；清单可选 godotExe（支持 %projectpath%）覆盖可执行文件，

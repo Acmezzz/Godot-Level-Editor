@@ -4,12 +4,14 @@ extends RefCounted
 ## 这样编辑器开箱可用，又不会污染游戏工程的 editor_manifest.json。
 
 ## 内置种类定义。fields 只声明编辑器要渲染的控件类型，游戏侧按自己的规则解释。
+## code = 分层身份码的实体段（内置种类固定码，merge 不覆盖游戏工程自己的声明）。
 const KINDS := [
 	{
 		"id": "trigger_zone",
 		"name": "触发区",
 		"builtin": true,
 		"role": "trigger",
+		"code": "TZ99",
 		"fields": [],
 	},
 ]

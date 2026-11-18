@@ -13,6 +13,7 @@ const TilesetCache := preload("res://src/canvas/tileset_cache.gd")   # PF-02：T
 const INVISIBLE_CELL := K.INVISIBLE_CELL
 const BuiltinKinds := preload("res://src/content/builtin_kinds.gd")   # 内置种类（trigger_zone 等）
 const MapStoreRef := preload("res://src/map_store.gd")   # K26b 引用扫描用
+const ContentIdRef := preload("res://src/content/content_id.gd")   # 分层身份码
 
 var active_layer := 0          # 按清单 layers 顺序，最后一个是实体
 var paint_cell := Vector2i(0, 0)  # 当前瓦片（纯手动，不自动变形）
@@ -181,6 +182,10 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	_build_tileset()
 	# 背景：整块铺满视口（比地图尺寸大得多），作为地图之外区域的底色
 	var meta: Dictionary = data.get("meta", {})
+	# 分层身份码：地图段。老图没有就补发（保存在 meta.code，地图改名不影响它）
+	if str(meta.get("code", "")) == "":
+		meta["code"] = ContentIdRef.new_map_code()
+		map_data["meta"] = meta
 	var mw := int(meta.get("w", 120))
 	var mh := int(meta.get("h", 56))
 	var bg := ColorRect.new()
@@ -268,6 +273,8 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 		spr.position = Vector2(int(e.get("x", 0)) * tile + tile / 2.0, int(e.get("y", 0)) * tile + tile / 2.0)
 		spr.set_meta("scene", sid)
 		spr.set_meta("props", e.get("props", {}))
+		# 分层身份码：实例段。老实体没有就由 _assign_id 统一补发
+		spr.set_meta("code", str(e.get("code", "")))
 		# 实例功能绑定：只做存取，UI 由内容编辑器负责；缺失/类型不对时置空数组，
 		# 让 extract 始终能写出 functions 键（含空数组），不清空就残留旧图绑定。
 		var fns = e.get("functions", [])
@@ -427,6 +434,9 @@ var ent_id_counter := 0
 var _rebuild_gen := 0
 
 func _assign_id(spr: Sprite2D, forced := "") -> void:
+	# 分层身份码：实例段。老实体/新建实体没有就补发，已有（载图恢复）保留
+	if str(spr.get_meta("code", "")) == "":
+		spr.set_meta("code", ContentIdRef.new_inst_code())
 	if forced != "":
 		spr.set_meta("ent_id", forced)
 		var n := forced.trim_prefix("e_").to_int()
@@ -450,9 +460,11 @@ func _assign_id(spr: Sprite2D, forced := "") -> void:
 		return
 	ent_id_counter += 1
 	spr.set_meta("ent_id", "e_%d" % ent_id_counter)
+	if str(spr.get_meta("code", "")) == "":
+		spr.set_meta("code", ContentIdRef.new_inst_code())
 
 ## K26b：全工程实体 id 引用集——地图 props 里 e_N 形字符串值（跨图落点/portal 目标）
-## + 事件步骤里 e_N 形字符串值（entity_ref 参数）。被引用的号绝不复用。
+## + 内容文件步骤里 e_N 形字符串值（entity_ref 参数）。被引用的号绝不复用。
 func _referenced_ent_ids() -> Dictionary:
 	var out := {}
 	var all := MapStoreRef.read_all(manifest)

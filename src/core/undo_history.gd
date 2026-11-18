@@ -119,6 +119,8 @@ func extract() -> Dictionary:
 			elist.append({
 				"scene": sid,
 				"id": eid,
+				# 分层身份码：实例段（丢失会让内容引用的前缀漂移，必须随快照走）
+				"code": str(spr.get_meta("code", "")),
 				# B4：与 _cell_of 一致用 floori——int() 向零截断会让负坐标实体每次保存向 0 漂移
 				"x": floori((cell_pos.x - cvs.tile_px / 2.0) / cvs.tile_px),
 				"y": floori((cell_pos.y - cvs.tile_px / 2.0) / cvs.tile_px),

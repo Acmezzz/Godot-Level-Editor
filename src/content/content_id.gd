@@ -1,36 +1,50 @@
 extends RefCounted
-## 分层内容 ID 生成器：地图-实体-实例-功能-随机码。
-## 不挂 class_name，按项目惯例用 preload 引用；随机码去掉易混的 I/O/0/1。
+## 分层身份码：地图-实体-实例-功能-内容 五段。
+## 前三段是各层实体的稳定身份码（4 位，出生时发放，存在载体上，改名不变）；
+## 功能段用清单 functions 声明的 id（它本身就是稳定身份键，不是显示名）；
+## 内容段 6 位。名字（地图名/类型名/编号 e_N）只是展示层，不进 ID。
+## 不挂 class_name，按项目惯例用 preload 引用。
 
 const ContentStore := preload("res://src/content/content_store.gd")
 
 ## 可打印且不含 I/O/0/1 的字符集，长度 32，恰好覆盖 randi() 的低 5 位。
-const CODE_CHARS := "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
-const CODE_LEN := 6
+const CHARS := "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+const LAYER_LEN := 4    # 地图/实体/实例段
+const CONTENT_LEN := 6  # 内容段
 
-static func _random_code() -> String:
+static func _code(n: int) -> String:
 	var out := ""
-	for _i in CODE_LEN:
-		out += CODE_CHARS[randi() % CODE_CHARS.length()]
+	for _i in n:
+		out += CHARS[randi() % CHARS.length()]
 	return out
 
-## 生成候选 ID；输入片段拼出不合法的整体 id 时返回空串，不产出脏数据。
-static func make(map_name: String, ent_type: String, inst_id: String, fn_id: String) -> String:
-	var out := "%s-%s-%s-%s-%s" % [map_name, ent_type, inst_id, fn_id, _random_code()]
-	return out if ContentStore.is_valid_id(out) else ""
+## 各层身份码：出生时发放，存在对应载体上（地图 meta / 清单 entities / 实体 meta）
+static func new_map_code() -> String:
+	return _code(LAYER_LEN)
+static func new_entity_code() -> String:
+	return _code(LAYER_LEN)
+static func new_inst_code() -> String:
+	return _code(LAYER_LEN)
 
-## 在候选 ID 上查重；冲突时只换末尾随机码（保留分层前缀），用尽次数返回空串。
-static func unique(m: Dictionary, kind: String, candidate: String, max_tries := 32) -> String:
+## 组装内容 ID：前四段稳定身份，末段 6 位随机码保证唯一。
+## 输入含空段（旧数据没发过码）时返回空串，不产出脏 ID。
+static func content_id(map_code: String, ent_code: String, inst_code: String, fn_id: String) -> String:
+	if map_code == "" or ent_code == "" or inst_code == "" or fn_id == "":
+		return ""
+	return "%s-%s-%s-%s-%s" % [map_code, ent_code, inst_code, fn_id, _code(CONTENT_LEN)]
+
+## 在候选 ID 上查重；冲突时只换末段内容码（保留分层身份前缀），用尽次数返回空串。
+static func unique(m: Dictionary, fn_id: String, candidate: String, max_tries := 32) -> String:
 	if candidate == "":
 		return ""
 	var taken := {}
-	for id in ContentStore.list_ids(m, kind):
+	for id in ContentStore.list_ids(m, fn_id):
 		taken[str(id)] = true
-	# 最后一段是随机码；用 rsplit 定位，前缀里即使有连字符也不会被切开。
+	# 最后一段是内容码；用 rfind 定位，前缀里即使有连字符也不会被切开。
 	var cut := candidate.rfind("-")
 	var prefix := candidate if cut < 0 else candidate.substr(0, cut)
 	for i in maxi(max_tries, 1):
-		var id := candidate if i == 0 else prefix + "-" + _random_code()
+		var id := candidate if i == 0 else prefix + "-" + _code(CONTENT_LEN)
 		if not taken.has(id) and ContentStore.is_valid_id(id):
 			return id
 	return ""

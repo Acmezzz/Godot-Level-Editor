@@ -276,6 +276,18 @@ func _current_fns() -> Array:
 	var fns = spr.get_meta("functions", [])
 	return fns if fns is Array else []
 
+## 分层内容 ID 的候选：地图码-实体码-实例码-功能id-内容码。
+## 三段身份码来自各层载体（地图 meta / 清单 entities / 实体 meta），缺段返回空串。
+func _content_id_for(spr: Sprite2D, fn_id: String) -> String:
+	var map_code := str((app.canvas.map_data.get("meta", {}) as Dictionary).get("code", ""))
+	var ent_code := ""
+	for e in manifest.get("entities", []):
+		if e is Dictionary and str((e as Dictionary).get("id", "")) == str(spr.get_meta("scene", "")):
+			ent_code = str((e as Dictionary).get("code", ""))
+			break
+	var inst_code := str(spr.get_meta("code", ""))
+	return ContentId.content_id(map_code, ent_code, inst_code, fn_id)
+
 ## 写回附加功能：先撤销快照（改动前），再改 meta 并标脏。
 ## 内容条目留在库里，删绑定不等于删内容（与演示稿状态栏口径一致）。
 func _write_fns(spr: Sprite2D, fns: Array) -> void:
@@ -1033,10 +1045,7 @@ func _ensure_content(i: int) -> String:
 	var spr := _current_spr()
 	if spr == null or fn_id == "":
 		return ""
-	var sid := str(spr.get_meta("scene", ""))
-	var ent_id := str(spr.get_meta("ent_id", ""))
-	var map_name := str(app.cur_map_name)
-	var cand := ContentId.make(map_name, sid, ent_id, fn_id)
+	var cand := _content_id_for(spr, fn_id)
 	var new_id := ContentId.unique(manifest, fn_id, cand)
 	if new_id == "":
 		return ""
@@ -1132,12 +1141,10 @@ func _duplicate_from_lib(fn_id: String, old_id: String, new_name: String) -> voi
 	var spr := _current_spr()
 	if spr == null:
 		return
-	var sid := str(spr.get_meta("scene", ""))
-	var ent_id := str(spr.get_meta("ent_id", ""))
-	var cand := ContentId.make(str(app.cur_map_name), sid, ent_id, fn_id)
+	var cand := _content_id_for(spr, fn_id)
 	var new_id := ContentId.unique(manifest, fn_id, cand)
 	if new_id == "":
-		app._set_status(" 新内容 ID 生成失败（同前缀撞码）")
+		app._set_status(" 新内容 ID 生成失败（缺分层身份码或撞码重试耗尽）")
 		return
 	var nm := new_name.strip_edges()
 	if nm == "":
@@ -1158,4 +1165,3 @@ func _duplicate_from_lib(fn_id: String, old_id: String, new_name: String) -> voi
 	_write_fns(spr, fns)
 	_refresh_all()
 	app._set_status(" 已复制「%s」为新内容 %s" % [nm, new_id])
-
