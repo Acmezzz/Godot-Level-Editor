@@ -57,6 +57,43 @@ static func _validate_entities(entities: Array, manifest: Dictionary, issues: Ar
 			_add(issues, "warning", path + ".scene", "entity type is not in the current manifest")
 		if entity.has("props") and not (entity.props is Dictionary):
 			_add(issues, "error", path + ".props", "must be an object")
+		if entity.has("functions"):
+			_validate_functions(entity.get("functions"), path + ".functions", manifest, issues)
+
+## v2 §5.3：实例 functions 数组结构校验——[{fn, content, name, order, parallel}]。
+## 空 content = 还没填（内容编辑器里显示「未填」），不是错误；未知 fn 只警告，
+## 因为项目侧可以先放数据再补实现（清单声明是开发契约，不是硬白名单）。
+static func _validate_functions(raw, path: String, manifest: Dictionary, issues: Array[Dictionary]) -> void:
+	if not (raw is Array):
+		_add(issues, "error", path, "must be an array")
+		return
+	var declared := {}
+	var decl = manifest.get("functions", null)
+	if decl is Dictionary:
+		for key in (decl as Dictionary):
+			declared[str(key)] = true
+	elif decl is Array:
+		for item in (decl as Array):
+			if item is Dictionary:
+				declared[str((item as Dictionary).get("id", ""))] = true
+	for i in (raw as Array).size():
+		var item = raw[i]
+		var p := "%s[%d]" % [path, i]
+		if not (item is Dictionary):
+			_add(issues, "error", p, "must be an object")
+			continue
+		var fn_id := str((item as Dictionary).get("fn", ""))
+		if fn_id == "":
+			_add(issues, "error", p + ".fn", "must name a function")
+		elif not declared.is_empty() and not declared.has(fn_id):
+			_add(issues, "warning", p + ".fn", "function is not declared in the manifest: " + fn_id)
+		for key in ["content", "name"]:
+			if (item as Dictionary).has(key) and not ((item as Dictionary)[key] is String):
+				_add(issues, "error", p + "." + key, "must be a string")
+		if (item as Dictionary).has("order") and not ((item as Dictionary).order is int or (item as Dictionary).order is float):
+			_add(issues, "error", p + ".order", "must be numeric")
+		if (item as Dictionary).has("parallel") and not ((item as Dictionary).parallel is bool):
+			_add(issues, "error", p + ".parallel", "must be a boolean")
 
 static func _is_number_pair(values: Array) -> bool:
 	return _is_number_prefix(values, 2)

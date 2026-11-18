@@ -47,6 +47,27 @@ func _run() -> void:
 	match mode:
 		"asset":
 			app._set_mode("asset", "crawler")
+		"asset_dist":
+			# 批次 D-2：实例分布行 = id + 各数值就地可改 + 定位
+			app._set_mode("asset", "crawler")
+			await process_frame
+			await process_frame
+			print("MEASURE dist_rows=%d" % (app.asset_panel._dist_rows.get_child_count() if app.asset_panel._dist_rows != null else -1))
+		"map_menu":
+			# 批次 D-3：地图菜单里应能看到「关卡清单与世界拓扑」「清单设置」
+			var pm: PopupMenu = null
+			for c in app.find_children("*", "PopupMenu", true, false):
+				if c.item_count >= 6 and c.get_item_id(0) == 1:
+					pm = c
+					break
+			if pm != null:
+				var labels := []
+				for i in pm.item_count:
+					labels.append(pm.get_item_text(i))
+				print("MEASURE map_menu=", labels)
+			app._layout_ctrl._open_levels_dialog()
+		"levels_dlg":
+			app._layout_ctrl._open_levels_dialog()
 		"asset_quick":
 			app._set_mode("asset")
 		"project":

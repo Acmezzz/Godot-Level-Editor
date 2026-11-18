@@ -367,72 +367,174 @@ func _add_size_row() -> void:
 	row.add_child(Kit.hint_label("0 = 从 prefab 碰撞形状解析", 220))
 	extra.add_child(row)
 
-## 实例分布（模型阶段 1 §5）：每实例一行——id/坐标 + 当前生效数值 + 单实例定位。
+## 实例分布（模型阶段 1 §5 + v2 §4）：每实例一行——id/坐标 + 各数值就地可改 + 定位。
 ## 数值 = 三层合并（实例 > 定义 > 清单），与属性面板/游戏运行时同一算法（DefModel.effective_stats）。
-## 数据每次全量读盘（自用规模可接受；批次 10 的 D2 mtime 缓存落地后自动受益）。
+## 改值 = 写该实例的 props.stats 覆盖（不是改类型模板）；当前打开的地图走画布内存，
+## 其余地图直接落盘——两处入口改的都是同一份数据，只是路径不同。
+var _dist_rows: VBoxContainer
+
 func _add_distribution_section(sid: String) -> void:
 	extra.add_child(Kit.section_label("实例分布"))
+	_dist_rows = Kit.vbox(4)
+	extra.add_child(_dist_rows)
+	_fill_distribution(sid)
+
+func _fill_distribution(sid: String) -> void:
+	if _dist_rows == null:
+		return
+	for c in _dist_rows.get_children():
+		_dist_rows.remove_child(c)
+		c.queue_free()
 	var dist := _instance_distribution(sid)
 	if dist.is_empty():
-		extra.add_child(Kit.hint_label("没有已放置实例", 220))
+		_dist_rows.add_child(Kit.hint_label("没有已放置实例", 220))
 		return
+	var sdefs: Array = _edef.get("stats", [])
+	var has_stats := not (sdefs as Array).is_empty()
 	var total := 0
 	for map_name in dist:
 		var rows: Array = dist[map_name]
 		total += rows.size()
-		extra.add_child(Kit.text_label("%s × %d" % [map_name, rows.size()], Th.TEXT, Th.FS_SMALL))
+		var head := Kit.hbox(6)
+		head.add_child(Kit.text_label("%s × %d" % [map_name, rows.size()], Th.TEXT, Th.FS_SMALL))
+		_dist_rows.add_child(head)
 		for r in rows:
-			var rid := str(r.get("id", ""))
-			var row := Kit.hbox(8)
-			var lbl := Kit.text_label("  %s(%d,%d)%s" % [
-				rid, int(r.get("x", 0)), int(r.get("y", 0)), _instance_stat_text(r)],
-				Th.TEXT_DIM, Th.FS_SMALL)
-			lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			row.add_child(lbl)
-			row.add_child(Kit.button("定位", func(): host._focus_issue(map_name, rid), "ghost"))
-			extra.add_child(row)
-	extra.add_child(Kit.hint_label("共 %d 个实例 / %d 张地图" % [total, dist.size()], 220))
+			_dist_rows.add_child(_dist_row(map_name, r, sdefs))
+	var foot := "共 %d 个实例 / %d 张地图" % [total, dist.size()]
+	if has_stats:
+		foot += "　·　改数值 = 只改这个实例，不影响同类型其它实例"
+	_dist_rows.add_child(Kit.hint_label(foot, 460))
 
 ## 全项目扫描：{地图名: [{id, x, y, def, props}, ...]}——实例分布、K7 删除检查与实例数值显示共用数据源
+## 当前打开的地图优先用画布内存值：磁盘上还没保存的改动也要能在这里看到并继续改。
 func _instance_distribution(sid: String) -> Dictionary:
 	var out := {}
 	var maps := MapStore.read_all(manifest)
+	var by_id := {}
+	if host != null and host.canvas != null and is_instance_valid(host.canvas) and host.canvas.entities != null:
+		by_id = host.canvas._ent_by_id_index()
 	for map_name in maps:
 		var data: Dictionary = maps[map_name]
+		var is_cur: bool = host != null and map_name == str(host.cur_map_name)
 		var rows: Array = []
 		for ent in data.get("entities", []):
 			if not (ent is Dictionary) or str(ent.get("scene", "")) != sid:
 				continue
+			var ent_id := str(ent.get("id", ""))
 			var props = ent.get("props", {})
-			rows.append({
-				"id": str(ent.get("id", "")),
+			var row := {
+				"id": ent_id,
 				"x": int(ent.get("x", 0)),
 				"y": int(ent.get("y", 0)),
 				"def": str(ent.get("def", "")),
 				"props": props if props is Dictionary else {},
-			})
+			}
+			var spr = by_id.get(ent_id, null)
+			if is_cur and spr != null and is_instance_valid(spr):
+				var live = spr.get_meta("props", {})
+				row["props"] = live if live is Dictionary else {}
+				row["def"] = str(spr.get_meta("def_id", ""))
+			rows.append(row)
 		if not rows.is_empty():
 			out[map_name] = rows
 	return out
 
-## 单实例生效数值文本：三层合并（实例 > 定义 > 清单）与属性面板同源；无 stats 模板返回空串
-func _instance_stat_text(r: Dictionary) -> String:
-	var sdefs: Array = _edef.get("stats", [])
+## 分布行：id · 各数值就地可改 · 定位。数值框直接写该实例的 props.stats 覆盖。
+func _dist_row(map_name: String, r: Dictionary, sdefs: Array) -> Control:
+	var row := Kit.hbox(10)
+	var rid := str(r.get("id", ""))
+	var ids := Kit.text_label(rid, Th.TEXT_MUTE, Th.FS_META)
+	ids.custom_minimum_size = Vector2(84, 0)
+	ids.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	ids.tooltip_text = "%s  (%d,%d)" % [map_name, int(r.get("x", 0)), int(r.get("y", 0))]
+	row.add_child(ids)
 	if (sdefs as Array).is_empty():
-		return ""
-	var props: Dictionary = r.get("props", {}) if r.get("props", {}) is Dictionary else {}
-	var def_res := {}
-	var did := str(r.get("def", ""))
-	if did != "":
-		def_res = ContentStore.read(manifest, "defs", did)
-	var eff: Dictionary = DefModel.effective_stats(def_res, _edef, props)
-	var parts := []
-	for sf in sdefs:
-		var sid2 := str(sf.get("id", ""))
-		var sname := str(sf.get("name", sid2))
-		var v := float(eff.get(sid2, sf.get("default", 0.0)))
-		parts.append("%s %s" % [sname, "%d" % int(v) if v == floorf(v) else "%.1f" % v])
-	return " · " + " · ".join(parts)
+		var lbl := Kit.text_label("这个类型没有数值项", Th.TEXT_MUTE, Th.FS_SMALL)
+		lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		row.add_child(lbl)
+	else:
+		var props: Dictionary = r.get("props", {}) if r.get("props") is Dictionary else {}
+		var ov: Dictionary = props.get("stats", {}) if props.get("stats", {}) is Dictionary else {}
+		var def_res := {}
+		var did := str(r.get("def", ""))
+		if did != "":
+			def_res = ContentStore.read(manifest, "defs", did)
+		var eff: Dictionary = DefModel.effective_stats(def_res, _edef, props)
+		var cells := Kit.hbox(8)
+		cells.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(cells)
+		for sf in sdefs:
+			var stat_id := str(sf.get("id", ""))
+			if stat_id == "":
+				continue
+			var cell := Kit.hbox(3)
+			var nl := Kit.text_label(str(sf.get("name", stat_id)), Th.TEXT_MUTE, Th.FS_META)
+			nl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+			cell.add_child(nl)
+			var box := SpinBox.new()
+			box.min_value = float(sf.get("min", 0.0))
+			box.max_value = float(sf.get("max", 999.0))
+			box.step = 0.1 if str(sf.get("type", "float")) == "float" else 1.0
+			box.value = float(eff.get(stat_id, sf.get("default", 0.0)))
+			box.custom_minimum_size = Vector2(64, 0)
+			box.tooltip_text = "只改「%s」这个实例；%s" % [rid,
+				"已覆盖类型模板" if ov.has(stat_id) else "当前继承类型模板，改动即覆盖"]
+			# 撤销合并：连续调同一个框只压一次撤销（和属性面板同一约定）
+			var session := {"started": false}
+			box.get_line_edit().focus_exited.connect(func(): session.started = false)
+			box.value_changed.connect(func(v: float):
+				if not session.started:
+					session.started = true
+					if host != null and map_name == str(host.cur_map_name) and host.canvas != null and host.canvas.entities != null:
+						host.canvas._push_undo()
+				_set_instance_stat(map_name, rid, stat_id, v)
+				box.tooltip_text = "只改「%s」这个实例；已覆盖类型模板" % rid)
+			cell.add_child(box)
+			cells.add_child(cell)
+		row.add_child(Kit.spacer())
+	row.add_child(Kit.button("定位", func(): host._focus_issue(map_name, rid), "ghost"))
+	return row
+
+## 写单实例数值：当前地图走画布（撤销栈/脏标记与属性面板同路），其余地图直接落盘。
+## 两个入口改的是同一份地图数据，区别只在「已经打开」与否。
+func _set_instance_stat(map_name: String, ent_id: String, stat_id: String, v: float) -> void:
+	if ent_id == "" or stat_id == "":
+		return
+	if host != null and map_name == str(host.cur_map_name) and host.canvas != null and host.canvas.entities != null:
+		var spr = host.canvas._ent_by_id_index().get(ent_id, null)
+		if spr == null or not is_instance_valid(spr):
+			return
+		var props: Dictionary = spr.get_meta("props", {})
+		if not (props is Dictionary):
+			props = {}
+		var ov: Dictionary = props.get("stats", {}) if props.get("stats", {}) is Dictionary else {}
+		ov[stat_id] = v
+		props["stats"] = ov
+		spr.set_meta("props", props)
+		host.canvas._mark()
+		host._set_status("  %s · %s 已改为 %s（仅此实例）" % [ent_id, stat_id, _fmt_num(v)])
+		return
+	# 非当前地图：读 → 改 → 写。写盘走 MapStore 的原子替换 + 历史轮转。
+	var data: Dictionary = MapStore.read(manifest, map_name)
+	if data.is_empty():
+		return
+	var ent := MapStore.find_entity(data, ent_id)
+	if ent.is_empty():
+		return
+	var p2 = ent.get("props", {})
+	var props2: Dictionary = p2 if p2 is Dictionary else {}
+	var ov2: Dictionary = props2.get("stats", {}) if props2.get("stats", {}) is Dictionary else {}
+	ov2[stat_id] = v
+	props2["stats"] = ov2
+	ent["props"] = props2
+	if MapStore.write(manifest, map_name, data):
+		host._set_status("  %s · %s 已改为 %s（仅此实例，已写盘）" % [ent_id, stat_id, _fmt_num(v)])
+	else:
+		host._set_status("  写盘失败：%s" % map_name)
+
+func _fmt_num(v: float) -> String:
+	return "%d" % int(v) if v == floorf(v) else "%.1f" % v
 
 ## K7：删除资产前引用检查——列出仍在使用该类型的地图与实例数；有引用需确认
 func _delete_asset_checked(sid: String) -> void:

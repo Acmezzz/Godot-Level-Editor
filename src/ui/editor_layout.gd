@@ -142,6 +142,10 @@ func _build_global_bar() -> PanelContainer:
 	map_menu.add_item("导出当前地图", 4)
 	map_menu.add_item("调整地图尺寸", 5)
 	map_menu.add_item("选择背景图组", 6)
+	map_menu.add_separator()
+	# v2 §2.4：关卡清单与世界拓扑属地图级动作，从项目页「清单」迁到这里
+	map_menu.add_item("关卡清单与世界拓扑…", 7)
+	map_menu.add_item("清单设置（背景图组 / 物品）…", 8)
 	map_menu.id_pressed.connect(_on_map_menu_id)
 	app._map_btn.pressed.connect(func(): _popup_below(map_menu, app._map_btn))
 	bar.add_child(map_menu)
@@ -168,7 +172,7 @@ func _build_global_bar() -> PanelContainer:
 	bar.add_child(play)
 	return panel_wrap
 
-## 地图菜单：文件三键 + 三个地图级动作。id 4/5/6 分派到原有弹窗入口。
+## 地图菜单：文件三键 + 三个地图级动作 + 关卡清单/世界拓扑。id 4/5/6 分派到原有弹窗入口。
 func _on_map_menu_id(id: int) -> void:
 	match id:
 		1:
@@ -183,6 +187,93 @@ func _on_map_menu_id(id: int) -> void:
 			app._open_size_dialog()
 		6:
 			app._open_bg_dialog()
+		7:
+			_open_levels_dialog()
+		8:
+			_open_manifest_dialog()
+
+## 关卡清单与世界拓扑（v2 §2.4）：从项目页清单视图迁入地图菜单。
+## 弹窗里复用 levels_panel.gd——面板不做 IO，保存/开图仍走原有信号链。
+var _levels_pop: PopupPanel
+var _manifest_pop: PopupPanel
+
+func _open_levels_dialog() -> void:
+	var LevelsPanelScript := preload("res://src/ui/levels_panel.gd")
+	var panel = LevelsPanelScript.new()
+	panel.manifest_ref = app.manifest
+	panel.build()
+	panel.level_open_requested.connect(func(nm: String):
+		if _levels_pop != null and is_instance_valid(_levels_pop):
+			_levels_pop.hide()
+		app._open_map_by_name(nm))
+	panel.levels_changed.connect(func(d: Dictionary):
+		app._save_levels(d)
+		panel.set_levels(app.LevelList.load_levels(app.manifest), app.manifest))
+	panel.world_refresh_requested.connect(func(): _refresh_levels_dialog(panel))
+	_refresh_levels_dialog(panel)
+	_levels_pop = _open_big_dialog("关卡清单与世界拓扑",
+		"改动在面板里点「保存清单」才写盘；双击条目直接打开那张图", panel)
+
+func _refresh_levels_dialog(panel) -> void:
+	if panel == null or not is_instance_valid(panel):
+		return
+	var all: Dictionary = app.MapStore.read_all(app.manifest)
+	panel.set_levels(app.LevelList.load_levels(app.manifest), app.manifest)
+	var levels: Dictionary = app.LevelList.load_levels(app.manifest)
+	var graph: Dictionary = app.LevelList.build_world_graph(app.manifest, levels, all)
+	var unreachable := []
+	var start := str(levels.get("start", ""))
+	if str(levels.get("mode", "")) == "metroidvania" and start != "":
+		unreachable = app.LevelList.unreachable_maps(graph, start)
+	panel.set_world(graph, app.cur_map_name, unreachable)
+
+## 清单设置（背景图组 / 商店物品）：项目页「清单」视图的原班面板，从地图菜单这里进。
+func _open_manifest_dialog() -> void:
+	var ManifestPanelScript := preload("res://src/ui/manifest_panel.gd")
+	var panel = ManifestPanelScript.new()
+	panel.manifest = app.manifest
+	panel.save_manifest = Callable(app, "_save_manifest_file")
+	panel.host = app
+	panel.build()
+	panel.refresh()
+	_manifest_pop = _open_big_dialog("清单设置",
+		"背景图组与商店物品；改动点面板里的「保存」写回 editor_manifest.json", panel)
+
+## 地图菜单里的常驻大面板弹窗壳：标题 + 关闭 + 滚动区，内容节点由调用方塞进来。
+## 同一时刻只留一个——重复打开会先把上一个丢掉，避免多个浮层叠在画布上。
+var _big_pop: PopupPanel
+
+func _open_big_dialog(title: String, sub: String, node: Control) -> PopupPanel:
+	if _big_pop != null and is_instance_valid(_big_pop):
+		_big_pop.queue_free()
+	var pop := PopupPanel.new()
+	var col: VBoxContainer = app.UiKitScript.vbox(10)
+	col.custom_minimum_size = Vector2(760, 0)
+	pop.add_child(col)
+	var head: HBoxContainer = app.UiKitScript.hbox(8)
+	head.add_child(app.UiKitScript.text_label(title, app.UiThemeScript.TEXT, app.UiThemeScript.FS_MD))
+	head.add_child(app.UiKitScript.spacer())
+	head.add_child(app.UiKitScript.hint_label(sub, 420))
+	head.add_child(app.UiKitScript.button("关闭", func(): pop.hide(), "ghost"))
+	col.add_child(head)
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size = Vector2(760, minf(app.get_viewport_rect().size.y - 190, 560))
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	col.add_child(scroll)
+	node.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(node)
+	_big_pop = pop
+	app.add_child(pop)
+	pop.popup_hide.connect(func():
+		if is_instance_valid(pop):
+			pop.queue_free())
+	pop.popup_centered(Vector2i(1, 1))
+	var want := pop.get_contents_minimum_size().ceil()
+	var vp: Vector2 = app.get_viewport_rect().size
+	want.x = minf(want.x, vp.x - 40)
+	want.y = minf(want.y, vp.y - 40)
+	pop.popup_centered(Vector2i(want))
+	return pop
 
 ## 在锚点控件正下方弹菜单（宽高交给引擎按内容测算）
 func _popup_below(pm: PopupMenu, anchor: Control) -> void:

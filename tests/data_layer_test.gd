@@ -130,6 +130,49 @@ func _test_map_data_validation() -> void:
 	_check(not rejected.ok, "malformed map is rejected")
 	_check(not rejected.errors.is_empty() and str(rejected.errors[0].path) == "terrain",
 		"rejection carries the terrain path")
+	_test_functions_validation(valid)
+
+## v2 §5.3：实例 functions 结构校验——空 content 是「未填」不是错误；
+## 未知 fn 只警告（项目侧可以先放数据再补实现）；类型错了才报错。
+func _test_functions_validation(valid: Dictionary) -> void:
+	var m := {"entities": [{"id": "portal"}], "functions": {"dialogue": {"fields": []}, "shop": {}}}
+	var ok := valid.duplicate(true)
+	ok.entities = [{"scene": "portal", "id": "e_1", "x": 2, "y": 3, "props": {},
+		"functions": [
+			{"fn": "dialogue", "content": "", "name": "", "order": 1, "parallel": false},
+			{"fn": "shop", "content": "TEST-portal-e_1-shop-ABC234", "name": "杂货", "order": 2, "parallel": true},
+		]}]
+	_check(Validator.validate(ok, m).is_empty(), "valid functions array passes validation")
+	var bad := valid.duplicate(true)
+	bad.entities = [{"scene": "portal", "id": "e_1", "x": 2, "y": 3, "props": {},
+		"functions": ["not-an-object"]}]
+	_check(_has_path(Validator.validate(bad, m), "entities[0].functions[0]"),
+		"non-object function entry is reported")
+	var bad2 := valid.duplicate(true)
+	bad2.entities = [{"scene": "portal", "id": "e_1", "x": 2, "y": 3, "props": {},
+		"functions": [{"fn": "dialogue", "content": 7, "order": "first", "parallel": "yes"}]}]
+	var issues2 := Validator.validate(bad2, m)
+	_check(_has_path(issues2, "entities[0].functions[0].content"), "non-string content is reported")
+	_check(_has_path(issues2, "entities[0].functions[0].order"), "non-numeric order is reported")
+	_check(_has_path(issues2, "entities[0].functions[0].parallel"), "non-boolean parallel is reported")
+	var undeclared := valid.duplicate(true)
+	undeclared.entities = [{"scene": "portal", "id": "e_1", "x": 2, "y": 3, "props": {},
+		"functions": [{"fn": "teleport", "content": "x", "name": "去矿洞", "order": 1}]}]
+	var warn_ok := false
+	for issue in Validator.validate(undeclared, m):
+		if str(issue.path).ends_with(".fn") and str(issue.severity) == "warning":
+			warn_ok = true
+	_check(warn_ok, "undeclared function is a warning, not an error")
+	var not_array := valid.duplicate(true)
+	not_array.entities = [{"scene": "portal", "id": "e_1", "x": 2, "y": 3, "props": {}, "functions": {}}]
+	_check(_has_path(Validator.validate(not_array, m), "entities[0].functions"),
+		"functions must be an array")
+
+func _has_path(issues: Array, path: String) -> bool:
+	for issue in issues:
+		if str(issue.path) == path:
+			return true
+	return false
 ## 多图事务：全量覆盖、失败回滚到字节一致、新图被撤回。
 func _test_map_transaction() -> void:
 	var maps_dir := ProjectSettings.globalize_path("user://map_tx_%d" % Time.get_ticks_usec())

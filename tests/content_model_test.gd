@@ -50,6 +50,32 @@ func _test_ids() -> void:
 	_check(ContentStore.is_valid_id("town_01"), "underscore content id is valid")
 	for bad in ["", "../x", "a/b", "a\\b", "C:evil", ".hidden", "trail."]:
 		_check(not ContentStore.is_valid_id(bad), "invalid content id accepted: " + bad)
+	_test_layered_ids()
+
+## v2 §5.1：分层 ID（地图-实体-实例-功能-随机码）+ 复用即复制（新 ID）。
+## 顺带锁住 content_store 的「白名单已删」——声明与磁盘目录都能列出来。
+func _test_layered_ids() -> void:
+	var ContentId = _module("res://src/content/content_id.gd")
+	if ContentId == null:
+		return
+	var cid: String = ContentId.make("TEST", "merchant", "e_3", "dialogue")
+	_check(cid != "" and cid.begins_with("TEST-merchant-e_3-dialogue-"),
+		"layered id carries map/type/instance/function prefix: " + cid)
+	var code: String = cid.substr(cid.rfind("-") + 1)
+	_check(code.length() == 6, "layered id ends with a 6-char code: " + code)
+	_check(not code.contains("I") and not code.contains("O") and not code.contains("0") and not code.contains("1"),
+		"random code avoids look-alike chars: " + code)
+	# 输入不合法（含路径分隔符）时宁可返回空串，也不产出脏 id
+	_check(ContentId.make("TE/ST", "merchant", "e_3", "dialogue") == "",
+		"layered id refuses illegal map name")
+	# 复用 = 复制出新 ID：同名候选必须被推成另一个合法 id
+	var m := _project("layered")
+	ContentStore.write(m, "dialogue", cid, {"id": cid, "function": "dialogue", "name": "问好"})
+	var dup: String = ContentId.unique(m, "dialogue", cid)
+	_check(dup != "" and dup != cid, "unique() never returns an existing id")
+	_check(ContentStore.is_valid_id(dup), "unique() output is a valid id: " + dup)
+	_check(dup.begins_with("TEST-merchant-e_3-dialogue-"), "unique() keeps the layered prefix")
+	_check(ContentId.unique(m, "dialogue", "") == "", "empty candidate yields empty id")
 
 func _test_store_roundtrip() -> void:
 	var m := _project("roundtrip")
