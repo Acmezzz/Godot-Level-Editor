@@ -144,7 +144,7 @@ func _confirm_action(title: String, text: String, ok_text := "确定") -> bool:
 	return await _map_file_ctrl.confirm_action(title, text, ok_text)
 
 func _load_map_file(p: String) -> void:
-	_map_file_ctrl.load_map_file(p)
+	await _map_file_ctrl.load_map_file(p)
 
 ## 保存当前地图；返回是否成功（试玩前依赖它决定是否继续）
 func _on_save() -> bool:

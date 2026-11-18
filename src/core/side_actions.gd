@@ -48,7 +48,8 @@ func _open_map_by_name(map_name: String) -> void:
 	if p == "" or not FileAccess.file_exists(p):
 		app._set_status(" 地图不存在: " + map_name)
 		return
-	app._load_map_file(p)
+	await app._load_map_file(p)
+
 
 func _delete_entities_by_id(ids: Array) -> void:
 	if not app.map_loaded or ids.is_empty():

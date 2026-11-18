@@ -223,6 +223,8 @@ func on_open() -> void:
 	fd.popup_centered(Vector2i(700, 500))
 
 func load_map_file(p: String) -> void:
+	# load_data 是协程（节点重建中间 await 一帧）：必须等它完成，否则切图刚返回时
+	# 实体还在重建中——内容页 after_switch 刷新会拿到半重建的画布（列表/点选全乱）。
 	var result: Dictionary = app.MapStore.read_path(p, app.manifest)
 	if not result.ok:
 		app._set_status(" 打开失败: " + _format_issues(result.errors))
@@ -239,7 +241,7 @@ func load_map_file(p: String) -> void:
 		p = EditorManifest.map_path(app.manifest, base)
 	_opened_mtime = FileAccess.get_modified_time(p)
 	app.canvas.set_thumbs(app._entity_thumbs())
-	app.canvas.load_data(data, base)
+	await app.canvas.load_data(data, base)
 	app.cur_map_name = base
 	app._sync_play_cfg_to_map()
 	app.cur_map_path = p
