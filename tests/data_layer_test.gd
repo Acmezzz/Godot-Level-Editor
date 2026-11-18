@@ -39,16 +39,6 @@ func _check(condition: bool, message: String) -> void:
 	if not condition:
 		failures.append(message)
 
-func _has(issues: Array, map_name: String, needle: String, ent_id := "") -> bool:
-	for issue in issues:
-		if str(issue.get("map", "")) != map_name:
-			continue
-		if ent_id != "" and str(issue.get("ent_id", "")) != ent_id:
-			continue
-		if str(issue.get("message", "")).contains(needle):
-			return true
-	return false
-
 func _temp_project(name: String) -> Dictionary:
 	var base := "user://data_layer_" + name
 	var maps_dir := base.path_join("maps")
