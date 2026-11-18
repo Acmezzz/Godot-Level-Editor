@@ -399,27 +399,6 @@ func _distribute(targets: Array, horizontal: bool) -> void:
 			(sorted[i] as Sprite2D).position.y = p.y
 
 
-## T6（批次 12）：批量挂/摘定义——写/清 def_id，一个撤销步（"" = 摘除）
-func bulk_set_def(scene_id: String, def_id: String) -> int:
-	var targets: Array = cvs._valid_multi()
-	var hits := []
-	for s in targets:
-		if str((s as Sprite2D).get_meta("scene", "")) == scene_id:
-			hits.append(s)
-	if hits.is_empty():
-		cvs._hint("选中里没有 " + scene_id + " 类型的实体")
-		return 0
-	cvs._push_undo()
-	for s in hits:
-		var spr := s as Sprite2D
-		if def_id == "":
-			spr.remove_meta("def_id")
-		else:
-			spr.set_meta("def_id", def_id)
-	cvs._mark()
-	cvs.queue_redraw()
-	return hits.size()
-
 func bulk_update(scene_id: String, stat_set: Dictionary, stat_clear: Array, props_set: Dictionary) -> int:
 	var targets: Array = cvs._valid_multi()
 	var hits := []
