@@ -31,10 +31,11 @@ var _side_actions_ctrl   # core/side_actions.gd 控制器（审查 8.2-5 侧栏�
 var _palette_ctrl   # ui/palette_panel.gd 控制器（调色板两级导航）
 var selected_spr: Sprite2D = null
 var map_loaded := false          # 防呆：是否已载入地图
-## 顶栏地图菜单锚点（v2 §2.4：地图名本身就是下拉按钮）
+## 顶栏左侧「设置 ▾」锚点（地图名在右侧共享导航条的「地图 ▾」上）
 var _map_btn: Button
-## 顶栏三个面板入口（关卡 / 内容 / 资产），_sync_panel_buttons 同步按下态
-var _panel_btns := {}
+## 顶栏导航条（地图 ▾ + 关卡/内容/资产）：关卡视图顶栏与项目页顶栏各嵌一个，
+## 统一登记在这里同步按下态——_set_mode 是唯一真相。
+var _nav_bars := []
 # 画布空态引导（未打开地图时显示）
 var _canvas_empty: Control
 
@@ -530,10 +531,9 @@ func _in_project_view() -> bool:
 ## 顶栏三个面板入口的按下态：单一真相是 _set_mode 的入参，
 ## 不依赖按钮自己记状态（点 Esc 返回、点地图菜单的路径都要同步）。
 func _sync_panel_buttons(mode: String) -> void:
-	for k in _panel_btns.keys():
-		var b := _panel_btns[k] as Button
-		if b != null:
-			b.button_pressed = (str(k) == mode)
+	for nb in _nav_bars:
+		if nb != null and is_instance_valid(nb):
+			nb.set_mode(mode)
 
 func _save_manifest_file() -> void:
 	var out := {}

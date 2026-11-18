@@ -83,7 +83,7 @@ func _run() -> void:
 				sh.show_view(v)
 				await process_frame
 				print("MEASURE view=%s mode_btn=%s holder_child=%d" % [
-					v, str(sh._mode_btns[v].button_pressed), sh._holder.get_child_count()])
+					v, str(sh._nav_bar._mode_btns[v].button_pressed), sh._holder.get_child_count()])
 			# Esc → 回画布
 			var ev := InputEventKey.new()
 			ev.keycode = KEY_ESCAPE

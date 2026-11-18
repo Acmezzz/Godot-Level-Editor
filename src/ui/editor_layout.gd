@@ -1,6 +1,8 @@
 extends RefCounted
 ## _layout_ctrl：从 src/app.gd 拆出的控制器（审查 8.3 表）。宿主状态经 alias 引用。
 
+const TopBarNavScript := preload("res://src/ui/top_bar_nav.gd")
+
 var app   # 宿主引用
 # 状态栏的常驻指示（与左侧消息分离，避免互相覆盖）
 var _meta_tool: Label
@@ -21,6 +23,7 @@ var _sel_state: Label
 func _init(host) -> void:
 	app = host
 func _build_editor_ui() -> void:
+	app._nav_bars.clear()  # 重建时丢弃旧顶栏导航条引用（控件已 queue_free）
 	for c in app.get_children():
 		app.remove_child(c)
 		c.queue_free()
@@ -91,6 +94,7 @@ func _build_editor_ui() -> void:
 	app._apply_state("paint", 0)  # 初始：地形层 + 涂刷，按钮高亮由 _sync_ui 统一刷新
 	app._set_map_loaded(false)  # 防呆：没开地图前禁用全部编辑交互
 	app._build_project_view()
+	app._sync_panel_buttons("map")  # 两个顶栏导航条都建好了，初始按下「关卡」
 	_set_status("无地图：先点「新建」填名字，或「打开」已有地图")
 
 
@@ -134,28 +138,10 @@ func _build_global_bar() -> PanelContainer:
 
 	bar.add_child(app.UiKitScript.spacer())
 
-	# —— 地图选择：只列已有地图，点一个就切过去（与设置分开） ——
-	var switch_btn: Button = app.UiKitScript.button("地图 ▾", Callable(), "plain")
-	switch_btn.tooltip_text = "切换地图（只列已有地图文件）"
-	switch_btn.custom_minimum_size = Vector2(104, 0)
-	bar.add_child(switch_btn)
-	var switch_menu := PopupMenu.new()
-	switch_menu.id_pressed.connect(_on_map_switch_from_menu)
-	switch_btn.pressed.connect(func():
-		_fill_map_switch_menu(switch_menu)
-		_popup_below(switch_menu, switch_btn))
-	bar.add_child(switch_menu)
-
-	# —— 三个平级面板（v2 §1）：关卡 / 内容 / 资产 ——
-	app._panel_btns = {}
-	for spec in [["map", "关卡"], ["content", "内容"], ["asset", "资产"]]:
-		var mode := str(spec[0])
-		var b: Button = app.UiKitScript.button(str(spec[1]), func(): app._set_mode(mode), "toggle")
-		b.tooltip_text = {"map": "摆放关卡（当前）", "content": "给实例挂功能、填内容（Esc 返回）",
-			"asset": "资产图鉴与实例分布（Esc 返回）"}.get(mode, "")
-		app._panel_btns[mode] = b
-		bar.add_child(b)
-	app._panel_btns["map"].button_pressed = true
+	# —— 地图 ▾ + 三个模式按钮：与项目页共用同一套实现 ——
+	app._nav_bars.append(TopBarNavScript.new(app))
+	app._nav_bars.back().build()
+	bar.add_child(app._nav_bars.back())
 
 	bar.add_child(app.UiKitScript.vdivider())
 	var cfg: Button = app.UiKitScript.button("试玩配置", app._open_play_cfg, "ghost")
@@ -165,34 +151,6 @@ func _build_global_bar() -> PanelContainer:
 	play.tooltip_text = "保存并启动游戏（当前地图）"
 	bar.add_child(play)
 	return panel_wrap
-
-## 地图选择下拉：每次打开前重建（地图文件可能被新建/重命名/删除）
-func _fill_map_switch_menu(menu: PopupMenu) -> void:
-	menu.clear()
-	var names: Array = app.MapStore.list_maps(app.manifest)
-	if names.is_empty():
-		menu.add_item("（还没有地图）")
-		menu.set_item_disabled(0, true)
-		return
-	for i in names.size():
-		var nm := str(names[i])
-		menu.add_item(nm, i)
-		if nm == app.cur_map_name:
-			menu.set_item_as_checkable(i, true)
-			menu.set_item_checked(i, true)
-
-func _on_map_switch_from_menu(id: int) -> void:
-	var names: Array = app.MapStore.list_maps(app.manifest)
-	if id < 0 or id >= names.size():
-		return
-	var nm := str(names[id])
-	if nm == app.cur_map_name:
-		return
-	var p: String = EditorManifest.map_path(app.manifest, nm)
-	if p == "" or not FileAccess.file_exists(p):
-		app._set_status("地图不存在: " + nm)
-		return
-	app._open_map_by_name(nm)
 
 ## 地图菜单：新建 / 打开 / 保存 / 重命名 / 导出 / 尺寸 / 校验。
 func _on_map_menu_id(id: int) -> void:

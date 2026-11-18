@@ -13,6 +13,7 @@ const Kit := preload("res://src/ui/ui_kit.gd")
 const Th := preload("res://src/ui/ui_theme.gd")
 const AssetPanelScript := preload("res://src/ui/asset_panel.gd")
 const ContentEditorScript := preload("res://src/ui/content_editor.gd")
+const TopBarNavScript := preload("res://src/ui/top_bar_nav.gd")
 
 var app   # 宿主 app
 var manifest := {}
@@ -22,15 +23,10 @@ var asset_panel = null
 var content_editor = null
 
 var _view := "asset"
-var _mode_btns := {}
 var _holder: Control
 var _title: Label
 var _status: Label
-## 内容视图专属的地图切换（v2 §3.2：地图是全局状态，在顶栏切）。
-## 为什么不在关卡顶栏那个菜单上加：内容视图下整个 _map_view 隐藏，那个菜单根本点不到。
-var _map_switch_btn: Button
-var _map_switch_menu: PopupMenu
-var _map_switch_box: Control
+var _nav_bar   # 地图 ▾ + 三个模式按钮（与关卡视图顶栏共用同一个组件）
 
 func _init(host) -> void:
 	app = host
@@ -60,75 +56,17 @@ func _build_top_bar() -> PanelContainer:
 	bar.add_child(_title)
 	bar.add_child(Kit.badge(str(manifest.get("projectName", "?")), Th.ACCENT))
 	bar.add_child(Kit.spacer())
-	# 地图切换（仅内容视图显示）：未填徽章挂在每个地图项上，与左列同口径
-	bar.add_child(_build_map_switch())
-	# 模式切换（关卡/内容/资产）：放右上角，紧挨保存
-	for spec in [["map", "关卡"], ["content", "内容"], ["asset", "资产"]]:
-		var mode := str(spec[0])
-		var btn: Button = Kit.button(str(spec[1]), func(): app._set_mode(mode), "toggle")
-		btn.tooltip_text = {"map": "回到关卡画布", "content": "给实例挂功能、填内容",
-			"asset": "资产图鉴与实例分布"}.get(mode, "")
-		_mode_btns[mode] = btn
-		bar.add_child(btn)
+	# 地图 ▾ + 三个模式按钮：与关卡视图顶栏共用同一个组件
+	_nav_bar = TopBarNavScript.new(app)
+	_nav_bar.after_switch = func(): show_view(_view)
+	_nav_bar.build()
+	app._nav_bars.append(_nav_bar)
+	bar.add_child(_nav_bar)
 	bar.add_child(Kit.vdivider())
 	var save := Kit.button("保存", func(): save_current(), "primary")
 	save.tooltip_text = "保存当前视图对应的数据（Ctrl+S）"
 	bar.add_child(save)
 	return wrap
-
-## 顶栏地图切换：内容视图下唯一的地图入口（关卡编辑器用画布顶栏那个菜单）。
-## 不用 editor_layout 的菜单：内容视图下整个 _map_view 隐藏，那个按钮点不到。
-func _build_map_switch() -> Control:
-	var box := HBoxContainer.new()
-	box.add_theme_constant_override("separation", 0)
-	_map_switch_btn = Kit.button("地图 ▾", Callable(), "ghost")
-	_map_switch_btn.tooltip_text = "切换当前地图（每个地图名后跟未填数）"
-	_map_switch_menu = PopupMenu.new()
-	_map_switch_menu.id_pressed.connect(_on_map_switch_id)
-	_map_switch_btn.pressed.connect(func():
-		_refresh_map_switch()
-		var at := Vector2i(_map_switch_btn.get_screen_position()) + Vector2i(0, int(_map_switch_btn.size.y))
-		_map_switch_menu.popup(Rect2i(at, Vector2i.ZERO)))
-	box.add_child(_map_switch_btn)
-	box.add_child(_map_switch_menu)
-	box.visible = false
-	_map_switch_box = box
-	return box
-
-## 地图项文字：`名字 · n 未填`；当前地图打勾。内容视图每次进入都重建一次。
-func _refresh_map_switch() -> void:
-	if _map_switch_menu == null or content_editor == null:
-		return
-	_map_switch_menu.clear()
-	var entries: Array = content_editor.map_menu_entries()
-	if entries.is_empty():
-		_map_switch_menu.add_item("（还没有地图）")
-		_map_switch_menu.set_item_disabled(0, true)
-		return
-	var cur := str(app.cur_map_name)
-	var n := 0
-	for row in entries:
-		var nm := str(row.name)
-		var todo := int(row.todo)
-		_map_switch_menu.add_item(nm + (("  ·  %d 未填" % todo) if todo > 0 else ""), n)
-		if nm == cur:
-			_map_switch_menu.set_item_as_checkable(n, true)
-			_map_switch_menu.set_item_checked(n, true)
-		n += 1
-	_map_switch_btn.text = ("%s ▾" % cur) if cur != "" else "地图 ▾"
-
-func _on_map_switch_id(id: int) -> void:
-	if content_editor == null:
-		return
-	var entries: Array = content_editor.map_menu_entries()
-	if id < 0 or id >= entries.size():
-		return
-	var nm := str(entries[id].name)
-	if nm == str(app.cur_map_name):
-		return
-	# 切图会连带丢弃未保存改动，确认框由 _open_map_by_name 内部处理
-	app._open_map_by_name(nm)
-	show_view("content")
 
 ## 底栏：消息常驻（左侧）+ 当前视图（右侧），与画布状态栏同一套视觉
 func _build_status_bar() -> PanelContainer:
@@ -162,12 +100,11 @@ func _build_views() -> void:
 ## 切视图（可横跳）。focus 用于资产/内容定位到某条资源
 func show_view(view: String, focus := "") -> void:
 	_view = view
-	# 顶栏模式切换：只有 map/content/asset 三个键，按下态与视图一一对应
-	for k in _mode_btns.keys():
-		(_mode_btns[k] as Button).button_pressed = str(k) == view
+	# 按下态由 app 统一同步到两个顶栏导航条（_set_mode 是唯一真相，
+	# 这里补一次是为了 show_view 被直接调用时按钮也不脱节）
+	app._sync_panel_buttons(view)
 	asset_panel.visible = view == "asset"
 	content_editor.root.visible = view == "content"
-	_map_switch_box.visible = view == "content"
 	_title.text = "项目 · %s" % _label_of(view)
 	match view:
 		"asset":
@@ -179,7 +116,6 @@ func show_view(view: String, focus := "") -> void:
 		"content":
 			# focus 语义在此视图 = 实例 id（右栏定位），空则保留上次选中
 			content_editor.refresh_list(focus)
-			_refresh_map_switch()
 			_set_status("点实例挂功能、填内容；改动即时写盘（Esc 回关卡编辑器）")
 
 func _label_of(view: String) -> String:
