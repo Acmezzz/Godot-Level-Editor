@@ -19,7 +19,6 @@ var host = null  # 宿主 app（确认框复用其链路）
 
 var asset_list: ItemList
 var stats_grid: GridContainer
-var fields_grid: GridContainer
 var name_edit: LineEdit
 var thumb: TextureRect
 var _detail_hint: Label
@@ -115,14 +114,6 @@ func build() -> void:
 	stats_grid.add_theme_constant_override("v_separation", 6)
 	det.add_child(stats_grid)
 
-	det.add_child(Kit.divider())
-	det.add_child(Kit.section_label("字段定义（引用及其它）"))
-	fields_grid = GridContainer.new()
-	fields_grid.columns = 7
-	fields_grid.add_theme_constant_override("h_separation", 8)
-	fields_grid.add_theme_constant_override("v_separation", 6)
-	det.add_child(fields_grid)
-
 	extra = Kit.vbox(8)
 	det.add_child(Kit.divider())
 	det.add_child(extra)
@@ -185,7 +176,6 @@ func _show_detail(sid: String) -> void:
 		name_edit.text = ""
 		thumb.texture = null
 		_asset_editor_rows(stats_grid, {})
-		_asset_field_rows(fields_grid, {})
 		_detail_hint.text = "没有匹配的资产"
 		_detail_hint.visible = true
 		return
@@ -194,12 +184,9 @@ func _show_detail(sid: String) -> void:
 	name_edit.text = str(_edef.get("name", sid))
 	thumb.texture = _asset_texture(_edef)
 	_asset_editor_rows(stats_grid, _edef)
-	_asset_field_rows(fields_grid, _edef)
 	for child in extra.get_children():
 		extra.remove_child(child)
 		child.queue_free()
-	extra.add_child(Kit.section_label("资产标识"))
-	extra.add_child(Kit.hint_label("id: %s   —— 稳定键，被地图数据全项目引用，不可在此重命名" % sid))
 	_add_distribution_section(sid)
 	var del := Kit.button("删除此资产", func(): _delete_asset_checked(sid), "ghost")
 	del.add_theme_color_override("font_color", Th.ERR)
@@ -478,84 +465,6 @@ func _asset_editor_rows(grid: GridContainer, edef: Dictionary) -> void:
 			save_manifest.call())
 		grid.add_child(mins)
 		grid.add_child(maxs)
-
-# —— 字段定义行 ——
-func _asset_field_rows(grid: GridContainer, edef: Dictionary) -> void:
-	for c in grid.get_children():
-		grid.remove_child(c)
-		c.queue_free()
-	for h in ["名称", "id", "类型", "of 目标类型", "enum 选项（逗号分隔）", "默认值", ""]:
-		grid.add_child(Kit.text_label(h, Th.TEXT_MUTE, Th.FS_META))
-	for f in edef.get("fields", []):
-		var nm := LineEdit.new()
-		nm.text = str(f.get("name", ""))
-		nm.custom_minimum_size = Vector2(90, 0)
-		# P0-6：失焦提交（同 stats 行）
-		nm.text_changed.connect(func(t: String): f["name"] = t)
-		nm.text_submitted.connect(func(_t: String): save_manifest.call())
-		nm.focus_exited.connect(func(): save_manifest.call())
-		grid.add_child(nm)
-		var idl := LineEdit.new()
-		idl.text = str(f.get("id", ""))
-		idl.editable = false
-		idl.custom_minimum_size = Vector2(96, 0)
-		grid.add_child(idl)
-		var tsel := OptionButton.new()
-		tsel.add_item("string")
-		tsel.add_item("entity_ref")
-		tsel.add_item("map_ref")
-		tsel.add_item("enum")
-		tsel.add_item("bool")
-		var types := ["string", "entity_ref", "map_ref", "enum", "bool"]
-		tsel.select(maxi(types.find(str(f.get("type", "string"))), 0))
-		tsel.item_selected.connect(func(idx: int):
-			f["type"] = types[idx]
-			save_manifest.call()
-			_asset_field_rows(grid, edef))
-		grid.add_child(tsel)
-		var ofe := LineEdit.new()
-		ofe.text = str(f.get("of", ""))
-		ofe.placeholder_text = "实体类型,逗号分隔"
-		ofe.custom_minimum_size = Vector2(110, 0)
-		ofe.editable = str(f.get("type", "")) == "entity_ref"
-		ofe.text_changed.connect(func(t: String): f["of"] = t)
-		ofe.text_submitted.connect(func(_t: String): save_manifest.call())
-		ofe.focus_exited.connect(func(): save_manifest.call())
-		grid.add_child(ofe)
-		# enum 选项：逗号分隔，失焦提交（只有 type=enum 时可编辑，其余置灰避免噪音）
-		var ope := LineEdit.new()
-		var opts_arr: Array = f.get("options", [])
-		var opt_texts := PackedStringArray()
-		for o in opts_arr:
-			opt_texts.append(str(o))
-		ope.text = ",".join(opt_texts)
-		ope.placeholder_text = "A,B,C"
-		ope.custom_minimum_size = Vector2(140, 0)
-		ope.editable = str(f.get("type", "")) == "enum"
-		ope.tooltip_text = "下拉可选项，逗号分隔；改完在属性面板里就是下拉框"
-		ope.text_changed.connect(func(t: String):
-			var arr: Array = []
-			for part in t.split(",", false):
-				var pt := part.strip_edges()
-				if pt != "":
-					arr.append(pt)
-			f["options"] = arr)
-		ope.text_submitted.connect(func(_t: String): save_manifest.call())
-		ope.focus_exited.connect(func(): save_manifest.call())
-		grid.add_child(ope)
-		var defe := LineEdit.new()
-		defe.text = str(f.get("default", ""))
-		defe.custom_minimum_size = Vector2(76, 0)
-		defe.text_changed.connect(func(t: String): f["default"] = t)
-		defe.text_submitted.connect(func(_t: String): save_manifest.call())
-		defe.focus_exited.connect(func(): save_manifest.call())
-		grid.add_child(defe)
-		var fdel := Kit.button("✕", func():
-			(edef.get("fields", []) as Array).erase(f)
-			save_manifest.call()
-			_asset_field_rows(grid, edef), "icon")
-		fdel.tooltip_text = "删除这个字段（地图里已填的值会变成孤立数据）"
-		grid.add_child(fdel)
 
 ## 去重历史遗留的重复 stat id；返回是否有改动
 func _dedupe_stat_ids(edef: Dictionary) -> bool:
