@@ -171,6 +171,22 @@ func _run() -> void:
 				if str(L[k].get("type", "tiles")) == "grid":
 					ci = k
 			app._on_layer(ci)
+			await process_frame
+			await process_frame
+			print("MEASURE coll_page=%s tile_list=%s ents=%s" % [
+				str(app.coll_page != null and app.coll_page.visible),
+				str(app.tile_list.visible), str(app.ent_list.visible)])
+		"decor_layer":
+			# 图一修复：装饰层左栏不再显示地形类别行（直接平铺图集条目）
+			app._on_layer(1)
+			await process_frame
+			await process_frame
+			var tl: ItemList = app.tile_list
+			var cat_rows := 0
+			for i in tl.item_count:
+				if str(tl.get_item_text(i)).begins_with("→") or str(tl.get_item_text(i)).begins_with("←"):
+					cat_rows += 1
+			print("MEASURE decor_cat_rows=%d items=%d" % [cat_rows, tl.item_count])
 		"picker":
 			# 跨图选点：完整地图 + 缩放 + 当前目标居中
 			var first_exit = null

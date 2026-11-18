@@ -33,6 +33,8 @@ var _left_title: Label = null
 var _badge: PanelContainer = null
 var _rows_box: VBoxContainer = null
 var _filter_btn: Button = null
+## 「校验本图」入口按钮（v2 §7.3 出口迁到内容编辑器左列）
+var _val_btn: Button = null
 # 中列
 var _preview: Control = null
 # 右列
@@ -105,6 +107,13 @@ func _build_left() -> Control:
 	_filter_btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	_filter_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	col.add_child(_filter_btn)
+	# 校验本图（v2 §7.3：MapValidate/ContentValidate 的出口 = 内容编辑器的地图级清单）。
+	# 旧右栏的问题页签随检查器一起删了，全图校验入口迁到这里。
+	_val_btn = Kit.button("校验本图", func(): open_validate_popup(false), "ghost")
+	_val_btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_val_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_val_btn.tooltip_text = "校验当前地图 + 内容资源，问题条目可点击定位"
+	col.add_child(_val_btn)
 	col.add_child(Kit.hint_label("行尾黄点 = 有功能未填；点画布上的实体选中同一行。", LEFT_W - 24))
 	return wrap
 
@@ -1149,4 +1158,68 @@ func _on_map_entry(id: int) -> void:
 	if idx < 0 or idx >= entries.size():
 		return
 	app._open_map_by_name(str(entries[idx].name))
+
+# ──────────── 校验（v2 §7.3：MapValidate / ContentValidate 的出口 = 地图级清单） ────────────
+
+var _val_pop: PopupPanel = null
+
+## 打开校验问题清单弹窗。all_maps=false 校验当前图（画布内存快照，未保存改动也覆盖），
+## true 校验全部地图 + 关卡清单 + 内容资源。条目可点：带实例定位信息的跳关卡编辑器聚焦实体。
+func open_validate_popup(all_maps: bool) -> void:
+	if _val_pop != null and is_instance_valid(_val_pop):
+		_val_pop.queue_free()
+	var issues: Array = app._collect_issues(all_maps)
+	var n_err := 0
+	for it in issues:
+		if str(it.get("level", "")) == "error":
+			n_err += 1
+	if issues.is_empty():
+		app._set_status(" 校验通过：没有发现任何问题")
+		return
+	var pop := PopupPanel.new()
+	var col: VBoxContainer = app.UiKitScript.vbox(10)
+	col.custom_minimum_size = Vector2(560, 0)
+	pop.add_child(col)
+	var head: HBoxContainer = app.UiKitScript.hbox(8)
+	head.add_child(app.UiKitScript.text_label("校验问题 %s：%d 项（%d 个错误）" % [
+		"全部地图" if all_maps else "本图", issues.size(), n_err],
+		app.UiThemeScript.TEXT, app.UiThemeScript.FS_MD))
+	head.add_child(app.UiKitScript.spacer())
+	head.add_child(app.UiKitScript.button("关闭", func(): pop.hide(), "ghost"))
+	col.add_child(head)
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size = Vector2(560, minf(app.get_viewport_rect().size.y - 220, 420))
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	col.add_child(scroll)
+	var rows: VBoxContainer = app.UiKitScript.vbox(3)
+	rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(rows)
+	for it in issues:
+		var level := str(it.get("level", "warn"))
+		var map_n := str(it.get("map", ""))
+		var eid := str(it.get("ent_id", ""))
+		var msg := str(it.get("message", ""))
+		var field := str(it.get("field", ""))
+		var mark := "●" if level == "error" else "○"
+		var row: Button = app.UiKitScript.button("%s %s%s  %s" % [mark,
+			(map_n + " · ") if map_n != "" else "", field, msg], Callable(), "ghost")
+		row.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		row.add_theme_color_override("font_color",
+			app.UiThemeScript.ERR if level == "error" else app.UiThemeScript.TEXT_DIM)
+		if map_n != "" and eid != "":
+			row.tooltip_text = "点击定位到该实例"
+			row.pressed.connect(func():
+				pop.hide()
+				app._focus_issue(map_n, eid))
+		else:
+			row.tooltip_text = field + "\n" + msg
+		rows.add_child(row)
+	_val_pop = pop
+	app.add_child(pop)
+	pop.popup_centered(Vector2i(1, 1))
+	var want := pop.get_contents_minimum_size().ceil()
+	var vp: Vector2 = app.get_viewport_rect().size
+	want.x = minf(want.x, vp.x - 40)
+	want.y = minf(want.y, vp.y - 40)
+	pop.popup_centered(Vector2i(want))
 

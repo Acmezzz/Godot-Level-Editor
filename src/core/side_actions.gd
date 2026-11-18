@@ -215,14 +215,14 @@ func _delete_entities_by_id(ids: Array) -> void:
 	app._rebuild_props_panel()
 
 
-func _run_validate(all_maps: bool) -> void:
+## 收集校验问题（不落 UI）：内容编辑器弹窗与隐藏侧栏共用同一份数据源。
+func _collect_issues(all_maps: bool) -> Array:
 	var issues: Array = []
 	if all_maps:
 		issues = app.MapValidate.validate_all(app.manifest)
 	else:
 		if not app.map_loaded:
-			app._set_status(" 无地图可校验")
-			return
+			return []
 		var data = app.canvas.extract()
 		issues = app.MapValidate.validate_map(app.manifest, app.cur_map_name, data)
 	# 关卡清单永远一起校验（它描述的是整体组织，与单图/全图正交）
@@ -230,6 +230,13 @@ func _run_validate(all_maps: bool) -> void:
 	# 内容资源（对话/事件/商店/定义）与地图引用一起校验：只做一遍，避免单图模式漏掉跨资源问题
 	var ContentValidate := preload("res://src/content/content_validate.gd")
 	issues.append_array(ContentValidate.validate_all(app.manifest, app.manifest))
+	return issues
+
+## 落 UI 的旧入口：隐藏侧栏的问题页签还消费它（visible=false，刷新链仍在用）。
+func _run_validate(all_maps: bool) -> void:
+	var issues: Array = _collect_issues(all_maps)
+	if issues.is_empty() and not app.map_loaded:
+		return
 	app.side_panel.set_issues(issues)
 	app.side_panel.select_tab(2)
 	var errors := 0

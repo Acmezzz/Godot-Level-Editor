@@ -146,6 +146,7 @@ func _build_global_bar() -> PanelContainer:
 	# v2 §2.4：关卡清单与世界拓扑属地图级动作，从项目页「清单」迁到这里
 	map_menu.add_item("关卡清单与世界拓扑…", 7)
 	map_menu.add_item("清单设置（背景图组 / 物品）…", 8)
+	map_menu.add_item("校验全部地图", 9)
 	map_menu.id_pressed.connect(_on_map_menu_id)
 	app._map_btn.pressed.connect(func(): _popup_below(map_menu, app._map_btn))
 	bar.add_child(map_menu)
@@ -191,6 +192,13 @@ func _on_map_menu_id(id: int) -> void:
 			_open_levels_dialog()
 		8:
 			_open_manifest_dialog()
+		9:
+			# 校验全部地图（v2 §7.3）：出口在内容编辑器，地图菜单只是另一个可达点
+			var ce = app.project_shell.content_editor if app.project_shell != null else null
+			if ce != null:
+				ce.open_validate_popup(true)
+			else:
+				app._run_validate(true)
 
 ## 关卡清单与世界拓扑（v2 §2.4）：从项目页清单视图迁入地图菜单。
 ## 弹窗里复用 levels_panel.gd——面板不做 IO，保存/开图仍走原有信号链。
@@ -349,6 +357,53 @@ func _build_palette_column() -> PanelContainer:
 	holder.add_child(app.ent_list)
 	full.call(app.ent_list)
 
+	# 碰撞层专属页（v2 §2.2 层决定行为）：grid 层没有资产可涂，涂的是隐形碰撞块，
+	# 类型/形状在左栏就地选，自动生成碰撞也在这里——旧右栏删掉后它一度没有入口。
+	var coll: VBoxContainer = app.UiKitScript.vbox(8)
+	coll.visible = false
+	holder.add_child(coll)
+	full.call(coll)
+	app.coll_page = coll
+	var hint: Label = app.UiKitScript.hint_label("碰撞层没有瓦片资产：左键拖涂，右键擦除。\n自动生成会按地形轮廓整层铺块。", 176)
+	coll.add_child(hint)
+	var trow: HBoxContainer = app.UiKitScript.hbox(6)
+	coll.add_child(app.UiKitScript.text_label("类型", app.UiThemeScript.TEXT_MUTE, app.UiThemeScript.FS_SMALL))
+	var topt := OptionButton.new()
+	for t in [["solid", "实心"], ["ladder", "梯子"], ["hazard", "危险"], ["one_way", "单向平台"]]:
+		topt.add_item(str(t[1]))
+		topt.set_item_metadata(topt.item_count - 1, str(t[0]))
+	topt.item_selected.connect(func(idx: int):
+		app.canvas.collision_type = str(topt.get_item_metadata(idx)))
+	topt.select(0)
+	topt.tooltip_text = "涂上去的碰撞类型；梯子/危险由游戏侧按组消费"
+	trow.add_child(topt)
+	coll.add_child(trow)
+	var srow: HBoxContainer = app.UiKitScript.hbox(6)
+	coll.add_child(app.UiKitScript.text_label("形状", app.UiThemeScript.TEXT_MUTE, app.UiThemeScript.FS_SMALL))
+	var sopt := OptionButton.new()
+	for sh in [["", "整格"], ["r45", "斜坡 ╱"], ["l45", "斜坡 ╲"], ["one_way", "上边缘单向"]]:
+		sopt.add_item(str(sh[1]))
+		sopt.set_item_metadata(sopt.item_count - 1, str(sh[0]))
+	sopt.item_selected.connect(func(idx: int):
+		app.canvas.collision_shape = str(sopt.get_item_metadata(idx)))
+	sopt.select(0)
+	sopt.tooltip_text = "整格 / 斜坡 / 上边缘单向；斜坡画三角，单向只挡从上方进入"
+	srow.add_child(sopt)
+	coll.add_child(srow)
+	var gen: Button = app.UiKitScript.button("自动生成碰撞…", func(): app._open_collision_gen(), "plain")
+	gen.tooltip_text = "按地形轮廓整层生成（全部/仅边缘，可替换或叠加）"
+	gen.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	coll.add_child(gen)
+	var clear: Button = app.UiKitScript.button("清空本层碰撞", func():
+		app.canvas._push_undo()
+		for c2 in app.canvas.collision.get_used_cells():
+			app.canvas.collision.erase_cell(c2)
+		app.canvas._collision_meta.clear()
+		app.canvas._mark(), "ghost")
+	clear.tooltip_text = "擦掉本层全部碰撞块（Ctrl+Z 可撤销）"
+	clear.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	coll.add_child(clear)
+
 	# 属性面板迁到右栏检查器（R2）：左栏只管「给画布喂什么」（图层 + 调色板），
 	# 三个控制器仍在这里建，供 app 的委托调用不变。
 	app._props_panel_ctrl = preload("res://src/ui/props_panel.gd").new(app)
@@ -364,13 +419,15 @@ func _build_palette_column() -> PanelContainer:
 	app.props_scroll.add_child(app.props_panel)
 	return col
 
-## 资产列表跟随层类型（v2 §2.2）：地形/装饰/碰撞 → 瓦片，实体层 → 实体。
+## 资产列表跟随层类型（v2 §2.2）：地形/装饰 → 瓦片，碰撞（grid）→ 碰撞控件，实体层 → 实体。
 ## 这是「层下拉接管一切」的落点——没有第二个切换入口，也就不可能与按钮状态打架。
 func _set_palette_page(which: String) -> void:
 	if app.tile_list:
 		app.tile_list.visible = which == "tiles"
 	if app.ent_list:
 		app.ent_list.visible = which == "entities"
+	if app.coll_page:
+		app.coll_page.visible = which == "collision"
 
 ## 图层类型小工具（editor_layout 自用，避免依赖 app 的私有方法）
 func _layer_type_of(i: int) -> String:

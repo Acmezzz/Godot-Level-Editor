@@ -35,9 +35,14 @@ func _gesture_hint(i: int) -> String:
 
 func _sync_ui() -> void:
 	# 调色板跟随图层类型（v2：这是唯一一套切换，页签按钮已删）
+	# grid 层（碰撞）没有瓦片资产可涂——左栏切到碰撞控件页（类型/形状/自动生成）。
 	var lt := _layer_type(app.canvas.active_layer)
-	if lt == "tiles" or lt == "grid":
+	if lt == "grid":
+		app._set_palette_page("collision")
+	elif lt == "tiles":
 		app._set_palette_page("tiles")
+		# 装饰层跳过类别钻入（图一）：装饰↔地形切换时重填瓦片列表
+		app._palette_ctrl.sync_layer_view()
 	else:
 		app._set_palette_page("entities")
 	app._refresh_tool_meta()

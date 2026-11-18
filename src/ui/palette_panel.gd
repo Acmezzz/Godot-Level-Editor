@@ -4,6 +4,7 @@ extends RefCounted
 
 var app   # 宿主
 var _cat := ""          # 当前视图："" = 类别视图；非空 = 资产视图（该类别名）
+var _decor_filled := false # 上次填表时是否处于装饰层（层切换时触发重填）
 var _cats := []         # [{name, count}]，按首次出现顺序
 var _atlas := 0         # 批次 9：当前图集上下文；多图集时 -1 = 顶层图集列表
 
@@ -16,10 +17,15 @@ func fill_all() -> void:
 	fill_tiles()
 	fill_entities()
 
-## 瓦片调色板：多图集 → 图集级导航（图集列表 → 图集内类别/全图）；单图集行为不变
+## 瓦片调色板：多图集 → 图集级导航（图集列表 → 图集类别/全图）；单图集行为不变
+## 装饰层例外（图一反馈）：装饰与地形共用图集时不显示「岩块件套（13）」这类
+## 地形类别行——直接平铺清单条目，类别导航属地形层。
 func fill_tiles() -> void:
 	var tl: ItemList = app.tile_list
 	tl.clear()
+	if _on_decor_layer():
+		_cat = ""   # 装饰层不做类别钻入，也不吃 MRU 状态
+	_decor_filled = _on_decor_layer()
 	var tiles: Array = app.manifest.get("tiles", [])
 	if tiles.is_empty():
 		_show_empty(tl, "清单未定义瓦片")
@@ -31,6 +37,25 @@ func fill_tiles() -> void:
 		_fill_multi(tl, tiles, tsz)
 	else:
 		_fill_single(tl, tiles[0], 0, tsz)
+
+## 层切换时同步装饰层视图：fill 只在启动/建图时跑一次，装饰↔地形切换靠这里触发重填。
+func sync_layer_view() -> void:
+	var now := _on_decor_layer()
+	if now != _decor_filled:
+		fill_tiles()
+
+## 当前是否在装饰层：层 id 或层名标识为 decor/装饰（清单驱动，无清单回退 false）
+func _on_decor_layer() -> bool:
+	var layers: Array = app.manifest.get("layers", [])
+	var i := 0
+	if app.canvas != null and is_instance_valid(app.canvas):
+		i = app.canvas.active_layer
+	if i < 0 or i >= layers.size():
+		return false
+	var lay: Dictionary = layers[i]
+	var idn := str(lay.get("id", ""))
+	var nm := str(lay.get("name", ""))
+	return idn == "decor" or idn.begins_with("decor") or nm == "装饰"
 
 ## 多图集：顶层（_atlas == -1）= 图集列表；钻入后加返回行再进图集体
 func _fill_multi(tl: ItemList, tiles: Array, tsz: int) -> void:
@@ -73,6 +98,15 @@ func _fill_single(tl: ItemList, t: Dictionary, ai: int, tsz: int) -> void:
 		# 没配 palette = 全图集平铺，那种视图必须是网格；MRU 行混进网格会被压成豆点，故跳过
 		_set_grid(tl, 3, 56)
 		_fill_full_atlas(tl, img, tsz, ai)
+		return
+	# 装饰层（图一反馈）：跳过类别行直接平铺清单条目——「→ 岩块件套（13）」这种
+	# 地形类别行不该出现在装饰层。三列网格，MRU 也不掺进来。
+	if _on_decor_layer():
+		_set_grid(tl, 3, 56)
+		for p in pal:
+			var dcell := Vector2i(int(p.cell[0]), int(p.cell[1]))
+			var dit := tl.add_item(str(p.get("name", "%d,%d" % [dcell.x, dcell.y])), _tex(ai, dcell, tsz))
+			tl.set_item_metadata(dit, {"auto": false, "cell": dcell, "atlas": ai})
 		return
 	_add_mru_rows(tl, tsz)
 	for c in _cats:

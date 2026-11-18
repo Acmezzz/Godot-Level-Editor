@@ -83,6 +83,35 @@ func _run() -> void:
 		_check(not (_current_entity().get_meta("props", {}).get("stats", {}) as Dictionary).has("hp"),
 			"undo removes the stat override and restores inheritance")
 
+	# —— v2 §5.3：functions 绑定经 extract → load_data 往返不丢（批次 B 引入的持久化契约） ——
+	var fn_data := {
+		"meta": {"name": "undo", "w": 8, "h": 6}, "spawn": [1, 1],
+		"terrain": [], "decor": [], "collision": [],
+		"entities": [{"scene": "test_entity", "id": "e_1", "x": 2, "y": 2, "props": {},
+			"functions": [{"fn": "dialogue", "content": "TEST-test_entity-e_1-dialogue-DEMO01", "name": "问好", "order": 1, "parallel": true}]}],
+	}
+	await host.canvas.load_data(fn_data, "undo")
+	var ex: Dictionary = host.canvas.extract()
+	var ex_fns: Array = (ex.entities[0] as Dictionary).get("functions", [])
+	_check(ex_fns.size() == 1
+		and str((ex_fns[0] as Dictionary).get("fn", "")) == "dialogue"
+		and str((ex_fns[0] as Dictionary).get("content", "")) == "TEST-test_entity-e_1-dialogue-DEMO01",
+		"extract keeps the instance function binding (fn/content)")
+	_check(bool((ex_fns[0] as Dictionary).get("parallel", false)),
+		"extract keeps the parallel flag")
+	await host.canvas.load_data(ex, "undo")
+	var fns_meta: Array = (_current_entity().get_meta("functions", []) as Array)
+	_check(fns_meta.size() == 1 and str((fns_meta[0] as Dictionary).get("name", "")) == "问好",
+		"load_data restores the binding into sprite meta")
+	host.canvas._push_undo()
+	_current_entity().set_meta("functions", [])
+	host.canvas._mark()
+	_check(host.canvas.undo(), "undo available after clearing the binding")
+	await process_frame
+	var restored: Array = (_current_entity().get_meta("functions", []) as Array)
+	_check(restored.size() == 1 and str((restored[0] as Dictionary).get("fn", "")) == "dialogue",
+		"undo restores a cleared function binding")
+
 	if is_instance_valid(host):
 		host.queue_free()
 	await process_frame

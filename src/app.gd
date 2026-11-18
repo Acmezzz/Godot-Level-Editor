@@ -21,6 +21,8 @@ var cur_map_path := ""
 var cur_map_name := ""
 var tile_list: ItemList
 var ent_list: ItemList
+## 碰撞层专属左栏页（v2 §2.2）：碰撞类型/形状/自动生成——层决定左栏显示什么
+var coll_page: VBoxContainer
 var status: Label
 ## v2：工具概念已废除——画笔行为由层类型决定，笔刷尺寸/碰撞类型不再有 UI 入口，
 ## 这两个字段保留为画布状态的直写点（默认值即唯一值）。
@@ -521,6 +523,12 @@ func _on_entity_selected(spr: Sprite2D) -> void:
 	# 但用户看到的是画布下沿那条极简信息条。
 	_props_panel_ctrl.on_entity_selected(spr)
 	_refresh_sel_bar()
+	# v2 §3.2 双向同步的另一半：画布选中的实例，切到内容编辑器时左列要定位到它。
+	# 载入地图会以 null 清选（P-10），先挡掉。
+	if spr != null and project_shell != null and project_shell.content_editor != null:
+		var eid := str(spr.get_meta("ent_id", ""))
+		if eid != "":
+			project_shell.content_editor.select_inst(eid)
 
 func _rebuild_props_panel() -> void:
 	_props_panel_ctrl.rebuild()
@@ -794,6 +802,10 @@ func _delete_entities_by_id(ids: Array) -> void:
 
 func _run_validate(all_maps: bool) -> void:
 	_side_actions_ctrl._run_validate(all_maps)
+
+## 校验问题的纯数据出口（内容编辑器弹窗用；不落隐藏侧栏的 UI）
+func _collect_issues(all_maps: bool) -> Array:
+	return _side_actions_ctrl._collect_issues(all_maps)
 
 func _focus_issue(map_name: String, ent_id: String) -> void:
 	_side_actions_ctrl._focus_issue(map_name, ent_id)
