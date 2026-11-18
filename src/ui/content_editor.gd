@@ -350,6 +350,16 @@ func _build_row(row: Dictionary) -> Control:
 
 	# 按钮内容行撑满高度：ghost 按钮默认按文字定高，空文字会塌成 0
 	b.custom_minimum_size = Vector2(0, 26)
+	# 悬停行 → 预览里高亮对应实例（与预览内悬停同一状态 _hover_ent，青框）
+	b.mouse_entered.connect(func():
+		_hover_ent = ent_id
+		if _preview != null:
+			_preview.queue_redraw())
+	b.mouse_exited.connect(func():
+		if _hover_ent == ent_id:
+			_hover_ent = ""
+			if _preview != null:
+				_preview.queue_redraw())
 	return b
 
 ## 单一选中入口：左列行、中列画布预览、外部定位都走这里，避免两处状态不同步。
