@@ -24,7 +24,7 @@ const SRC := [
 	"res://src/ui/content_editor.gd",
 	"res://src/content/content_store.gd",
 	"res://src/content/def_model.gd",
-	"res://src/content/builtin_kinds.gd", "res://src/content/content_templates.gd",
+	"res://src/content/builtin_kinds.gd",
 	"res://src/content/content_id.gd",
 ]
 
