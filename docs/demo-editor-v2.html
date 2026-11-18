@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>编辑器 v2 布局演示</title>
+<style>
+  :root{
+    --void:#0b0e13; --base:#12161d; --panel:#171c24; --raised:#1e242e;
+    --hover:#273040; --border:#242c38; --border-hi:#354052;
+    --text:#e8edf5; --soft:#b9c3d1; --dim:#9aa5b5; --mute:#697487;
+    --accent:#4c9aff; --accent-bg:#182c47; --ok:#3fb950; --warn:#d6a13a; --err:#f0605c;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{
+    background:var(--void);color:var(--text);
+    font:13px/1.45 -apple-system,"Segoe UI",system-ui,sans-serif;
+    height:100vh;display:flex;flex-direction:column;overflow:hidden;
+  }
+  button{font:inherit;color:var(--soft);background:transparent;border:0;cursor:pointer}
+  button:hover{color:var(--text)}
+
+  /* 全局横带 */
+  #top{
+    display:flex;align-items:center;gap:8px;padding:6px 12px;
+    background:var(--base);border-bottom:1px solid var(--border);flex:0 0 auto;
+  }
+  #brand{font-size:14px;font-weight:600}
+  .sep{width:1px;height:18px;background:var(--border)}
+  .btn{
+    padding:5px 10px;border-radius:6px;background:var(--raised);
+    border:1px solid var(--border);color:var(--soft);
+  }
+  .btn:hover{background:var(--hover);border-color:var(--border-hi);color:var(--text)}
+  .btn.primary{background:#245f9e;border-color:var(--accent);color:#eaf3ff}
+  .btn.ghost{background:transparent;border-color:transparent}
+  .btn.ghost:hover{background:var(--raised)}
+  #tabs{display:flex;gap:2px;margin-left:auto}
+  .tab{
+    padding:5px 12px;border-radius:6px;color:var(--mute);
+    border:1px solid transparent;
+  }
+  .tab:hover{color:var(--soft);background:var(--raised)}
+  .tab.on{background:var(--accent-bg);border-color:var(--accent);color:var(--accent)}
+
+  /* 面板容器 */
+  .panel{flex:1;display:none;min-height:0}
+  .panel.on{display:flex}
+
+  /* ── 关卡编辑器 ── */
+  #lvLeft{
+    width:200px;flex:0 0 auto;background:var(--panel);
+    border-right:1px solid var(--border);padding:8px;display:flex;flex-direction:column;gap:8px;
+  }
+  .sec{font-size:11px;color:var(--mute);letter-spacing:.04em}
+  #layerBtn{
+    display:flex;width:100%;justify-content:space-between;align-items:center;
+    padding:6px 9px;background:var(--raised);border:1px solid var(--border);border-radius:6px;
+  }
+  #layerMenu{
+    display:none;background:var(--panel);border:1px solid var(--border-hi);
+    border-radius:8px;padding:4px;margin-top:-4px;
+  }
+  #layerMenu.on{display:block}
+  .lyr{
+    display:flex;align-items:center;gap:6px;padding:5px 8px;border-radius:4px;cursor:pointer;
+    color:var(--soft);
+  }
+  .lyr:hover{background:var(--raised)}
+  .lyr.on{background:var(--accent-bg);color:var(--accent)}
+  .lyr .nm{flex:1}
+  .mini{
+    width:20px;height:18px;display:grid;place-items:center;border-radius:4px;
+    border:1px solid var(--border);font-size:10px;color:var(--mute);
+  }
+  .mini.on{background:var(--accent-bg);border-color:var(--accent);color:var(--accent-hi,#74b4ff)}
+  #assetList{flex:1;overflow:auto;display:grid;grid-template-columns:1fr 1fr;gap:4px;align-content:start}
+  .asset{
+    padding:6px 4px;background:var(--raised);border:1px solid var(--border);
+    border-radius:6px;font-size:11px;color:var(--soft);text-align:center;
+  }
+  .asset:hover{border-color:var(--border-hi);color:var(--text)}
+  .asset.on{background:var(--accent-bg);border-color:var(--accent);color:var(--accent)}
+
+  #lvCanvas{flex:1;position:relative;background:var(--void);min-width:0;overflow:hidden}
+  .grid{
+    position:absolute;inset:0;
+    background-image:linear-gradient(var(--border) 1px,transparent 1px),
+                     linear-gradient(90deg,var(--border) 1px,transparent 1px);
+    background-size:32px 32px;opacity:.45;
+  }
+  .tile{position:absolute;background:rgba(120,200,130,.28);border:1px solid rgba(140,220,150,.5)}
+  .ent{
+    position:absolute;width:26px;height:26px;border-radius:50%;
+    display:grid;place-items:center;font-size:11px;
+    background:var(--raised);border:1px solid var(--border-hi);color:var(--soft);cursor:pointer;
+  }
+  .ent.sel{border-color:var(--accent);box-shadow:0 0 0 2px rgba(76,154,255,.25);color:var(--accent)}
+
+  /* 选中信息条 */
+  #selBar{
+    position:absolute;left:50%;transform:translateX(-50%);bottom:16px;
+    display:none;align-items:center;gap:8px;padding:5px 10px;
+    background:rgba(23,28,36,.96);border:1px solid var(--border-hi);border-radius:8px;
+    font-size:12px;white-space:nowrap;
+  }
+  #selBar.on{display:flex}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--ok)}
+  .dot.none{background:var(--mute)}
+
+  /* 状态栏 */
+  #status{
+    flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:4px 12px;
+    background:var(--base);border-top:1px solid var(--border);font-size:11px;color:var(--mute);
+  }
+  #status .msg{flex:1;color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .tog{
+    padding:3px 8px;border:1px solid var(--border);border-radius:4px;
+    background:transparent;color:var(--mute);font-size:11px;
+  }
+  .tog.on{background:var(--accent-bg);border-color:var(--accent);color:var(--accent)}
+  .tog:hover{border-color:var(--border-hi)}
+
+  /* ── 内容编辑器 ── */
+  #ctMaps{
+    width:220px;flex:0 0 auto;background:var(--panel);
+    border-right:1px solid var(--border);padding:8px;display:flex;flex-direction:column;gap:4px;overflow:auto;
+  }
+  .mapRow{
+    display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:6px;
+    cursor:pointer;color:var(--soft);
+  }
+  .mapRow:hover{background:var(--raised)}
+  .mapRow.on{background:var(--accent-bg);color:var(--accent);border:1px solid var(--accent)}
+  .mapRow .nm{flex:1}
+  .badge{
+    font-size:10px;padding:1px 6px;border-radius:9px;
+    background:rgba(214,161,58,.15);border:1px solid rgba(214,161,58,.5);color:var(--warn);
+  }
+  .badge.done{background:rgba(63,185,80,.12);border-color:rgba(63,185,80,.45);color:var(--ok)}
+
+  #ctCanvas{flex:1;position:relative;background:var(--void);min-width:0;overflow:hidden}
+  #ctCanvas .hint{
+    position:absolute;left:10px;top:8px;font-size:11px;color:var(--mute);
+  }
+  #ctRight{
+    width:360px;flex:0 0 auto;background:var(--panel);
+    border-left:1px solid var(--border);display:flex;flex-direction:column;overflow:auto;
+  }
+  .rHead{padding:8px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px}
+  .rBody{padding:10px 12px;display:flex;flex-direction:column;gap:10px}
+  .blk{border:1px solid var(--border);border-radius:8px;padding:8px 10px;display:flex;flex-direction:column;gap:7px}
+  .blk > .sec{margin-bottom:2px}
+  .kv{display:flex;align-items:center;gap:8px}
+  .kv label{width:52px;color:var(--dim);font-size:12px;flex:0 0 auto}
+  .kv input{
+    flex:1;min-width:0;padding:4px 8px;background:var(--void);color:var(--text);
+    border:1px solid var(--border);border-radius:4px;font:inherit;font-size:12px;
+  }
+  .fnRow{
+    display:flex;align-items:center;gap:7px;padding:6px 8px;border-radius:6px;
+    background:var(--raised);border:1px solid var(--border);cursor:pointer;
+  }
+  .fnRow:hover{border-color:var(--border-hi)}
+  .fnRow.on{border-color:var(--accent);background:var(--accent-bg)}
+  .fnRow .ord{color:var(--mute);font-size:11px;width:12px;flex:0 0 auto}
+  .fnRow .fn{color:var(--text);flex:0 0 auto}
+  .fnRow .cname{flex:1;color:var(--dim);font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .fnRow .cname.empty{color:var(--warn)}
+  .pill{
+    font-size:10px;padding:1px 6px;border-radius:9px;border:1px solid var(--border);
+    color:var(--mute);flex:0 0 auto;
+  }
+  .pill.par{border-color:rgba(76,154,255,.55);color:var(--accent)}
+  .tiny{font-size:11px;color:var(--mute)}
+  .addRow{
+    display:flex;align-items:center;justify-content:center;gap:6px;padding:6px;
+    border:1px dashed var(--border-hi);border-radius:6px;color:var(--dim);cursor:pointer;
+  }
+  .addRow:hover{color:var(--text);border-color:var(--accent)}
+
+  /* 内容表单（就地展开） */
+  #ctForm{border-color:var(--accent)}
+  .lines{display:flex;flex-direction:column;gap:5px}
+  .lineRow{display:flex;gap:6px;align-items:center}
+  .lineRow input{flex:1}
+  .libBtn{
+    padding:2px 8px;font-size:11px;border:1px solid var(--border-hi);border-radius:4px;
+    color:var(--dim);background:transparent;
+  }
+  .libBtn:hover{color:var(--accent);border-color:var(--accent)}
+
+  /* 库弹层 */
+  #libMask{
+    position:fixed;inset:0;background:rgba(0,0,0,.55);display:none;
+    align-items:center;justify-content:center;z-index:50;
+  }
+  #libMask.on{display:flex}
+  #libBox{
+    width:520px;max-height:70vh;background:var(--panel);
+    border:1px solid var(--border-hi);border-radius:10px;display:flex;flex-direction:column;overflow:hidden;
+  }
+  #libBox .lh{padding:10px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px}
+  #libBox .lb{padding:8px;overflow:auto;display:flex;flex-direction:column;gap:4px}
+  .libItem{
+    display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:6px;
+    border:1px solid var(--border);background:var(--raised);cursor:pointer;
+  }
+  .libItem:hover{border-color:var(--accent);background:var(--accent-bg)}
+  .libItem .nm{flex:1;color:var(--text)}
+  .libItem .id{font-size:10px;color:var(--mute);font-family:ui-monospace,monospace}
+  #libBox .lf{padding:8px 14px;border-top:1px solid var(--border);display:flex;justify-content:flex-end;gap:8px}
+
+  /* ── 资产目录 ── */
+  #asLeft{
+    width:272px;flex:0 0 auto;background:var(--panel);
+    border-right:1px solid var(--border);padding:10px;display:flex;flex-direction:column;gap:8px;
+  }
+  #asLeft .list{flex:1;overflow:auto;display:flex;flex-direction:column;gap:3px}
+  .asItem{padding:6px 9px;border-radius:6px;color:var(--soft);cursor:pointer}
+  .asItem:hover{background:var(--raised);color:var(--text)}
+  .asItem.on{background:var(--accent-bg);color:var(--accent)}
+  #asMain{flex:1;overflow:auto;padding:14px 18px;display:flex;flex-direction:column;gap:14px;min-width:0}
+  table{width:100%;border-collapse:collapse;font-size:12px}
+  th{text-align:left;color:var(--mute);font-weight:400;font-size:11px;padding:4px 8px;border-bottom:1px solid var(--border)}
+  td{padding:5px 8px;border-bottom:1px solid rgba(36,44,56,.6);color:var(--soft)}
+  td input{
+    width:76px;padding:3px 7px;background:var(--void);color:var(--text);
+    border:1px solid var(--border);border-radius:4px;font:inherit;font-size:12px;
+  }
+  .distRow{display:flex;align-items:center;gap:10px;padding:5px 0;border-bottom:1px solid rgba(36,44,56,.6)}
+  .distRow .m{width:110px;color:var(--text)}
+  .distRow .n{width:56px;color:var(--dim);font-size:12px}
+  .distRow .ids{flex:1;color:var(--mute);font-size:11px;font-family:ui-monospace,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+</style>
+</head>
+<body>
+
+<div id="top">
+  <span id="brand">BIRD</span>
+  <span class="sep"></span>
+  <span style="color:var(--soft)">TEST</span>
+  <button class="btn">新建</button>
+  <button class="btn">打开</button>
+  <button class="btn">保存</button>
+  <div id="tabs">
+    <button class="tab on" data-panel="lv">关卡</button>
+    <button class="tab" data-panel="ct">内容</button>
+    <button class="tab" data-panel="as">资产</button>
+  </div>
+  <button class="btn primary" style="margin-left:10px">▶ 试玩</button>
+</div>
+
+<!-- ═══ 关卡编辑器 ═══ -->
+<div class="panel on" id="panel-lv">
+  <div id="lvLeft">
+    <div class="sec">图层</div>
+    <button id="layerBtn"><span id="layerCur">地形</span><span style="color:var(--mute)">▾</span></button>
+    <div id="layerMenu">
+      <div class="lyr on" data-layer="地形"><span class="nm">地形</span>
+        <span class="mini on">👁</span><span class="mini">🔒</span></div>
+      <div class="lyr" data-layer="装饰"><span class="nm">装饰</span>
+        <span class="mini on">👁</span><span class="mini">🔒</span></div>
+      <div class="lyr" data-layer="碰撞"><span class="nm">碰撞</span>
+        <span class="mini on">👁</span><span class="mini">🔒</span></div>
+      <div class="lyr" data-layer="实体"><span class="nm">实体</span>
+        <span class="mini on">👁</span><span class="mini">🔒</span></div>
+    </div>
+    <div class="sec" id="assetTitle">地形资产</div>
+    <div id="assetList"></div>
+  </div>
+
+  <div id="lvCanvas">
+    <div class="grid"></div>
+    <div class="ent" style="left:220px;top:150px">商</div>
+    <div class="ent" style="left:360px;top:210px">怪</div>
+    <div class="ent" style="left:300px;top:300px">门</div>
+    <div id="selBar">
+      <span id="selName">商人</span>
+      <span class="dot"></span><span style="color:var(--mute);font-size:11px">已配内容</span>
+      <span class="sep" style="height:14px"></span>
+      <button class="btn ghost" style="padding:2px 8px;font-size:11px">在工作台编辑 →</button>
+    </div>
+  </div>
+</div>
+
+<div class="panel" id="panel-ct">  <div id="ctMaps">
+    <div class="sec">地图</div>
+    <div class="mapRow on" data-map="TEST"><span class="nm">TEST</span><span class="badge">1/3</span></div>
+    <div class="mapRow" data-map="level1"><span class="nm">level1</span><span class="badge done">0/2</span></div>
+    <div class="mapRow" data-map="cave"><span class="nm">cave</span><span class="badge">2/4</span></div>
+  </div>
+
+  <div id="ctCanvas">
+    <div class="grid"></div>
+    <span class="hint">只读预览 · 点击实例选中</span>
+    <div class="ent sel" data-ent="e_3" style="left:220px;top:150px">商</div>
+    <div class="ent" data-ent="e_5" style="left:360px;top:210px">怪</div>
+    <div class="ent" data-ent="e_9" style="left:300px;top:300px">门</div>
+  </div>
+
+  <div id="ctRight">
+    <div class="rHead">
+      <span style="color:var(--text);font-size:14px">商人</span>
+      <span class="pill">TEST.e_3</span>
+      <span class="badge" style="margin-left:auto">未完成 1</span>
+    </div>
+
+    <div class="rBody">
+      <div class="blk">
+        <div class="sec">固定功能</div>
+        <div class="kv"><label>生命</label><input value="12"></div>
+        <div class="kv"><label>伤害</label><input value="4"></div>
+        <div class="tiny">固定功能由代码实现，只能改值。</div>
+      </div>
+
+      <div class="blk">
+        <div class="sec">附加功能</div>
+
+        <div class="fnRow on" data-fn="dialogue">
+          <span class="ord">①</span><span class="fn">对话</span>
+          <span class="cname">问好</span>
+          <button class="libBtn">库</button><span class="tiny">✕</span>
+        </div>
+
+        <div class="fnRow" data-fn="shop">
+          <span class="ord">②</span><span class="fn">商店</span>
+          <span class="cname empty">未填</span>
+          <button class="libBtn">库</button><span class="tiny">✕</span>
+        </div>
+
+        <div class="fnRow" data-fn="quest">
+          <span class="ord">③</span><span class="fn">接任务</span>
+          <span class="cname">矿洞委托</span><span class="pill par">并行</span>
+          <button class="libBtn">库</button><span class="tiny">✕</span>
+        </div>
+
+        <div class="addRow">+ 添加功能 …</div>
+      </div>
+
+      <div class="blk" id="ctForm">
+        <div class="sec">对话内容 · 问好</div>
+        <div class="kv"><label>内容名</label><input value="问好"></div>
+        <div class="kv"><label>ID</label>
+          <input value="TEST-merchant-e_3-dialogue-7K2QX9" readonly style="color:var(--mute);font-family:ui-monospace,monospace;font-size:11px">
+        </div>
+        <div class="kv"><label>讲话人</label><input value="商人"></div>
+        <div class="sec" style="margin-top:4px">台词</div>
+        <div class="lines">
+          <div class="lineRow"><input value="要点些什么吗？"><span class="tiny">✕</span></div>
+          <div class="lineRow"><input value="今天货很全。"><span class="tiny">✕</span></div>
+          <div class="addRow" style="padding:4px">+ 一行</div>
+        </div>
+        <div class="tiny">「说完还能再说 / 只说一次」属功能内部逻辑，由项目侧代码决定。</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ 资产目录 ═══ -->
+<div class="panel" id="panel-as">
+  <div id="asLeft">
+    <div class="sec">实体图鉴</div>
+    <div class="list">
+      <div class="asItem on">商人 merchant</div>
+      <div class="asItem">小怪 crawler</div>
+      <div class="asItem">传送门 portal</div>
+      <div class="asItem">跨图出口 exit</div>
+      <div class="asItem">触发区 trigger_zone</div>
+    </div>
+  </div>
+  <div id="asMain">
+    <div>
+      <div class="sec" style="margin-bottom:6px">数值模板（类型默认值）</div>
+      <table>
+        <tr><th>数值</th><th>默认</th><th>说明</th></tr>
+        <tr><td>生命</td><td><input value="10"></td><td>新实例的初始值</td></tr>
+        <tr><td>伤害</td><td><input value="3"></td><td>接触伤害</td></tr>
+        <tr><td>速度</td><td><input value="60"></td><td>像素/秒</td></tr>
+      </table>
+    </div>
+
+    <div>
+      <div class="sec" style="margin-bottom:6px">实例分布 · 共 5 个 / 3 张地图</div>
+      <div class="distRow"><span class="m">TEST</span><span class="n">× 3</span>
+        <span class="ids">TEST.e_3 · TEST.e_7 · TEST.e_11</span><button class="libBtn">定位</button></div>
+      <div class="distRow"><span class="m">level1</span><span class="n">× 1</span>
+        <span class="ids">level1.e_2</span><button class="libBtn">定位</button></div>
+      <div class="distRow"><span class="m">cave</span><span class="n">× 1</span>
+        <span class="ids">cave.e_6</span><button class="libBtn">定位</button></div>
+    </div>
+
+    <div class="tiny">资产目录按类型看（这个类型有多少个、在哪）；内容编辑器按实例看（这张图的这个实例）。</div>
+  </div>
+</div>
+
+<!-- 库弹层 -->
+<div id="libMask">
+  <div id="libBox">
+    <div class="lh"><span style="color:var(--text)">选择已有对话</span>
+      <span class="tiny">选中即复制进当前实例，生成新 ID</span></div>
+    <div class="lb">
+      <div class="libItem" data-pick="1">
+        <span class="nm">问好</span><span class="id">TEST-merchant-e_1-dialogue-A3F9K2</span></div>
+      <div class="libItem" data-pick="1">
+        <span class="nm">矿洞警告</span><span class="id">cave-miner-e_6-dialogue-Q7LZ4M</span></div>
+      <div class="libItem" data-pick="1">
+        <span class="nm">讨价还价</span><span class="id">level1-merchant-e_2-dialogue-B8WY3E</span></div>
+    </div>
+    <div class="lf">
+      <button class="btn" id="libCancel">取消</button>
+      <button class="btn primary" id="libOk">复制进来</button>
+    </div>
+  </div>
+</div>
+
+<div id="status">
+  <span class="msg" id="statusMsg">就绪 · 左键放置 / 右键擦除</span>
+  <button class="tog on">网格</button>
+  <button class="tog">背景</button>
+  <span id="statusMeta">光标 — · 地形</span>
+  <span>?</span>
+</div>
+
+<script>
+(function(){
+  // ── 面板切换：关卡 / 内容 / 资产 ──
+  var tabs = Array.prototype.slice.call(document.querySelectorAll('.tab'));
+  var panels = {lv:document.getElementById('panel-lv'),
+                ct:document.getElementById('panel-ct'),
+                as:document.getElementById('panel-as')};
+  var cur = 'lv';
+  function show(name){
+    cur = name;
+    tabs.forEach(function(t){ t.classList.toggle('on', t.dataset.panel === name); });
+    Object.keys(panels).forEach(function(k){ panels[k].classList.toggle('on', k === name); });
+  }
+  tabs.forEach(function(t){ t.addEventListener('click', function(){ show(t.dataset.panel); }); });
+
+  // ── 关卡：层下拉 ──
+  var layerBtn = document.getElementById('layerBtn');
+  var layerMenu = document.getElementById('layerMenu');
+  var layerCur = document.getElementById('layerCur');
+  var assetTitle = document.getElementById('assetTitle');
+  var assetList = document.getElementById('assetList');
+  var ASSETS = {
+    '地形': ['草地','石台','斜坡','岩块','水面','藤蔓'],
+    '装饰': ['火把','草簇','碎石','蛛网'],
+    '碰撞': ['实心','单向','梯子','危险'],
+    '实体': ['商人','小怪','传送门','出口','触发区','宝箱']
+  };
+  layerBtn.addEventListener('click', function(){ layerMenu.classList.toggle('on'); });
+  Array.prototype.forEach.call(layerMenu.querySelectorAll('.lyr'), function(row){
+    row.querySelector('.nm').addEventListener('click', function(){
+      var name = row.dataset.layer;
+      layerCur.textContent = name;
+      assetTitle.textContent = name + '资产';
+      Array.prototype.forEach.call(layerMenu.querySelectorAll('.lyr'), function(r){
+        r.classList.toggle('on', r === row);
+      });
+      renderAssets(name);
+      layerMenu.classList.remove('on');
+    });
+    // 显隐 / 锁定 就地切换，不关闭下拉
+    Array.prototype.forEach.call(row.querySelectorAll('.mini'), function(m){
+      m.addEventListener('click', function(e){ e.stopPropagation(); m.classList.toggle('on'); });
+    });
+  });
+  function renderAssets(name){
+    var list = ASSETS[name] || [];
+    assetList.innerHTML = '';
+    list.forEach(function(n, i){
+      var d = document.createElement('div');
+      d.className = 'asset' + (i === 0 ? ' on' : '');
+      d.textContent = n;
+      d.addEventListener('click', function(){
+        Array.prototype.forEach.call(assetList.children, function(c){ c.classList.remove('on'); });
+        d.classList.add('on');
+      });
+      assetList.appendChild(d);
+    });
+  }
+  renderAssets('地形');
+
+  // ── 关卡：选中实例信息条 ──
+  var selBar = document.getElementById('selBar');
+  var selName = document.getElementById('selName');
+  Array.prototype.forEach.call(document.querySelectorAll('#lvCanvas .ent'), function(e){
+    e.addEventListener('click', function(ev){
+      ev.stopPropagation();
+      Array.prototype.forEach.call(document.querySelectorAll('#lvCanvas .ent'), function(o){ o.classList.remove('sel'); });
+      e.classList.add('sel');
+      selName.textContent = e.textContent === '商' ? '商人' : (e.textContent === '怪' ? '小怪' : '传送门');
+      selBar.classList.add('on');
+    });
+  });
+  document.getElementById('lvCanvas').addEventListener('click', function(){
+    selBar.classList.remove('on');
+    Array.prototype.forEach.call(document.querySelectorAll('#lvCanvas .ent'), function(o){ o.classList.remove('sel'); });
+  });
+
+  // ── 内容：选地图 / 选实例 ──
+  var mapRows = document.querySelectorAll('.mapRow');
+  Array.prototype.forEach.call(mapRows, function(r){
+    r.addEventListener('click', function(){
+      Array.prototype.forEach.call(mapRows, function(o){ o.classList.remove('on'); });
+      r.classList.add('on');
+    });
+  });
+  var ctEnts = document.querySelectorAll('#ctCanvas .ent');
+  Array.prototype.forEach.call(ctEnts, function(e){
+    e.addEventListener('click', function(){
+      Array.prototype.forEach.call(ctEnts, function(o){ o.classList.remove('sel'); });
+      e.classList.add('sel');
+    });
+  });
+
+  // 功能行选中 → 展开表单（演示里只切换高亮）
+  var fnRows = document.querySelectorAll('.fnRow');
+  Array.prototype.forEach.call(fnRows, function(r){
+    r.addEventListener('click', function(ev){
+      if (ev.target.classList.contains('libBtn')) return;
+      Array.prototype.forEach.call(fnRows, function(o){ o.classList.remove('on'); });
+      r.classList.add('on');
+    });
+  });
+
+  // ── 库弹层 ──
+  var libMask = document.getElementById('libMask');
+  Array.prototype.forEach.call(document.querySelectorAll('.libBtn'), function(b){
+    b.addEventListener('click', function(ev){ ev.stopPropagation(); libMask.classList.add('on'); });
+  });
+  document.getElementById('libCancel').addEventListener('click', function(){ libMask.classList.remove('on'); });
+  document.getElementById('libOk').addEventListener('click', function(){
+    libMask.classList.remove('on');
+  });
+  libMask.addEventListener('click', function(e){ if (e.target === libMask) libMask.classList.remove('on'); });
+
+  // ── Esc：先关弹层，再回上一个面板 ──
+  document.addEventListener('keydown', function(e){
+    if (e.key !== 'Escape') return;
+    if (libMask.classList.contains('on')) { libMask.classList.remove('on'); return; }
+    if (cur !== 'lv') show('lv');
+  });
+})();
+</script>
+</body>
+</html>
