@@ -359,6 +359,11 @@ func select_inst(code: String) -> void:
 	commit()
 	_selected_ent = code
 	_selected_fn = -1
+	# 切实例清指向预览：高亮属于上一个实例的引用编辑，不带走
+	app.canvas.ref_highlight = ""
+	app.canvas.queue_redraw()
+	if _preview != null:
+		_preview.set_highlight("")
 	# 自带功能（类型挂载）补齐绑定：缺就按声明顺序追加到列表末尾（见 _sync_mounted）。
 	var spr0 := _find_ent(code)
 	if spr0 != null:
