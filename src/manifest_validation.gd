@@ -1,11 +1,13 @@
 extends RefCounted
-## 清单结构与能力校验：tiles/layers/entities/functions/conditions 的类型与 id/码唯一性、
-## 图层限定 terrain/decor/collision、字段 kind 必须显式 input/choice、
-## 挂载功能必须已声明、功能引用的条件必须已声明、功能与条件的字段码同空间唯一。
+## 清单结构与能力校验：tiles/layers/entities/functions/conditions/audio 的类型与
+## id/码唯一性、图层限定 terrain/decor/collision、字段 kind 必须显式 input/choice、
+## 挂载功能必须已声明、功能引用的条件必须已声明、功能与条件的字段码同空间唯一、
+## 音频码池内唯一。
 
 const SUPPORTED_TILE_LAYERS := ["terrain", "decor", "collision"]
 const FunctionDecls := preload("res://src/content/function_decl.gd")
 const ConditionDecls := preload("res://src/content/condition_decl.gd")
+const AudioDecls := preload("res://src/content/audio_decl.gd")
 
 static func validate(data: Dictionary, project_dir := "") -> Array[Dictionary]:
 	var issues: Array[Dictionary] = []
@@ -22,6 +24,8 @@ static func validate(data: Dictionary, project_dir := "") -> Array[Dictionary]:
 		_validate_functions(data, issues)
 	if data.has("conditions"):
 		_validate_conditions(data, issues)
+	if data.has("audio"):
+		_validate_audio(data, issues)
 	var tile_size = data.get("tileSize", 16)
 	if not (tile_size is int or tile_size is float) or float(tile_size) <= 0.0:
 		_add(issues, "error", "tileSize", "must be a positive number")
@@ -155,6 +159,29 @@ static func _validate_conditions(data: Dictionary, issues: Array[Dictionary]) ->
 						"duplicate field code across pools: " + fc2)
 				if fc2 != "":
 					fcodes[fc2] = true
+
+## 音频池：id 非空唯一（array 写法查重）、码池内唯一（重复=静默别名，报错）、
+## path 缺失只警告（条目占位合法，播放归游戏侧）。
+static func _validate_audio(data: Dictionary, issues: Array[Dictionary]) -> void:
+	var decl = data.get("audio", null)
+	if not (decl is Dictionary or decl is Array):
+		_add(issues, "error", "audio", "must be an object or an array")
+		return
+	var ids := {}
+	var codes := {}
+	for pair in AudioDecls._decl_items(decl):
+		var aid := str(pair.id)
+		if aid == "" or ids.has(aid):
+			_add(issues, "error", "audio",
+				"audio ids must be non-empty and unique (seen: %s)" % aid)
+		ids[aid] = true
+		var body: Dictionary = pair.body
+		var c := str(body.get("code", ""))
+		if c != "" and codes.has(c):
+			_add(issues, "error", "audio", "duplicate code %s (%s)" % [c, aid])
+		codes[c] = true
+		if str(body.get("path", "")) == "":
+			_add(issues, "warning", "audio.%s" % aid, "audio path is empty")
 
 static func _validate_tiles(tiles: Array, project_dir: String, issues: Array[Dictionary]) -> void:
 	var ids := {}

@@ -8,6 +8,7 @@ const BAD_NAME_CHARS := ["/", "\\", ":", "*", "?", "\"", "<", ">", "|"]
 const Validation := preload("res://src/manifest_validation.gd")
 const FunctionDecls := preload("res://src/content/function_decl.gd")
 const ConditionDecls := preload("res://src/content/condition_decl.gd")
+const AudioDecls := preload("res://src/content/audio_decl.gd")
 
 ## 变量替换：%mapfile% 当前地图文件；%projectpath% 游戏项目根目录
 ## 路径含空格且模板未自行加引号时自动补引号，避免经 cmd /c 后被拆成多个参数。
@@ -93,6 +94,8 @@ static func load_from(project_dir: String) -> Dictionary:
 	FunctionDecls.ensure_codes(data)
 	# 条件字段码：与功能字段共用一个码空间，避开功能字段已占用的码补发。
 	ConditionDecls.ensure_codes(data)
+	# 音频码：音频池条目补发执行码（保存清单时随 audio 写回）。
+	AudioDecls.ensure_codes(data)
 	return data
 
 ## 试玩命令 = 模板 + 变量替换；清单可选 godotExe（支持 %projectpath%）覆盖可执行文件，

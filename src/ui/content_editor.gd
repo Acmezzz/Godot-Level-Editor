@@ -12,6 +12,7 @@ const Th := preload("res://src/ui/ui_theme.gd")
 const ContentStore := preload("res://src/content/content_store.gd")
 const ContentId := preload("res://src/content/content_id.gd")
 const ConditionDecls := preload("res://src/content/condition_decl.gd")
+const AudioDecls := preload("res://src/content/audio_decl.gd")
 const MapStore := preload("res://src/map_store.gd")
 const FieldWidgets := preload("res://src/ui/field_widgets.gd")
 const FunctionDecls := preload("res://src/content/function_decl.gd")
@@ -884,7 +885,8 @@ func _build_field_row(i: int, fn_id: String, fd: Dictionary, cur: Dictionary) ->
 	return Kit.field_row(label, built.ctl, 96)
 
 ## choice.source 的选项来源解析（由游戏侧声明，编辑器只查不解释）。
-## 支持：content:<功能id>（内容库）、entity:<id,id>（清单实体类型）、map（地图文件）。
+## 支持：content:<功能id>（内容库）、entity:<id,id>（清单实体类型）、
+## entity_inst:<id,id>（当前图实例，值=实例码）、map（地图文件）、audio:（音频池）。
 func _resolve_options(decl: Dictionary) -> Array:
 	var src := str(decl.get("source", ""))
 	if src.begins_with("content:"):
@@ -924,6 +926,13 @@ func _resolve_options(decl: Dictionary) -> Array:
 				var cell: Vector2i = app.canvas._cell_of(spr.position)
 				out4.append({"v": c0, "t": "%s · (%d,%d)" % [str(app._scene_name(sid0)), cell.x, cell.y]})
 		return out4
+	if src == "audio:":
+		# 音频池来源：列音频声明（值=音频码，显示名），路径解释权在游戏侧。
+		var out5: Array = []
+		for aid in AudioDecls.audio(manifest):
+			var ad: Dictionary = (AudioDecls.audio(manifest) as Dictionary)[aid]
+			out5.append({"v": str(ad.get("code", "")), "t": str(ad.get("name", aid))})
+		return out5
 	if src == "map":
 		var out3: Array = []
 		for mn in MapStore.list_maps(manifest):

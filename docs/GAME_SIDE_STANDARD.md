@@ -49,12 +49,12 @@
 | `playCommand` | string | 试玩命令模板；支持 `%mapfile%`、`%projectpath%` |
 | `godotExe` | string | 可选，覆盖 `playCommand` 首个可执行文件路径；支持 `%projectpath%` |
 
-清单校验把 `tiles/layers/entities/functions/conditions` 非 Array（functions/conditions 也接受 dict）、
-`tileSize` 非正数、图层 id 不受支持、瓦片/实体 id 空或重复、**实例码重复**、图集路径含 `..` 或为空、
-palette 元素缺 `cell`、功能/字段**码重复**（功能与条件字段**跨池同码**也算）、字段缺 `kind` 或
-kind/type 非法、挂载引用未声明的功能、功能引用未声明的条件，判为**错误**（编辑器拒绝加载）；
-`terrain/decor/collision` 三个图层缺任何一个只判**警告**。功能 id 与条件 id 重复都是错误
-（数组写法不查会静默后者覆盖前者）。
+清单校验把 `tiles/layers/entities/functions/conditions` 非 Array（functions/conditions/audio
+也接受 dict）、`tileSize` 非正数、图层 id 不受支持、瓦片/实体 id 空或重复、**实例码重复**、
+图集路径含 `..` 或为空、palette 元素缺 `cell`、功能/字段**码重复**（功能与条件字段**跨池同码**
+也算）、音频**码重复**、字段缺 `kind` 或 kind/type 非法、挂载引用未声明的功能、功能引用未声明
+的条件，判为**错误**（编辑器拒绝加载）；`terrain/decor/collision` 三个图层缺任何一个只判
+**警告**。功能 id 与条件 id 重复都是错误（数组写法不查会静默后者覆盖前者）。
 
 ### 2.2 图集 `tiles[]`
 
@@ -240,7 +240,8 @@ solid+矩形碰撞：`col.set_cell(cell, 0, Vector2i(4,0))`。
 
 choice 的 `source` 取值：`content:<kind>`（列该目录内容条目）、`entity:<id,id>`（清单实体类型，
 空 = 不过滤）、`entity_inst:<id,id>`（当前图实例，显示"类型 · (x,y)"，值=实例码，空 = 全部）、
-`map`（地图列表）。值的 JSON 形态与声明不符时只读展示，**绝不自动改写**。
+`map`（地图列表）、`audio:`（音频池，值=音频码）。值的 JSON 形态与声明不符时只读展示，
+**绝不自动改写**。
 
 `default` 决定新建内容时的初值：`bool`→false、`int`→0、`float`→0.0、其他→`""`。
 
@@ -296,6 +297,24 @@ choice 的 `source` 取值：`content:<kind>`（列该目录内容条目）、`e
 条件无执行码：功能→条件的引用只发生在清单里（按 id）；磁盘上流转的是**字段码**
 （条件字段与功能字段共用一个码空间，校验查重、`ensure_codes` 补码时互相避开）。
 条件区在内容表单里跟在功能字段之后，按引用顺序逐条渲染。
+
+### 2.5.2 音频池 `audio`（顶层声明池）
+
+音频与功能/条件同类：**游戏工程声明的资产**。条目 = `{id, name, path}`，path 指向工程内
+音频文件（解释权在游戏侧，编辑器不加载、不播放、不校验存在性）；执行码由 `ensure_codes`
+补发（码重复 = 校验错误）。
+
+```json
+"audio": {
+  "bgm_title": {"name": "标题曲", "path": "audio/bgm_title.ogg"},
+  "sfx_door":  {"name": "开门音效", "path": "audio/door.wav"}
+}
+```
+
+功能/条件字段声明 `{"kind": "choice", "source": "audio:"}` 即得音频下拉，值存**音频码**。
+BGM 切换、环境音触发、音效播放在哪一步响起，都是功能代码（游戏侧）的事——例如
+「环境音触发区」= trigger_zone 绑定一个带 `audio:` 字段的功能，进区播放、离区停止由
+功能实现决定。编辑器全程不解释音频语义。
 
 ### 2.6 `role` —— 连接语义标签
 
