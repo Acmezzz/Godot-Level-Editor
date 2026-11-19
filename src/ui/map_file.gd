@@ -6,6 +6,7 @@ const MapExport := preload("res://src/map_export.gd")
 const UiKitScript := preload("res://src/ui/ui_kit.gd")
 const UiThemeScript := preload("res://src/ui/ui_theme.gd")
 const K := preload("res://src/core/constants.gd")
+const MapStore := preload("res://src/map_store.gd")
 
 var app   # 宿主引用
 
@@ -108,11 +109,7 @@ func create_map_from_dialog(name_edit: LineEdit, err_label: Label, pop: PopupPan
 	if not await confirm_discard("新建"):
 		return
 	app.canvas.set_thumbs(app._entity_thumbs())
-	await app.canvas.load_data({
-		"meta": {"name": n, "w": K.DEFAULT_MAP_W, "h": K.DEFAULT_MAP_H},
-		"spawn": [2, 2],
-		"terrain": [], "decor": [], "collision": [], "entities": [],
-	}, n)
+	await app.canvas.load_data(MapStore.new_map(n, K.DEFAULT_MAP_W, K.DEFAULT_MAP_H), n)
 	app.cur_map_name = n
 	app.cur_map_path = EditorManifest.map_path(app.manifest, n)
 	_opened_mtime = 0

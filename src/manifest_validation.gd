@@ -1,10 +1,9 @@
 extends RefCounted
-## 清单结构与能力校验：tiles/layers/entities/functions/conditions/audio 的类型与
-## id/码唯一性、图层限定 terrain/decor/collision、字段 kind 必须显式 input/choice、
-## 挂载功能必须已声明、功能引用的条件必须已声明、功能与条件的字段码同空间唯一、
-## 音频码池内唯一。
+## 清单结构与能力校验：tiles/entities/functions/conditions/steps/audio 的类型与
+## id/码唯一性（图层已退役为地图 meta.layers，归 map_data_validation 校验）、
+## 字段 kind 必须显式 input/choice、挂载功能必须已声明、功能引用的条件必须已声明、
+## 功能/条件/步骤字段码同空间唯一、步骤码与音频码池内唯一。
 
-const SUPPORTED_TILE_LAYERS := ["terrain", "decor", "collision"]
 const FunctionDecls := preload("res://src/content/function_decl.gd")
 const ConditionDecls := preload("res://src/content/condition_decl.gd")
 const StepDecls := preload("res://src/content/step_decl.gd")
@@ -12,13 +11,11 @@ const AudioDecls := preload("res://src/content/audio_decl.gd")
 
 static func validate(data: Dictionary, project_dir := "") -> Array[Dictionary]:
 	var issues: Array[Dictionary] = []
-	for key in ["tiles", "layers", "entities"]:
+	for key in ["tiles", "entities"]:
 		if data.has(key) and not (data[key] is Array):
 			_add(issues, "error", key, "must be an array")
 	if data.get("tiles", null) is Array:
 		_validate_tiles(data.tiles, project_dir, issues)
-	if data.get("layers", null) is Array:
-		_validate_layers(data.layers, issues)
 	if data.get("entities", null) is Array:
 		_validate_entities(data, issues)
 	if data.has("functions"):
@@ -287,24 +284,6 @@ static func _validate_tiles(tiles: Array, project_dir: String, issues: Array[Dic
 						_add(issues, "error", "%s.palette[%d]" % [path, j], "must be an object")
 					elif not (entry.get("cell", null) is Array) or entry.cell.size() < 2:
 						_add(issues, "error", "%s.palette[%d].cell" % [path, j], "must contain atlas x and y")
-
-static func _validate_layers(layers: Array, issues: Array[Dictionary]) -> void:
-	var ids := {}
-	for i in layers.size():
-		var layer = layers[i]
-		var path := "layers[%d]" % i
-		if not (layer is Dictionary):
-			_add(issues, "error", path, "must be an object")
-			continue
-		var id := str(layer.get("id", ""))
-		if id == "" or ids.has(id):
-			_add(issues, "error", path + ".id", "must be non-empty and unique")
-		elif not SUPPORTED_TILE_LAYERS.has(id):
-			_add(issues, "error", path + ".id", "unsupported map layer: " + id)
-		ids[id] = true
-	for required in ["terrain", "decor", "collision"]:
-		if not ids.has(required):
-			_add(issues, "warning", "layers", "recommended layer is missing: " + required)
 
 static func _validate_entities(data: Dictionary, issues: Array[Dictionary]) -> void:
 	var entities: Array = data.get("entities", [])

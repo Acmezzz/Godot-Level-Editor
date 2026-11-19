@@ -3,28 +3,30 @@ extends RefCounted
 
 static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 	var issues: Array[Dictionary] = []
-	for key in ["terrain", "decor", "collision", "entities"]:
+	for key in ["collision", "entities"]:
 		if data.has(key) and not (data[key] is Array):
 			_add(issues, "error", key, "must be an array")
 	var meta = data.get("meta", {})
+	var layer_ids := {}
 	if not (meta is Dictionary):
 		_add(issues, "error", "meta", "must be an object")
 	else:
 		for key in ["w", "h"]:
 			if meta.has(key) and not (meta[key] is int or meta[key] is float):
 				_add(issues, "error", "meta." + key, "must be a number")
+		layer_ids = _validate_layers(meta, issues)
+	var tiles = data.get("tiles", null)
+	if tiles != null and not (tiles is Dictionary):
+		_add(issues, "error", "tiles", "must be an object keyed by layer id")
+	elif tiles is Dictionary and not layer_ids.is_empty():
+		for lid in tiles.keys():
+			if not layer_ids.has(str(lid)):
+				_add(issues, "error", "tiles." + str(lid), "unknown layer id")
 	var spawn = data.get("spawn", [2, 2])
 	if not (spawn is Array) or spawn.size() < 2 or not _is_number_pair(spawn):
 		_add(issues, "error", "spawn", "must contain two numeric coordinates")
 	if data.get("entities", null) is Array:
-		_validate_entities(data.entities, manifest, issues)
-	for key in ["terrain", "decor"]:
-		if data.get(key, null) is Array:
-			for i in data[key].size():
-				var cell = data[key][i]
-				if not (cell is Array) or cell.size() < 5 or not _is_number_prefix(cell, 5):
-					_add(issues, "error", "%s[%d]" % [key, i],
-						"must contain x, y, atlas, atlas_x, atlas_y")
+		_validate_entities(data.entities, manifest, layer_ids, issues)
 	if data.get("collision", null) is Array:
 		for i in data.collision.size():
 			var cell = data.collision[i]
@@ -32,7 +34,32 @@ static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 				_add(issues, "error", "collision[%d]" % i, "must contain x and y")
 	return issues
 
-static func _validate_entities(entities: Array, manifest: Dictionary, issues: Array[Dictionary]) -> void:
+## meta.layers 用户层栈校验：非空数组、条目 id 非空且唯一、name 非空。
+## 返回合法层 id 集（供 tiles 键与 entities.layer 归属校验）；栈本身不合格时返回空集，
+## 关联检查（tiles 键 ⊆ 层集、entity.layer ∈ 层集）随之跳过，避免连坐噪音。
+static func _validate_layers(meta: Dictionary, issues: Array[Dictionary]) -> Dictionary:
+	var ids := {}
+	if not meta.has("layers") or not (meta.layers is Array) or (meta.layers as Array).is_empty():
+		_add(issues, "error", "meta.layers", "must be a non-empty array of layer objects")
+		return ids
+	for i in (meta.layers as Array).size():
+		var ldef = meta.layers[i]
+		var p := "meta.layers[%d]" % i
+		if not (ldef is Dictionary):
+			_add(issues, "error", p, "must be an object")
+			continue
+		var lid := str(ldef.get("id", ""))
+		if lid == "":
+			_add(issues, "error", p + ".id", "must be a non-empty layer id")
+		elif ids.has(lid):
+			_add(issues, "error", p + ".id", "duplicate layer id: " + lid)
+		else:
+			ids[lid] = true
+		if str(ldef.get("name", "")) == "":
+			_add(issues, "error", p + ".name", "must be a non-empty layer name")
+	return ids
+
+static func _validate_entities(entities: Array, manifest: Dictionary, layer_ids: Dictionary, issues: Array[Dictionary]) -> void:
 	var known := {}
 	for definition in manifest.get("entities", []):
 		if definition is Dictionary:
@@ -58,6 +85,8 @@ static func _validate_entities(entities: Array, manifest: Dictionary, issues: Ar
 			_add(issues, "warning", path + ".scene", "entity type is not in the current manifest")
 		if entity.has("props") and not (entity.props is Dictionary):
 			_add(issues, "error", path + ".props", "must be an object")
+		if entity.has("layer") and not layer_ids.is_empty() and not layer_ids.has(str(entity.layer)):
+			_add(issues, "error", path + ".layer", "unknown layer id: " + str(entity.layer))
 		if entity.has("functions"):
 			_validate_functions(entity.get("functions"), path + ".functions", manifest, issues)
 

@@ -1,9 +1,10 @@
 class_name EditorCanvas
 extends Node2D
 ## 清单驱动的关卡画布（数据化编辑器）：
-## 地形/装饰 = 运行时构建的 TileMapLayer（图集 PNG → TileSet，不依赖游戏工程资源）；
-## 实体 = 缩略图 Sprite2D（数据占位,不实例化游戏 prefab）；
-## 出生点 = Marker2D。保存/装载的都是纯 JSON 数据。
+## 图层 = 地图 meta.layers 声明的混合层栈（层=纯 z 槽，一层可混瓦片+实体，
+## 栈序即绘制序；碰撞是栈外元层）；瓦片层 = 运行时构建的 TileMapLayer
+## （图集 PNG → TileSet，不依赖游戏工程资源）；实体 = 缩略图 Sprite2D
+## （数据占位，不实例化游戏 prefab）；出生点 = Marker2D。保存/装载纯 JSON。
 
 signal modified
 signal cursor_info(text: String)
@@ -15,7 +16,8 @@ const BuiltinKinds := preload("res://src/content/builtin_kinds.gd")   # 内置�
 const MapStoreRef := preload("res://src/map_store.gd")   # 地图数据层（读全工程/写盘）
 const ContentIdRef := preload("res://src/content/content_id.gd")   # 分层身份码
 
-var active_layer := 0          # 按清单 layers 顺序，最后一个是实体
+var active_layer := 0          # 0..N-1 = 层栈下标，N = 碰撞元层
+var place_kind := "tiles"      # 放置语义跟资产走："tiles"=涂瓦片 / "entity"=摆实体（左栏驱动）
 var paint_cell := Vector2i(0, 0)  # 当前瓦片（纯手动，不自动变形）
 var brush_size := 1               # 笔刷边长（格）
 var stamp_scene := ""
@@ -29,9 +31,10 @@ var manifest: Dictionary
 var map_data := {}
 var cur_map_name := ""
 var map_root: Node2D
-var terrain: TileMapLayer
-var decor: TileMapLayer
-var entities: Node2D
+# 层栈节点：下标 = meta.layers 栈序；每层 = 一个瓦片 TileMapLayer + 一个实体容器。
+# 树序 = 栈序（底→顶），碰撞网格与红叠加在栈外（永远画在最上）。
+var layer_tiles: Array = []
+var layer_ents: Array = []
 var spawn: Marker2D
 var tile_set: TileSet
 var atlas_tex: Texture2D
@@ -68,38 +71,72 @@ func _update_cam() -> void:
 	var half := vp.get_visible_rect().size * 0.5
 	vp.canvas_transform = Transform2D(0.0, Vector2(zoom, zoom), 0.0, half - cam_pos * zoom)
 
-# —— 图层节点：按清单 layers 顺序解析（grid 型 = 碰撞） ——
-func _layer_node(i: int) -> TileMapLayer:
-	var layers: Array = manifest.get("layers", [])
-	var lid := str(layers[i].get("id", "terrain")) if i < layers.size() else "terrain"
-	match lid:
-		"decor": return decor
-		"collision": return collision
-		_: return terrain
+# —— 图层栈：地图 meta.layers 声明（[{id, name, visible}]，栈序 = 数组序，底→顶） ——
+## 层=纯 z 槽只管画画；清单 layers[] 已退役，层词汇逐图声明。
+func layers_decl() -> Array:
+	var m: Dictionary = map_data.get("meta", {}) if map_data != null else {}
+	var L = m.get("layers", null)
+	return L if L is Array and not (L as Array).is_empty() else []
+
+func layer_count() -> int:
+	return layers_decl().size()
+
+func layer_id(i: int) -> String:
+	var L := layers_decl()
+	return str((L[i] as Dictionary).get("id", "")) if i >= 0 and i < L.size() else ""
+
+func layer_name(i: int) -> String:
+	var L := layers_decl()
+	return str((L[i] as Dictionary).get("name", "")) if i >= 0 and i < L.size() else ""
+
+## 层码 → 栈下标；未知返回 -1
+func _layer_index_of(lid: String) -> int:
+	for i in layer_count():
+		if layer_id(i) == lid:
+			return i
+	return -1
+
+## 碰撞是栈外元层：下标恒 = 栈层数（下拉里排最后）
+func collision_index() -> int:
+	return layer_count()
 
 func _is_grid_layer(i: int) -> bool:
-	var layers: Array = manifest.get("layers", [])
-	return i < layers.size() and str(layers[i].get("type", "tiles")) == "grid"
+	return i == collision_index() and collision != null
 
-## 图层节点（按索引）；i = 实体层索引时返回 entities
-func _layer_visual_node(i: int) -> Node2D:
-	if i == _ent_layer_index():
-		return entities
-	return _layer_node(i)
+func _layer_node(i: int) -> TileMapLayer:
+	if _is_grid_layer(i):
+		return collision
+	if i >= 0 and i < layer_tiles.size():
+		return layer_tiles[i]
+	return null
+
+## 全层实体合集（层栈化后实体分散在各层容器）
+func ents_all() -> Array:
+	var out := []
+	for n in layer_ents:
+		if n != null and is_instance_valid(n):
+			out.append_array((n as Node2D).get_children())
+	return out
 
 ## 图层「看得到的那个节点」：碰撞层看 coll_view（红块），其余看数据节点本身。
 ## 可见性/隐藏一律作用在这个节点上，保证所有图层的显示逻辑走同一条路。
 func _layer_display_node(i: int) -> Node2D:
 	if _is_grid_layer(i):
 		return coll_view
-	return _layer_visual_node(i)
+	if i >= 0 and i < layer_ents.size():
+		return layer_ents[i]
+	return null
 
-## 设置图层可见/锁定；隐藏只是视觉遮挡，锁定阻止编辑写入
+## 设置图层可见/锁定；隐藏 = 该层瓦片与实体一起隐（视觉遮挡，锁定阻止编辑写入）
 func set_layer_hidden(i: int, now_hidden: bool) -> void:
 	layer_hidden[i] = now_hidden
-	var node := _layer_display_node(i)
-	if node:
-		node.visible = not now_hidden
+	if _is_grid_layer(i):
+		if coll_view:
+			coll_view.visible = not now_hidden
+	elif i >= 0 and i < layer_tiles.size():
+		(layer_tiles[i] as TileMapLayer).visible = not now_hidden
+		if i < layer_ents.size():
+			(layer_ents[i] as Node2D).visible = not now_hidden
 	queue_redraw()
 
 ## 图层当前是否可见（未隐藏）。所有图层默认可见——包括碰撞层：用户明确要求
@@ -187,6 +224,15 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	if str(meta.get("code", "")) == "":
 		meta["code"] = ContentIdRef.new_map_code()
 		map_data["meta"] = meta
+	# 图层栈：meta.layers 缺失/为空时补默认两层（资产层/FL）——不是旧数据迁移，
+	# 是新建图的同款默认；层词汇逐图声明。
+	var dl = meta.get("layers", null)
+	if not (dl is Array) or (dl as Array).is_empty():
+		meta["layers"] = [
+			{"id": ContentIdRef.new_inst_code(), "name": "资产层", "visible": true},
+			{"id": ContentIdRef.new_inst_code(), "name": "FL", "visible": true},
+		]
+		map_data["meta"] = meta
 	var mw := int(meta.get("w", K.DEFAULT_MAP_W))
 	var mh := int(meta.get("h", K.DEFAULT_MAP_H))
 	var bg := ColorRect.new()
@@ -209,16 +255,20 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	field.z_index = -9
 	field.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	map_root.add_child(field)
-	# 瓦片层（运行时 TileSet，编辑器内无碰撞需求）
-	terrain = TileMapLayer.new()
-	terrain.name = "Terrain"
-	terrain.tile_set = tile_set
-	map_root.add_child(terrain)
-	decor = TileMapLayer.new()
-	decor.name = "Decor"
-	decor.tile_set = tile_set
-	decor.z_index = 0   # 与地形同层（树序在后），保持低于 canvas 自绘参照层
-	map_root.add_child(decor)
+	# 层栈节点：按 meta.layers 栈序创建（每层 = 瓦片 TileMapLayer + 实体容器），树序 = 栈序
+	layer_tiles.clear()
+	layer_ents.clear()
+	var L := layers_decl()
+	for li in L.size():
+		var tn := TileMapLayer.new()
+		tn.name = "LayerTiles%d" % li
+		tn.tile_set = tile_set
+		map_root.add_child(tn)
+		layer_tiles.append(tn)
+		var en := Node2D.new()
+		en.name = "LayerEnts%d" % li
+		map_root.add_child(en)
+		layer_ents.append(en)
 	# 碰撞图层（grid 型：画上去的都是隐形碰撞块）
 	# 数据仍是 TileMapLayer（隐形格），但节点本身不显示——它那格图集像素会画成灰白网格。
 	# 可视表达交给 CollisionView，由图层接口统一控制显隐，和地形/装饰/实体一致。
@@ -234,13 +284,16 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	map_root.add_child(coll_view)
 	coll_view.setup(collision, tile_px)
 	coll_view.canvas_ref = self   # 读 _collision_meta 做类型化分色分形
-	# 涂瓦片（terrain/decor 一律 5 元 [x,y,atlas,ax,ay]，atlas=图集索引）
-	for c in data.get("terrain", []):
-		var arr := c as Array
-		terrain.set_cell(Vector2i(int(arr[0]), int(arr[1])), int(arr[2]), Vector2i(int(arr[3]), int(arr[4])))
-	for c in data.get("decor", []):
-		var arr2 := c as Array
-		decor.set_cell(Vector2i(int(arr2[0]), int(arr2[1])), int(arr2[2]), Vector2i(int(arr2[3]), int(arr2[4])))
+	# 涂瓦片：tiles = {层id: [[x,y,atlas,ax,ay]...]}（5 元，atlas=图集索引）
+	var tiles_data = data.get("tiles", {})
+	if not (tiles_data is Dictionary):
+		tiles_data = {}
+	for li2 in L.size():
+		var lid := layer_id(li2)
+		var tn2: TileMapLayer = layer_tiles[li2]
+		for c in (tiles_data.get(lid, []) as Array):
+			var arr := c as Array
+			tn2.set_cell(Vector2i(int(arr[0]), int(arr[1])), int(arr[2]), Vector2i(int(arr[3]), int(arr[4])))
 	# 碰撞：[x,y] = solid 缺省（契约零冗余）；[x,y,type,shape] 记入类型元数据（solid+矩形不记）
 	for c in data.get("collision", []):
 		var ccell := Vector2i(int(c[0]), int(c[1]))
@@ -249,11 +302,9 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 		var sname := str(c[3]) if (c as Array).size() >= 4 else ""
 		if tname != "solid" or sname != "":
 			_collision_meta[ccell] = {"type": tname if tname != "" else "solid", "shape": sname}
-	# 实体层：数据化占位（缩略图 Sprite2D，带 metadata scene=id）
-	entities = Node2D.new()
-	entities.name = "Entities"
-	map_root.add_child(entities)
+	# 实体：数据化占位（缩略图 Sprite2D，带 metadata scene=id），按 meta "layer" 入对应层容器
 	var tile := int(manifest.get("tileSize", 16))
+	var bottom := layer_id(0)
 	for e in data.get("entities", []):
 		var sid := str(e.get("scene", ""))
 		var spr := Sprite2D.new()
@@ -273,7 +324,12 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 			var tprops: Dictionary = e.get("props", {}) if e.get("props", {}) is Dictionary else {}
 			spr.position += trigger_zone_size(tprops) * 0.5 - Vector2(tile, tile) * 0.5
 		spr.flip_h = bool(e.get("flip_h", false))
-		entities.add_child(spr)
+		var lid := str(e.get("layer", bottom))
+		var ei := _layer_index_of(lid)
+		if ei < 0:
+			ei = 0
+		spr.set_meta("layer", layer_id(ei))
+		(layer_ents[ei] as Node2D).add_child(spr)
 		_fit_sprite(spr, sid)
 		_ensure_code(spr)
 	# 出生点
@@ -284,10 +340,12 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	map_root.add_child(spawn)
 	# 地图装载后同步碰撞可视节点与图层可见性（按图层索引恢复，不只是节点 flag）
 	coll_view.refresh()
-	for i in manifest.get("layers", []).size() + 1:
+	for i in layer_count() + 1:
 		var dn := _layer_display_node(i)
 		if dn:
 			dn.visible = is_layer_visible(i)
+		if i < layer_tiles.size():
+			(layer_tiles[i] as TileMapLayer).visible = is_layer_visible(i)
 
 	# 相机：撤销时保持视角，否则对准出生点
 	if keep_cam:
@@ -401,9 +459,15 @@ func _drag_spawn_to(pos: Vector2) -> void:
 	queue_redraw()
 
 # —— 坐标换算 ——
-## 转发：tool_ops 擦除与选区共用同一命中规则
+## 转发：选区命中跨层（顶层向下取第一个）；tool_ops 擦除用单层版
 func _entity_hit(pos: Vector2) -> Sprite2D:
 	return _selection_ops_ctrl._entity_hit(pos)
+
+## 指定层的实体命中（擦除只认当前层）
+func _entity_hit_on(li: int, pos: Vector2) -> Sprite2D:
+	if li < 0 or li >= layer_ents.size():
+		return null
+	return _selection_ops_ctrl._entity_hit_in((layer_ents[li] as Node2D).get_children(), pos)
 
 func _cell_of(pos: Vector2) -> Vector2i:
 	return Vector2i(int(floor(pos.x / tile_px)), int(floor(pos.y / tile_px)))
@@ -411,9 +475,6 @@ func _cell_of(pos: Vector2) -> Vector2i:
 # —— 涂刷/擦除（图层硬规则：瓦片/碰撞层禁盖章，实体层禁涂刷；笔刷 = 以 c 为基准的 brush_size×brush_size 格，偶数尺寸时 c 偏右下） ——
 func _hint(t: String) -> void:
 	cursor_info.emit(t)
-
-func _ent_layer_index() -> int:
-	return manifest.get("layers", []).size()
 
 # —— 实例身份：4 位码（唯一身份：引用/重映射/连线全用它） ——
 ## 码出生即定、永不回收，所以不需要「发号前防空洞复用」的全工程扫描。
@@ -434,7 +495,7 @@ func _fresh_inst_code() -> String:
 	return ContentIdRef.new_inst_code()
 
 func _code_taken(c: String) -> bool:
-	for e in entities.get_children():
+	for e in ents_all():
 		if str((e as Sprite2D).get_meta("code", "")) == c:
 			return true
 	return false
@@ -442,35 +503,34 @@ func _code_taken(c: String) -> bool:
 # —— 吸管 + 整图入视野 ——
 signal tool_requested(tool: String, layer: int)
 
-## 吸管：取光标格瓦片为当前笔刷——地形优先，其次装饰；碰撞层无瓦片语义。
+## 吸管：从顶层向下取光标格瓦片为当前笔刷；吸到哪层就切到哪层。
 ## 经 tool_requested 信号走 app._apply_state 单一写入口切层，保持左栏与状态同步。
 func _pick_tile(pos: Vector2) -> void:
-	if map_root == null or not is_instance_valid(map_root) or terrain == null or decor == null:
+	if map_root == null or not is_instance_valid(map_root) or layer_tiles.is_empty():
 		_hint("无地图：先新建或打开一张地图")
 		return
 	var c := _cell_of(pos)
-	var ac := terrain.get_cell_atlas_coords(c)
-	var layer := 0
-	var sid := terrain.get_cell_source_id(c)
-	if ac == Vector2i(-1, -1):
-		ac = decor.get_cell_atlas_coords(c)
-		sid = decor.get_cell_source_id(c)
-		layer = 1
-	if ac == Vector2i(-1, -1):
-		_hint("该格没有可吸取的瓦片（碰撞层不参与吸管）")
+	for li in range(layer_count() - 1, -1, -1):
+		var tn: TileMapLayer = layer_tiles[li]
+		var ac := tn.get_cell_atlas_coords(c)
+		if ac == Vector2i(-1, -1):
+			continue
+		paint_cell = ac
+		paint_atlas = tn.get_cell_source_id(c)   # 吸管连 atlas 一起吸（多图集瓦片吸取后原样落笔）
+		active_layer = li
+		_hint("已吸取 %s（切到涂刷）" % str(ac))
+		tool_requested.emit("paint", li)
 		return
-	paint_cell = ac
-	paint_atlas = sid   # 吸管连 atlas 一起吸（多图集瓦片吸取后原样落笔）
-	active_layer = layer
-	_hint("已吸取 %s（切到涂刷）" % str(ac))
-	tool_requested.emit("paint", layer)
+	_hint("该格没有可吸取的瓦片（碰撞层不参与吸管）")
 
 ## 整图入视野（Home）——相机对中 + 缩放夹回 0.5~6.0
 func _fit_view() -> void:
-	if map_root == null or not is_instance_valid(map_root) or terrain == null:
+	if map_root == null or not is_instance_valid(map_root) or layer_tiles.is_empty():
 		_hint("无地图：先新建或打开一张地图")
 		return
-	var used := terrain.get_used_rect()
+	var used := Rect2i()
+	for tn in layer_tiles:
+		used = used.merge((tn as TileMapLayer).get_used_rect())
 	if used.size == Vector2i.ZERO:
 		used = Rect2i(0, 0, 10, 10)
 	cam_pos = Vector2(used.get_center()) * tile_px
@@ -490,7 +550,7 @@ var ref_highlight := ""
 @warning_ignore("unused_private_class_variable")
 var _clipboard: Array = []       # 实体复制模板 [{scene, code, dx, dy, flip_h, functions, props}]
 var _region_sel := Rect2i(-1, 0, 0, 0)  # 区域框选结果（瓦片层 Ctrl+C 用）
-var _region_clip := {}           # 区域快照 {terrain[], decor[], collision[], entities[], size}
+var _region_clip := {}           # 区域快照 {tiles:{层id:[...]}, collision[], entities[], size}
 var _paste_mode := false         # 区域粘贴预览态（幽灵跟随鼠标）
 # 区域拖动搬迁（框选后按住区内拖动）：按下只快照，松手才擦源写目标
 var _move_snap := {}
@@ -512,22 +572,26 @@ func _valid_multi() -> Array:
 			out.append(s)
 	return out
 
-# —— 自动生成碰撞：从地形推导碰撞层（辅助功能，手动摆放仍是首选方式） ——
-## strategy: "full"(全部地形) / "top"(仅顶部表面) / "outline"(仅外轮廓)
+# —— 自动生成碰撞：从**当前层**瓦片推导碰撞（层栈化后「当前层自审」，不再认 terrain id） ——
+## strategy: "full"(全部) / "top"(仅顶部表面) / "outline"(仅外轮廓)
 ## replace=true 先清空碰撞层再生成
 func generate_collision(strategy := "full", replace := false, one_way_top := false) -> int:
 	if map_root == null:
 		_hint("无地图：先新建或打开一张地图")
 		return 0
-	if is_layer_locked(_collision_layer_index()):
+	if is_layer_locked(collision_index()):
 		_hint("碰撞层已锁定：先解锁")
+		return 0
+	var src := _layer_node(active_layer)
+	if src == null:
+		_hint("切到一个瓦片层再用自动碰撞（当前是碰撞元层）")
 		return 0
 	_push_undo()
 	if replace:
 		for c in collision.get_used_cells():
 			set_collision_cell(c, false)
 	var added := 0
-	for c in terrain.get_used_cells():
+	for c in src.get_used_cells():
 		if not _collision_wanted(c, strategy):
 			continue
 		if collision.get_cell_source_id(c) != -1:
@@ -544,8 +608,11 @@ func generate_collision(strategy := "full", replace := false, one_way_top := fal
 func count_auto_collision(strategy := "full", replace := false) -> int:
 	if map_root == null:
 		return 0
+	var src := _layer_node(active_layer)
+	if src == null:
+		return 0
 	var n := 0
-	for c in terrain.get_used_cells():
+	for c in src.get_used_cells():
 		if not _collision_wanted(c, strategy):
 			continue
 		if not replace and collision.get_cell_source_id(c) != -1:
@@ -564,13 +631,6 @@ func _collision_wanted(c: Vector2i, strategy: String) -> bool:
 				or not _has_terrain_at(c + Vector2i(0, -1))
 		_:
 			return true
-
-func _collision_layer_index() -> int:
-	var layers: Array = manifest.get("layers", [])
-	for i in layers.size():
-		if str(layers[i].get("type", "tiles")) == "grid":
-			return i
-	return -1
 
 ## 碰撞格统一写入口——涂刷/擦除/矩形/粘贴/自动生成全走这里，类型元数据跟着走。
 ## solid+矩形不记 meta（缺省值零冗余）；其余记 {type, shape}；擦除连 meta 一起清。
@@ -608,7 +668,7 @@ func _mark(ents_changed := true) -> void:
 func _ent_by_code_index() -> Dictionary:
 	if _ent_by_id_dirty:
 		var out := {}
-		for e0 in entities.get_children():
+		for e0 in ents_all():
 			var spr0 = e0 as Sprite2D
 			if spr0:
 				out[str(spr0.get_meta("code", ""))] = spr0
@@ -659,13 +719,85 @@ var _drag_origins: Array = []
 var _drag_grab := Vector2.ZERO
 var _drag_moved := false
 
-# —— 区域复制粘贴（瓦片三层 + 实体打包快照） ——
+# —— 区域复制粘贴（层栈瓦片 + 碰撞 + 实体打包快照） ——
 func _any_layer_locked() -> bool:
-	var layers: Array = manifest.get("layers", [])
-	for i in layers.size():
+	for i in layer_count() + 1:
 		if is_layer_locked(i):
 			return true
 	return false
+
+# —— 层管理：新建/删除/改名/上下移/运行时可见（meta 在整图快照里，操作先进撤销） ——
+## 新层默认插到栈顶之下——新建即可画前景遮挡。
+func layer_add(name: String) -> void:
+	if map_root == null:
+		_hint("无地图：先新建或打开一张地图")
+		return
+	_push_undo()
+	var meta: Dictionary = map_data.get("meta", {})
+	var L: Array = meta.get("layers", [])
+	var entry := {"id": ContentIdRef.new_inst_code(), "name": name if name != "" else "新层", "visible": true}
+	if L.size() >= 2:
+		L.insert(L.size() - 1, entry)
+	else:
+		L.append(entry)
+	meta["layers"] = L
+	map_data["meta"] = meta
+	_rebuild_layers()
+
+## 删层 = 删内容：该层瓦片与实体一并删除（撤销整图快照可回）。
+func layer_del(i: int) -> void:
+	if map_root == null or i < 0 or i >= layer_count():
+		return
+	if layer_count() <= 1:
+		_hint("至少保留一个图层")
+		return
+	_push_undo()
+	var lid := layer_id(i)
+	var meta: Dictionary = map_data.get("meta", {})
+	(meta.get("layers", []) as Array).remove_at(i)
+	# 该层活体实体先移除（extract 同步活体状态，不删会在重建时落到第 0 层复活）
+	for s in ents_all():
+		if str((s as Sprite2D).get_meta("layer", "")) == lid:
+			(s.get_parent() as Node2D).remove_child(s)
+			(s as Sprite2D).free()
+	_rebuild_layers()
+
+func layer_rename(i: int, name: String) -> void:
+	var L := layers_decl()
+	if i < 0 or i >= L.size() or str(name) == "":
+		return
+	_push_undo()
+	(L[i] as Dictionary)["name"] = str(name)
+	_mark(false)   # 只改 meta，不动节点
+
+func layer_move(i: int, dir: int) -> void:
+	var L := layers_decl()
+	var nj := i + dir
+	if i < 0 or i >= L.size() or nj < 0 or nj >= L.size():
+		return
+	_push_undo()
+	var tmp = L[i]
+	L[i] = L[nj]
+	L[nj] = tmp
+	_rebuild_layers()
+
+## 运行时初始可见（差分视图用）；编辑视图显隐走 set_layer_hidden，两回事。
+func layer_set_visible(i: int, v: bool) -> void:
+	var L := layers_decl()
+	if i < 0 or i >= L.size():
+		return
+	_push_undo()
+	(L[i] as Dictionary)["visible"] = v
+	_mark(false)
+
+## 层操作后全量重建：先用 extract() 把活体状态写回 map_data（未保存的摆放/移动不丢），
+## 再 load_data（异步协程，_rebuild_gen 保护并发；无 await 调用是刻意的 fire-and-forget）。
+func _rebuild_layers() -> void:
+	if map_root == null:
+		return
+	active_layer = clampi(active_layer, 0, maxi(layer_count() - 1, 0))
+	map_data = extract()
+	load_data(map_data, cur_map_name, true, true)
 
 # —— 绘制：网格 + 光标幽灵预览 ——
 
@@ -788,5 +920,7 @@ func _erase_hits(pos: Vector2) -> bool:
 func _stamp(c: Vector2i) -> void:
 	_tool_ops_ctrl._stamp(c)
 
+## 「当前层自审」：active_layer 的瓦片格判定（自动碰撞/边缘类逻辑共用）
 func _has_terrain_at(c: Vector2i) -> bool:
-	return _tool_ops_ctrl._has_terrain_at(c)
+	var tn := _layer_node(active_layer)
+	return tn != null and tn.get_cell_source_id(c) != -1

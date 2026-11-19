@@ -208,8 +208,7 @@ var _pending_commits: Array = []
 # ──────────── 数据读取：只从画布实体读，不另存一份 ────────────
 
 func _map_ready() -> bool:
-	return app.map_loaded and app.canvas != null and is_instance_valid(app.canvas) \
-		and app.canvas.entities != null and is_instance_valid(app.canvas.entities)
+	return app.map_loaded and app.canvas != null and is_instance_valid(app.canvas)
 
 ## 本图实例快照（保持画布放置顺序）：[{spr, code, scene, name, fns}]
 ## 按 canvas.ents_rev 缓存——预览每次鼠标移动都调 _hit_at，原实现每个事件
@@ -228,7 +227,7 @@ func _entities() -> Array:
 	if _ents_rev == rev and _ents_map == map_name:
 		return _ents_cache
 	var out: Array = []
-	for e in app.canvas.entities.get_children():
+	for e in app.canvas.ents_all():
 		var spr := e as Sprite2D
 		if spr == null or not spr.has_meta("scene"):
 			continue
@@ -251,7 +250,7 @@ func _entities() -> Array:
 func _find_ent(code: String) -> Sprite2D:
 	if code == "" or not _map_ready():
 		return null
-	for e in app.canvas.entities.get_children():
+	for e in app.canvas.ents_all():
 		var spr := e as Sprite2D
 		if spr != null and str(spr.get_meta("code", "")) == code:
 			return spr
@@ -904,7 +903,8 @@ func _build_field_row(i: int, fn_id: String, fd: Dictionary, cur: Dictionary) ->
 
 ## choice.source 的选项来源解析（由游戏侧声明，编辑器只查不解释）。
 ## 支持：content:<功能id>（内容库）、entity:<id,id>（清单实体类型）、
-## entity_inst:<id,id>（当前图实例，值=实例码）、map（地图文件）、audio:（音频池）。
+## entity_inst:<id,id>（当前图实例，值=实例码）、map（地图文件）、audio:（音频池）、
+## layer:（当前图用户层栈，值=层码，显示「序号.层名」）。
 func _resolve_options(decl: Dictionary) -> Array:
 	var src := str(decl.get("source", ""))
 	if src.begins_with("content:"):
@@ -931,7 +931,7 @@ func _resolve_options(decl: Dictionary) -> Array:
 		var want := src.substr(12).split(",", false)
 		var out4: Array = []
 		if _map_ready():
-			for e0 in app.canvas.entities.get_children():
+			for e0 in app.canvas.ents_all():
 				var spr := e0 as Sprite2D
 				if spr == null or not spr.has_meta("scene"):
 					continue
@@ -944,6 +944,13 @@ func _resolve_options(decl: Dictionary) -> Array:
 				var cell: Vector2i = app.canvas._cell_of(spr.position)
 				out4.append({"v": c0, "t": "%s · (%d,%d)" % [str(app._scene_name(sid0)), cell.x, cell.y]})
 		return out4
+	if src == "layer:":
+		var outl: Array = []
+		var li := 0
+		for L in app.canvas.layers_decl():
+			outl.append({"v": str(L.get("id", "")), "t": "%d.%s" % [li + 1, str(L.get("name", ""))]})
+			li += 1
+		return outl
 	if src == "audio:":
 		# 音频池来源：列音频声明（值=音频码，显示名），路径解释权在游戏侧。
 		var out5: Array = []

@@ -38,10 +38,10 @@ func _draw() -> void:
 		while gy <= y1:
 			cvs.draw_line(Vector2(maxf(x0, origin.x), gy), Vector2(minf(x1, endv.x), gy), Color(1, 1, 1, 0.07), 1.0, true)
 			gy += cvs.tile_px
-	# 幽灵预览：只看「当前层 + 手上拿着什么」，没有工具要判断
-	var on_ent_layer: bool = cvs.active_layer == cvs._ent_layer_index()
+	# 幽灵预览：只看「手上拿着什么」，没有工具要判断
+	var on_ent: bool = cvs.place_kind == "entity"
 	if Rect2(Vector2(map_rect.position) * cvs.tile_px, Vector2(map_rect.size) * cvs.tile_px).has_point(pos):
-		if on_ent_layer:
+		if on_ent:
  # 实体层：手上拿着资产就画它的幽灵，否则画「点这里会选中」的提示框
 			if cvs.stamp_thumb:
  # 幽灵按实体的真实占位尺寸画，和落下去之后一样大，便于对位
@@ -88,8 +88,8 @@ func _draw() -> void:
 	var spos = cvs.spawn.position
 	var screen_rect := Rect2(spos - Vector2(ss[0], ss[1]) * 0.5, Vector2(ss[0], ss[1]))
 	cvs.draw_rect(screen_rect, Color(0.35, 0.65, 1.0, 0.40), false, 1.0)
-	# 出生点标记：只在实体层画成「可拖」的样子，其余层画淡一些——避免在地形层误导成可点
-	var spawn_draggable: bool = cvs.active_layer == cvs._ent_layer_index()
+	# 出生点标记：实体放置模式下画成「可拖」的样子，其余画淡一些——避免误导成可点
+	var spawn_draggable: bool = cvs.place_kind == "entity"
 	var half = cvs.tile_px * 0.5
 	var srect := Rect2(spos - Vector2(half, half), Vector2(cvs.tile_px, cvs.tile_px))
 	var spawn_col := Color(0.3, 1.0, 0.5, 0.9) if spawn_draggable else Color(0.3, 1.0, 0.5, 0.35)
@@ -166,8 +166,9 @@ func _draw() -> void:
 			cvs.draw_rect(mr, Color(1.0, 0.85, 0.3, 0.85), false, 1.5)
 	# 多选集合的外接框：明确标出「这一块可以整体拖动」。
 	# 框内空白处按下就能拖，鼠标悬停在框内时加亮，给出可操作性暗示。
+	# 框选组可跨层（成员可属不同层），绘制与层无关。
 	var multi = cvs._valid_multi()
-	if multi.size() > 1 and cvs._ent_layer_index() == cvs.active_layer:
+	if multi.size() > 1:
 		var mb = cvs._multi_bounds(multi).grow(cvs._multi_hot())
 		var hot = mb.has_point(pos)
 		cvs.draw_rect(mb, Color(1.0, 0.85, 0.3, 0.22 if hot else 0.10), true)
@@ -189,59 +190,60 @@ func _draw() -> void:
 		cvs.draw_line(Vector2(s4.x, r4.position.y), Vector2(s4.x, r4.end.y), Color(0.35, 0.95, 0.95, 0.25), 1.0)
 	# 触发区：没有贴图，用半透明矩形 + 事件名标签表示；绑定事件的用实色，未绑定的用警示色
 	_draw_trigger_zones(zones)
-	# 区域选区轮廓（瓦片层框选的结果——开关或 Ctrl+拖动）
-	if cvs._region_sel.size.x > 0 and cvs._ent_layer_index() != cvs.active_layer:
+	# 区域选区轮廓（框选的结果——开关或 Ctrl+拖动，可跨层）
+	if cvs._region_sel.size.x > 0:
 		var rr := Rect2(Vector2(cvs._region_sel.position) * cvs.tile_px, Vector2(cvs._region_sel.size) * cvs.tile_px)
 		cvs.draw_rect(rr, Color(1.0, 0.85, 0.3, 0.8), false, 2.0)
 	# 区域拖动预览：整块幽灵按当前格偏移跟手，松手才真搬
 	if cvs._move_active and not cvs._move_snap.is_empty():
 		var md: Vector2i = cvs._move_cell_delta
-		for t in cvs._move_snap.get("terrain", []):
-			if cvs.atlas_tex != null:
-				cvs.draw_texture_rect_region(cvs.atlas_tex,
-					Rect2(Vector2(Vector2i(int(t[0]), int(t[1])) + md) * cvs.tile_px, Vector2(cvs.tile_px, cvs.tile_px)),
-					Rect2(Vector2(int(t[3]), int(t[4])) * cvs.tile_px, Vector2(cvs.tile_px, cvs.tile_px)),
-					Color(1, 1, 1, 0.6))
-		for t in cvs._move_snap.get("decor", []):
-			if cvs.atlas_tex != null:
-				cvs.draw_texture_rect_region(cvs.atlas_tex,
-					Rect2(Vector2(Vector2i(int(t[0]), int(t[1])) + md) * cvs.tile_px, Vector2(cvs.tile_px, cvs.tile_px)),
-					Rect2(Vector2(int(t[3]), int(t[4])) * cvs.tile_px, Vector2(cvs.tile_px, cvs.tile_px)),
-					Color(1, 1, 1, 0.6))
+		# tiles = {层id: [[x,y,atlas,ax,ay]...]}——预览不区分层，统一原色
+		for cells in (cvs._move_snap.get("tiles", {}) as Dictionary).values():
+			for t in cells:
+				if cvs.atlas_tex != null:
+					cvs.draw_texture_rect_region(cvs.atlas_tex,
+						Rect2(Vector2(Vector2i(int(t[0]), int(t[1])) + md) * cvs.tile_px, Vector2(cvs.tile_px, cvs.tile_px)),
+						Rect2(Vector2(int(t[3]), int(t[4])) * cvs.tile_px, Vector2(cvs.tile_px, cvs.tile_px)),
+						Color(1, 1, 1, 0.6))
 		for t in cvs._move_snap.get("collision", []):
 			var mc: Vector2i = Vector2i(int(t[0]), int(t[1])) + md
 			cvs.draw_rect(Rect2(Vector2(mc) * cvs.tile_px, Vector2(cvs.tile_px, cvs.tile_px)), Color(1.0, 0.25, 0.25, 0.45), true)
-		for s in cvs._move_snap.get("ents", []):
-			if is_instance_valid(s):
-				var tex0: Texture2D = cvs.thumbs.get(str((s as Sprite2D).get_meta("scene", "")))
-				var er0 := Rect2((s as Sprite2D).position + Vector2(md) * cvs.tile_px - Vector2(cvs.tile_px, cvs.tile_px) * 0.5,
-					Vector2(cvs.tile_px, cvs.tile_px))
+		for e0 in cvs._move_snap.get("ents", []):
+			if e0 is Dictionary:
+	 # 快照式条目 {dx,dy,scene,...}：按区域原点 + 偏移画
+				var d0: Dictionary = e0
+				var ep: Vector2 = Vector2(cvs._region_sel.position + md) \
+					+ Vector2(float(d0.get("dx", 0)), float(d0.get("dy", 0)))
+				var tex0: Texture2D = cvs.thumbs.get(str(d0.get("scene", "")))
 				if tex0 != null:
-					cvs.draw_texture_rect(tex0, er0, false, Color(1, 1, 1, 0.6))
+					cvs.draw_texture_rect(tex0, Rect2(ep * cvs.tile_px,
+						Vector2(cvs.tile_px, cvs.tile_px)), false, Color(1, 1, 1, 0.6))
+			elif e0 is Node2D and is_instance_valid(e0):
+	 # 活体精灵条目：按原位 + 拖动增量画
+				var tex1: Texture2D = cvs.thumbs.get(str((e0 as Sprite2D).get_meta("scene", "")))
+				if tex1 != null:
+					cvs.draw_texture_rect(tex1, Rect2((e0 as Sprite2D).position
+						+ Vector2(md) * cvs.tile_px - Vector2(cvs.tile_px, cvs.tile_px) * 0.5,
+						Vector2(cvs.tile_px, cvs.tile_px)), false, Color(1, 1, 1, 0.6))
 		var gr0 := Rect2(Vector2(cvs._region_sel.position + md) * cvs.tile_px, Vector2(cvs._region_sel.size) * cvs.tile_px)
 		cvs.draw_rect(gr0, Color(0.45, 1.0, 0.75, 0.9), false, 2.0)
-	# 区域粘贴预览：三层幽灵跟随鼠标，左键落位
+	# 区域粘贴预览：各层幽灵跟随鼠标，左键落位
 	if cvs._paste_mode and not cvs._region_clip.is_empty():
 		var org = cvs._cell_of(pos)
-		for t in cvs._region_clip.get("terrain", []):
-			var tc = org + Vector2i(t[0], t[1])
-			if cvs.atlas_tex != null:
-				cvs.draw_texture_rect_region(cvs.atlas_tex,
-					Rect2(Vector2(tc) * cvs.tile_px, Vector2(cvs.tile_px, cvs.tile_px)),
-					Rect2(Vector2(t[3], t[4]) * cvs.tile_px, Vector2(cvs.tile_px, cvs.tile_px)),
-					Color(1, 1, 1, 0.5))
-		for t in cvs._region_clip.get("decor", []):
-			var d2 = org + Vector2i(t[0], t[1])
-			if cvs.atlas_tex != null:
-				cvs.draw_texture_rect_region(cvs.atlas_tex,
-					Rect2(Vector2(d2) * cvs.tile_px, Vector2(cvs.tile_px, cvs.tile_px)),
-					Rect2(Vector2(t[3], t[4]) * cvs.tile_px, Vector2(cvs.tile_px, cvs.tile_px)),
-					Color(1, 1, 1, 0.5))
+		# tiles = {层id: [[x,y,atlas,ax,ay]...]}——预览不区分层，统一原色
+		for cells2 in (cvs._region_clip.get("tiles", {}) as Dictionary).values():
+			for t in cells2:
+				var tc = org + Vector2i(int(t[0]), int(t[1]))
+				if cvs.atlas_tex != null:
+					cvs.draw_texture_rect_region(cvs.atlas_tex,
+						Rect2(Vector2(tc) * cvs.tile_px, Vector2(cvs.tile_px, cvs.tile_px)),
+						Rect2(Vector2(int(t[3]), int(t[4])) * cvs.tile_px, Vector2(cvs.tile_px, cvs.tile_px)),
+						Color(1, 1, 1, 0.5))
 		for t in cvs._region_clip.get("collision", []):
 			var cc = org + Vector2i(t[0], t[1])
 			cvs.draw_rect(Rect2(Vector2(cc) * cvs.tile_px, Vector2(cvs.tile_px, cvs.tile_px)), Color(1.0, 0.25, 0.25, 0.35), true)
- # 实体幽灵：区域碎片里的实体也预览
-		for t in cvs._region_clip.get("entities", []):
+	# 实体幽灵：区域碎片里的实体也预览
+		for t in cvs._region_clip.get("ents", []):
 			var ec2 = org + Vector2i(int(t.get("dx", 0)), int(t.get("dy", 0)))
 			var tex: Texture2D = cvs.thumbs.get(str(t.get("scene", "")))
 			var er := Rect2(Vector2(ec2) * cvs.tile_px, Vector2(cvs.tile_px, cvs.tile_px))

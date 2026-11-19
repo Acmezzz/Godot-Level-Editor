@@ -6,11 +6,21 @@ var cvs   # 宿主引用
 func _init(host) -> void:
 	cvs = host
 ## 按实体占位尺寸做外接框命中（旧实现写死 16/20px，大实体边缘点不中/擦不掉）。
-## 返回命中的实体（命中多个时取中心距最近者）；无命中返回 null。
+## 跨层命中：从顶层向下取第一个命中的层，层内取中心距最近者；无命中返回 null。
 func _entity_hit(pos: Vector2) -> Sprite2D:
+	for li in range(cvs.layer_count() - 1, -1, -1):
+		if li >= cvs.layer_ents.size():
+			continue
+		var hit := _entity_hit_in((cvs.layer_ents[li] as Node2D).get_children(), pos)
+		if hit != null:
+			return hit
+	return null
+
+## 单层命中核心：遍历给定容器子节点（tool_ops 擦除与跨层选区共用同一规则）
+func _entity_hit_in(children: Array, pos: Vector2) -> Sprite2D:
 	var best: Sprite2D = null
 	var best_d = INF
-	for e in cvs.entities.get_children():
+	for e in children:
 		var spr: Sprite2D = e as Sprite2D
 		if spr == null or not spr.has_meta("scene"):
 			continue
@@ -50,7 +60,7 @@ func _box_select(a: Vector2, b: Vector2) -> void:
 		return
 	cvs.selected_multi.clear()
 	var r := Rect2(a.min(b), (a - b).abs())
-	for e in cvs.entities.get_children():
+	for e in cvs.ents_all():
 		var spr := e as Sprite2D
 		if spr and r.has_point(spr.position):
 			cvs.selected_multi.append(spr)
@@ -89,9 +99,10 @@ func _inside_multi_box(pos: Vector2) -> bool:
 	return _multi_bounds(targets).grow(_multi_hot()).has_point(pos)
 
 ## —— 实体拖拽移动：按下记录起点，移动只改预览，松手吸附格点并标脏 ——
+## 锁检查跟着实体所在层走（实体可属任何栈层）。
 func _begin_entity_drag(spr: Sprite2D, pos: Vector2) -> void:
-	if cvs.is_layer_locked(cvs._ent_layer_index()):
-		cvs._hint("实体层已锁定：解锁后再移动")
+	if cvs.is_layer_locked(cvs._layer_index_of(str(spr.get_meta("layer", "")))):
+		cvs._hint("实体所在图层已锁定：解锁后再移动")
 		return
 	cvs._drag_entity = spr
 	cvs._drag_entities = [spr]
@@ -108,8 +119,11 @@ func _begin_entity_drag(spr: Sprite2D, pos: Vector2) -> void:
 
 ## 从框内空白处拖动 = 平移整个框选集合（和按住某个成员拖一样，一次撤销步）
 func _begin_group_drag(pos: Vector2) -> void:
-	if cvs.is_layer_locked(cvs._ent_layer_index()):
-		cvs._hint("实体层已锁定：解锁后再移动")
+	var targets0: Array = cvs._valid_multi()
+	if targets0.is_empty():
+		return
+	if cvs.is_layer_locked(cvs._layer_index_of(str((targets0[0] as Sprite2D).get_meta("layer", "")))):
+		cvs._hint("实体所在图层已锁定：解锁后再移动")
 		return
 	var targets: Array = cvs._valid_multi()
 	if targets.size() < 2:
@@ -196,6 +210,7 @@ func copy_selection() -> void:
 			"dx": spr.position.x - center.x,
 			"dy": spr.position.y - center.y,
 			"flip_h": spr.flip_h,
+			"layer": str(spr.get_meta("layer", "")),
 			"functions": (spr.get_meta("functions", []) as Array).duplicate(true),
  # deep=true：props 里的嵌套字典各副本独立，避免改一个影响全部
 			"props": (spr.get_meta("props", {}) as Dictionary).duplicate(true),
@@ -209,8 +224,8 @@ func cut_selection() -> void:
 	if cvs.map_root == null:
 		cvs._hint("无地图：先新建或打开一张地图")
 		return
-	if cvs.is_layer_locked(cvs._ent_layer_index()):
-		cvs._hint("实体层已锁定：解锁后再剪切")
+	if cvs.is_layer_locked(cvs.active_layer):
+		cvs._hint("当前图层已锁定：解锁后再剪切")
 		return
 	var sel: Array = cvs.selected_multi.duplicate()
 	if sel.is_empty() and cvs.selected_entity and is_instance_valid(cvs.selected_entity):
@@ -226,7 +241,7 @@ func cut_selection() -> void:
 	var n := 0
 	for s in sel:
 		if is_instance_valid(s):
-			cvs.entities.remove_child(s)
+			(s.get_parent() as Node2D).remove_child(s)
 			s.free()
 			n += 1
 	cvs.selected_multi.clear()
@@ -249,6 +264,7 @@ func paste_at(pos: Vector2) -> void:
 	# 先建副本并给每个 fresh 码；建 旧码→新码 映射，供组内引用重映射
 	var copied := {}   # 旧码 → 新码
 	var built: Array = []   # [{spr, scene, props, functions}]
+	var target: int = cvs.active_layer if cvs.active_layer < cvs.layer_count() else 0
 	for t in cvs._clipboard:
 		var spr := Sprite2D.new()
 		var scene_id := str(t.get("scene", ""))
@@ -268,7 +284,8 @@ func paste_at(pos: Vector2) -> void:
 			"props": (t.get("props", {}) as Dictionary).duplicate(true),
 			"functions": (t.get("functions", []) as Array).duplicate(true),
 		})
-		cvs.entities.add_child(spr)
+		spr.set_meta("layer", cvs.layer_id(target))
+		(cvs.layer_ents[target] as Node2D).add_child(spr)
 		cvs._fit_sprite(spr, scene_id)
 	# 副本间引用重映射：props 声明驱动（entity_ref fields）+ functions 盲重映射
 	for b in built:
@@ -305,7 +322,7 @@ func delete_selection() -> void:
 	cvs._push_undo()
 	for v in victims:
 		if is_instance_valid(v):
-			cvs.entities.remove_child(v)
+			(v.get_parent() as Node2D).remove_child(v)
 			v.free()
 	cvs.selected_multi.clear()
 	cvs.selected_entity = null
@@ -343,23 +360,31 @@ func _in_region_sel(pos: Vector2) -> bool:
 	return cvs._region_sel.has_point(cvs._cell_of(pos))
 
 func _snapshot_region(sel: Rect2i) -> Dictionary:
-	var snap := {"terrain": [], "decor": [], "collision": [], "ents": [], "size": sel.size}
-	for y in range(sel.position.y, sel.end.y):
-		for x in range(sel.position.x, sel.end.x):
-			var c := Vector2i(x, y)
-			var tac: Vector2i = cvs.terrain.get_cell_atlas_coords(c)
-			if tac != Vector2i(-1, -1):
-				snap["terrain"].append([x, y, cvs.terrain.get_cell_source_id(c), tac.x, tac.y])
-			var dc: Vector2i = cvs.decor.get_cell_atlas_coords(c)
-			if dc != Vector2i(-1, -1):
-				snap["decor"].append([x, y, cvs.decor.get_cell_source_id(c), dc.x, dc.y])
-			if cvs.collision.get_cell_source_id(c) != -1:
-				var cm = cvs._collision_meta.get(c, null)
+	# 层栈快照：tiles = {层id: [[x,y,atlas,ax,ay]...]}，碰撞/实体照旧（实体带 layer）
+	var snap := {"tiles": {}, "collision": [], "ents": [], "size": sel.size}
+	for li in cvs.layer_tiles.size():
+		var lid: String = cvs.layer_id(li)
+		if lid == "":
+			continue
+		var cells := []
+		for y in range(sel.position.y, sel.end.y):
+			for x in range(sel.position.x, sel.end.x):
+				var c := Vector2i(x, y)
+				var tac: Vector2i = (cvs.layer_tiles[li] as TileMapLayer).get_cell_atlas_coords(c)
+				if tac != Vector2i(-1, -1):
+					cells.append([x, y, (cvs.layer_tiles[li] as TileMapLayer).get_cell_source_id(c), tac.x, tac.y])
+		if not cells.is_empty():
+			snap["tiles"][lid] = cells
+	for y2 in range(sel.position.y, sel.end.y):
+		for x2 in range(sel.position.x, sel.end.x):
+			var c2 := Vector2i(x2, y2)
+			if cvs.collision.get_cell_source_id(c2) != -1:
+				var cm = cvs._collision_meta.get(c2, null)
 				if cm != null:
-					snap["collision"].append([x, y, str(cm.get("type", "solid")), str(cm.get("shape", ""))])
+					snap["collision"].append([x2, y2, str(cm.get("type", "solid")), str(cm.get("shape", ""))])
 				else:
-					snap["collision"].append([x, y])
-	for e in cvs.entities.get_children():
+					snap["collision"].append([x2, y2])
+	for e in cvs.ents_all():
 		var spr := e as Sprite2D
 		if spr == null or not spr.has_meta("scene"):
 			continue
@@ -398,18 +423,22 @@ func _finish_region_move() -> void:
 	if not active or delta == Vector2i.ZERO:
 		return
 	cvs._push_undo()
-	# 先清源（三层 + 区域内实体位置回原点后再搬）
-	for t in snap.get("terrain", []):
-		cvs.terrain.erase_cell(Vector2i(int(t[0]), int(t[1])))
-	for t in snap.get("decor", []):
-		cvs.decor.erase_cell(Vector2i(int(t[0]), int(t[1])))
+	# 先清源（各层瓦片 + 碰撞），再写目标；实体按位置平移
+	for lid in (snap.get("tiles", {}) as Dictionary):
+		var li: int = cvs._layer_index_of(str(lid))
+		if li < 0:
+			continue
+		for t in (snap.get("tiles", {})[lid] as Array):
+			(cvs.layer_tiles[li] as TileMapLayer).erase_cell(Vector2i(int(t[0]), int(t[1])))
 	for t in snap.get("collision", []):
 		cvs.set_collision_cell(Vector2i(int(t[0]), int(t[1])), false)
-	# 再写目标
-	for t in snap.get("terrain", []):
-		cvs.terrain.set_cell(Vector2i(int(t[0]), int(t[1])) + delta, int(t[2]), Vector2i(int(t[3]), int(t[4])))
-	for t in snap.get("decor", []):
-		cvs.decor.set_cell(Vector2i(int(t[0]), int(t[1])) + delta, int(t[2]), Vector2i(int(t[3]), int(t[4])))
+	for lid2 in (snap.get("tiles", {}) as Dictionary):
+		var li2: int = cvs._layer_index_of(str(lid2))
+		if li2 < 0:
+			continue
+		for t2 in (snap.get("tiles", {})[lid2] as Array):
+			(cvs.layer_tiles[li2] as TileMapLayer).set_cell(
+				Vector2i(int(t2[0]), int(t2[1])) + delta, int(t2[2]), Vector2i(int(t2[3]), int(t2[4])))
 	for t in snap.get("collision", []):
 		var ta := t as Array
 		if ta.size() >= 4:
@@ -429,35 +458,41 @@ func _finish_region_move() -> void:
 func copy_region() -> void:
 	if cvs.map_root == null:
 		return
-	if cvs._ent_layer_index() == cvs.active_layer:
+	if cvs.place_kind == "entity":
 		copy_selection()
 		return
 	if cvs._region_sel.size.x <= 0:
-		cvs._hint("先用选择工具在瓦片层拖拽框选一块区域")
+		cvs._hint("先框选一块区域再复制")
 		return
-	cvs._region_clip = {"terrain": [], "decor": [], "collision": [], "size": cvs._region_sel.size}
-	for y in range(cvs._region_sel.position.y, cvs._region_sel.end.y):
-		for x in range(cvs._region_sel.position.x, cvs._region_sel.end.x):
-			var d: Vector2i = Vector2i(x, y) - cvs._region_sel.position
- # 区域剪贴板带 atlas（source_id）——多图集瓦片整块搬运
-			var tac: Vector2i = cvs.terrain.get_cell_atlas_coords(Vector2i(x, y))
-			if tac != Vector2i(-1, -1):
-				var tsid: int = cvs.terrain.get_cell_source_id(Vector2i(x, y))
-				cvs._region_clip["terrain"].append([d.x, d.y, tsid, tac.x, tac.y])
-			var dc: Vector2i = cvs.decor.get_cell_atlas_coords(Vector2i(x, y))
-			if dc != Vector2i(-1, -1):
-				var dsid: int = cvs.decor.get_cell_source_id(Vector2i(x, y))
-				cvs._region_clip["decor"].append([d.x, d.y, dsid, dc.x, dc.y])
-			if cvs.collision.get_cell_source_id(Vector2i(x, y)) != -1:
- # 区域剪贴板带碰撞类型/形状
-				var cm = cvs._collision_meta.get(Vector2i(x, y), null)
+	# 层栈剪贴板：tiles = {层id: [[dx,dy,atlas,ax,ay]...]}，碰撞/实体照旧（实体带 layer）
+	cvs._region_clip = {"tiles": {}, "collision": [], "size": cvs._region_sel.size}
+	for li in cvs.layer_tiles.size():
+		var lid: String = cvs.layer_id(li)
+		if lid == "":
+			continue
+		var cells := []
+		for y in range(cvs._region_sel.position.y, cvs._region_sel.end.y):
+			for x in range(cvs._region_sel.position.x, cvs._region_sel.end.x):
+				var d: Vector2i = Vector2i(x, y) - cvs._region_sel.position
+	 # 区域剪贴板带 atlas（source_id）——多图集瓦片整块搬运
+				var tac: Vector2i = (cvs.layer_tiles[li] as TileMapLayer).get_cell_atlas_coords(Vector2i(x, y))
+				if tac != Vector2i(-1, -1):
+					var tsid: int = (cvs.layer_tiles[li] as TileMapLayer).get_cell_source_id(Vector2i(x, y))
+					cells.append([d.x, d.y, tsid, tac.x, tac.y])
+		if not cells.is_empty():
+			cvs._region_clip["tiles"][lid] = cells
+	for y2 in range(cvs._region_sel.position.y, cvs._region_sel.end.y):
+		for x2 in range(cvs._region_sel.position.x, cvs._region_sel.end.x):
+			if cvs.collision.get_cell_source_id(Vector2i(x2, y2)) != -1:
+	 # 区域剪贴板带碰撞类型/形状
+				var cm = cvs._collision_meta.get(Vector2i(x2, y2), null)
 				if cm != null:
-					cvs._region_clip["collision"].append([d.x, d.y, str(cm.get("type", "solid")), str(cm.get("shape", ""))])
+					cvs._region_clip["collision"].append([x2 - cvs._region_sel.position.x, y2 - cvs._region_sel.position.y, str(cm.get("type", "solid")), str(cm.get("shape", ""))])
 				else:
-					cvs._region_clip["collision"].append([d.x, d.y])
-	# 实体也一起复制：区域块含实体，才能整块房间复用
+					cvs._region_clip["collision"].append([x2 - cvs._region_sel.position.x, y2 - cvs._region_sel.position.y])
+	# 实体也一起复制：区域块含实体，才能整块房间复用（层随实体走）
 	var ents_clip := []
-	for e in cvs.entities.get_children():
+	for e in cvs.ents_all():
 		var spr := e as Sprite2D
 		if spr == null or not spr.has_meta("scene"):
 			continue
@@ -467,30 +502,32 @@ func copy_region() -> void:
 				"dx": ec.x - cvs._region_sel.position.x,
 				"dy": ec.y - cvs._region_sel.position.y,
 				"scene": str(spr.get_meta("scene", "")),
- # 朝向随块复制；code 是引用重映射的前提
+ # 朝向随块复制；code 是引用重映射的前提；layer 是层重映射的前提
 				"flip_h": bool(spr.flip_h),
 				"code": str(spr.get_meta("code", "")),
+				"layer": str(spr.get_meta("layer", "")),
 				"functions": (spr.get_meta("functions", []) as Array).duplicate(true),
 				"props": (spr.get_meta("props", {}) as Dictionary).duplicate(true),
 			})
 	cvs._region_clip["entities"] = ents_clip
 	cvs._last_copy_region = true
+	var tcount := 0
+	for lid2 in (cvs._region_clip["tiles"] as Dictionary):
+		tcount += ((cvs._region_clip["tiles"] as Dictionary)[lid2] as Array).size()
 	cvs._hint("已复制 %dx%d 区域（%d 瓦片 / %d 实体；Ctrl+V 幽灵预览，左键落位/右键或 Esc 取消）" % [
-		cvs._region_sel.size.x, cvs._region_sel.size.y,
-		(cvs._region_clip["terrain"] as Array).size() + (cvs._region_clip["decor"] as Array).size() + (cvs._region_clip["collision"] as Array).size(),
-		ents_clip.size()])
+		cvs._region_sel.size.x, cvs._region_sel.size.y, tcount, ents_clip.size()])
 
 ## 任一图层锁定即拒绝区域级操作：部分跳过会让剪贴板与实际删除不一致。
 
-## 区域剪切 = 复制区域内三层 + 实体，再把源区域清空。整件事一个撤销步。
+## 区域剪切 = 复制区域内各层瓦片 + 碰撞 + 实体，再把源区域清空。整件事一个撤销步。
 func cut_region() -> void:
 	if cvs.map_root == null:
 		return
-	if cvs._ent_layer_index() == cvs.active_layer:
+	if cvs.place_kind == "entity":
 		cut_selection()
 		return
 	if cvs._region_sel.size.x <= 0:
-		cvs._hint("先用选择工具在瓦片层拖拽框选一块区域")
+		cvs._hint("先框选一块区域再剪切")
 		return
 	if cvs._any_layer_locked():
 		cvs._hint("有图层处于锁定状态：解锁后再剪切区域")
@@ -499,24 +536,19 @@ func cut_region() -> void:
 	if cvs._region_clip.is_empty():
 		return
 	cvs._push_undo()
-	var ci: int = cvs._collision_layer_index()
-	var layers: Array = cvs.manifest.get("layers", [])
 	for y in range(cvs._region_sel.position.y, cvs._region_sel.end.y):
 		for x in range(cvs._region_sel.position.x, cvs._region_sel.end.x):
 			var c := Vector2i(x, y)
-			for i in layers.size():
- # 只擦瓦片/装饰层；碰撞层走统一入口（连 meta 一起清），实体层在下面按位置处理
-				if i == ci or str(layers[i].get("type", "tiles")) != "tiles":
-					continue
-				cvs._layer_node(i).erase_cell(c)
+			for tn in cvs.layer_tiles:
+				(tn as TileMapLayer).erase_cell(c)
 			cvs.set_collision_cell(c, false)
 	# 区域内的实体一并移除（它们已经进了剪贴板）
-	for e in cvs.entities.get_children():
+	for e in cvs.ents_all():
 		var spr := e as Sprite2D
 		if spr == null or not spr.has_meta("scene"):
 			continue
 		if cvs._region_sel.has_point(cvs._cell_of(spr.position)):
-			cvs.entities.remove_child(spr)
+			(spr.get_parent() as Node2D).remove_child(spr)
 			spr.free()
 	cvs._mark()   # 区域剪切含实体删除，实体索引/实例列表缓存一并失效
 	cvs.queue_redraw()
@@ -530,20 +562,22 @@ func _paste_region(origin: Vector2i) -> void:
 		cvs._hint("有图层处于锁定状态：解锁后再粘贴区域")
 		return
 	cvs._push_undo()
-	# 粘贴按 atlas 维度重建（[dx,dy,atlas,ax,ay]）
-	for t in cvs._region_clip.get("terrain", []):
-		var ta := t as Array
-		cvs.terrain.set_cell(origin + Vector2i(int(ta[0]), int(ta[1])), int(ta[2]), Vector2i(int(ta[3]), int(ta[4])))
-	for t in cvs._region_clip.get("decor", []):
-		var da := t as Array
-		cvs.decor.set_cell(origin + Vector2i(int(da[0]), int(da[1])), int(da[2]), Vector2i(int(da[3]), int(da[4])))
+	# 粘贴按 层id×atlas 维度重建（tiles = {层id: [[dx,dy,atlas,ax,ay]...]}）
+	for lid in (cvs._region_clip.get("tiles", {}) as Dictionary):
+		var li: int = cvs._layer_index_of(str(lid))
+		if li < 0:
+			continue   # 粘贴目标图没有同名层就跳过该层瓦片
+		for t in (cvs._region_clip.get("tiles", {})[lid] as Array):
+			var ta := t as Array
+			(cvs.layer_tiles[li] as TileMapLayer).set_cell(
+				origin + Vector2i(int(ta[0]), int(ta[1])), int(ta[2]), Vector2i(int(ta[3]), int(ta[4])))
 	for t in cvs._region_clip.get("collision", []):
 		var cc := origin + Vector2i(int(t[0]), int(t[1]))
 		if (t as Array).size() >= 4:
 			cvs.set_collision_cell(cc, true, str(t[2]), str(t[3]))
 		else:
 			cvs.set_collision_cell(cc, true)
-	# 实体：区域内的实体按相对格位重建（引用字段保留，id 重新分配）
+	# 实体：按相对格位重建，落回各自的层（找不到同码层落最底层）；引用重映射照旧
 	var id_map := {}   # 旧码 → 粘贴后新码
 	var pasted: Array = []
 	for t in cvs._region_clip.get("entities", []):
@@ -557,7 +591,11 @@ func _paste_region(origin: Vector2i) -> void:
 		spr.flip_h = bool(t.get("flip_h", false))
 		spr.set_meta("props", (t.get("props", {}) as Dictionary).duplicate(true))
 		spr.set_meta("functions", (t.get("functions", []) as Array).duplicate(true))
-		cvs.entities.add_child(spr)
+		var ei: int = cvs._layer_index_of(str(t.get("layer", "")))
+		if ei < 0:
+			ei = 0
+		spr.set_meta("layer", cvs.layer_id(ei))
+		(cvs.layer_ents[ei] as Node2D).add_child(spr)
 		cvs._fit_sprite(spr, scene_id)
 		cvs._ensure_code(spr)
 		var old_code := str(t.get("code", ""))

@@ -407,7 +407,7 @@ func _shortcut_input(event: InputEvent) -> void:
 		_set_status(" 已重做" if await canvas.redo() else " 没有可重做的操作")
 		get_viewport().set_input_as_handled()
 		return
-	# 复制 / 剪切 / 粘贴（按当前图层分发实体或区域；键盘入口在 app 级——画布收不到键盘）
+	# 复制 / 剪切 / 粘贴（按 place_kind 分发实体或区域；键盘入口在 app 级——画布收不到键盘）
 	if ctrl and k == KEY_C:
 		_copy()
 		get_viewport().set_input_as_handled()
@@ -523,10 +523,14 @@ func _shortcut_input(event: InputEvent) -> void:
 # 任何交互（点导航按钮、切图层、点资产、按快捷键）都只调用这两者，不各写一份。
 
 func _layer_label(i: int) -> String:
-	var layers: Array = manifest.get("layers", [])
-	if i >= layers.size():
-		return "实体"
-	return str(layers[i].get("name", layers[i].get("id", "?")))
+	# 层名来自地图 meta.layers；碰撞元层排在栈外（下标 = 层数）；无图/越界回退 "?"
+	if canvas == null or not map_loaded:
+		return "?"
+	if i == canvas.collision_index():
+		return "碰撞"
+	if i < 0 or i >= canvas.layer_count():
+		return "?"
+	return canvas.layer_name(i)
 
 func _toggle_grid() -> void:
 	canvas.show_grid = not canvas.show_grid
@@ -546,7 +550,7 @@ func _cut() -> void:
 	if not map_loaded:
 		_set_status("无地图：先新建或打开一张地图")
 		return
-	if _layer_type(canvas.active_layer) == "entities":
+	if canvas.place_kind == "entity":
 		canvas.cut_selection()
 	else:
 		canvas.cut_region()
@@ -555,7 +559,7 @@ func _copy() -> void:
 	if not map_loaded:
 		_set_status("无地图：先新建或打开一张地图")
 		return
-	if _layer_type(canvas.active_layer) == "entities":
+	if canvas.place_kind == "entity":
 		canvas.copy_selection()
 	else:
 		canvas.copy_region()

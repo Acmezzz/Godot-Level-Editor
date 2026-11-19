@@ -1,10 +1,11 @@
 extends RefCounted
 ## _canvas_input_ctrl：从 src/canvas/editor_canvas.gd 拆出的控制器。宿主状态经 cvs 引用。
 ##
-## 没有工具概念——**层类型决定左键语义**。
+## 没有工具概念——**place_kind（瓦片/实体）决定左键语义**；实体选择/拖动与层无关。
 ## 全局手势：中键拖动 = 平移（任意层）；滚轮 = 以鼠标为锚缩放。
-## 地形 / 装饰 / 碰撞：左键按住拖动连续涂，右键拖动擦除。
-## 实体：左键点空处 = 放置当前选中资产，点实体 = 选中并拖动；右键 = 删除该实体。
+## 瓦片 / 碰撞：左键按住拖动连续涂，右键拖动擦除。
+## 实体放置（place_kind="entity"）：左键点空处 = 放置当前选中资产，
+## 点实体 = 选中并拖动（任何层都可以选）；右键 = 删除该实体。
 ## 框选由 cvs.select_mode（左栏「框选」开关）决定：打开时任意层普通左键拖动即框选；
 ## 关闭时保留 Ctrl+拖动框选作为兼容入口。两条路径都不依赖工具。
 ##
@@ -62,9 +63,8 @@ func _unhandled_input(event: InputEvent) -> void:
 			cvs.Gesture.ERASE:
 				cvs._erase_at(pos)
 			cvs.Gesture.PAINT:
- # 连续涂：只看层，不看工具
-				if cvs.active_layer != cvs._ent_layer_index():
-					cvs._apply_tool(pos)
+	# 连续涂：PAINT 手势只从瓦片/碰撞按下起手，与层无关
+				cvs._apply_tool(pos)
 		var c = cvs._cell_of(pos)
 		cvs.cursor_info.emit("%d,%d" % [c.x, c.y])
 		cvs.queue_redraw()
@@ -86,23 +86,23 @@ func _on_left_press(pos: Vector2, b: InputEventMouseButton) -> void:
 	if cvs._paste_mode:
 		cvs._paste_region(cvs._cell_of(pos))
 		return
-	# 出生点标记可直接拖动——但只在实体层：在地形层上它只是路过的装饰，
-	# 挡住那一格的笔刷会让人以为「这一格画不上」。框选模式下让位给框选。
-	if not cvs.select_mode and cvs.active_layer == cvs._ent_layer_index() and cvs._on_spawn(pos):
-		if cvs.is_layer_locked(cvs._ent_layer_index()):
-			cvs._hint("实体层已锁定：解锁后再移动出生点")
+	# 出生点标记可在实体放置模式下直接拖动——瓦片/碰撞笔刷优先，
+	# 框选模式下让位给框选。当前图层锁定时也不拖。
+	if not cvs.select_mode and cvs.place_kind == "entity" and cvs._on_spawn(pos):
+		if cvs.is_layer_locked(cvs.active_layer):
+			cvs._hint("当前图层已锁定：解锁后再移动出生点")
 			return
 		cvs._push_undo()
 		cvs.begin_gesture(cvs.Gesture.SPAWN_DRAG, MOUSE_BUTTON_LEFT)
 		cvs._drag_start = pos
 		return
-	if cvs.active_layer == cvs._ent_layer_index():
+	if cvs.place_kind == "entity":
 		_on_entity_layer_press(pos, b)
 	else:
 		_on_tile_layer_press(pos, b)
 
 
-## 实体层：框选模式下优先框选/整组拖动；否则点实体 = 选中并拖动，点空白 = 放置
+## 实体放置模式（任何层都行）：框选模式下优先框选/整组拖动；否则点实体 = 选中并拖动，点空白 = 放置
 func _on_entity_layer_press(pos: Vector2, b: InputEventMouseButton) -> void:
 	var hit = cvs._entity_at(pos)
 	if cvs.select_mode:
@@ -143,7 +143,7 @@ func _on_entity_layer_press(pos: Vector2, b: InputEventMouseButton) -> void:
 		cvs._apply_tool(pos)
 
 
-## 瓦片 / 装饰 / 碰撞层：拖动连续涂，框选模式下左键拖动 = 区域框选（兼容 Ctrl+拖动）
+## 瓦片 / 碰撞：拖动连续涂，框选模式下左键拖动 = 区域框选（兼容 Ctrl+拖动）
 func _on_tile_layer_press(pos: Vector2, b: InputEventMouseButton) -> void:
 	if cvs.is_layer_locked(cvs.active_layer):
 		cvs._hint("当前图层已锁定：解锁后再编辑")
@@ -162,7 +162,7 @@ func _on_tile_layer_press(pos: Vector2, b: InputEventMouseButton) -> void:
 	cvs.begin_gesture(cvs.Gesture.PAINT, MOUSE_BUTTON_LEFT)
 
 
-## 右键 = 擦除。实体层删实体、其余层擦瓦片/碰撞，语义与左键对称。
+## 右键 = 擦除。实体放置模式删实体、其余擦瓦片/碰撞，语义与左键对称。
 func _on_right_press(pos: Vector2) -> void:
 	if cvs._paste_mode:
 		cvs._paste_mode = false
@@ -199,11 +199,11 @@ func _on_left_release(pos: Vector2) -> void:
 			cvs.end_gesture()
 		cvs.Gesture.BOX:
 			cvs.end_gesture()
-			if cvs.active_layer == cvs._ent_layer_index():
+			if cvs.place_kind == "entity":
 				cvs._box_select(cvs._drag_start, pos)
 			else:
 				cvs._region_sel = cvs._cell_rect(cvs._drag_start, pos)
-				cvs._hint("区域已选 %dx%d（Ctrl+C 复制瓦片三层+实体，拖空白处可重选）" % [cvs._region_sel.size.x, cvs._region_sel.size.y])
+				cvs._hint("区域已选 %dx%d（Ctrl+C 复制各层瓦片+实体，拖空白处可重选）" % [cvs._region_sel.size.x, cvs._region_sel.size.y])
 		cvs.Gesture.PAINT, cvs.Gesture.PAN:
 			cvs.end_gesture()
 

@@ -57,16 +57,19 @@ func _functions_field(spr: Sprite2D) -> Dictionary:
 func extract() -> Dictionary:
 	if cvs.map_root == null or not is_instance_valid(cvs.map_root):
 		return {}   # 重建窗口期（load_data 的 await 一帧）：不产出快照，防 free 后访问
-	var tcells := []
-	for c in cvs.terrain.get_used_cells():
-		var ac = cvs.terrain.get_cell_atlas_coords(c)
-		var sid = cvs.terrain.get_cell_source_id(c)
-		tcells.append([c.x, c.y, sid, ac.x, ac.y])
-	var dcells := []
-	for c in cvs.decor.get_used_cells():
-		var ac2 = cvs.decor.get_cell_atlas_coords(c)
-		var sid2 = cvs.decor.get_cell_source_id(c)
-		dcells.append([c.x, c.y, sid2, ac2.x, ac2.y])
+	# 层栈瓦片：tiles = {层id: [[x,y,atlas,ax,ay]...]}（替代旧 terrain/decor 双数组）
+	var tiles := {}
+	for li in cvs.layer_tiles.size():
+		var tn: TileMapLayer = cvs.layer_tiles[li]
+		var lid: String = cvs.layer_id(li)
+		if lid == "":
+			continue
+		var cells := []
+		for c in tn.get_used_cells():
+			var ac = tn.get_cell_atlas_coords(c)
+			var sid = tn.get_cell_source_id(c)
+			cells.append([c.x, c.y, sid, ac.x, ac.y])
+		tiles[lid] = cells
 	# 碰撞条目带类型/形状（solid+矩形只写 [x,y]——契约缺省值零冗余）
 	var ccells := []
 	for c in cvs.collision.get_used_cells():
@@ -81,7 +84,7 @@ func extract() -> Dictionary:
 		else:
 			ccells.append([c.x, c.y])
 	var elist := []
-	for e in cvs.entities.get_children():
+	for e in cvs.ents_all():
 		var spr := e as Sprite2D
 		if spr and spr.has_meta("scene"):
  # props 原样保留（契约是"未知字段忽略"而非"剥离"——白名单会把手工
@@ -105,13 +108,16 @@ func extract() -> Dictionary:
 				"scene": sid,
  # 分层身份码：实例段 = 唯一身份（丢失会让内容 ID 前缀漂移，必须随快照走）
 				"code": code,
+				"layer": str(spr.get_meta("layer", "")),
  # 与 _cell_of 一致用 floori——int() 向零截断会让负坐标实体每次保存向 0 漂移
 				"x": floori((cell_pos.x - cvs.tile_px / 2.0) / cvs.tile_px),
 				"y": floori((cell_pos.y - cvs.tile_px / 2.0) / cvs.tile_px),
 				"flip_h": bool(spr.flip_h),
 				"props": clean,
 			}.merged(_functions_field(spr), true))
-	var used = cvs.terrain.get_used_rect()
+	var used = Rect2i()
+	for tn in cvs.layer_tiles:
+		used = used.merge((tn as TileMapLayer).get_used_rect())
 	if used.size == Vector2i.ZERO:
 		used = Rect2i(Vector2i.ZERO, Vector2i(Constants.DEFAULT_MAP_W, Constants.DEFAULT_MAP_H))
 	var meta0: Dictionary = cvs.map_data.get("meta", {})
@@ -124,11 +130,10 @@ func extract() -> Dictionary:
 	meta["name"] = cvs.cur_map_name
 	var sp = cvs._cell_of(cvs.spawn.position)
 	return {
-		"version": 3,   # 须与 map_store.FORMAT_VERSION 一致（此处是字面量；upgrade 对老值兜底）
+		"version": 4,   # 须与 map_store.FORMAT_VERSION 一致（此处是字面量；零兼容不升级老图）
 		"meta": meta,
 		"spawn": [sp.x, sp.y],
-		"terrain": tcells,
-		"decor": dcells,
+		"tiles": tiles,
 		"collision": ccells,
 		"entities": elist,
 	}

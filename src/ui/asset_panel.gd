@@ -252,9 +252,9 @@ func _instance_distribution(sid: String) -> Dictionary:
 	var out := {}
 	var maps := MapStore.read_all(manifest)
 	var live_rows: Array = []
-	var canvas_ok: bool = host != null and host.canvas != null and is_instance_valid(host.canvas) and host.canvas.entities != null
+	var canvas_ok: bool = host != null and host.canvas != null and is_instance_valid(host.canvas)
 	if canvas_ok:
-		for e in host.canvas.entities.get_children():
+		for e in host.canvas.ents_all():
 			var spr := e as Sprite2D
 			if spr == null or not spr.has_meta("scene") or str(spr.get_meta("scene", "")) != sid:
 				continue

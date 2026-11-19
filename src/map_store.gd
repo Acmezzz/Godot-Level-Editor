@@ -8,8 +8,10 @@ const ManifestScript := preload("res://src/manifest.gd")
 const MapValidator := preload("res://src/map_data_validation.gd")
 
 ## 当前地图数据格式版本。老图（无 version 键）视为 1。
-## v3：collision 条目 [x,y,(type,(shape))]（solid+矩形可短写 [x,y]）；terrain/decor = [x,y,atlas,ax,ay]。
-const FORMAT_VERSION := 3
+## v4：用户层栈 meta.layers=[{id,name,visible}]（栈序底→顶，id=4 位层码）；瓦片改
+## tiles={层id:[[x,y,atlas,ax,ay]...]}；实体 entities[] 加 layer=层码；collision 不变；
+## terrain/decor 顶层键删除——零兼容，旧图不迁移，由校验拒绝。
+const FORMAT_VERSION := 4
 ## 项目数据写盘版本号：每次 write_text 成功 +1。派生缓存（实体引用集等）据此判断是否重扫。
 static var project_rev := 0
 
@@ -69,33 +71,35 @@ static func read_path(path: String, manifest := {}) -> Dictionary:
 	return decode_text(text, path, manifest)
 
 ## 升级地图数据到当前格式；返回是否改动。
-## 老图实体坐标可能存了浮点或中心偏移，统一取整为格坐标。
+## v4 起零兼容：旧格式（terrain/decor 顶层键、无 meta.layers、浮点坐标）一律不迁移，
+## 只把版本号抬到当前值，结构问题交 validate 报错拒绝。
 static func upgrade(data: Dictionary) -> bool:
 	var ver := int(data.get("version", 1))
-	var changed := false
-	if ver < FORMAT_VERSION:
-		for ent in data.get("entities", []):
-			if not (ent is Dictionary):
-				continue
-			for key in ["x", "y"]:
-				if ent.has(key):
-					var v = ent[key]
-					if v is float or v is int:
-						var iv := int(v)
-						if iv != v:
-							ent[key] = iv
-							changed = true
- # spawn 也取整（与实体同规则），否则读回来会偏移半格
-		var sp = data.get("spawn", null)
-		if sp is Array and (sp as Array).size() >= 2:
-			for i in 2:
-				var sv = sp[i]
-				if sv is float and int(sv) != float(sv):
-					sp[i] = int(sv)
-					changed = true
-		data["version"] = FORMAT_VERSION
-		changed = true
-	return changed
+	if ver >= FORMAT_VERSION:
+		return false
+	data["version"] = FORMAT_VERSION
+	return true
+
+## v4 空地图模板：两层用户层栈（「资产层」+「FL」，底→顶，层码用 ContentId 发放），
+## tiles/collision/entities 均空。新建地图入口用它组装，保证 meta.layers 从出生就是 v4 契约。
+static func new_map(name: String, w: int, h: int) -> Dictionary:
+	var ContentId := preload("res://src/content/content_id.gd")
+	return {
+		"version": FORMAT_VERSION,
+		"meta": {
+			"name": name,
+			"w": w,
+			"h": h,
+			"layers": [
+				{"id": ContentId.new_inst_code(), "name": "资产层", "visible": true},
+				{"id": ContentId.new_inst_code(), "name": "FL", "visible": true},
+			],
+		},
+		"spawn": [2, 2],
+		"tiles": {},
+		"collision": [],
+		"entities": [],
+	}
 
 ## 地图文件路径；名称非法时返回 ""（调用方必须检查）
 static func path_for(m: Dictionary, name: String) -> String:

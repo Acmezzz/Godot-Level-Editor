@@ -9,7 +9,7 @@ extends RefCounted
 const KINDS := [
 	{
 		"id": "trigger_zone",
-		"name": "触发区",
+		"name": "事件区",
 		"builtin": true,
 		"role": "trigger",
 		"code": "TZ99",

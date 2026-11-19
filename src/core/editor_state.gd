@@ -5,33 +5,32 @@ var app   # 宿主引用
 
 func _init(host) -> void:
 	app = host
-## 唯一写入口。没有工具概念——层类型即画笔语义。
+## 唯一写入口。没有工具概念——place_kind（瓦片/实体）即画笔语义。
 ## 第一个参数保留只为兼容吸管的 tool_requested(tool, layer) 信号，值被忽略。
 func _apply_state(_tool := "", layer := -1) -> void:
 	if layer >= 0 and layer != app.canvas.active_layer:
 		var moved_from: int = app.canvas.active_layer
 		app.canvas.active_layer = layer
-		if _is_tiles_layer(layer):
+		if layer != app.canvas.collision_index():
 			app.last_tiles_layer = layer
 		if moved_from != layer:
 			app._set_status("已切到「%s」图层：%s" % [app._layer_label(layer), _gesture_hint(layer)])
 	_sync_ui()
 func _gesture_hint(i: int) -> String:
-	if _layer_type(i) == "entities":
+	if i >= 0 and i == app.canvas.collision_index():
+		return "左键拖动涂，右键擦除，开「框选」后拖动框选"
+	if app.canvas.place_kind == "entity":
 		return "左键放置 / 选中拖动，右键删除，开「框选」后拖动框选"
 	return "左键拖动涂，右键擦除，开「框选」后拖动框选"
 
 
 func _sync_ui() -> void:
-	# 调色板跟随图层类型（唯一一套切换；页签已删）
-	# grid 层（碰撞）没有瓦片/实体资产——两个列表藏起来，显示碰撞类型/形状控件。
-	var lt := _layer_type(app.canvas.active_layer)
-	if lt == "grid":
+	# 调色板跟随 place_kind（左栏选了瓦片还是实体）；碰撞元层例外——没有资产，显示类型/形状控件。
+	if app.canvas.active_layer == app.canvas.collision_index():
 		app._set_palette_page("")
 		_sync_collision_controls()
-	elif lt == "tiles":
+	elif app.canvas.place_kind == "tiles":
 		app._set_palette_page("tiles")
- # 装饰层没有独立资产（图一）：装饰↔地形切换时重填瓦片列表
 		app._palette_ctrl.sync_layer_view()
 	else:
 		app._set_palette_page("entities")
@@ -54,14 +53,10 @@ func _sync_collision_controls() -> void:
 
 
 func _layer_type(i: int) -> String:
-	var layers: Array = app.manifest.get("layers", [])
-	if i >= layers.size():
-		return "entities"
-	return str(layers[i].get("type", "tiles"))
-
-
-func _is_tiles_layer(i: int) -> bool:
-	return _layer_type(i) == "tiles"
+	# 旧层词汇已退役：栈层都是瓦片层（可混实体），只有碰撞是栈外元层
+	if i == app.canvas.collision_index():
+		return "collision"
+	return "tiles"
 
 ## 层下拉入口：切层就是唯一的「换画笔」动作
 
@@ -83,11 +78,9 @@ func _on_tile_pick(i: int, _at: Vector2 = Vector2.ZERO, _mb: int = 0) -> void:
 	# 多图集——调色板 metadata 带 atlas（TileSet source_id），选瓦片时一起落笔
 	app.canvas.paint_atlas = int(meta.get("atlas", 0))
 	app.canvas.stamp_thumb = null
-	# 保留碰撞层（在碰撞层选瓦片仍是要画碰撞）；否则回到最近用的瓦片层
-	var cur: int = app.canvas.active_layer
-	var target: int = cur if (_layer_type(cur) == "tiles" or _layer_type(cur) == "grid") \
-		else app.last_tiles_layer
-	_apply_state("paint", target)
+	# 选瓦片 = 进入瓦片放置语义；active_layer 保持不变（层栈混瓦片+实体）
+	app.canvas.place_kind = "tiles"
+	_apply_state("paint")
 
 ## 最近使用瓦片记录（键 "atlas:x,y"——多图集瓦片各自记录）
 func _record_tile_mru(key_str: String) -> void:
@@ -99,11 +92,13 @@ func _record_tile_mru(key_str: String) -> void:
 	if mru.size() > 8:
 		mru.resize(8)
 
-## 左栏点实体：设好待放置实体，切到实体层（层类型即画笔语义，无独立工具）
+## 左栏点实体：设好待放置实体，切到实体放置模式（place_kind 驱动画布手势）
 func _on_ent_pick(i: int, _at: Vector2 = Vector2.ZERO, _mb: int = 0) -> void:
 	if not app.map_loaded:
 		app._set_status(" 无地图：先新建或打开一张地图")
 		return
 	app.canvas.stamp_scene = str(app.ent_list.get_item_metadata(i))
 	app.canvas.stamp_thumb = app.ent_list.get_item_icon(i)
-	_apply_state("stamp", app.canvas._ent_layer_index())
+	# active_layer 保持不变：实体可摆任何栈层
+	app.canvas.place_kind = "entity"
+	_apply_state("stamp")

@@ -21,7 +21,7 @@ var _pan := Vector2.ZERO
 var _panning := false   # 中键按住拖动平移（手势同关卡画布）
 # 瓦片缓存（整图满涂时每次重绘重建上万条临时数组——按 canvas.map_rev 缓存）
 var _tiles_cache := {}
-var _tiles_rev := {}   # kind -> 缓存对应的 map_rev
+var _tiles_rev := {}   # 层栈下标 -> 缓存对应的 map_rev
 
 func _init(host) -> void:
 	self.host = host
@@ -190,13 +190,17 @@ func _draw_map() -> void:
 			draw_line(Vector2(origin.x, py), Vector2(origin.x + map_px.x, py), grid_col, 1.0)
 	draw_rect(Rect2(origin, map_px), Color(1, 1, 1, 0.25), false, 1.0)
 
-	# 地形 / 装饰真实瓦片：预览必须看得出实例压在哪块地上，只画网格等于丢了一半信息。
+	# 各用户层真实瓦片：预览必须看得出实例压在哪块地上，只画网格等于丢了一半信息。
 	# 数据优先取画布实时 TileMapLayer（刚涂的立刻可见），退回 map_data 的序列化数组；
-	# 两种来源都归一成 [x, y, atlas, ax, ay]。
+	# 两种来源都归一成 [x, y, atlas, ax, ay]；预览不分层配色，统一用地形色。
 	var texs: Array = host.app.canvas.atlas_texs
-	for kind in ["terrain", "decor"]:
-		var fallback: Color = Th.MAP_TERRAIN if str(kind) == "terrain" else Th.MAP_DECOR
-		for t in _tiles(str(kind)):
+	var layers: Array = meta.get("layers", [])
+	for li in layers.size():
+		var ldef = layers[li]
+		if not (ldef is Dictionary):
+			continue
+		var fallback: Color = Th.MAP_TERRAIN
+		for t in _tiles(li, str(ldef.get("id", ""))):
  # 只画地图边界内的格：画布允许在边界外涂，预览出框会显得脏
 			var cx := int(t[0])
 			var cy := int(t[1])
@@ -227,7 +231,7 @@ func _draw_map() -> void:
 		if tex != null:
 			draw_texture_rect(tex, rect, false)
 		else:
- # 内置种类（触发区等）没有缩略图：画半透明块，尺寸就是它在游戏里的占位
+ # 内置种类（事件区等）没有缩略图：画半透明块，尺寸就是它在游戏里的占位
 			draw_rect(rect, Color(Th.ACCENT, 0.35), true)
 			draw_rect(rect, Color(Th.ACCENT_HI, 0.8), false, 1.0)
  # 悬停框记下来，循环结束后再画：否则被后画的实体盖住，悬停看起来像没生效
@@ -249,16 +253,17 @@ func _draw_map() -> void:
 	if highlight_rect.size.x > 0.0:
 		draw_rect(highlight_rect.grow(3.0), Color(0.2, 1.0, 0.9, 0.95), false, 2.0)
 
-## 预览用的瓦片列表，统一为 [x, y, atlas, ax, ay]。
+## 预览用的瓦片列表，统一为 [x, y, atlas, ax, ay]（按层栈下标取）。
 ## 首选画布实时 TileMapLayer（编辑中的改动立刻反映），图层不可用时退回 map_data 数组。
-func _tiles(kind: String) -> Array:
+func _tiles(li: int, layer_id: String) -> Array:
 	if not host._map_ready():
 		return []
 	var rev: int = int(host.app.canvas.map_rev)
-	if _tiles_rev.get(kind, -1) == rev:
-		return _tiles_cache.get(kind, [])
+	if _tiles_rev.get(li, -1) == rev:
+		return _tiles_cache.get(li, [])
 	var out: Array = []
-	var layer: TileMapLayer = host.app.canvas.terrain if kind == "terrain" else host.app.canvas.decor
+	var stack: Array = host.app.canvas.layer_tiles
+	var layer: TileMapLayer = stack[li] if li >= 0 and li < stack.size() else null
 	if layer != null and is_instance_valid(layer):
 		for c in layer.get_used_cells():
 			var ac: Vector2i = layer.get_cell_atlas_coords(c)
@@ -266,12 +271,13 @@ func _tiles(kind: String) -> Array:
 				continue
 			out.append([c.x, c.y, layer.get_cell_source_id(c), ac.x, ac.y])
 	else:
-		for raw in host.app.canvas.map_data.get(kind, []):
+		var tiles: Dictionary = host.app.canvas.map_data.get("tiles", {})
+		for raw in tiles.get(layer_id, []):
 			if not (raw is Array) or (raw as Array).size() < 5:
 				continue
 			var a: Array = raw
 			out.append([int(a[0]), int(a[1]), int(a[2]), int(a[3]), int(a[4])])
-	_tiles_cache[kind] = out
-	_tiles_rev[kind] = rev
+	_tiles_cache[li] = out
+	_tiles_rev[li] = rev
 	return out
 

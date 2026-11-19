@@ -11,10 +11,15 @@ var _dirty_badge: PanelContainer
 # 画布视图开关（网格 / 框选）
 var _grid_btn: Button
 var _select_btn: Button
-## 层下拉（决定当前画笔语义）。按钮显示当前层名，弹层里每层一行 + 👁/🔒。
+## 层下拉（决定画在哪）。按钮显示当前层名，弹层里每层一行 + 👁/🔒。
 var _layer_btn: Button
 var _layer_menu: PopupPanel
 var _layer_menu_body: VBoxContainer
+## 层管理弹窗（新建/改名/上下移/删除/运行时可见）
+var _layer_mgr: PopupPanel
+var _layer_mgr_body: VBoxContainer
+var _layer_mgr_rows: VBoxContainer
+var _layer_mgr_input: LineEdit
 ## 选中实体信息条（不做属性表单，只给类型名 / 内容状态 / 去内容编辑器）
 var _sel_bar: PanelContainer
 var _sel_name: Label
@@ -191,14 +196,18 @@ func _build_palette_column() -> PanelContainer:
 	var v = app.UiKitScript.vbox(8)
 	col.add_child(v)
 
-	# —— 层下拉：这一列唯一决定输入的东西——
-	# 层决定画笔行为：地形/装饰/碰撞 = 按住拖动连续涂、右键擦除；实体 = 左键放、右键删。
-	# 所以不再需要工具按钮，也不再需要「地形瓦片 / 实体」两个页签——层就是那个切换。
+	# —— 层下拉 + 管理按钮：层决定画在哪，place_kind（调色板）决定画什么——
+	var layer_row = app.UiKitScript.hbox(4)
 	_layer_btn = app.UiKitScript.button("层：—", Callable(), "plain")
 	_layer_btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
-	_layer_btn.tooltip_text = "选择图层：图层类型决定左键与右键的行为"
+	_layer_btn.tooltip_text = "选择图层：图层决定画在哪，place_kind 决定画什么"
 	_layer_btn.pressed.connect(_toggle_layer_menu)
-	v.add_child(_layer_btn)
+	_layer_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	layer_row.add_child(_layer_btn)
+	var mgr_btn = app.UiKitScript.button("管理", func(): _open_layer_manager(), "ghost")
+	mgr_btn.tooltip_text = "图层管理：新建 / 改名 / 排序 / 删除 / 运行时可见"
+	layer_row.add_child(mgr_btn)
+	v.add_child(layer_row)
 
 	# 弹层内容按清单重建：每层一行 = 层名 + 👁 + 🔒，显隐/锁定内联在项里（不占额外高度）。
 	# 本控制器是 RefCounted（没有 add_child），弹层挂到窗口根——和所有其他弹窗一致。
@@ -311,12 +320,11 @@ func _set_palette_page(which: String) -> void:
 	if app.grid_hint:
 		app.grid_hint.visible = which == ""
 
-## 图层类型小工具（editor_layout 自用，避免依赖 app 的私有方法）
+## 图层类型小工具（editor_layout 自用）：栈层都是瓦片层，只有碰撞是栈外元层
 func _layer_type_of(i: int) -> String:
-	var layers: Array = app.manifest.get("layers", [])
-	if i < 0 or i >= layers.size():
-		return "entities"
-	return str((layers[i] as Dictionary).get("type", "tiles"))
+	if i == app.canvas.collision_index():
+		return "collision"
+	return "tiles"
 
 ## 状态栏：左侧操作提示，右侧常驻坐标/工具/脏标记
 
@@ -394,12 +402,12 @@ func _refresh_tool_meta() -> void:
 		return
 	var lt := _layer_type_of(app.canvas.active_layer)
 	var suffix := ""
-	if lt == "entities":
-		suffix = " · 单击放置"
-	elif lt == "grid":
+	if lt == "collision":
  # 碰撞层没有涂抹尺寸的说法，真正要知道的是「这一笔画的是什么」
 		suffix = " · %s %s" % [_collision_type_label(app.canvas.collision_type),
 			_diagonal_shape_label(app.canvas.collision_shape)]
+	elif app.canvas.place_kind == "entity":
+		suffix = " · 单击放置"
 	else:
 		suffix = " · %d×%d 拖动涂" % [app.canvas.brush_size, app.canvas.brush_size]
 	_meta_tool.text = "%s%s" % [app._layer_label(app.canvas.active_layer), suffix]
@@ -437,9 +445,8 @@ func _refresh_layer_panel() -> void:
 	for c in _layer_menu_body.get_children():
 		_layer_menu_body.remove_child(c)
 		c.queue_free()
-	var layers: Array = app.manifest.get("layers", [])
-	# 层数 = 清单层 + 实体层（实体层永远排在最后，是唯一「放东西」的层）
-	for i in layers.size() + 1:
+	# 层数 = 地图 meta.layers 层栈 + 碰撞元层（下拉最后，名字走 app._layer_label）
+	for i in app.canvas.layer_count() + 1:
 		var lname: String = app._layer_label(i)
 		var is_cur: bool = i == app.canvas.active_layer
 		var row = app.UiKitScript.hbox(2)
@@ -478,6 +485,84 @@ func _toggle_layer_menu() -> void:
 	var at := _layer_btn.get_screen_position()
 	_layer_menu.position = Vector2i(at) + Vector2i(0, int(_layer_btn.size.y))
 	_layer_menu.popup()
+
+## 层管理弹窗：每层一行（改名 / 运行时可见 / ↑↓ / 删除），底部新建层。
+## 行操作走画布 layer_* API；meta.layers 同步更新，弹窗内容直接读它重填
+## （画布 load_data 重建是异步的，不阻塞弹窗刷新）。碰撞元层不是栈层，不进列表。
+func _open_layer_manager() -> void:
+	var shell: Dictionary = app._popup_body("图层管理",
+		"新建 / 改名（回车提交）/ 上下排序 / 删除；「运行时」= 游戏开局该层是否显示")
+	_layer_mgr = shell.pop
+	_layer_mgr_body = shell.body
+	_layer_mgr_rows = app.UiKitScript.vbox(2)
+	_layer_mgr_body.add_child(_layer_mgr_rows)
+	var row = app.UiKitScript.hbox(6)
+	var input := LineEdit.new()
+	input.placeholder_text = "新层名"
+	input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_layer_mgr_input = input
+	row.add_child(input)
+	row.add_child(app.UiKitScript.button("新建层", func():
+		app.canvas.layer_add(_layer_mgr_input.text)
+		_layer_mgr_input.clear()
+		_rebuild_layer_mgr()), "primary")
+	_layer_mgr_body.add_child(row)
+	var close_btn: Button = app.UiKitScript.button("关闭", func(): _layer_mgr.hide(), "plain")
+	close_btn.size_flags_horizontal = Control.SIZE_SHRINK_END
+	_layer_mgr_body.add_child(close_btn)
+	_rebuild_layer_mgr()
+	app._open_popup(_layer_mgr)
+
+## 重填层管理列表：读 meta.layers（layers_decl）直接重建，不依赖画布异步重建完成
+func _rebuild_layer_mgr() -> void:
+	if _layer_mgr == null or not is_instance_valid(_layer_mgr):
+		return
+	if _layer_mgr_rows == null or not is_instance_valid(_layer_mgr_rows):
+		return
+	for c in _layer_mgr_rows.get_children():
+		_layer_mgr_rows.remove_child(c)
+		c.queue_free()
+	var decl: Array = app.canvas.layers_decl()
+	if decl.is_empty():
+		_layer_mgr_rows.add_child(app.UiKitScript.hint_label(
+			"还没有图层——下方输入名字后点「新建层」。", app.POPUP_BODY_W))
+		return
+	for i in decl.size():
+		_layer_mgr_rows.add_child(_layer_mgr_row(i, decl[i] as Dictionary))
+
+## 一层一行：名字（行内改名，回车提交）+ 运行时可见 + ↑ ↓ 删除
+func _layer_mgr_row(i: int, decl: Dictionary) -> Control:
+	var row = app.UiKitScript.hbox(4)
+	var nm := LineEdit.new()
+	nm.text = str(decl.get("name", ""))
+	nm.placeholder_text = str(decl.get("id", ""))
+	nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	nm.tooltip_text = "层名（改成新名字后回车提交）"
+	nm.text_submitted.connect(func(s: String): app.canvas.layer_rename(i, s))
+	row.add_child(nm)
+	var vis := CheckBox.new()
+	vis.button_pressed = bool(decl.get("visible", true))
+	vis.tooltip_text = "运行时初始可见（差分视图用）"
+	vis.toggled.connect(func(on: bool): app.canvas.layer_set_visible(i, on))
+	row.add_child(vis)
+	var up = app.UiKitScript.button("↑", func():
+		app.canvas.layer_move(i, -1)
+		_rebuild_layer_mgr(), "ghost")
+	up.disabled = i == 0
+	up.tooltip_text = "上移一层"
+	row.add_child(up)
+	var down = app.UiKitScript.button("↓", func():
+		app.canvas.layer_move(i, 1)
+		_rebuild_layer_mgr(), "ghost")
+	down.disabled = i >= app.canvas.layer_count() - 1
+	down.tooltip_text = "下移一层"
+	row.add_child(down)
+	var del = app.UiKitScript.button("删除", func():
+		app.canvas.layer_del(i)
+		_rebuild_layer_mgr(), "ghost")
+	del.tooltip_text = "删除该层（层上瓦片与实体一并删除）"
+	row.add_child(del)
+	return row
 
 ## 选中实体信息条：类型名 + 内容状态 + 「在工作台编辑 →」。
 ## 不做属性表单——参数属内容，归内容编辑器与资产目录。
