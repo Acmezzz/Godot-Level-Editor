@@ -60,3 +60,14 @@ func test_audio_code_dup() -> void:
 		{"id": "a", "name": "A", "path": "x.ogg", "code": "Z111"},
 		{"id": "b", "name": "B", "path": "y.ogg", "code": "Z111"}]
 	ok(_errs_of(m).size() >= 1, "音频码重复报错")
+
+func test_cross_pool_field_code_dup() -> void:
+	var m := _good()
+	m["conditions"] = [{"id": "c", "fields": [
+		{"id": "x", "code": "A111", "kind": "input", "type": "string", "default": ""}]}]
+	ok(_errs_of(m).size() >= 1, "功能与条件字段码同码报错（三池一个码空间）")
+
+func test_fn_id_charset() -> void:
+	var m := _good()
+	m["functions"] = {"中文功能": {"name": "N", "code": "F111"}}
+	ok(_errs_of(m).size() >= 1, "功能 id 含非 ASCII 字符报错（内容目录/ID 段不可用）")

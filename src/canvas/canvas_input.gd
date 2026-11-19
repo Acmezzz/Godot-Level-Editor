@@ -13,6 +13,7 @@ extends RefCounted
 ## 起手即 begin_gesture，松手即 end_gesture；任何新起手都顶掉旧手势，不可能叠加。
 
 var cvs   # 宿主引用
+var _spawn_moved := false   # 出生点拖动本次是否真的动过格（点击不动 = 零副作用）
 
 func _init(host) -> void:
 	cvs = host
@@ -27,11 +28,14 @@ func _unhandled_input(event: InputEvent) -> void:
 		if b.pressed:
 			match b.button_index:
 				MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN:
- # 滚轮缩放以鼠标为锚——鼠标下的世界点缩放前后不动
+ # 滚轮缩放以鼠标为锚——鼠标下的世界点缩放前后不动。
+ # 局部鼠标读于缩放前（=锚点世界坐标）：S-half = (L-cam)*zw0，
+ # 代入 cam1 = cam0 + (S-half)*(1/zw0 - 1/z1) 化简得下式；光标在屏中心时相机不动
+					var lm: Vector2 = cvs.get_local_mouse_position()
 					var zw0: float = cvs.zoom
 					cvs.zoom = clampf(cvs.zoom * (1.15 if b.button_index == MOUSE_BUTTON_WHEEL_UP else 1.0 / 1.15), 0.5, 6.0)
 					if not is_equal_approx(cvs.zoom, zw0):
-						cvs.cam_pos += cvs.get_local_mouse_position() / zw0 - cvs.get_local_mouse_position() / cvs.zoom
+						cvs.cam_pos += (lm - cvs.cam_pos) * (1.0 - zw0 / cvs.zoom)
 					cvs._update_cam()
 				MOUSE_BUTTON_MIDDLE:
 					cvs.begin_gesture(cvs.Gesture.PAN, MOUSE_BUTTON_MIDDLE)
@@ -59,6 +63,12 @@ func _unhandled_input(event: InputEvent) -> void:
 			cvs.Gesture.REGION_MOVE:
 				cvs._move_region_preview(pos)
 			cvs.Gesture.SPAWN_DRAG:
+				# 点击不动 = 不压撤销、不置脏：首次格间移动前才压快照，松手动过才 _mark
+				var c0: Vector2i = cvs._cell_of((cvs.spawn as Node2D).position)
+				var c1: Vector2i = cvs._cell_of(pos)
+				if c1 != c0 and not _spawn_moved:
+					cvs._push_undo()
+					_spawn_moved = true
 				cvs._drag_spawn_to(pos)
 			cvs.Gesture.ERASE:
 				cvs._erase_at(pos)
@@ -88,14 +98,14 @@ func _on_left_press(pos: Vector2, b: InputEventMouseButton) -> void:
 		return
 	# 出生点标记可在实体放置模式下直接拖动——瓦片/碰撞笔刷优先，
 	# 框选模式下让位给框选。当前图层锁定时也不拖。
-	if not cvs.select_mode and cvs.place_kind == "entity" and cvs._on_spawn(pos):
-		if cvs.is_layer_locked(cvs.active_layer):
-			cvs._hint("当前图层已锁定：解锁后再移动出生点")
+		if not cvs.select_mode and cvs.place_kind == "entity" and cvs._on_spawn(pos):
+			if cvs.is_layer_locked(cvs.active_layer):
+				cvs._hint("当前图层已锁定：解锁后再移动出生点")
+				return
+			_spawn_moved = false   # 撤销快照推迟到首次真移动前才压（点击不动 = 零副作用）
+			cvs.begin_gesture(cvs.Gesture.SPAWN_DRAG, MOUSE_BUTTON_LEFT)
+			cvs._drag_start = pos
 			return
-		cvs._push_undo()
-		cvs.begin_gesture(cvs.Gesture.SPAWN_DRAG, MOUSE_BUTTON_LEFT)
-		cvs._drag_start = pos
-		return
 	if cvs.place_kind == "entity":
 		_on_entity_layer_press(pos, b)
 	else:
@@ -192,7 +202,8 @@ func _on_left_release(pos: Vector2) -> void:
 			cvs.end_gesture()
 		cvs.Gesture.SPAWN_DRAG:
 			cvs.end_gesture()
-			cvs._mark()
+			if _spawn_moved:
+				cvs._mark()   # 点击不动零副作用：不置脏、不无效化索引、不丢重做栈
 		cvs.Gesture.ENTITY_DRAG:
 			if cvs._drag_entity != null and is_instance_valid(cvs._drag_entity):
 				cvs._finish_entity_drag()

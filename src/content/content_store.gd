@@ -71,9 +71,6 @@ static func declared_kinds(m: Dictionary) -> Array:
 	out.sort()
 	return out
 
-static func list_kinds(m: Dictionary) -> Array:
-	return declared_kinds(m)
-
 ## 某类资源的目录；种类非法或项目目录缺失返回 ""。
 static func dir_for(m: Dictionary, kind: String) -> String:
 	if not _is_valid_kind(kind):

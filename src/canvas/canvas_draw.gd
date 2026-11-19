@@ -68,11 +68,15 @@ func _draw() -> void:
 			var tint := Color(1.0, 0.45, 0.45, 0.55) if cvs._is_grid_layer(cvs.active_layer) else Color(1, 1, 1, 0.5)
 			cvs.draw_rect(brect, tint, false, 1.0)
  # 无图集（headless 测试/清单缺图）时不画幽灵，避免 draw_texture_rect_region 空纹理警告
-			if cvs.atlas_tex != null and not cvs._is_grid_layer(cvs.active_layer):
-				cvs.draw_texture_rect_region(cvs.atlas_tex,
-					Rect2(Vector2(c) * cvs.tile_px, Vector2(tsz, tsz)),
-					Rect2(Vector2(cvs.paint_cell) * cvs.tile_px, Vector2(tsz, tsz)),
-					Color(1, 1, 1, 0.5))
+			if not cvs._is_grid_layer(cvs.active_layer):
+				# 笔刷幽灵跟 paint_atlas 走（多图集项目不再画成 0 号图集的错图）
+				var gtex: Texture2D = cvs.atlas_texs[cvs.paint_atlas] \
+					if cvs.paint_atlas >= 0 and cvs.paint_atlas < (cvs.atlas_texs as Array).size() else null
+				if gtex != null:
+					cvs.draw_texture_rect_region(gtex,
+						Rect2(Vector2(c) * cvs.tile_px, Vector2(tsz, tsz)),
+						Rect2(Vector2(cvs.paint_cell) * cvs.tile_px, Vector2(tsz, tsz)),
+						Color(1, 1, 1, 0.5))
 	# 碰撞叠加由 CollisionView 节点绘制（图层接口控制显隐），这里不再特例绘制。
 	# 地图边界（meta w×h，关卡的实际范围）
 	var meta: Dictionary = cvs.map_data.get("meta", {})
@@ -200,8 +204,12 @@ func _draw() -> void:
 		# tiles = {层id: [[x,y,atlas,ax,ay]...]}——预览不区分层，统一原色
 		for cells in (cvs._move_snap.get("tiles", {}) as Dictionary).values():
 			for t in cells:
-				if cvs.atlas_tex != null:
-					cvs.draw_texture_rect_region(cvs.atlas_tex,
+				# 按条目自己的图集索引取纹理（预览与真实落笔一致）
+				var ai2: int = int(t[2])
+				var tex2: Texture2D = cvs.atlas_texs[ai2] \
+					if ai2 >= 0 and ai2 < (cvs.atlas_texs as Array).size() else null
+				if tex2 != null:
+					cvs.draw_texture_rect_region(tex2,
 						Rect2(Vector2(Vector2i(int(t[0]), int(t[1])) + md) * cvs.tile_px, Vector2(cvs.tile_px, cvs.tile_px)),
 						Rect2(Vector2(int(t[3]), int(t[4])) * cvs.tile_px, Vector2(cvs.tile_px, cvs.tile_px)),
 						Color(1, 1, 1, 0.6))
@@ -234,8 +242,12 @@ func _draw() -> void:
 		for cells2 in (cvs._region_clip.get("tiles", {}) as Dictionary).values():
 			for t in cells2:
 				var tc = org + Vector2i(int(t[0]), int(t[1]))
-				if cvs.atlas_tex != null:
-					cvs.draw_texture_rect_region(cvs.atlas_tex,
+				# 按条目自己的图集索引取纹理（同上）
+				var ai3: int = int(t[2])
+				var tex3: Texture2D = cvs.atlas_texs[ai3] \
+					if ai3 >= 0 and ai3 < (cvs.atlas_texs as Array).size() else null
+				if tex3 != null:
+					cvs.draw_texture_rect_region(tex3,
 						Rect2(Vector2(tc) * cvs.tile_px, Vector2(cvs.tile_px, cvs.tile_px)),
 						Rect2(Vector2(int(t[3]), int(t[4])) * cvs.tile_px, Vector2(cvs.tile_px, cvs.tile_px)),
 						Color(1, 1, 1, 0.5))

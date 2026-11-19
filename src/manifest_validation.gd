@@ -8,6 +8,7 @@ const FunctionDecls := preload("res://src/content/function_decl.gd")
 const ConditionDecls := preload("res://src/content/condition_decl.gd")
 const StepDecls := preload("res://src/content/step_decl.gd")
 const AudioDecls := preload("res://src/content/audio_decl.gd")
+const ContentStore := preload("res://src/content/content_store.gd")
 
 static func validate(data: Dictionary, project_dir := "") -> Array[Dictionary]:
 	var issues: Array[Dictionary] = []
@@ -55,6 +56,12 @@ static func _validate_functions(data: Dictionary, issues: Array[Dictionary]) -> 
 		for k0 in (decl as Dictionary).keys():
 			if str(k0) == "":
 				_add(issues, "error", "functions", "function ids must be non-empty (dict form)")
+	# 功能 id 同时是内容目录名与内容 ID 第四段——字符集受限（ContentStore 同一规则），
+	# 非法字符集的声明能过结构校验但内容读写全废，必须在加载期就报出来
+	for fid2 in FunctionDecls.functions(data):
+		if not ContentStore.is_valid_id(fid2):
+			_add(issues, "error", "functions.%s" % str(fid2),
+				"function id may only contain letters/digits/_/./- (content dir + id segment)")
 	var dup := FunctionDecls.duplicate_codes(data)
 	for d in dup:
 		_add(issues, "error", "functions", "duplicate code %s (%s)" % [str(d.get("code", "")), str(d.get("scope", ""))])
@@ -139,16 +146,14 @@ static func _validate_conditions(data: Dictionary, issues: Array[Dictionary]) ->
 				if not ["string", "int", "float", "bool"].has(typ):
 					_add(issues, "error", "conditions.%s.fields.%s" % [cid, field_id],
 						"input type must be string / int / float / bool")
-	# 字段码跨池查重：条件字段与功能字段共存于同一份内容 fields，同码 = 静默合并
+	# 字段码跨池查重：条件字段与功能字段共存于同一份内容 fields，同码 = 静默合并。
+	# 功能池内部的字段码重复由 duplicate_codes（本文件上方）已报过——这里只收集不重报
 	var fcodes := {}
 	for fid in FunctionDecls.functions(data):
 		for fd1 in (FunctionDecls.functions(data)[fid] as Dictionary).get("fields", []):
 			if fd1 is Dictionary:
 				var fc := str((fd1 as Dictionary).get("code", ""))
 				if fc != "":
-					if fcodes.has(fc):
-						_add(issues, "error", "functions.%s.fields" % str(fid),
-							"duplicate field code across pools: " + fc)
 					fcodes[fc] = true
 	for cid2 in ConditionDecls.conditions(data):
 		for fd2 in (ConditionDecls.conditions(data)[cid2] as Dictionary).get("fields", []):

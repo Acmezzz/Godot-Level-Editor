@@ -30,6 +30,9 @@ static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 					if not (cell is Array) or cell.size() != 5 or not _is_number_prefix(cell, 5):
 						_add(issues, "error", "tiles.%s[%d]" % [str(lid), j],
 							"must contain exactly x, y, atlas, atlas_x, atlas_y")
+					elif int(cell[2]) < 0 or int(cell[3]) < 0 or int(cell[4]) < 0:
+						_add(issues, "error", "tiles.%s[%d]" % [str(lid), j],
+							"atlas index and atlas coords must be >= 0")
 	var spawn = data.get("spawn", [2, 2])
 	if not (spawn is Array) or spawn.size() != 2 or not _is_number_pair(spawn):
 		_add(issues, "error", "spawn", "must contain two numeric coordinates")

@@ -33,18 +33,32 @@ func _paint(c: Vector2i) -> void:
 	if cvs.map_root == null:
 		cvs._hint("无地图：先新建或打开一张地图")
 		return
+	# 有真实改动才 _mark：拖动涂刷每个 mouse-motion 都进这里，无条件 mark 会让
+	# 碰撞视图整层重画、内容预览按 map_rev 的缓存反复失效重建（热路径）
+	var changed := false
 	# 碰撞元层涂刷走统一入口（类型/形状元数据跟笔刷的 collision_type/shape 走）
 	if cvs._is_grid_layer(cvs.active_layer):
 		for bc in _brush_cells(c):
-			cvs.set_collision_cell(bc, true, cvs.collision_type, cvs.collision_shape)
-		cvs._mark(false)   # 只改碰撞，实体集没动
+			var had: bool = cvs.collision.get_cell_source_id(bc) != -1
+			var cm = cvs._collision_meta.get(bc, null)
+			var same: bool = had and cm != null and str(cm.get("type", "solid")) == cvs.collision_type \
+				and str(cm.get("shape", "")) == cvs.collision_shape
+			if not same:
+				cvs.set_collision_cell(bc, true, cvs.collision_type, cvs.collision_shape)
+				changed = true
+		if changed:
+			cvs._mark(false)   # 只改碰撞，实体集没动
 		return
 	var layer = cvs._layer_node(cvs.active_layer)
 	if layer == null:
 		return
 	for bc in _brush_cells(c):
-		layer.set_cell(bc, cvs.paint_atlas, cvs.paint_cell)
-	cvs._mark(false)   # 只改瓦片层
+		if layer.get_cell_source_id(bc) != cvs.paint_atlas \
+				or layer.get_cell_atlas_coords(bc) != cvs.paint_cell:
+			layer.set_cell(bc, cvs.paint_atlas, cvs.paint_cell)
+			changed = true
+	if changed:
+		cvs._mark(false)   # 只改瓦片层
 
 
 ## 这一格到底有没有东西可擦——起手前先判，避免压空撤销快照。
@@ -88,17 +102,23 @@ func _erase_at(pos: Vector2) -> void:
 		cvs.entity_selected.emit(cvs.selected_entity)
 		cvs._mark()
 		return
-	# 碰撞元层擦除走统一入口（类型元数据一并清）
+	# 碰撞元层擦除走统一入口（类型元数据一并清）——有真实改动才 _mark（热路径同 _paint）
+	var changed := false
 	if cvs._is_grid_layer(cvs.active_layer):
 		for bc in _brush_cells(cvs._cell_of(pos)):
-			cvs.set_collision_cell(bc, false)
+			if cvs.collision.get_cell_source_id(bc) != -1:
+				cvs.set_collision_cell(bc, false)
+				changed = true
 	else:
 		var layer = cvs._layer_node(cvs.active_layer)
 		if layer == null:
 			return
 		for bc in _brush_cells(cvs._cell_of(pos)):
-			layer.erase_cell(bc)
-	cvs._mark(false)   # 纯瓦片/碰撞擦除，实体集不变
+			if layer.get_cell_source_id(bc) != -1:
+				layer.erase_cell(bc)
+				changed = true
+	if changed:
+		cvs._mark(false)   # 纯瓦片/碰撞擦除，实体集不变
 
 
 func _stamp(c: Vector2i) -> void:
@@ -137,8 +157,3 @@ func _stamp(c: Vector2i) -> void:
 	cvs._mark()
 	# 放置即选中（"放置→配置"不断档）；连放不受影响
 	cvs.entity_selected.emit(spr)
-
-
-## 当前层自审：自动碰撞的「有没有地形」判定跟着 active_layer 走（不再认 terrain id）。
-func _has_terrain_at(c: Vector2i) -> bool:
-	return cvs._has_terrain_at(c)

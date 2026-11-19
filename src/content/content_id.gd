@@ -7,6 +7,10 @@ extends RefCounted
 ## 不挂 class_name，按项目惯例用 preload 引用。
 
 const ContentStore := preload("res://src/content/content_store.gd")
+# 注意：preload 链 content_id → content_store → map_store → manifest 是一条**闭环**
+# （manifest 又 preload 声明域家族）。当前能解析靠的是跨脚本全是运行期方法调用——
+# 任何人在 const 初始化器里解引用预载脚本的成员（如 const X = ContentId.LAYER_LEN）即爆
+# cyclic reference。给这条链加成员常量前先想清楚。
 
 ## 可打印且不含 I/O/0/1 的字符集，长度 32，恰好覆盖 randi() 的低 5 位。
 const CHARS := "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"

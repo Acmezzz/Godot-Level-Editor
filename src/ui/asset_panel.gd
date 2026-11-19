@@ -277,7 +277,7 @@ func _instance_distribution(sid: String) -> Dictionary:
 			if not (ent is Dictionary) or str(ent.get("scene", "")) != sid:
 				continue
 			rows.append({
-				"id": str(ent.get("id", "")),
+				"id": str(ent.get("code", "")),   # v4 实例身份 = code（id 键在实例条目里不存在）
 				"x": int(ent.get("x", 0)),
 				"y": int(ent.get("y", 0)),
 			})

@@ -32,25 +32,22 @@ static func _decl_items(decl) -> Array:
 static func ensure_codes(m: Dictionary) -> bool:
 	var Decls := preload("res://src/content/content_id.gd")
 	var changed := false
-	var seen := {}
-	# 第一遍收集已占用的码，第二遍只给空的分配，避免新码撞上后面的既有码
+	# 占用表 = 三池字段码全量 + 本池条目码。字段码是全局码空间（校验跨池同码报错），
+	# 功能是首池——补码不避条件/步骤已占码，造出的坏码会随清单落盘、下次启动校验拒载
+	var seen := Decls.field_codes(m)
+	var seen_fn := {}   # 条目码查重是池内的（steps/audio 各自池内查重）
 	for pair in _decl_items(m.get("functions", null)):
-		var d0: Dictionary = pair.body
-		var c0 := str(d0.get("code", ""))
+		var c0 := str((pair.body as Dictionary).get("code", ""))
 		if c0 != "":
-			seen[c0] = true
-		for fd0 in d0.get("fields", []) if d0.get("fields", []) is Array else []:
-			var fc0 := str((fd0 as Dictionary).get("code", "")) if fd0 is Dictionary else ""
-			if fc0 != "":
-				seen[fc0] = true
+			seen_fn[c0] = true
 	for pair in _decl_items(m.get("functions", null)):
 		var d: Dictionary = pair.body
 		if str(d.get("code", "")) == "":
 			var code := Decls.new_fn_code()
-			while seen.has(code):
+			while seen_fn.has(code):
 				code = Decls.new_fn_code()
 			d["code"] = code
-			seen[code] = true
+			seen_fn[code] = true
 			changed = true
 		for fd in d.get("fields", []) if d.get("fields", []) is Array else []:
 			if not (fd is Dictionary):

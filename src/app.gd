@@ -298,11 +298,14 @@ func _switch_project() -> void:
 	_map_view = null
 	project_shell = null
 	asset_panel = null
-	# 三个控制器由 editor_layout 建界面时赋值，界面已释放就必须一起置空，
+	# 控制器由 editor_layout 建界面时赋值，界面已释放就必须全部置空，
 	# 否则切项目回选择页后 _process / 菜单委托仍会打到旧控制器上（见 6b0c5de）。
 	_map_file_ctrl = null
 	_props_panel_ctrl = null
 	_editor_state_ctrl = null
+	_layout_ctrl = null
+	_side_actions_ctrl = null
+	_palette_ctrl = null
 	_nav_bars.clear()
 	_ent_thumbs_cache.clear()
 	_show_picker()
@@ -679,7 +682,10 @@ func _save_manifest_file() -> void:
 		if not str(k).begins_with("_"):
 			out[k] = manifest[k]
 	var tiles: Array = out.get("tiles", [])
-	for t in tiles:
+	# tiles 与 live manifest 共享同一数组/字典引用——必须深拷贝后再擦运行时键，
+	# 否则 Ctrl+S 会把 atlas_abs 从活体清单里抹掉，之后载图 _build_tileset 全灭（直到重开项目）
+	out["tiles"] = (tiles as Array).duplicate(true)
+	for t in (out.get("tiles", []) as Array):
 		(t as Dictionary).erase("atlas_abs")
 	# 内置种类由编辑器提供，不写进游戏工程清单
 	out = preload("res://src/content/builtin_kinds.gd").strip_from(out)

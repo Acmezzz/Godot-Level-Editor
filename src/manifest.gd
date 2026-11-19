@@ -41,7 +41,10 @@ static func is_valid_map_name(name: String) -> bool:
 	if name.ends_with("."):
 		return false
 	var stem := name.to_lower()
-	for reserved in ["con", "prn", "aux", "nul"]:
+	# 保留名不带扩展名（CON.json 同样是 Windows 保留设备名），COM/LPT 覆盖 1-9
+	for reserved in ["con", "prn", "aux", "nul",
+			"com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8", "com9",
+			"lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9"]:
 		if stem == reserved or stem.begins_with(reserved + "."):
 			return false
 	return true

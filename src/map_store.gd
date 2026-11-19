@@ -15,9 +15,9 @@ const FORMAT_VERSION := 4
 ## 项目数据写盘版本号：每次 write_text 成功 +1。派生缓存（实体引用集等）据此判断是否重扫。
 static var project_rev := 0
 
-## ---- 地图数据 mtime+尺寸缓存（read/read_all 复用） ----
-## 刷新链/校验/引用扫描一个会话里反复 read_all——按文件 mtime 缓存；
-## write_text / write_transaction 各自维护一致性（写后失效，下次读回源）。
+## ---- 地图数据 mtime+尺寸缓存（read_all 复用） ----
+## 刷新链/校验/引用扫描一个会话里反复 read_all——按文件 mtime+size 缓存；
+## write_text 等写路径各自维护一致性（写后失效，下次读回源）。read() 单图直读不走缓存。
 static var _cache := {}   # path -> {mtime: int, data: Dictionary}
 
 ## 按缓存读单图；读失败不缓存（下次重读）
@@ -173,50 +173,6 @@ static func write_text(path: String, text: String) -> bool:
 
 ## 多地图协调写入：先暂存所有新内容和原文件备份，再逐个替换。
 ## OS 不提供跨文件原子提交；任一替换失败时尽力恢复已提交文件并报告回滚结果。
-static func write_transaction(m: Dictionary, updates: Dictionary) -> Dictionary:
-	if updates.is_empty():
-		return {"ok": true, "rollback_ok": true, "failed_map": ""}
-	var txid := str(Time.get_ticks_usec())
-	var entries: Array[Dictionary] = []
-	var seen_paths := {}
-	for map_name in updates:
-		var name := str(map_name)
-		var path := path_for(m, name)
-		if path == "" or seen_paths.has(path):
-			return {"ok": false, "rollback_ok": true, "failed_map": name, "error": "invalid or duplicate map path"}
-		seen_paths[path] = true
-		var entry := {"name": name, "path": path, "stage": path + ".txn-" + txid + ".tmp",
-			"backup": path + ".txn-" + txid + ".bak", "existed": FileAccess.file_exists(path)}
-		if entry.existed:
-			var read_file := FileAccess.open(path, FileAccess.READ)
-			if read_file == null:
-				_cleanup_transaction(entries)
-				return {"ok": false, "rollback_ok": true, "failed_map": name, "error": "cannot read original map"}
-			var original := read_file.get_buffer(read_file.get_length())
-			read_file.close()
-			if not _write_bytes(str(entry.backup), original):
-				entries.append(entry)
-				_cleanup_transaction(entries)
-				return {"ok": false, "rollback_ok": true, "failed_map": name, "error": "cannot stage backup"}
-		var content := JSON.stringify(updates[map_name], "\t").to_utf8_buffer()
-		if not _write_bytes(str(entry.stage), content):
-			entries.append(entry)
-			_cleanup_transaction(entries)
-			return {"ok": false, "rollback_ok": true, "failed_map": name, "error": "cannot stage map"}
-		entries.append(entry)
-
-	var committed: Array[Dictionary] = []
-	for entry in entries:
-		var err := DirAccess.rename_absolute(str(entry.stage), str(entry.path))
-		if err != OK:
-			var rollback_ok := _rollback_transaction(committed)
-			_cleanup_transaction(entries)
-			return {"ok": false, "rollback_ok": rollback_ok, "failed_map": str(entry.name),
-				"error": "map replacement failed: " + error_string(err)}
-		committed.append(entry)
-	_cleanup_transaction(entries)
-	return {"ok": true, "rollback_ok": true, "failed_map": ""}
-
 static func _write_bytes(path: String, bytes: PackedByteArray) -> bool:
 	var file := FileAccess.open(path, FileAccess.WRITE)
 	if file == null:
@@ -226,33 +182,6 @@ static func _write_bytes(path: String, bytes: PackedByteArray) -> bool:
 	var ok := file.get_error() == OK
 	file.close()
 	return ok
-
-static func _rollback_transaction(committed: Array[Dictionary]) -> bool:
-	var ok := true
-	for i in range(committed.size() - 1, -1, -1):
-		var entry: Dictionary = committed[i]
-		var path := str(entry.path)
-		if bool(entry.existed):
-			var backup_file := FileAccess.open(str(entry.backup), FileAccess.READ)
-			if backup_file == null:
-				ok = false
-				continue
-			var backup := backup_file.get_buffer(backup_file.get_length())
-			backup_file.close()
-			if not _write_bytes(path, backup):
-				ok = false
-		else:
-			if FileAccess.file_exists(path) and DirAccess.remove_absolute(path) != OK:
-				ok = false
-	return ok
-
-static func _cleanup_transaction(entries: Array[Dictionary]) -> void:
-	for entry in entries:
-		_cache.erase(str(entry.get("path", "")))   # 事务落盘后失效对应缓存
-		for key in ["stage", "backup"]:
-			var path := str(entry.get(key, ""))
-			if path != "" and FileAccess.file_exists(path):
-				DirAccess.remove_absolute(path)
 
 ## 在地图数据里按实例码查找；返回空字典表示没有
 static func find_entity(data: Dictionary, ent_id: String) -> Dictionary:
@@ -291,6 +220,12 @@ static func rename_map(m: Dictionary, old_name: String, new_name: String) -> Str
 		return "文件系统重命名失败"
 	_cache.erase(src)
 	_cache.erase(dst)
+	# 旧名的历史备份按新名永远查不到——一并清掉，不留孤儿
+	var hist_dir := str(m.get("_maps_dir", "")).path_join(".history")
+	for i in HISTORY_DEPTH:
+		var hp := hist_dir.path_join("%s.json.%d" % [old_name, i + 1])
+		if FileAccess.file_exists(hp):
+			DirAccess.remove_absolute(hp)
 	return ""
 
 ## 复制地图文件（新名冲突拒绝）；内容原样复制，引用不动。
@@ -308,11 +243,11 @@ static func duplicate_map(m: Dictionary, old_name: String, new_name: String) -> 
 	var f := FileAccess.open(src, FileAccess.READ)
 	if f == null:
 		return "原图读取失败"
-	var buf := f.get_buffer(f.get_length())
+	var txt := f.get_as_text()
 	f.close()
-	if not _write_bytes(path_for(m, new_name), buf):
+	# 走原子写单入口（tmp+rename）：写失败不留半截文件堵死同名重试；缓存失效 write_text 内部已做
+	if not write_text(path_for(m, new_name), txt):
 		return "复制写盘失败"
-	_cache.erase(path_for(m, new_name))
 	return ""
 
 ## 读所有地图 → {地图名: data}。坏图（无法读取/JSON 解析失败/非对象）不进结果，

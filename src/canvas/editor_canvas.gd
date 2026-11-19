@@ -202,6 +202,9 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	_drag_entities.clear()
 	_drag_origins.clear()
 	_drag_moved = false
+	# 区域拖动快照清干净：跨图残留旧图实体的 freed 引用（注释声称的「输入/区域状态复位」补齐）
+	_move_snap = {}
+	_move_from = Vector2i.ZERO
 	if not keep_dirty:
 		layer_hidden.clear()
 		layer_locked.clear()
@@ -209,8 +212,12 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	var saved_zoom := zoom
 	if map_root:
 		map_root.queue_free()
-		await get_tree().process_frame
- # 代数过期 = 期间又有更新一次的重建进入——本协程退出，root 交给最新协程创建
+		# 不在场景树内（headless 直调）时 get_tree() 为 null——旧 root 的释放排到退出即可，
+		# 协程同步走到重建分支（gen 守卫仍然保护并发重建）
+		var tree := get_tree()
+		if tree != null:
+			await tree.process_frame
+	# 代数过期 = 期间又有更新一次的重建进入——本协程退出，root 交给最新协程创建
 		if gen != _rebuild_gen:
 			return
 	map_root = Node2D.new()
@@ -486,7 +493,11 @@ var _rebuild_gen := 0
 ## 老实体/新建实体没有码就补发；已有（载图恢复）保留
 func _ensure_code(spr: Sprite2D) -> void:
 	if str(spr.get_meta("code", "")) == "":
-		spr.set_meta("code", _fresh_inst_code())
+		var c := _fresh_inst_code()
+		spr.set_meta("code", c)
+		# 新码即时入索引（索引已建时）：防止同批次后续补码查不到它而撞码
+		if not _ent_by_id_dirty:
+			_ent_by_id[c] = spr
 
 ## 生成一个本图未占用的实例码（码空间 100 万+，撞码重摇即可）
 func _fresh_inst_code() -> String:
@@ -497,10 +508,8 @@ func _fresh_inst_code() -> String:
 	return ContentIdRef.new_inst_code()
 
 func _code_taken(c: String) -> bool:
-	for e in ents_all():
-		if str((e as Sprite2D).get_meta("code", "")) == c:
-			return true
-	return false
+	# _ent_by_code_index 是脏标记缓存——O(n) 全扫摊平为建一次索引后 O(1) 查
+	return _ent_by_code_index().has(c)
 
 # —— 吸管 + 整图入视野 ——
 signal tool_requested(tool: String, layer: int)
@@ -519,8 +528,9 @@ func _pick_tile(pos: Vector2) -> void:
 			continue
 		paint_cell = ac
 		paint_atlas = tn.get_cell_source_id(c)   # 吸管连 atlas 一起吸（多图集瓦片吸取后原样落笔）
-		active_layer = li
-		_hint("已吸取 %s（切到涂刷）" % str(ac))
+		# 不直写 active_layer——直写会短路 editor_state 的切层分支（状态文案不出）；
+		# 经 tool_requested 走 _apply_state 单一写入口
+		_hint("已吸取 %s（切到该层涂刷）" % str(ac))
 		tool_requested.emit("paint", li)
 		return
 	_hint("该格没有可吸取的瓦片（碰撞层不参与吸管）")
@@ -530,9 +540,14 @@ func _fit_view() -> void:
 	if map_root == null or not is_instance_valid(map_root) or layer_tiles.is_empty():
 		_hint("无地图：先新建或打开一张地图")
 		return
+	# 用第一个非空矩形做种子再合并——Rect2i() 以 (0,0) 为种子会让 union 恒含原点，
+	# 内容不贴原点时 Home 的中心与缩放全错
 	var used := Rect2i()
 	for tn in layer_tiles:
-		used = used.merge((tn as TileMapLayer).get_used_rect())
+		var r: Rect2i = (tn as TileMapLayer).get_used_rect()
+		if r.size == Vector2i.ZERO:
+			continue
+		used = r if used.size == Vector2i.ZERO else used.merge(r)
 	if used.size == Vector2i.ZERO:
 		used = Rect2i(0, 0, 10, 10)
 	cam_pos = Vector2(used.get_center()) * tile_px
@@ -583,6 +598,10 @@ func generate_collision(strategy := "full", replace := false, one_way_top := fal
 		return 0
 	if is_layer_locked(collision_index()):
 		_hint("碰撞层已锁定：先解锁")
+		return 0
+	# 预判：无可生成（且不是替换模式）就不压撤销快照——与 _erase_hits 的「不压空撤销」同纪律
+	if not replace and count_auto_collision(strategy, false) == 0:
+		_hint("没有可生成的碰撞格（换策略或换层再试）")
 		return 0
 	var src := _layer_node(active_layer)
 	if src == null or active_layer == collision_index():
@@ -782,12 +801,24 @@ func layer_del(i: int) -> void:
 	_load_snap_layers(snap, active_id)
 
 func layer_rename(i: int, name: String) -> void:
+	if map_root == null or not is_instance_valid(map_root):
+		return
 	var L := layers_decl()
 	if i < 0 or i >= L.size() or str(name) == "":
 		return
+	# 快照先行（契约 1）：只改 name 也走同一纪律，防止照抄成改 id/顺序时串层
 	_push_undo()
-	(L[i] as Dictionary)["name"] = str(name)
-	_mark(false)   # 只改 meta，不动节点
+	var snap := extract()
+	if snap.is_empty():
+		return
+	var meta: Dictionary = snap.get("meta", {})
+	var SL: Array = (meta.get("layers", []) as Array).duplicate(true)
+	if i < 0 or i >= SL.size():
+		return
+	(SL[i] as Dictionary)["name"] = str(name)
+	meta["layers"] = SL
+	snap["meta"] = meta
+	_load_snap_layers(snap, layer_id(active_layer))
 
 func layer_move(i: int, dir: int) -> void:
 	if map_root == null or not is_instance_valid(map_root):
@@ -812,12 +843,24 @@ func layer_move(i: int, dir: int) -> void:
 
 ## 运行时初始可见（差分视图用）；编辑视图显隐走 set_layer_hidden，两回事。
 func layer_set_visible(i: int, v: bool) -> void:
+	if map_root == null or not is_instance_valid(map_root):
+		return
 	var L := layers_decl()
 	if i < 0 or i >= L.size():
 		return
+	# 快照先行（同 layer_rename：只改 visible 也走同一纪律）
 	_push_undo()
-	(L[i] as Dictionary)["visible"] = v
-	_mark(false)
+	var snap := extract()
+	if snap.is_empty():
+		return
+	var meta: Dictionary = snap.get("meta", {})
+	var SL: Array = (meta.get("layers", []) as Array).duplicate(true)
+	if i < 0 or i >= SL.size():
+		return
+	(SL[i] as Dictionary)["visible"] = v
+	meta["layers"] = SL
+	snap["meta"] = meta
+	_load_snap_layers(snap, layer_id(active_layer))
 
 ## 层操作收尾：按新快照重建，激活层跟随身份（同码层下标，层没了落最底层）。
 func _load_snap_layers(snap: Dictionary, active_id: String) -> void:
