@@ -129,7 +129,7 @@ static func function_decl(m: Dictionary, fn_id: String) -> Dictionary:
 	var all := functions(m)
 	return all.get(fn_id, {}) if all.get(fn_id, {}) is Dictionary else {}
 
-## 功能字段声明数组（与实体 stats/fields 同构）；缺失时返回空数组。
+## 功能字段声明数组；缺失时返回空数组。
 static func function_fields(m: Dictionary, fn_id: String) -> Array:
 	return function_decl(m, fn_id).get("fields", [])
 
@@ -149,6 +149,23 @@ static func fn_id_of(m: Dictionary, code: String) -> String:
 		if str((functions(m)[fid] as Dictionary).get("code", "")) == code:
 			return str(fid)
 	return ""
+
+## 实体类型的自带功能（挂载）：清单 entities[].functions = 功能 id 数组，声明顺序即默认执行顺序。
+## 返回 [{id, code}]；挂载了未声明功能的 id 被过滤（校验层报错误），保证返回的都可用。
+static func entity_mounts(m: Dictionary, sid: String) -> Array:
+	var out: Array = []
+	for ed in m.get("entities", []):
+		if not (ed is Dictionary) or str((ed as Dictionary).get("id", "")) != sid:
+			continue
+		var mounts = (ed as Dictionary).get("functions", [])
+		if not (mounts is Array):
+			continue
+		for fid in mounts:
+			var fids := str(fid)
+			var code := fn_code(m, fids)
+			if fids != "" and code != "":
+				out.append({"id": fids, "code": code})
+	return out
 
 ## 人类名 ↔ 执行码对照表（Markdown），保存清单时写到 editor/CODES.md。
 ## 游戏侧启动时读清单即可重建同样的运行时映射；本表是给人看的快照 + git diff 友好。

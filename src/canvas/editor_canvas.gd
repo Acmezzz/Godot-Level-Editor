@@ -145,6 +145,9 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	invalidate_ref_cache()   # 换图后引用集可能来自另一张图，必须重扫
 	map_data = data
 	cur_map_name = map_name
+	# 清单 tileSize 是「一格 = 多少像素」的唯一真相：网格/边界/实体对齐/碰撞视图全用它。
+	# 此前只建 tileset 时读了它，tile_px 本体从不赋值（恒 16）——tileSize≠16 的项目全画布错位。
+	tile_px = int(manifest.get("tileSize", 16))
 	# 节点全部重建：选区/剪贴板引用失效，清空（剪贴板只存模板数据可保留，但引用选区必须清）
 	selected_entity = null
 	selected_multi.clear()
@@ -279,9 +282,6 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 			spr.texture = null
 			var tprops: Dictionary = e.get("props", {}) if e.get("props", {}) is Dictionary else {}
 			spr.position += trigger_zone_size(tprops) * 0.5 - Vector2(tile, tile) * 0.5
-		# 三层标识的定义层：def 指游戏工程内容库里的具体配置；缺省时走旧的 scene 路径
-		if str(e.get("def", "")) != "":
-			spr.set_meta("def_id", str(e.get("def", "")))
 		spr.flip_h = bool(e.get("flip_h", false))
 		entities.add_child(spr)
 		_fit_sprite(spr, sid)

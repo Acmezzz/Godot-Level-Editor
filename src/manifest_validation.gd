@@ -2,6 +2,7 @@ extends RefCounted
 ## Manifest structural and supported-capability validation.
 
 const SUPPORTED_TILE_LAYERS := ["terrain", "decor", "collision"]
+const FunctionDecls := preload("res://src/content/function_decl.gd")
 
 static func validate(data: Dictionary, project_dir := "") -> Array[Dictionary]:
 	var issues: Array[Dictionary] = []
@@ -13,7 +14,7 @@ static func validate(data: Dictionary, project_dir := "") -> Array[Dictionary]:
 	if data.get("layers", null) is Array:
 		_validate_layers(data.layers, issues)
 	if data.get("entities", null) is Array:
-		_validate_entities(data.entities, issues)
+		_validate_entities(data, issues)
 	if data.has("functions"):
 		_validate_functions(data, issues)
 	var tile_size = data.get("tileSize", 16)
@@ -25,7 +26,6 @@ static func validate(data: Dictionary, project_dir := "") -> Array[Dictionary]:
 ## 码重复是**错误**：两个声明同码等于静默别名，磁盘上的引用会指向不确定的那个。
 ## id 重复同样错误（内容和目录按 id 分目录）。
 static func _validate_functions(data: Dictionary, issues: Array[Dictionary]) -> void:
-	var FunctionDecls := preload("res://src/content/function_decl.gd")
 	var decl = data.get("functions", null)
 	if not (decl is Dictionary or decl is Array):
 		_add(issues, "error", "functions", "must be an object or an array")
@@ -106,7 +106,8 @@ static func _validate_layers(layers: Array, issues: Array[Dictionary]) -> void:
 		if not ids.has(required):
 			_add(issues, "warning", "layers", "recommended layer is missing: " + required)
 
-static func _validate_entities(entities: Array, issues: Array[Dictionary]) -> void:
+static func _validate_entities(data: Dictionary, issues: Array[Dictionary]) -> void:
+	var entities: Array = data.get("entities", [])
 	var ids := {}
 	for i in entities.size():
 		var entity = entities[i]
@@ -120,8 +121,20 @@ static func _validate_entities(entities: Array, issues: Array[Dictionary]) -> vo
 		ids[id] = true
 		if entity.has("fields") and not (entity.fields is Array):
 			_add(issues, "error", path + ".fields", "must be an array")
-		if entity.has("stats") and not (entity.stats is Array):
-			_add(issues, "error", path + ".stats", "must be an array")
+		# 自带功能（挂载）：entities[].functions = 已声明功能的 id 数组。
+		# 挂载了未声明的功能 = 挂了个空操作，直接报错误（声明池在上层 functions）。
+		if entity.has("functions"):
+			if not (entity.functions is Array):
+				_add(issues, "error", path + ".functions", "must be an array of function ids")
+			else:
+				var pool := FunctionDecls.functions(data)
+				for fid in entity.functions:
+					if not (fid is String) or str(fid) == "":
+						_add(issues, "error", path + ".functions",
+							"mounts must be non-empty function ids")
+					elif not pool.has(str(fid)):
+						_add(issues, "error", path + ".functions",
+							"mounted function is not declared: " + str(fid))
 		var fields := {}
 		for field in entity.get("fields", []) if entity.get("fields", []) is Array else []:
 			if not (field is Dictionary):

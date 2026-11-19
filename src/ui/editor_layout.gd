@@ -519,8 +519,7 @@ func _refresh_sel_bar() -> void:
 	var sid := str(spr.get_meta("scene", ""))
 	var eid := str(spr.get_meta("ent_id", ""))
 	var fns: Array = spr.get_meta("functions", [])
-	var def_id := str(spr.get_meta("def_id", ""))
-	var n := fns.size() if not fns.is_empty() else (1 if def_id != "" else 0)
+	var n := fns.size()
 	_sel_name.text = "%s  %s" % [app._scene_name(sid), eid]
 	if n == 0:
 		_sel_state.text = "无附加功能"

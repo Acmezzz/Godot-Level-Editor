@@ -10,15 +10,14 @@ signal closed   # 返回关卡编辑器
 const Kit := preload("res://src/ui/ui_kit.gd")
 const Th := preload("res://src/ui/ui_theme.gd")
 const MapStore := preload("res://src/map_store.gd")
-const DefModel := preload("res://src/content/def_model.gd")
-const ContentStore := preload("res://src/content/content_store.gd")
+const FunctionDecls := preload("res://src/content/function_decl.gd")
 
 var manifest := {}
 var save_manifest: Callable
 var host = null  # 宿主 app（确认框复用其链路）
 
 var asset_list: ItemList
-var stats_grid: GridContainer
+var mounts_box: VBoxContainer
 var name_edit: LineEdit
 var thumb: TextureRect
 var _detail_hint: Label
@@ -107,12 +106,11 @@ func build() -> void:
 	name_box.add_child(Kit.hint_label("名称与下方数值即时写回清单，下次试玩生效"))
 
 	det.add_child(Kit.divider())
-	det.add_child(Kit.section_label("数值模板（stats）"))
-	stats_grid = GridContainer.new()
-	stats_grid.columns = 6
-	stats_grid.add_theme_constant_override("h_separation", 8)
-	stats_grid.add_theme_constant_override("v_separation", 6)
-	det.add_child(stats_grid)
+	det.add_child(Kit.section_label("自带功能（挂载）"))
+	det.add_child(Kit.hint_label(
+		"类型自带、实例不可删的功能：从清单 functions 声明池里挑，值在内容编辑器按实例填。", 460))
+	mounts_box = Kit.vbox(6)
+	det.add_child(mounts_box)
 
 	extra = Kit.vbox(8)
 	det.add_child(Kit.divider())
@@ -159,7 +157,7 @@ func refresh_list(focus_sid := "") -> void:
 		asset_list.select(focus_idx)
 		_show_detail(str(asset_list.get_item_metadata(focus_idx)))
 	else:
-		# 列表空（含「删掉最后一个资产」）：右栏必须走空态，否则名称框/stats/分布/删除按钮
+		# 列表空（含「删掉最后一个资产」）：右栏必须走空态，否则名称框/挂载/分布/删除按钮
 		# 全部滞留上一项，残留闭包还会往已 erase 的字典里写（审查 P1-8）。
 		_show_detail("")
 
@@ -179,7 +177,7 @@ func _show_detail(sid: String) -> void:
 		# 空匹配（例如详情里删掉了当前资产）不能留上一项的陈旧数据
 		name_edit.text = ""
 		thumb.texture = null
-		_asset_editor_rows(stats_grid, {})
+		_mount_rows({})
 		# extra 里挂着实例分布与删除按钮，也必须清掉（审查 P1-8 的残留主体）
 		for child in extra.get_children():
 			extra.remove_child(child)
@@ -191,7 +189,7 @@ func _show_detail(sid: String) -> void:
 	_loading = true
 	name_edit.text = str(_edef.get("name", sid))
 	thumb.texture = _asset_texture(_edef)
-	_asset_editor_rows(stats_grid, _edef)
+	_mount_rows(_edef)
 	for child in extra.get_children():
 		extra.remove_child(child)
 		child.queue_free()
@@ -202,10 +200,8 @@ func _show_detail(sid: String) -> void:
 	extra.add_child(del)
 	_loading = false
 
-## 实例分布（模型阶段 1 §5 + v2 §4）：每实例一行——id/坐标 + 各数值就地可改。
-## 数值 = 三层合并（实例 > 定义 > 清单），与属性面板/游戏运行时同一算法（DefModel.effective_stats）。
-## 改值 = 写该实例的 props.stats 覆盖（不是改类型模板）；当前打开的地图走画布内存，
-## 其余地图直接落盘——两处入口改的都是同一份数据，只是路径不同。
+## 实例分布（只读视图）：按地图折叠列实例 id 与坐标，供清点/删除检查。
+## 自带功能的值 = 实例绑定内容（内容编辑器填），未填的用声明 default（游戏侧兜底）。
 var _dist_rows: VBoxContainer
 
 func _add_distribution_section(sid: String) -> void:
@@ -224,21 +220,16 @@ func _fill_distribution(sid: String) -> void:
 	if dist.is_empty():
 		_dist_rows.add_child(Kit.hint_label("没有已放置实例", 220))
 		return
-	var sdefs: Array = _edef.get("stats", [])
-	var has_stats := not (sdefs as Array).is_empty()
 	var total := 0
 	for map_name in dist:
 		total += (dist[map_name] as Array).size()
-		# P2-11：行数 = 实例数 × 数值项数，满项目扫下来能上千个 SpinBox。
-		# 按地图折叠，默认收起，展开时才建行（懒构建）。
-		_dist_rows.add_child(_dist_map_section(str(map_name), dist[map_name], sdefs))
-	var foot := "共 %d 个实例 / %d 张地图" % [total, dist.size()]
-	if has_stats:
-		foot += "　·　改数值 = 只改这个实例，不影响同类型其它实例"
+		# P2-11：实例多时按地图折叠，默认收起，展开时才建行（懒构建）。
+		_dist_rows.add_child(_dist_map_section(str(map_name), dist[map_name]))
+	var foot := "共 %d 个实例 / %d 张地图 · 自带功能值在内容编辑器按实例填（未填的用声明默认值）" % [total, dist.size()]
 	_dist_rows.add_child(Kit.hint_label(foot, 460))
 
 ## 单张地图的折叠段：标题按钮切换，首展时才构建行（P2-11）。
-func _dist_map_section(map_name: String, rows: Array, sdefs: Array) -> Control:
+func _dist_map_section(map_name: String, rows: Array) -> Control:
 	var wrap := Kit.vbox(2)
 	var built := {"done": false}
 	var body := Kit.vbox(2)
@@ -249,7 +240,7 @@ func _dist_map_section(map_name: String, rows: Array, sdefs: Array) -> Control:
 		if not built.done:
 			built.done = true
 			for r in rows:
-				body.add_child(_dist_row(map_name, r, sdefs))
+				body.add_child(_dist_row(map_name, r))
 		body.visible = not body.visible
 		head.text = _dist_head_text(map_name, rows.size(), body.visible))
 	wrap.add_child(head)
@@ -273,13 +264,10 @@ func _instance_distribution(sid: String) -> Dictionary:
 			if spr == null or not spr.has_meta("scene") or str(spr.get_meta("scene", "")) != sid:
 				continue
 			var c: Vector2i = host.canvas._cell_of(spr.position)
-			var lprops = spr.get_meta("props", {})
 			live_rows.append({
 				"id": str(spr.get_meta("ent_id", "")),
 				"x": c.x,
 				"y": c.y,
-				"def": str(spr.get_meta("def_id", "")),
-				"props": lprops if lprops is Dictionary else {},
 			})
 	for map_name in maps:
 		var is_cur: bool = host != null and map_name == str(host.cur_map_name)
@@ -293,13 +281,10 @@ func _instance_distribution(sid: String) -> Dictionary:
 		for ent in data.get("entities", []):
 			if not (ent is Dictionary) or str(ent.get("scene", "")) != sid:
 				continue
-			var props = ent.get("props", {})
 			rows.append({
 				"id": str(ent.get("id", "")),
 				"x": int(ent.get("x", 0)),
 				"y": int(ent.get("y", 0)),
-				"def": str(ent.get("def", "")),
-				"props": props if props is Dictionary else {},
 			})
 		if not rows.is_empty():
 			out[map_name] = rows
@@ -308,8 +293,9 @@ func _instance_distribution(sid: String) -> Dictionary:
 		out[str(host.cur_map_name)] = live_rows
 	return out
 
-## 分布行：id · 各数值就地可改。数值框直接写该实例的 props.stats 覆盖。
-func _dist_row(map_name: String, r: Dictionary, sdefs: Array) -> Control:
+## 分布行（只读）：id · 坐标。值在内容编辑器按实例填，这里不再提供第二套编辑入口
+## （旧 props.stats 双写就是两个编辑面各写各的造成的分裂）。
+func _dist_row(map_name: String, r: Dictionary) -> Control:
 	var row := Kit.hbox(10)
 	var rid := str(r.get("id", ""))
 	var ids := Kit.text_label(rid, Th.TEXT_MUTE, Th.FS_META)
@@ -317,113 +303,13 @@ func _dist_row(map_name: String, r: Dictionary, sdefs: Array) -> Control:
 	ids.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	ids.tooltip_text = "%s  (%d,%d)" % [map_name, int(r.get("x", 0)), int(r.get("y", 0))]
 	row.add_child(ids)
-	if (sdefs as Array).is_empty():
-		var lbl := Kit.text_label("这个类型没有数值项", Th.TEXT_MUTE, Th.FS_SMALL)
-		lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		row.add_child(lbl)
-	else:
-		var props: Dictionary = r.get("props", {}) if r.get("props") is Dictionary else {}
-		var ov: Dictionary = props.get("stats", {}) if props.get("stats", {}) is Dictionary else {}
-		var def_res := {}
-		var did := str(r.get("def", ""))
-		if did != "":
-			def_res = ContentStore.read(manifest, "defs", did)
-		var eff: Dictionary = DefModel.effective_stats(def_res, _edef, props)
-		var cells := Kit.hbox(8)
-		cells.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		row.add_child(cells)
-		for sf in sdefs:
-			var stat_id := str(sf.get("id", ""))
-			if stat_id == "":
-				continue
-			var cell := Kit.hbox(3)
-			var nl := Kit.text_label(str(sf.get("name", stat_id)), Th.TEXT_MUTE, Th.FS_META)
-			nl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-			cell.add_child(nl)
-			var box := SpinBox.new()
-			var v_min := float(sf.get("min", 0.0))
-			var v_max := float(sf.get("max", 999.0))
-			var eff_v := float(eff.get(stat_id, sf.get("default", 0.0)))
-			# P3-8：有效值超出声明的 min/max 时（实例覆盖或类型模板给了越界值），SpinBox 会
-			# 静默夹到边界显示，用户一微调就把夹过的值写回去。把范围撑到能包住它。
-			v_min = minf(v_min, eff_v)
-			v_max = maxf(v_max, eff_v)
-			box.min_value = v_min
-			box.max_value = v_max
-			box.step = 0.1 if str(sf.get("type", "float")) == "float" else 1.0
-			box.value = eff_v
-			box.custom_minimum_size = Vector2(64, 0)
-			box.tooltip_text = "只改「%s」这个实例；%s" % [rid,
-				"已覆盖类型模板" if ov.has(stat_id) else "当前继承类型模板，改动即覆盖"]
-			# 撤销合并：连续调同一个框只压一次撤销（和属性面板同一约定）
-			var session := {"started": false}
-			box.get_line_edit().focus_exited.connect(func(): session.started = false)
-			# P1-7：连续控件不在每 tick 落盘。拖值期间只改内存/画布，失焦或回车上提交；
-			# 否则非当前图的每次增量都要全量读改写，还会把 3 层 .history 备份挤满。
-			var pending := {"v": box.value}
-			box.value_changed.connect(func(v: float):
-				pending.v = v
-				if not session.started:
-					session.started = true
-					if host != null and map_name == str(host.cur_map_name) and host.canvas != null and host.canvas.entities != null:
-						host.canvas._push_undo()
-				if host != null and map_name == str(host.cur_map_name):
-					_set_instance_stat(map_name, rid, stat_id, v)
-				box.tooltip_text = "只改「%s」这个实例；已覆盖类型模板" % rid)
-			var commit := func(_t := ""):
-				_set_instance_stat(map_name, rid, stat_id, pending.v)
-			box.get_line_edit().text_submitted.connect(commit)
-			box.get_line_edit().focus_exited.connect(commit)
-			# 点上下箭头不会让 LineEdit 获得焦点，focus_exited 等不到——按鼠标松开兜底提交
-			box.gui_input.connect(func(ev: InputEvent):
-				if ev is InputEventMouseButton and not (ev as InputEventMouseButton).pressed:
-					commit.call())
-			cell.add_child(box)
-			cells.add_child(cell)
-		row.add_child(Kit.spacer())
-
+	var pos := Kit.text_label("(%d, %d)" % [int(r.get("x", 0)), int(r.get("y", 0))], Th.TEXT_MUTE, Th.FS_META)
+	pos.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	pos.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	row.add_child(pos)
 	return row
 
-## 写单实例数值：当前地图走画布（撤销栈/脏标记与属性面板同路），其余地图直接落盘。
-## 两个入口改的是同一份地图数据，区别只在「已经打开」与否。
-func _set_instance_stat(map_name: String, ent_id: String, stat_id: String, v: float) -> void:
-	if ent_id == "" or stat_id == "":
-		return
-	if host != null and map_name == str(host.cur_map_name) and host.canvas != null and host.canvas.entities != null:
-		var spr = host.canvas._ent_by_id_index().get(ent_id, null)
-		if spr == null or not is_instance_valid(spr):
-			return
-		var props: Dictionary = spr.get_meta("props", {})
-		if not (props is Dictionary):
-			props = {}
-		var ov: Dictionary = props.get("stats", {}) if props.get("stats", {}) is Dictionary else {}
-		ov[stat_id] = v
-		props["stats"] = ov
-		spr.set_meta("props", props)
-		host.canvas._mark()
-		host._set_status("  %s · %s 已改为 %s（仅此实例）" % [ent_id, stat_id, _fmt_num(v)])
-		return
-	# 非当前地图：读 → 改 → 写。写盘走 MapStore 的原子替换 + 历史轮转。
-	var data: Dictionary = MapStore.read(manifest, map_name)
-	if data.is_empty():
-		return
-	var ent := MapStore.find_entity(data, ent_id)
-	if ent.is_empty():
-		return
-	var p2 = ent.get("props", {})
-	var props2: Dictionary = p2 if p2 is Dictionary else {}
-	var ov2: Dictionary = props2.get("stats", {}) if props2.get("stats", {}) is Dictionary else {}
-	ov2[stat_id] = v
-	props2["stats"] = ov2
-	ent["props"] = props2
-	if MapStore.write(manifest, map_name, data):
-		host._set_status("  %s · %s 已改为 %s（仅此实例，已写盘）" % [ent_id, stat_id, _fmt_num(v)])
-	else:
-		host._set_status("  写盘失败：%s" % map_name)
 
-func _fmt_num(v: float) -> String:
-	return "%d" % int(v) if v == floorf(v) else "%.1f" % v
 
 ## K7：删除资产前引用检查——列出仍在使用该类型的地图与实例数；有引用需确认
 func _delete_asset_checked(sid: String) -> void:
@@ -452,97 +338,78 @@ func _delete_asset_checked(sid: String) -> void:
 	# 删除后留在图鉴：刷新列表并落到第一项（没有则给空态提示）
 	refresh_list()
 
-# —— stats 模板行 ——
-func _asset_editor_rows(grid: GridContainer, edef: Dictionary) -> void:
-	for c in grid.get_children():
-		grid.remove_child(c)
+# —— 自带功能（挂载）编辑器 ——
+## 挂载 = 类型自带的 functions 声明 id 列表；实例绑定在选中时自动补齐（content_editor._sync_mounted）。
+## 声明本体（fields/kind/type）在清单 functions 池，属开发契约——这里只挂载，不编辑声明。
+func _mount_rows(edef: Dictionary) -> void:
+	for c in mounts_box.get_children():
+		mounts_box.remove_child(c)
 		c.queue_free()
-	if _dedupe_stat_ids(edef):
-		save_manifest.call()
-	for h in ["名称", "id", "类型", "默认", "最小", "最大"]:
-		grid.add_child(Kit.text_label(h, Th.TEXT_MUTE, Th.FS_META))
-	for sf in edef.get("stats", []):
-		var nm := LineEdit.new()
-		nm.text = str(sf.get("name", ""))
-		nm.custom_minimum_size = Vector2(78, 0)
-		# P0-6：编辑只改内存，失焦/回车才写盘（每击键全量写 JSON 会持续打盘）
-		nm.text_changed.connect(func(t: String): sf["name"] = t)
-		nm.text_submitted.connect(func(_t: String): save_manifest.call())
-		nm.focus_exited.connect(func(): save_manifest.call())
-		grid.add_child(nm)
-		var idl := LineEdit.new()
-		idl.text = str(sf.get("id", ""))
-		idl.editable = false
-		idl.custom_minimum_size = Vector2(96, 0)
-		grid.add_child(idl)
-		var tsel := OptionButton.new()
-		tsel.add_item("int")
-		tsel.add_item("float")
-		tsel.select(1 if str(sf.get("type", "float")) == "float" else 0)
-		tsel.item_selected.connect(func(idx: int):
-			sf["type"] = ["int", "float"][idx]
-			save_manifest.call())
-		grid.add_child(tsel)
-		var step := 1.0 if str(sf.get("type", "float")) == "int" else 0.1
-		var defs := SpinBox.new()
-		defs.min_value = -999999
-		defs.max_value = 999999
-		defs.step = step
-		defs.value = float(sf.get("default", 0))
-		defs.custom_minimum_size = Vector2(56, 0)
-		defs.value_changed.connect(func(v: float):
-			sf["default"] = v
-		)
-		defs.focus_exited.connect(func():
-			save_manifest.call())
-		grid.add_child(defs)
-		# U-03：三个数值统一 SpinBox；min/max 互相钳制保证 min<=max（先声明再连接，lambda 才能引用彼此）
-		var mins := SpinBox.new()
-		mins.min_value = -999999
-		mins.max_value = 999999
-		mins.step = step
-		mins.value = float(sf.get("min", 0))
-		mins.custom_minimum_size = Vector2(56, 0)
-		var maxs := SpinBox.new()
-		maxs.min_value = -999999
-		maxs.max_value = 999999
-		maxs.step = step
-		maxs.value = float(sf.get("max", 0))
-		maxs.custom_minimum_size = Vector2(56, 0)
-		mins.value_changed.connect(func(v: float):
-			sf["min"] = v
-			if float(sf.get("max", 0)) < v:
-				sf["max"] = v
-				maxs.set_value_no_signal(v)
-		)
-		mins.focus_exited.connect(func():
-			save_manifest.call())
-		maxs.value_changed.connect(func(v: float):
-			sf["max"] = v
-			if float(sf.get("min", 0)) > v:
-				sf["min"] = v
-				mins.set_value_no_signal(v)
-		)
-		maxs.focus_exited.connect(func():
-			save_manifest.call())
-		grid.add_child(mins)
-		grid.add_child(maxs)
+	if edef.is_empty():
+		return
+	var mounted: Array = edef.get("functions", []) if (edef.get("functions", []) is Array) else []
+	for mid in mounted:
+		mounts_box.add_child(_mount_row(edef, str(mid)))
+	if mounted.is_empty():
+		mounts_box.add_child(Kit.hint_label("这个类型没有自带功能。", 420))
+	_add_mount_row(edef, mounted)
 
-## 去重历史遗留的重复 stat id；返回是否有改动
-func _dedupe_stat_ids(edef: Dictionary) -> bool:
-	var seen := {}
-	var changed := false
-	var kept := []
-	for s in edef.get("stats", []):
-		var sid := str(s.get("id", ""))
-		if sid == "" or seen.has(sid):
-			changed = true
+## 单个挂载行：显示名 + 移除钮。
+func _mount_row(edef: Dictionary, mid: String) -> Control:
+	var row := Kit.hbox(8)
+	var lbl := Kit.text_label(FunctionDecls.function_name(manifest, mid), Th.TEXT, Th.FS_SMALL)
+	lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	lbl.tooltip_text = mid
+	row.add_child(lbl)
+	row.add_child(Kit.del_button(func(): _unmount(edef, mid)))
+	return row
+
+## 底部添加行：下拉列出「已声明未挂载」的功能；选中即挂载（写清单）。
+func _add_mount_row(edef: Dictionary, mounted: Array) -> void:
+	var sel := OptionButton.new()
+	sel.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	sel.add_item("＋ 挂载功能…")
+	var pool := FunctionDecls.functions(manifest)
+	var any := false
+	for k in pool.keys():
+		if mounted.has(str(k)):
 			continue
-		seen[sid] = true
-		kept.append(s)
-	if changed:
-		edef["stats"] = kept
-	return changed
+		var d: Dictionary = pool[k]
+		sel.add_item(str(d.get("name", k)))
+		sel.set_item_metadata(sel.get_item_count() - 1, str(k))
+		any = true
+	if not any:
+		sel.disabled = true
+		sel.tooltip_text = "声明池里没有可挂载的新功能了"
+		sel.select(0)
+		mounts_box.add_child(sel)
+		return
+	sel.item_selected.connect(func(idx: int):
+		if idx == 0:
+			sel.select(0)
+			return
+		var fid := str(sel.get_item_metadata(idx))
+		var arr: Array = edef.get("functions", []) if (edef.get("functions", []) is Array) else []
+		arr.append(fid)
+		edef["functions"] = arr
+		mounts_box.remove_child(sel)
+		mounts_box.queue_redraw()
+		_mount_rows(edef)
+		save_manifest.call())
+	sel.select(0)
+	mounts_box.add_child(sel)
+
+## 摘除挂载：从类型 functions 数组删 id；已有实例的绑定不受影响（绑定按码解析，码不变）。
+func _unmount(edef: Dictionary, mid: String) -> void:
+	var arr: Array = edef.get("functions", []) if (edef.get("functions", []) is Array) else []
+	if not arr.has(mid):
+		return
+	arr.erase(mid)
+	edef["functions"] = arr
+	_mount_rows(edef)
+	save_manifest.call()
+
 
 ## 资产缩略图：裁掉透明留白后再用。
 ## 预览图统一 96×96 画布 + 中间十几像素的图形，不裁的话列表里只剩一个点。

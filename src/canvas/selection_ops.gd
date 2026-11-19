@@ -196,9 +196,8 @@ func copy_selection() -> void:
 			"dx": spr.position.x - center.x,
 			"dy": spr.position.y - center.y,
 			"flip_h": spr.flip_h,
-			"def_id": str(spr.get_meta("def_id", "")),
 			"functions": (spr.get_meta("functions", []) as Array).duplicate(true),
-			# deep=true：props 里的 stats 等嵌套字典各副本独立，避免改一个影响全部
+			# deep=true：props 里的嵌套字典各副本独立，避免改一个影响全部
 			"props": (spr.get_meta("props", {}) as Dictionary).duplicate(true),
 		})
 	cvs._hint("已复制 %d 个实体（Ctrl+V 粘贴到光标处）" % cvs._clipboard.size())
@@ -265,8 +264,6 @@ func paste_at(pos: Vector2) -> void:
 		spr.position = base + Vector2(t.get("dx", 0.0), t.get("dy", 0.0))
 		spr.flip_h = bool(t.get("flip_h", false))
 		spr.set_meta("scene", scene_id)
-		if str(t.get("def_id", "")) != "":
-			spr.set_meta("def_id", str(t.get("def_id", "")))
 		# 每个副本独立一份数据，并把复制组内部引用改到对应副本。
 		var props: Dictionary = (t.get("props", {}) as Dictionary).duplicate(true)
 		for edef in cvs.manifest.get("entities", []):
@@ -466,9 +463,8 @@ func copy_region() -> void:
 				"dx": ec.x - cvs._region_sel.position.x,
 				"dy": ec.y - cvs._region_sel.position.y,
 				"scene": str(spr.get_meta("scene", "")),
-				# A3：朝向与 def 绑定随块复制；ent_id 是引用重映射（C2）的前提
+				# A3：朝向随块复制；ent_id 是引用重映射（C2）的前提
 				"flip_h": bool(spr.flip_h),
-				"def_id": str(spr.get_meta("def_id", "")),
 				"ent_id": str(spr.get_meta("ent_id", "")),
 				"functions": (spr.get_meta("functions", []) as Array).duplicate(true),
 				"props": (spr.get_meta("props", {}) as Dictionary).duplicate(true),
@@ -558,10 +554,8 @@ func _paste_region(origin: Vector2i) -> void:
 		spr.position = Vector2(origin + Vector2i(int(t.get("dx", 0)), int(t.get("dy", 0)))) * cvs.tile_px \
 			+ Vector2(cvs.tile_px, cvs.tile_px) * 0.5
 		spr.set_meta("scene", scene_id)
-		# A3：恢复朝向与 def 绑定；ent_id 不复用（新块给新号），留作 C2 重映射的候选数据
+		# A3：恢复朝向；ent_id 不复用（新块给新号），留作 C2 重映射的候选数据
 		spr.flip_h = bool(t.get("flip_h", false))
-		if str(t.get("def_id", "")) != "":
-			spr.set_meta("def_id", str(t.get("def_id", "")))
 		spr.set_meta("props", (t.get("props", {}) as Dictionary).duplicate(true))
 		spr.set_meta("functions", (t.get("functions", []) as Array).duplicate(true))
 		cvs.entities.add_child(spr)

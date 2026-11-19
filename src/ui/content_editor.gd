@@ -365,6 +365,10 @@ func select_inst(ent_id: String) -> void:
 	commit()
 	_selected_ent = ent_id
 	_selected_fn = -1
+	# 自带功能（类型挂载）补齐绑定：缺就按声明顺序追加到列表末尾（见 _sync_mounted）。
+	var spr0 := _find_ent(ent_id)
+	if spr0 != null:
+		_sync_mounted(spr0)
 	# P2-9：内容页隐藏时（关卡编辑器里点实体）不做整套左列/右栏重建，只记住选中，
 	# 等切到内容视图时 refresh_list 再重建。
 	if not _is_view_visible():
@@ -439,68 +443,64 @@ func _rebuild_right() -> void:
 	_r_id.text = "%s.%s" % [str(app.cur_map_name), ent_id]
 	_r_badge.visible = false
 
-	_r_body.add_child(_build_fixed_block(sid))
-	_r_body.add_child(Kit.divider())
 	_r_body.add_child(_build_fn_block())
 	if _selected_fn >= 0 and _selected_fn < _current_fns().size():
 		_r_body.add_child(Kit.divider())
 		_r_body.add_child(_build_form_block())
 
-## 固定的「类型自带参数」：清单 entities[].stats 声明 → 与功能字段同一套控件工厂。
-## 值写在实体 meta props 上（实例级覆盖），不碰清单默认值——改模板去资产目录。
-## 旧实现自建控件且没有 bool 分支，同一个声明在两个 UI 里渲染成不同控件；现已统一。
-func _build_fixed_block(sid: String) -> Control:
-	var box := Kit.vbox(6)
-	box.add_child(Kit.section_header("固定功能", null))
-	var stats := _stats_of(sid)
-	if stats.is_empty():
-		box.add_child(Kit.hint_label("这个类型没有可调参数。", RIGHT_W - 40))
-		return box
-	var spr := _current_spr()
-	var props: Dictionary = spr.get_meta("props", {}) if spr != null else {}
-	for st in stats:
-		if not (st is Dictionary):
-			continue
-		var decl: Dictionary = st
-		var key := str(decl.get("id", ""))
-		if key == "":
-			continue
-		var cur = props.get(key, decl.get("default", FieldWidgets.default_for(decl)))
-		var built := FieldWidgets.build(decl, cur, func(v): _set_prop(key, v), _resolve_options)
-		if built.get("commit") is Callable and (built.commit as Callable).is_valid():
-			_pending_commits.append(built.commit)
-		box.add_child(Kit.field_row(str(decl.get("name", key)), built.ctl, 96))
-	box.add_child(Kit.hint_label("固定功能由代码实现，只能改值。", RIGHT_W - 40))
-	return box
+## 自带功能（挂载）——类型自带、实例不可删，与附加功能同一套绑定/内容模型：
+## 值在 content/<功能id>/<内容ID>.json，未编辑过的实例 = 声明 default（游戏侧兜底）。
+## 选中实例时补齐缺失的挂载绑定（见 _sync_mounted）；列表里的锁 = 挂载码集。
 
-func _stats_of(sid: String) -> Array:
-	for e in manifest.get("entities", []):
-		if e is Dictionary and str((e as Dictionary).get("id", "")) == sid:
-			var st = (e as Dictionary).get("stats", [])
-			return st if st is Array else []
-	return []
-
-## 写实例参数：改动前先存撤销快照；值等于声明默认值时删键，保持地图 JSON 精简。
-func _set_prop(key: String, value) -> void:
+## 实体类型的挂载码集（{code: true}）；码由 ensure_codes 保证非空。
+func _mount_codes() -> Dictionary:
+	var sid := ""
 	var spr := _current_spr()
-	if spr == null:
+	if spr != null and is_instance_valid(spr):
+		sid = str(spr.get_meta("scene", ""))
+	var out := {}
+	for m in FunctionDecls.entity_mounts(manifest, sid):
+		out[str((m as Dictionary).get("code", ""))] = true
+	return out
+
+## 给当前实例补齐缺失的挂载绑定：缺的按声明顺序追加到末尾并重排 order。
+## 只在真的补了东西时写盘/标脏——常规路径（绑定齐全）零副作用。
+func _sync_mounted(spr: Sprite2D) -> void:
+	var sid := str(spr.get_meta("scene", ""))
+	var mounts: Array = FunctionDecls.entity_mounts(manifest, sid)
+	if mounts.is_empty():
 		return
-	var props: Dictionary = spr.get_meta("props", {})
-	if props.get(key, null) == value:
+	var fns: Array = spr.get_meta("functions", [])
+	if not (fns is Array):
+		fns = []
+	var have := {}
+	for f in fns:
+		if f is Dictionary:
+			have[str((f as Dictionary).get("fn", ""))] = true
+	var missing: Array = []
+	for m in mounts:
+		var code := str((m as Dictionary).get("code", ""))
+		if code != "" and not have.has(code):
+			missing.append({"fn": code, "content": "", "name": "",
+				"order": 0, "parallel": false})
+	if missing.is_empty():
 		return
-	app.canvas._push_undo()
-	props = props.duplicate(true)
-	props[key] = value
-	spr.set_meta("props", props)
+	fns = fns.duplicate(true)
+	fns.append_array(missing)
+	for k in fns.size():
+		if fns[k] is Dictionary:
+			(fns[k] as Dictionary)["order"] = k + 1
+	spr.set_meta("functions", fns)
 	app.canvas._mark()
 
 ## 附加功能列表：每行 ① 名称 [内容名] ⟳并行 [库] ✕；点行展开内容表单。
+## 挂载功能与附加功能同一列表同一模型；挂载行只锁「删除」，其余（并行/库/表单）照常。
 func _build_fn_block() -> Control:
 	var box := Kit.vbox(6)
-	box.add_child(Kit.section_header("附加功能", null))
+	box.add_child(Kit.section_header("功能", null))
 	var fns := _current_fns()
 	if fns.is_empty():
-		box.add_child(Kit.hint_label("这个实例还没有附加功能。", RIGHT_W - 40))
+		box.add_child(Kit.hint_label("这个实例还没有功能。", RIGHT_W - 40))
 	for i in fns.size():
 		box.add_child(_build_fn_row(i, fns[i]))
 	box.add_child(_build_add_row())
@@ -549,7 +549,14 @@ func _build_fn_row(i: int, item) -> Control:
 	var lib := Kit.button("库", func(): _open_lib(i), "ghost")
 	lib.tooltip_text = "从已有内容复制一条进来（生成新 ID，追加到列表末尾）"
 	line.add_child(lib)
-	line.add_child(Kit.del_button(func(): _delete_fn(i), "移除这一项（内容条目留在库里）"))
+	# 挂载功能不可删（类型自带，锁只锁删除）；附加功能照常给删除钮
+	if _mount_codes().has(str(ref.get("code", ""))):
+		var lock := Kit.text_label("🔒", Th.TEXT_MUTE, Th.FS_META)
+		lock.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		lock.tooltip_text = "类型自带功能：不可删除。改挂载清单去资产目录。"
+		line.add_child(lock)
+	else:
+		line.add_child(Kit.del_button(func(): _delete_fn(i), "移除这一项（内容条目留在库里）"))
 
 
 	# 行本身是按钮：用一层覆盖按钮承载点击，内部控件仍可单独响应。
@@ -598,13 +605,19 @@ func _build_add_row() -> Control:
 	return btn
 
 ## 添加功能弹层的内容每次弹出前重建：清单可能在会话中被编辑（清单视图）。
+## 已绑定（含挂载自动生成的）与已挂载的功能不再出现在菜单里——同一个功能一个实例只挂一条。
 func _populate_add_menu() -> void:
 	_add_menu.clear()
 	var all := _function_index()
-	var keys: Array = all.keys()
-	keys.sort()
-	for k in keys:
+	var bound := {}
+	for f in _current_fns():
+		if f is Dictionary:
+			bound[str((f as Dictionary).get("fn", ""))] = true
+	for k in all.keys():
 		var d: Dictionary = all[k]
+		var code := str(d.get("code", ""))
+		if bound.has(code):
+			continue
 		_add_menu.add_item(str(d.get("name", k)))
 		_add_menu.set_item_metadata(_add_menu.get_item_count() - 1, str(k))
 
@@ -808,11 +821,11 @@ func _resolve_options(decl: Dictionary) -> Array:
 
 ## 字段改动：写内容文件。content 为空时首次改动即创建条目（ID 生成 + 绑定回写）。
 ## P2-12 约定：字段值落在 content/<kind>/<id>.json，属「内容资产」而非地图快照——
-## 不进画布撤销栈（撤销恢复的是地图，内容文件不回滚）；改地图 meta 的路径（_set_prop/_write_fns）
-## 已各自 _push_undo()。连续控件按 O3 只在失焦/回车提交（见 _build_fn_form）。
+## 不进画布撤销栈（撤销恢复的是地图，内容文件不回滚）；改绑定的路径（_set_parallel 等）
+## 走 _write_fns 各自进撤销。连续控件按 O3 只在失焦/回车提交。
 func _set_field(i: int, fn_id: String, key: String, value) -> void:
-	# P3-7：字符串字段统一 strip_edges——与实例固定块的 _set_prop 同口径，
-	# 否则同一个名字在固定块里被裁、在内容表单里带着首尾空格落盘。
+	# P3-7：字符串字段统一 strip_edges——所有字符串值同一口径，避免同一字段
+	# 在两条编辑路径里一个被裁、一个带着首尾空格落盘。
 	if value is String:
 		value = (value as String).strip_edges()
 	var cid := _ensure_content(i)

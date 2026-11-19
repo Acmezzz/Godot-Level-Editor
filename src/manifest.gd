@@ -127,24 +127,16 @@ static func map_path(m: Dictionary, name: String) -> String:
 		return ""
 	return path
 
-## ---- 角色声明（实体-内容模型阶段 1） ----
-## role = 编辑器连接语义标签；清单实体条目可声明 role: portal/exit/landing/trigger，
-## 缺省按 scene id 回退识别（旧清单零改动兼容），声明优先于回退。
-## 连接工具（配对/校验/选点/可达性）一律按 role 识别，不再硬编码 scene id。
+## ---- 角色声明 ----
+## role = 编辑器连接语义标签（画布标记用）；清单实体条目声明 role: portal/exit/landing/trigger。
+## 零兼容：只认清单声明，不按实体 id 猜——没声明 role 的实体就是普通实体，画布不画连接标记。
 
-const FALLBACK_ROLES := {
-	"portal": "portal",
-	"exit": "exit",
-	"spawn_point": "landing",
-	"trigger_zone": "trigger",
-}
-
-## 实体类型的连接语义；无声明且 id 不匹配连接原语时返回空串（普通实体）
+## 实体类型的连接语义；未声明返回空串（普通实体）
 static func role_of(m: Dictionary, sid: String) -> String:
 	for ed in m.get("entities", []):
 		if ed is Dictionary and str(ed.get("id", "")) == sid:
-			return str(ed.get("role", FALLBACK_ROLES.get(sid, "")))
-	return str(FALLBACK_ROLES.get(sid, ""))
+			return str(ed.get("role", ""))
+	return ""
 
 ## 该实体类型是否具有给定连接语义（普通实体恒 false）
 static func has_role(m: Dictionary, sid: String, role: String) -> bool:

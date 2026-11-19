@@ -441,7 +441,7 @@ func _shortcut_input(event: InputEvent) -> void:
 			canvas._mark()
 			get_viewport().set_input_as_handled()
 			return
-	# A2.3：Ctrl+D 原位复制（+1 格偏移；def_id/props/朝向随复制，新号照发）
+	# A2.3：Ctrl+D 原位复制（+1 格偏移；props/functions/朝向随复制，新号照发）
 	if ctrl and k == KEY_D:
 		var srcs: Array = canvas.selected_multi if not canvas.selected_multi.is_empty() else ([] if canvas.selected_entity == null else [canvas.selected_entity])
 		if not srcs.is_empty():
@@ -458,8 +458,6 @@ func _shortcut_input(event: InputEvent) -> void:
 				dup.set_meta("scene", sid)
 				dup.set_meta("props", (orig.get_meta("props", {}) as Dictionary).duplicate(true))
 				dup.set_meta("functions", (orig.get_meta("functions", []) as Array).duplicate(true))
-				if orig.has_meta("def_id"):
-					dup.set_meta("def_id", str(orig.get_meta("def_id", "")))
 				canvas.entities.add_child(dup)
 				canvas._fit_sprite(dup, sid)
 				canvas._assign_id(dup)

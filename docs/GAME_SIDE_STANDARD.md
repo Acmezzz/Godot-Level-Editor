@@ -120,7 +120,7 @@ solid+矩形碰撞：`col.set_cell(cell, 0, Vector2i(4,0))`。
   "editorSize": [10, 10],
   "role": "portal",
   "code": "FY9F",
-  "stats": [],
+  "functions": ["hp"],
   "fields": [
     {"id": "target_map",   "name": "跨图目标地图(留空=图内)", "type": "map_ref"},
     {"id": "target_point", "name": "目标(落点=单向/门=双向)", "type": "entity_ref", "of": "spawn_point,portal"}
@@ -137,47 +137,39 @@ solid+矩形碰撞：`col.set_cell(cell, 0, Vector2i(4,0))`。
 | `editorSize` | 否 | `[w,h]` **像素**，画布占位尺寸。缺省读 prefab 的第一个碰撞形状；再缺用缩略图原始尺寸 |
 | `role` | 否 | 连接语义：`portal` / `exit` / `landing` / `trigger`；见 2.6 |
 | `code` | 否 | 4 位实体身份码。缺省由编辑器补发并随清单写回；**不要手工改动** |
-| `stats` | 否 | 类型自带的实例级参数声明，见 2.4.1 |
+| `functions` | 否 | **自带功能（挂载）**：声明池 functions 里功能 id 的数组，声明顺序 = 默认执行顺序；见 2.4.1 |
 | `fields` | 否 | 实例级「引用型」参数声明，见 2.4.2 |
 
-**`fields` 与 `stats` 的区别（当前实现的真实情况）：**
-- `stats` 是**有值**的参数（数值/字符串），编辑器会在内容编辑器「固定功能」块里渲染控件，
-  写进实例的 `props[<statId>]`。
-- `fields` 编辑器**只用于两件事**：① 复制/粘贴/框选粘贴时按 `type: "entity_ref"`
-  重映射实例 id 引用；② `type: "map_ref"` / `"entity_ref"` 的**类型名**给手工改 JSON 的人看。
-  **编辑器当前不渲染 `fields` 的输入控件**——`portal.target_point` 这类值只能直接改地图 JSON
-  或由内容编辑器之外的路径写入。
+**`functions`（挂载）与 `fields` 的分工**：
+- `functions` = 类型自带、实例不可删的**功能**（如生命值/攻击/寻敌），声明本体在顶层 functions 池，
+  类型只挂 id。值走内容文件（与附加功能同一模型）；未编辑过的实例 = 声明 default。
+- `fields` 是「引用型」参数声明，编辑器**只用于**复制/粘贴时按 `type: "entity_ref"`
+  重映射实例 id 引用（§2.4.2）。它不是功能，也没有值编辑 UI（`portal.target_point` 这类
+  值由游戏侧运行时写或手改 JSON）。
 
 > 这是缺口，不是设计。要改「能在编辑器里点选目标落点」，得在编辑器里补控件；
 > 游戏侧按当前 JSON 契约实现即可，不必等待。
 
-### 2.4.1 `stats[]` —— 类型自带参数（数值/字符串）
+### 2.4.1 自带功能（挂载）`entities[].functions`
 
 ```json
-{"id": "hp", "name": "生命值", "type": "int", "default": 1, "min": 1, "max": 99}
+"functions": ["hp", "attack"]
 ```
 
-| 键 | 必填 | 语义 |
-|---|---|---|
-| `id` | 是 | 实例 `props` 里的键名；同类型内唯一 |
-| `name` | 否 | 控件标签，缺省用 `id` |
-| `type` | 否 | `int` / `float` / 其他任意字符串。**只有 `int`/`float` 得到 SpinBox**，其余一律 LineEdit |
-| `default` | 否 | 缺省值。int/float 缺省 0 / 0.0；其他类型缺省 `""` |
-| `min` / `max` | 否 | 仅 int/float 生效；缺省 `-999999` / `999999` |
+实体类型从顶层 `functions` **声明池**里挑功能挂为「类型自带」：实例上不可删（内容编辑器里
+显示 🔒），与附加功能同一套绑定/内容模型，没有任何独立的数值层：
 
-控件步进：`int` 步进 1.0，`float` 步进 0.1。连续控件只在失焦/回车/松手时提交。
+| 事项 | 语义 |
+|---|---|
+| 挂载写法 | 功能 **id 数组**（人类名，清单作者手写可读）；实例绑定写**执行码** |
+| 声明本体 | 字段/kind/type/default 全在顶层 `functions` 声明里（§2.5），类型不重复声明 |
+| 实例值 | `content/<功能id>/<内容ID>.json`（§4）；未编辑过的实例 = 声明 `default`（游戏侧按「键缺失 = 用 default」兜底） |
+| 同一功能挂多个类型 | 完全合法：共享同一声明池条目，各自实例各自的内容条目 |
+| 类型差异 | 声明池里另声明一个变体功能（如 `boss_hp`），各挂各的 |
+| 画布/分布 | 实例分布视图（资产目录）只读清点；值只在内容编辑器一个入口编辑 |
 
-**有效值三层合并（`def_model.gd::effective_stats`）**：
-
-```
-清单 stats[].default  ←  def 内容文件 stats  ←  实例 props.stats
-```
-
-后者覆盖前者。游戏侧 `enemy_db.gd::merge` 只实现前两层（清单默认 ← `props.stats`），
-`def` 层在游戏侧未实现——**若游戏需要 `def` 层，必须自己补**。
-
-**`props` 写盘规则**：值等于 `null` 或空字符串时**不写入**（`undo_history.extract` 的 `clean` 过滤）。
-所以「把参数改回默认值」在磁盘上表现为「键消失」，游戏侧必须按「键缺失 = 用默认值」实现。
+**props 只剩几何/引用**：触发区 `w/h`、`target_map`/`target_point` 这类引用值留在 `props`；
+数值类参数一律不进 props。
 
 ### 2.4.2 `fields[]` —— 引用型参数声明
 
@@ -276,9 +268,8 @@ choice 的 `source` 取值：`content:<kind>`（列该目录内容条目）、`e
 | `landing` | 传送落点 | 画布画落点描边 |
 | `trigger` | 触发区 | 画布画半透明矩形 + 事件名 |
 
-缺省回退表（`manifest.gd::FALLBACK_ROLES`）按实体 id 匹配：
-`portal`→portal、`exit`→exit、`spawn_point`→landing、`trigger_zone`→trigger。
-清单显式 `role` 优先于回退。
+实体条目必须**显式声明** `role` 才有画布连接标记；不声明就是普通实体，编辑器不按实体 id 猜语义。
+`trigger_zone` 由编辑器内置声明（`role: trigger`）。
 
 **role 只影响画布呈现，不影响数据。**地图里不写 role，游戏侧也不该读 role 决定行为——
 按 `scene`（实体 id）或 `prefab` 分发。role 存在的意义是让编辑器在换实体 id 时仍能识别连接语义。
@@ -292,7 +283,7 @@ choice 的 `source` 取值：`content:<kind>`（列该目录内容条目）、`e
 {"id": "trigger_zone", "name": "触发区", "builtin": true, "role": "trigger", "code": "TZ99", "fields": []}
 ```
 
-它**没有 prefab、没有缩略图、没有 stats**。地图里它的 `props` 是编辑器硬编码的：
+它**没有 prefab、没有缩略图、没有自带功能**。地图里它的 `props` 是编辑器硬编码的：
 
 | `props` 键 | 编辑器含义 | 编辑器是否会写 |
 |---|---|---|
@@ -436,7 +427,6 @@ choice 的 `source` 取值：`content:<kind>`（列该目录内容条目）、`e
 | `flip_h` | 否 | 布尔，水平翻转 |
 | `props` | 否 | 对象。类型参数 + 自定义键。**编辑器原样保留非空值，不剥离未知键** |
 | `functions` | 否 | 数组，见 2.5；缺省视为空数组，编辑器写出时**总是写这个键**（含 `[]`） |
-| `def` | 否 | 旧格式的定义层引用（内容文件 id）。新数据不再写入，编辑器只在既有值上原样带出 |
 
 **`props` 的保留策略是「只丢空值」**：`value == null` 或 `str(value) == ""` 的键在保存时消失，
 其余（包括编辑器完全不认识的键、嵌套字典、数组）原样保留。
@@ -533,7 +523,7 @@ main.gd
  ├── MapLoader.load_json(path)            # 纯 JSON 读，不校验
  ├── build(root, data)                     # 建地形/装饰/碰撞/实体/出生点
  ├── load_content(fn, id)                  # 功能内容按需读（可自行封装）
- └── effective_stats(manifest, props)      # 数值合并（见 §2.4.1）
+ └── 按绑定读 content/<功能id>/<内容ID>.json（§7.2 模式；缺键用声明 default 兜底）
 ```
 
 **绝不反向写地图**。编辑器是唯一写盘方（`editor_canvas.extract()`）。游戏侧若生成运行时状态
@@ -560,8 +550,8 @@ inst.set_meta("functions", functions)          # 游戏侧需要时自己注入
 ```
 
 **注入给 prefab 的 metadata 是唯一约定通道**。推荐注入三件：
-`ent_id`（实例 id，跨图引用靠它）、`props`（`stats` 与引用参数）、
-`scene_id`（= `scene`，类型 id，数值查表用）。
+`ent_id`（实例 id，跨图引用靠它）、`props`（几何/引用参数，见 §2.4.1）、
+`scene_id`（= `scene`，类型 id，查清单用）。
 prefab 脚本在 `_ready()` 里读这些 meta，**不要依赖编辑器把值写进场景属性**。
 
 `flip_h`：编辑器存布尔。推荐处理是「根节点有 `flip_h` 属性就 set，否则遍历子 `Sprite2D` 全部 set」。
@@ -655,8 +645,8 @@ func _apply_door(inst: Node, fn: Dictionary) -> void:
 
 1. **`content` 为空不是错误**。用户可能先挂功能后填内容，也可能清空内容绑定。
    静默跳过，不要报错。
-2. **字段值以内容文件为准，不要读 `props`**。`props` 是 `stats` 的地盘（类型参数），
-   内容字段在 `content/*.json`。
+2. **字段值以内容文件为准，不要读 `props`**。数值类参数一律在内容文件（§2.4.1）；
+   `props` 只剩几何/引用（触发区 w/h、target_map/target_point）。
 3. **`order` / `parallel` 由你解释**。编辑器只保证它们是数字/布尔并保持顺序，
    不保证游戏该怎么并发。一个可行的做法是「按 order 排序，同一实体只取最近的一条」。
 
@@ -671,10 +661,7 @@ func _apply_door(inst: Node, fn: Dictionary) -> void:
   "prefab": "scenes/objects/moving_platform.tscn",
   "thumb": "editor/previews/moving_platform.png",
   "editorSize": [32, 16],
-  "stats": [
-    {"id": "travel", "name": "行程(格)", "type": "float", "default": 3.0, "min": 0.5, "max": 32.0},
-    {"id": "speed",  "name": "速度",     "type": "float", "default": 40.0, "min": 1.0, "max": 400.0}
-  ],
+  "functions": ["platform_motion"],
   "fields": []
 }
 ```
@@ -687,7 +674,7 @@ func _apply_door(inst: Node, fn: Dictionary) -> void:
 | `prefab` | 相对工程根的 `.tscn`。**根节点必须是 `Node2D` 系**，否则 `position` 注入无效 |
 | `thumb` | 96×96 左右的 PNG 到 `editor/previews/`。没有它画布上是空白方块，但仍可放置 |
 | `editorSize` | 像素。省略则编辑器读 prefab 第一个碰撞形状；再省略用缩略图原尺寸 |
-| `stats` | 每个 stat 的 `default` 必填——它是游戏侧数值的默认值来源 |
+| `functions` | 只挂已在顶层 `functions` 声明过的功能 id；资产目录「自带功能」UI 可点选挂载，也可手写清单 |
 | 缩略图烘焙 | 自己写一个截图脚本把 prefab 渲染成 PNG（需窗口，不能 headless）；编辑器只读 `thumb` 路径 |
 
 ### 8.3 不要做的事
@@ -752,12 +739,12 @@ godot --path "<你的游戏工程>" -- --map=maps/<地图名>.json
 - **`fields[]` 没有输入控件**。见 2.4.2。`portal.target_point` 只能手改 JSON。
 - **`trigger_zone` 的 props 没有编辑 UI**。见 2.7。
 - **不能新增图层类型**。只用 `terrain` / `decor` / `collision` + 实体层。
-- **一个实体实例只能有一份 `props.stats`**，多份就互相覆盖——`stats` 是扁平键值表。
+- **一个实体实例一个功能只挂一条绑定**。同一功能重复绑定会被校验/UI 过滤去重。
+- **数值参数不走 props**。props 只剩几何/引用（§2.4.1）；值一律内容文件。
 - **内容 ID 不可改**。改名只改 `name`；要换 ID 只能「复制成新 ID」，旧文件留在库里。
 - **地图改名不迁移引用**。`target_map` 指名字符串，改名后需手工改。
 - **地图 JSON 只有一个写入方**：编辑器 `extract()`。游戏侧回写会造成格式分叉。
 - **撤销是整图快照**，只覆盖地图内存态；内容文件改动不进撤销栈。
-- **`def` 层是遗留概念**。新数据不写 `def`；只有老地图残留时编辑器原样带出。
 
 ## 12. 相关文档
 
