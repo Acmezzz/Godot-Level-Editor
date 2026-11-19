@@ -44,6 +44,9 @@ func _paint(c: Vector2i) -> void:
 			var same: bool = had and cm != null and str(cm.get("type", "solid")) == cvs.collision_type \
 				and str(cm.get("shape", "")) == cvs.collision_shape
 			if not same:
+				if not cvs._paint_pushed:
+					cvs._push_undo()   # 笔画内首个真实改动前压一次快照（点击不动 = 零副作用）
+					cvs._paint_pushed = true
 				cvs.set_collision_cell(bc, true, cvs.collision_type, cvs.collision_shape)
 				changed = true
 		if changed:
@@ -55,6 +58,9 @@ func _paint(c: Vector2i) -> void:
 	for bc in _brush_cells(c):
 		if layer.get_cell_source_id(bc) != cvs.paint_atlas \
 				or layer.get_cell_atlas_coords(bc) != cvs.paint_cell:
+			if not cvs._paint_pushed:
+				cvs._push_undo()   # 笔画内首个真实改动前压一次快照（点击不动 = 零副作用）
+				cvs._paint_pushed = true
 			layer.set_cell(bc, cvs.paint_atlas, cvs.paint_cell)
 			changed = true
 	if changed:

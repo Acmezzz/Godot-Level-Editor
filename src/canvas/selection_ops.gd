@@ -1,6 +1,8 @@
 extends RefCounted
 ## SelectionOps：从 src/canvas/editor_canvas.gd 拆出的控制器。宿主状态经 cvs 引用。
 
+const BuiltinKinds := preload("res://src/content/builtin_kinds.gd")
+
 var cvs   # 宿主引用
 
 func _init(host) -> void:
@@ -42,8 +44,7 @@ func _select_entity_at(pos: Vector2) -> void:
 	var best: Sprite2D = _entity_hit(pos)
 	cvs.selected_entity = best
 	cvs.selected_multi.clear()
-	if best:
-		cvs.entity_selected.emit(best)
+	cvs.entity_selected.emit(best)   # 空点也发 null：右侧检查器要同步清空（擦除路径同语义）
 	cvs.queue_redraw()
 
 
@@ -119,13 +120,13 @@ func _begin_entity_drag(spr: Sprite2D, pos: Vector2) -> void:
 
 ## 从框内空白处拖动 = 平移整个框选集合（和按住某个成员拖一样，一次撤销步）
 func _begin_group_drag(pos: Vector2) -> void:
-	var targets0: Array = cvs._valid_multi()
-	if targets0.is_empty():
-		return
-	if cvs.is_layer_locked(cvs._layer_index_of(str((targets0[0] as Sprite2D).get_meta("layer", "")))):
-		cvs._hint("实体所在图层已锁定：解锁后再移动")
-		return
 	var targets: Array = cvs._valid_multi()
+	if targets.is_empty():
+		return
+	# 锁检查覆盖全部成员的层（只查首成员时，跨层组的其他成员可能住在锁定层）
+	if _selection_touches_locked(targets):
+		cvs._hint("有成员所在图层已锁定：解锁后再移动")
+		return
 	if targets.size() < 2:
 		return
 	# cvs._drag_entity 指向第一个成员：_finish_entity_drag 靠它判断拖拽是否在进行
@@ -190,9 +191,7 @@ func _finish_entity_drag() -> void:
 func copy_selection() -> void:
 	if cvs.map_root == null:
 		return
-	var sel: Array = cvs.selected_multi.duplicate()
-	if sel.is_empty() and cvs.selected_entity and is_instance_valid(cvs.selected_entity):
-		sel.append(cvs.selected_entity)
+	var sel := _live_selection()
 	if sel.is_empty():
 		cvs._hint("先选中实体再复制（Ctrl+C）")
 		return
@@ -227,16 +226,12 @@ func cut_selection() -> void:
 	if cvs.is_layer_locked(cvs.active_layer):
 		cvs._hint("当前图层已锁定：解锁后再剪切")
 		return
-	var sel: Array = cvs.selected_multi.duplicate()
-	if sel.is_empty() and cvs.selected_entity and is_instance_valid(cvs.selected_entity):
-		sel.append(cvs.selected_entity)
+	var sel := _live_selection()
 	if sel.is_empty():
 		cvs._hint("先选中实体再剪切（Ctrl+X）")
 		return
 	# 复用复制逻辑生成剪贴板（它负责算中心与相对偏移）
 	copy_selection()
-	if cvs._clipboard.is_empty():
-		return
 	cvs._push_undo()
 	var n := 0
 	for s in sel:
@@ -260,11 +255,15 @@ func paste_at(pos: Vector2) -> void:
 		return
 	# 落点吸附到格子中心：否则保存(格坐标)再载入后位置会漂移
 	var base: Vector2 = Vector2(cvs._cell_of(pos)) * cvs.tile_px + Vector2(cvs.tile_px, cvs.tile_px) * 0.5
+	var target: int = cvs.active_layer if cvs.active_layer < cvs.layer_count() else 0
+	# 目标层锁检查（碰撞元层激活时落到 0 层——0 层也要查）
+	if cvs.is_layer_locked(target):
+		cvs._hint("目标图层已锁定：解锁后再粘贴")
+		return
 	cvs._push_undo()
 	# 先建副本并给每个 fresh 码；建 旧码→新码 映射，供组内引用重映射
 	var copied := {}   # 旧码 → 新码
 	var built: Array = []   # [{spr, scene, props, functions}]
-	var target: int = cvs.active_layer if cvs.active_layer < cvs.layer_count() else 0
 	for t in cvs._clipboard:
 		var spr := Sprite2D.new()
 		var scene_id := str(t.get("scene", ""))
@@ -304,10 +303,26 @@ func paste_at(pos: Vector2) -> void:
 		_remap_refs_in(functions2, copied)
 		spr2.set_meta("props", props2)
 		spr2.set_meta("functions", functions2)
+		# 吸附：多选粘贴的相对偏移（center 是均值，可为半格）会骑在格线上，
+		# 保存再载入整体漂半格。非内置吸附到格中心；内置按左上格语义吸附后补中心偏移
+		var pc: Vector2i = cvs._cell_of(spr2.position)
+		spr2.position = Vector2(pc) * cvs.tile_px + Vector2(cvs.tile_px, cvs.tile_px) * 0.5
+		if cvs.BuiltinKinds.is_builtin(str(b.scene)):
+			var psz: Vector2 = cvs.entity_display_size_of(spr2)
+			spr2.position += psz * 0.5 - Vector2(cvs.tile_px, cvs.tile_px) * 0.5
 	cvs._mark()
 	cvs.queue_redraw()
 	cvs._hint("已粘贴 %d 个实体（Ctrl+Z 撤销）" % cvs._clipboard.size())
 
+
+## 选区成员是否踩到锁定层：锁定阻止一切写入（与涂刷/擦除/区域操作同语义）
+func _selection_touches_locked(sel: Array) -> bool:
+	for s in sel:
+		var spr := s as Sprite2D
+		if spr != null and is_instance_valid(spr):
+			if cvs.is_layer_locked(cvs._layer_index_of(str(spr.get_meta("layer", "")))):
+				return true
+	return false
 
 func delete_selection() -> void:
 	if cvs.map_root == null:
@@ -318,6 +333,9 @@ func delete_selection() -> void:
 		victims.append(cvs.selected_entity)
 	if victims.is_empty():
 		cvs._hint("先在画布上点选或框选实体，再按 Del 删除")
+		return
+	if _selection_touches_locked(victims):
+		cvs._hint("选中实体所在图层已锁定：解锁后再删除")
 		return
 	cvs._push_undo()
 	for v in victims:
@@ -340,6 +358,9 @@ func flip_selected() -> bool:
 		targets.append(cvs.selected_entity)
 	if targets.is_empty():
 		return false
+	if _selection_touches_locked(targets):
+		cvs._hint("实体所在图层已锁定：解锁后再翻转")
+		return false
 	cvs._push_undo()
 	for s in targets:
 		(s as Sprite2D).flip_h = not (s as Sprite2D).flip_h
@@ -358,6 +379,27 @@ func _in_region_sel(pos: Vector2) -> bool:
 	if cvs._region_sel.size.x <= 0 or cvs._region_sel.size.y <= 0:
 		return false
 	return cvs._region_sel.has_point(cvs._cell_of(pos))
+
+## 实体的「所在格」判定与 extract() 同语义：内置（触发区）= 矩形左上角格，
+## 普通实体 = 中心格。区域复制/剪切/框入判定共用一套，防止复制进了剪贴板、
+## 剪切却漏删（或反之）的错位。
+func _ent_cell(spr: Sprite2D) -> Vector2i:
+	if BuiltinKinds.is_builtin(str(spr.get_meta("scene", ""))):
+		var v: Vector2 = spr.position - cvs.entity_display_size_of(spr) * 0.5
+		return Vector2i(floori(v.x / cvs.tile_px), floori(v.y / cvs.tile_px))
+	return cvs._cell_of(spr.position)
+
+
+## 当前有效选区（多选优先，为空则退单选），已滤掉已释放对象。
+func _live_selection() -> Array:
+	var out: Array = []
+	for s in cvs.selected_multi:
+		if is_instance_valid(s):
+			out.append(s)
+	if out.is_empty() and cvs.selected_entity and is_instance_valid(cvs.selected_entity):
+		out.append(cvs.selected_entity)
+	return out
+
 
 func _snapshot_region(sel: Rect2i) -> Dictionary:
 	# 层栈快照：tiles = {层id: [[x,y,atlas,ax,ay]...]}，碰撞/实体照旧（实体带 layer）
@@ -388,7 +430,7 @@ func _snapshot_region(sel: Rect2i) -> Dictionary:
 		var spr := e as Sprite2D
 		if spr == null or not spr.has_meta("scene"):
 			continue
-		if sel.has_point(cvs._cell_of(spr.position)):
+		if sel.has_point(_ent_cell(spr)):
 			snap["ents"].append(spr)
 	return snap
 
@@ -501,7 +543,7 @@ func copy_region() -> void:
 		var spr := e as Sprite2D
 		if spr == null or not spr.has_meta("scene"):
 			continue
-		var ec: Vector2i = cvs._cell_of(spr.position)
+		var ec: Vector2i = _ent_cell(spr)
 		if cvs._region_sel.has_point(ec):
 			ents_clip.append({
 				"dx": ec.x - cvs._region_sel.position.x,
@@ -552,9 +594,20 @@ func cut_region() -> void:
 		var spr := e as Sprite2D
 		if spr == null or not spr.has_meta("scene"):
 			continue
-		if cvs._region_sel.has_point(cvs._cell_of(spr.position)):
+		if cvs._region_sel.has_point(_ent_cell(spr)):
 			(spr.get_parent() as Node2D).remove_child(spr)
 			spr.free()
+	# 区域内实体已释放：把选区里的悬挂引用清掉，否则后续复制/框选/绘制
+	# 读已释放对象会直接崩（剪掉自己正选着的东西是常态操作）。
+	# 只过滤不清空：仍有效的选择保持原样（单选不升格成多选）
+	var keep: Array = []
+	for s in cvs.selected_multi:
+		if is_instance_valid(s):
+			keep.append(s)
+	cvs.selected_multi = keep
+	if cvs.selected_entity != null and not is_instance_valid(cvs.selected_entity):
+		cvs.selected_entity = null
+		cvs.entity_selected.emit(null)
 	cvs._mark()   # 区域剪切含实体删除，实体索引/实例列表缓存一并失效
 	cvs.queue_redraw()
 	cvs._hint("已剪切区域 %dx%d（Ctrl+V 粘贴 / Ctrl+Z 撤销）" % [cvs._region_sel.size.x, cvs._region_sel.size.y])
@@ -592,6 +645,9 @@ func _paste_region(origin: Vector2i) -> void:
 		spr.texture = cvs.thumbs.get(scene_id)
 		spr.position = Vector2(origin + Vector2i(int(t.get("dx", 0)), int(t.get("dy", 0)))) * cvs.tile_px \
 			+ Vector2(cvs.tile_px, cvs.tile_px) * 0.5
+	 # dx 记的是「所在格」（与 extract 同语义）：内置体补「左上格→矩形中心」偏移
+		if BuiltinKinds.is_builtin(scene_id):
+			spr.position += cvs.trigger_zone_size(t.get("props", {})) * 0.5 - Vector2(cvs.tile_px, cvs.tile_px) * 0.5
 		spr.set_meta("scene", scene_id)
  # 恢复朝向；新块给新码，旧码只留作 id_map 的重映射键
 		spr.flip_h = bool(t.get("flip_h", false))

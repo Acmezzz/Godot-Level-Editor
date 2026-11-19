@@ -257,8 +257,13 @@ func _draw() -> void:
 	# 实体幽灵：区域碎片里的实体也预览
 		for t in cvs._region_clip.get("ents", []):
 			var ec2 = org + Vector2i(int(t.get("dx", 0)), int(t.get("dy", 0)))
+			var gprops: Dictionary = t.get("props", {}) if t.get("props", {}) is Dictionary else {}
+			# 内置体 dx = 左上角格：幽灵按触发区矩形画（尺寸跟 props），否则一格占位框
+			var gsz := Vector2(cvs.tile_px, cvs.tile_px)
+			if cvs.BuiltinKinds.is_builtin(str(t.get("scene", ""))):
+				gsz = cvs.trigger_zone_size(gprops)
+			var er := Rect2(Vector2(ec2) * cvs.tile_px, gsz)
 			var tex: Texture2D = cvs.thumbs.get(str(t.get("scene", "")))
-			var er := Rect2(Vector2(ec2) * cvs.tile_px, Vector2(cvs.tile_px, cvs.tile_px))
 			if tex != null:
 				cvs.draw_texture_rect(tex, er, false, Color(1, 1, 1, 0.55))
 			else:

@@ -167,7 +167,9 @@ func _on_tile_layer_press(pos: Vector2, b: InputEventMouseButton) -> void:
 		cvs.begin_gesture(cvs.Gesture.BOX, MOUSE_BUTTON_LEFT)
 		cvs._drag_start = pos
 		return
-	cvs._push_undo()
+	# 撤销快照不在这里压：涂刷是笔画制——首个真实改动前由 _paint 压一次
+	# （点击不动 = 零副作用，空点不再挤掉一条真实历史）
+	cvs._paint_pushed = false
 	cvs._apply_tool(pos)
 	cvs.begin_gesture(cvs.Gesture.PAINT, MOUSE_BUTTON_LEFT)
 
@@ -184,6 +186,19 @@ func _on_right_press(pos: Vector2) -> void:
 	if cvs.is_layer_locked(cvs.active_layer):
 		cvs._hint("当前图层已锁定：解锁后再擦除")
 		return
+	# 左键手势进行中被右键打断：先按左键松手的语义收尾，再进擦除流程。
+	# 否则 begin_gesture(ERASE) 直接顶掉旧手势——实体悬在预览位、区域搬迁半途而废。
+	if cvs.gesture_button == MOUSE_BUTTON_LEFT and cvs.gesture != cvs.Gesture.NONE:
+		match cvs.gesture:
+			cvs.Gesture.ENTITY_DRAG:
+				if cvs._drag_entity != null and is_instance_valid(cvs._drag_entity):
+					cvs._finish_entity_drag()
+			cvs.Gesture.REGION_MOVE:
+				cvs._finish_region_move()
+			cvs.Gesture.SPAWN_DRAG:
+				if _spawn_moved:
+					cvs._mark()   # 与左键松手同语义：动过才置脏
+		cvs.end_gesture()
 	if not cvs._erase_hits(pos):
 		return
 	cvs._push_undo()

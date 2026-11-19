@@ -741,6 +741,8 @@ var _drag_origins: Array = []
 @warning_ignore("unused_private_class_variable")
 var _drag_grab := Vector2.ZERO
 var _drag_moved := false
+## 涂刷笔画的撤销快照推迟到首个真实改动前才压（点击不动 = 零副作用，与出生点拖动同模式）
+var _paint_pushed := false
 
 # —— 区域复制粘贴（层栈瓦片 + 碰撞 + 实体打包快照） ——
 func _any_layer_locked() -> bool:

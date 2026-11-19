@@ -31,21 +31,29 @@ func _push_undo() -> void:
 		cvs.undo_stack.pop_front()
 	cvs.redo_stack.clear()
 
+## 恢复是异步的（await load_data 让帧）。恢复进行中再触发 undo/redo，两个恢复流
+## 会交错写状态：快照弹错、画布被双重覆盖。恢复期一律拒绝（返回 false）。
+var _restoring := false
+
 ## 返回是否真的撤销了（空栈时调用方要给「没有可撤销的操作」而不是假反馈）。
 ## 脏标记与 modified.emit 由 load_data(keep_dirty=true) 统一处理，不再自己置脏。
 func undo() -> bool:
-	if cvs.map_root == null or not is_instance_valid(cvs.map_root) or cvs.undo_stack.is_empty():
+	if _restoring or cvs.map_root == null or not is_instance_valid(cvs.map_root) or cvs.undo_stack.is_empty():
 		return false
+	_restoring = true
 	cvs.redo_stack.append(_snapshot())
 	await _restore(cvs.undo_stack.pop_back())
+	_restoring = false
 	return true
 
 
 func redo() -> bool:
-	if cvs.map_root == null or not is_instance_valid(cvs.map_root) or cvs.redo_stack.is_empty():
+	if _restoring or cvs.map_root == null or not is_instance_valid(cvs.map_root) or cvs.redo_stack.is_empty():
 		return false
+	_restoring = true
 	cvs.undo_stack.append(_snapshot())
 	await _restore(cvs.redo_stack.pop_back())
+	_restoring = false
 	return true
 
 
