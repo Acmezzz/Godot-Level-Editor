@@ -5,6 +5,7 @@ var cvs   # 宿主引用
 
 const BuiltinKinds := preload("res://src/content/builtin_kinds.gd")
 const ManifestScript := preload("res://src/manifest.gd")   # K10：出口 role 判定
+const K := preload("res://src/core/constants.gd")
 
 func _init(host) -> void:
 	cvs = host
@@ -15,7 +16,7 @@ func _draw() -> void:
 	var c = cvs._cell_of(pos)
 	# 网格覆盖整个地图边界（meta w×h），碰撞/实体放在地形外也有网格
 	var meta0: Dictionary = cvs.map_data.get("meta", {})
-	var map_rect := Rect2i(0, 0, int(meta0.get("w", 120)), int(meta0.get("h", 56)))
+	var map_rect := Rect2i(0, 0, int(meta0.get("w", K.DEFAULT_MAP_W)), int(meta0.get("h", K.DEFAULT_MAP_H)))
 	if cvs.show_grid:
 		var origin = Vector2(map_rect.position) * cvs.tile_px
 		var endv = Vector2(map_rect.end) * cvs.tile_px
@@ -75,7 +76,9 @@ func _draw() -> void:
 	# 碰撞叠加由 CollisionView 节点绘制（图层接口控制显隐），这里不再特例绘制。
 	# 地图边界（meta w×h，关卡的实际范围）
 	var meta: Dictionary = cvs.map_data.get("meta", {})
-	var bounds := Rect2(Vector2.ZERO, Vector2(int(meta.get("w", 120)) * cvs.tile_px, int(meta.get("h", 56)) * cvs.tile_px))
+	var bounds := Rect2(Vector2.ZERO, Vector2(
+		int(meta.get("w", K.DEFAULT_MAP_W)) * cvs.tile_px,
+		int(meta.get("h", K.DEFAULT_MAP_H)) * cvs.tile_px))
 	cvs.draw_rect(bounds, Color(1, 1, 1, 0.35), false, 2.0)
 	# 游玩视野预览（跟随鼠标）：鼠标在哪 = 假设玩家在那，屏幕里能看到什么
 	var ss: Array = cvs.manifest.get("screenSize", [640, 360])

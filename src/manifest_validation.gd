@@ -25,18 +25,18 @@ static func validate(data: Dictionary, project_dir := "") -> Array[Dictionary]:
 ## 码重复是**错误**：两个声明同码等于静默别名，磁盘上的引用会指向不确定的那个。
 ## id 重复同样错误（内容和目录按 id 分目录）。
 static func _validate_functions(data: Dictionary, issues: Array[Dictionary]) -> void:
-	var ManifestScript := preload("res://src/manifest.gd")
+	var FunctionDecls := preload("res://src/content/function_decl.gd")
 	var decl = data.get("functions", null)
 	if not (decl is Dictionary or decl is Array):
 		_add(issues, "error", "functions", "must be an object or an array")
 		return
-	var dup := ManifestScript.duplicate_codes(data)
+	var dup := FunctionDecls.duplicate_codes(data)
 	for d in dup:
 		_add(issues, "error", "functions", "duplicate code %s (%s)" % [str(d.get("code", "")), str(d.get("scope", ""))])
-	var norm: Dictionary = ManifestScript.functions(data)
+	var norm: Dictionary = FunctionDecls.functions(data)
 	for fid in norm:
 		var d: Dictionary = norm[fid]
-		# 缺码不是错误：load_from 在 validate 之后调 ensure_codes 自动补发（兼容老清单）。
+		# 缺码不是错误：load_from 在 validate 之后调 ensure_codes 补发（新声明补码的正常路径）。
 		# 只有「重复」是错误——上面 duplicate_codes 已报。
 		var fseen := {}
 		for fd in d.get("fields", []):
@@ -49,9 +49,15 @@ static func _validate_functions(data: Dictionary, issues: Array[Dictionary]) -> 
 					"field ids must be non-empty and unique (by id, seen: %s)" % field_id)
 			fseen[field_id] = true
 			var kind := str((fd as Dictionary).get("kind", ""))
-			if kind != "" and kind != "input" and kind != "choice":
+			# 零兼容：kind/type 是声明契约的必需键，缺或非法直接报错（UI 侧对应只读兜底）
+			if kind != "input" and kind != "choice":
 				_add(issues, "error", "functions.%s.fields.%s" % [str(fid), field_id],
-					"unsupported field kind: " + kind)
+					"field kind must be \"input\" or \"choice\"")
+			elif kind == "input":
+				var typ := str((fd as Dictionary).get("type", ""))
+				if not ["string", "int", "float", "bool"].has(typ):
+					_add(issues, "error", "functions.%s.fields.%s" % [str(fid), field_id],
+						"input type must be string / int / float / bool")
 
 static func _validate_tiles(tiles: Array, project_dir: String, issues: Array[Dictionary]) -> void:
 	var ids := {}

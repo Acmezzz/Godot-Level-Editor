@@ -12,13 +12,14 @@ const ContentStore := preload("res://src/content/content_store.gd")
 const ContentId := preload("res://src/content/content_id.gd")
 const MapStore := preload("res://src/map_store.gd")
 const FieldWidgets := preload("res://src/ui/field_widgets.gd")
+const FunctionDecls := preload("res://src/content/function_decl.gd")
+const Preview := preload("res://src/ui/content_preview.gd")
+const K := preload("res://src/core/constants.gd")
 
 ## 序号圈字符；超出后回落到数字
 const ORD := ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨"]
 const LEFT_W := 220
 const RIGHT_W := 360
-## 预览悬停高亮色：青色，和选中框的黄（Th.WARN）区分开
-const HOVER_COL := Color(0.35, 0.95, 0.95, 0.95)
 
 var app
 var manifest := {}
@@ -27,14 +28,13 @@ var root: Control = null
 
 var _selected_ent := ""
 var _selected_fn := -1
-## 预览区鼠标悬停的实例 id（青色高亮，与点击选中的黄框区分）
-var _hover_ent := ""
 
 # 左列
 var _left_title: Label = null
 var _rows_box: VBoxContainer = null
-# 中列
+# 中列（只读预览控件，实现见 content_preview.gd）
 var _preview: Control = null
+var _preview_map := ""   # 预览缩放所属地图：切图时 reset_view
 # 右列
 var _r_name: Label = null
 var _r_id: Label = null
@@ -97,31 +97,7 @@ func _build_left() -> Control:
 	col.add_child(Kit.hint_label("点画布上的实体选中同一行。", LEFT_W - 24))
 	return wrap
 
-# ──────────── 中列：只读画布预览 ────────────
-
-## 预览控件：真正画图的是控制器，本类只负责把 _draw / 点击转过去。
-## 为什么要新类：同一 Node2D 不能同时挂在两份 UI 里，所以这里重绘而不是复用画布。
-class PreviewControl extends Control:
-	var ctrl = null
-
-	func _draw() -> void:
-		if ctrl != null:
-			ctrl._draw_preview(self)
-
-	func _gui_input(event: InputEvent) -> void:
-		if ctrl != null:
-			ctrl._preview_input(event)
-
-	## 鼠标离开预览区：清掉悬停高亮，避免光标移出后框还停在原处
-	func _notification(what: int) -> void:
-		if ctrl == null:
-			return
-		if what == NOTIFICATION_MOUSE_EXIT:
-			ctrl._set_preview_hover(self, Vector2.INF)
-			ctrl._preview_panning = false   # 拖出预览区松不了中键：出界即复位
-		elif what == NOTIFICATION_MOUSE_ENTER:
-			ctrl._set_preview_hover(self, get_local_mouse_position())
-
+# ──────────── 中列：只读画布预览（实现在 src/ui/content_preview.gd） ────────────
 
 func _build_middle() -> Control:
 	var wrap := Control.new()
@@ -134,13 +110,8 @@ func _build_middle() -> Control:
 	bg.add_theme_stylebox_override("panel", Th.flat(Th.BG_VOID, 0))
 	wrap.add_child(bg)
 
-	_preview = PreviewControl.new()
-	_preview.ctrl = self
+	_preview = Preview.new(self)
 	_preview.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	_preview.mouse_filter = Control.MOUSE_FILTER_STOP
-	# 缩放/平移后地图不能画出控件边界（曾盖到左列）——同关卡画布的 SubViewport 裁剪语义
-	_preview.clip_contents = true
-	_preview.tooltip_text = "只读预览 · 滚轮缩放 · 中键拖动 · 点击实例选中"
 	wrap.add_child(_preview)
 
 	var hint := Kit.text_label("只读预览 · 滚轮缩放 · 中键拖动 · 点击实例选中", Th.TEXT_MUTE, Th.FS_META)
@@ -195,12 +166,11 @@ func refresh_list(focus := "") -> void:
 	# 切图后上一张图的缩放/平移对这张图没有意义：zoom 归 1（整图塞进控件）
 	if _preview_map != str(app.cur_map_name):
 		_preview_map = str(app.cur_map_name)
-		_preview_zoom = 1.0
-		_preview_pan = Vector2.ZERO
+		_preview.reset_view()
 	var ents := _entities()
 	# 悬停 id 随切图/删实体失效：留着会指向不存在的实例，清干净
-	if _hover_ent != "" and _find_ent(_hover_ent) == null:
-		_hover_ent = ""
+	if _preview.hover_ent != "" and _find_ent(_preview.hover_ent) == null:
+		_preview.clear_hover()
 	# 选中项失效（切图/删实体）时回到第一行：右栏不该对着已不存在的实例
 	if focus != "" and _find_ent(focus) != null:
 		_selected_ent = focus
@@ -216,7 +186,7 @@ func refresh_list(focus := "") -> void:
 	_rebuild_rows()
 	_rebuild_right()
 	if _preview != null:
-		_preview.queue_redraw()
+		_preview.refresh()
 
 ## Ctrl+S / 切视图：把还没失焦提交的连续控件改动统一写盘，避免 Esc 或直接切走时丢改动。
 func commit() -> bool:
@@ -375,16 +345,12 @@ func _build_row(row: Dictionary) -> Control:
 
 	# 按钮内容行撑满高度：ghost 按钮默认按文字定高，空文字会塌成 0
 	b.custom_minimum_size = Vector2(0, 26)
-	# 悬停行 → 预览里高亮对应实例（与预览内悬停同一状态 _hover_ent，青框）
+	# 悬停行 → 预览里高亮对应实例（与预览内悬停同一状态，青框）
 	b.mouse_entered.connect(func():
-		_hover_ent = ent_id
-		if _preview != null:
-			_preview.queue_redraw())
+		_preview.set_hover(ent_id))
 	b.mouse_exited.connect(func():
-		if _hover_ent == ent_id:
-			_hover_ent = ""
-			if _preview != null:
-				_preview.queue_redraw())
+		if _preview.hover_ent == ent_id:
+			_preview.set_hover(""))
 	return b
 
 ## 内容页是否在屏上（root 由 project_shell 切 visible）。隐藏时的选中只记状态不重建 UI。
@@ -422,248 +388,14 @@ func select_inst(ent_id: String) -> void:
 	_rebuild_rows()
 	_rebuild_right()
 	if _preview != null:
-		_preview.queue_redraw()
+		_preview.refresh()
 
-# ──────────── 中列：重绘式预览 ────────────
-
-## 预览缩放：fit 缩放 × 用户滚轮缩放（zoom 0.2~8），pan 为视图原点的屏幕偏移。
-## 滚轮缩放以鼠标为锚点（指着的地图点缩放前后不动）；坐标换算全部走 _preview_origin。
-var _preview_zoom := 1.0
-var _preview_pan := Vector2.ZERO
-var _preview_map := ""   # 预览缩放所属地图：切图时重置 zoom/pan
-var _preview_panning := false   # 中键按住拖动平移（手势同关卡画布）
-
-## fit 缩放：把整张地图塞进控件（留 24px 边距），不跟随关卡画布的 zoom/相机。
-func _preview_fit(c: Control) -> float:
-	if not _map_ready() or c.size.x <= 1 or c.size.y <= 1:
-		return 0.0
-	var meta: Dictionary = app.canvas.map_data.get("meta", {})
-	# app.canvas 在宿主上是无类型 var，链式取值是 Variant：必须显式标注，否则推断失败
-	var tile_px: float = float(app.canvas.tile_px)
-	var w: float = float(int(meta.get("w", 95))) * tile_px
-	var h: float = float(int(meta.get("h", 56))) * tile_px
-	if w <= 0 or h <= 0:
-		return 0.0
-	return minf((c.size.x - 48) / w, (c.size.y - 48) / h)
-
-func _preview_scale(c: Control) -> float:
-	return _preview_fit(c) * _preview_zoom
-
-## 预览视图原点：居中原点 + 用户 pan 偏移（绘制与命中测试共用同一变换）
-func _preview_origin(c: Control, s: float) -> Vector2:
-	var meta: Dictionary = app.canvas.map_data.get("meta", {})
-	var tile_px: float = float(app.canvas.tile_px)
-	var map_px := Vector2(float(int(meta.get("w", 95))) * tile_px,
-		float(int(meta.get("h", 56))) * tile_px) * s
-	return (c.size - map_px) * 0.5 + _preview_pan
-
-## 预览绘制：网格 + 真实地形/装饰瓦片 + 实例缩略图/色块 + 选中框。
-## 地形必须画出来：只画实体点时，用户看不出实例压在什么地形上。
-func _draw_preview(c: Control) -> void:
-	c.draw_rect(Rect2(Vector2.ZERO, c.size), Th.BG_VOID)
-	if not _map_ready():
-		c.draw_string(ThemeDB.fallback_font, Vector2(24, c.size.y * 0.5),
-			"没有正在编辑的地图", HORIZONTAL_ALIGNMENT_LEFT, -1, Th.FS_SMALL, Th.TEXT_MUTE)
-		return
-	var s := _preview_scale(c)
-	if s <= 0.0:
-		return
-	var meta: Dictionary = app.canvas.map_data.get("meta", {})
-	var mw := int(meta.get("w", 95))
-	var mh := int(meta.get("h", 56))
-	var tile := float(app.canvas.tile_px)
-	var map_px := Vector2(float(mw) * tile, float(mh) * tile) * s
-	var origin := _preview_origin(c, s)
-
-	# 地图底 + 网格：缩略后逐格线过密就不画（避免一整片灰）
-	c.draw_rect(Rect2(origin, map_px), Th.BG_BASE)
-	var step := tile * s
-	if step >= 6.0:
-		var grid_col := Color(1, 1, 1, 0.05)
-		for x in mw + 1:
-			var px := origin.x + x * step
-			c.draw_line(Vector2(px, origin.y), Vector2(px, origin.y + map_px.y), grid_col, 1.0)
-		for y in mh + 1:
-			var py := origin.y + y * step
-			c.draw_line(Vector2(origin.x, py), Vector2(origin.x + map_px.x, py), grid_col, 1.0)
-	c.draw_rect(Rect2(origin, map_px), Color(1, 1, 1, 0.25), false, 1.0)
-
-	# 地形 / 装饰真实瓦片：预览必须看得出实例压在哪块地上，只画网格等于丢了一半信息。
-	# 数据优先取画布实时 TileMapLayer（刚涂的立刻可见），退回 map_data 的序列化数组；
-	# 两种来源都归一成 [x, y, atlas, ax, ay]，兼容旧 4 元 [x, y, ax, ay]。
-	var texs: Array = app.canvas.atlas_texs
-	for kind in ["terrain", "decor"]:
-		var fallback: Color = Th.MAP_TERRAIN if str(kind) == "terrain" else Th.MAP_DECOR
-		for t in _preview_tiles(str(kind)):
-			# 只画地图边界内的格：画布允许在边界外涂，预览出框会显得脏
-			var cx := int(t[0])
-			var cy := int(t[1])
-			if cx < 0 or cy < 0 or cx >= mw or cy >= mh:
-				continue
-			var ai := int(t[2])
-			var src := Rect2(Vector2(float(t[3]), float(t[4])) * tile, Vector2(tile, tile))
-			var dst := Rect2(origin + Vector2(float(t[0]), float(t[1])) * step, Vector2(step, step))
-			var atex: Texture2D = null
-			if ai >= 0 and ai < texs.size():
-				atex = texs[ai] as Texture2D
-			if atex != null:
-				c.draw_texture_rect_region(atex, dst, src)
-			else:
-				c.draw_rect(dst, fallback, true)
-
-	var hover_rect := Rect2()
-	for row in _entities():
-		var spr: Sprite2D = row.spr
-		if spr == null or not is_instance_valid(spr):
-			continue
-		var dsz: Vector2 = app.canvas.entity_display_size_of(spr) * s
-		var center := origin + spr.position * s
-		var rect := Rect2(center - dsz * 0.5, dsz)
-		var tex: Texture2D = app.canvas.thumbs.get(str(row.scene))
-		if tex != null:
-			c.draw_texture_rect(tex, rect, false)
-		else:
-			# 内置种类（触发区等）没有缩略图：画半透明块，尺寸就是它在游戏里的占位
-			c.draw_rect(rect, Color(Th.ACCENT, 0.35), true)
-			c.draw_rect(rect, Color(Th.ACCENT_HI, 0.8), false, 1.0)
-		# 悬停框记下来，循环结束后再画：否则被后画的实体盖住，悬停看起来像没生效
-		if str(row.id) == _hover_ent and str(row.id) != _selected_ent:
-			hover_rect = rect
-		if str(row.id) == _selected_ent:
-			var pad := 3.0
-			c.draw_rect(rect.grow(pad), Th.WARN, false, 2.0)
-	# 悬停高亮：青色淡框 + 细十字（与选中的黄色实框区分），最后画保证在最上层
-	if hover_rect.size.x > 0.0:
-		var hr := hover_rect.grow(2.0)
-		var hc := hr.get_center()
-		c.draw_rect(hr, HOVER_COL, false, 1.5)
-		c.draw_line(Vector2(hr.position.x, hc.y), Vector2(hr.end.x, hc.y), Color(HOVER_COL, 0.35), 1.0)
-		c.draw_line(Vector2(hc.x, hr.position.y), Vector2(hc.x, hr.end.y), Color(HOVER_COL, 0.35), 1.0)
-
-## 预览用的瓦片列表，统一为 [x, y, atlas, ax, ay]。
-## 首选画布实时 TileMapLayer（编辑中的改动立刻反映），图层不可用时退回 map_data 数组。
-## P2-4：整图满涂时每次重绘重建上万条临时数组——按 canvas.map_rev 缓存（任何写入都会抬它）。
-var _tiles_cache := {}
-var _tiles_rev := {}   # kind -> 缓存对应的 map_rev
-
-func _preview_tiles(kind: String) -> Array:
-	if not _map_ready():
-		return []
-	var rev: int = int(app.canvas.map_rev)
-	if _tiles_rev.get(kind, -1) == rev:
-		return _tiles_cache.get(kind, [])
-	var out: Array = []
-	var layer: TileMapLayer = app.canvas.terrain if kind == "terrain" else app.canvas.decor
-	if layer != null and is_instance_valid(layer):
-		for c in layer.get_used_cells():
-			var ac: Vector2i = layer.get_cell_atlas_coords(c)
-			if ac == Vector2i(-1, -1):
-				continue
-			out.append([c.x, c.y, layer.get_cell_source_id(c), ac.x, ac.y])
-	else:
-		for raw in app.canvas.map_data.get(kind, []):
-			if not (raw is Array):
-				continue
-			var a: Array = raw
-			if a.size() < 4:
-				continue
-			if a.size() >= 5:
-				out.append([int(a[0]), int(a[1]), int(a[2]), int(a[3]), int(a[4])])
-			else:
-				out.append([int(a[0]), int(a[1]), 0, int(a[2]), int(a[3])])
-	_tiles_cache[kind] = out
-	_tiles_rev[kind] = rev
-	return out
-
-## 预览点击/悬停：命中半径取实体显示尺寸的一半（与它看起来的大小一致）。
-## 手势对齐关卡画布：滚轮缩放（鼠标锚点）、中键按住拖动平移、左键点击选中。
-func _preview_input(event: InputEvent) -> void:
-	if event is InputEventMouseMotion:
-		var mm := event as InputEventMouseMotion
-		# 中键拖动平移：pan 是屏幕偏移，手势语义与画布 cam_pos 相同（跟手走）
-		if _preview_panning:
-			_preview_pan += mm.relative
-			_preview.queue_redraw()
-			return
-		_set_preview_hover(_preview, mm.position)
-		return
-	if not (event is InputEventMouseButton):
-		return
-	var mb := event as InputEventMouseButton
-	if mb.pressed and (mb.button_index == MOUSE_BUTTON_WHEEL_UP
-			or mb.button_index == MOUSE_BUTTON_WHEEL_DOWN):
-		_zoom_preview_at(mb.position, 1.15 if mb.button_index == MOUSE_BUTTON_WHEEL_UP else 1.0 / 1.15)
-		return
-	if mb.button_index == MOUSE_BUTTON_MIDDLE:
-		_preview_panning = mb.pressed
-		return
-	if mb.button_index != MOUSE_BUTTON_LEFT or not mb.pressed:
-		return
-	if _preview == null or not _map_ready():
-		return
-	var hit := _hit_ent_at(mb.position)
-	if hit != "":
-		select_inst(hit)
-
-## 滚轮缩放预览：缩放前后鼠标指着的地图点不动。pan 屏幕偏移 = 新原点 − 新居中原点。
-func _zoom_preview_at(pos: Vector2, factor: float) -> void:
-	if _preview == null or not _map_ready():
-		return
-	var s_old := _preview_scale(_preview)
-	if s_old <= 0.0:
-		return
-	var origin_old := _preview_origin(_preview, s_old)
-	_preview_zoom = clampf(_preview_zoom * factor, 0.2, 8.0)
-	var s_new := _preview_scale(_preview)
-	if is_equal_approx(s_new, s_old):
-		return
-	_preview_pan = Vector2.ZERO
-	var center_new := _preview_origin(_preview, s_new)
-	_preview_pan = pos - (pos - origin_old) * (s_new / s_old) - center_new
-	_preview.queue_redraw()
-
-## 光标下的实体 id（"" = 空白处）。后画的在上层，命中测试要反向遍历
-## （同一格叠多个时取最上面那个）。坐标均为预览控件本地坐标。
-func _hit_ent_at(pos: Vector2) -> String:
-	if _preview == null or not _map_ready():
-		return ""
-	var s := _preview_scale(_preview)
-	if s <= 0.0:
-		return ""
-	var meta: Dictionary = app.canvas.map_data.get("meta", {})
-	var map_px := Vector2(float(int(meta.get("w", 95))) * app.canvas.tile_px,
-		float(int(meta.get("h", 56))) * app.canvas.tile_px) * s
-	var origin := _preview_origin(_preview, s)
-	var world := (pos - origin) / s
-	var ents := _entities()
-	for i in range(ents.size() - 1, -1, -1):
-		var row: Dictionary = ents[i]
-		var spr: Sprite2D = row.spr
-		if spr == null or not is_instance_valid(spr):
-			continue
-		var half: Vector2 = app.canvas.entity_display_size_of(spr) * 0.5
-		if absf(world.x - spr.position.x) <= maxf(half.x, 4.0) \
-				and absf(world.y - spr.position.y) <= maxf(half.y, 4.0):
-			return str(row.id)
-	return ""
-
-## 更新预览悬停实体并重绘（只在 id 变化时重绘，鼠标在空白处滑动不刷帧）。
-## pos 传 Vector2.INF 表示「离开预览区」，直接清理。
-func _set_preview_hover(c, pos: Vector2) -> void:
-	var hit := "" if pos == Vector2.INF else _hit_ent_at(pos)
-	if hit == _hover_ent:
-		return
-	_hover_ent = hit
-	if c != null and is_instance_valid(c):
-		c.queue_redraw()
-	elif _preview != null:
-		_preview.queue_redraw()
-
+# ──────────── 中列：重绘式预览（实现见 content_preview.gd） ────────────
 ## 没开地图：清空三列并给引导。不伪造空行，让「先去开图」是唯一明确动作。
 func _clear_all_for_empty() -> void:
 	_selected_ent = ""
 	_selected_fn = -1
-	_hover_ent = ""
+	_preview.clear_hover()
 	_left_title.text = "实例"
 	if _rows_box != null:
 		for c in _rows_box.get_children():
@@ -681,7 +413,7 @@ func _clear_all_for_empty() -> void:
 		_r_body.add_child(Kit.empty_state("◇", "先打开一张地图",
 			"顶栏地图下拉可切换地图"))
 	if _preview != null:
-		_preview.queue_redraw()
+		_preview.refresh()
 
 # ──────────── 右列：渲染 ────────────
 
@@ -792,7 +524,7 @@ func _build_fn_row(i: int, item) -> Control:
 	# 未知码：清单里查不到 → 红字显形，数据原样保留（不删、不改写）
 	var known := bool(ref.get("known", false))
 	var name_lbl := Kit.text_label(
-		EditorManifest.function_name(manifest, fn_id) if known else ("(未声明的功能) " + str(f.get("fn", ""))),
+		FunctionDecls.function_name(manifest, fn_id) if known else ("(未声明的功能) " + str(f.get("fn", ""))),
 		(Th.TEXT if on else Th.TEXT_SOFT) if known else Th.WARN, Th.FS_SMALL)
 	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	line.add_child(name_lbl)
@@ -881,12 +613,14 @@ func _on_add_menu_id(idx: int) -> void:
 	_add_fn(fn_id)
 
 func _function_index() -> Dictionary:
-	return EditorManifest.functions(manifest)
+	return FunctionDecls.functions(manifest)
 
-## 解析一条绑定里的功能引用。磁盘上的 fn 是执行码；旧数据存的是人类名。
+## 解析一条绑定里的功能引用：磁盘上的 fn 一律是执行码，按码查 id；查不到 = 数据漂移。
 ## 返回 {id, code, known}——UI 全部按 id（人类名）组织，写盘只写 code。
 func _resolve_fn(f: Dictionary) -> Dictionary:
-	return EditorManifest.resolve_fn(manifest, str(f.get("fn", "")))
+	var code := str(f.get("fn", ""))
+	var id := FunctionDecls.fn_id_of(manifest, code)
+	return {"id": id, "code": code, "known": id != ""}
 
 func _pick_fn(i: int) -> void:
 	commit()
@@ -921,15 +655,14 @@ func _delete_fn(i: int) -> void:
 	_refresh_all()
 
 ## 追加功能：内容留空，等用户在表单里第一次改动时再生成 ID。
-## 绑定里写执行码（人类名改名不破数据）；声明缺码时退回人类名。
+## 绑定里写执行码；码由 ensure_codes 在加载清单时补发，这里不可能缺。
 func _add_fn(fn_id: String) -> void:
 	var spr := _current_spr()
 	if spr == null or fn_id == "":
 		return
 	commit()   # 追加前先落盘当前表单待提交值（下标保持有效）
 	var fns := _current_fns().duplicate(true)
-	var code := EditorManifest.fn_code(manifest, fn_id)
-	fns.append({"fn": code if code != "" else fn_id, "content": "", "name": "",
+	fns.append({"fn": FunctionDecls.fn_code(manifest, fn_id), "content": "", "name": "",
 		"order": fns.size() + 1, "parallel": false})
 	_selected_fn = fns.size() - 1
 	_write_fns(spr, fns)
@@ -940,7 +673,7 @@ func _refresh_all() -> void:
 	_rebuild_rows()
 	_rebuild_right()
 	if _preview != null:
-		_preview.queue_redraw()
+		_preview.refresh()
 
 # ──────────── 右列：内容表单 ────────────
 
@@ -955,7 +688,7 @@ func _build_form_block() -> Control:
 	var ref := _resolve_fn(f)
 	var fn_id := str(ref.get("id", ""))
 	var content_id := str(f.get("content", ""))
-	var fn_label := str(EditorManifest.function_name(manifest, fn_id)) if bool(ref.get("known", false)) \
+	var fn_label := str(FunctionDecls.function_name(manifest, fn_id)) if bool(ref.get("known", false)) \
 		else "(未声明的功能) " + str(f.get("fn", ""))
 	var data: Dictionary = ContentStore.read(manifest, fn_id, content_id) if content_id != "" and fn_id != "" else {}
 	var cname := str(data.get("name", "")) if not data.is_empty() else str(f.get("name", ""))
@@ -985,7 +718,7 @@ func _build_form_block() -> Control:
 	name_edit.focus_exited.connect(func(): _commit_name(i, name_edit.text))
 	box.add_child(Kit.field_row("显示名", name_edit, 56))
 
-	var fields := EditorManifest.function_fields(manifest, fn_id)
+	var fields := FunctionDecls.function_fields(manifest, fn_id)
 	if fields.is_empty():
 		box.add_child(Kit.hint_label("这个功能没有声明可填字段；填个名字即可。", RIGHT_W - 40))
 	var cur: Dictionary = data.get("fields", {}) if data.get("fields", {}) is Dictionary else {}
@@ -1001,13 +734,12 @@ func _build_form_block() -> Control:
 	return box
 
 ## 报告 ③：内容里有清单没声明的键——保留原值、只读呈现，不删不改。
-## 场景：游戏侧删了字段声明（或换了码）、或手工改过 JSON。数据还在，编辑器只是不再替它渲染控件。
+## 键一律是字段码；对不上声明码 = 声明被删/换码（数据漂移）。
 func _undeclared_block(fields: Array, cur: Dictionary) -> Control:
 	var known := {}
 	for fd in fields:
 		if fd is Dictionary:
 			known[str((fd as Dictionary).get("code", ""))] = true
-			known[str((fd as Dictionary).get("id", ""))] = true
 	var extra := []
 	for k in cur:
 		if str(k) == "" or known.has(str(k)):
@@ -1026,17 +758,16 @@ func _undeclared_block(fields: Array, cur: Dictionary) -> Control:
 		row.text = "%s = %s" % [str(k), txt]
 		row.editable = false
 		row.add_theme_font_size_override("font_size", Th.FS_META)
-		row.tooltip_text = "字段码/名：声明缺失。游戏侧补回声明（code 须一致）即可恢复编辑。"
+		row.tooltip_text = "字段码不在清单声明里（声明被删/换码）。补回声明（code 须一致）即可恢复编辑。"
 		box.add_child(row)
 	return box
 
 ## 单个声明字段：交给 field_widgets 按 kind（input / choice）建控件。
-## 内容文件里的键是字段码；旧数据里存的是字段 id，读取时按 id 回退。
+## 内容文件里的键一律是字段码（ensure_codes 保证声明都有码，无回退）。
 func _build_field_row(i: int, fn_id: String, fd: Dictionary, cur: Dictionary) -> Control:
 	var fid := str(fd.get("id", ""))
-	var fcode := str(fd.get("code", ""))
-	var key := fcode if fcode != "" else fid
-	var val = cur.get(key, cur.get(fid, fd.get("default", FieldWidgets.default_for(fd))))
+	var key := str(fd.get("code", ""))
+	var val = cur.get(key, fd.get("default", FieldWidgets.default_for(fd)))
 	var label := str(fd.get("name", fid))
 	var built := FieldWidgets.build(fd, val, func(v):
 		_set_field(i, fn_id, key, v), _resolve_options)
@@ -1139,8 +870,8 @@ func _commit_name(i: int, text: String) -> void:
 
 ## 新内容条目骨架：function 写功能码（执行引用），目录名仍是人类名（可读）。
 func _blank_content(fn_id: String, cid: String) -> Dictionary:
-	var code := EditorManifest.fn_code(manifest, fn_id)
-	return {"id": cid, "function": code if code != "" else fn_id, "name": fn_id, "fields": {}}
+	return {"id": cid, "function": FunctionDecls.fn_code(manifest, fn_id),
+		"name": fn_id, "fields": {}}
 
 ## 保证该附加功能有 content id：没有就生成并写一条空内容 + 回写绑定。
 ## 返回空串 = 生成/写盘失败（调用方给出可见反馈，不静默吞掉）。
@@ -1191,7 +922,7 @@ func _ensure_failed() -> void:
 func _refresh_status_only() -> void:
 	_rebuild_rows()
 	if _preview != null:
-		_preview.queue_redraw()
+		_preview.refresh()
 
 # ──────────── 库复用弹窗 ────────────
 
@@ -1205,7 +936,7 @@ func _open_lib(i: int) -> void:
 	var fn_id := str(_resolve_fn(f).get("id", ""))
 	if fn_id == "":
 		return
-	var fn_label := str(EditorManifest.function_name(manifest, fn_id))
+	var fn_label := str(FunctionDecls.function_name(manifest, fn_id))
 	var shell: Dictionary = app._popup_body("选择已有%s内容" % fn_label,
 		"选中即复制进当前实例，生成新 ID")
 	var pop: PopupPanel = shell.pop
@@ -1270,7 +1001,7 @@ func _duplicate_from_lib(fn_id: String, old_id: String, new_name: String) -> voi
 	var src_fields = src.get("fields", {})
 	var data := {
 		"id": new_id,
-		"function": EditorManifest.fn_code(manifest, fn_id),
+		"function": FunctionDecls.fn_code(manifest, fn_id),
 		"name": nm,
 		"fields": (src_fields as Dictionary).duplicate(true) if src_fields is Dictionary else {},
 	}
@@ -1279,9 +1010,8 @@ func _duplicate_from_lib(fn_id: String, old_id: String, new_name: String) -> voi
 		return
 	commit()   # 复制库内容前先落盘当前表单待提交值（下标保持有效）
 	var fns := _current_fns().duplicate(true)
-	# 绑定里写执行码；清单里查不到码（声明缺失）时退回人类名，至少不写空值
-	var fn_ref := EditorManifest.fn_code(manifest, fn_id)
-	fns.append({"fn": fn_ref if fn_ref != "" else fn_id, "content": new_id, "name": nm,
+	# 绑定里写执行码；码由 ensure_codes 保证非空
+	fns.append({"fn": FunctionDecls.fn_code(manifest, fn_id), "content": new_id, "name": nm,
 		"order": fns.size() + 1, "parallel": false})
 	_selected_fn = fns.size() - 1
 	_write_fns(spr, fns)

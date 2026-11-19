@@ -3,6 +3,7 @@ extends RefCounted
 const MapExport := preload("res://src/map_export.gd")
 const UiKitScript := preload("res://src/ui/ui_kit.gd")
 const UiThemeScript := preload("res://src/ui/ui_theme.gd")
+const K := preload("res://src/core/constants.gd")
 
 var app   # 宿主引用
 
@@ -106,7 +107,7 @@ func create_map_from_dialog(name_edit: LineEdit, err_label: Label, pop: PopupPan
 		return
 	app.canvas.set_thumbs(app._entity_thumbs())
 	await app.canvas.load_data({
-		"meta": {"name": n, "w": 120, "h": 56},
+		"meta": {"name": n, "w": K.DEFAULT_MAP_W, "h": K.DEFAULT_MAP_H},
 		"spawn": [2, 2],
 		"terrain": [], "decor": [], "collision": [], "entities": [],
 	}, n)
@@ -391,13 +392,13 @@ func open_size_dialog() -> void:
 	w_edit.min_value = 8
 	w_edit.max_value = 4000
 	w_edit.step = 1
-	w_edit.value = int(meta.get("w", 120))
+	w_edit.value = int(meta.get("w", K.DEFAULT_MAP_W))
 	row.add_child(UiKitScript.field_row("宽", w_edit))
 	var h_edit := SpinBox.new()
 	h_edit.min_value = 8
 	h_edit.max_value = 4000
 	h_edit.step = 1
-	h_edit.value = int(meta.get("h", 56))
+	h_edit.value = int(meta.get("h", K.DEFAULT_MAP_H))
 	row.add_child(UiKitScript.field_row("高", h_edit))
 	var btn_row := UiKitScript.hbox(8)
 	btn_row.alignment = BoxContainer.ALIGNMENT_END

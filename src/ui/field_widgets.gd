@@ -17,16 +17,13 @@ const MapStore := preload("res://src/map_store.gd")
 const KIND_INPUT := "input"
 const KIND_CHOICE := "choice"
 
-## 声明的种类；旧声明只有 type（+可选 options）时按此归一。
+## 声明的种类：一律读 kind 键，不做推断。
+## 缺 kind / 认不出的 kind 一律走只读展示（校验层把缺 kind 报成错误）。
 static func kind_of(decl: Dictionary) -> String:
-	var k := str(decl.get("kind", ""))
-	if k != "":
-		return k
-	return KIND_CHOICE if decl.get("options", null) is Array else KIND_INPUT
+	return str(decl.get("kind", ""))
 
 static func type_of(decl: Dictionary) -> String:
-	var t := str(decl.get("type", ""))
-	return t if t != "" else "string"
+	return str(decl.get("type", ""))
 
 ## 声明没给 default 时的初值（按 type 推）。
 static func default_for(decl: Dictionary) -> Variant:
@@ -63,8 +60,9 @@ static func build(decl: Dictionary, value, on_set: Callable,
 		return _build_choice(decl, value, on_set, option_resolver)
 	if kind == KIND_INPUT:
 		return _build_input(decl, value, on_set)
-	return _readonly(decl, value, "未声明的字段种类「%s」" % kind,
-		"清单里应写 kind: \"input\" 或 \"choice\"")
+	var why := "声明缺 kind（应写 \"input\" 或 \"choice\"）" if kind == "" \
+		else "未声明的字段种类「%s」" % kind
+	return _readonly(decl, value, why, "补全声明后重新加载清单即可恢复编辑")
 
 ## input：string（可 multiline）/ int / float / bool。
 ## 连续控件（SpinBox、多行 TextEdit）拖动/输入期间只记内存，失焦或 commit() 才写盘。
@@ -113,8 +111,9 @@ static func _build_input(decl: Dictionary, value, on_set: Callable) -> Dictionar
 			le.focus_exited.connect(func(): on_set.call(le.text.strip_edges()))
 			return {"ctl": le, "commit": Callable()}
 		_:
-			return _readonly(decl, value, "未声明的输入类型「%s」" % typ,
-				"清单里应写 type: string / int / float / bool")
+			var why := "声明缺 type（应写 string / int / float / bool）" if typ == "" \
+				else "未声明的输入类型「%s」" % typ
+			return _readonly(decl, value, why, "补全声明后重新加载清单即可恢复编辑")
 
 ## choice：options[] 直给，或按 source 动态取。
 ## 值不在选项里时保留原值并额外插一条「(当前值)」——绝不静默改成第一项。

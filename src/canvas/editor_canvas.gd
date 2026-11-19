@@ -185,8 +185,8 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	if str(meta.get("code", "")) == "":
 		meta["code"] = ContentIdRef.new_map_code()
 		map_data["meta"] = meta
-	var mw := int(meta.get("w", 120))
-	var mh := int(meta.get("h", 56))
+	var mw := int(meta.get("w", K.DEFAULT_MAP_W))
+	var mh := int(meta.get("h", K.DEFAULT_MAP_H))
 	var bg := ColorRect.new()
 	bg.name = "Background"
 	bg.color = Color("#0b0e13")
@@ -245,7 +245,7 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 			decor.set_cell(Vector2i(int(arr2[0]), int(arr2[1])), int(arr2[2]), Vector2i(int(arr2[3]), int(arr2[4])))
 		else:
 			decor.set_cell(Vector2i(int(arr2[0]), int(arr2[1])), 0, Vector2i(int(arr2[2]), int(arr2[3])))
-	# 碰撞：[x,y] 旧格式=solid；[x,y,type,shape] 记入类型元数据（solid+矩形不记，缺省零冗余）
+	# 碰撞：[x,y] = solid 缺省（契约零冗余）；[x,y,type,shape] 记入类型元数据（solid+矩形不记）
 	for c in data.get("collision", []):
 		var ccell := Vector2i(int(c[0]), int(c[1]))
 		collision.set_cell(ccell, 0, INVISIBLE_CELL)
@@ -253,10 +253,6 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 		var sname := str(c[3]) if (c as Array).size() >= 4 else ""
 		if tname != "solid" or sname != "":
 			_collision_meta[ccell] = {"type": tname if tname != "" else "solid", "shape": sname}
-	# 兼容旧格式：没有 collision 键的地图，碰撞层自动用地形兜底（与游戏侧一致）
-	if not data.has("collision"):
-		for c in terrain.get_used_cells():
-			collision.set_cell(c, 0, INVISIBLE_CELL)
 	# 实体层：数据化占位（缩略图 Sprite2D，带 metadata scene=id）
 	entities = Node2D.new()
 	entities.name = "Entities"

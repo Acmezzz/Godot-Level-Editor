@@ -22,8 +22,9 @@ static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 		if data.get(key, null) is Array:
 			for i in data[key].size():
 				var cell = data[key][i]
-				if not (cell is Array) or cell.size() < 4 or not _is_number_prefix(cell, 4):
-					_add(issues, "error", "%s[%d]" % [key, i], "must contain x, y, atlas_x, atlas_y")
+				if not (cell is Array) or cell.size() < 5 or not _is_number_prefix(cell, 5):
+					_add(issues, "error", "%s[%d]" % [key, i],
+						"must contain x, y, atlas, atlas_x, atlas_y")
 	if data.get("collision", null) is Array:
 		for i in data.collision.size():
 			var cell = data.collision[i]
@@ -61,15 +62,15 @@ static func _validate_entities(entities: Array, manifest: Dictionary, issues: Ar
 			_validate_functions(entity.get("functions"), path + ".functions", manifest, issues)
 
 ## v2 §5.3：实例 functions 数组结构校验——[{fn, content, name, order, parallel}]。
-## 空 content = 还没绑定内容（内容编辑器里会按需生成），不是错误；未知 fn 只警告，
-## 因为项目侧可以先放数据再补实现（清单声明是开发契约，不是硬白名单）。
-## fn 在磁盘上是功能的执行码；旧数据存人类名，两者都认（见 manifest.resolve_fn）。
+## 空 content = 还没绑定内容（内容编辑器里会按需生成），不是错误；未知码只警告，
+## 因为项目侧可以先放数据再补声明（清单声明是开发契约，不是硬白名单）。
+## fn 在磁盘上一律是功能的执行码，按码查声明，无人类名回退。
 static func _validate_functions(raw, path: String, manifest: Dictionary, issues: Array[Dictionary]) -> void:
 	if not (raw is Array):
 		_add(issues, "error", path, "must be an array")
 		return
 	var has_manifest := not manifest.is_empty()
-	var ManifestScript := preload("res://src/manifest.gd")
+	var FunctionDecls := preload("res://src/content/function_decl.gd")
 	for i in (raw as Array).size():
 		var item = raw[i]
 		var p := "%s[%d]" % [path, i]
@@ -79,12 +80,9 @@ static func _validate_functions(raw, path: String, manifest: Dictionary, issues:
 		var fn_raw := str((item as Dictionary).get("fn", ""))
 		if fn_raw == "":
 			_add(issues, "error", p + ".fn", "must name a function")
-		elif has_manifest:
-			# 码或人类名都认；两者都查不到 = 数据漂移（不阻断，清单可能只是还没补声明）
-			var ref: Dictionary = ManifestScript.resolve_fn(manifest, fn_raw)
-			if not bool(ref.get("known", false)):
-				_add(issues, "warning", p + ".fn",
-					"function is not declared in the manifest: " + fn_raw)
+		elif has_manifest and FunctionDecls.fn_id_of(manifest, fn_raw) == "":
+			_add(issues, "warning", p + ".fn",
+				"function code is not declared in the manifest: " + fn_raw)
 		for key in ["content", "name"]:
 			if (item as Dictionary).has(key) and not ((item as Dictionary)[key] is String):
 				_add(issues, "error", p + "." + key, "must be a string")
