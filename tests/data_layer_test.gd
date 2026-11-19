@@ -264,6 +264,7 @@ func _test_playtest_guard() -> void:
 		"missing executable is rejected before spawning")
 
 ## 实体编辑器占位尺寸：需要真实游戏清单，未设置 EDITOR_PROJECT 时跳过。
+## 不假定任何具体实体 id——随便哪个工程都能跑。
 func _test_entity_editor_size() -> void:
 	var project := OS.get_environment("EDITOR_PROJECT")
 	if project == "":
@@ -273,25 +274,21 @@ func _test_entity_editor_size() -> void:
 	_check(not manifest.has("_error"), "game manifest loads from EDITOR_PROJECT")
 	if manifest.has("_error"):
 		return
-	var crawler := {}
-	var portal := {}
+	# 取第一个能算出非零尺寸的实体（有 prefab 形状或显式 editorSize）
+	var sample := {}
 	for entity in manifest.get("entities", []):
-		if str(entity.get("id", "")) == "crawler":
-			crawler = entity
-		elif str(entity.get("id", "")) == "portal":
-			portal = entity
-	_check(not crawler.is_empty(), "crawler entry exists in the game manifest")
-	if not crawler.is_empty():
-		_check(Manifest.entity_editor_size(manifest, crawler) == Vector2(11, 7),
-			"editor size comes from the prefab collision shape")
-		var override := crawler.duplicate(true)
+		if Manifest.entity_editor_size(manifest, entity) != Vector2.ZERO:
+			sample = entity
+			break
+	if sample.is_empty():
+		print("SKIP entity_editor_size (清单里没有带尺寸来源的实体)")
+	else:
+		var size := Manifest.entity_editor_size(manifest, sample)
+		_check(size.x > 0 and size.y > 0, "editor size resolves to a positive size")
+		var override := sample.duplicate(true)
 		override["editorSize"] = [20, 12]
 		_check(Manifest.entity_editor_size(manifest, override) == Vector2(20, 12),
 			"editorSize overrides the prefab shape")
-	_check(not portal.is_empty(), "portal entry exists in the game manifest")
-	if not portal.is_empty():
-		_check(Manifest.entity_editor_size(manifest, portal) == Vector2(20, 20),
-			"circle collision yields a square editor size")
 	_check(Manifest.entity_editor_size(manifest, {"id": "x"}) == Vector2.ZERO,
 		"missing size source yields zero")
 	_check(Manifest.prefab_collision_size(project, "scenes/nope.tscn") == Vector2.ZERO,

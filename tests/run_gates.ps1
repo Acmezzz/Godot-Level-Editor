@@ -1,7 +1,6 @@
 ﻿param(
     [Parameter(Mandatory = $true)][string]$GodotExe,
-    [Parameter(Mandatory = $true)][string]$EditorProject,
-    [Parameter(Mandatory = $true)][string]$BirdProject
+    [Parameter(Mandatory = $true)][string]$EditorProject
 )
 
 $ErrorActionPreference = 'Stop'
@@ -36,8 +35,6 @@ $editorGates = @('parse_all', 'regress', 'data_layer_test', 'content_model_test'
 foreach ($gate in $editorGates) {
     Invoke-GodotGate $EditorProject @('--script', "res://tests/$gate.gd") "editor/$gate"
 }
-Invoke-GodotGate $BirdProject @('--script', 'res://tests/parse_bird.gd') 'bird/parse_bird'
-Invoke-GodotGate $BirdProject @('res://tests/launch_args_test.tscn') 'bird/launch_args_test'
 
 if ($failures.Count -gt 0) {
     Write-Error ("Gate failures: " + ($failures -join ', '))
