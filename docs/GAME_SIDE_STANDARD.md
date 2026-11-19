@@ -49,10 +49,12 @@
 | `playCommand` | string | 试玩命令模板；支持 `%mapfile%`、`%projectpath%` |
 | `godotExe` | string | 可选，覆盖 `playCommand` 首个可执行文件路径；支持 `%projectpath%` |
 
-清单校验把 `tiles/layers/entities/functions` 非 Array（functions 也接受 dict）、`tileSize` 非正数、
-图层 id 不受支持、瓦片/实体 id 空或重复、图集路径含 `..` 或为空、palette 元素缺 `cell`、
-功能/字段**码重复**、字段缺 `kind` 或 kind/type 非法、挂载引用未声明的功能，判为**错误**（编辑器拒绝加载）；
-`terrain/decor/collision` 三个图层缺任何一个只判**警告**。功能 id 不查重（数组写法下归一化按 id 收敛，后写覆盖前写）。
+清单校验把 `tiles/layers/entities/functions/conditions` 非 Array（functions/conditions 也接受 dict）、
+`tileSize` 非正数、图层 id 不受支持、瓦片/实体 id 空或重复、**实例码重复**、图集路径含 `..` 或为空、
+palette 元素缺 `cell`、功能/字段**码重复**（功能与条件字段**跨池同码**也算）、字段缺 `kind` 或
+kind/type 非法、挂载引用未声明的功能、功能引用未声明的条件，判为**错误**（编辑器拒绝加载）；
+`terrain/decor/collision` 三个图层缺任何一个只判**警告**。功能 id 与条件 id 重复都是错误
+（数组写法不查会静默后者覆盖前者）。
 
 ### 2.2 图集 `tiles[]`
 
@@ -201,14 +203,15 @@ solid+矩形碰撞：`col.set_cell(cell, 0, Vector2i(4,0))`。
     "fields": [
       {"id": "text", "code": "M3PQ", "name": "台词",
        "kind": "input", "type": "string", "default": ""}
-    ]
+    ],
+    "conditions": ["has_item"]
   }
 }
 ```
 
 ```json
 "functions": [
-  {"id": "dialogue", "code": "X7K2", "name": "对话", "fields": [...]}
+  {"id": "dialogue", "code": "X7K2", "name": "对话", "fields": [...], "conditions": ["has_item"]}
 ]
 ```
 
@@ -235,15 +238,16 @@ solid+矩形碰撞：`col.set_cell(cell, 0, Vector2i(4,0))`。
 | choice | — | OptionButton：`options: ["a","b"]` 直给，或 `source` 动态取 |
 | input | 其他任意字符串 | 只读展示 + 黄字提示（编辑器不会把数组/对象塞进可写控件） |
 
-choice 的 `source` 取值：`content:<kind>`（列该目录内容条目）、`entity:<id,id>`（清单实体，
-空 = 不过滤）、`map`（地图列表）。值的 JSON 形态与声明不符时只读展示，**绝不自动改写**。
+choice 的 `source` 取值：`content:<kind>`（列该目录内容条目）、`entity:<id,id>`（清单实体类型，
+空 = 不过滤）、`entity_inst:<id,id>`（当前图实例，显示"类型 · (x,y)"，值=实例码，空 = 全部）、
+`map`（地图列表）。值的 JSON 形态与声明不符时只读展示，**绝不自动改写**。
 
 `default` 决定新建内容时的初值：`bool`→false、`int`→0、`float`→0.0、其他→`""`。
 
 **功能声明里编辑器不支持的键**（别指望它们生效）：`trigger`、`scope`、`icon`、`params`、
-`category`、`group` 等一律被忽略——`functions()` 归一化时只保留 `id` / `code` / `name` / `fields`。
-「一个功能在什么时机触发」**不在清单里声明**，由游戏侧实现决定
-（现有 `dialogue` 就是 game 侧按距离 + 交互键触发）。
+`category`、`group` 等一律被忽略——`functions()` 归一化时只保留 `id` / `code` / `name` /
+`fields` / `conditions`。功能的触发时机不在清单里声明，由游戏侧实现决定；**条件依赖**声明在
+清单里（见下），触发时机与条件是两回事：条件 = 满足才执行，时机 = 什么时候来问这个条件。
 
 **实例上挂多个功能**：`functions` 是有序数组，每项：
 
@@ -260,6 +264,38 @@ choice 的 `source` 取值：`content:<kind>`（列该目录内容条目）、`e
 | `parallel` | 布尔，编辑器只存取，**不解释语义** |
 
 游戏侧若要「顺序执行 vs 并行」，读 `order` 与 `parallel` 自行实现；编辑器不校验语义。
+
+### 2.5.1 条件库 `conditions`（顶层声明池）
+
+条件与功能同类：**游戏侧的代码 + 暴露的可调字段（接口）**。抽成库是为了复用与写法统一——
+十个功能都要判「持有物品」，库里写一次。功能声明用 `conditions: [条件 id, ...]` 引用
+（同清单内按人类 id 引用，同挂载模型）；引用未声明的条件 = 校验错误。
+
+```json
+"conditions": {
+  "has_item": {
+    "name": "持有物品",
+    "fields": [
+      {"id": "item", "code": "F7Q2", "name": "物品", "kind": "choice", "options": ["钥匙", "徽章"]}
+    ]
+  },
+  "kill_count": {
+    "name": "击杀计数",
+    "fields": [
+      {"id": "monster", "code": "G8R3", "name": "目标", "kind": "input", "type": "string"},
+      {"id": "count", "code": "H9S4", "name": "数量", "kind": "input", "type": "int", "min": 1}
+    ]
+  }
+}
+```
+
+分工：**条件库定义"能判断什么"（游戏侧写代码+接口），功能声明定"依赖哪个判断"，编辑器填
+"具体是多少"（条件参数在实例上填，与功能参数共存于同一份内容 fields），运行时游戏侧求值**
+——不满足就不执行该功能。编辑器全程不写一行判断逻辑，也不解释条件语义。
+
+条件无执行码：功能→条件的引用只发生在清单里（按 id）；磁盘上流转的是**字段码**
+（条件字段与功能字段共用一个码空间，校验查重、`ensure_codes` 补码时互相避开）。
+条件区在内容表单里跟在功能字段之后，按引用顺序逐条渲染。
 
 ### 2.6 `role` —— 连接语义标签
 
@@ -732,11 +768,13 @@ godot --path "<你的游戏工程>" -- --map=maps/<地图名>.json
 
 ## 11. 已知边界（照抄编辑器实现，不是待办）
 
-- **`fields[]` 没有输入控件**。见 2.4.2。`portal.target_point` 只能手改 JSON。
 - **`trigger_zone` 的 props 没有编辑 UI**。见 2.7。
 - **不能新增图层类型**。只用 `terrain` / `decor` / `collision` + 实体层。
 - **一个实体实例一个功能只挂一条绑定**。同一功能重复绑定只有「添加功能」菜单会过滤（校验不去重；手改 JSON 可造成重复绑定）。
 - **数值参数不走 props**。props 只剩几何/引用（§2.4.1）；值一律内容文件。
+- **引用字段的编辑在内容编辑器「引用」区**（§2.4.2）：entity_ref/map_ref 值写实例 props。
+- **条件只在声明链上**：条件由功能声明引用（§2.5.1），绑定上没有独立的条件门——
+  改条件依赖 = 改游戏工程清单，不是编辑器内操作。
 - **内容 ID 不可改**。改名只改 `name`；要换 ID 只能「复制成新 ID」，旧文件留在库里。
 - **地图改名不迁移引用**。`target_map` 指名字符串，改名后需手工改。
 - **地图 JSON 只有一个写入方**：编辑器 `extract()`。游戏侧回写会造成格式分叉。

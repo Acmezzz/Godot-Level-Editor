@@ -105,6 +105,7 @@ static func functions(m: Dictionary) -> Dictionary:
 				"code": str(src.get("code", "")),
 				"name": str(src.get("name", fid)) if str(src.get("name", "")) != "" else fid,
 				"fields": src.get("fields", []) if src.get("fields", []) is Array else [],
+				"conditions": src.get("conditions", []) if src.get("conditions", []) is Array else [],
 			}
 	elif decl is Array:
 		for item in (decl as Array):
@@ -119,6 +120,7 @@ static func functions(m: Dictionary) -> Dictionary:
 				"code": str(src2.get("code", "")),
 				"name": str(src2.get("name", fid2)) if str(src2.get("name", "")) != "" else fid2,
 				"fields": src2.get("fields", []) if src2.get("fields", []) is Array else [],
+				"conditions": src2.get("conditions", []) if src2.get("conditions", []) is Array else [],
 			}
 	_cache = out
 	_cache_key = key

@@ -10,6 +10,7 @@ const UiThemeScript := preload("res://src/ui/ui_theme.gd")
 const UiKitScript := preload("res://src/ui/ui_kit.gd")
 const MapStore := preload("res://src/map_store.gd")
 const FunctionDecls := preload("res://src/content/function_decl.gd")
+const ConditionDecls := preload("res://src/content/condition_decl.gd")
 
 var manifest := {}
 var canvas: EditorCanvas
@@ -678,7 +679,11 @@ func _save_manifest_file() -> void:
 	# 人类名 ↔ 执行码对照表随清单一起刷新（游戏侧重建映射、人工 diff 均用）；
 	# 只在清单落盘成功后写，码表写失败不影响清单本身，状态栏单独报。
 	var cp: String = str(manifest.get("_dir", "")).path_join("editor/CODES.md")
-	if not MapStore.write_text(cp, FunctionDecls.codes_doc(manifest)):
+	var doc := FunctionDecls.codes_doc(manifest)
+	var cdoc := ConditionDecls.codes_doc(manifest)
+	if cdoc != "":
+		doc += "\n" + cdoc
+	if not MapStore.write_text(cp, doc):
 		_set_status(" 清单已保存，但码表写入失败: " + cp)
 ## —— 拆到 src/core/editor_state.gd 的委托（调用点保持不变） ——
 func _apply_state(tool := "", layer := -1) -> void:

@@ -11,6 +11,7 @@ const Kit := preload("res://src/ui/ui_kit.gd")
 const Th := preload("res://src/ui/ui_theme.gd")
 const ContentStore := preload("res://src/content/content_store.gd")
 const ContentId := preload("res://src/content/content_id.gd")
+const ConditionDecls := preload("res://src/content/condition_decl.gd")
 const MapStore := preload("res://src/map_store.gd")
 const FieldWidgets := preload("res://src/ui/field_widgets.gd")
 const FunctionDecls := preload("res://src/content/function_decl.gd")
@@ -806,20 +807,42 @@ func _build_form_block() -> Control:
 		if not (fd is Dictionary):
 			continue
 		box.add_child(_build_field_row(i, fn_id, fd, cur))
+	# 条件区：功能声明引用的条件库条目。条件参数是实例上填的——同一条件被不同
+	# 实例引用时参数各填各的；值与功能字段共存于同一份内容 fields（键=字段码）。
+	var cond_fds: Array = []
+	for cid in FunctionDecls.function_decl(manifest, fn_id).get("conditions", []):
+		var cond_id := str(cid)
+		var cdecl := ConditionDecls.condition_decl(manifest, cond_id)
+		if cdecl.is_empty():
+			continue
+		box.add_child(Kit.divider())
+		box.add_child(Kit.section_header("条件：%s" % str(cdecl.get("name", cond_id))))
+		var cfields: Array = cdecl.get("fields", [])
+		if cfields.is_empty():
+			box.add_child(Kit.hint_label("这个条件没有可调参数。", RIGHT_W - 40))
+		for fd2 in cfields:
+			if not (fd2 is Dictionary):
+				continue
+			cond_fds.append(fd2)
+			box.add_child(_build_field_row(i, fn_id, fd2, cur))
 	if content_id == "":
 		box.add_child(Kit.hint_label("首次修改任意字段即创建内容条目。", RIGHT_W - 40))
-	var undeclared := _undeclared_block(fields, cur)
+	var undeclared := _undeclared_block(fields, cond_fds, cur)
 	if undeclared != null:
 		box.add_child(undeclared)
 	return box
 
 ## 内容里有清单没声明的键——保留原值、只读呈现，不删不改。
 ## 键一律是字段码；对不上声明码 = 声明被删/换码（数据漂移）。
-func _undeclared_block(fields: Array, cur: Dictionary) -> Control:
+## fields 与 cond_fields 都算「已知」：条件字段与功能字段共存于同一份 fields。
+func _undeclared_block(fields: Array, cond_fields: Array, cur: Dictionary) -> Control:
 	var known := {}
 	for fd in fields:
 		if fd is Dictionary:
 			known[str((fd as Dictionary).get("code", ""))] = true
+	for fd2 in cond_fields:
+		if fd2 is Dictionary:
+			known[str((fd2 as Dictionary).get("code", ""))] = true
 	var extra := []
 	for k in cur:
 		if str(k) == "" or known.has(str(k)):

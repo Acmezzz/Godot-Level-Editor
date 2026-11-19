@@ -1,9 +1,11 @@
 extends RefCounted
-## 清单结构与能力校验：tiles/layers/entities/functions 的类型与 id/码唯一性、
-## 图层限定 terrain/decor/collision、字段 kind 必须显式 input/choice、挂载功能必须已声明。
+## 清单结构与能力校验：tiles/layers/entities/functions/conditions 的类型与 id/码唯一性、
+## 图层限定 terrain/decor/collision、字段 kind 必须显式 input/choice、
+## 挂载功能必须已声明、功能引用的条件必须已声明、功能与条件的字段码同空间唯一。
 
 const SUPPORTED_TILE_LAYERS := ["terrain", "decor", "collision"]
 const FunctionDecls := preload("res://src/content/function_decl.gd")
+const ConditionDecls := preload("res://src/content/condition_decl.gd")
 
 static func validate(data: Dictionary, project_dir := "") -> Array[Dictionary]:
 	var issues: Array[Dictionary] = []
@@ -18,6 +20,8 @@ static func validate(data: Dictionary, project_dir := "") -> Array[Dictionary]:
 		_validate_entities(data, issues)
 	if data.has("functions"):
 		_validate_functions(data, issues)
+	if data.has("conditions"):
+		_validate_conditions(data, issues)
 	var tile_size = data.get("tileSize", 16)
 	if not (tile_size is int or tile_size is float) or float(tile_size) <= 0.0:
 		_add(issues, "error", "tileSize", "must be a positive number")
@@ -75,6 +79,82 @@ static func _validate_functions(data: Dictionary, issues: Array[Dictionary]) -> 
 				if not ["string", "int", "float", "bool"].has(typ):
 					_add(issues, "error", "functions.%s.fields.%s" % [str(fid), field_id],
 						"input type must be string / int / float / bool")
+		# 功能引用的条件：同清单内按 id 引用（同挂载模型），引用未声明的条件 = 错误
+		var conds = d.get("conditions", [])
+		if not (conds is Array):
+			_add(issues, "error", "functions.%s.conditions" % str(fid), "must be an array of condition ids")
+		else:
+			for c0 in conds:
+				var c0s := str(c0)
+				if c0s == "" or not ConditionDecls.conditions(data).has(c0s):
+					_add(issues, "error", "functions.%s.conditions" % str(fid),
+						"condition \"%s\" is not declared" % c0s)
+
+## 条件声明：结构 + id 唯一性 + 字段种类合法性（与功能声明同一套规则）。
+## 条件按 id 被功能声明引用（清单内人类名，条件无执行码）；字段码与功能字段同空间。
+static func _validate_conditions(data: Dictionary, issues: Array[Dictionary]) -> void:
+	var decl = data.get("conditions", null)
+	if not (decl is Dictionary or decl is Array):
+		_add(issues, "error", "conditions", "must be an object or an array")
+		return
+	# id 查重（数组写法可能重复；dict 写法查空键）
+	var cseen := {}
+	if decl is Array:
+		for item in decl:
+			if not (item is Dictionary):
+				_add(issues, "error", "conditions", "entries must be objects")
+				continue
+			var cid0 := str((item as Dictionary).get("id", ""))
+			if cid0 == "" or cseen.has(cid0):
+				_add(issues, "error", "conditions",
+					"condition ids must be non-empty and unique (array form, seen: %s)" % cid0)
+			cseen[cid0] = true
+	elif decl is Dictionary:
+		for k0 in (decl as Dictionary).keys():
+			if str(k0) == "":
+				_add(issues, "error", "conditions", "condition ids must be non-empty (dict form)")
+	# 字段 id / kind / type（归一化视图逐条件查）
+	for cid in ConditionDecls.conditions(data):
+		var d: Dictionary = ConditionDecls.conditions(data)[cid]
+		var fseen := {}
+		for fd in d.get("fields", []):
+			if not (fd is Dictionary):
+				_add(issues, "error", "conditions.%s.fields" % cid, "entries must be objects")
+				continue
+			var field_id := str((fd as Dictionary).get("id", ""))
+			if field_id == "" or fseen.has(field_id):
+				_add(issues, "error", "conditions.%s.fields" % cid,
+					"field ids must be non-empty and unique (seen: %s)" % field_id)
+			fseen[field_id] = true
+			var kind := str((fd as Dictionary).get("kind", ""))
+			if kind != "input" and kind != "choice":
+				_add(issues, "error", "conditions.%s.fields.%s" % [cid, field_id],
+					"field kind must be \"input\" or \"choice\"")
+			elif kind == "input":
+				var typ := str((fd as Dictionary).get("type", ""))
+				if not ["string", "int", "float", "bool"].has(typ):
+					_add(issues, "error", "conditions.%s.fields.%s" % [cid, field_id],
+						"input type must be string / int / float / bool")
+	# 字段码跨池查重：条件字段与功能字段共存于同一份内容 fields，同码 = 静默合并
+	var fcodes := {}
+	for fid in FunctionDecls.functions(data):
+		for fd1 in (FunctionDecls.functions(data)[fid] as Dictionary).get("fields", []):
+			if fd1 is Dictionary:
+				var fc := str((fd1 as Dictionary).get("code", ""))
+				if fc != "":
+					if fcodes.has(fc):
+						_add(issues, "error", "functions.%s.fields" % str(fid),
+							"duplicate field code across pools: " + fc)
+					fcodes[fc] = true
+	for cid2 in ConditionDecls.conditions(data):
+		for fd2 in (ConditionDecls.conditions(data)[cid2] as Dictionary).get("fields", []):
+			if fd2 is Dictionary:
+				var fc2 := str((fd2 as Dictionary).get("code", ""))
+				if fc2 != "" and fcodes.has(fc2):
+					_add(issues, "error", "conditions.%s.fields" % cid2,
+						"duplicate field code across pools: " + fc2)
+				if fc2 != "":
+					fcodes[fc2] = true
 
 static func _validate_tiles(tiles: Array, project_dir: String, issues: Array[Dictionary]) -> void:
 	var ids := {}
