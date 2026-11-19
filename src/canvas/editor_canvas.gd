@@ -482,20 +482,7 @@ func _referenced_ent_ids() -> Dictionary:
 				var v = props[k]
 				if v is String and str(v).match("e_[0-9]*"):
 					out[str(v)] = true
-	var ContentStore := preload("res://src/content/content_store.gd")
-	for ev_id in ContentStore.list_ids(manifest, "events"):
-		var ev := ContentStore.read(manifest, "events", str(ev_id))
-		if ev.is_empty():
-			continue
-		var steps = ev.get("steps", [])
-		if not (steps is Array):
-			continue
-		for st in steps:
-			if st is Dictionary:
-				for k in st:
-					var v = st[k]
-					if v is String and str(v).match("e_[0-9]*"):
-						out[str(v)] = true
+	# 只扫 props：实例引用（target_point 等）都在这里；内容文件字段按码存值，不存 e_N 引用
 	_ref_ids_cache = out
 	_ref_ids_rev = MapStoreRef.project_rev
 	return out
