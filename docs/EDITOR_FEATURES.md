@@ -563,7 +563,7 @@ godot --path "<编辑器工程>" --script res://tools/screenshot.gd -- <模式> 
 ```
 
 模式：`empty` / `map` / `topbar` / `map_menu` / `props` / `size` / `collide` / `export` / `play` /
-`layers` / `layer_menu` / `multi` / `multi_dim` / `coll_coll_layer` / `decor_layer` / `ents_page` /
+`layers` / `layer_menu` / `multi` / `multi_dim` / `coll_layer` / `decor_layer` / `ents_page` /
 `props_multi` / `help` / `asset` / `asset_quick` / `asset_dist` / `project` / `project_content` /
 `project_measure`。部分模式会 `print("MEASURE …")` 输出实测值。
 
