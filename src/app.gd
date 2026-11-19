@@ -463,7 +463,7 @@ func _shortcut_input(event: InputEvent) -> void:
 				dup.set_meta("functions", (orig.get_meta("functions", []) as Array).duplicate(true))
 				canvas.entities.add_child(dup)
 				canvas._fit_sprite(dup, sid)
-				canvas._assign_id(dup)
+				canvas._ensure_code(dup)
 			canvas._mark()
 			get_viewport().set_input_as_handled()
 			return
@@ -582,10 +582,10 @@ func _process(_delta: float) -> void:
 	_maybe_autosave()
 	_poll_playtest()
 
-# 按 ent_id 找实体精灵（画布 Entities 子节点里查）
+# 按实例码找实体精灵（画布 Entities 子节点里查）
 func _ent_by_id(id: String) -> Sprite2D:
 	for e in canvas.entities.get_children():
-		if str(e.get_meta("ent_id", "")) == id:
+		if str(e.get_meta("code", "")) == id:
 			return e as Sprite2D
 	return null
 
@@ -600,7 +600,7 @@ func _on_entity_selected(spr: Sprite2D) -> void:
 	# 双向同步的另一半：画布选中的实例，切到内容编辑器时左列要定位到它。
 	# 载入地图会以 null 清选，先挡掉。
 	if spr != null and project_shell != null and project_shell.content_editor != null:
-		var eid := str(spr.get_meta("ent_id", ""))
+		var eid := str(spr.get_meta("code", ""))
 		if eid != "":
 			project_shell.content_editor.select_inst(eid)
 
@@ -773,6 +773,3 @@ func _scene_name(sid: String) -> String:
 ## 否则弹窗一弹出就返回，新图还没加载完（顶栏切图刷新曾踩过这个坑）。
 func _open_map_by_name(map_name: String) -> void:
 	await _side_actions_ctrl._open_map_by_name(map_name)
-
-func _delete_entities_by_id(ids: Array) -> void:
-	_side_actions_ctrl._delete_entities_by_id(ids)

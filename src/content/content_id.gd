@@ -3,7 +3,7 @@ extends RefCounted
 ## 前三段是各层实体的稳定身份码（4 位，出生时发放，存在载体上，改名不变）；
 ## 功能段保留功能人类 id（显示壳，人眼可读）；真正的执行引用（functions[].fn、
 ## 内容 "function"、fields 键）用 4 位执行码——见 function_decl.gd。
-## 内容段 6 位。名字（地图名/类型名/编号 e_N）只是展示层，不进 ID。
+## 内容段 6 位。名字（地图名/类型名）只是展示层，不进 ID。
 ## 不挂 class_name，按项目惯例用 preload 引用。
 
 const ContentStore := preload("res://src/content/content_store.gd")

@@ -44,11 +44,11 @@ static func _validate_entities(entities: Array, manifest: Dictionary, issues: Ar
 		if not (entity is Dictionary):
 			_add(issues, "error", path, "must be an object")
 			continue
-		var id := str(entity.get("id", ""))
-		if id != "" and ids.has(id):
-			_add(issues, "error", path + ".id", "duplicate entity id: " + id)
-		if id != "":
-			ids[id] = true
+		var code := str(entity.get("code", ""))
+		if code != "" and ids.has(code):
+			_add(issues, "error", path + ".code", "duplicate entity code: " + code)
+		if code != "":
+			ids[code] = true
 		for key in ["x", "y"]:
 			if entity.has(key) and not (entity[key] is int or entity[key] is float):
 				_add(issues, "error", path + "." + key, "must be numeric")

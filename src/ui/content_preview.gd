@@ -13,6 +13,8 @@ var host  # content_editor 宿主（_map_ready / _entities / select_inst / app �
 
 ## 青框悬停的实例 id（宿主在悬停目标失效时清它）
 var hover_ent := ""
+## 指向预览：引用字段选中的实例（亮青粗框；编辑引用时由宿主设置）
+var highlight_ent := ""
 
 var _zoom := 1.0
 var _pan := Vector2.ZERO
@@ -35,6 +37,11 @@ func refresh() -> void:
 ## 悬停实例变更（含清空）。
 func set_hover(id: String) -> void:
 	hover_ent = id
+	queue_redraw()
+
+## 指向预览：高亮引用字段选中的实例（含清空）。
+func set_highlight(id: String) -> void:
+	highlight_ent = id
 	queue_redraw()
 
 ## 切图/缩放复位：zoom 归 1（整图塞进控件）、pan 归零。
@@ -147,7 +154,7 @@ func _hit_at(pos: Vector2) -> String:
 		var half: Vector2 = host.app.canvas.entity_display_size_of(spr) * 0.5
 		if absf(world.x - spr.position.x) <= maxf(half.x, 4.0) \
 				and absf(world.y - spr.position.y) <= maxf(half.y, 4.0):
-			return str(row.id)
+			return str(row.code)
 	return ""
 
 func _draw() -> void:
@@ -207,6 +214,7 @@ func _draw_map() -> void:
 				draw_rect(dst, fallback, true)
 
 	var hover_rect := Rect2()
+	var highlight_rect := Rect2()
 	var sel: String = str(host._selected_ent)
 	for row in host._entities():
 		var spr: Sprite2D = row.spr
@@ -223,9 +231,11 @@ func _draw_map() -> void:
 			draw_rect(rect, Color(Th.ACCENT, 0.35), true)
 			draw_rect(rect, Color(Th.ACCENT_HI, 0.8), false, 1.0)
  # 悬停框记下来，循环结束后再画：否则被后画的实体盖住，悬停看起来像没生效
-		if str(row.id) == hover_ent and str(row.id) != sel:
+		if str(row.code) == hover_ent and str(row.code) != sel:
 			hover_rect = rect
-		if str(row.id) == sel:
+		if str(row.code) == highlight_ent:
+			highlight_rect = rect
+		if str(row.code) == sel:
 			var pad := 3.0
 			draw_rect(rect.grow(pad), Th.WARN, false, 2.0)
 	# 悬停高亮：青色淡框 + 细十字，最后画保证在最上层
@@ -235,6 +245,9 @@ func _draw_map() -> void:
 		draw_rect(hr, HOVER_COL, false, 1.5)
 		draw_line(Vector2(hr.position.x, hc.y), Vector2(hr.end.x, hc.y), Color(HOVER_COL, 0.35), 1.0)
 		draw_line(Vector2(hc.x, hr.position.y), Vector2(hc.x, hr.end.y), Color(HOVER_COL, 0.35), 1.0)
+	# 指向预览：引用字段选中的实例（亮青粗框，最后画保证可见）
+	if highlight_rect.size.x > 0.0:
+		draw_rect(highlight_rect.grow(3.0), Color(0.2, 1.0, 0.9, 0.95), false, 2.0)
 
 ## 预览用的瓦片列表，统一为 [x, y, atlas, ax, ay]。
 ## 首选画布实时 TileMapLayer（编辑中的改动立刻反映），图层不可用时退回 map_data 数组。

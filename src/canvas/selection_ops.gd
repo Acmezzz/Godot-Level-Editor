@@ -192,7 +192,7 @@ func copy_selection() -> void:
 		var spr := s as Sprite2D
 		cvs._clipboard.append({
 			"scene": str(spr.get_meta("scene")),
-			"ent_id": str(spr.get_meta("ent_id", "")),
+			"code": str(spr.get_meta("code", "")),
 			"dx": spr.position.x - center.x,
 			"dy": spr.position.y - center.y,
 			"flip_h": spr.flip_h,
@@ -245,44 +245,48 @@ func paste_at(pos: Vector2) -> void:
 		return
 	# 落点吸附到格子中心：否则保存(格坐标)再载入后位置会漂移
 	var base: Vector2 = Vector2(cvs._cell_of(pos)) * cvs.tile_px + Vector2(cvs.tile_px, cvs.tile_px) * 0.5
-	var copied_ids := {}
-	var paste_ids: Array[String] = []
-	var next_id: int = int(cvs.ent_id_counter)
-	for t in cvs._clipboard:
-		next_id += 1
-		var paste_id := "e_%d" % next_id
-		paste_ids.append(paste_id)
-		var source_id := str(t.get("ent_id", ""))
-		if source_id != "":
-			copied_ids[source_id] = paste_id
 	cvs._push_undo()
-	for i in cvs._clipboard.size():
-		var t: Dictionary = cvs._clipboard[i]
+	# 先建副本并给每个 fresh 码；建 旧码→新码 映射，供组内引用重映射
+	var copied := {}   # 旧码 → 新码
+	var built: Array = []   # [{spr, scene, props, functions}]
+	for t in cvs._clipboard:
 		var spr := Sprite2D.new()
 		var scene_id := str(t.get("scene", ""))
 		spr.texture = cvs.thumbs.get(scene_id)
 		spr.position = base + Vector2(t.get("dx", 0.0), t.get("dy", 0.0))
 		spr.flip_h = bool(t.get("flip_h", false))
 		spr.set_meta("scene", scene_id)
- # 每个副本独立一份数据，并把复制组内部引用改到对应副本。
-		var props: Dictionary = (t.get("props", {}) as Dictionary).duplicate(true)
+		var code: String = cvs._fresh_inst_code()
+		spr.set_meta("code", code)
+		var src := str(t.get("code", ""))
+		if src != "":
+			copied[src] = code
+ # 每个副本独立一份数据；组内引用的重映射在下面统一做
+		built.append({
+			"spr": spr,
+			"scene": scene_id,
+			"props": (t.get("props", {}) as Dictionary).duplicate(true),
+			"functions": (t.get("functions", []) as Array).duplicate(true),
+		})
+		cvs.entities.add_child(spr)
+		cvs._fit_sprite(spr, scene_id)
+	# 副本间引用重映射：props 声明驱动（entity_ref fields）+ functions 盲重映射
+	for b in built:
+		var spr2: Sprite2D = b.spr
+		var props2: Dictionary = b.props
 		for edef in cvs.manifest.get("entities", []):
-			if str(edef.get("id", "")) != scene_id:
+			if str(edef.get("id", "")) != str(b.scene):
 				continue
 			for field in edef.get("fields", []):
 				var field_id := str(field.get("id", ""))
-				var target_id := str(props.get(field_id, ""))
-				if str(field.get("type", "")) == "entity_ref" and copied_ids.has(target_id):
-					props[field_id] = copied_ids[target_id]
+				var target_id := str(props2.get(field_id, ""))
+				if str(field.get("type", "")) == "entity_ref" and copied.has(target_id):
+					props2[field_id] = copied[target_id]
 			break
-		spr.set_meta("props", props)
- # functions 里对块内实例 id 的字符串引用同样重映射（与 props 同一套 copied_ids）
-		var functions: Array = (t.get("functions", []) as Array).duplicate(true)
-		_remap_refs_in(functions, copied_ids)
-		spr.set_meta("functions", functions)
-		cvs.entities.add_child(spr)
-		cvs._fit_sprite(spr, scene_id)
-		cvs._assign_id(spr, paste_ids[i])
+		var functions2: Array = b.functions
+		_remap_refs_in(functions2, copied)
+		spr2.set_meta("props", props2)
+		spr2.set_meta("functions", functions2)
 	cvs._mark()
 	cvs.queue_redraw()
 	cvs._hint("已粘贴 %d 个实体（Ctrl+Z 撤销）" % cvs._clipboard.size())
@@ -463,9 +467,9 @@ func copy_region() -> void:
 				"dx": ec.x - cvs._region_sel.position.x,
 				"dy": ec.y - cvs._region_sel.position.y,
 				"scene": str(spr.get_meta("scene", "")),
- # 朝向随块复制；ent_id 是引用重映射的前提
+ # 朝向随块复制；code 是引用重映射的前提
 				"flip_h": bool(spr.flip_h),
-				"ent_id": str(spr.get_meta("ent_id", "")),
+				"code": str(spr.get_meta("code", "")),
 				"functions": (spr.get_meta("functions", []) as Array).duplicate(true),
 				"props": (spr.get_meta("props", {}) as Dictionary).duplicate(true),
 			})
@@ -540,7 +544,7 @@ func _paste_region(origin: Vector2i) -> void:
 		else:
 			cvs.set_collision_cell(cc, true)
 	# 实体：区域内的实体按相对格位重建（引用字段保留，id 重新分配）
-	var id_map := {}   # 旧 ent_id → 粘贴后新 id
+	var id_map := {}   # 旧码 → 粘贴后新码
 	var pasted: Array = []
 	for t in cvs._region_clip.get("entities", []):
 		var spr := Sprite2D.new()
@@ -549,16 +553,16 @@ func _paste_region(origin: Vector2i) -> void:
 		spr.position = Vector2(origin + Vector2i(int(t.get("dx", 0)), int(t.get("dy", 0)))) * cvs.tile_px \
 			+ Vector2(cvs.tile_px, cvs.tile_px) * 0.5
 		spr.set_meta("scene", scene_id)
- # 恢复朝向；ent_id 不复用（新块给新号），旧 id 只留作 id_map 的重映射键
+ # 恢复朝向；新块给新码，旧码只留作 id_map 的重映射键
 		spr.flip_h = bool(t.get("flip_h", false))
 		spr.set_meta("props", (t.get("props", {}) as Dictionary).duplicate(true))
 		spr.set_meta("functions", (t.get("functions", []) as Array).duplicate(true))
 		cvs.entities.add_child(spr)
 		cvs._fit_sprite(spr, scene_id)
-		cvs._assign_id(spr)
-		var old_id := str(t.get("ent_id", ""))
-		if old_id != "":
-			id_map[old_id] = str(spr.get_meta("ent_id", ""))
+		cvs._ensure_code(spr)
+		var old_code := str(t.get("code", ""))
+		if old_code != "":
+			id_map[old_code] = str(spr.get_meta("code", ""))
 		pasted.append(spr)
 	# 引用重映射：props/functions 里命中旧 id 的字符串全部换成新 id
 	for spr2 in pasted:

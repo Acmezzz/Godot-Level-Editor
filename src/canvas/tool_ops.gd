@@ -120,7 +120,7 @@ func _stamp(c: Vector2i) -> void:
 		spr.set_meta("props", {})
 	cvs.entities.add_child(spr)
 	cvs._fit_sprite(spr, cvs.stamp_scene)
-	cvs._assign_id(spr)
+	cvs._ensure_code(spr)
 	cvs._mark()
 	# 放置即选中（"放置→配置"不断档）；连放不受影响
 	cvs.entity_selected.emit(spr)

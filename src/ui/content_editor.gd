@@ -1,5 +1,5 @@
 extends RefCounted
-## 内容编辑器：左列本图实例列表 / 中列只读画布预览 / 右列功能绑定与内容表单。
+## 内容编辑器：左列本图实例列表 / 中列只读画布预览 / 右列实例引用 + 功能绑定与内容表单。
 ##
 ## 与其它控制器同形：RefCounted + _init(host)，样式统一走 Kit/Th。
 ## 数据真相：实例绑定在画布 Sprite2D 的 meta（functions），功能内容在
@@ -180,7 +180,7 @@ func refresh_list(focus := "") -> void:
  # 不带参数过来，用户期望看到的就是刚才选中的那个实例。
 		var sel = app.canvas.selected_entity if app.canvas != null else null
 		if sel != null and is_instance_valid(sel) and sel.has_meta("scene"):
-			_selected_ent = str(sel.get_meta("ent_id", ""))
+			_selected_ent = str(sel.get_meta("code", ""))
 		if _find_ent(_selected_ent) == null:
 			_selected_ent = str((ents[0] as Dictionary).get("id", "")) if not ents.is_empty() else ""
 	_selected_fn = -1
@@ -208,8 +208,8 @@ func _map_ready() -> bool:
 	return app.map_loaded and app.canvas != null and is_instance_valid(app.canvas) \
 		and app.canvas.entities != null and is_instance_valid(app.canvas.entities)
 
-## 本图实例快照（按 ent_id 排序，保持稳定顺序）：[{spr, id, scene, name, fns}]
-## 按 canvas.ents_rev 缓存——预览每次鼠标移动都调 _hit_ent_at，原实现每个事件
+## 本图实例快照（保持画布放置顺序）：[{spr, code, scene, name, fns}]
+## 按 canvas.ents_rev 缓存——预览每次鼠标移动都调 _hit_at，原实现每个事件
 ## 都重扫子树 + 重新排序（95×56 满图时每秒上万次临时数组分配）。绑定变更走 _mark() 抬 rev。
 var _ents_cache: Array = []
 var _ents_rev := -1
@@ -234,31 +234,23 @@ func _entities() -> Array:
 		var list: Array = fns if fns is Array else []
 		out.append({
 			"spr": spr,
-			"id": str(spr.get_meta("ent_id", "")),
+			"code": str(spr.get_meta("code", "")),
 			"scene": sid,
 			"name": str(app._scene_name(sid)),
 			"fns": list,
 		})
-	out.sort_custom(func(a, b): return _ent_less(str(a.id), str(b.id)))
+	# 保持画布放置顺序（撤销恢复也稳定），不做字符串排序
 	_ents_cache = out
 	_ents_rev = rev
 	_ents_map = map_name
 	return out
 
-## e_N 按数字排序（字符串排序会把 e_10 排到 e_3 前，行序看着像乱的）
-func _ent_less(a: String, b: String) -> bool:
-	var na := a.trim_prefix("e_").to_int()
-	var nb := b.trim_prefix("e_").to_int()
-	if a.begins_with("e_") and b.begins_with("e_") and na != nb:
-		return na < nb
-	return a < b
-
-func _find_ent(ent_id: String) -> Sprite2D:
-	if ent_id == "" or not _map_ready():
+func _find_ent(code: String) -> Sprite2D:
+	if code == "" or not _map_ready():
 		return null
 	for e in app.canvas.entities.get_children():
 		var spr := e as Sprite2D
-		if spr != null and str(spr.get_meta("ent_id", "")) == ent_id:
+		if spr != null and str(spr.get_meta("code", "")) == code:
 			return spr
 	return null
 
@@ -313,13 +305,13 @@ func _rebuild_rows() -> void:
 	for row in ents:
 		_rows_box.add_child(_build_row(row))
 
-## 实例行：类型名 + e_N。整行是按钮，点击走 select_inst（与画布双向同步）。
+## 实例行：类型名 + 实例码。整行是按钮，点击走 select_inst（与画布双向同步）。
 func _build_row(row: Dictionary) -> Control:
-	var ent_id := str(row.id)
-	var on := ent_id == _selected_ent
-	var b := Kit.button("", func(): select_inst(ent_id), "ghost")
+	var code := str(row.code)
+	var on := code == _selected_ent
+	var b := Kit.button("", func(): select_inst(code), "ghost")
 	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	b.tooltip_text = "%s %s" % [str(row.name), ent_id]
+	b.tooltip_text = "%s %s" % [str(row.name), code]
 	if on:
 		b.add_theme_stylebox_override("normal",
 			Th.box(Th.ACCENT_BG, Th.ACCENT, Th.R_INNER, 6, 4))
@@ -340,7 +332,7 @@ func _build_row(row: Dictionary) -> Control:
 	nm.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	h.add_child(nm)
 
-	var iid := Kit.text_label(ent_id, Th.TEXT_MUTE, Th.FS_META)
+	var iid := Kit.text_label(code, Th.TEXT_MUTE, Th.FS_META)
 	iid.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	h.add_child(iid)
 
@@ -348,9 +340,9 @@ func _build_row(row: Dictionary) -> Control:
 	b.custom_minimum_size = Vector2(0, 26)
 	# 悬停行 → 预览里高亮对应实例（与预览内悬停同一状态，青框）
 	b.mouse_entered.connect(func():
-		_preview.set_hover(ent_id))
+		_preview.set_hover(code))
 	b.mouse_exited.connect(func():
-		if _preview.hover_ent == ent_id:
+		if _preview.hover_ent == code:
 			_preview.set_hover(""))
 	return b
 
@@ -359,15 +351,15 @@ func _is_view_visible() -> bool:
 	return root != null and is_instance_valid(root) and root.visible
 
 ## 单一选中入口：左列行、中列画布预览、外部定位都走这里，避免两处状态不同步。
-func select_inst(ent_id: String) -> void:
-	if ent_id == "" or _find_ent(ent_id) == null:
+func select_inst(code: String) -> void:
+	if code == "" or _find_ent(code) == null:
 		return
 	# 切实例前先落盘当前 SpinBox 的待提交值（旧下标只对旧实例有效）
 	commit()
-	_selected_ent = ent_id
+	_selected_ent = code
 	_selected_fn = -1
 	# 自带功能（类型挂载）补齐绑定：缺就按声明顺序追加到列表末尾（见 _sync_mounted）。
-	var spr0 := _find_ent(ent_id)
+	var spr0 := _find_ent(code)
 	if spr0 != null:
 		_sync_mounted(spr0)
 	# 内容页隐藏时（关卡编辑器里点实体）不做整套左列/右栏重建，只记住选中，
@@ -378,7 +370,7 @@ func select_inst(ent_id: String) -> void:
 	# 画布上已有框选组（>1）时不能把 selected_multi 覆写成 [spr]——
 	# _box_select 会经 entity_selected 走到这里，覆写就等于「框选完立刻塌缩成单选」，
 	# 整组拖动随即失效（用户报的「能框选但不能移动」）。只把单选指针挪过去即可。
-	var spr := _find_ent(ent_id)
+	var spr := _find_ent(code)
 	if spr != null and app.canvas != null:
 		app.canvas.selected_entity = spr
  # 只有「本次选中就是这个多选集合的成员」才保留集合；其它入口（新放置实体等）
@@ -439,11 +431,15 @@ func _rebuild_right() -> void:
 		_r_body.add_child(Kit.empty_state("◇", "选一个实例", "左侧列表或中间预览点击实例"))
 		return
 	var sid := str(spr.get_meta("scene", ""))
-	var ent_id := str(spr.get_meta("ent_id", ""))
+	var code := str(spr.get_meta("code", ""))
 	_r_name.text = str(app._scene_name(sid))
-	_r_id.text = "%s.%s" % [str(app.cur_map_name), ent_id]
+	_r_id.text = "%s.%s" % [str(app.cur_map_name), code]
 	_r_badge.visible = false
 
+	var refs := _build_refs_block()
+	if refs != null:
+		_r_body.add_child(refs)
+		_r_body.add_child(Kit.divider())
 	_r_body.add_child(_build_fn_block())
 	if _selected_fn >= 0 and _selected_fn < _current_fns().size():
 		_r_body.add_child(Kit.divider())
@@ -494,6 +490,75 @@ func _sync_mounted(spr: Sprite2D) -> void:
 			(fns[k] as Dictionary)["order"] = k + 1
 	spr.set_meta("functions", fns)
 	app.canvas._mark()
+
+# ──────────── 实例引用编辑（实体类型 fields 声明的 entity_ref/map_ref） ────────────
+
+## 按实体类型的引用型字段声明渲染下拉；值存实例 props。编辑器只管存取与呈现，
+## 语义归游戏侧。类型没有引用声明就不出这个区块。
+func _build_refs_block() -> Control:
+	var spr := _current_spr()
+	if spr == null or not is_instance_valid(spr):
+		return null
+	var sid := str(spr.get_meta("scene", ""))
+	var edef: Dictionary = {}
+	for e0 in manifest.get("entities", []):
+		if e0 is Dictionary and str(e0.get("id", "")) == sid:
+			edef = e0
+			break
+	var fdecls: Array = edef.get("fields", []) if edef.get("fields", []) is Array else []
+	var rows: Array = []
+	for fd in fdecls:
+		if fd is Dictionary:
+			var t := str(fd.get("type", ""))
+			if t == "entity_ref" or t == "map_ref":
+				rows.append(fd)
+	if rows.is_empty():
+		return null
+	var box := Kit.vbox(6)
+	box.add_child(Kit.section_header("引用"))
+	var props: Dictionary = spr.get_meta("props", {}) if spr.get_meta("props", {}) is Dictionary else {}
+	for fd in rows:
+		box.add_child(_build_ref_row(fd, props))
+	return box
+
+## 单个引用字段行：entity_ref → 实例下拉（of 限定类型，未声明 of 列全部）；
+## map_ref → 地图下拉。值不在选项里时由 FieldWidgets 保留原值（绝不静默改写）。
+func _build_ref_row(fd: Dictionary, props: Dictionary) -> Control:
+	var fid := str(fd.get("id", ""))
+	var typ := str(fd.get("type", ""))
+	var cur := str(props.get(fid, ""))
+	var built: Dictionary
+	if typ == "map_ref":
+		built = FieldWidgets.build({"kind": "choice", "source": "map"}, cur,
+			func(v): _set_prop_ref(fd, v), _resolve_options)
+	else:
+		var of := str(fd.get("of", ""))
+		var src := "entity_inst:" + of if of != "" else "entity_inst:"
+		built = FieldWidgets.build({"kind": "choice", "source": src}, cur,
+			func(v): _set_prop_ref(fd, v), _resolve_options)
+	return Kit.field_row(str(fd.get("name", fid)), built.ctl, 96)
+
+## 写实例 props 的引用字段：props 是地图数据，改动进撤销栈；并做指向预览高亮。
+func _set_prop_ref(fd: Dictionary, value: String) -> void:
+	var spr := _current_spr()
+	if spr == null or not is_instance_valid(spr) or not app.map_loaded:
+		return
+	var props: Dictionary = (spr.get_meta("props", {}) as Dictionary).duplicate(true)
+	if props.get(fd.id, null) == value:
+		return
+	app.canvas._push_undo()
+	if value == "":
+		props.erase(fd.id)
+	else:
+		props[fd.id] = value
+	spr.set_meta("props", props)
+	app.canvas._mark()
+	# 指向预览：高亮被指实例（仅 entity_ref；map_ref 指向别的图，不高亮）
+	var target := value if str(fd.type) == "entity_ref" else ""
+	app.canvas.ref_highlight = target
+	app.canvas.queue_redraw()
+	if _preview != null:
+		_preview.set_highlight(target)
 
 ## 附加功能列表：每行 ① 名称 [内容名] ⟳并行 [库] ✕；点行展开内容表单。
 ## 挂载功能与附加功能同一列表同一模型；挂载行只锁「删除」，其余（并行/库/表单）照常。
@@ -813,6 +878,24 @@ func _resolve_options(decl: Dictionary) -> Array:
 				continue
 			out2.append({"v": sid, "t": str((e as Dictionary).get("name", sid))})
 		return out2
+	if src.begins_with("entity_inst:"):
+	# 实例级来源：列当前图里这些类型的实例（值=实例码）。类型列表空 = 全部实例。
+		var want := src.substr(12).split(",", false)
+		var out4: Array = []
+		if _map_ready():
+			for e0 in app.canvas.entities.get_children():
+				var spr := e0 as Sprite2D
+				if spr == null or not spr.has_meta("scene"):
+					continue
+				var sid0 := str(spr.get_meta("scene", ""))
+				if not want.is_empty() and not want.has(sid0):
+					continue
+				var c0 := str(spr.get_meta("code", ""))
+				if c0 == "":
+					continue
+				var cell: Vector2i = app.canvas._cell_of(spr.position)
+				out4.append({"v": c0, "t": "%s · (%d,%d)" % [str(app._scene_name(sid0)), cell.x, cell.y]})
+		return out4
 	if src == "map":
 		var out3: Array = []
 		for mn in MapStore.list_maps(manifest):
@@ -925,7 +1008,7 @@ func _ensure_failed() -> void:
 	var cur := _current_spr()
 	if cur == null:
 		app._set_status(" 内容写入失败：当前没有选中实例")
-	elif str(cur.get_meta("code", "")) == "" and str(cur.get_meta("ent_id", "")) == "":
+	elif str(cur.get_meta("code", "")) == "":
 		app._set_status("  内容写入失败：这个实例还没有身份码（重新放置一次再试）")
 	else:
 		app._set_status("  内容写入失败：检查 content 目录是否存在且可写")

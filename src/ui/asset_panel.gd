@@ -260,7 +260,7 @@ func _instance_distribution(sid: String) -> Dictionary:
 				continue
 			var c: Vector2i = host.canvas._cell_of(spr.position)
 			live_rows.append({
-				"id": str(spr.get_meta("ent_id", "")),
+				"id": str(spr.get_meta("code", "")),
 				"x": c.x,
 				"y": c.y,
 			})

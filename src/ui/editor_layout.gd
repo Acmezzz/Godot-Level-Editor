@@ -517,7 +517,7 @@ func _refresh_sel_bar() -> void:
 		_sel_bar.visible = false
 		return
 	var sid := str(spr.get_meta("scene", ""))
-	var eid := str(spr.get_meta("ent_id", ""))
+	var eid := str(spr.get_meta("code", ""))
 	var fns: Array = spr.get_meta("functions", [])
 	var n := fns.size()
 	_sel_name.text = "%s  %s" % [app._scene_name(sid), eid]

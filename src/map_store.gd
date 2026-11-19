@@ -250,10 +250,10 @@ static func _cleanup_transaction(entries: Array[Dictionary]) -> void:
 			if path != "" and FileAccess.file_exists(path):
 				DirAccess.remove_absolute(path)
 
-## 在地图数据里按实体 id 查找；返回空字典表示没有
+## 在地图数据里按实例码查找；返回空字典表示没有
 static func find_entity(data: Dictionary, ent_id: String) -> Dictionary:
 	for ent in data.get("entities", []):
-		if ent is Dictionary and str(ent.get("id", "")) == ent_id:
+		if ent is Dictionary and str(ent.get("code", "")) == ent_id:
 			return ent
 	return {}
 

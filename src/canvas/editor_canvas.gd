@@ -12,7 +12,7 @@ const K := preload("res://src/core/constants.gd")   # 共享常量统一在 core
 const TilesetCache := preload("res://src/canvas/tileset_cache.gd")   # PF-02：TileSet 构建缓存
 const INVISIBLE_CELL := K.INVISIBLE_CELL
 const BuiltinKinds := preload("res://src/content/builtin_kinds.gd")   # 内置种类（trigger_zone 等）
-const MapStoreRef := preload("res://src/map_store.gd")   # K26b 引用扫描用
+const MapStoreRef := preload("res://src/map_store.gd")   # 地图数据层（读全工程/写盘）
 const ContentIdRef := preload("res://src/content/content_id.gd")   # 分层身份码
 
 var active_layer := 0          # 按清单 layers 顺序，最后一个是实体
@@ -142,7 +142,6 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	# 进入即抬代数；await 恢复后比对——过期 = 期间又有更新的重建进入，本协程退出
 	_rebuild_gen += 1
 	var gen := _rebuild_gen
-	invalidate_ref_cache()   # 换图后引用集可能来自另一张图，必须重扫
 	map_data = data
 	cur_map_name = map_name
 	# 清单 tileSize 是「一格 = 多少像素」的唯一真相：网格/边界/实体对齐/碰撞视图全用它。
@@ -255,9 +254,6 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	entities.name = "Entities"
 	map_root.add_child(entities)
 	var tile := int(manifest.get("tileSize", 16))
-	# 计数器载图清零，由 _assign_id 按本图 id 抬回本图高水位——
-	# 旧实现跨图累积（同会话先开 A 图再开 B 图，B 图新实体接着 A 的号往上排）
-	ent_id_counter = 0
 	for e in data.get("entities", []):
 		var sid := str(e.get("scene", ""))
 		var spr := Sprite2D.new()
@@ -265,7 +261,7 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 		spr.position = Vector2(int(e.get("x", 0)) * tile + tile / 2.0, int(e.get("y", 0)) * tile + tile / 2.0)
 		spr.set_meta("scene", sid)
 		spr.set_meta("props", e.get("props", {}))
- # 分层身份码：实例段。老实体没有就由 _assign_id 统一补发
+ # 分层身份码：实例段。老实体没有就由 _ensure_code 统一补发
 		spr.set_meta("code", str(e.get("code", "")))
  # 实例功能绑定：只做存取，UI 由内容编辑器负责；缺失/类型不对时置空数组，
  # 让 extract 始终能写出 functions 键（含空数组），不清空就残留旧图绑定。
@@ -279,7 +275,7 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 		spr.flip_h = bool(e.get("flip_h", false))
 		entities.add_child(spr)
 		_fit_sprite(spr, sid)
-		_assign_id(spr, str(e.get("id", "")))
+		_ensure_code(spr)
 	# 出生点
 	spawn = Marker2D.new()
 	spawn.name = "Spawn"
@@ -419,67 +415,29 @@ func _hint(t: String) -> void:
 func _ent_layer_index() -> int:
 	return manifest.get("layers", []).size()
 
-# —— 实体 id 分配（稳定引用：传送门/开关等 entity_ref 的标注基础） ——
-var ent_id_counter := 0
+# —— 实例身份：4 位码（唯一身份：引用/重映射/连线全用它） ——
+## 码出生即定、永不回收，所以不需要「发号前防空洞复用」的全工程扫描。
 # 重建代数——load_data 是协程，期间再进一次 load_data 时，先进者按代数退出防孤儿 map_root
 var _rebuild_gen := 0
 
-func _assign_id(spr: Sprite2D, forced := "") -> void:
-	# 分层身份码：实例段。老实体/新建实体没有就补发，已有（载图恢复）保留
+## 老实体/新建实体没有码就补发；已有（载图恢复）保留
+func _ensure_code(spr: Sprite2D) -> void:
 	if str(spr.get_meta("code", "")) == "":
-		spr.set_meta("code", ContentIdRef.new_inst_code())
-	if forced != "":
-		spr.set_meta("ent_id", forced)
-		var n := forced.trim_prefix("e_").to_int()
-		if n > ent_id_counter:
-			ent_id_counter = n
-		return
-	# 安全空洞复用——本图最小空号发号前做全工程引用扫描，通过才复用；否则高水位+1
-	var used := {}
+		spr.set_meta("code", _fresh_inst_code())
+
+## 生成一个本图未占用的实例码（码空间 100 万+，撞码重摇即可）
+func _fresh_inst_code() -> String:
+	for i in 64:
+		var c := ContentIdRef.new_inst_code()
+		if not _code_taken(c):
+			return c
+	return ContentIdRef.new_inst_code()
+
+func _code_taken(c: String) -> bool:
 	for e in entities.get_children():
-		var eid := str((e as Sprite2D).get_meta("ent_id", ""))
-		if eid.begins_with("e_"):
-			used[eid] = true
-	var gap := ""
-	for n in range(1, ent_id_counter):
-		var cand := "e_%d" % n
-		if not used.has(cand):
-			gap = cand
-			break
-	if gap != "" and not _referenced_ent_ids().has(gap):
-		spr.set_meta("ent_id", gap)
-		return
-	ent_id_counter += 1
-	spr.set_meta("ent_id", "e_%d" % ent_id_counter)
-
-## 全工程实体 id 引用集——所有地图 props 里 e_N 形字符串值（target_point 等实例引用）。
-## 被引用的号绝不复用。内容文件字段按码存值，不存 e_N 引用，故不扫。
-## 会话级缓存——每次发号都读全部地图+全部内容文件会被批量粘贴线性放大。
-## 失效点：保存地图、换图（load_data）、内容提交（invalidate_ref_cache）。
-static var _ref_ids_cache: Dictionary = {}
-static var _ref_ids_rev := -1   # 对应的 MapStore.project_rev
-
-func invalidate_ref_cache() -> void:
-	_ref_ids_rev = -1
-
-func _referenced_ent_ids() -> Dictionary:
-	if _ref_ids_rev == MapStoreRef.project_rev:
-		return _ref_ids_cache
-	var out := {}
-	var all := MapStoreRef.read_all(manifest)
-	for map_name in all:
-		for ent in (all[map_name] as Dictionary).get("entities", []):
-			if not (ent is Dictionary):
-				continue
-			var props: Dictionary = ent.get("props", {})
-			for k in props:
-				var v = props[k]
-				if v is String and str(v).match("e_[0-9]*"):
-					out[str(v)] = true
-	# 只扫 props：实例引用（target_point 等）都在这里；内容文件字段按码存值，不存 e_N 引用
-	_ref_ids_cache = out
-	_ref_ids_rev = MapStoreRef.project_rev
-	return out
+		if str((e as Sprite2D).get_meta("code", "")) == c:
+			return true
+	return false
 
 # —— 吸管 + 整图入视野 ——
 signal tool_requested(tool: String, layer: int)
@@ -527,8 +485,10 @@ signal entity_selected(spr: Sprite2D)
 
 var selected_entity: Sprite2D = null
 var selected_multi: Array = []   # 框选集合（Del / 复制粘贴用）
+## 引用指向预览：内容编辑器里编辑引用字段时，画布高亮被指实例（存实例码）
+var ref_highlight := ""
 @warning_ignore("unused_private_class_variable")
-var _clipboard: Array = []       # 实体复制模板 [{scene, ent_id, dx, dy, flip_h, functions, props}]
+var _clipboard: Array = []       # 实体复制模板 [{scene, code, dx, dy, flip_h, functions, props}]
 var _region_sel := Rect2i(-1, 0, 0, 0)  # 区域框选结果（瓦片层 Ctrl+C 用）
 var _region_clip := {}           # 区域快照 {terrain[], decor[], collision[], entities[], size}
 var _paste_mode := false         # 区域粘贴预览态（幽灵跟随鼠标）
@@ -644,14 +604,14 @@ func _mark(ents_changed := true) -> void:
 		coll_view.refresh()
 	modified.emit()
 
-## 实体 {ent_id: Sprite2D} 索引——绘制连线 O(n) 复用；置脏后首次取用重建
-func _ent_by_id_index() -> Dictionary:
+## 实体 {code: Sprite2D} 索引——绘制连线 O(n) 复用；置脏后首次取用重建
+func _ent_by_code_index() -> Dictionary:
 	if _ent_by_id_dirty:
 		var out := {}
 		for e0 in entities.get_children():
 			var spr0 = e0 as Sprite2D
 			if spr0:
-				out[str(spr0.get_meta("ent_id", ""))] = spr0
+				out[str(spr0.get_meta("code", ""))] = spr0
 		_ent_by_id = out
 		_ent_by_id_dirty = false
 	return _ent_by_id

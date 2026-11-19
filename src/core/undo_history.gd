@@ -5,6 +5,7 @@ var cvs   # 宿主引用
 
 const BuiltinKinds := preload("res://src/content/builtin_kinds.gd")
 const Constants := preload("res://src/core/constants.gd")
+const ContentId := preload("res://src/content/content_id.gd")
 
 func _init(host) -> void:
 	cvs = host
@@ -80,14 +81,6 @@ func extract() -> Dictionary:
 		else:
 			ccells.append([c.x, c.y])
 	var elist := []
-	# 先扫出本图最大实体编号（老图实体可能没 id，保存时自动补号）
-	var max_id := 0
-	for e in cvs.entities.get_children():
-		var spr0 := e as Sprite2D
-		if spr0 and spr0.has_meta("scene"):
-			var idd := str(spr0.get_meta("ent_id", ""))
-			if idd.begins_with("e_"):
-				max_id = maxi(max_id, int(idd.substr(2)))
 	for e in cvs.entities.get_children():
 		var spr := e as Sprite2D
 		if spr and spr.has_meta("scene"):
@@ -99,21 +92,19 @@ func extract() -> Dictionary:
 			for k in props.keys():
 				if props[k] != null and str(props[k]) != "":
 					clean[k] = props[k]
- # 无 id 的老实体 → 自动补号（引用跨图落点等依赖 id，不能留空）
-			var eid := str(spr.get_meta("ent_id", ""))
-			if eid == "":
-				max_id += 1
-				eid = "e_%d" % max_id
-				spr.set_meta("ent_id", eid)
+ # 无码的老实体 → 补发实例码（身份丢失会让内容 ID 前缀漂移，不能留空）
+			var code := str(spr.get_meta("code", ""))
+			if code == "":
+				code = ContentId.new_inst_code()
+				spr.set_meta("code", code)
  # 触发区的位置是矩形中心：还原成左上角格坐标，与数据格式（x/y = 左上角）一致
 			var cell_pos := Vector2(spr.position.x, spr.position.y)
 			if BuiltinKinds.is_builtin(sid):
 				cell_pos -= cvs.entity_display_size_of(spr) * 0.5 - Vector2(cvs.tile_px, cvs.tile_px) * 0.5
 			elist.append({
 				"scene": sid,
-				"id": eid,
- # 分层身份码：实例段（丢失会让内容引用的前缀漂移，必须随快照走）
-				"code": str(spr.get_meta("code", "")),
+ # 分层身份码：实例段 = 唯一身份（丢失会让内容 ID 前缀漂移，必须随快照走）
+				"code": code,
  # 与 _cell_of 一致用 floori——int() 向零截断会让负坐标实体每次保存向 0 漂移
 				"x": floori((cell_pos.x - cvs.tile_px / 2.0) / cvs.tile_px),
 				"y": floori((cell_pos.y - cvs.tile_px / 2.0) / cvs.tile_px),

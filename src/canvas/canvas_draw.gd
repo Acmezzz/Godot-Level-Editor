@@ -97,8 +97,8 @@ func _draw() -> void:
 	cvs.draw_line(Vector2(spos.x - 6, spos.y), Vector2(spos.x + 6, spos.y), spawn_col, 2.0)
 	cvs.draw_line(Vector2(spos.x, spos.y - 6), Vector2(spos.x, spos.y + 6), spawn_col, 2.0)
 	# 引用连线：props.target_point 指向同图另一实例（跨图蓝线 / 同图黄线）
-	# 先建 {ent_id: spr} 索引——O(n²) 双重遍历改为 O(n)
-	var by_id = cvs._ent_by_id_index()   # 脏标记缓存
+	# 先建 {code: spr} 索引——O(n²) 双重遍历改为 O(n)
+	var by_code = cvs._ent_by_code_index()   # 脏标记缓存
 	# 出口角标 / 落点描边 / 占位框 / 触发区（各层都画）——原先各扫一遍 entities，
 	# 鼠标每动一像素就付 5 次 O(n)。现在一次遍历按类别收集，再分段绘制。
 	var exits: Array = []
@@ -114,7 +114,7 @@ func _draw() -> void:
  # 同图引用连线
 		var tid := str(props.get("target_point", ""))
 		if tid != "":
-			var spr2 = by_id.get(tid, null)
+			var spr2 = by_code.get(tid, null)
 			if spr2 and spr2 != spr:
 				var wobble := str(props.get("target_map", "")) != ""
 				var col := Color(0.4, 0.4, 1.0, 0.6) if wobble else Color(1.0, 0.85, 0.3, 0.6)
@@ -147,6 +147,12 @@ func _draw() -> void:
 	if cvs.selected_entity and is_instance_valid(cvs.selected_entity):
 		var sr := Rect2(cvs.selected_entity.position - Vector2(cvs.tile_px, cvs.tile_px) * 0.75, Vector2(cvs.tile_px, cvs.tile_px) * 1.5)
 		cvs.draw_rect(sr, Color(1.0, 0.85, 0.3, 0.9), false, 2.0)
+	# 引用指向预览：编辑引用字段时高亮被指实例（青色粗框）
+	if cvs.ref_highlight != "":
+		var hs = cvs._ent_by_code_index().get(cvs.ref_highlight, null)
+		if hs and is_instance_valid(hs):
+			var hsz: Vector2 = cvs.entity_display_size_of(hs)
+			cvs.draw_rect(Rect2((hs as Sprite2D).position - hsz * 0.5, hsz).grow(4.0), Color(0.2, 1.0, 0.9, 0.95), false, 2.5)
 	# 框选拖拽矩形（框选开关或 Ctrl+拖动，实体层或瓦片层都画同一个框）
 	if cvs._drag_box:
 		var br := Rect2(cvs._drag_start.min(pos), (cvs._drag_start - pos).abs())

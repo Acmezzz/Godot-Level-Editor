@@ -147,12 +147,9 @@ solid+矩形碰撞：`col.set_cell(cell, 0, Vector2i(4,0))`。
 **`functions`（挂载）与 `fields` 的分工**：
 - `functions` = 类型自带、实例不可删的**功能**（如生命值/攻击/寻敌），声明本体在顶层 functions 池，
   类型只挂 id。值走内容文件（与附加功能同一模型）；未编辑过的实例 = 声明 default。
-- `fields` 是「引用型」参数声明，编辑器**只用于**复制/粘贴时按 `type: "entity_ref"`
-  重映射实例 id 引用（§2.4.2）。它不是功能，也没有值编辑 UI（`portal.target_point` 这类
-  值由游戏侧运行时写或手改 JSON）。
-
-> 这是缺口，不是设计。要改「能在编辑器里点选目标落点」，得在编辑器里补控件；
-> 游戏侧按当前 JSON 契约实现即可，不必等待。
+- `fields` 是「引用型」参数声明，值存实例 `props`。编辑器在内容编辑器右栏按声明渲染
+  引用下拉（entity_ref 列实例、map_ref 列地图，§2.4.2），复制/粘贴时按声明重映射。
+  语义归游戏侧——编辑器只管选谁、存谁、画布上指给你看。
 
 ### 2.4.1 自带功能（挂载）`entities[].functions`
 
@@ -183,8 +180,8 @@ solid+矩形碰撞：`col.set_cell(cell, 0, Vector2i(4,0))`。
 
 编辑器消费 `fields` 的方式：
 1. **实体复制/粘贴**：`type == "entity_ref"` 的字段，若值命中块内某实例的旧 id，
-   自动替换成新 id（声明驱动的重映射）；`functions` 数组里的 e_N 字符串则不看声明、全量重映射。
-2. **区域复制/粘贴**：props 与 functions 都不看声明，e_N 形字符串按 id_map 盲替换。
+   自动替换成新码（声明驱动的重映射）；`functions` 数组里的实例码字符串则不看声明、全量重映射。
+2. **区域复制/粘贴**：props 与 functions 都不看声明，命中旧实例码的字符串按 id_map 盲替换。
 3. `fields[].id` 必须非空且同类型内唯一（校验规则）。
 
 `of` 键**编辑器完全不读**（没有解析代码）。写它只是给人看的注释。
@@ -319,8 +316,8 @@ choice 的 `source` 取值：`content:<kind>`（列该目录内容条目）、`e
   "terrain": [[21, 24, 0, 1, 2]],
   "decor": [[5, 9, 0, 3, 0]],
   "collision": [[21, 24], [30, 12, "one_way"], [33, 4, "solid", "r45"]],
-  "entities": [{"scene": "portal", "id": "e_7", "code": "QK3T", "x": 31, "y": 28,
-                "flip_h": false, "props": {"target_point": "e_10"}, "functions": []}]
+  "entities": [{"scene": "portal", "code": "QK3T", "x": 31, "y": 28,
+                "flip_h": false, "props": {"target_point": "L8WM"}, "functions": []}]
 }
 ```
 
@@ -407,12 +404,11 @@ choice 的 `source` 取值：`content:<kind>`（列该目录内容条目）、`e
 ```json
 {
   "scene": "portal",
-  "id": "e_7",
   "code": "QK3T",
   "x": 31,
   "y": 28,
   "flip_h": false,
-  "props": {"target_point": "e_10"},
+  "props": {"target_point": "L8WM"},
   "functions": [
     {"fn": "X7K2", "content": "TEST-FY9F-QK3T-dialogue-7M2XK9",
      "name": "打招呼", "order": 1, "parallel": false}
@@ -423,7 +419,7 @@ choice 的 `source` 取值：`content:<kind>`（列该目录内容条目）、`e
 | 键 | 必填 | 语义 |
 |---|---|---|
 | `scene` | 是 | 实体类型 id = 清单 `entities[].id`。**编辑器校验：空 → 错误；不在清单 → 仅警告** |
-| `id` | 否 | 图内唯一实例 id，形如 `e_N`。缺省由编辑器补号（`e_<max+1>`）。跨图引用与 `props` 里的 `entity_ref` 全靠它 |
+| `code` | 是（老图缺省由编辑器补发） | 图内唯一实例码（4 位身份码）。**唯一身份**：引用（props 里的 entity_ref 值）、复制重映射、画布连线全靠它。码出生即定、永不回收 |
 | `code` | 否 | 4 位实例身份码，内容 ID 的第三段。缺省补发。**不要手工改** |
 | `x` / `y` | 否 | **格坐标，格中心语义**：像素 = `(x + 0.5) * tileSize`。`trigger_zone` 例外，见 2.7 |
 | `flip_h` | 否 | 布尔，水平翻转 |
@@ -434,14 +430,12 @@ choice 的 `source` 取值：`content:<kind>`（列该目录内容条目）、`e
 其余（包括编辑器完全不认识的键、嵌套字典、数组）原样保留。
 所以游戏侧可以往 `props` 里塞自己的数据，但要接受「空值会被清掉」。
 
-**实体 id 分配规则**（`_assign_id`，editor_canvas.gd）：新实体优先复用本图最小空闲 `e_N`，
-但**发号前会全工程扫一遍引用**（所有地图 `props` 里的 e_N 形字符串，`_referenced_ent_ids`）。
-被引用过的号**绝不复用**，此时取高水位 +1。
-所以跨图 `target_point` 指向 `e_10` 是安全的——只要那条引用还在 JSON 里，`e_10` 不会被回收。
+**实例码分配规则**（`_ensure_code`，editor_canvas.gd）：实例码出生即定、**永不回收**——
+放置/粘贴时生成一个本图未占用的 4 位码，之后无论复制多少次、引用多少次都不会被复用或重编。
+所以 `target_point` 指向某个码是永久安全的，不需要任何引用扫描来保护号段。
 
-> 注意：引用扫描**只扫地图 props**。内容文件的 fields 按码存值、不存 e_N 引用——
-> 实例间的指向关系都应放在实体 `props` 里（建议同时声明 `type: "entity_ref"`，
-> 复制粘贴时才会跟着重映射）。
+> 注意：实例间的指向关系都应放在实体 `props` 里（建议同时声明 `type: "entity_ref"`，
+> 编辑器才有下拉编辑入口，复制粘贴时才会跟着重映射）。
 
 ## 4. 内容 `content/<功能id>/<内容ID>.json`
 
@@ -508,7 +502,7 @@ TEST-FY9F-QK3T-dialogue-7M2XK9
 前 4 段（到功能段为止）唯一确定「哪张图的哪类哪个实例的哪个功能」，
 用于「这个内容属于谁」的调试输出或分图校验。
 
-**名字（地图名 / 实体 `name` / 实例号 `e_N`）一律不进 ID**，改名不破坏内容引用。
+**名字（地图名 / 实体 `name`）一律不进 ID**，改名不破坏内容引用。
 
 **显示壳与执行引用**：内容 ID 第四段保留功能人类 id（显示壳，人眼可读）；
 磁盘上的**执行引用**写码——地图 `functions[].fn`、内容文件 `"function"`、内容 `fields` 的键。
@@ -546,13 +540,13 @@ main.gd
 var edef := manifest_entity_def(scene_id)      # 从清单按 id 查
 var inst := (load(edef.prefab) as PackedScene).instantiate()
 inst.position = Vector2((x + 0.5) * tile_size, (y + 0.5) * tile_size)
-inst.set_meta("ent_id", id)
+inst.set_meta("code", code)
 inst.set_meta("props", props)
 inst.set_meta("functions", functions)          # 游戏侧需要时自己注入
 ```
 
 **注入给 prefab 的 metadata 是唯一约定通道**。推荐注入三件：
-`ent_id`（实例 id，跨图引用靠它）、`props`（几何/引用参数，见 §2.4.1）、
+`code`（实例码，唯一身份，引用靠它）、`props`（几何/引用参数，见 §2.4.1）、
 `scene_id`（= `scene`，类型 id，查清单用）。
 prefab 脚本在 `_ready()` 里读这些 meta，**不要依赖编辑器把值写进场景属性**。
 
@@ -725,7 +719,7 @@ func _apply_door(inst: Node, fn: Dictionary) -> void:
 | 6 | `maps/` 目录存在（可为空） | 新建地图能保存 |
 | 7 | `playCommand` 能拉起游戏并接收 `--map=` | 试玩按钮工作 |
 | 8 | 游戏侧 `MapLoader` 读 `meta.w/h`、`spawn`、`terrain`、`decor`、`collision`、`entities` | 试玩画面与编辑画布一致 |
-| 9 | 游戏侧按 `scene` 实例化并注入 `ent_id`/`props` | 传送门等按 props 行为正确 |
+| 9 | 游戏侧按 `scene` 实例化并注入 `code`/`props` | 传送门等按 props 行为正确 |
 | 10 | 若用功能系统：`functions` 已声明 + 游戏侧有对应消费代码 | 挂上功能后行为生效 |
 
 ### 一次性验证命令

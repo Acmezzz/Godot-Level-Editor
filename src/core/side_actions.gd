@@ -51,26 +51,4 @@ func _open_map_by_name(map_name: String) -> void:
 	await app._load_map_file(p)
 
 
-func _delete_entities_by_id(ids: Array) -> void:
-	if not app.map_loaded or ids.is_empty():
-		return
-	app.canvas._push_undo()
-	var victims := []
-	for e in app.canvas.entities.get_children():
-		var spr := e as Sprite2D
-		if spr and ids.has(str(spr.get_meta("ent_id", ""))):
-			victims.append(spr)
-# 悬空引用清理——被删实体不能留在选区里，否则下游会对已 free 节点写 props
-	var victims_set := {}
-	for v in victims:
-		victims_set[v] = true
-		app.canvas.entities.remove_child(v)
-		v.free()
-	app.canvas.selected_multi = app.canvas.selected_multi.filter(func(s): return is_instance_valid(s) and not victims_set.has(s))
-	if app.canvas.selected_entity != null \
-			and (not is_instance_valid(app.canvas.selected_entity) or victims_set.has(app.canvas.selected_entity)):
-		app.canvas.selected_entity = null
-	if app.selected_spr != null and (not is_instance_valid(app.selected_spr) or victims_set.has(app.selected_spr)):
-		app.selected_spr = null
-	app.canvas._mark()
-	app._set_status(" 已删除 %d 个实体" % victims.size())
+## （历史遗留：按 id 批量删实体的入口随旧面板删除，此控制器已无此职责）
