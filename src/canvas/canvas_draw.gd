@@ -19,14 +19,24 @@ func _draw() -> void:
 	if cvs.show_grid:
 		var origin = Vector2(map_rect.position) * cvs.tile_px
 		var endv = Vector2(map_rect.end) * cvs.tile_px
-		var x0 = origin.x
-		while x0 <= endv.x:
-			cvs.draw_line(Vector2(x0, origin.y), Vector2(x0, endv.y), Color(1, 1, 1, 0.07), 1.0, true)
-			x0 += cvs.tile_px
-		var y0 = origin.y
-		while y0 <= endv.y:
-			cvs.draw_line(Vector2(origin.x, y0), Vector2(endv.x, y0), Color(1, 1, 1, 0.07), 1.0, true)
-			y0 += cvs.tile_px
+		# P2-3：网格按可视区间裁剪——120×56 满图每帧 176 条抗锯齿线，鼠标一动就全付。
+		# 可见世界矩形由 canvas_transform 反变换得到（headless 无视口时退回整图）。
+		var vis := Rect2(origin, endv - origin)
+		var vp: Viewport = cvs.get_viewport()
+		if vp != null:
+			vis = vp.get_canvas_transform().affine_inverse() * Rect2(Vector2.ZERO, vp.get_visible_rect().size)
+		var x0 := maxf(origin.x, floorf(vis.position.x / cvs.tile_px) * cvs.tile_px)
+		var x1 := minf(endv.x, ceilf(vis.end.x / cvs.tile_px) * cvs.tile_px)
+		var y0 := maxf(origin.y, floorf(vis.position.y / cvs.tile_px) * cvs.tile_px)
+		var y1 := minf(endv.y, ceilf(vis.end.y / cvs.tile_px) * cvs.tile_px)
+		var gx := x0
+		while gx <= x1:
+			cvs.draw_line(Vector2(gx, maxf(y0, origin.y)), Vector2(gx, minf(y1, endv.y)), Color(1, 1, 1, 0.07), 1.0, true)
+			gx += cvs.tile_px
+		var gy := y0
+		while gy <= y1:
+			cvs.draw_line(Vector2(maxf(x0, origin.x), gy), Vector2(minf(x1, endv.x), gy), Color(1, 1, 1, 0.07), 1.0, true)
+			gy += cvs.tile_px
 	# 幽灵预览：只看「当前层 + 手上拿着什么」，没有工具要判断
 	var on_ent_layer: bool = cvs.active_layer == cvs._ent_layer_index()
 	if Rect2(Vector2(map_rect.position) * cvs.tile_px, Vector2(map_rect.size) * cvs.tile_px).has_point(pos):
@@ -86,41 +96,50 @@ func _draw() -> void:
 	# 传送门等引用连线：props.target_entity 指向同图另一实例（黄线）
 	# PF-03：先建 {ent_id: spr} 索引——O(n²) 双重遍历改为 O(n)
 	var by_id = cvs._ent_by_id_index()   # D5：脏标记缓存
+	# P2-3：实体层再叠加「出口角标 / 落点描边 / 占位框 / 触发区」——原先各扫一遍 entities，
+	# 鼠标每动一像素就付 5 次 O(n)。现在一次遍历按类别收集，再分段绘制。
+	var exits: Array = []
+	var landings: Array = []
+	var boxes: Array = []
+	var zones: Array = []
 	for e in cvs.entities.get_children():
 		var spr := e as Sprite2D
 		if spr == null or not spr.has_meta("scene"):
 			continue
-		var props: Dictionary = spr.get_meta("props", {})
+		var sid := str(spr.get_meta("scene", ""))
+		var props: Dictionary = spr.get_meta("props", {}) if spr.get_meta("props", {}) is Dictionary else {}
+		# 同图引用连线
 		var tid := str(props.get("target_point", ""))
-		if tid == "":
-			continue
-		var spr2 = by_id.get(tid, null)
-		if spr2 and spr2 != spr:
-			var wobble := str(props.get("target_map", "")) != ""
-			var col := Color(0.4, 0.4, 1.0, 0.6) if wobble else Color(1.0, 0.85, 0.3, 0.6)
-			cvs.draw_line(spr.position, spr2.position, col, 1.5)
-	# K10（批次 12）：跨图出口「已接好」角标——有 target_map 的 exit 画 ↗+目标图名
-	for e3 in cvs.entities.get_children():
-		var ex3 = e3 as Sprite2D
-		if ex3 == null or not ex3.has_meta("scene"):
-			continue
-		if not ManifestScript.has_role(cvs.manifest, str(ex3.get_meta("scene", "")), "exit"):
-			continue
-		var tmap := str((ex3.get_meta("props", {}) as Dictionary).get("target_map", ""))
-		if tmap == "":
-			continue
+		if tid != "":
+			var spr2 = by_id.get(tid, null)
+			if spr2 and spr2 != spr:
+				var wobble := str(props.get("target_map", "")) != ""
+				var col := Color(0.4, 0.4, 1.0, 0.6) if wobble else Color(1.0, 0.85, 0.3, 0.6)
+				cvs.draw_line(spr.position, spr2.position, col, 1.5)
+		# K10（批次 12）：跨图出口「已接好」角标——有 target_map 的 exit 画 ↗+目标图名
+		if ManifestScript.has_role(cvs.manifest, sid, "exit"):
+			var tmap := str(props.get("target_map", ""))
+			if tmap != "":
+				exits.append([spr.position, tmap])
+		# K8（批次 12）：传送落点（青色描边）与出生 marker（绿十字）拉开色系
+		if ManifestScript.has_role(cvs.manifest, sid, "landing"):
+			landings.append(spr)
+		# 实体实际占位（清单 editorSize 或 prefab 碰撞尺寸）：青色实框
+		var sz = cvs._size_of(sid)
+		if sz != Vector2.ZERO:
+			boxes.append([spr.position, sz])
+		# 触发区：没有贴图，用半透明矩形 + 事件名标签表示
+		if BuiltinKinds.is_builtin(sid):
+			zones.append(spr)
+	if not exits.is_empty():
 		var fnt: Font = ThemeDB.fallback_font   # K10：Node2D 无 Control 主题接口，用引擎兜底字体
 		if fnt != null:
-			cvs.draw_string(fnt, ex3.position + Vector2(-10, -12), "↗" + tmap, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(0.35, 0.9, 1.0, 0.9))
-	# K8（批次 12）：传送落点（青色描边）与出生 marker（绿十字）拉开色系
-	for e4 in cvs.entities.get_children():
-		var lp = e4 as Sprite2D
-		if lp == null or not lp.has_meta("scene"):
-			continue
-		if not ManifestScript.has_role(cvs.manifest, str(lp.get_meta("scene", "")), "landing"):
-			continue
+			for it in exits:
+				cvs.draw_string(fnt, it[0] + Vector2(-10, -12), "↗" + str(it[1]),
+					HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(0.35, 0.9, 1.0, 0.9))
+	for lp in landings:
 		var lsz: Vector2 = cvs.entity_display_size_of(lp)
-		cvs.draw_rect(Rect2((lp as Sprite2D).position - lsz * 0.5, lsz), Color(0.35, 0.9, 1.0, 0.45), false, 1.5)
+		cvs.draw_rect(Rect2(lp.position - lsz * 0.5, lsz), Color(0.35, 0.9, 1.0, 0.45), false, 1.5)
 	# 选中实体高亮
 	if cvs.selected_entity and is_instance_valid(cvs.selected_entity):
 		var sr := Rect2(cvs.selected_entity.position - Vector2(cvs.tile_px, cvs.tile_px) * 0.75, Vector2(cvs.tile_px, cvs.tile_px) * 1.5)
@@ -150,21 +169,17 @@ func _draw() -> void:
 				"%d 个实体 · 拖动可整体移动" % multi.size(),
 				HORIZONTAL_ALIGNMENT_LEFT, -1, 11,
 				Color(1.0, 0.85, 0.3, 0.9 if hot else 0.55))
-	# 实体实际占位（清单 editorSize 或 prefab 碰撞尺寸）：青色实框，标出游戏里真正占的地方
-	for e4 in cvs.entities.get_children():
-		var s4 := e4 as Sprite2D
-		if s4 == null or not s4.has_meta("scene"):
-			continue
-		var sz = cvs._size_of(str(s4.get_meta("scene", "")))
-		if sz == Vector2.ZERO:
-			continue
-		var r4 := Rect2(s4.position - sz * 0.5, sz)
+	# 实体实际占位（清单 editorSize 或 prefab 碰撞尺寸）：青色实框，已在上面的单次遍历里收集
+	for it in boxes:
+		var s4: Vector2 = it[0]
+		var sz: Vector2 = it[1]
+		var r4 := Rect2(s4 - sz * 0.5, sz)
 		cvs.draw_rect(r4, Color(0.35, 0.95, 0.95, 0.85), false, 1.0)
 		# 十字标中心，便于对格
-		cvs.draw_line(Vector2(r4.position.x, s4.position.y), Vector2(r4.end.x, s4.position.y), Color(0.35, 0.95, 0.95, 0.25), 1.0)
-		cvs.draw_line(Vector2(s4.position.x, r4.position.y), Vector2(s4.position.x, r4.end.y), Color(0.35, 0.95, 0.95, 0.25), 1.0)
+		cvs.draw_line(Vector2(r4.position.x, s4.y), Vector2(r4.end.x, s4.y), Color(0.35, 0.95, 0.95, 0.25), 1.0)
+		cvs.draw_line(Vector2(s4.x, r4.position.y), Vector2(s4.x, r4.end.y), Color(0.35, 0.95, 0.95, 0.25), 1.0)
 	# 触发区：没有贴图，用半透明矩形 + 事件名标签表示；绑定事件的用实色，未绑定的用警示色
-	_draw_trigger_zones()
+	_draw_trigger_zones(zones)
 	# 区域选区轮廓（瓦片层 Ctrl+拖动框选的结果）
 	if cvs._region_sel.size.x > 0 and cvs._ent_layer_index() != cvs.active_layer:
 		var rr := Rect2(Vector2(cvs._region_sel.position) * cvs.tile_px, Vector2(cvs._region_sel.size) * cvs.tile_px)
@@ -229,12 +244,11 @@ func _draw() -> void:
 		cvs.draw_rect(gr, Color(1.0, 0.85, 0.3, 0.9), false, 2.0)
 ## 触发区矩形：半透明填充 + 边框 + 左上角事件名标签。
 ## 未绑定事件时用警示色——它在地图里是"死"的，必须在画布上一眼能看出来。
-func _draw_trigger_zones() -> void:
-	for node in cvs.entities.get_children():
+## zones 由 _draw 的单次实体遍历收集（P2-3），这里不再自己扫 entities。
+func _draw_trigger_zones(zones: Array) -> void:
+	for node in zones:
 		var spr := node as Sprite2D
-		if spr == null or not spr.has_meta("scene"):
-			continue
-		if not BuiltinKinds.is_builtin(str(spr.get_meta("scene", ""))):
+		if spr == null or not is_instance_valid(spr):
 			continue
 		var props: Dictionary = spr.get_meta("props", {}) if spr.get_meta("props", {}) is Dictionary else {}
 		var size_rect: Vector2 = cvs.entity_display_size_of(spr)

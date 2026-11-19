@@ -24,10 +24,12 @@ static func ids() -> Array:
 	return out
 
 ## 把缺失的内置种类补进清单；已存在（游戏工程自己声明过）则不覆盖。
+## P3-9：局部变量不能标 Array——清单里 entities 坏了（非 Array）时，类型化赋值会直接报错
+## 中断清单加载，而这里本该走兜底（当空表重建）。
 static func merge_into(manifest: Dictionary) -> void:
-	var entities: Array = manifest.get("entities", [])
-	if not (entities is Array):
-		entities = []
+	var raw = manifest.get("entities", [])
+	var entities: Array = raw if raw is Array else []
+	if not (raw is Array):
 		manifest["entities"] = entities
 	var existing := {}
 	for entity in entities:

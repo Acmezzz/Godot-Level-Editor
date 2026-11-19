@@ -244,10 +244,22 @@ func _map_ready() -> bool:
 		and app.canvas.entities != null and is_instance_valid(app.canvas.entities)
 
 ## 本图实例快照（按 ent_id 排序，保持稳定顺序）：[{spr, id, scene, name, fns}]
+## P2-4：按 canvas.ents_rev 缓存——预览每次鼠标移动都调 _hit_ent_at，原实现每个事件
+## 都重扫子树 + 重新排序（95×56 满图时每秒上万次临时数组分配）。绑定变更走 _mark() 抬 rev。
+var _ents_cache: Array = []
+var _ents_rev := -1
+var _ents_map := ""
+
 func _entities() -> Array:
-	var out: Array = []
 	if not _map_ready():
-		return out
+		_ents_cache = []
+		_ents_rev = -1
+		return _ents_cache
+	var rev: int = int(app.canvas.ents_rev)
+	var map_name := str(app.cur_map_name)
+	if _ents_rev == rev and _ents_map == map_name:
+		return _ents_cache
+	var out: Array = []
 	for e in app.canvas.entities.get_children():
 		var spr := e as Sprite2D
 		if spr == null or not spr.has_meta("scene"):
@@ -263,6 +275,9 @@ func _entities() -> Array:
 			"fns": list,
 		})
 	out.sort_custom(func(a, b): return _ent_less(str(a.id), str(b.id)))
+	_ents_cache = out
+	_ents_rev = rev
+	_ents_map = map_name
 	return out
 
 ## e_N 按数字排序（字符串排序会把 e_10 排到 e_3 前，行序看着像乱的）
@@ -407,6 +422,9 @@ func select_inst(ent_id: String) -> void:
 			and app.canvas.selected_multi.has(spr)
 		if not keep_multi:
 			app.canvas.selected_multi = [spr]
+		# P2-12：选中状态改了必须让画布重绘，否则选择框要等下一次任意重绘才落位。
+		# 不发 entity_selected——那会经 app 再转回本函数，形成回环。
+		app.canvas.queue_redraw()
 	_rebuild_rows()
 	_rebuild_right()
 	if _preview != null:
@@ -530,10 +548,17 @@ func _draw_preview(c: Control) -> void:
 
 ## 预览用的瓦片列表，统一为 [x, y, atlas, ax, ay]。
 ## 首选画布实时 TileMapLayer（编辑中的改动立刻反映），图层不可用时退回 map_data 数组。
+## P2-4：整图满涂时每次重绘重建上万条临时数组——按 canvas.map_rev 缓存（任何写入都会抬它）。
+var _tiles_cache := {}
+var _tiles_rev := {}   # kind -> 缓存对应的 map_rev
+
 func _preview_tiles(kind: String) -> Array:
-	var out: Array = []
 	if not _map_ready():
-		return out
+		return []
+	var rev: int = int(app.canvas.map_rev)
+	if _tiles_rev.get(kind, -1) == rev:
+		return _tiles_cache.get(kind, [])
+	var out: Array = []
 	var layer: TileMapLayer = app.canvas.terrain if kind == "terrain" else app.canvas.decor
 	if layer != null and is_instance_valid(layer):
 		for c in layer.get_used_cells():
@@ -541,17 +566,19 @@ func _preview_tiles(kind: String) -> Array:
 			if ac == Vector2i(-1, -1):
 				continue
 			out.append([c.x, c.y, layer.get_cell_source_id(c), ac.x, ac.y])
-		return out
-	for raw in app.canvas.map_data.get(kind, []):
-		if not (raw is Array):
-			continue
-		var a: Array = raw
-		if a.size() < 4:
-			continue
-		if a.size() >= 5:
-			out.append([int(a[0]), int(a[1]), int(a[2]), int(a[3]), int(a[4])])
-		else:
-			out.append([int(a[0]), int(a[1]), 0, int(a[2]), int(a[3])])
+	else:
+		for raw in app.canvas.map_data.get(kind, []):
+			if not (raw is Array):
+				continue
+			var a: Array = raw
+			if a.size() < 4:
+				continue
+			if a.size() >= 5:
+				out.append([int(a[0]), int(a[1]), int(a[2]), int(a[3]), int(a[4])])
+			else:
+				out.append([int(a[0]), int(a[1]), 0, int(a[2]), int(a[3])])
+	_tiles_cache[kind] = out
+	_tiles_rev[kind] = rev
 	return out
 
 ## 预览点击/悬停：命中半径取实体显示尺寸的一半（与它看起来的大小一致）。
@@ -1021,7 +1048,14 @@ func _default_for(typ: String):
 		_: return ""
 
 ## 字段改动：写内容文件。content 为空时首次改动即创建条目（ID 生成 + 绑定回写）。
+## P2-12 约定：字段值落在 content/<kind>/<id>.json，属「内容资产」而非地图快照——
+## 不进画布撤销栈（撤销恢复的是地图，内容文件不回滚）；改地图 meta 的路径（_set_prop/_write_fns）
+## 已各自 _push_undo()。连续控件按 O3 只在失焦/回车提交（见 _build_fn_form）。
 func _set_field(i: int, fn_id: String, key: String, value) -> void:
+	# P3-7：字符串字段统一 strip_edges——与实例固定块的 _set_prop 同口径，
+	# 否则同一个名字在固定块里被裁、在内容表单里带着首尾空格落盘。
+	if value is String:
+		value = (value as String).strip_edges()
 	var cid := _ensure_content(i)
 	if cid == "":
 		_ensure_failed()
@@ -1110,8 +1144,15 @@ func _ensure_content(i: int) -> String:
 	return new_id
 
 ## 写盘失败：状态栏 + 徽章双重提示（红色徽章在右栏顶部，不依赖状态栏可见性）
+## P3-5：不再一律甩「目录权限」——真实失败原因多半是身份码没生成或 kind 不合法。
 func _ensure_failed() -> void:
-	app._set_status(" 内容写盘失败，检查 content 目录权限")
+	var cur := _current_spr()
+	if cur == null:
+		app._set_status(" 内容写入失败：当前没有选中实例")
+	elif str(cur.get_meta("code", "")) == "" and str(cur.get_meta("ent_id", "")) == "":
+		app._set_status("  内容写入失败：这个实例还没有身份码（重新放置一次再试）")
+	else:
+		app._set_status("  内容写入失败：检查 content 目录是否存在且可写")
 	if _r_badge != null:
 		_r_badge.visible = true
 		Kit.set_badge(_r_badge, "写盘失败", Th.ERR)

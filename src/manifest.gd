@@ -261,15 +261,27 @@ static func prefab_collision_size(project_dir: String, prefab_rel: String) -> Ve
 ## ---- 功能声明读取（批次 B） ----
 ## 顶层 functions 可为 {fnId: {name, fields, ...}} 或 [{id, ...}]。
 ## 两种写法归一成 {fnId: {id, name, fields}}；声明缺失返回空字典，不报错。
+## P2-10：归一化结果按「项目目录 + 清单指纹」缓存——content_editor 重建右栏时逐字段调用，
+## function_decl/function_fields/function_name 每次都全量重扫是纯浪费。
+## 指纹 = functions 声明的 JSON 串（清单保存后内容必变，天然失效）。
+static var _fn_cache: Dictionary = {}
+static var _fn_cache_key := ""
+
+static func _fn_key(m: Dictionary) -> String:
+	return str(m.get("_dir", "")) + "\u0001" + JSON.stringify(m.get("functions", null))
+
 static func functions(m: Dictionary) -> Dictionary:
+	var key := _fn_key(m)
+	if _fn_cache_key == key:
+		return _fn_cache
 	var out := {}
 	var decl = m.get("functions", null)
 	if decl is Dictionary:
-		for key in (decl as Dictionary):
-			var fid := str(key)
+		for fid_key in (decl as Dictionary):
+			var fid := str(fid_key)
 			if fid == "":
 				continue
-			var body = (decl as Dictionary)[key]
+			var body = (decl as Dictionary)[fid_key]
 			var src: Dictionary = body if body is Dictionary else {}
 			out[fid] = {
 				"id": fid,
@@ -289,6 +301,8 @@ static func functions(m: Dictionary) -> Dictionary:
 				"name": str(src2.get("name", fid2)) if str(src2.get("name", "")) != "" else fid2,
 				"fields": src2.get("fields", []) if src2.get("fields", []) is Array else [],
 			}
+	_fn_cache = out
+	_fn_cache_key = key
 	return out
 
 ## 单个功能声明；缺失时返回空字典。

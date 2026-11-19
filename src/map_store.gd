@@ -19,15 +19,26 @@ static var project_rev := 0
 static var _cache := {}   # path -> {mtime: int, data: Dictionary}
 
 ## 按缓存读单图；读失败不缓存（下次重读）
+## P2-7：mtime 是秒级粒度，同秒内外部改文件会被脏缓存吃掉。缓存键补上文件长度——
+## 尺寸变了必然重读；同秒且同尺寸的改动仍无法识别（自写路径有显式失效，只影响外部编辑器）。
 static func _read_cached(path: String, m: Dictionary) -> Dictionary:
 	var mt := FileAccess.get_modified_time(path)
+	var sz := _file_size(path)
 	var hit = _cache.get(path, null)
-	if hit != null and int(hit.get("mtime", -1)) == mt:
+	if hit != null and int(hit.get("mtime", -1)) == mt and int(hit.get("size", -1)) == sz:
 		return hit.get("data", {})
 	var result := read_path(path, m)
 	if result.ok:
-		_cache[path] = {"mtime": mt, "data": result.data}
+		_cache[path] = {"mtime": mt, "size": sz, "data": result.data}
 	return result.data if result.ok else {}
+
+static func _file_size(path: String) -> int:
+	var f := FileAccess.open(path, FileAccess.READ)
+	if f == null:
+		return -1
+	var n := f.get_length()
+	f.close()
+	return n
 
 ## 统一文本解码、版本升级与结构校验；错误时不返回可编辑数据。
 static func decode_text(text: String, source := "", manifest := {}) -> Dictionary:
@@ -109,6 +120,10 @@ static func write(m: Dictionary, name: String, data: Dictionary) -> bool:
 	return write_json(path, data)
 
 ## 轮转 .3←.2←.1←当前（copy 当前而非 rename：备份失败绝不阻断保存本身）
+## P3-14：内容文件也要同样的回滚保险（内容条目是可复用资产），所以开放成公开入口。
+static func rotate_history(path: String) -> void:
+	_rotate_history(path)
+
 static func _rotate_history(path: String) -> void:
 	var dir := path.get_base_dir().path_join(".history")
 	DirAccess.make_dir_recursive_absolute(dir)

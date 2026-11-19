@@ -45,6 +45,24 @@ func _paint(c: Vector2i) -> void:
 	cvs._mark(false)   # 只改瓦片层
 
 
+## P3-2：这一格到底有没有东西可擦——起手前先判，避免压空撤销快照。
+func _erase_hits(pos: Vector2) -> bool:
+	if cvs.map_root == null:
+		return false
+	if cvs.active_layer == cvs._ent_layer_index():
+		return cvs._entity_hit(pos) != null
+	if cvs._is_grid_layer(cvs.active_layer):
+		for bc in _brush_cells(cvs._cell_of(pos)):
+			if cvs.collision.get_cell_source_id(bc) != -1:
+				return true
+		return false
+	var layer = cvs._layer_node(cvs.active_layer)
+	for bc in _brush_cells(cvs._cell_of(pos)):
+		if layer.get_cell_source_id(bc) != -1:
+			return true
+	return false
+
+
 func _erase_at(pos: Vector2) -> void:
 	if cvs.map_root == null:
 		cvs._hint("无地图：先新建或打开一张地图")

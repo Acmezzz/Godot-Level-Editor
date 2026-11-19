@@ -228,17 +228,36 @@ func _fill_distribution(sid: String) -> void:
 	var has_stats := not (sdefs as Array).is_empty()
 	var total := 0
 	for map_name in dist:
-		var rows: Array = dist[map_name]
-		total += rows.size()
-		var head := Kit.hbox(6)
-		head.add_child(Kit.text_label("%s × %d" % [map_name, rows.size()], Th.TEXT, Th.FS_SMALL))
-		_dist_rows.add_child(head)
-		for r in rows:
-			_dist_rows.add_child(_dist_row(map_name, r, sdefs))
+		total += (dist[map_name] as Array).size()
+		# P2-11：行数 = 实例数 × 数值项数，满项目扫下来能上千个 SpinBox。
+		# 按地图折叠，默认收起，展开时才建行（懒构建）。
+		_dist_rows.add_child(_dist_map_section(str(map_name), dist[map_name], sdefs))
 	var foot := "共 %d 个实例 / %d 张地图" % [total, dist.size()]
 	if has_stats:
 		foot += "　·　改数值 = 只改这个实例，不影响同类型其它实例"
 	_dist_rows.add_child(Kit.hint_label(foot, 460))
+
+## 单张地图的折叠段：标题按钮切换，首展时才构建行（P2-11）。
+func _dist_map_section(map_name: String, rows: Array, sdefs: Array) -> Control:
+	var wrap := Kit.vbox(2)
+	var built := {"done": false}
+	var body := Kit.vbox(2)
+	body.visible = false
+	var head := Kit.button(_dist_head_text(map_name, rows.size(), false), Callable(), "ghost")
+	head.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	head.pressed.connect(func():
+		if not built.done:
+			built.done = true
+			for r in rows:
+				body.add_child(_dist_row(map_name, r, sdefs))
+		body.visible = not body.visible
+		head.text = _dist_head_text(map_name, rows.size(), body.visible))
+	wrap.add_child(head)
+	wrap.add_child(body)
+	return wrap
+
+func _dist_head_text(map_name: String, n: int, open: bool) -> String:
+	return ("▾ " if open else "▸ ") + "%s × %d" % [map_name, n]
 
 ## 全项目扫描：{地图名: [{id, x, y, def, props}, ...]}——实例分布、K7 删除检查与实例数值显示共用数据源
 ## 当前打开的地图以画布内存为底（P1-4）：磁盘底册+内存补丁的混合体会让新增未保存的实例
@@ -323,10 +342,17 @@ func _dist_row(map_name: String, r: Dictionary, sdefs: Array) -> Control:
 			nl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 			cell.add_child(nl)
 			var box := SpinBox.new()
-			box.min_value = float(sf.get("min", 0.0))
-			box.max_value = float(sf.get("max", 999.0))
+			var v_min := float(sf.get("min", 0.0))
+			var v_max := float(sf.get("max", 999.0))
+			var eff_v := float(eff.get(stat_id, sf.get("default", 0.0)))
+			# P3-8：有效值超出声明的 min/max 时（实例覆盖或类型模板给了越界值），SpinBox 会
+			# 静默夹到边界显示，用户一微调就把夹过的值写回去。把范围撑到能包住它。
+			v_min = minf(v_min, eff_v)
+			v_max = maxf(v_max, eff_v)
+			box.min_value = v_min
+			box.max_value = v_max
 			box.step = 0.1 if str(sf.get("type", "float")) == "float" else 1.0
-			box.value = float(eff.get(stat_id, sf.get("default", 0.0)))
+			box.value = eff_v
 			box.custom_minimum_size = Vector2(64, 0)
 			box.tooltip_text = "只改「%s」这个实例；%s" % [rid,
 				"已覆盖类型模板" if ov.has(stat_id) else "当前继承类型模板，改动即覆盖"]

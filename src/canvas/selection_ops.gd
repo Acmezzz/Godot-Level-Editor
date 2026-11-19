@@ -104,6 +104,7 @@ func _begin_entity_drag(spr: Sprite2D, pos: Vector2) -> void:
 			cvs._drag_origins.append((s as Sprite2D).position)
 	cvs._drag_grab = pos
 	cvs._drag_moved = false
+	cvs.begin_gesture(cvs.Gesture.ENTITY_DRAG, MOUSE_BUTTON_LEFT)
 
 ## 从框内空白处拖动 = 平移整个框选集合（和按住某个成员拖一样，一次撤销步）
 func _begin_group_drag(pos: Vector2) -> void:
@@ -121,6 +122,7 @@ func _begin_group_drag(pos: Vector2) -> void:
 		cvs._drag_origins.append((s as Sprite2D).position)
 	cvs._drag_grab = pos
 	cvs._drag_moved = false
+	cvs.begin_gesture(cvs.Gesture.ENTITY_DRAG, MOUSE_BUTTON_LEFT)
 
 
 func _move_drag_preview(pos: Vector2) -> void:
@@ -375,7 +377,7 @@ func _begin_region_move(pos: Vector2) -> void:
 	cvs._move_from = cvs._region_sel.position
 	cvs._move_grab = pos
 	cvs._move_cell_delta = Vector2i.ZERO
-	cvs._move_active = true
+	cvs.begin_gesture(cvs.Gesture.REGION_MOVE, MOUSE_BUTTON_LEFT)
 
 
 func _move_region_preview(pos: Vector2) -> void:
@@ -390,7 +392,6 @@ func _finish_region_move() -> void:
 	var snap: Dictionary = cvs._move_snap
 	var from: Vector2i = cvs._move_from
 	var delta: Vector2i = cvs._move_cell_delta
-	cvs._move_active = false
 	cvs._move_snap = {}
 	cvs._move_cell_delta = Vector2i.ZERO
 	if not active or delta == Vector2i.ZERO:

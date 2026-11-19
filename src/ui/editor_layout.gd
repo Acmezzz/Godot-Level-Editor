@@ -548,8 +548,11 @@ func _open_popup(pop: PopupPanel, size := Vector2i.ZERO) -> void:
 	# 再用 popup_centered() 让引擎按最小尺寸开窗——不带参数的 popup_centered()
 	# 会沿用上次窗口大小，必须显式给尺寸。
 	# C6 回退（批次 12 修正）：单次居中量取不准会裁切内容——恢复两段式（先 1×1 弹出再按
-	# 实际最小尺寸居中；首帧闪烁是小瑕疵，内容被裁是硬伤）。
+	# 实际最小尺寸居中）。
+	# P3-12：两段式首帧会在左上角闪一下 1×1 的小窗。把第一段挪到屏幕外再量——
+	# 同一帧内接第二段居中，中间那次布局从未被绘制，闪烁消失。
 	pop.popup_centered(Vector2i(1, 1))
+	pop.position = Vector2i(-32000, -32000)
 	var want := pop.get_contents_minimum_size().ceil()
 	var vp = app.get_viewport_rect().size
 	want.x = minf(want.x, vp.x - 40)

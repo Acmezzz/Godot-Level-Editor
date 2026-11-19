@@ -12,7 +12,18 @@ const MapStore := preload("res://src/map_store.gd")
 var manifest := {}
 var canvas: EditorCanvas
 var cur_map_path := ""
-var cur_map_name := ""
+var _cur_map_name := ""
+## P3-6：地图名单一来源 = canvas.cur_map_name。app 侧保留同名属性做代理——
+## 原来两个字段各自被赋值，切图协程窗口期会短暂不一致，读的那一方拿到旧名。
+var cur_map_name: String:
+	get:
+		if canvas != null and str(canvas.cur_map_name) != "":
+			return str(canvas.cur_map_name)
+		return _cur_map_name
+	set(v):
+		_cur_map_name = v
+		if canvas != null:
+			canvas.cur_map_name = v
 var tile_list: ItemList
 var ent_list: ItemList
 ## 碰撞层左栏：说明 + 类型/形状选择器
@@ -374,9 +385,9 @@ func _shortcut_input(event: InputEvent) -> void:
 		KEY_SLASH, KEY_QUESTION:
 			_open_shortcut_help()
 			get_viewport().set_input_as_handled()
-		KEY_ENTER:
+		KEY_ENTER, KEY_KP_ENTER:
 			# v2 §2.3：Enter 的去处从「打开内容抽屉」改成「去内容编辑器」——
-			# 抽屉已删，功能搬到了独立面板。
+			# 抽屉已删，功能搬到了独立面板。P3-11：小键盘回车同权。
 			if canvas.selected_entity != null:
 				_set_mode("content")
 				get_viewport().set_input_as_handled()

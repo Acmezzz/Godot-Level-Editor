@@ -148,9 +148,8 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	# 节点全部重建：选区/剪贴板引用失效，清空（剪贴板只存模板数据可保留，但引用选区必须清）
 	selected_entity = null
 	selected_multi.clear()
-	_drag_paint = false
-	_drag_box = false
-	_drag_spawn = false
+	# P2-8/O1：手势单点复位——不再逐个清 5 个布尔位
+	end_gesture()
 	# 输入/区域状态一并复位：上个图的粘贴预览、区域选区、右键擦除、拖拽中状态
 	# 不能带进这张图（BUG-06）；拖拽标志不重置会让 undo 后松手推出冗余快照（P-13）。
 	# P-17：图层显隐/锁定是按图的编辑状态，跨图泄漏会让人对着空气解锁——换图时清空。
@@ -160,8 +159,6 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	_region_clip = {}
 	_last_copy_region = false
 	_collision_meta.clear()
-	_rmb_erase = false
-	_panning = false
 	_drag_entity = null
 	_drag_entities.clear()
 	_drag_origins.clear()
@@ -317,6 +314,8 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	# 不一致就是脏的），普通载入清零；emit 只在这里发一次，undo/redo 不再自己发。
 	modified_flag = keep_dirty
 	_ent_by_id_dirty = true   # D5：整图载入（含撤销恢复）索引置脏
+	map_rev += 1              # P2-4：整图替换后下游缓存必须重扫
+	ents_rev += 1
 	modified.emit()
 	# P-10：载入后选区引用已失效——发 null 让属性面板/侧栏同步清空，悬空引用不再滞留
 	entity_selected.emit(null)
@@ -462,8 +461,6 @@ func _assign_id(spr: Sprite2D, forced := "") -> void:
 		return
 	ent_id_counter += 1
 	spr.set_meta("ent_id", "e_%d" % ent_id_counter)
-	if str(spr.get_meta("code", "")) == "":
-		spr.set_meta("code", ContentIdRef.new_inst_code())
 
 ## K26b：全工程实体 id 引用集——地图 props 里 e_N 形字符串值（跨图落点/portal 目标）
 ## + 内容文件步骤里 e_N 形字符串值（entity_ref 参数）。被引用的号绝不复用。
@@ -564,7 +561,6 @@ var _move_snap := {}
 var _move_from := Vector2i.ZERO
 var _move_grab := Vector2.ZERO
 var _move_cell_delta := Vector2i.ZERO
-var _move_active := false
 var _selection_ops_ctrl   # SelectionOps：实体选区/剪贴板/区域复制粘贴控制器（审查 8.3-E）
 var _undo_history_ctrl   # UndoHistory：快照式撤销/重做控制器（审查 8.3-F）
 var _canvas_draw_ctrl   # CanvasDraw：绘制块（审查 8.3-H，行数验收迫使拆出）
@@ -659,12 +655,19 @@ func set_collision_cell(c: Vector2i, on: bool, type := "solid", shape := "") -> 
 		collision.erase_cell(c)
 		_collision_meta.erase(c)
 
-# —— 修改标记 ——
+# ——— 修改标记 ——
+## 整图版本号：任何写入（瓦片/碰撞/实体/绑定）都 +1。内容编辑器的预览瓦片数组以它为缓存键。
+var map_rev := 0
+## 实体集版本号：只有实体增删/改 id/meta 绑定时 +1。实例列表与预览实体数组以它为缓存键（P2-4）。
+var ents_rev := 0
+
 ## ents_changed=false：只改了地形/装饰/碰撞，实体集没动——不必让实体索引失效（P2-2）。
 func _mark(ents_changed := true) -> void:
 	modified_flag = true
+	map_rev += 1
 	if ents_changed:
 		_ent_by_id_dirty = true   # D5：实体集变了，索引置脏
+		ents_rev += 1             # P2-4：下游缓存（内容编辑器实例/预览数组）随之失效
 	# 碰撞可视节点是数据的镜像，任何写入（涂刷/擦除/矩形/生成/粘贴/撤销）后都要重画。
 	# 统一在这里刷新，避免每个调用点各记一次、漏掉就出现「数据改了但红块没变」。
 	if coll_view and is_instance_valid(coll_view):
@@ -691,13 +694,32 @@ var redo_stack := []
 
 # —— 序列化：画布节点 → JSON 数据（游戏侧 MapLoader.build 消费的同一格式） ——
 # —— 输入状态 ——
-var _panning := false
-var _drag_paint := false
-## v2：拖动语义由层 + 修饰键决定，两种拖动各自一位（互斥）——
-## 连续涂 / 框选。原来由 cvs.tool 区分，工具删掉后改由这里承载。
-var _drag_box := false
-var _drag_spawn := false
-var _rmb_erase := false
+## P2-8/O1：手势互斥。原来平铺 8 个布尔位（_panning/_drag_paint/_drag_box/_drag_spawn/
+## _rmb_erase/_drag_entity/_move_active/_paste_mode），无互斥——拖实体时按中键会平移+拖动并行，
+## 拖出生点时按右键会拖动+擦除并行。现在只留一个枚举：起手即接管，松手即清零，
+## 任何新起手都会顶掉上一个手势（物理上不可能叠加）。
+## _paste_mode 是「模式」不是手势（跨点击存活），不在枚举里。
+enum Gesture { NONE, PAN, PAINT, BOX, SPAWN_DRAG, ERASE, ENTITY_DRAG, REGION_MOVE }
+var gesture: int = Gesture.NONE
+## 起手按键：中键松手只清中键起的平移，不会误杀 Space+左键的平移（反之亦然）。
+var gesture_button := 0
+
+func begin_gesture(g: int, button := 0) -> void:
+	gesture = g
+	gesture_button = button
+
+func end_gesture() -> void:
+	gesture = Gesture.NONE
+	gesture_button = 0
+
+## 派生只读位（绘制块与松手分派仍按这两个语义判断）
+var _drag_box: bool:
+	get:
+		return gesture == Gesture.BOX
+var _move_active: bool:
+	get:
+		return gesture == Gesture.REGION_MOVE
+
 @warning_ignore("unused_private_class_variable")
 var _drag_start := Vector2.ZERO
 # 实体拖拽移动
@@ -831,6 +853,9 @@ func _paint(c: Vector2i) -> void:
 
 func _erase_at(pos: Vector2) -> void:
 	_tool_ops_ctrl._erase_at(pos)
+
+func _erase_hits(pos: Vector2) -> bool:
+	return _tool_ops_ctrl._erase_hits(pos)
 
 func _stamp(c: Vector2i) -> void:
 	_tool_ops_ctrl._stamp(c)

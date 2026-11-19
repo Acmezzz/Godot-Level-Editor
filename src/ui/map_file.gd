@@ -372,8 +372,7 @@ func poll_playtest() -> void:
 	# A5.1：试玩日志尾随——游戏侧写 editor/playtest.log，退出后取最后几行（无文件 = 原消息）
 	var tail := Playtest.log_tail(str(app.manifest.get("_dir", "")), 4)
 	if tail != "":
-		app._set_status(" 试玩退出（%d 秒）· 日志: %s" % [secs, tail.replace("
-", " | ")])
+		app._set_status(" 试玩退出（%d 秒）· 日志: %s" % [secs, tail.replace("\n", " | ")])
 	else:
 		app._set_status(" 试玩进程已退出（运行 %d 秒）" % secs)
 

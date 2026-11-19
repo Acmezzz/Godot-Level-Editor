@@ -110,8 +110,10 @@ static func read(m: Dictionary, kind: String, id: String) -> Dictionary:
 	if path == "" or not FileAccess.file_exists(path):
 		return {}
 	var mt := FileAccess.get_modified_time(path)
+	var sz := _file_size(path)
 	var hit = _cache.get(path, null)
-	if hit != null and int(hit.get("mtime", -1)) == mt:
+	# P2-7：mtime 秒级粒度，同秒改写会被脏缓存吃掉——缓存键补文件长度兜住绝大多数情形
+	if hit != null and int(hit.get("mtime", -1)) == mt and int(hit.get("size", -1)) == sz:
 		return (hit.get("data", {}) as Dictionary).duplicate(true)
 	var f := FileAccess.open(path, FileAccess.READ)
 	if f == null:
@@ -120,8 +122,16 @@ static func read(m: Dictionary, kind: String, id: String) -> Dictionary:
 	f.close()
 	var data := _decode(text, id, kind)
 	if not data.is_empty():
-		_cache[path] = {"mtime": mt, "data": data}
+		_cache[path] = {"mtime": mt, "size": sz, "data": data}
 	return data
+
+static func _file_size(path: String) -> int:
+	var f := FileAccess.open(path, FileAccess.READ)
+	if f == null:
+		return -1
+	var n := f.get_length()
+	f.close()
+	return n
 
 ## 静默解析：JSON.parse_string 遇到坏文件会向引擎打 ERROR 日志，
 ## 校验页扫描大量资源时会被噪声淹没；JSON.new().parse() 只返回错误码。
@@ -143,6 +153,9 @@ static func write(m: Dictionary, kind: String, id: String, data: Dictionary) -> 
 	if path == "":
 		return false
 	DirAccess.make_dir_recursive_absolute(path.get_base_dir())
+	if FileAccess.file_exists(path):
+		# P3-14：内容文件与地图同权——误写可回滚（3 层 .history，最新 .1）
+		Store.rotate_history(path)
 	var payload := data.duplicate(true)
 	if kind != "schema":
 		payload["id"] = id
@@ -211,5 +224,3 @@ static func remove(m: Dictionary, kind: String, id: String) -> bool:
 	var ok := DirAccess.remove_absolute(path) == OK
 	_cache.erase(path)   # D3：删除后失效
 	return ok
-
-## 扫描对某 id 的文本引用（编辑器无调用方，审查 P1-13 判死代码已删）。

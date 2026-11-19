@@ -61,7 +61,7 @@ static func _validate_entities(entities: Array, manifest: Dictionary, issues: Ar
 			_validate_functions(entity.get("functions"), path + ".functions", manifest, issues)
 
 ## v2 §5.3：实例 functions 数组结构校验——[{fn, content, name, order, parallel}]。
-## 空 content = 还没填（内容编辑器里显示「未填」），不是错误；未知 fn 只警告，
+## 空 content = 还没绑定内容（内容编辑器里会按需生成），不是错误；未知 fn 只警告，
 ## 因为项目侧可以先放数据再补实现（清单声明是开发契约，不是硬白名单）。
 static func _validate_functions(raw, path: String, manifest: Dictionary, issues: Array[Dictionary]) -> void:
 	if not (raw is Array):
