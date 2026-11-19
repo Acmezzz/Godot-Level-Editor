@@ -11,7 +11,7 @@ const HOVER_COL := Color(0.35, 0.95, 0.95, 0.95)
 
 var host  # content_editor 宿主（_map_ready / _entities / select_inst / app 都在宿主）
 
-## 青框悬停的实例 id（宿主在切图/删实体/清空时清它）
+## 青框悬停的实例 id（宿主在悬停目标失效时清它）
 var hover_ent := ""
 
 var _zoom := 1.0
@@ -80,7 +80,7 @@ func _notification(what: int) -> void:
 	elif what == NOTIFICATION_MOUSE_ENTER:
 		_update_hover(get_local_mouse_position())
 
-## 更新悬停实体并重绘（只在 id 变化时重绘，鼠标在空白处滑动不刷帧）。
+## 更新悬停实体并重绘（悬停框是最上层信息，每次移动都请求重绘）。
 func _update_hover(pos: Vector2) -> void:
 	set_hover(_hit_at(pos))
 

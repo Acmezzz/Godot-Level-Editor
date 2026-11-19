@@ -1,6 +1,6 @@
 extends RefCounted
 class_name UiKit
-## 可复用 UI 构件：把「分段标题 / 空状态 / 字段行 / 页签栏」这类重复拼装收敛到一处。
+## 可复用 UI 构件：把「分段标题 / 空状态 / 字段行 / 徽章 / 弹窗按钮行」这类重复拼装收敛到一处。
 ##
 ## 全部返回已配好样式的 Control，调用方 add_child 即可。样式只在 UiTheme 里定义，
 ## 这里只做结构与语义组合，不写死色值（个别强调用 UiTheme 的公开常量）。
@@ -169,8 +169,7 @@ static func set_badge(p: PanelContainer, text: String, color: Color) -> void:
 			break
 
 # —— 符号常量 ——
-## 符号表（R4 统一，按设计文档 §0 口径）：✕ 删除；↑/↓ 排序；+ 新建；👁/🔒 图层显隐与锁定。
-## 别再混 × ＋ ●/○ 🗑。
+## 行级删除符号统一 ✕。其余符号（↑/↓/+、👁/🔒）直接写在调用处，未设常量。
 const SYM_DEL := "✕"
 
 ## 行级删除钮：统一 ✕ + ghost + tooltip（删除必须有 tooltip 说明删的是什么）

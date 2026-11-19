@@ -1,10 +1,11 @@
 extends RefCounted
-## 内容编辑器（左本图实例 / 中只读画布预览 / 右实例与功能。
+## 内容编辑器：左列本图实例列表 / 中列只读画布预览 / 右列功能绑定与内容表单。
 ##
-## 与其它控制器同形：RefCounted + _init(host)，UI 全部用 Kit/Th 构建。
-## 数据真相：实例绑定在画布 Sprite2D 的 meta（props / functions），
-## 功能内容在 content/<fn>/<id>.json；本面板不做内存草稿，改动即时写盘。
-## 中列是重绘式预览——同一节点不能两处上屏，所以不挂 app.canvas，只按坐标重画。
+## 与其它控制器同形：RefCounted + _init(host)，样式统一走 Kit/Th。
+## 数据真相：实例绑定在画布 Sprite2D 的 meta（functions），功能内容在
+## content/<功能id>/<内容id>.json。离散控件改动即时写盘；SpinBox/多行等
+## 连续控件在失焦或 commit() 时统一落盘（见 _pending_commits）。
+## 中列是重绘式预览——同一节点不能两处上屏，不挂 app.canvas，按坐标重画。
 
 const Kit := preload("res://src/ui/ui_kit.gd")
 const Th := preload("res://src/ui/ui_theme.gd")
@@ -284,7 +285,7 @@ func _content_id_for(spr: Sprite2D, fn_id: String) -> String:
 	return ContentId.content_id(map_code, ent_code, inst_code, fn_id)
 
 ## 写回附加功能：先撤销快照（改动前），再改 meta 并标脏。
-## 内容条目留在库里，删绑定不等于删内容（与演示稿状态栏口径一致）。
+## 内容条目留在库里，删绑定不等于删内容。
 func _write_fns(spr: Sprite2D, fns: Array) -> void:
 	if spr == null:
 		return
@@ -312,7 +313,7 @@ func _rebuild_rows() -> void:
 	for row in ents:
 		_rows_box.add_child(_build_row(row))
 
-## 实例行：类型名 + e_N + 状态点。整行是按钮，点击走 select_inst（与画布双向同步）。
+## 实例行：类型名 + e_N。整行是按钮，点击走 select_inst（与画布双向同步）。
 func _build_row(row: Dictionary) -> Control:
 	var ent_id := str(row.id)
 	var on := ent_id == _selected_ent
@@ -681,7 +682,7 @@ func _add_fn(fn_id: String) -> void:
 	_write_fns(spr, fns)
 	_refresh_all()
 
-## 左右列一起刷新（列表状态点、徽章、右栏表单都随绑定变化）
+## 左右列一起刷新（列表高亮、徽章、右栏表单都随绑定变化）
 func _refresh_all() -> void:
 	_rebuild_rows()
 	_rebuild_right()
@@ -692,7 +693,7 @@ func _refresh_all() -> void:
 
 ## 内容表单：字段按功能声明渲染（声明 = 游戏侧契约，编辑器只建控件不解释语义）。
 ## 内容文件结构 {id, function: 功能码, name, fields:{字段码:值}}。
-## 旧数据里 function 与 fields 键存的是人类名，读取时按名回退（见 manifest.resolve_*）。
+## 磁盘上的 function/fields 键一律是执行码（ensure_codes 保证），严格按码、无回退。
 func _build_form_block() -> Control:
 	var box := Kit.vbox(6)
 	var fns := _current_fns()
@@ -746,7 +747,7 @@ func _build_form_block() -> Control:
 		box.add_child(undeclared)
 	return box
 
-## 报告 ③：内容里有清单没声明的键——保留原值、只读呈现，不删不改。
+## 内容里有清单没声明的键——保留原值、只读呈现，不删不改。
 ## 键一律是字段码；对不上声明码 = 声明被删/换码（数据漂移）。
 func _undeclared_block(fields: Array, cur: Dictionary) -> Control:
 	var known := {}
@@ -822,7 +823,7 @@ func _resolve_options(decl: Dictionary) -> Array:
 ## 字段改动：写内容文件。content 为空时首次改动即创建条目（ID 生成 + 绑定回写）。
 ## 约定：字段值落在 content/<kind>/<id>.json，属「内容资产」而非地图快照——
 ## 不进画布撤销栈（撤销恢复的是地图，内容文件不回滚）；改绑定的路径（_set_parallel 等）
-## 走 _write_fns 各自进撤销。连续控件按 O3 只在失焦/回车提交。
+## 走 _write_fns 各自进撤销。连续控件只在失焦/回车提交。
 func _set_field(i: int, fn_id: String, key: String, value) -> void:
 	# 字符串字段统一 strip_edges——所有字符串值同一口径，避免同一字段
 	# 在两条编辑路径里一个被裁、一个带着首尾空格落盘。
@@ -940,7 +941,7 @@ func _refresh_status_only() -> void:
 # ──────────── 库复用弹窗 ────────────
 
 ## 列同功能的全部内容条目；选中一条 → 复制成新 ID 追加到当前实例末尾。
-## 跨功能不列：字段声明不同，复用没有意义（演示稿 filterLib 同口径）。
+## 跨功能不列：字段声明不同，复用没有意义。
 func _open_lib(i: int) -> void:
 	var fns := _current_fns()
 	if i < 0 or i >= fns.size():
@@ -1019,7 +1020,7 @@ func _duplicate_from_lib(fn_id: String, old_id: String, new_name: String) -> voi
 		"fields": (src_fields as Dictionary).duplicate(true) if src_fields is Dictionary else {},
 	}
 	if not ContentStore.write(manifest, fn_id, new_id, data):
-		app._set_status(" 写盘失败，检查 content 目录权限")
+		app._set_status(" 写盘失败: content/%s/%s.json" % [fn_id, new_id])
 		return
 	commit()   # 复制库内容前先落盘当前表单待提交值（下标保持有效）
 	var fns := _current_fns().duplicate(true)

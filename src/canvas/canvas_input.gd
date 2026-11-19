@@ -1,13 +1,14 @@
 extends RefCounted
-## _canvas_input_ctrl：从 src/canvas/editor_canvas.gd 拆出的控制器。宿主状态经 alias 引用。
+## _canvas_input_ctrl：从 src/canvas/editor_canvas.gd 拆出的控制器。宿主状态经 cvs 引用。
 ##
 ## 没有工具概念——**层类型决定左键语义**。
+## 全局手势：中键拖动 = 平移（任意层）；滚轮 = 以鼠标为锚缩放。
 ## 地形 / 装饰 / 碰撞：左键按住拖动连续涂，右键拖动擦除。
 ## 实体：左键点空处 = 放置当前选中资产，点实体 = 选中并拖动；右键 = 删除该实体。
 ## 框选由 cvs.select_mode（左栏「框选」开关）决定：打开时任意层普通左键拖动即框选；
 ## 关闭时保留 Ctrl+拖动框选作为兼容入口。两条路径都不依赖工具。
 ##
-## /O1：所有拖拽/平移状态收敛到 cvs.gesture 单一枚举（见 editor_canvas.Gesture）。
+## 所有拖拽/平移状态收敛到 cvs.gesture 单一枚举（见 editor_canvas.Gesture）。
 ## 起手即 begin_gesture，松手即 end_gesture；任何新起手都顶掉旧手势，不可能叠加。
 
 var cvs   # 宿主引用
@@ -16,7 +17,7 @@ func _init(host) -> void:
 	cvs = host
 
 func _unhandled_input(event: InputEvent) -> void:
-	# 重建窗口期拦截输入：cvs.map_root 已 queue_free 但变量还指向它（BUG-06）
+	# 重建窗口期拦截输入：cvs.map_root 已 queue_free 但变量还指向它
 	if cvs.map_root != null and not is_instance_valid(cvs.map_root):
 		return
 	var pos = cvs.get_global_mouse_position()
@@ -25,7 +26,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		if b.pressed:
 			match b.button_index:
 				MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN:
- # 滚轮缩放以鼠标为锚——鼠标下的世界点缩放前后不动（公式同 map_thumb BUG-13）
+ # 滚轮缩放以鼠标为锚——鼠标下的世界点缩放前后不动
 					var zw0: float = cvs.zoom
 					cvs.zoom = clampf(cvs.zoom * (1.15 if b.button_index == MOUSE_BUTTON_WHEEL_UP else 1.0 / 1.15), 0.5, 6.0)
 					if not is_equal_approx(cvs.zoom, zw0):
@@ -39,7 +40,8 @@ func _unhandled_input(event: InputEvent) -> void:
 					_on_right_press(pos)
 		else:
  # 松手只处理「是这一颗键起的那个手势」，避免中键松手误杀左键起手的平移
-			if b.button_index == MOUSE_BUTTON_MIDDLE and cvs.gesture == cvs.Gesture.PAN:
+			if b.button_index == MOUSE_BUTTON_MIDDLE and cvs.gesture == cvs.Gesture.PAN \
+					and cvs.gesture_button == MOUSE_BUTTON_MIDDLE:
 				cvs.end_gesture()
 			if b.button_index == MOUSE_BUTTON_RIGHT and cvs.gesture == cvs.Gesture.ERASE:
 				cvs.end_gesture()
@@ -131,7 +133,7 @@ func _on_entity_layer_press(pos: Vector2, b: InputEventMouseButton) -> void:
  # 按在已有框选范围内（但没按到具体某个实体）：拖动整组
 		cvs._begin_group_drag(pos)
 	elif b.ctrl_pressed:
- # 空白处 Ctrl+拖动 = 框选（没有工具按钮之后，这是唯一的框选入口）
+ # 空白处 Ctrl+拖动 = 框选（框选开关关闭时的兼容入口）
 		cvs.begin_gesture(cvs.Gesture.BOX, MOUSE_BUTTON_LEFT)
 		cvs._drag_start = pos
 	elif cvs.stamp_scene == "":
@@ -201,7 +203,7 @@ func _on_left_release(pos: Vector2) -> void:
 				cvs._box_select(cvs._drag_start, pos)
 			else:
 				cvs._region_sel = cvs._cell_rect(cvs._drag_start, pos)
-				cvs._hint("区域已选 %dx%d（Ctrl+C 复制三层，拖空白处可重选）" % [cvs._region_sel.size.x, cvs._region_sel.size.y])
+				cvs._hint("区域已选 %dx%d（Ctrl+C 复制瓦片三层+实体，拖空白处可重选）" % [cvs._region_sel.size.x, cvs._region_sel.size.y])
 		cvs.Gesture.PAINT, cvs.Gesture.PAN:
 			cvs.end_gesture()
 

@@ -1,8 +1,8 @@
 extends Control
 ## 独立关卡编辑器应用（Godot EXE）：
-## 启动 → 读 user:// 的项目列表 → 自动打开上次项目，否则显示项目选择页；
-## 选定项目 = 读清单 → 顶栏/资产栏/画布/状态栏，全部由清单驱动。
-## 不绑定具体游戏：多个游戏工程可在项目列表里并行管理，顶栏「设置 ▾ → 切换项目…」切换。
+## 启动 → 读 user:// 项目列表 → 自动打开上次项目，否则进项目选择页；
+## 选定项目后搭界面：顶栏（设置▾ / 地图▾+三模式 / 试玩）、左栏（层下拉+调色板）、画布、状态栏。
+## 不绑定具体游戏：多个工程并行管理，顶栏「设置 ▾ → 切换项目…」切换。
 
 const SettingsCfg := "user://settings.cfg"
 const ProjectShellScript := preload("res://src/ui/project_shell.gd")
@@ -36,13 +36,13 @@ var status: Label
 var last_tiles_layer := 0       # 最近使用的瓦片层（选瓦片时切回它）
 var _props_panel_ctrl   # ui/props_panel.gd 控制器（只剩「从地形生成碰撞」弹窗）
 var _map_file_ctrl   # ui/map_file.gd 控制器
-var _editor_state_ctrl   # core/editor_state.gd 控制器（审查 8.2-4 状态流）
-var _layout_ctrl   # ui/editor_layout.gd 控制器（审查 8.2-2 界面搭建）
-var _side_actions_ctrl   # core/side_actions.gd 控制器（审查 8.2-5 侧栏联动）
-var _palette_ctrl   # ui/palette_panel.gd 控制器（调色板两级导航）
+var _editor_state_ctrl   # core/editor_state.gd 控制器（状态流）
+var _layout_ctrl   # ui/editor_layout.gd 控制器（界面搭建）
+var _side_actions_ctrl   # core/side_actions.gd 控制器（侧栏动作）
+var _palette_ctrl   # ui/palette_panel.gd 控制器（调色板导航：多图集三级/单图集两级）
 var selected_spr: Sprite2D = null
 var map_loaded := false          # 防呆：是否已载入地图
-## 顶栏左侧「设置 ▾」锚点（地图名在右侧共享导航条的「地图 ▾」上）
+## 顶栏左侧「设置 ▾」锚点（「地图 ▾」按钮是固定文案，不显示当前地图名）
 var _map_btn: Button
 ## 顶栏导航条（地图 ▾ + 关卡/内容/资产）：关卡视图顶栏与项目页顶栏各嵌一个，
 ## 统一登记在这里同步按下态——_set_mode 是唯一真相。
@@ -230,8 +230,7 @@ func _on_project_picked(dir: String) -> void:
 	_open_project(dir)
 
 # —— 编辑器主界面 ——
-# —— 顶栏：按语义分四组（文件 / 视图 / 工具 / 试玩），组间用细线分隔 ——
-# —— 资产面板填充（拆到 ui/palette_panel.gd；调用点保持不变） ——
+# —— 调色板填充（控制器在 ui/palette_panel.gd） ——
 func _fill_palettes() -> void:
 	_palette_ctrl.fill_all()
 
@@ -310,7 +309,7 @@ func _load_prefs() -> void:
 		return
 	var f := FileAccess.open(PREFS_PATH, FileAccess.READ)
 	if f == null:
-		return   # 文件不可读不致命（BUG-09：原来 null 直接赋给硬类型变量会崩 _ready）
+		return   # 文件不可读不致命（null 直接赋给硬类型变量会崩 _ready）
 	var parsed = JSON.parse_string(f.get_as_text())
 	f.close()
 	if parsed is Dictionary:
@@ -401,7 +400,7 @@ func _shortcut_input(event: InputEvent) -> void:
 		_set_status(" 已重做" if await canvas.redo() else " 没有可重做的操作")
 		get_viewport().set_input_as_handled()
 		return
-	# 复制 / 剪切 / 粘贴（按当前图层分发实体或区域，BUG-02：键盘入口从画布移到 app）
+	# 复制 / 剪切 / 粘贴（按当前图层分发实体或区域；键盘入口在 app 级——画布收不到键盘）
 	if ctrl and k == KEY_C:
 		_copy()
 		get_viewport().set_input_as_handled()
@@ -414,7 +413,7 @@ func _shortcut_input(event: InputEvent) -> void:
 		_paste()
 		get_viewport().set_input_as_handled()
 		return
-	# 删除选中实体（Del，BUG-02 家族：delete_selection 此前无键盘入口）
+	# 删除选中实体（Del；delete_selection 的键盘入口）
 	if k == KEY_DELETE:
  # P0：没开地图时 delete_selection 会动到未初始化的画布状态，先守卫
 		if not map_loaded:
@@ -513,17 +512,14 @@ func _shortcut_input(event: InputEvent) -> void:
 #
 # 现在只有一个方向：**一个入口写状态，其它全部从状态派生**。
 # _apply_state(tool=?, layer=?) 是唯一的写入口；
-# _sync_ui() 把按钮高亮/页签/辅助控件从 canvas 的真实状态刷出来。
-# 任何交互（点工具按钮、切图层、点资产、按快捷键）都只调用这两者，不各写一份。
+# _sync_ui() 把按钮高亮/层下拉/辅助控件从 canvas 的真实状态刷出来。
+# 任何交互（点导航按钮、切图层、点资产、按快捷键）都只调用这两者，不各写一份。
 
-## 唯一写入口。参数留空表示「保持当前值」。
 func _layer_label(i: int) -> String:
 	var layers: Array = manifest.get("layers", [])
 	if i >= layers.size():
 		return "实体"
 	return str(layers[i].get("name", layers[i].get("id", "?")))
-
-## 把界面从 canvas 的真实状态刷出来（单向：状态 → UI，不反向写状态）
 
 func _toggle_grid() -> void:
 	canvas.show_grid = not canvas.show_grid
@@ -570,9 +566,6 @@ func _paste() -> void:
 		canvas.paste_at(canvas.get_global_mouse_position())
 
 
-## 眼睛/锁按钮反映当前图层状态。
-## 三个信号同时给：图标（睁眼/闭眼、开锁/上锁）+ 按钮按下态（底色高亮）+ 文字色。
-## 只用字色区分太弱，深色底上几乎看不出「启用」和「未启用」的差别。
 # —— 主题：全部样式集中在 src/ui/ui_theme.gd，此处只挂上去 ——
 # —— UI 辅助（转发到 UiKit，保证所有弹窗内控件与主界面同风格） ——
 const POPUP_BODY_W := 340
@@ -601,7 +594,7 @@ func _on_entity_selected(spr: Sprite2D) -> void:
 	selected_spr = spr
 	_refresh_sel_bar()
 	# 双向同步的另一半：画布选中的实例，切到内容编辑器时左列要定位到它。
-	# 载入地图会以 null 清选（P-10），先挡掉。
+	# 载入地图会以 null 清选，先挡掉。
 	if spr != null and project_shell != null and project_shell.content_editor != null:
 		var eid := str(spr.get_meta("ent_id", ""))
 		if eid != "":
@@ -609,7 +602,7 @@ func _on_entity_selected(spr: Sprite2D) -> void:
 
 func _set_map_loaded(loaded: bool) -> void:
 	map_loaded = loaded
-	# 顶栏「设置 ▾」是固定文案，不再兼作地图名显示（地图名在右侧切换按钮上）
+	# 顶栏「设置 ▾」是固定文案
 	if _canvas_empty:
 		_canvas_empty.visible = not loaded
 	if not loaded:
@@ -674,11 +667,10 @@ func _save_manifest_file() -> void:
 		_set_status(" 清单写回校验失败，未保存")
 		return
 	var p: String = str(manifest.get("_dir", "")).path_join("editor/editor_manifest.json")
-	# P-02/S-02：清单写盘走 MapStore 原子写单入口
+	# 清单写盘走 MapStore 原子写单入口
 	if not MapStore.write_text(p, txt):
 		_set_status(" 清单写入失败: " + p)
 		return
-		_set_status(" 清单已保存（资产模板变更下次试玩生效）")
 	# 人类名 ↔ 执行码对照表随清单一起刷新（游戏侧重建映射、人工 diff 均用）；
 	# 只在清单落盘成功后写，码表写失败不影响清单本身，状态栏单独报。
 	var cp: String = str(manifest.get("_dir", "")).path_join("editor/CODES.md")
@@ -745,7 +737,7 @@ func _open_popup(pop: PopupPanel, popup_size := Vector2i.ZERO) -> void:
 func _popup_body(title: String, subtitle := "") -> Dictionary:
 	return _layout_ctrl._popup_body(title, subtitle)
 
-## R4：快捷键速查弹窗（? 键 / 状态栏「?」入口）
+## 快捷键速查弹窗（? 键 / 状态栏「?」入口）
 func _open_shortcut_help() -> void:
 	_layout_ctrl._open_shortcut_help()
 ## —— 拆到 src/ui/map_file.gd 的委托（调用点保持不变） ——
@@ -758,7 +750,7 @@ func _play_args(spawn_tiles := Vector2i(-1, -1)) -> PackedStringArray:
 func _sync_play_cfg_to_map() -> void:
 	_map_file_ctrl._sync_play_cfg_to_map()
 ## —— 拆到 src/ui/editor_layout.gd 的委托（调用点保持不变） ——
-## 项目页：三个全屏视图合并进一个外壳（src/ui/project_shell.gd）
+## 项目页外壳（src/ui/project_shell.gd）：资产/内容两视图互斥切换
 func _build_project_view() -> void:
 	_layout_ctrl._build_project_view()
 ## —— 拆到 src/core/side_actions.gd 的委托（调用点保持不变） ——

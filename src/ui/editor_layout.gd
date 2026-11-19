@@ -1,5 +1,5 @@
 extends RefCounted
-## _layout_ctrl：从 src/app.gd 拆出的控制器。宿主状态经 alias 引用。
+## _layout_ctrl：从 src/app.gd 拆出的控制器。宿主状态经 app 引用。
 
 const TopBarNavScript := preload("res://src/ui/top_bar_nav.gd")
 
@@ -11,7 +11,7 @@ var _dirty_badge: PanelContainer
 # 画布视图开关（网格 / 框选）
 var _grid_btn: Button
 var _select_btn: Button
-## 层下拉（左栏唯一输入决定者）。按钮显示当前层名，弹层里每层一行 + 👁/🔒。
+## 层下拉（决定当前画笔语义）。按钮显示当前层名，弹层里每层一行 + 👁/🔒。
 var _layer_btn: Button
 var _layer_menu: PopupPanel
 var _layer_menu_body: VBoxContainer
@@ -98,9 +98,9 @@ func _build_editor_ui() -> void:
 	_set_status("无地图：先点「新建」填名字，或「打开」已有地图")
 
 
-## 全局横带（ / §2.4）：项目名 · 地图名▾ · 三个面板 · 试玩。
-## 地图名本身就是下拉按钮，点开容纳全部地图级动作；编辑工具与剪贴板按钮一概不在顶栏——
-## 任一层 / 任一窗口宽度下都只有这四组东西，没有挤出可视区的风险。
+## 全局横带：项目名 · 设置▾ · 地图 ▾（固定文案）+ 三模式按钮 · 试玩。
+## 地图 ▾ 点开容纳全部地图级动作；编辑工具与剪贴板按钮一概不在顶栏——
+## 任一层 / 任一窗口宽度下都只有这几组东西，没有挤出可视区的风险。
 func _build_global_bar() -> PanelContainer:
 	var panel_wrap := PanelContainer.new()
 	var sb = app.UiThemeScript.box(app.UiThemeScript.BG_BASE, app.UiThemeScript.BORDER, 0, 12, 6)
@@ -177,7 +177,7 @@ func _popup_below(pm: PopupMenu, anchor: Control) -> void:
 	pm.popup(Rect2i(at, Vector2i.ZERO))
 
 
-## 左侧资产栏：两组调色板各自撑半高，中间用细线分段
+## 左栏：层下拉 + 瓦片/实体两组列表（互斥显示）+ 碰撞类型/形状控件（grid 层）
 
 func _build_palette_column() -> PanelContainer:
 	var col := PanelContainer.new()
@@ -209,7 +209,7 @@ func _build_palette_column() -> PanelContainer:
 	app.add_child(_layer_menu)
 
 	var holder := Control.new()
-	# 资产列表吃掉剩余高度（v2：右栏检查器已删，画布与列表各得其所）
+	# 资产列表吃掉剩余高度（右栏检查器已删，画布与列表各得其所）
 	holder.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	v.add_child(holder)
 	var full := func(c: Control) -> void:
@@ -302,7 +302,7 @@ func _build_palette_column() -> PanelContainer:
 	app._editor_state_ctrl = preload("res://src/core/editor_state.gd").new(app)
 	return col
 
-## 资产列表跟随层类型（）：地形/装饰 → 瓦片，碰撞（grid）无资产 → 空，实体层 → 实体。
+## 资产列表跟随层类型：地形/装饰 → 瓦片，碰撞（grid）无资产 → 空，实体层 → 实体。
 func _set_palette_page(which: String) -> void:
 	if app.tile_list:
 		app.tile_list.visible = which == "tiles"
@@ -356,7 +356,7 @@ func _build_status_bar() -> PanelContainer:
 	_dirty_badge = app.UiKitScript.badge("未保存", app.UiThemeScript.WARN)
 	_dirty_badge.visible = false
 	h.add_child(_dirty_badge)
-	# R4：快捷键速查入口常驻状态栏（? 键同效）——功能存在但没人知道等于不存在
+	# 快捷键速查入口常驻状态栏（? 键同效）——功能存在但没人知道等于不存在
 	var help: Button = app.UiKitScript.button("?", func(): app._open_shortcut_help(), "ghost")
 	help.tooltip_text = "快捷键速查（?）"
 	help.custom_minimum_size = Vector2(26, 0)
@@ -388,7 +388,7 @@ func _refresh_dirty_badge() -> void:
 	if _dirty_badge:
 		_dirty_badge.visible = app.map_loaded and app.canvas != null and app.canvas.modified_flag
 
-## 状态栏右侧的层指示（v2：工具概念已废除，这里只说「在哪一层、笔刷多大」）
+## 状态栏右侧的层指示（工具概念已废除，这里只说「在哪一层、笔刷多大」）
 func _refresh_tool_meta() -> void:
 	if _meta_tool == null:
 		return
@@ -529,7 +529,7 @@ func _refresh_sel_bar() -> void:
 		_sel_state.add_theme_color_override("font_color", app.UiThemeScript.ACCENT_HI)
 	_sel_bar.visible = true
 
-## v2：图层面板已收进层下拉，保留下钻点供既有调用方（editor_state._sync_ui）使用。
+## 图层面板已收进层下拉，保留下钻点供既有调用方（editor_state._sync_ui）使用。
 func _sync_layer_buttons() -> void:
 	_refresh_layer_panel()
 
@@ -550,8 +550,7 @@ func _open_popup(pop: PopupPanel, size := Vector2i.ZERO) -> void:
 	# 先按内容算出最小尺寸（此刻子控件还没排版，直接量会偏小），
 	# 再用 popup_centered() 让引擎按最小尺寸开窗——不带参数的 popup_centered()
 	# 会沿用上次窗口大小，必须显式给尺寸。
-	# ：单次居中量取不准会裁切内容——恢复两段式（先 1×1 弹出再按
-	# 实际最小尺寸居中）。
+	# 单次居中量取不准会裁切内容——两段式（先 1×1 弹出再按实际最小尺寸居中）。
 	# 两段式首帧会在左上角闪一下 1×1 的小窗。把第一段挪到屏幕外再量——
 	# 同一帧内接第二段居中，中间那次布局从未被绘制，闪烁消失。
 	pop.popup_centered(Vector2i(1, 1))
@@ -580,7 +579,7 @@ func _popup_body(title: String, subtitle := "") -> Dictionary:
 	col.add_child(body)
 	return {"pop": pop, "root": col, "body": body}
 
-## 快捷键只剩六组（撤销 / 剪贴板 / 删除 / 保存 / 返回 / 速查）。
+## 快捷键速查共 8 行（撤销 / 剪贴板 / 编辑 / 框选 / 文件 / 返回 / 视图 / 速查）。
 ## 数字键与工具键已全部删除——它们从未是用户设计的一部分，是历史实现遗留。
 func _open_shortcut_help() -> void:
 	var shell: Dictionary = app._popup_body("快捷键速查", "只剩必要的键盘入口；其余全部交给鼠标与层下拉")
@@ -620,5 +619,3 @@ func _build_project_view() -> void:
 	app.project_shell.build()
 	# 别名：视图面板的既有调用点（app.asset_panel）保持不变
 	app.asset_panel = app.project_shell.asset_panel
-
-## 清单写回：剥内部键（_开头 / tiles[].atlas_abs），写前 JSON 校验

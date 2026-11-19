@@ -1,5 +1,6 @@
 extends RefCounted
-## Manifest structural and supported-capability validation.
+## 清单结构与能力校验：tiles/layers/entities/functions 的类型与 id/码唯一性、
+## 图层限定 terrain/decor/collision、字段 kind 必须显式 input/choice、挂载功能必须已声明。
 
 const SUPPORTED_TILE_LAYERS := ["terrain", "decor", "collision"]
 const FunctionDecls := preload("res://src/content/function_decl.gd")
@@ -24,7 +25,7 @@ static func validate(data: Dictionary, project_dir := "") -> Array[Dictionary]:
 
 ## 功能/字段声明：结构 + 身份码唯一性 + 字段种类合法性。
 ## 码重复是**错误**：两个声明同码等于静默别名，磁盘上的引用会指向不确定的那个。
-## id 重复同样错误（内容和目录按 id 分目录）。
+## 功能 id 不查重：数组写法下归一化按 id 收敛，后写覆盖前写（function_decl.functions）。
 static func _validate_functions(data: Dictionary, issues: Array[Dictionary]) -> void:
 	var decl = data.get("functions", null)
 	if not (decl is Dictionary or decl is Array):

@@ -7,7 +7,7 @@ const INVISIBLE_CELL := K.INVISIBLE_CELL
 
 ## 生成预览图。px_per_tile 为每格像素（默认 4，120x56 地图得 480x224）。
 ## atlas_texture 可空；为空时地形用纯色块占位。
-static func render_preview(data: Dictionary, px_per_tile := 4, atlas_imgs: Array = [], tsz := 16) -> Image:   # B6（批次 12）：图集数组+tileSize 参数化
+static func render_preview(data: Dictionary, px_per_tile := 4, atlas_imgs: Array = [], tsz := 16) -> Image:
 	var meta: Dictionary = data.get("meta", {})
 	var w := maxi(int(meta.get("w", 1)), 1)
 	var h := maxi(int(meta.get("h", 1)), 1)
@@ -35,7 +35,7 @@ static func render_preview(data: Dictionary, px_per_tile := 4, atlas_imgs: Array
 		var ey := int(e.get("y", 0))
 		if ex < 0 or ey < 0 or ex >= w or ey >= h:
 			continue
- # B6：颜色不再硬编码游戏实体名（编辑器中立）——按 scene id 稳定 hash 从调色板取色
+ # 颜色按 scene id 稳定 hash 从调色板取色（编辑器中立，不硬编码游戏实体名）
 		var col := _scene_color(str(e.get("scene", "")))
 		var p := Vector2i(ex * px_per_tile, ey * px_per_tile)
 		img.fill_rect(Rect2i(p, Vector2i(maxi(px_per_tile, 2), maxi(px_per_tile, 2))), col)
@@ -45,7 +45,7 @@ static func render_preview(data: Dictionary, px_per_tile := 4, atlas_imgs: Array
 	img.fill_rect(sr, Color(1, 1, 1, 1))
 	return img
 
-## B6：scene id → 稳定调色板色（hash 取色，编辑器不认识具体游戏实体）
+## scene id → 稳定调色板色（hash 取色，编辑器不认识具体游戏实体）
 static func _scene_color(scene_id: String) -> Color:
 	var pal := [Color(0.35, 0.85, 1.0), Color(1.0, 0.62, 0.25), Color(0.3, 1.0, 0.5), Color(1.0, 0.35, 0.35), Color(0.75, 0.5, 1.0), Color(0.5, 0.6, 1.0), Color(1.0, 0.9, 0.3), Color(0.95, 0.6, 0.7), Color(0.6, 0.95, 0.8), Color(0.9, 0.9, 0.6)]
 	if scene_id == "":

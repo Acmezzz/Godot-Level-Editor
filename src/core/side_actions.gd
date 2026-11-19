@@ -1,5 +1,5 @@
 extends RefCounted
-## _side_actions_ctrl：从 src/app.gd 拆出的控制器。宿主状态经 alias 引用。
+## _side_actions_ctrl：从 src/app.gd 拆出的控制器。宿主状态经 app 引用。
 
 var app   # 宿主引用
 
@@ -60,14 +60,15 @@ func _delete_entities_by_id(ids: Array) -> void:
 		var spr := e as Sprite2D
 		if spr and ids.has(str(spr.get_meta("ent_id", ""))):
 			victims.append(spr)
-# BUG-08：悬空引用清理——被删实体不能留在选区里，否则属性面板会对已 free 节点写 props
+# 悬空引用清理——被删实体不能留在选区里，否则下游会对已 free 节点写 props
 	var victims_set := {}
 	for v in victims:
 		victims_set[v] = true
 		app.canvas.entities.remove_child(v)
 		v.free()
 	app.canvas.selected_multi = app.canvas.selected_multi.filter(func(s): return is_instance_valid(s) and not victims_set.has(s))
-	if is_instance_valid(app.canvas.selected_entity) and victims_set.has(app.canvas.selected_entity):
+	if app.canvas.selected_entity != null \
+			and (not is_instance_valid(app.canvas.selected_entity) or victims_set.has(app.canvas.selected_entity)):
 		app.canvas.selected_entity = null
 	if app.selected_spr != null and (not is_instance_valid(app.selected_spr) or victims_set.has(app.selected_spr)):
 		app.selected_spr = null

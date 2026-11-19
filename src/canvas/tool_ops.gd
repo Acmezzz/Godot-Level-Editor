@@ -1,5 +1,5 @@
 extends RefCounted
-## _tool_ops_ctrl：从 src/canvas/editor_canvas.gd 拆出的控制器。宿主状态经 alias 引用。
+## _tool_ops_ctrl：从 src/canvas/editor_canvas.gd 拆出的控制器。宿主状态经 cvs 引用。
 ##
 ## 没有工具概念。`_apply_tool` 现在是「按当前层的语义执行一次左键」：
 ## 实体层 = 放置当前资产；其余层 = 涂刷（碰撞层走 set_collision_cell）。
@@ -67,7 +67,7 @@ func _erase_at(pos: Vector2) -> void:
 	if cvs.map_root == null:
 		cvs._hint("无地图：先新建或打开一张地图")
 		return
-	# BUG-03：右键擦除/擦除拖拽不经过 _apply_tool 的锁检查，下沉到写入函数入口
+	# 锁检查下沉到写入函数入口：右键擦除不经过 _apply_tool，直调也拦住
 	if cvs.is_layer_locked(cvs.active_layer):
 		cvs._hint("当前图层已锁定：解锁后再擦除")
 		return
@@ -98,7 +98,7 @@ func _stamp(c: Vector2i) -> void:
 	if cvs.map_root == null:
 		cvs._hint("无地图：先新建或打开一张地图")
 		return
-	# T-12/BUG-03 模式：锁检查下沉到写入口本身，绕过 _apply_tool 的直调也拦住
+	# 锁检查下沉到写入口本身，绕过 _apply_tool 的直调也拦住
 	if cvs.is_layer_locked(cvs.active_layer):
 		cvs._hint("当前图层已锁定：解锁后再放置")
 		return

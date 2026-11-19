@@ -4,7 +4,7 @@ extends HBoxContainer
 ## 以前各建各的，现在这四样只有这一处实现。试玩 / 保存等各自顶栏的其它东西不在这里。
 ##
 ## 地图菜单每次弹出前用 MapStore.list_maps 重建：只列已有地图，点一个就切。
-## 切图成功后宿主可挂 after_switch 回调（项目页用它留在当前内容视图）。
+## 切图是协程，await 完成后触发 after_switch（无论是否真的切成功；项目页用它留在当前视图）。
 
 const Kit := preload("res://src/ui/ui_kit.gd")
 

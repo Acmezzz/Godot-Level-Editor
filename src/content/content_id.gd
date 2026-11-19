@@ -33,7 +33,7 @@ static func new_inst_code() -> String:
 static func new_fn_code() -> String:
 	return _code(LAYER_LEN)
 
-## 组装内容 ID：前四段稳定身份，末段 6 位随机码保证唯一。
+## 组装内容 ID：前三段稳定身份 + 功能人类 id，末段 6 位随机码保证唯一。
 ## 输入含空段（旧数据没发过码）时返回空串，不产出脏 ID。
 static func content_id(map_code: String, ent_code: String, inst_code: String, fn_id: String) -> String:
 	if map_code == "" or ent_code == "" or inst_code == "" or fn_id == "":

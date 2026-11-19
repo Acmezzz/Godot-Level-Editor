@@ -1,12 +1,13 @@
 extends RefCounted
-## _palette_ctrl：左栏调色板控制器（瓦片两级导航：类别视图 → 资产视图）。
-## 类别优先取清单 palette 条目的 "cat" 字段；无 cat 用图集条目名；都没有 → 「未分类」。
+## _palette_ctrl：左栏调色板控制器。瓦片导航：多图集先选图集，再类别 → 资产（三级）；
+## 单图集只有类别 → 资产（两级）。类别优先取清单 palette 条目的 "cat" 字段；
+## 无 cat 用图集条目名；都没有 → 「未分类」。装饰层无独立资产：清空并提示。
 
 var app   # 宿主
 var _cat := ""          # 当前视图："" = 类别视图；非空 = 资产视图（该类别名）
 var _decor_filled := false # 上次填表时是否处于装饰层（层切换时触发重填）
 var _cats := []         # [{name, count}]，按首次出现顺序
-var _atlas := 0         # 批次 9：当前图集上下文；多图集时 -1 = 顶层图集列表
+var _atlas := 0         # 当前图集上下文；多图集时 -1 = 顶层图集列表
 
 func _init(host) -> void:
 	app = host
@@ -38,7 +39,7 @@ func fill_tiles() -> void:
 		return
 	var tsz := int(app.manifest.get("tileSize", 16))
 	if (app.canvas.atlas_imgs as Array).is_empty():
-		app.canvas._build_tileset()   # 批次 9：多图集 images/texs 就位
+		app.canvas._build_tileset()   # 多图集 images/texs 就位
 	if tiles.size() > 1:
 		_fill_multi(tl, tiles, tsz)
 	else:
@@ -236,7 +237,7 @@ func fill_entities() -> void:
 	if shown == 0:
 		_show_empty(el, "清单没有带预览图的实体", "在编辑器清单里给实体配 thumb")
 
-## 调色板空状态覆盖（自 app._show_palette_empty 迁移）
+## 列表空状态覆盖（遮罩挂在列表上层，连接一次防重复）
 func _show_empty(list: ItemList, title: String, hint := "") -> void:
 	var holder := list.get_parent()
 	if list.has_meta("_empty_node"):

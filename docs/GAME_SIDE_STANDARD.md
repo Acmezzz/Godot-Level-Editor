@@ -49,9 +49,10 @@
 | `playCommand` | string | 试玩命令模板；支持 `%mapfile%`、`%projectpath%` |
 | `godotExe` | string | 可选，覆盖 `playCommand` 首个可执行文件路径；支持 `%projectpath%` |
 
-清单校验只把 `tiles/layers/entities` 非 Array、`tileSize` 非正数、图层 id 不受支持、
-瓦片/实体 id 空或重复、图集路径含 `..`、palette 元素缺 `cell` 判为**错误**（编辑器拒绝加载）；
-`terrain/decor/collision` 三个图层缺任何一个只判**警告**。
+清单校验把 `tiles/layers/entities/functions` 非 Array（functions 也接受 dict）、`tileSize` 非正数、
+图层 id 不受支持、瓦片/实体 id 空或重复、图集路径含 `..` 或为空、palette 元素缺 `cell`、
+功能/字段**码重复**、字段缺 `kind` 或 kind/type 非法、挂载引用未声明的功能，判为**错误**（编辑器拒绝加载）；
+`terrain/decor/collision` 三个图层缺任何一个只判**警告**。功能 id 不查重（数组写法下归一化按 id 收敛，后写覆盖前写）。
 
 ### 2.2 图集 `tiles[]`
 
@@ -137,7 +138,7 @@ solid+矩形碰撞：`col.set_cell(cell, 0, Vector2i(4,0))`。
 | `name` | 否 | 显示名，缺省用 `id` |
 | `prefab` | 是（可运行实体） | 相对工程根的 `.tscn` 路径；**游戏侧按此加载** |
 | `thumb` | 否 | 编辑器材质的缩略图 PNG 路径；缺失则画布上是空白占位 |
-| `editorSize` | 否 | `[w,h]` **像素**，画布占位尺寸。缺省读 prefab 的第一个碰撞形状；再缺用缩略图原始尺寸 |
+| `editorSize` | 否 | `[w,h]` **像素**，画布占位尺寸。缺省读 prefab 的第一个碰撞形状；再缺用 1 格（tileSize×tileSize） |
 | `role` | 否 | 连接语义：`portal` / `exit` / `landing` / `trigger`；见 2.6 |
 | `code` | 否 | 4 位实体身份码。缺省由编辑器补发并随清单写回；**不要手工改动** |
 | `functions` | 否 | **自带功能（挂载）**：声明池 functions 里功能 id 的数组，声明顺序 = 默认执行顺序；见 2.4.1 |
@@ -180,10 +181,11 @@ solid+矩形碰撞：`col.set_cell(cell, 0, Vector2i(4,0))`。
 {"id": "target_point", "name": "目标", "type": "entity_ref", "of": "spawn_point,portal"}
 ```
 
-编辑器实际消费的只有两点：
-1. `type == "entity_ref"` 的字段，在复制/粘贴一块实例时，若值命中块内某实例的旧 id，
-   自动替换成新实例 id（`selection_ops.gd::_remap_refs_in`）。
-2. `fields[].id` 必须非空且同类型内唯一（校验规则）。
+编辑器消费 `fields` 的方式：
+1. **实体复制/粘贴**：`type == "entity_ref"` 的字段，若值命中块内某实例的旧 id，
+   自动替换成新 id（声明驱动的重映射）；`functions` 数组里的 e_N 字符串则不看声明、全量重映射。
+2. **区域复制/粘贴**：props 与 functions 都不看声明，e_N 形字符串按 id_map 盲替换。
+3. `fields[].id` 必须非空且同类型内唯一（校验规则）。
 
 `of` 键**编辑器完全不读**（没有解析代码）。写它只是给人看的注释。
 `type` 其余取值（`map_ref` / `string` 等）编辑器同样不特殊处理——按字符串对待。
@@ -192,7 +194,7 @@ solid+矩形碰撞：`col.set_cell(cell, 0, Vector2i(4,0))`。
 
 ### 2.5 功能声明 `functions`
 
-两种写法都支持，归一化后结构相同（`manifest.gd::functions`）：
+两种写法都支持，归一化后结构相同（`function_decl.gd::functions`）：
 
 ```json
 "functions": {
@@ -266,7 +268,7 @@ choice 的 `source` 取值：`content:<kind>`（列该目录内容条目）、`e
 
 | role | 含义 | 编辑器用在哪 |
 |---|---|---|
-| `portal` | 图内/跨图传送门 | 画布画「已接好」角标 |
+| `portal` | 图内/跨图传送门 | 无专属标记（引用连线只看 `props.target_point`，与 role 无关） |
 | `exit` | 跨图出口（单向） | 画布画 `↗` + 目标图名角标 |
 | `landing` | 传送落点 | 画布画落点描边 |
 | `trigger` | 触发区 | 画布画半透明矩形 + 事件名 |
@@ -296,8 +298,7 @@ choice 的 `source` 取值：`content:<kind>`（列该目录内容条目）、`e
 | `once` | 是否只触发一次 | 放置时写 `true` |
 | `require_flag` | 前置标记 | **编辑器从不写，也不会显示** |
 
-`undo_history.gd::TRIGGER_PROP_KEYS` 声明了这 6 个键，但**没有任何编辑控件**——
-`props` 由 `undo_history.extract` 原样保留（只要非空），要改只能直接改地图 JSON 或
+这些键**没有任何编辑控件**——`props` 由 `undo_history.extract` 原样保留（只要非空），要改只能直接改地图 JSON 或
 靠游戏工程在 `entities` 里自己声明同名实体类型覆盖内置定义。
 
 **位置语义（重要）**：`trigger_zone` 的 `x/y` 是矩形**左上角格坐标**，
@@ -332,7 +333,7 @@ choice 的 `source` 取值：`content:<kind>`（列该目录内容条目）、`e
 | `spawn` | 否 | `[x, y]` 格坐标，缺省 `[2, 2]`；**给了就必须是两个数字**（否则校验报错） |
 | `terrain[]` | 否 | 数组，见 3.2 |
 | `decor[]` | 否 | 数组，见 3.2 |
-| `collision[]` | 否 | 数组，见 3.3；**整个键缺失**时编辑器/游戏都退回「地形即碰撞」 |
+| `collision[]` | 否 | 数组，见 3.3；**键缺失与 `[]` 等价**——编辑器没有任何由地形兜底生成碰撞的逻辑 |
 | `entities[]` | 否 | 数组，见 3.4 |
 
 游戏侧读取时**不必检查 `version`**：下面的兼容分支已经覆盖旧格式，旧图不会崩。
@@ -353,11 +354,9 @@ choice 的 `source` 取值：`content:<kind>`（列该目录内容条目）、`e
 | 3 | 图集内格坐标 x |
 | 4 | 图集内格坐标 y |
 
-旧格式（**4 元**）仍被两侧接受，等价于 `atlas = 0`：`[x, y, atlasX, atlasY]`。
-编辑器读取时按 `arr.size() >= 5` 分支；写出**永远写 5 元**。
-
-地图数据校验对 terrain/decor 的要求：元素必须是 Array、至少 4 个数字，
-否则报 `must contain x, y, atlas_x, atlas_y`。**第 5 位不强制**（兼容旧图）。
+4 元旧格式**不再被接受**（零兼容）：校验要求 terrain/decor 条目必须为 Array 且**至少 5 个数字**
+（x, y, atlas, atlas_x, atlas_y），否则报错 `must contain x, y, atlas, atlas_x, atlas_y`。
+编辑器读取分支只认 5 元；写出**永远写 5 元**。
 
 瓦片原点：格 `(x,y)` 的像素矩形 = `Rect2(x*tileSize, y*tileSize, tileSize, tileSize)`，
 `tileSize` 取自清单，不是地图。**游戏侧的瓦片像素常量必须与清单 `tileSize` 一致，否则整体错位**
@@ -365,7 +364,7 @@ choice 的 `source` 取值：`content:<kind>`（列该目录内容条目）、`e
 
 ### 3.3 碰撞条目 `collision[]`
 
-四种写法，**由长到短**（缺省值零冗余写出）：
+三种写法，**由长到短**（缺省值零冗余写出）：
 
 ```
 [x, y]                        # = solid + 矩形
@@ -400,8 +399,8 @@ choice 的 `source` 取值：`content:<kind>`（列该目录内容条目）、`e
 `shape == ""` → 写 `[x,y,type]`；否则写 4 元。编辑器读回来时按同样规则还原，
 所以**游戏侧也必须按缺省值解释**，不能要求显式 `"solid"`。
 
-**`collision` 键整体缺失** = 旧图，两侧都用地形瓦片兜底生成 solid 碰撞。
-**`collision: []`（空数组）≠ 缺失**——空数组表示「明确无碰撞」。
+**`collision` 键缺失与 `[]` 等价**——两侧都是「无碰撞」。编辑器没有任何由地形生成碰撞的兜底
+（「从地形生成碰撞」是编辑器里的手动辅助功能，只在你点弹窗时执行）。
 
 ### 3.4 实体条目 `entities[]`
 
@@ -435,14 +434,14 @@ choice 的 `source` 取值：`content:<kind>`（列该目录内容条目）、`e
 其余（包括编辑器完全不认识的键、嵌套字典、数组）原样保留。
 所以游戏侧可以往 `props` 里塞自己的数据，但要接受「空值会被清掉」。
 
-**实体 id 分配规则**（`_assign_id`，`editor_canvas.gd:437`）：新实体优先复用本图最小空闲 `e_N`，
-但**发号前会全工程扫一遍引用**（所有地图 `props` 里的 `e_N` 形字符串 + `content/events/` 下
-旧事件内容的步骤值，`_referenced_ent_ids`）。被引用过的号**绝不复用**，此时取高水位 +1。
+**实体 id 分配规则**（`_assign_id`，editor_canvas.gd）：新实体优先复用本图最小空闲 `e_N`，
+但**发号前会全工程扫一遍引用**（所有地图 `props` 里的 e_N 形字符串，`_referenced_ent_ids`）。
+被引用过的号**绝不复用**，此时取高水位 +1。
 所以跨图 `target_point` 指向 `e_10` 是安全的——只要那条引用还在 JSON 里，`e_10` 不会被回收。
 
-> 注意：引用扫描**只覆盖 `props` 与 `content/events/`**，不覆盖 `content/<其他功能>/*.json` 的
-> `fields`。若你的功能字段里存 `e_N` 引用，请放进实体 `props`（并在 `fields` 里声明
-> `type: "entity_ref"`），否则号可能被回收。
+> 注意：引用扫描**只扫地图 props**。内容文件的 fields 按码存值、不存 e_N 引用——
+> 实例间的指向关系都应放在实体 `props` 里（建议同时声明 `type: "entity_ref"`，
+> 复制粘贴时才会跟着重映射）。
 
 ## 4. 内容 `content/<功能id>/<内容ID>.json`
 
@@ -522,7 +521,7 @@ TEST-FY9F-QK3T-dialogue-7M2XK9
 
 ```
 main.gd
- ├── 决定地图路径（跨图过渡 > --map= > 默认图）
+ ├── 决定地图路径（--map= 参数 > 默认图）
  ├── MapLoader.load_json(path)            # 纯 JSON 读，不校验
  ├── build(root, data)                     # 建地形/装饰/碰撞/实体/出生点
  ├── load_content(fn, id)                  # 功能内容按需读（可自行封装）
@@ -535,7 +534,7 @@ main.gd
 ### 6.2 `--map=` 参数
 
 试玩时编辑器传 `--map=maps/xxx.json`（绝对或相对工程根）。
-`main.gd:28-31` 的解析顺序：`FileAccess.file_exists(原始串)` → 否则 `"res://" + 去掉前导 /`。
+建议的解析顺序：`FileAccess.file_exists(原始串)` → 否则 `"res://" + 去掉前导 /`。
 游戏侧新增启动参数时保持这个前缀约定，别改 `--map=` 的语义。
 
 其他编辑器会传的参数：`--abilities=dash,glide`、`--hp=N`、`--spawnx/--spawny`（格坐标）。
@@ -701,10 +700,10 @@ func _apply_door(inst: Node, fn: Dictionary) -> void:
 ### 9.2 游戏侧要保证的
 
 1. **源 0 已烘焙**：`assets/tiles/terrain_tiles.tres` 必须存在且源 0 有 `(4,0)` 隐形碰撞格。
-   `tiles[0]` 的 PNG 只是编辑器显示用，游戏侧**不再**加载它（`_add_manifest_sources` 从索引 1 起）。
+   `tiles[0]` 的 PNG 只是编辑器显示用，游戏侧**不再**加载它（加载清单图集从索引 1 起）。
 2. **`TILE` 一致性**：运行时 `TileSetAtlasSource.texture_region_size` 写死 `Vector2i(TILE, TILE)`，
    `TILE` 是常量 16。清单 `tileSize` 改成别的值，这里也得同步。
-3. **PNG 必须在 `res://` 下且已导入**。`_add_manifest_sources` 用 `load("res://" + rel)`，
+3. **PNG 必须在 `res://` 下且已导入**。游戏侧加载用 `load("res://" + rel)`，
    路径含 `..` 直接跳过（安全，但静默——查不到图集时只 `push_warning`）。
 
 ### 9.3 palette 可省
@@ -742,7 +741,7 @@ godot --path "<你的游戏工程>" -- --map=maps/<地图名>.json
 - **`fields[]` 没有输入控件**。见 2.4.2。`portal.target_point` 只能手改 JSON。
 - **`trigger_zone` 的 props 没有编辑 UI**。见 2.7。
 - **不能新增图层类型**。只用 `terrain` / `decor` / `collision` + 实体层。
-- **一个实体实例一个功能只挂一条绑定**。同一功能重复绑定会被校验/UI 过滤去重。
+- **一个实体实例一个功能只挂一条绑定**。同一功能重复绑定只有「添加功能」菜单会过滤（校验不去重；手改 JSON 可造成重复绑定）。
 - **数值参数不走 props**。props 只剩几何/引用（§2.4.1）；值一律内容文件。
 - **内容 ID 不可改**。改名只改 `name`；要换 ID 只能「复制成新 ID」，旧文件留在库里。
 - **地图改名不迁移引用**。`target_map` 指名字符串，改名后需手工改。

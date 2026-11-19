@@ -1,10 +1,10 @@
 extends RefCounted
-## _canvas_draw_ctrl：从 src/canvas/editor_canvas.gd 拆出的控制器。宿主状态经 alias 引用。
+## _canvas_draw_ctrl：从 src/canvas/editor_canvas.gd 拆出的控制器。宿主状态经 cvs 引用。
 
 var cvs   # 宿主引用
 
 const BuiltinKinds := preload("res://src/content/builtin_kinds.gd")
-const ManifestScript := preload("res://src/manifest.gd")   # K10：出口 role 判定
+const ManifestScript := preload("res://src/manifest.gd")   # 出口 role 判定
 const K := preload("res://src/core/constants.gd")
 
 func _init(host) -> void:
@@ -96,10 +96,10 @@ func _draw() -> void:
 	cvs.draw_rect(srect, spawn_col, false, 2.0)
 	cvs.draw_line(Vector2(spos.x - 6, spos.y), Vector2(spos.x + 6, spos.y), spawn_col, 2.0)
 	cvs.draw_line(Vector2(spos.x, spos.y - 6), Vector2(spos.x, spos.y + 6), spawn_col, 2.0)
-	# 传送门等引用连线：props.target_entity 指向同图另一实例（黄线）
+	# 引用连线：props.target_point 指向同图另一实例（跨图蓝线 / 同图黄线）
 	# 先建 {ent_id: spr} 索引——O(n²) 双重遍历改为 O(n)
-	var by_id = cvs._ent_by_id_index()   # D5：脏标记缓存
-	# 实体层再叠加「出口角标 / 落点描边 / 占位框 / 触发区」——原先各扫一遍 entities，
+	var by_id = cvs._ent_by_id_index()   # 脏标记缓存
+	# 出口角标 / 落点描边 / 占位框 / 触发区（各层都画）——原先各扫一遍 entities，
 	# 鼠标每动一像素就付 5 次 O(n)。现在一次遍历按类别收集，再分段绘制。
 	var exits: Array = []
 	var landings: Array = []
@@ -135,7 +135,7 @@ func _draw() -> void:
 		if BuiltinKinds.is_builtin(sid):
 			zones.append(spr)
 	if not exits.is_empty():
-		var fnt: Font = ThemeDB.fallback_font   # K10：Node2D 无 Control 主题接口，用引擎兜底字体
+		var fnt: Font = ThemeDB.fallback_font   # Node2D 无 Control 主题接口，用引擎兜底字体
 		if fnt != null:
 			for it in exits:
 				cvs.draw_string(fnt, it[0] + Vector2(-10, -12), "↗" + str(it[1]),
@@ -147,7 +147,7 @@ func _draw() -> void:
 	if cvs.selected_entity and is_instance_valid(cvs.selected_entity):
 		var sr := Rect2(cvs.selected_entity.position - Vector2(cvs.tile_px, cvs.tile_px) * 0.75, Vector2(cvs.tile_px, cvs.tile_px) * 1.5)
 		cvs.draw_rect(sr, Color(1.0, 0.85, 0.3, 0.9), false, 2.0)
-	# 框选拖拽矩形（Ctrl+拖动，实体层或瓦片层都画同一个框）
+	# 框选拖拽矩形（框选开关或 Ctrl+拖动，实体层或瓦片层都画同一个框）
 	if cvs._drag_box:
 		var br := Rect2(cvs._drag_start.min(pos), (cvs._drag_start - pos).abs())
 		cvs.draw_rect(br, Color(1.0, 0.85, 0.3, 0.15), true)
@@ -183,7 +183,7 @@ func _draw() -> void:
 		cvs.draw_line(Vector2(s4.x, r4.position.y), Vector2(s4.x, r4.end.y), Color(0.35, 0.95, 0.95, 0.25), 1.0)
 	# 触发区：没有贴图，用半透明矩形 + 事件名标签表示；绑定事件的用实色，未绑定的用警示色
 	_draw_trigger_zones(zones)
-	# 区域选区轮廓（瓦片层 Ctrl+拖动框选的结果）
+	# 区域选区轮廓（瓦片层框选的结果——开关或 Ctrl+拖动）
 	if cvs._region_sel.size.x > 0 and cvs._ent_layer_index() != cvs.active_layer:
 		var rr := Rect2(Vector2(cvs._region_sel.position) * cvs.tile_px, Vector2(cvs._region_sel.size) * cvs.tile_px)
 		cvs.draw_rect(rr, Color(1.0, 0.85, 0.3, 0.8), false, 2.0)
@@ -222,14 +222,14 @@ func _draw() -> void:
 			if cvs.atlas_tex != null:
 				cvs.draw_texture_rect_region(cvs.atlas_tex,
 					Rect2(Vector2(tc) * cvs.tile_px, Vector2(cvs.tile_px, cvs.tile_px)),
-					Rect2(Vector2(t[2], t[3]) * cvs.tile_px, Vector2(cvs.tile_px, cvs.tile_px)),
+					Rect2(Vector2(t[3], t[4]) * cvs.tile_px, Vector2(cvs.tile_px, cvs.tile_px)),
 					Color(1, 1, 1, 0.5))
 		for t in cvs._region_clip.get("decor", []):
 			var d2 = org + Vector2i(t[0], t[1])
 			if cvs.atlas_tex != null:
 				cvs.draw_texture_rect_region(cvs.atlas_tex,
 					Rect2(Vector2(d2) * cvs.tile_px, Vector2(cvs.tile_px, cvs.tile_px)),
-					Rect2(Vector2(t[2], t[3]) * cvs.tile_px, Vector2(cvs.tile_px, cvs.tile_px)),
+					Rect2(Vector2(t[3], t[4]) * cvs.tile_px, Vector2(cvs.tile_px, cvs.tile_px)),
 					Color(1, 1, 1, 0.5))
 		for t in cvs._region_clip.get("collision", []):
 			var cc = org + Vector2i(t[0], t[1])
@@ -273,4 +273,3 @@ func _draw_trigger_zones(zones: Array) -> void:
 func _brush_rect(c: Vector2i) -> Rect2:
 	var half = cvs.brush_size / 2
 	return Rect2(Vector2(c.x - half, c.y - half) * cvs.tile_px, Vector2(cvs.brush_size, cvs.brush_size) * cvs.tile_px)
-## —— 拆到 src/canvas/selection_ops.gd 的委托（调用点保持不变） ——

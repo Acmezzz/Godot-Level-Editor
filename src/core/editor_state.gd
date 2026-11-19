@@ -1,5 +1,5 @@
 extends RefCounted
-## _editor_state_ctrl：从 src/app.gd 拆出的控制器。宿主状态经 alias 引用。
+## _editor_state_ctrl：从 src/app.gd 拆出的控制器。宿主状态经 app 引用。
 
 var app   # 宿主引用
 
@@ -23,8 +23,8 @@ func _gesture_hint(i: int) -> String:
 
 
 func _sync_ui() -> void:
-	# 调色板跟随图层类型（v2：这是唯一一套切换，页签按钮已删）
-	# grid 层（碰撞）没有瓦片资产、也没有专属控件——左栏留空（两个列表都藏起来）。
+	# 调色板跟随图层类型（唯一一套切换；页签已删）
+	# grid 层（碰撞）没有瓦片/实体资产——两个列表藏起来，显示碰撞类型/形状控件。
 	var lt := _layer_type(app.canvas.active_layer)
 	if lt == "grid":
 		app._set_palette_page("")
@@ -89,8 +89,6 @@ func _on_tile_pick(i: int, _at: Vector2 = Vector2.ZERO, _mb: int = 0) -> void:
 		else app.last_tiles_layer
 	_apply_state("paint", target)
 
-## 资产栏点实体：设好待盖章实体，切到盖章工具，并切到实体层
-
 ## 最近使用瓦片记录（键 "atlas:x,y"——多图集瓦片各自记录）
 func _record_tile_mru(key_str: String) -> void:
 	if key_str == "":
@@ -101,6 +99,7 @@ func _record_tile_mru(key_str: String) -> void:
 	if mru.size() > 8:
 		mru.resize(8)
 
+## 左栏点实体：设好待放置实体，切到实体层（层类型即画笔语义，无独立工具）
 func _on_ent_pick(i: int, _at: Vector2 = Vector2.ZERO, _mb: int = 0) -> void:
 	if not app.map_loaded:
 		app._set_status(" 无地图：先新建或打开一张地图")

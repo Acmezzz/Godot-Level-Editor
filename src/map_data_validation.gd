@@ -1,5 +1,5 @@
 extends RefCounted
-## Structural validation for map JSON, independent of scene-tree state.
+## 地图 JSON 结构校验，与场景树状态无关（纯字典操作，读图必经之路）。
 
 static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 	var issues: Array[Dictionary] = []

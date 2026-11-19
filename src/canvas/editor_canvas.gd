@@ -8,7 +8,7 @@ extends Node2D
 signal modified
 signal cursor_info(text: String)
 
-const K := preload("res://src/core/constants.gd")   # S-01：共享常量统一在 core/constants.gd
+const K := preload("res://src/core/constants.gd")   # 共享常量统一在 core/constants.gd
 const TilesetCache := preload("res://src/canvas/tileset_cache.gd")   # PF-02：TileSet 构建缓存
 const INVISIBLE_CELL := K.INVISIBLE_CELL
 const BuiltinKinds := preload("res://src/content/builtin_kinds.gd")   # 内置种类（trigger_zone 等）
@@ -38,7 +38,7 @@ var atlas_tex: Texture2D
 var atlas_img: Image
 # 多图集：全部图集（索引 = TileSet source_id = 地图格 atlas 维度）
 var atlas_imgs: Array = []
-# D5：实体 by_id 索引缓存——_mark/load_data 置脏，绘制连线时 O(n) 复用
+# 实体 by_id 索引缓存——_mark/load_data 置脏，绘制连线时 O(n) 复用
 var _ent_by_id := {}
 var _ent_by_id_dirty := true
 var atlas_texs: Array = []
@@ -151,10 +151,10 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	# 节点全部重建：选区/剪贴板引用失效，清空（剪贴板只存模板数据可保留，但引用选区必须清）
 	selected_entity = null
 	selected_multi.clear()
-	# /O1：手势单点复位——不再逐个清 5 个布尔位
+	# 手势单点复位（手势与起手按键清零）
 	end_gesture()
 	# 输入/区域状态一并复位：上个图的粘贴预览、区域选区、右键擦除、拖拽中状态
-	# 不能带进这张图（BUG-06）；拖拽标志不重置会让 undo 后松手推出冗余快照（P-13）。
+	# 不能带进这张图；拖拽标志不重置会让 undo 后松手推出冗余快照。
 	# 图层显隐/锁定是按图的编辑状态，跨图泄漏会让人对着空气解锁——换图时清空。
 	# undo（keep_dirty=true）恢复的是同一张图，保留锁定状态不被误清。
 	_paste_mode = false
@@ -234,20 +234,14 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	coll_view.z_index = 2
 	map_root.add_child(coll_view)
 	coll_view.setup(collision, tile_px)
-	coll_view.canvas_ref = self   # 批次 9：读 _collision_meta 做类型化分色分形
-	# 涂瓦片（terrain/decor：[x,y,ax,ay] 旧格式 atlas=0；[x,y,atlas,ax,ay] 新格式按索引挂源）
+	coll_view.canvas_ref = self   # 读 _collision_meta 做类型化分色分形
+	# 涂瓦片（terrain/decor 一律 5 元 [x,y,atlas,ax,ay]，atlas=图集索引）
 	for c in data.get("terrain", []):
 		var arr := c as Array
-		if arr.size() >= 5:
-			terrain.set_cell(Vector2i(int(arr[0]), int(arr[1])), int(arr[2]), Vector2i(int(arr[3]), int(arr[4])))
-		else:
-			terrain.set_cell(Vector2i(int(arr[0]), int(arr[1])), 0, Vector2i(int(arr[2]), int(arr[3])))
+		terrain.set_cell(Vector2i(int(arr[0]), int(arr[1])), int(arr[2]), Vector2i(int(arr[3]), int(arr[4])))
 	for c in data.get("decor", []):
 		var arr2 := c as Array
-		if arr2.size() >= 5:
-			decor.set_cell(Vector2i(int(arr2[0]), int(arr2[1])), int(arr2[2]), Vector2i(int(arr2[3]), int(arr2[4])))
-		else:
-			decor.set_cell(Vector2i(int(arr2[0]), int(arr2[1])), 0, Vector2i(int(arr2[2]), int(arr2[3])))
+		decor.set_cell(Vector2i(int(arr2[0]), int(arr2[1])), int(arr2[2]), Vector2i(int(arr2[3]), int(arr2[4])))
 	# 碰撞：[x,y] = solid 缺省（契约零冗余）；[x,y,type,shape] 记入类型元数据（solid+矩形不记）
 	for c in data.get("collision", []):
 		var ccell := Vector2i(int(c[0]), int(c[1]))
@@ -306,11 +300,11 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	else:
 		cam_pos = spawn.position
 	_update_cam()
-	# keep_dirty：撤销/重做恢复路径不抹脏标记（BUG-01——快照恢复后内容与磁盘
+	# keep_dirty：撤销/重做恢复路径不抹脏标记（快照恢复后内容与磁盘
 	# 不一致就是脏的），普通载入清零；emit 只在这里发一次，undo/redo 不再自己发。
 	modified_flag = keep_dirty
-	_ent_by_id_dirty = true   # D5：整图载入（含撤销恢复）索引置脏
-	map_rev += 1              # P2-4：整图替换后下游缓存必须重扫
+	_ent_by_id_dirty = true   # 整图载入（含撤销恢复）索引置脏
+	map_rev += 1              # 整图替换后下游缓存必须重扫
 	ents_rev += 1
 	modified.emit()
 	# 载入后选区引用已失效——发 null 让属性面板/侧栏同步清空，悬空引用不再滞留
@@ -395,8 +389,8 @@ func _fit_sprite(spr: Sprite2D, scene_id: String) -> void:
 		k = maxf(1.0, floorf(k))
 	spr.scale = Vector2(k, k)
 
-## v2：出生点从「工具」降级为画布上的可拖对象。
-## 命中容差用半格——它只有一个绿十字那么大，严格点中几乎不可能。
+## 出生点：画布上的可拖对象。
+## 命中容差 0.6 格——它只有一个绿十字那么大，严格点中几乎不可能。
 func _on_spawn(pos: Vector2) -> bool:
 	if spawn == null or not is_instance_valid(spawn):
 		return false
@@ -411,14 +405,14 @@ func _drag_spawn_to(pos: Vector2) -> void:
 	queue_redraw()
 
 # —— 坐标换算 ——
-## P-11 转发：tool_ops 擦除与选区共用同一命中规则
+## 转发：tool_ops 擦除与选区共用同一命中规则
 func _entity_hit(pos: Vector2) -> Sprite2D:
 	return _selection_ops_ctrl._entity_hit(pos)
 
 func _cell_of(pos: Vector2) -> Vector2i:
 	return Vector2i(int(floor(pos.x / tile_px)), int(floor(pos.y / tile_px)))
 
-# —— 涂刷/擦除（图层硬规则：瓦片/碰撞层禁盖章，实体层禁涂刷；笔刷 = 以 c 为中心 brush_size×brush_size 格） ——
+# —— 涂刷/擦除（图层硬规则：瓦片/碰撞层禁盖章，实体层禁涂刷；笔刷 = 以 c 为基准的 brush_size×brush_size 格，偶数尺寸时 c 偏右下） ——
 func _hint(t: String) -> void:
 	cursor_info.emit(t)
 
@@ -458,8 +452,8 @@ func _assign_id(spr: Sprite2D, forced := "") -> void:
 	ent_id_counter += 1
 	spr.set_meta("ent_id", "e_%d" % ent_id_counter)
 
-## 全工程实体 id 引用集——地图 props 里 e_N 形字符串值（跨图落点/portal 目标）
-## + 内容文件步骤里 e_N 形字符串值（entity_ref 参数）。被引用的号绝不复用。
+## 全工程实体 id 引用集——所有地图 props 里 e_N 形字符串值（target_point 等实例引用）。
+## 被引用的号绝不复用。内容文件字段按码存值，不存 e_N 引用，故不扫。
 ## 会话级缓存——每次发号都读全部地图+全部内容文件会被批量粘贴线性放大。
 ## 失效点：保存地图、换图（load_data）、内容提交（invalidate_ref_cache）。
 static var _ref_ids_cache: Dictionary = {}
@@ -491,7 +485,7 @@ func _referenced_ent_ids() -> Dictionary:
 signal tool_requested(tool: String, layer: int)
 
 ## 吸管：取光标格瓦片为当前笔刷——地形优先，其次装饰；碰撞层无瓦片语义。
-## 经 tool_requested 信号走 app._apply_state 单一写入口切工具，避免工具按钮高亮失同步。
+## 经 tool_requested 信号走 app._apply_state 单一写入口切层，保持左栏与状态同步。
 func _pick_tile(pos: Vector2) -> void:
 	if map_root == null or not is_instance_valid(map_root) or terrain == null or decor == null:
 		_hint("无地图：先新建或打开一张地图")
@@ -508,7 +502,7 @@ func _pick_tile(pos: Vector2) -> void:
 		_hint("该格没有可吸取的瓦片（碰撞层不参与吸管）")
 		return
 	paint_cell = ac
-	paint_atlas = sid   # 批次 9：吸管连 atlas 一起吸（多图集瓦片吸取后原样落笔）
+	paint_atlas = sid   # 吸管连 atlas 一起吸（多图集瓦片吸取后原样落笔）
 	active_layer = layer
 	_hint("已吸取 %s（切到涂刷）" % str(ac))
 	tool_requested.emit("paint", layer)
@@ -528,33 +522,29 @@ func _fit_view() -> void:
 	zoom = clampf(minf(vp.x / w, vp.y / h) * 0.9, 0.5, 6.0)
 	_update_cam()
 
-# —— 实体盖章 ——
 # —— 选择实体 ——
 signal entity_selected(spr: Sprite2D)
 
 var selected_entity: Sprite2D = null
 var selected_multi: Array = []   # 框选集合（Del / 复制粘贴用）
 @warning_ignore("unused_private_class_variable")
-var _clipboard: Array = []       # 复制模板 [{scene, dx, dy, props}]
+var _clipboard: Array = []       # 实体复制模板 [{scene, ent_id, dx, dy, flip_h, functions, props}]
 var _region_sel := Rect2i(-1, 0, 0, 0)  # 区域框选结果（瓦片层 Ctrl+C 用）
-var _region_clip := {}           # 三层区域快照 {terrain[], decor[], collision[], size}
+var _region_clip := {}           # 区域快照 {terrain[], decor[], collision[], entities[], size}
 var _paste_mode := false         # 区域粘贴预览态（幽灵跟随鼠标）
 # 区域拖动搬迁（框选后按住区内拖动）：按下只快照，松手才擦源写目标
 var _move_snap := {}
 var _move_from := Vector2i.ZERO
 var _move_grab := Vector2.ZERO
 var _move_cell_delta := Vector2i.ZERO
-var _selection_ops_ctrl   # SelectionOps：实体选区/剪贴板/区域复制粘贴控制器（审查 8.3-E）
-var _undo_history_ctrl   # UndoHistory：快照式撤销/重做控制器（审查 8.3-F）
-var _canvas_draw_ctrl   # CanvasDraw：绘制块（审查 8.3-H，行数验收迫使拆出）
-var _canvas_input_ctrl   # CanvasInput：鼠标输入路由（审查 8.3-G，行数验收迫使拆出）
-var _tool_ops_ctrl   # ToolOps：工具执行（审查 8.3-D，行数验收迫使拆出）
+var _selection_ops_ctrl   # SelectionOps：实体选区/剪贴板/区域复制粘贴控制器
+var _undo_history_ctrl   # UndoHistory：快照式撤销/重做控制器
+var _canvas_draw_ctrl   # CanvasDraw：绘制控制器
+var _canvas_input_ctrl   # CanvasInput：鼠标输入路由控制器
+var _tool_ops_ctrl   # ToolOps：左键/右键语义执行控制器
 var _last_copy_region := false   # 最近一次复制是区域还是实体（Ctrl+V 分发）
 
-# —— 光标模式：框选 / 删除 / 复制粘贴（实体） ——
-## 命中测试：返回离 pos 最近且在阈值内的实体
-# —— 多选对齐/分布（作用对象：框选集合；不足 2 个时忽略） ——
-## mode: left / right / top / bottom / center_h / center_v / dist_h / dist_v
+# —— 框选集合有效性过滤 ——
 func _valid_multi() -> Array:
 	var out := []
 	for s in selected_multi:
@@ -562,9 +552,6 @@ func _valid_multi() -> Array:
 			out.append(s)
 	return out
 
-# —— 批量属性：对多选里「同一 scene」的实体统一写 props ——
-## 只改属于 scene_id 的实体，避免把 crawler 的 hp 写到 portal 上。
-## stat_set: {字段id: 数值}；stat_clear: 要恢复继承的字段 id 列表；props_set: 普通字段
 # —— 自动生成碰撞：从地形推导碰撞层（辅助功能，手动摆放仍是首选方式） ——
 ## strategy: "full"(全部地形) / "top"(仅顶部表面) / "outline"(仅外轮廓)
 ## replace=true 先清空碰撞层再生成
@@ -649,15 +636,15 @@ func _mark(ents_changed := true) -> void:
 	modified_flag = true
 	map_rev += 1
 	if ents_changed:
-		_ent_by_id_dirty = true   # D5：实体集变了，索引置脏
-		ents_rev += 1             # P2-4：下游缓存（内容编辑器实例/预览数组）随之失效
+		_ent_by_id_dirty = true   # 实体集变了，索引置脏
+		ents_rev += 1             # 下游缓存（内容编辑器实例/预览数组）随之失效
 	# 碰撞可视节点是数据的镜像，任何写入（涂刷/擦除/矩形/生成/粘贴/撤销）后都要重画。
 	# 统一在这里刷新，避免每个调用点各记一次、漏掉就出现「数据改了但红块没变」。
 	if coll_view and is_instance_valid(coll_view):
 		coll_view.refresh()
 	modified.emit()
 
-## D5：实体 {ent_id: Sprite2D} 索引——绘制连线 O(n) 复用；置脏后首次取用重建
+## 实体 {ent_id: Sprite2D} 索引——绘制连线 O(n) 复用；置脏后首次取用重建
 func _ent_by_id_index() -> Dictionary:
 	if _ent_by_id_dirty:
 		var out := {}
@@ -675,9 +662,8 @@ const UNDO_MAX := 80
 var undo_stack := []
 var redo_stack := []
 
-# —— 序列化：画布节点 → JSON 数据（游戏侧 MapLoader.build 消费的同一格式） ——
 # —— 输入状态 ——
-## /O1：手势互斥。原来平铺 8 个布尔位（_panning/_drag_paint/_drag_box/_drag_spawn/
+## 手势互斥。原来平铺 8 个布尔位（_panning/_drag_paint/_drag_box/_drag_spawn/
 ## _rmb_erase/_drag_entity/_move_active/_paste_mode），无互斥——拖实体时按中键会平移+拖动并行，
 ## 拖出生点时按右键会拖动+擦除并行。现在只留一个枚举：起手即接管，松手即清零，
 ## 任何新起手都会顶掉上一个手势（物理上不可能叠加）。
@@ -713,7 +699,7 @@ var _drag_origins: Array = []
 var _drag_grab := Vector2.ZERO
 var _drag_moved := false
 
-# —— 区域复制粘贴（三层打包快照） ——
+# —— 区域复制粘贴（瓦片三层 + 实体打包快照） ——
 func _any_layer_locked() -> bool:
 	var layers: Array = manifest.get("layers", [])
 	for i in layers.size():
@@ -721,7 +707,6 @@ func _any_layer_locked() -> bool:
 			return true
 	return false
 
-## 区域剪切 = 复制区域内三层 + 实体，再把源区域清空。整件事一个撤销步。
 # —— 绘制：网格 + 光标幽灵预览 ——
 
 func _select_entity_at(pos: Vector2) -> void:

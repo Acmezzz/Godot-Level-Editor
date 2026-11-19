@@ -3,8 +3,8 @@ class_name UiTheme
 ## 编辑器统一视觉系统：颜色令牌 + 完整控件主题。
 ##
 ## 设计取向（参考现代 AI 编码工具的界面）：近黑中性底、单一蓝色强调色、
-## 低饱和边框分层、高对比正文。所有 UI 组件只从这里取色和样式，
-## 不允许在别处硬编码色值，保证换肤只改一个文件。
+## 低饱和边框分层、高对比正文。所有 UI 组件应从这里取色（历史遗留的少量外部
+## 硬编码色待收敛），换肤只改本文件。
 ##
 ## 用法：`theme = UiTheme.build()`（在 app._build_theme 里）。
 
@@ -50,10 +50,10 @@ const FS_BASE := 13
 const FS_MD := 14
 const FS_LG := 17
 
-## 构造完整主题。所有控件类型一次性配齐，避免局部漏样式而回落到 Godot 默认灰。
 const MAP_TERRAIN := Color(0.35, 0.65, 0.40, 0.95)
 const MAP_DECOR := Color(0.20, 0.40, 0.25, 0.80)
 
+## 构造完整主题。所有控件类型一次性配齐，避免局部漏样式而回落到 Godot 默认灰。
 static func build() -> Theme:
 	var th := Theme.new()
 	th.default_font_size = FS_BASE
@@ -187,7 +187,7 @@ static func _style_button(th: Theme) -> void:
 	th.set_color("font_pressed_color", "ToggleButton", ACCENT_HI)
 	th.set_color("font_hover_pressed_color", "ToggleButton", ACCENT_HI)
 
-	# 图标型开关（图层可见/锁定）：紧凑方块，on 态用强调色实底 + 亮描边，
+	# 图标型开关：紧凑方块，on 态用强调色实底 + 亮描边，
 	# off 态只留一圈弱边——两者对比足够强，不会「看不出是否启用」。
 	th.set_type_variation("IconToggle", "Button")
 	th.set_stylebox("normal", "IconToggle",
@@ -289,8 +289,8 @@ static func _checkbox_icon(checked: bool, muted := false) -> ImageTexture:
 			img.set_pixel(4 + i, 8, tick)
 			img.set_pixel(4 + i, 9, tick)
 		for i in 5:
-			img.set_pixel(7 + i, 8 - i, Color.WHITE)
-			img.set_pixel(7 + i, 9 - i, Color.WHITE)
+			img.set_pixel(7 + i, 8 - i, tick)
+			img.set_pixel(7 + i, 9 - i, tick)
 	return ImageTexture.create_from_image(img)
 
 # —— 列表 / 树 ——

@@ -1,6 +1,6 @@
 extends RefCounted
-## 「从地形生成碰撞」弹窗控制器（原实体属性面板的存活部分：
-## v2 删掉了右栏检查器后，字段编辑走内容编辑器与资产目录，这里只剩这一个辅助功能）。
+## 「从地形生成碰撞」弹窗控制器。右栏检查器删除后，字段编辑走内容编辑器与资产目录，
+## 这里只剩这一个辅助功能。
 const UiKitScript := preload("res://src/ui/ui_kit.gd")
 const UiThemeScript := preload("res://src/ui/ui_theme.gd")
 

@@ -33,24 +33,9 @@ static func default_for(decl: Dictionary) -> Variant:
 		"float": return 0.0
 		_: return ""
 
-## 值的 JSON 形态是否与声明相符（报告用，不改数据）。
-## 只判标量四型与 choice；choice 一律按字符串比对。
-static func value_matches(decl: Dictionary, v) -> bool:
-	match type_of(decl):
-		"bool":
-			return v is bool
-		"int":
-			return v is int or v is float
-		"float":
-			return v is int or v is float
-		"string":
-			return v is String
-		_:
-			return true
-
 ## 构建控件。返回 {ctl: Control, commit: Callable}。
 ## commit 用于重建/切实例前统一提交连续控件（SpinBox/多行文本）的待写值；
-## 值未变时不触发 on_set。离散控件（CheckBox/LineEdit/OptionButton）commit 为空操作。
+## 幂等（值未变不写盘）由下游 _set_field 保证。离散控件（CheckBox/LineEdit/OptionButton）commit 为空操作。
 ## option_resolver（可选）：Callable(decl) -> Array，元素为 {v, t} 或纯字符串，
 ## 供 choice 的 source（content:item / entity:portal,exit / map）动态取选项。
 static func build(decl: Dictionary, value, on_set: Callable,

@@ -1,5 +1,7 @@
 extends RefCounted
-## 地图文件生命周期控制器。状态经宿主访问；写盘暂仍走 FileAccess。
+## 地图文件生命周期控制器：新建/打开/保存/改名（纯改名，引用不迁移）/
+## 自动保存/试玩/尺寸/导出。状态经宿主访问；写盘统一走 MapStore
+## （.tmp 原子替换，正式保存带 .history 轮转备份）。
 const MapExport := preload("res://src/map_export.gd")
 const UiKitScript := preload("res://src/ui/ui_kit.gd")
 const UiThemeScript := preload("res://src/ui/ui_theme.gd")
@@ -239,7 +241,7 @@ func load_map_file(p: String) -> void:
 	if not result.warnings.is_empty():
 		app._set_status(" 地图已打开但有兼容警告: " + _format_issues(result.warnings))
 	# 草稿归位——打开 .autosave.json 读草稿数据，但名字/路径/名字框归位正式名；
-	# 之后 Ctrl+S 写回正式文件，草稿自然变旧、草稿列表条目消失（与侧栏 tooltip 承诺一致）
+	# 之后 Ctrl+S 写回正式文件，草稿自然变旧失效
 	var was_draft := str(p.get_file()).ends_with(".autosave.json")
 	var base := p.get_file().get_basename()
 	if was_draft:
@@ -266,7 +268,7 @@ func _format_issues(issues: Array) -> String:
 		lines.append("%s: %s" % [str(issue.get("path", "map")), str(issue.get("message", "invalid data"))])
 	return "; ".join(lines)
 
-## 当前地图名的单一来源：侧栏改名只写 canvas.cur_map_name（不碰 app），这里统一回填
+## 当前地图名的兜底对齐：app.cur_map_name 与 canvas.cur_map_name 两处记录，以 canvas 为准
 func _effective_map_name() -> String:
 	var n: String = str(app.cur_map_name).strip_edges()
 	var cname: String = str(app.canvas.cur_map_name)
@@ -300,7 +302,7 @@ func on_save() -> bool:
 	# 外部变更检测——打开后磁盘 mtime 变了 = 别处改过这份文件（本次保存会覆盖外部改动）
 	var ext_changed := _opened_mtime > 0 and FileAccess.file_exists(path) \
 		and FileAccess.get_modified_time(path) != _opened_mtime
-	# P-02/S-02：写盘收敛到 MapStore 单入口（.tmp 原子替换，中途崩溃不留半截 JSON）
+	# 写盘收敛到 MapStore 单入口（.tmp 原子替换，中途崩溃不留半截 JSON）
 	if not app.MapStore.write(app.manifest, n, data):
 		app._set_status(" 保存失败: " + path)
 		return false
@@ -330,7 +332,7 @@ func maybe_autosave() -> void:
 	data.meta.name = app.cur_map_name
 	data["_autosave_of"] = app.cur_map_name
 	var path := str(app.manifest.get("_maps_dir", "")).path_join(app.cur_map_name + ".autosave.json")
-	# P-02/S-02：自动保存同样走原子写
+	# 自动保存同样走原子写
 	if not app.MapStore.write_json(path, data):
 		return
 	_last_autosave_msec = Time.get_ticks_msec()
@@ -403,7 +405,7 @@ func open_size_dialog() -> void:
 	var btn_row := UiKitScript.hbox(8)
 	btn_row.alignment = BoxContainer.ALIGNMENT_END
 	# apply 回调改走方法：lambda 里不能 await，而 load_data 是协程——
-	# 不 await 就 _mark()，置脏会被 load_data 收尾覆盖（BUG-01 第二入口）。
+	# 不 await 就 _mark()，置脏会被 load_data 收尾覆盖（撤销恢复路径的脏标记）
 	btn_row.add_child(UiKitScript.button("取消", func(): pop.hide(), "ghost"))
 	btn_row.add_child(UiKitScript.button("应用", func(): apply_map_size(int(w_edit.value), int(h_edit.value), pop), "primary"))
 	body.add_child(btn_row)
@@ -439,7 +441,7 @@ func open_export_dialog() -> void:
 	var row := UiKitScript.hbox(8)
 	body.add_child(row)
 	var png_cb := func():
-		var img := MapExport.render_preview(app.canvas.extract(), int(px.value), app.canvas.atlas_imgs, int(app.manifest.get("tileSize", 16)))   # B6/批次 12：多图集+tileSize
+		var img := MapExport.render_preview(app.canvas.extract(), int(px.value), app.canvas.atlas_imgs, int(app.manifest.get("tileSize", 16)))   # 多图集+tileSize
 		var dir := str(app.manifest.get("_dir", "")).path_join("editor/exports")
 		DirAccess.make_dir_recursive_absolute(dir)
 		var path := dir.path_join(app.cur_map_name + ".png")
@@ -554,6 +556,3 @@ func _play_args(spawn_tiles := Vector2i(-1, -1)) -> PackedStringArray:
 
 func _sync_play_cfg_to_map() -> void:
 	app.play_cfg = app._prefs.get(app.cur_map_name, {"abilities": [], "hp": 0})
-
-## 实体缩略图：读图后统一裁掉透明留白。
-## 预览图都是固定画布 + 居中小图形，不裁的话画布上和调色板里都只是个小点。

@@ -1,6 +1,8 @@
 class_name EditorManifest
 ## 游戏项目清单读取器：编辑器的唯一项目入口。
-## 清单 = <游戏项目>/editor/editor_manifest.json，定义图层/瓦片/实体/试玩命令。
+## 清单 = <游戏项目>/editor/editor_manifest.json，定义图层/瓦片/实体/功能声明/试玩命令。
+## 加载链里还负责：补发缺失的分层身份码、并入内置种类、实体占位尺寸解析
+## （editorSize → prefab 碰撞形状）、预览图透明裁剪、地图名/路径安全校验。
 
 const BAD_NAME_CHARS := ["/", "\\", ":", "*", "?", "\"", "<", ">", "|"]
 const Validation := preload("res://src/manifest_validation.gd")
@@ -41,10 +43,10 @@ static func is_valid_map_name(name: String) -> bool:
 			return false
 	return true
 
-## 从项目文件夹读清单；失败返回带 _error 的字典
 static func validate(data: Dictionary) -> Array[Dictionary]:
 	return Validation.validate(data, str(data.get("_dir", "")))
 
+## 读 <项目>/editor/editor_manifest.json；失败返回 {"_error": 消息}
 static func load_from(project_dir: String) -> Dictionary:
 	var p := project_dir.path_join("editor/editor_manifest.json")
 	if not FileAccess.file_exists(p):
@@ -239,7 +241,7 @@ static func prefab_collision_size(project_dir: String, prefab_rel: String) -> Ve
 				var sid := rest2.substr(0, rest2.find("\""))
 				if sizes.has(sid):
 					return sizes[sid]
-	# 没有 CollisionShape2D：退回第一个矩形尺寸
+	# 没有 CollisionShape2D：退回第一个收集到的形状尺寸（可能是圆/胶囊）
 	for k in sizes:
 		return sizes[k]
 	return Vector2.ZERO

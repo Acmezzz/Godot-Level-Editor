@@ -68,7 +68,7 @@ func _build_top_bar() -> PanelContainer:
 	bar.add_child(save)
 	return wrap
 
-## 底栏：消息常驻（左侧）+ 当前视图（右侧），与画布状态栏同一套视觉
+## 底栏：状态消息常驻，与画布状态栏同一套视觉
 func _build_status_bar() -> PanelContainer:
 	var wrap := PanelContainer.new()
 	var sb := Th.box(Th.BG_BASE, Th.BORDER, 0, 12, 5)

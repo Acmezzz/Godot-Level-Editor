@@ -93,8 +93,8 @@ static func path_for(m: Dictionary, kind: String, id: String) -> String:
 	return dir.path_join(id + ".json").simplify_path()
 
 ## 读单个资源；缺失/损坏/非法一律返回 {}。
-## D3：按文件 mtime 缓存——属性面板/抽屉/库反复 read 不再逐文件读盘；
-## 返回缓存副本防调用方污染；写盘后 mtime 变化自动失效（与 map_store D2 同款）。
+## 按文件 mtime+尺寸缓存——属性面板/库反复 read 不再逐文件读盘；
+## 返回缓存副本防调用方污染；写盘后 mtime 变化自动失效（与 map_store 同款）。
 static var _cache := {}   # path -> {mtime: int, data: Dictionary}
 
 static func read(m: Dictionary, kind: String, id: String) -> Dictionary:

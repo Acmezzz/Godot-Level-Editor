@@ -1,9 +1,10 @@
 extends RefCounted
-## _undo_history_ctrl：从 src/canvas/editor_canvas.gd 拆出的控制器。宿主状态经 alias 引用。
+## _undo_history_ctrl：从 src/canvas/editor_canvas.gd 拆出的控制器。宿主状态经 cvs 引用。
 
 var cvs   # 宿主引用
 
 const BuiltinKinds := preload("res://src/content/builtin_kinds.gd")
+const Constants := preload("res://src/core/constants.gd")
 
 func _init(host) -> void:
 	cvs = host
@@ -16,7 +17,7 @@ func _restore(snapshot) -> void:
 	if snapshot is String:
 		d = JSON.parse_string(snapshot)
 	if d is Dictionary:
- # keep_dirty=true：恢复的是历史状态，内容与磁盘不一致即为脏（BUG-01）
+ # keep_dirty=true：恢复的是历史状态，内容与磁盘不一致即为脏
 		await cvs.load_data(d, cvs.cur_map_name, true, true)
 
 
@@ -113,7 +114,7 @@ func extract() -> Dictionary:
 				"id": eid,
  # 分层身份码：实例段（丢失会让内容引用的前缀漂移，必须随快照走）
 				"code": str(spr.get_meta("code", "")),
- # B4：与 _cell_of 一致用 floori——int() 向零截断会让负坐标实体每次保存向 0 漂移
+ # 与 _cell_of 一致用 floori——int() 向零截断会让负坐标实体每次保存向 0 漂移
 				"x": floori((cell_pos.x - cvs.tile_px / 2.0) / cvs.tile_px),
 				"y": floori((cell_pos.y - cvs.tile_px / 2.0) / cvs.tile_px),
 				"flip_h": bool(spr.flip_h),
@@ -121,7 +122,7 @@ func extract() -> Dictionary:
 			}.merged(_functions_field(spr), true))
 	var used = cvs.terrain.get_used_rect()
 	if used.size == Vector2i.ZERO:
-		used = Rect2i(Vector2i.ZERO, Vector2i(120, 56))
+		used = Rect2i(Vector2i.ZERO, Vector2i(Constants.DEFAULT_MAP_W, Constants.DEFAULT_MAP_H))
 	var meta0: Dictionary = cvs.map_data.get("meta", {})
 	# 以当前地图 meta 为底（保留游戏侧自定义键），只覆盖编辑器管辖的 name/w/h
 	var meta: Dictionary = meta0.duplicate(true)
@@ -132,7 +133,7 @@ func extract() -> Dictionary:
 	meta["name"] = cvs.cur_map_name
 	var sp = cvs._cell_of(cvs.spawn.position)
 	return {
-		"version": 3,   # 批次 9：与 FORMAT_VERSION 同步（load_data 的 upgrade 会兜底）
+		"version": 3,   # 须与 map_store.FORMAT_VERSION 一致（此处是字面量；upgrade 对老值兜底）
 		"meta": meta,
 		"spawn": [sp.x, sp.y],
 		"terrain": tcells,

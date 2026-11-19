@@ -1,5 +1,5 @@
 extends RefCounted
-## SelectionOps：从 src/canvas/editor_canvas.gd 拆出的控制器。宿主状态经 alias 引用。
+## SelectionOps：从 src/canvas/editor_canvas.gd 拆出的控制器。宿主状态经 cvs 引用。
 
 var cvs   # 宿主引用
 
@@ -476,8 +476,9 @@ func copy_region() -> void:
 		(cvs._region_clip["terrain"] as Array).size() + (cvs._region_clip["decor"] as Array).size() + (cvs._region_clip["collision"] as Array).size(),
 		ents_clip.size()])
 
-## 任一图层锁定即拒绝区域级操作（BUG-03）：部分跳过会让剪贴板与实际删除不一致。
+## 任一图层锁定即拒绝区域级操作：部分跳过会让剪贴板与实际删除不一致。
 
+## 区域剪切 = 复制区域内三层 + 实体，再把源区域清空。整件事一个撤销步。
 func cut_region() -> void:
 	if cvs.map_root == null:
 		return
@@ -500,11 +501,11 @@ func cut_region() -> void:
 		for x in range(cvs._region_sel.position.x, cvs._region_sel.end.x):
 			var c := Vector2i(x, y)
 			for i in layers.size():
- # 只擦瓦片/装饰层；碰撞层走 cvs.collision 节点，实体层在下面按位置处理
+ # 只擦瓦片/装饰层；碰撞层走统一入口（连 meta 一起清），实体层在下面按位置处理
 				if i == ci or str(layers[i].get("type", "tiles")) != "tiles":
 					continue
 				cvs._layer_node(i).erase_cell(c)
-			cvs.collision.erase_cell(c)
+			cvs.set_collision_cell(c, false)
 	# 区域内的实体一并移除（它们已经进了剪贴板）
 	for e in cvs.entities.get_children():
 		var spr := e as Sprite2D
@@ -513,7 +514,7 @@ func cut_region() -> void:
 		if cvs._region_sel.has_point(cvs._cell_of(spr.position)):
 			cvs.entities.remove_child(spr)
 			spr.free()
-	cvs._mark(false)   # 区域剪切只动瓦片/碰撞层；实体已在上面单独移除
+	cvs._mark()   # 区域剪切含实体删除，实体索引/实例列表缓存一并失效
 	cvs.queue_redraw()
 	cvs._hint("已剪切区域 %dx%d（Ctrl+V 粘贴 / Ctrl+Z 撤销）" % [cvs._region_sel.size.x, cvs._region_sel.size.y])
 
@@ -525,19 +526,13 @@ func _paste_region(origin: Vector2i) -> void:
 		cvs._hint("有图层处于锁定状态：解锁后再粘贴区域")
 		return
 	cvs._push_undo()
-	# 粘贴按 atlas 维度重建（[dx,dy,atlas,ax,ay] 新 / [dx,dy,ax,ay] 旧）
+	# 粘贴按 atlas 维度重建（[dx,dy,atlas,ax,ay]）
 	for t in cvs._region_clip.get("terrain", []):
 		var ta := t as Array
-		if ta.size() >= 5:
-			cvs.terrain.set_cell(origin + Vector2i(int(ta[0]), int(ta[1])), int(ta[2]), Vector2i(int(ta[3]), int(ta[4])))
-		else:
-			cvs.terrain.set_cell(origin + Vector2i(int(ta[0]), int(ta[1])), 0, Vector2i(int(ta[2]), int(ta[3])))
+		cvs.terrain.set_cell(origin + Vector2i(int(ta[0]), int(ta[1])), int(ta[2]), Vector2i(int(ta[3]), int(ta[4])))
 	for t in cvs._region_clip.get("decor", []):
 		var da := t as Array
-		if da.size() >= 5:
-			cvs.decor.set_cell(origin + Vector2i(int(da[0]), int(da[1])), int(da[2]), Vector2i(int(da[3]), int(da[4])))
-		else:
-			cvs.decor.set_cell(origin + Vector2i(int(da[0]), int(da[1])), 0, Vector2i(int(da[2]), int(da[3])))
+		cvs.decor.set_cell(origin + Vector2i(int(da[0]), int(da[1])), int(da[2]), Vector2i(int(da[3]), int(da[4])))
 	for t in cvs._region_clip.get("collision", []):
 		var cc := origin + Vector2i(int(t[0]), int(t[1]))
 		if (t as Array).size() >= 4:
@@ -545,7 +540,7 @@ func _paste_region(origin: Vector2i) -> void:
 		else:
 			cvs.set_collision_cell(cc, true)
 	# 实体：区域内的实体按相对格位重建（引用字段保留，id 重新分配）
-	var id_map := {}   # C2（批次 12）：旧 ent_id → 粘贴后新 id
+	var id_map := {}   # 旧 ent_id → 粘贴后新 id
 	var pasted: Array = []
 	for t in cvs._region_clip.get("entities", []):
 		var spr := Sprite2D.new()
@@ -554,7 +549,7 @@ func _paste_region(origin: Vector2i) -> void:
 		spr.position = Vector2(origin + Vector2i(int(t.get("dx", 0)), int(t.get("dy", 0)))) * cvs.tile_px \
 			+ Vector2(cvs.tile_px, cvs.tile_px) * 0.5
 		spr.set_meta("scene", scene_id)
- # 恢复朝向；ent_id 不复用（新块给新号），留作 
+ # 恢复朝向；ent_id 不复用（新块给新号），旧 id 只留作 id_map 的重映射键
 		spr.flip_h = bool(t.get("flip_h", false))
 		spr.set_meta("props", (t.get("props", {}) as Dictionary).duplicate(true))
 		spr.set_meta("functions", (t.get("functions", []) as Array).duplicate(true))
@@ -565,7 +560,7 @@ func _paste_region(origin: Vector2i) -> void:
 		if old_id != "":
 			id_map[old_id] = str(spr.get_meta("ent_id", ""))
 		pasted.append(spr)
-	# 
+	# 引用重映射：props/functions 里命中旧 id 的字符串全部换成新 id
 	for spr2 in pasted:
 		var props2: Dictionary = (spr2.get_meta("props", {}) as Dictionary).duplicate(true)
 		var functions2: Array = (spr2.get_meta("functions", []) as Array).duplicate(true)
@@ -604,8 +599,6 @@ func _remap_refs_in(container, id_map: Dictionary) -> bool:
 				elif v2 is Dictionary or v2 is Array:
 					stack.append(v2)
 	return changed
-
-## 取消区域粘贴预览（Esc/右键共用）。键盘入口在 app 级——画布收不到键盘。
 
 func _cell_rect(a: Vector2, b: Vector2) -> Rect2i:
 	var ca: Vector2i = cvs._cell_of(a)

@@ -5,14 +5,14 @@ extends Node2D
 ## 为什么单独一个节点：碰撞层在数据上是 TileMapLayer，但它用的瓦片是「隐形格」，
 ## 直接显示 TileMapLayer 会画出图集里那格灰白分块（看起来像一层脏网格）。
 ## 所以碰撞层有一个专属的可视节点，和地形/装饰/实体层一样挂在图层节点上——
-## 可见性、锁定、 SubViewport 显示都由统一的图层接口控制。
+## 可见性/锁定由统一的图层接口控制；画布整体包在 SubViewport 里（editor_layout.gd）。
 ##
-## 按类型分色分形——solid 红块、one_way 琥珀色、ladder 青色、hazard 品红；
+## 按类型分色分形——solid 红块、one_way 琥珀色、ladder 蓝色、hazard 品红；
 ## 斜坡画三角形（r45 右高 / l45 左高），一眼区分斜坡朝向。颜色刻意饱和。
 
 var layer: TileMapLayer
 var tile_px := 16
-var canvas_ref   # 宿主编码画布：读 _collision_meta（批次 9 类型化碰撞）
+var canvas_ref   # 宿主编码画布：读 _collision_meta 做类型化分色分形
 var fill := Color(0.95, 0.22, 0.30, 0.28)
 var outline := Color(1.0, 0.35, 0.42, 0.5)
 ## 类型 → [填充色, 描边色]；solid/无 meta 用默认红

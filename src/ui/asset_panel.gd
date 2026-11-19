@@ -1,10 +1,7 @@
 extends VBoxContainer
 ## 实体资产目录：左列图鉴列表 + 右侧详情（名称/缩略图、自带功能挂载、实例分布清点、删除）。
 ## 清单对象与写回动作由 app.gd 注入：manifest 字典、save_manifest 回调。
-##
-## 视觉统一走 UiTheme / UiKit：详情页左侧列表 + 右侧编辑区，所有可编辑控件都是明确的输入样式。
-
-signal closed   # 返回关卡编辑器
+## 视觉统一走 UiTheme / UiKit。
 
 const Kit := preload("res://src/ui/ui_kit.gd")
 const Th := preload("res://src/ui/ui_theme.gd")
@@ -102,7 +99,7 @@ func build() -> void:
 	name_edit = LineEdit.new()
 	name_edit.add_theme_font_size_override("font_size", Th.FS_LG)
 	name_box.add_child(name_edit)
-	name_box.add_child(Kit.hint_label("名称与下方数值即时写回清单，下次试玩生效"))
+	name_box.add_child(Kit.hint_label("名称即时写回清单，下次试玩生效"))
 
 	det.add_child(Kit.divider())
 	det.add_child(Kit.section_label("自带功能（挂载）"))
@@ -139,7 +136,6 @@ func refresh_list(focus_sid := "") -> void:
 	var focus_idx := -1
 	var idx := 0
 	for edef in manifest.get("entities", []):
- # 
 		if bool(edef.get("builtin", false)):
 			continue
 		var sid := str(edef.get("id", ""))
@@ -222,7 +218,7 @@ func _fill_distribution(sid: String) -> void:
 	var total := 0
 	for map_name in dist:
 		total += (dist[map_name] as Array).size()
- # 实例多时按地图折叠，默认收起，展开时才建行（懒构建）。
+ # 每张地图一个折叠段（默认收起，展开时才建行——懒构建）。
 		_dist_rows.add_child(_dist_map_section(str(map_name), dist[map_name]))
 	var foot := "共 %d 个实例 / %d 张地图 · 自带功能值在内容编辑器按实例填（未填的用声明默认值）" % [total, dist.size()]
 	_dist_rows.add_child(Kit.hint_label(foot, 460))
@@ -249,7 +245,7 @@ func _dist_map_section(map_name: String, rows: Array) -> Control:
 func _dist_head_text(map_name: String, n: int, open: bool) -> String:
 	return ("▾ " if open else "▸ ") + "%s × %d" % [map_name, n]
 
-## 全项目扫描：{地图名: [{id, x, y, def, props}, ...]}——实例分布、删除检查与实例数值显示共用数据源
+## 全项目扫描：{地图名: [{id, x, y}, ...]}——实例分布与删除检查共用数据源
 ## 当前打开的地图以画布内存为底：磁盘底册+内存补丁的混合体会让新增未保存的实例
 ## 不出现、已删除的还留着。所以当前图直接用实体树生成，其余图读磁盘。
 func _instance_distribution(sid: String) -> Dictionary:
@@ -312,7 +308,6 @@ func _dist_row(map_name: String, r: Dictionary) -> Control:
 
 ## 删除资产前引用检查——列出仍在使用该类型的地图与实例数；有引用需确认
 func _delete_asset_checked(sid: String) -> void:
-	# 
 	if bool(_edef.get("builtin", false)):
 		host._set_status(" 内置种类由编辑器提供，不能删除")
 		return
@@ -412,7 +407,7 @@ func _unmount(edef: Dictionary, mid: String) -> void:
 
 ## 资产缩略图：裁掉透明留白后再用。
 ## 预览图统一 96×96 画布 + 中间十几像素的图形，不裁的话列表里只剩一个点。
-var _tex_cache := {}   # U-06：path→ImageTexture 缓存，同一图只读一次盘
+var _tex_cache := {}   # path→ImageTexture 缓存，同一图只读一次盘
 func _asset_texture(edef: Dictionary) -> Texture2D:
 	var rel := str(edef.get("thumb", ""))
 	if rel == "":

@@ -1,6 +1,7 @@
 extends RefCounted
-## 地图 JSON 数据层：名称校验后的读写、实体查找、改名/复制（纯文件操作，引用不迁移）。
-## 全部是无状态静态函数；manifest 只用于取 _maps_dir。
+## 地图 JSON 数据层：名称校验后的读写、mtime+尺寸缓存、实体查找、改名/复制（纯文件操作，引用不迁移）。
+## 以静态函数为主，带少量静态状态：_cache（读缓存）与 project_rev（写盘版本号，派生缓存据此重扫）。
+## manifest 除取 _maps_dir 外，还随读取传入 map_data_validation 做结构校验（查实体类型/功能声明）。
 ## 注意：路径引用（preload）而非全局类名，避免 headless 首次扫描时的 class_name 缓存问题。
 
 const ManifestScript := preload("res://src/manifest.gd")
@@ -12,7 +13,7 @@ const FORMAT_VERSION := 3
 ## 项目数据写盘版本号：每次 write_text 成功 +1。派生缓存（实体引用集等）据此判断是否重扫。
 static var project_rev := 0
 
-## ---- D2：地图数据 mtime 缓存（read/read_all 复用） ----
+## ---- 地图数据 mtime+尺寸缓存（read/read_all 复用） ----
 ## 刷新链/校验/引用扫描一个会话里反复 read_all——按文件 mtime 缓存；
 ## write_text / write_transaction 各自维护一致性（写后失效，下次读回源）。
 static var _cache := {}   # path -> {mtime: int, data: Dictionary}
@@ -147,7 +148,7 @@ static func _rotate_history(path: String) -> void:
 	if not _write_bytes(h1, buf):
 		return  # 备份失败不阻断保存；下次保存再试
 
-## P-02/S-02：地图域 JSON 写盘单入口——先写 .tmp 再原子替换，中途崩溃不会留下半截 JSON。
+## 地图域 JSON 写盘单入口——先写 .tmp 再原子替换，中途崩溃不会留下半截 JSON。
 ## save / autosave / levels.json / 清单导出等所有项目数据写盘都走这里。
 static func write_json(path: String, data: Dictionary) -> bool:
 	return write_text(path, JSON.stringify(data, "\t"))
@@ -160,9 +161,9 @@ static func write_text(path: String, text: String) -> bool:
 	if err != OK:
 		DirAccess.remove_absolute(tmp)
 		return false
-	_cache.erase(path)   # D2：写后失效，下次读回源
+	_cache.erase(path)   # 写后失效，下次读回源
 	# 任何项目数据落盘都可能改变实体 id 引用（地图 props / 内容步骤）：
-	# 版本号 +1，画布的引用集缓存据此重扫（的失效点，避免循环 preload）。
+	# 版本号 +1；画布的引用集缓存以 project_rev 为失效锚点（经参数传入，避免循环 preload）。
 	project_rev += 1
 	return true
 
@@ -243,7 +244,7 @@ static func _rollback_transaction(committed: Array[Dictionary]) -> bool:
 
 static func _cleanup_transaction(entries: Array[Dictionary]) -> void:
 	for entry in entries:
-		_cache.erase(str(entry.get("path", "")))   # D2：事务落盘后失效对应缓存
+		_cache.erase(str(entry.get("path", "")))   # 事务落盘后失效对应缓存
 		for key in ["stage", "backup"]:
 			var path := str(entry.get(key, ""))
 			if path != "" and FileAccess.file_exists(path):
@@ -311,7 +312,7 @@ static func duplicate_map(m: Dictionary, old_name: String, new_name: String) -> 
 	return ""
 
 ## 读所有地图 → {地图名: data}。坏图（无法读取/JSON 解析失败/非对象）不进结果，
-## 但记录进 bad_out（坏图不再对校验页/世界页隐身）。D2：走 mtime 缓存。
+## 但记录进 bad_out（坏图不再对校验页/世界页隐身）。读取走 mtime 缓存。
 static func read_all(m: Dictionary, bad_out: Array = []) -> Dictionary:
 	var out := {}
 	for name in list_maps(m):
