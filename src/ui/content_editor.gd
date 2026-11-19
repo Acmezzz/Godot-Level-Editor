@@ -486,6 +486,7 @@ func _sync_mounted(spr: Sprite2D) -> void:
 				"order": 0, "parallel": false})
 	if missing.is_empty():
 		return
+	app.canvas._push_undo()   # 自动补绑定也是地图修改：进撤销栈，Ctrl+Z 整步退回
 	fns = fns.duplicate(true)
 	fns.append_array(missing)
 	for k in fns.size():

@@ -377,6 +377,10 @@ func _shortcut_input(event: InputEvent) -> void:
 			project_shell.save_current()
 			get_viewport().set_input_as_handled()
 		return
+	# 编辑器 UI 未就绪（启动早期 / 切项目重建窗口期）：canvas 为 null，
+	# 下方所有分支都默认画布存在——统一拦住，不响应任何快捷键。
+	if canvas == null:
+		return
 	# TextEdit（对话编辑器等）同样不能触发画布快捷键，否则编辑台词时 Ctrl+Z 撤的是地图
 	if focus is LineEdit or focus is TextEdit:
 		return

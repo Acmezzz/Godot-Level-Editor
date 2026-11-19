@@ -25,12 +25,28 @@ static func validate(data: Dictionary, project_dir := "") -> Array[Dictionary]:
 
 ## 功能/字段声明：结构 + 身份码唯一性 + 字段种类合法性。
 ## 码重复是**错误**：两个声明同码等于静默别名，磁盘上的引用会指向不确定的那个。
-## 功能 id 不查重：数组写法下归一化按 id 收敛，后写覆盖前写（function_decl.functions）。
+## 功能 id 重复同样是**错误**（内容目录按功能 id 分目录；数组写法不查会静默后者覆盖前者）。
 static func _validate_functions(data: Dictionary, issues: Array[Dictionary]) -> void:
 	var decl = data.get("functions", null)
 	if not (decl is Dictionary or decl is Array):
 		_add(issues, "error", "functions", "must be an object or an array")
 		return
+	# 功能 id 查重：dict 写法键天然唯一，array 写法可能重复——重复/空 id 都报错
+	# （内容目录按功能 id 分目录，不查的话归一化会静默后者覆盖前者）
+	var decl_ids := {}
+	if decl is Array:
+		for d0 in decl:
+			if not (d0 is Dictionary):
+				continue
+			var fid0 := str((d0 as Dictionary).get("id", ""))
+			if fid0 == "" or decl_ids.has(fid0):
+				_add(issues, "error", "functions",
+					"function ids must be non-empty and unique (array form, seen: %s)" % fid0)
+			decl_ids[fid0] = true
+	elif decl is Dictionary:
+		for k0 in (decl as Dictionary).keys():
+			if str(k0) == "":
+				_add(issues, "error", "functions", "function ids must be non-empty (dict form)")
 	var dup := FunctionDecls.duplicate_codes(data)
 	for d in dup:
 		_add(issues, "error", "functions", "duplicate code %s (%s)" % [str(d.get("code", "")), str(d.get("scope", ""))])
