@@ -36,7 +36,6 @@ var grid_hint: VBoxContainer
 var _coll_type_opt: OptionButton
 var _coll_shape_opt: OptionButton
 var status: Label
-var last_tiles_layer := 0       # 最近使用的瓦片层（选瓦片时切回它）
 var _props_panel_ctrl   # ui/props_panel.gd 控制器（只剩「从地形生成碰撞」弹窗）
 var _map_file_ctrl   # ui/map_file.gd 控制器
 var _editor_state_ctrl   # core/editor_state.gd 控制器（状态流）
@@ -703,9 +702,6 @@ func _apply_state(tool := "", layer := -1) -> void:
 
 func _sync_ui() -> void:
 	_editor_state_ctrl._sync_ui()
-
-func _layer_type(i: int) -> String:
-	return _editor_state_ctrl._layer_type(i)
 
 func _on_layer(i: int) -> void:
 	_editor_state_ctrl._on_layer(i)

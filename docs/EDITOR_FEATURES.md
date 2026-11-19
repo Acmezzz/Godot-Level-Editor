@@ -167,8 +167,8 @@ src/
 {
   "version": 4,
   "meta": { "name": "level_1", "w": 120, "h": 56, "code": "K7QM",
-            "layers": [{ "id": "L1C3", "name": "资产层", "visible": true },
-                       { "id": "T8N5", "name": "FL", "visible": true }] },
+			"layers": [{ "id": "L1C3", "name": "资产层", "visible": true },
+					   { "id": "T8N5", "name": "FL", "visible": true }] },
   "spawn": [2, 2],
   "tiles": { "L1C3": [[x, y, atlas, ax, ay]], "T8N5": [[x, y, atlas, ax, ay]] },
   "collision": [[x, y, "one_way", "r45"], [x, y]],

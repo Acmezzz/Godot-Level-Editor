@@ -9,12 +9,8 @@ func _init(host) -> void:
 ## 第一个参数保留只为兼容吸管的 tool_requested(tool, layer) 信号，值被忽略。
 func _apply_state(_tool := "", layer := -1) -> void:
 	if layer >= 0 and layer != app.canvas.active_layer:
-		var moved_from: int = app.canvas.active_layer
 		app.canvas.active_layer = layer
-		if layer != app.canvas.collision_index():
-			app.last_tiles_layer = layer
-		if moved_from != layer:
-			app._set_status("已切到「%s」图层：%s" % [app._layer_label(layer), _gesture_hint(layer)])
+		app._set_status("已切到「%s」图层：%s" % [app._layer_label(layer), _gesture_hint(layer)])
 	_sync_ui()
 func _gesture_hint(i: int) -> String:
 	if i >= 0 and i == app.canvas.collision_index():
@@ -31,7 +27,6 @@ func _sync_ui() -> void:
 		_sync_collision_controls()
 	elif app.canvas.place_kind == "tiles":
 		app._set_palette_page("tiles")
-		app._palette_ctrl.sync_layer_view()
 	else:
 		app._set_palette_page("entities")
 	app._refresh_tool_meta()
@@ -51,12 +46,6 @@ func _sync_collision_controls() -> void:
 				app._coll_shape_opt.select(i)
 				break
 
-
-func _layer_type(i: int) -> String:
-	# 旧层词汇已退役：栈层都是瓦片层（可混实体），只有碰撞是栈外元层
-	if i == app.canvas.collision_index():
-		return "collision"
-	return "tiles"
 
 ## 层下拉入口：切层就是唯一的「换画笔」动作
 

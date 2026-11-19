@@ -1,11 +1,10 @@
 extends RefCounted
 ## _palette_ctrl：左栏调色板控制器。瓦片导航：多图集先选图集，再类别 → 资产（三级）；
 ## 单图集只有类别 → 资产（两级）。类别优先取清单 palette 条目的 "cat" 字段；
-## 无 cat 用图集条目名；都没有 → 「未分类」。装饰层无独立资产：清空并提示。
+## 无 cat 用图集条目名；都没有 → 「未分类」。
 
 var app   # 宿主
 var _cat := ""          # 当前视图："" = 类别视图；非空 = 资产视图（该类别名）
-var _decor_filled := false # 上次填表时是否处于装饰层（层切换时触发重填）
 var _cats := []         # [{name, count}]，按首次出现顺序
 var _atlas := 0         # 当前图集上下文；多图集时 -1 = 顶层图集列表
 
@@ -19,20 +18,15 @@ func fill_all() -> void:
 	fill_entities()
 
 ## 瓦片调色板：多图集 → 图集级导航；单图集行为不变。
-## 装饰层没有独立资产清单，不该显示地形图集的东西——清空并给提示。
 func fill_tiles() -> void:
 	var tl: ItemList = app.tile_list
-	# 切层重填前先清掉上一次的空状态覆盖，别让它盖住瓦片
+	# 重填前先清掉上一次的空状态覆盖，别让它盖住瓦片
 	if tl.has_meta("_empty_node"):
 		var old_empty = tl.get_meta("_empty_node")
 		if is_instance_valid(old_empty):
 			old_empty.queue_free()
 		tl.remove_meta("_empty_node")
 	tl.clear()
-	_decor_filled = _on_decor_layer()
-	if _decor_filled:
-		_show_empty(tl, "装饰层未配置资产", "清单里给装饰层配好独立图集后，瓦片会出现在这里")
-		return
 	var tiles: Array = app.manifest.get("tiles", [])
 	if tiles.is_empty():
 		_show_empty(tl, "清单未定义瓦片")
@@ -44,25 +38,6 @@ func fill_tiles() -> void:
 		_fill_multi(tl, tiles, tsz)
 	else:
 		_fill_single(tl, tiles[0], 0, tsz)
-
-## 层切换时同步装饰层视图：fill 只在启动/建图时跑一次，装饰↔地形切换靠这里触发重填。
-func sync_layer_view() -> void:
-	var now := _on_decor_layer()
-	if now != _decor_filled:
-		fill_tiles()
-
-## 当前是否在装饰层：层 id 或层名标识为 decor/装饰（清单驱动，无清单回退 false）
-func _on_decor_layer() -> bool:
-	var layers: Array = app.manifest.get("layers", [])
-	var i := 0
-	if app.canvas != null and is_instance_valid(app.canvas):
-		i = app.canvas.active_layer
-	if i < 0 or i >= layers.size():
-		return false
-	var lay: Dictionary = layers[i]
-	var idn := str(lay.get("id", ""))
-	var nm := str(lay.get("name", ""))
-	return idn == "decor" or idn.begins_with("decor") or nm == "装饰"
 
 ## 多图集：顶层（_atlas == -1）= 图集列表；钻入后加返回行再进图集体
 func _fill_multi(tl: ItemList, tiles: Array, tsz: int) -> void:
