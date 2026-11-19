@@ -549,7 +549,7 @@ func _fit_view() -> void:
 	_update_cam()
 
 # —— 实体盖章 ——
-# —— 选择实体（属性工具用） ——
+# —— 选择实体 ——
 signal entity_selected(spr: Sprite2D)
 
 var selected_entity: Sprite2D = null

@@ -121,7 +121,7 @@ func _draw() -> void:
 			continue
 		var lsz: Vector2 = cvs.entity_display_size_of(lp)
 		cvs.draw_rect(Rect2((lp as Sprite2D).position - lsz * 0.5, lsz), Color(0.35, 0.9, 1.0, 0.45), false, 1.5)
-	# 选中实体高亮（属性工具）
+	# 选中实体高亮
 	if cvs.selected_entity and is_instance_valid(cvs.selected_entity):
 		var sr := Rect2(cvs.selected_entity.position - Vector2(cvs.tile_px, cvs.tile_px) * 0.75, Vector2(cvs.tile_px, cvs.tile_px) * 1.5)
 		cvs.draw_rect(sr, Color(1.0, 0.85, 0.3, 0.9), false, 2.0)
