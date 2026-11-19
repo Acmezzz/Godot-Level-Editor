@@ -20,6 +20,7 @@ const SRC := [
 	"res://src/ui/map_file.gd",
 	"res://src/ui/palette_panel.gd", "res://src/ui/project_shell.gd",
 	"res://src/ui/top_bar_nav.gd",
+	"res://src/ui/ui_kit.gd", "res://src/ui/ui_theme.gd",
 	"res://src/ui/content_editor.gd",
 	"res://src/content/content_store.gd",
 	"res://src/content/def_model.gd",
@@ -28,7 +29,7 @@ const SRC := [
 ]
 
 const TESTS := [
-	"res://tests/parse_all.gd",
+	"res://tests/parse_all.gd", "res://tests/regress.gd",
 	"res://tests/data_layer_test.gd", "res://tests/content_model_test.gd",
 	"res://tests/def_regression_test.gd", "res://tests/entity_copy_regression_test.gd",
 	"res://tests/props_undo_regression_test.gd",

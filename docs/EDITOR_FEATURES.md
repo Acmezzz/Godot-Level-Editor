@@ -553,8 +553,8 @@ src/
 | `tests/shortcut_test.gd` | 快捷键输入管线：真实按键事件推入主视口，防输入路由回归 |
 | `tests/regress.gd` | 画布综合：盖章/id、撤销、框选、复制粘贴、区域复制、拖拽吸附、整组拖动、剪切、锁定层拒绝、碰撞自动生成、flip_h |
 
-注意 `tests/regress.gd` 里仍留着 `align_selection` / `bulk_update` 的旧断言——这两个函数已从
-`selection_ops.gd` 删除，重写测试时应一并删掉。
+注意 `tests/regress.gd` 里已删掉 `align_selection` / `bulk_update` 的旧断言（这两个函数已从
+`selection_ops.gd` 删除）。
 
 截图辅助 `tools/screenshot.gd`：
 
