@@ -1,8 +1,11 @@
 # 游戏侧开发规范（编辑器数据契约）
 
-> 面向 `D:\Game\BIRD\bird`。本文约束的是**游戏工程**该怎么声明资产/功能、怎么读编辑器产物；
+> 面向**任何** 2D 游戏工程。本文约束的是游戏工程该怎么声明资产/功能、怎么读编辑器产物；
 > 编辑器自身的功能说明见 [EDITOR_FEATURES.md](EDITOR_FEATURES.md)。
 > 所有条目以编辑器源码为准。标「未实现 / 缺口」的地方是当前真实情况，不要按想象补齐。
+>
+> 编辑器不绑定任何具体游戏：一个工程只要按本文摆好清单与目录，打开即用；
+> 多个工程可以并行开发，编辑器里按项目列表切换。
 
 ## 0. 一句话
 
@@ -74,14 +77,14 @@
 **关键契约：`tiles[]` 的顺序就是地图里的 `atlas` 字段值。**
 `tiles` 数组索引 = 地图 terrain/decor 条目第三位 = TileSet `source_id`。
 游戏侧把 `tiles[0]` 视为烘焙 TileSet 的源 0（`assets/tiles/terrain_tiles.tres` 自带），
-`tiles[1..]` 由 `map_loader._add_manifest_sources()` 运行时加载 PNG 挂成 `source_id = 索引`。
+`tiles[1..]` 由游戏侧在运行时加载 PNG 挂成 `source_id = 索引`（每张图集一个 TileSetAtlasSource）。
 
 **因此：`tiles[0]` 的位置是硬契约，新图集只能追加在末尾，不能插队或重排。**
 一旦重排，所有既有地图的 atlas 数字全部错位。
 
 游戏侧烘焙 TileSet 的源 0 里必须有 `(4,0)` 这个格子作为隐形碰撞占位瓦片
-（`constants.gd::INVISIBLE_CELL`，带整格物理多边形）。游戏侧 `map_loader` 用它做
-solid+矩形碰撞，硬编码 `col.set_cell(cell, 0, Vector2i(4,0))`。
+（编辑器侧常量 `constants.gd::INVISIBLE_CELL`，带整格物理多边形）。游戏侧用它做
+solid+矩形碰撞：`col.set_cell(cell, 0, Vector2i(4,0))`。
 
 ### 2.3 图层 `layers[]`
 
@@ -288,8 +291,8 @@ solid+矩形碰撞，硬编码 `col.set_cell(cell, 0, Vector2i(4,0))`。
 编辑器中它按矩形中心摆放，保存时再换算回左上角；其他实体 `x/y` 是**格中心**的格子。
 游戏侧若把 `trigger_zone` 当作普通实体按格中心放置，会偏半个矩形。
 
-游戏侧当前**还没有**消费 `trigger_zone` 的实现（`map_loader` 只跳过无 prefab 的实体，
-不生成节点）。要在游戏里用触发区，需要自己按 `props.w/h/mode/event/once` 建 Area2D。
+`trigger_zone` **没有 prefab**，游戏侧必须自己按 `props.w/h/mode/event/once` 建 Area2D
+（不要指望按 scene 查 prefab 的通用实例化逻辑能处理它，那一步会取不到 prefab 而跳过）。
 ## 3. 地图 JSON `maps/<名>.json`
 
 ### 3.1 顶层结构（格式版本 `version: 3`）
@@ -319,8 +322,7 @@ solid+矩形碰撞，硬编码 `col.set_cell(cell, 0, Vector2i(4,0))`。
 | `collision[]` | 否 | 数组，见 3.3；**整个键缺失**时编辑器/游戏都退回「地形即碰撞」 |
 | `entities[]` | 否 | 数组，见 3.4 |
 
-游戏侧当前 `map_loader` **只读 `version` 之外的所有键，不检查 version**。
-它同时接受旧格式（见 3.2 兼容分支），所以旧图不会崩。
+游戏侧读取时**不必检查 `version`**：下面的兼容分支已经覆盖旧格式，旧图不会崩。
 
 ### 3.2 瓦片条目 `terrain[]` / `decor[]`
 
@@ -345,8 +347,8 @@ solid+矩形碰撞，硬编码 `col.set_cell(cell, 0, Vector2i(4,0))`。
 否则报 `must contain x, y, atlas_x, atlas_y`。**第 5 位不强制**（兼容旧图）。
 
 瓦片原点：格 `(x,y)` 的像素矩形 = `Rect2(x*tileSize, y*tileSize, tileSize, tileSize)`，
-`tileSize` 取自清单，不是地图。游戏侧 `map_loader.TILE` 当前硬编码 16——
-**必须与清单 `tileSize` 保持一致，否则整体错位**。
+`tileSize` 取自清单，不是地图。**游戏侧的瓦片像素常量必须与清单 `tileSize` 一致，否则整体错位**
+（建议游戏侧也从清单读 `tileSize`，而不是写死 16）。
 
 ### 3.3 碰撞条目 `collision[]`
 
@@ -364,7 +366,7 @@ solid+矩形碰撞，硬编码 `col.set_cell(cell, 0, Vector2i(4,0))`。
 | 2 | 类型，缺省 `"solid"` |
 | 3 | 形状，缺省 `""`（矩形） |
 
-**类型**（编辑器 UI 与游戏 `map_loader` 一一对应）：
+**类型**（编辑器 UI 的 4 个选项，游戏侧按此语义实现）：
 
 | type | 语义 | 游戏侧实现 |
 |---|---|---|
@@ -502,9 +504,9 @@ TEST-FY9F-QK3T-dialogue-7M2XK9
 main.gd
  ├── 决定地图路径（跨图过渡 > --map= > 默认图）
  ├── MapLoader.load_json(path)            # 纯 JSON 读，不校验
- ├── MapLoader.build(root, data, frozen)  # 建节点，返回 {terrain, decor, entities, dialogues, spawn, spawn_pos, rect}
- ├── ContentDB.load_content(fn, id)       # 功能内容按需读
- └── EnemyDB.merge(type_id, props)        # 数值合并
+ ├── build(root, data)                     # 建地形/装饰/碰撞/实体/出生点
+ ├── load_content(fn, id)                  # 功能内容按需读（可自行封装）
+ └── effective_stats(manifest, props)      # 数值合并（见 §2.4.1）
 ```
 
 **绝不反向写地图**。编辑器是唯一写盘方（`editor_canvas.extract()`）。游戏侧若生成运行时状态
@@ -521,7 +523,7 @@ main.gd
 ### 6.3 实体实例化：`scene` → prefab
 
 ```gdscript
-# 游戏侧推荐模型（当前 bird 用扫目录 + prefab_map()，见 6.4）
+# 游戏侧推荐模型（按 `scene` 查清单拿 prefab，不要扫目录）
 var edef := manifest_entity_def(scene_id)      # 从清单按 id 查
 var inst := (load(edef.prefab) as PackedScene).instantiate()
 inst.position = Vector2((x + 0.5) * tile_size, (y + 0.5) * tile_size)
@@ -530,38 +532,46 @@ inst.set_meta("props", props)
 inst.set_meta("functions", functions)          # 游戏侧需要时自己注入
 ```
 
-**注入给 prefab 的 metadata 是唯一约定通道**。当前 bird 已注入：
-`ent_id`、`props`、`scene_id`（= `scene`，供 `EnemyDB` 查表）。
+**注入给 prefab 的 metadata 是唯一约定通道**。推荐注入三件：
+`ent_id`（实例 id，跨图引用靠它）、`props`（`stats` 与引用参数）、
+`scene_id`（= `scene`，类型 id，数值查表用）。
 prefab 脚本在 `_ready()` 里读这些 meta，**不要依赖编辑器把值写进场景属性**。
 
-`flip_h`：编辑器存布尔。游戏侧的处理约定（`map_loader.gd:146-151`）是
-「根节点有 `flip_h` 属性就 set，否则遍历子 `Sprite2D` 全部 set」。新 prefab 建议根节点直接是
-`Sprite2D` 或暴露 `flip_h`，省掉遍历。
+`flip_h`：编辑器存布尔。推荐处理是「根节点有 `flip_h` 属性就 set，否则遍历子 `Sprite2D` 全部 set」。
+新 prefab 建议根节点直接是 `Sprite2D` 或暴露 `flip_h`，省掉遍历。
 
-**未知 `scene` 的处理**：当前 `map_loader` 用 `pmap.get(scene, "")`，取不到就
-`continue` 静默跳过。要更严格就 `push_warning` 并记下——编辑器校验已经会警告
-「entity type is not in the current manifest」，所以运行期跳过是可接受的降级。
+**未知 `scene` 的处理**：清单里查不到该 id 就跳过并 `push_warning`。
+编辑器校验已经会警告「entity type is not in the current manifest」，所以运行期跳过是可接受的降级。
 
-### 6.4 当前 bird 与契约的差距（真实清单）
+### 6.4 参考实现
 
-`bird/scripts/world/map_loader.gd` 已实现的部分（可以直接用）：
-terrain/decor 5 元与 4 元解析、碰撞四类型 + 三角斜坡、`entities` 的
-`ent_id`/`props`/`scene_id`/`flip_h` 注入、`spawn`、`dialogues` 收集。
+编辑器不再附带任何示例游戏工程（原 `D:\Game\BIRD\bird` 已于 2026-11-19 删除）。
+新工程从零接入时，按 §10 的检查清单逐条自己实现；下面是最小可用的读取骨架：
 
-**尚未对齐的（按今日代码实测）**：
+```gdscript
+const TILE := 16   # 必须与清单 tileSize 一致
 
-| 缺口 | 现状 | 影响 |
-|---|---|---|
-| 不读清单 `entities[].prefab` | 用 `prefab_map()` 扫 `scenes/enemies` + `scenes/objects` 目录按文件名匹配 | 清单里 `prefab` 字段形同虚设；要换 prefab 必须改名或移目录 |
-| `TILE` 硬编码 16 | 不读清单 `tileSize` | 改清单 `tileSize` 后地图整体错位 |
-| 不消费 `trigger_zone` | 无 prefab → 跳过 | 触发区在游戏里不存在 |
-| 不消费 `ladder` / `hazard` 组 | 建了 Area2D 并分组，但没有攀爬/伤害逻辑 | 两个碰撞类型只建了触发体 |
-| `functions` 只认 `dialogue` | 其余 fn 静默忽略 | 新增功能需要改 `map_loader` |
-| 无 `def` 层数值合并 | `EnemyDB.merge` 只有「清单默认 ← props.stats」 | 与编辑器 `effective_stats` 三层语义不一致 |
-| 无地图清单/关卡序列 | `editor/levels.json` 在游戏侧无任何读取代码 | 关卡顺序只能靠默认图或外部脚本 |
-| `maps/*.autosave.json` 未排除 | `MapLoader.maps_dir()` 只按名字拼路径 | 只有当有人在游戏里枚举 maps 目录时才会踩到 |
+static func build(root: Node2D, data: Dictionary) -> Dictionary:
+	var meta: Dictionary = data.get("meta", {})
+	var mw := int(meta.get("w", 120))
+	var mh := int(meta.get("h", 56))
+	var ts := _build_tileset()          # 源 0 = 烘焙 .tres；源 1..n = 清单 tiles[1..]
+	var terrain := TileMapLayer.new(); terrain.tile_set = ts; root.add_child(terrain)
+	var decor := TileMapLayer.new(); decor.tile_set = ts; decor.collision_enabled = false; root.add_child(decor)
+	for c in data.get("terrain", []):
+		var a := c as Array
+		if a.size() >= 5:
+			terrain.set_cell(Vector2i(int(a[0]), int(a[1])), int(a[2]), Vector2i(int(a[3]), int(a[4])))
+	for c in data.get("decor", []):
+		var a2 := c as Array
+		if a2.size() >= 5:
+			decor.set_cell(Vector2i(int(a2[0]), int(a2[1])), int(a2[2]), Vector2i(int(a2[3]), int(a2[4])))
+	# collision / entities / spawn 见 §3.3 / §3.4 / 6.3
+	return {"terrain": terrain, "decor": decor, "rect": Rect2(Vector2.ZERO, Vector2(mw * TILE, mh * TILE))}
+```
 
-上表不是「要做的事」，是「两边当前不一致的地方」。哪一条要修由游戏侧决定。
+**不要照抄别人的工程**。上面这段只覆盖 terrain/decor；碰撞类型、实体实例化、功能消费
+各自取决于目标游戏，§3.3 和 §6.3 给了字段语义，实现自由。
 ## 7. 新增一个「功能」的标准流程
 
 以「开关门」为例，游戏侧需要动三处、编辑器侧一处。
@@ -609,7 +619,7 @@ func _apply_door(inst: Node, fn: Dictionary) -> void:
 2. **字段值以内容文件为准，不要读 `props`**。`props` 是 `stats` 的地盘（类型参数），
    内容字段在 `content/*.json`。
 3. **`order` / `parallel` 由你解释**。编辑器只保证它们是数字/布尔并保持顺序，
-   不保证游戏该怎么并发。当前 bird 对 dialogue 的做法是「按 order 排序，同一实体只取最近的一条」。
+   不保证游戏该怎么并发。一个可行的做法是「按 order 排序，同一实体只取最近的一条」。
 
 ## 8. 新增一个「实体类型」的标准流程
 
@@ -639,7 +649,7 @@ func _apply_door(inst: Node, fn: Dictionary) -> void:
 | `thumb` | 96×96 左右的 PNG 到 `editor/previews/`。没有它画布上是空白方块，但仍可放置 |
 | `editorSize` | 像素。省略则编辑器读 prefab 第一个碰撞形状；再省略用缩略图原尺寸 |
 | `stats` | 每个 stat 的 `default` 必填——它是游戏侧数值的默认值来源 |
-| 缩略图烘焙 | 跑 `godot --path bird --script editor/bake_previews.gd`（需窗口，不能 headless） |
+| 缩略图烘焙 | 自己写一个截图脚本把 prefab 渲染成 PNG（需窗口，不能 headless）；编辑器只读 `thumb` 路径 |
 
 ### 8.3 不要做的事
 
@@ -657,7 +667,7 @@ func _apply_door(inst: Node, fn: Dictionary) -> void:
 ```
 
 加载后它的索引（比如 1）= 地图 terrain 条目的 atlas 数字 = TileSet `source_id` 1。
-游戏侧 `map_loader._add_manifest_sources()` 会把 `tiles[1..]` 全部运行时加载。
+游戏侧要把 `tiles[1..]` 全部在运行时加载成 TileSetAtlasSource。
 
 ### 9.2 游戏侧要保证的
 
@@ -690,16 +700,13 @@ func _apply_door(inst: Node, fn: Dictionary) -> void:
 | 9 | 游戏侧按 `scene` 实例化并注入 `ent_id`/`props` | 传送门等按 props 行为正确 |
 | 10 | 若用功能系统：`functions` 已声明 + 游戏侧有对应消费代码 | 挂上功能后行为生效 |
 
-**当前 bird 的状态**：1–8 基本满足（8 有 6.4 表里的偏差），9 满足，
-10 只有 `dialogue` 一个功能被消费。
-
 ### 一次性验证命令
 
 ```
-godot --path "D:\Game\BIRD\bird" -- --map=maps/TEST.json
+godot --path "<你的游戏工程>" -- --map=maps/<地图名>.json
 ```
 
-能进游戏、地形与编辑画布一致、传送门能通，就说明第 8 条通过。
+能进游戏、地形与编辑画布一致、实体按 `props` 正确行为，就说明第 8、9 条通过。
 
 ## 11. 已知边界（照抄编辑器实现，不是待办）
 
@@ -718,4 +725,4 @@ godot --path "D:\Game\BIRD\bird" -- --map=maps/TEST.json
 | 文档 | 内容 |
 |---|---|
 | [EDITOR_FEATURES.md](EDITOR_FEATURES.md) | 编辑器功能全貌、快捷键、已知边界索引 |
-| [code-review-2026-11-19.md](code-review-2026-11-19.md) | 历史审查记录（全部已修） |
+| [../README.md](../README.md) | 快速上手与目录结构 |

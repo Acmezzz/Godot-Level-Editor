@@ -1,7 +1,8 @@
 extends Control
 ## 独立关卡编辑器应用（Godot EXE）：
-## 启动 → 读 user:// 上次项目 → 无则显示"打开项目文件夹"；
+## 启动 → 读 user:// 的项目列表 → 自动打开上次项目，否则显示项目选择页；
 ## 选定项目 = 读清单 → 顶栏/资产栏/画布/状态栏，全部由清单驱动。
+## 不绑定具体游戏：多个游戏工程可在项目列表里并行管理，顶栏「设置 ▾ → 切换项目…」切换。
 
 const SettingsCfg := "user://settings.cfg"
 const ProjectShellScript := preload("res://src/ui/project_shell.gd")
@@ -50,6 +51,7 @@ var _canvas_empty: Control
 
 func _ready() -> void:
 	_load_prefs()
+	_load_projects()
 	_layout_ctrl = preload("res://src/ui/editor_layout.gd").new(self)
 	_side_actions_ctrl = preload("res://src/core/side_actions.gd").new(self)
 	_palette_ctrl = preload("res://src/ui/palette_panel.gd").new(self)
@@ -60,6 +62,12 @@ func _ready() -> void:
 		_show_picker(manifest.get("_error", ""))
 	else:
 		_build_editor_ui()
+
+## 启动时尝试打开上次的项目；失败返回 {} 或带 _error 的字典（选择页据此显示原因）。
+func _load_last_project() -> Dictionary:
+	if cur_project_dir == "":
+		return {}
+	return EditorManifest.load_from(cur_project_dir)
 
 ## 关窗口前拦截：有未保存修改就确认，并把草稿落盘
 func _notification(what: int) -> void:
@@ -74,20 +82,52 @@ func _handle_close_request() -> void:
 	get_tree().auto_accept_quit = true
 	get_tree().quit()
 
-# —— 上次项目记忆（user://settings.cfg） ——
-func _load_last_project() -> Dictionary:
-	var cf := ConfigFile.new()
-	if cf.load(SettingsCfg) != OK:
-		return {}
-	var dir := str(cf.get_value("project", "dir", ""))
-	if dir == "":
-		return {}
-	return EditorManifest.load_from(dir)
+# —— 项目记忆（user://settings.cfg）：多项目列表 + 上次打开的那个 ——
+## 顺序 = 最近使用倒序。names 记住 projectName，项目目录暂时不可达时选择页仍显示得出来。
+var project_dirs: Array = []
+var project_names := {}
+var cur_project_dir := ""
 
-func _save_last_project(dir: String) -> void:
+func _load_projects() -> void:
 	var cf := ConfigFile.new()
-	cf.set_value("project", "dir", dir)
+	if cf.load(SettingsCfg) == OK:
+		var dirs = cf.get_value("projects", "dirs", [])
+		if dirs is Array:
+			for d in dirs:
+				if str(d) != "" and not project_dirs.has(str(d)):
+					project_dirs.append(str(d))
+		var names = cf.get_value("projects", "names", {})
+		if names is Dictionary:
+			project_names = (names as Dictionary).duplicate()
+		cur_project_dir = str(cf.get_value("projects", "last", ""))
+		# 兼容单项目旧格式
+		var old := str(cf.get_value("project", "dir", ""))
+		if old != "" and not project_dirs.has(old):
+			project_dirs.append(old)
+			if cur_project_dir == "":
+				cur_project_dir = old
+
+func _save_projects() -> void:
+	var cf := ConfigFile.new()
+	cf.set_value("projects", "dirs", project_dirs)
+	cf.set_value("projects", "names", project_names)
+	cf.set_value("projects", "last", cur_project_dir)
 	cf.save(SettingsCfg)
+
+## 登记一个项目到列表头（最近使用置顶）；名字取清单 projectName，缺省用目录名。
+func _remember_project(dir: String, pname: String) -> void:
+	project_dirs.erase(dir)
+	project_dirs.push_front(dir)
+	project_names[dir] = pname if pname != "" else dir.get_file()
+	cur_project_dir = dir
+	_save_projects()
+
+func _forget_project(dir: String) -> void:
+	project_dirs.erase(dir)
+	project_names.erase(dir)
+	if cur_project_dir == dir:
+		cur_project_dir = ""
+	_save_projects()
 
 # —— 项目选择页 ——
 func _show_picker(err := "") -> void:
@@ -97,6 +137,7 @@ func _show_picker(err := "") -> void:
 	var v := VBoxContainer.new()
 	v.set_anchors_preset(Control.PRESET_FULL_RECT)
 	v.alignment = BoxContainer.ALIGNMENT_CENTER
+	v.add_theme_constant_override("separation", 10)
 	add_child(v)
 	var t := Label.new()
 	t.text = "关卡编辑器"
@@ -104,21 +145,76 @@ func _show_picker(err := "") -> void:
 	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(t)
 	var hint := Label.new()
-	hint.text = "选择一个游戏项目文件夹（内含 editor/editor_manifest.json）"
+	hint.text = "选一个游戏项目（内含 editor/editor_manifest.json）；可同时管理多个项目"
 	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	v.add_child(hint)
 	if err != "":
 		var el := Label.new()
 		el.text = err
 		el.modulate = Color(1, 0.4, 0.4)
+		el.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		v.add_child(el)
-	var btn := Button.new()
-	btn.text = "打开项目文件夹…"
-	btn.pressed.connect(_pick_project)
-	var hb := HBoxContainer.new()
-	hb.alignment = BoxContainer.ALIGNMENT_CENTER
-	hb.add_child(btn)
-	v.add_child(hb)
+	if not project_dirs.is_empty():
+		var list := VBoxContainer.new()
+		list.custom_minimum_size = Vector2(520, 0)
+		v.add_child(list)
+		for dir in project_dirs:
+			list.add_child(_project_row(str(dir)))
+		var row := HBoxContainer.new()
+		row.alignment = BoxContainer.ALIGNMENT_CENTER
+		var add := Button.new()
+		add.text = "打开其它项目文件夹…"
+		add.pressed.connect(_pick_project)
+		row.add_child(add)
+		v.add_child(row)
+	else:
+		var hb := HBoxContainer.new()
+		hb.alignment = BoxContainer.ALIGNMENT_CENTER
+		var btn := Button.new()
+		btn.text = "打开项目文件夹…"
+		btn.pressed.connect(_pick_project)
+		hb.add_child(btn)
+		v.add_child(hb)
+
+## 选择页的一行：项目名（+ 路径）+ 「打开」+「移除记录」。
+## 移除只删记录不动磁盘——用户可能只是临时不想看见它。
+func _project_row(dir: String) -> Control:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	var info := VBoxContainer.new()
+	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var nm := Label.new()
+	nm.text = str(project_names.get(dir, dir.get_file()))
+	nm.add_theme_font_size_override("font_size", 16)
+	info.add_child(nm)
+	var path_lbl := Label.new()
+	path_lbl.text = dir
+	path_lbl.modulate = Color(1, 1, 1, 0.5)
+	path_lbl.add_theme_font_size_override("font_size", 11)
+	info.add_child(path_lbl)
+	row.add_child(info)
+	var open := Button.new()
+	open.text = "打开"
+	open.pressed.connect(func(): _open_project(dir))
+	row.add_child(open)
+	var forget := Button.new()
+	forget.text = "移除记录"
+	forget.pressed.connect(func():
+		_forget_project(dir)
+		_show_picker())
+	row.add_child(forget)
+	return row
+
+## 从列表里选一个项目打开；清单坏了就回选择页并说明原因。
+func _open_project(dir: String) -> void:
+	var m := EditorManifest.load_from(dir)
+	if m.has("_error"):
+		_show_picker(m["_error"])
+		return
+	manifest = m
+	_ent_thumbs_cache.clear()   # D1：换项目清缩略图缓存
+	_remember_project(dir, str(m.get("projectName", "")))
+	_build_editor_ui()
 
 func _pick_project() -> void:
 	var fd := FileDialog.new()
@@ -130,14 +226,7 @@ func _pick_project() -> void:
 
 # —— 项目选定：读清单 → 进编辑器界面 ——
 func _on_project_picked(dir: String) -> void:
-	var m := EditorManifest.load_from(dir)
-	if m.has("_error"):
-		_show_picker(m["_error"])
-		return
-	manifest = m
-	_ent_thumbs_cache.clear()   # D1：换项目清缩略图缓存
-	_save_last_project(dir)
-	_build_editor_ui()
+	_open_project(dir)
 
 # —— 编辑器主界面 ——
 # —— 顶栏：按语义分四组（文件 / 视图 / 工具 / 试玩），组间用细线分隔 ——
@@ -185,6 +274,25 @@ func _open_size_dialog() -> void:
 
 func _open_export_dialog() -> void:
 	_map_file_ctrl.open_export_dialog()
+
+## 切换项目：有未保存修改先确认，然后回选择页。
+## 回选择页会 free 掉整个编辑器界面（画布/三面板），切项目后由 _build_editor_ui 全量重建，
+## 不残留上一个项目的清单、缩略图、地图路径与撤销栈。
+func _switch_project() -> void:
+	if map_loaded and canvas != null and canvas.modified_flag:
+		if not await _confirm_discard("切换项目"):
+			return
+	manifest = {}
+	cur_map_path = ""
+	_cur_map_name = ""
+	map_loaded = false
+	canvas = null
+	_map_view = null
+	project_shell = null
+	asset_panel = null
+	_nav_bars.clear()
+	_ent_thumbs_cache.clear()
+	_show_picker()
 
 # —— 试玩配置（每图独立）：初始能力/血量，存编辑器用户数据不污染地图 JSON ——
 var play_cfg := {}                 # 当前图配置 {abilities:[], hp:int}

@@ -2,7 +2,7 @@ extends SceneTree
 
 ## 数据层合并回归：原 t_coverage / map_data_validation / map_transaction /
 ## manifest_contract 等脚本合并为一个。
-## 纯数据路径：临时目录造图，不建 UI；BIRD_PROJECT 缺省时跳过真实项目断言。
+## 纯数据路径：临时目录造图，不建 UI；EDITOR_PROJECT 缺省时跳过真实项目断言。
 
 const Store := preload("res://src/map_store.gd")
 const Validator := preload("res://src/map_data_validation.gd")
@@ -263,14 +263,14 @@ func _test_playtest_guard() -> void:
 	_check(not missing.ok and str(missing.error).contains("找不到"),
 		"missing executable is rejected before spawning")
 
-## 实体编辑器占位尺寸：需要真实游戏清单，未设置 BIRD_PROJECT 时跳过。
+## 实体编辑器占位尺寸：需要真实游戏清单，未设置 EDITOR_PROJECT 时跳过。
 func _test_entity_editor_size() -> void:
-	var project := OS.get_environment("BIRD_PROJECT")
+	var project := OS.get_environment("EDITOR_PROJECT")
 	if project == "":
-		print("SKIP entity_editor_size (BIRD_PROJECT unset)")
+		print("SKIP entity_editor_size (EDITOR_PROJECT unset)")
 		return
 	var manifest := Manifest.load_from(project)
-	_check(not manifest.has("_error"), "game manifest loads from BIRD_PROJECT")
+	_check(not manifest.has("_error"), "game manifest loads from EDITOR_PROJECT")
 	if manifest.has("_error"):
 		return
 	var crawler := {}

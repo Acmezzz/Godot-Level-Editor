@@ -38,9 +38,6 @@ static func _is_valid_kind(kind: String) -> bool:
 
 ## 内容根目录：清单可用 contentDir 覆盖；缺省 <项目>/content。
 static func root_dir(m: Dictionary) -> String:
-	var explicit := str(m.get("_content_dir", ""))
-	if explicit != "":
-		return explicit
 	var project := str(m.get("_dir", ""))
 	if project == "":
 		return ""

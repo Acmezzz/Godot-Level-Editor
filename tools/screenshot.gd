@@ -2,8 +2,8 @@ extends SceneTree
 ## 截图辅助：启动编辑器 → 切到指定界面 → 等待渲染 → 保存 PNG。
 ## 用法：godot --path <编辑器工程> --script res://tools/screenshot.gd -- <mode> <out.png>
 ## 仅开发期临时使用，不属于测试套件。
-
-const DEFAULT_PROJECT := "D:/Game/BIRD/bird"
+## 项目路径由 SHOT_PROJECT 环境变量给出（编辑器已支持多项目，没有可用的内置默认值）。
+const ENV_PROJECT := "SHOT_PROJECT"
 
 func _init() -> void:
 	call_deferred("_run")
@@ -30,9 +30,11 @@ func _run() -> void:
 	root.add_child(app)
 	# 真实入口是 editor.tscn（根节点已铺满窗口），手动 new 出来要自己补齐锚点
 	app.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	var project := OS.get_environment("BIRD_PROJECT")
+	var project := OS.get_environment(ENV_PROJECT)
 	if project == "":
-		project = DEFAULT_PROJECT
+		push_error("缺少 %s：指向一个含 editor/editor_manifest.json 的游戏工程目录" % ENV_PROJECT)
+		quit(1)
+		return
 	app.manifest = EditorManifest.load_from(project)
 	app._build_theme()
 	app._build_editor_ui()

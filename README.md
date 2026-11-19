@@ -1,24 +1,24 @@
-# BIRD 关卡编辑器
+# 2D 关卡编辑器
 
-自用的 Godot 4.7.2 关卡编辑器，为游戏工程 `D:\Game\BIRD\bird` 开发。编辑器不依赖游戏运行时，
-只读取游戏工程里的 `editor/editor_manifest.json`、地图 JSON 和 `content/` 内容资源。
+自用的 Godot 4.7.2 通用 2D 关卡编辑器。**不绑定任何具体游戏**：
+每个游戏工程只要按规范放入 `editor/editor_manifest.json`，编辑器打开即用；
+多个工程可在编辑器里按项目列表切换、并行开发。
 
 ## 文档
 
 | 文档 | 定位 |
 |---|---|
-| [docs/EDITOR_FEATURES.md](docs/EDITOR_FEATURES.md) | **唯一权威功能描述**：架构、全部功能、快捷键、已知边界、已删除功能索引 |
-| [docs/GAME_SIDE_STANDARD.md](docs/GAME_SIDE_STANDARD.md) | **游戏侧开发规范**：清单/地图/内容三种数据的完整契约，怎么声明资产与功能，游戏侧怎么读；附当前 bird 的差距清单 |
-| [docs/code-review-2026-11-19.md](docs/code-review-2026-11-19.md) | 2026-11-19 代码审查报告（全部条目已修复，现作历史记录） |
-| [docs/demo-editor-v2.html](docs/demo-editor-v2.html) | 交互演示稿（单文件 HTML） |
+| [docs/EDITOR_FEATURES.md](docs/EDITOR_FEATURES.md) | **编辑器功能权威描述**：架构、全部功能、快捷键、已知边界 |
+| [docs/GAME_SIDE_STANDARD.md](docs/GAME_SIDE_STANDARD.md) | **游戏侧开发规范**：清单/地图/内容三种数据的完整契约，怎么声明资产与功能，游戏侧怎么读 |
 
 ## 快速上手
 
 ```
-godot --path "D:\Game\BIRD\Level Editor"     # 打开编辑器（主场景 src/editor.tscn）
+godot --path "<Level Editor 目录>"     # 打开编辑器（主场景 src/editor.tscn）
 ```
 
-首次使用：顶栏「设置 ▾ → 打开项目」选定游戏工程文件夹 → 读清单 → 开始编辑。
+首次使用：启动页「打开项目文件夹…」选定游戏工程 → 读清单 → 开始编辑。
+之后启动会自动打开上次的项目；顶栏「设置 ▾ → 切换项目…」可回到项目列表。
 
 日常三条主线：
 
@@ -33,15 +33,15 @@ godot --path "D:\Game\BIRD\Level Editor"     # 打开编辑器（主场景 src/e
 
 ```
 src/
-├── app.gd / editor.tscn   宿主：项目选择、快捷键、模式切换、跨控制器委托
+├── app.gd / editor.tscn   宿主：项目列表与切换、快捷键、模式切换、跨控制器委托
 ├── *.gd                   清单读取与校验、地图数据读写、导出、试玩
 ├── core/                  状态流、撤销栈、侧栏动作
 ├── canvas/                画布宿主与控制器（绘制 / 输入 / 工具执行 / 选区）
 ├── content/               内容资源存储、分层身份码、内置种类、数值合并
 └── ui/                    设计系统、布局骨架、三面板、各种弹窗
 tests/                     测试脚本（待重写，不作验收口径）
-tools/screenshot.gd        截图辅助（开发期）
-docs/                      EDITOR_FEATURES + GAME_SIDE_STANDARD + 审查报告 + 演示稿
+tools/screenshot.gd        截图辅助（开发期，项目路径由 SHOT_PROJECT 环境变量给出）
+docs/                      EDITOR_FEATURES + GAME_SIDE_STANDARD
 ```
 
 ## 验证

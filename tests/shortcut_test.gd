@@ -14,9 +14,11 @@ func _init() -> void:
 func _run() -> void:
 	var app = load("res://src/app.gd").new()
 	root.add_child(app)
-	var project := OS.get_environment("BIRD_PROJECT")
+	var project := OS.get_environment("EDITOR_PROJECT")
 	if project == "":
-		project = "D:/Game/BIRD/bird"
+		print("SKIP shortcut_test (EDITOR_PROJECT unset)")
+		quit(0)
+		return
 	app.manifest = EditorManifest.load_from(project)
 	app._build_theme()
 	app._build_editor_ui()

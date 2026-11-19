@@ -27,7 +27,7 @@ func _build_editor_ui() -> void:
 	for c in app.get_children():
 		app.remove_child(c)
 		c.queue_free()
-	DisplayServer.window_set_title("BIRD 关卡编辑器 — %s" % app.manifest.get("projectName", "?"))
+	DisplayServer.window_set_title("关卡编辑器 — %s" % app.manifest.get("projectName", "?"))
 	var root := VBoxContainer.new()
 	root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	root.add_theme_constant_override("separation", 0)
@@ -130,6 +130,8 @@ func _build_global_bar() -> PanelContainer:
 	map_menu.add_item("重命名地图…", 10)
 	map_menu.add_item("导出当前地图", 4)
 	map_menu.add_item("调整地图尺寸", 5)
+	map_menu.add_separator()
+	map_menu.add_item("切换项目…", 20)
 	map_menu.id_pressed.connect(_on_map_menu_id)
 	app._map_btn.pressed.connect(func(): _popup_below(map_menu, app._map_btn))
 	bar.add_child(map_menu)
@@ -166,6 +168,8 @@ func _on_map_menu_id(id: int) -> void:
 		10:
 			# 顶栏名字输入框已删：改名只能从菜单进弹窗
 			app._on_rename()
+		20:
+			app._switch_project()
 
 ## 在锚点控件正下方弹菜单（宽高交给引擎按内容测算）
 func _popup_below(pm: PopupMenu, anchor: Control) -> void:

@@ -1,6 +1,6 @@
-# BIRD 关卡编辑器 — 功能文档
+# 关卡编辑器 — 功能文档
 
-> 独立 Godot 4.7.2 工程（`D:\Game\BIRD\Level Editor`），入口场景 `src/editor.tscn`，主脚本 `src/app.gd`。
+> 独立 Godot 4.7.2 工程，通用 2D 关卡编辑器（不绑定具体游戏）。入口场景 `src/editor.tscn`，主脚本 `src/app.gd`。
 > 编辑器不依赖游戏工程资源，只读 `<游戏项目>/editor/editor_manifest.json`、`maps/*.json` 与 `content/<功能id>/*.json`。
 > 本文按 2026-11-19 的实际代码重写；凡文档与代码冲突，以代码为准。
 
@@ -65,10 +65,11 @@ src/
 ## 1.1 快速上手
 
 **启动**：用 Godot 4.7.2 打开本工程（主场景 `src/editor.tscn`）直接 F5；或
-`godot --path "D:\Game\BIRD\Level Editor"`。
+`godot --path "<Level Editor 目录>"`。
 
-**首次启动**：选游戏项目文件夹（内含 `editor/editor_manifest.json` 与 `maps/`）；下次自动加载
-（`user://settings.cfg`）；清单读取失败在选择页直接给出错误说明。
+**首次启动**：启动页列出已登记项目，或「打开项目文件夹…」选一个新工程（内含
+`editor/editor_manifest.json` 与 `maps/`）；下次自动打开上次的项目，
+顶栏「设置 ▾ → 切换项目…」可回项目列表。清单读取失败在选择页直接给出错误说明。
 
 **日常流程**：
 
@@ -89,9 +90,12 @@ src/
 
 | 功能 | 说明 |
 |---|---|
-| 选择项目文件夹 | 启动时无上次记录则显示选择页，`FileDialog` 选目录 |
+| 项目列表 | `user://settings.cfg` 存 `projects/dirs`（最近使用倒序）、`projects/names`、`projects/last`；兼容旧单项目 `project/dir` |
+| 选择项目文件夹 | 启动页列出已登记项目（项目名 + 路径 + 打开/移除记录），底部「打开其它项目文件夹…」用 `FileDialog` 选新目录 |
+| 记住上次项目 | 每次打开项目写入 `projects/last`，下次启动自动打开 |
+| 切换项目 | 顶栏「设置 ▾ → 切换项目…」：有未保存修改先确认，然后清空清单/画布/撤销栈回选择页 |
+| 移除项目记录 | 选择页每行「移除记录」——只删记录不动磁盘 |
 | 清单校验 | 读 `<项目>/editor/editor_manifest.json`；缺失/解析失败/结构无效都进错误页，附问题路径 |
-| 记住上次项目 | 写 `user://settings.cfg`，下次自动加载 |
 | 项目名展示 | 顶栏最左显示 `projectName` |
 | 路径推导 | 读后自动补 `_dir`、`_maps_dir`、每个图集的 `atlas_abs`、`_warnings` |
 | 清单版本 | 缺 `version` 补 1（结构演进时的迁移锚点） |
@@ -547,7 +551,7 @@ src/
 | 脚本 | 覆盖 |
 |---|---|
 | `tests/parse_all.gd` | 全量解析：`src/` 下所有 GDScript + `tests/` 下所有脚本逐个 load，语法坏了立刻暴露 |
-| `tests/data_layer_test.gd` | 数据层：清单契约、地图结构校验与旧格式迁移、`functions` 结构校验、多图事务与失败回滚、坏图隔离、`list_maps`、`next_entity_id`、地图名与路径穿越、命令引号与 `godotExe`、预览图与统计、试玩启动守卫、实体占位尺寸（需 `BIRD_PROJECT`） |
+| `tests/data_layer_test.gd` | 数据层：清单契约、地图结构校验与旧格式迁移、`functions` 结构校验、多图事务与失败回滚、坏图隔离、`list_maps`、`next_entity_id`、地图名与路径穿越、命令引号与 `godotExe`、预览图与统计、试玩启动守卫、实体占位尺寸（需 `EDITOR_PROJECT`） |
 | `tests/content_model_test.gd` | 内容数据层：id 规则、分层身份码、原子读写与坏文件隔离、数值三层合并 |
 | `tests/def_regression_test.gd` | 定义层：`def` 穿过加载/快照/复制粘贴；触发区 w/h 穿过快照；唯一缩略图的内置种类必须进实体列表 |
 | `tests/entity_copy_regression_test.gd` | 复制粘贴内部引用重映射、选区外引用不变、flip 保留、原实体不受影响 |
@@ -576,7 +580,7 @@ godot --headless --path "<编辑器工程>" --script res://tests/parse_all.gd
 godot --headless --path "<编辑器工程>" --script res://tests/data_layer_test.gd
 ```
 
-`BIRD_PROJECT` 指向游戏工程时，`data_layer_test` 会额外验证真实清单；未设置时跳过相关断言。
+`EDITOR_PROJECT` 指向游戏工程时，`data_layer_test` 会额外验证真实清单；未设置时跳过相关断言。
 
 ---
 

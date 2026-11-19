@@ -10,7 +10,7 @@ config_version=5
 
 [application]
 
-config/name="BIRD 关卡编辑器"
+config/name="2D 关卡编辑器"
 run/main_scene="res://src/editor.tscn"
 config/features=PackedStringArray("4.7")
 config/icon="res://icon.svg"
