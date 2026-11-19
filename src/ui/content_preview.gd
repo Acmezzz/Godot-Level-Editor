@@ -17,7 +17,7 @@ var hover_ent := ""
 var _zoom := 1.0
 var _pan := Vector2.ZERO
 var _panning := false   # 中键按住拖动平移（手势同关卡画布）
-# 瓦片缓存（P2-4：整图满涂时每次重绘重建上万条临时数组——按 canvas.map_rev 缓存）
+# 瓦片缓存（整图满涂时每次重绘重建上万条临时数组——按 canvas.map_rev 缓存）
 var _tiles_cache := {}
 var _tiles_rev := {}   # kind -> 缓存对应的 map_rev
 
@@ -47,7 +47,7 @@ func reset_view() -> void:
 func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
 		var mm := event as InputEventMouseMotion
-		# 中键拖动平移：pan 是屏幕偏移，手势语义与画布 cam_pos 相同（跟手走）
+ # 中键拖动平移：pan 是屏幕偏移，手势语义与画布 cam_pos 相同（跟手走）
 		if _panning:
 			_pan += mm.relative
 			refresh()
@@ -190,7 +190,7 @@ func _draw_map() -> void:
 	for kind in ["terrain", "decor"]:
 		var fallback: Color = Th.MAP_TERRAIN if str(kind) == "terrain" else Th.MAP_DECOR
 		for t in _tiles(str(kind)):
-			# 只画地图边界内的格：画布允许在边界外涂，预览出框会显得脏
+ # 只画地图边界内的格：画布允许在边界外涂，预览出框会显得脏
 			var cx := int(t[0])
 			var cy := int(t[1])
 			if cx < 0 or cy < 0 or cx >= mw or cy >= mh:
@@ -219,10 +219,10 @@ func _draw_map() -> void:
 		if tex != null:
 			draw_texture_rect(tex, rect, false)
 		else:
-			# 内置种类（触发区等）没有缩略图：画半透明块，尺寸就是它在游戏里的占位
+ # 内置种类（触发区等）没有缩略图：画半透明块，尺寸就是它在游戏里的占位
 			draw_rect(rect, Color(Th.ACCENT, 0.35), true)
 			draw_rect(rect, Color(Th.ACCENT_HI, 0.8), false, 1.0)
-		# 悬停框记下来，循环结束后再画：否则被后画的实体盖住，悬停看起来像没生效
+ # 悬停框记下来，循环结束后再画：否则被后画的实体盖住，悬停看起来像没生效
 		if str(row.id) == hover_ent and str(row.id) != sel:
 			hover_rect = rect
 		if str(row.id) == sel:

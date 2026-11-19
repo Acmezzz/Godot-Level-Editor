@@ -1,13 +1,13 @@
 extends RefCounted
-## _canvas_input_ctrl：从 src/canvas/editor_canvas.gd 拆出的控制器（审查 8.3 表）。宿主状态经 alias 引用。
+## _canvas_input_ctrl：从 src/canvas/editor_canvas.gd 拆出的控制器。宿主状态经 alias 引用。
 ##
-## v2 §2.2：没有工具概念——**层类型决定左键语义**。
-##   地形 / 装饰 / 碰撞：左键按住拖动连续涂，右键拖动擦除。
-##   实体：左键点空处 = 放置当前选中资产，点实体 = 选中并拖动；右键 = 删除该实体。
+## 没有工具概念——**层类型决定左键语义**。
+## 地形 / 装饰 / 碰撞：左键按住拖动连续涂，右键拖动擦除。
+## 实体：左键点空处 = 放置当前选中资产，点实体 = 选中并拖动；右键 = 删除该实体。
 ## 框选由 cvs.select_mode（左栏「框选」开关）决定：打开时任意层普通左键拖动即框选；
 ## 关闭时保留 Ctrl+拖动框选作为兼容入口。两条路径都不依赖工具。
 ##
-## P2-8/O1：所有拖拽/平移状态收敛到 cvs.gesture 单一枚举（见 editor_canvas.Gesture）。
+## /O1：所有拖拽/平移状态收敛到 cvs.gesture 单一枚举（见 editor_canvas.Gesture）。
 ## 起手即 begin_gesture，松手即 end_gesture；任何新起手都顶掉旧手势，不可能叠加。
 
 var cvs   # 宿主引用
@@ -25,7 +25,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		if b.pressed:
 			match b.button_index:
 				MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN:
-					# E1（批次 12）：滚轮缩放以鼠标为锚——鼠标下的世界点缩放前后不动（公式同 map_thumb BUG-13）
+ # 滚轮缩放以鼠标为锚——鼠标下的世界点缩放前后不动（公式同 map_thumb BUG-13）
 					var zw0: float = cvs.zoom
 					cvs.zoom = clampf(cvs.zoom * (1.15 if b.button_index == MOUSE_BUTTON_WHEEL_UP else 1.0 / 1.15), 0.5, 6.0)
 					if not is_equal_approx(cvs.zoom, zw0):
@@ -38,7 +38,7 @@ func _unhandled_input(event: InputEvent) -> void:
 				MOUSE_BUTTON_RIGHT:
 					_on_right_press(pos)
 		else:
-			# 松手只处理「是这一颗键起的那个手势」，避免中键松手误杀左键起手的平移
+ # 松手只处理「是这一颗键起的那个手势」，避免中键松手误杀左键起手的平移
 			if b.button_index == MOUSE_BUTTON_MIDDLE and cvs.gesture == cvs.Gesture.PAN:
 				cvs.end_gesture()
 			if b.button_index == MOUSE_BUTTON_RIGHT and cvs.gesture == cvs.Gesture.ERASE:
@@ -60,7 +60,7 @@ func _unhandled_input(event: InputEvent) -> void:
 			cvs.Gesture.ERASE:
 				cvs._erase_at(pos)
 			cvs.Gesture.PAINT:
-				# 连续涂：只看层，不看工具
+ # 连续涂：只看层，不看工具
 				if cvs.active_layer != cvs._ent_layer_index():
 					cvs._apply_tool(pos)
 		var c = cvs._cell_of(pos)
@@ -73,11 +73,11 @@ func _on_left_press(pos: Vector2, b: InputEventMouseButton) -> void:
 	if cvs.map_root == null:
 		cvs._hint("无地图：先新建或打开一张地图")
 		return
-	# A1.1 吸管：Alt+左键取光标格瓦片（任何层下可用）。P1-11：放在 map_root 守卫之后
+	# 吸管：Alt+左键取光标格瓦片（任何层下可用）。放在 map_root 守卫之后
 	if b.alt_pressed:
 		cvs._pick_tile(pos)
 		return
-	# A6：Space+左键拖拽平移
+	# Space+左键拖拽平移
 	if Input.is_key_pressed(KEY_SPACE):
 		cvs.begin_gesture(cvs.Gesture.PAN, MOUSE_BUTTON_LEFT)
 		return
@@ -104,11 +104,11 @@ func _on_left_press(pos: Vector2, b: InputEventMouseButton) -> void:
 func _on_entity_layer_press(pos: Vector2, b: InputEventMouseButton) -> void:
 	var hit = cvs._entity_at(pos)
 	if cvs.select_mode:
-		# 框选开关打开：
-		#   a) 按在「当前已选集合」的成员上 → 直接拖（单选也能拖，整组一起走）；
-		#   b) 按在已框选组的外接框内 → 整组拖；
-		#   c) 其余一律框选——包括压在「没被选中」的实体上，起手必须是拉框。
-		# 先走 a/b 而不是无脑框选，否则框完之后永远拖不动（用户报的核心问题）。
+ # 框选开关打开：
+ # a) 按在「当前已选集合」的成员上 → 直接拖（单选也能拖，整组一起走）；
+ # b) 按在已框选组的外接框内 → 整组拖；
+ # c) 其余一律框选——包括压在「没被选中」的实体上，起手必须是拉框。
+ # 先走 a/b 而不是无脑框选，否则框完之后永远拖不动（用户报的核心问题）。
 		if hit != null and (cvs.selected_multi.has(hit) or hit == cvs.selected_entity):
 			cvs.selected_entity = hit
 			cvs._begin_entity_drag(hit, pos)
@@ -120,22 +120,22 @@ func _on_entity_layer_press(pos: Vector2, b: InputEventMouseButton) -> void:
 		cvs._drag_start = pos
 		return
 	if hit != null and cvs.selected_multi.size() > 1 and cvs.selected_multi.has(hit):
-		# 按在「已框选的成员」上：保持整组，直接整组拖。
-		# 不调 _select_entity_at，否则会先把选区塌缩成单选。
+ # 按在「已框选的成员」上：保持整组，直接整组拖。
+ # 不调 _select_entity_at，否则会先把选区塌缩成单选。
 		cvs.selected_entity = hit
 		cvs._begin_entity_drag(hit, pos)
 	elif hit != null:
 		cvs._select_entity_at(pos)
 		cvs._begin_entity_drag(hit, pos)
 	elif cvs._inside_multi_box(pos):
-		# 按在已有框选范围内（但没按到具体某个实体）：拖动整组
+ # 按在已有框选范围内（但没按到具体某个实体）：拖动整组
 		cvs._begin_group_drag(pos)
 	elif b.ctrl_pressed:
-		# 空白处 Ctrl+拖动 = 框选（没有工具按钮之后，这是唯一的框选入口）
+ # 空白处 Ctrl+拖动 = 框选（没有工具按钮之后，这是唯一的框选入口）
 		cvs.begin_gesture(cvs.Gesture.BOX, MOUSE_BUTTON_LEFT)
 		cvs._drag_start = pos
 	elif cvs.stamp_scene == "":
-		# 没选资产就点到空白：把「先选资产」这条前置条件说出来，而不是静默无反应
+ # 没选资产就点到空白：把「先选资产」这条前置条件说出来，而不是静默无反应
 		cvs._hint("先在左栏资产列表选一个实体，再左键放置")
 	else:
 		cvs._apply_tool(pos)
@@ -148,7 +148,7 @@ func _on_tile_layer_press(pos: Vector2, b: InputEventMouseButton) -> void:
 		return
 	# 框选开关：优先于涂刷，否则每次起手都会先落一笔
 	if cvs.select_mode or b.ctrl_pressed:
-		# 区内起手 = 搬走这块（否则框完之后只能复制，不能移动）
+ # 区内起手 = 搬走这块（否则框完之后只能复制，不能移动）
 		if cvs._in_region_sel(pos):
 			cvs._begin_region_move(pos)
 			return
@@ -168,7 +168,7 @@ func _on_right_press(pos: Vector2) -> void:
 		return
 	if cvs.map_root == null:
 		return
-	# P3-2：先判「这一格真能擦」再压撤销——锁定层/空白处不留下空快照
+	# 先判「这一格真能擦」再压撤销——锁定层/空白处不留下空快照
 	if cvs.is_layer_locked(cvs.active_layer):
 		cvs._hint("当前图层已锁定：解锁后再擦除")
 		return
@@ -180,12 +180,12 @@ func _on_right_press(pos: Vector2) -> void:
 
 
 func _on_left_release(pos: Vector2) -> void:
-	# 只收尾「左键起的手势」。中键起的平移不该被左键松手打断（P0-2 的另一面）。
+	# 只收尾「左键起的手势」。中键起的平移不该被左键松手打断（的另一面）。
 	if cvs.gesture_button != MOUSE_BUTTON_LEFT:
 		return
 	match cvs.gesture:
 		cvs.Gesture.REGION_MOVE:
-			# 先收尾再清手势：_finish_region_move 靠 gesture 判断这次搬动是否有效
+ # 先收尾再清手势：_finish_region_move 靠 gesture 判断这次搬动是否有效
 			cvs._finish_region_move()
 			cvs.end_gesture()
 		cvs.Gesture.SPAWN_DRAG:

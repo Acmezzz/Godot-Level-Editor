@@ -101,7 +101,7 @@ func _fill_single(tl: ItemList, t: Dictionary, ai: int, tsz: int) -> void:
 	# 类别视图与 MRU 行是「一行一个名字」，用单列吃满宽度——用 3 列网格会被截成「→ 岩块…」
 	_set_grid(tl, 1, 0)
 	if pal.is_empty():
-		# 没配 palette = 全图集平铺，那种视图必须是网格；MRU 行混进网格会被压成豆点，故跳过
+ # 没配 palette = 全图集平铺，那种视图必须是网格；MRU 行混进网格会被压成豆点，故跳过
 		_set_grid(tl, 3, 56)
 		_fill_full_atlas(tl, img, tsz, ai)
 		return
@@ -156,7 +156,7 @@ func _cat_of(p: Dictionary, fb: String) -> String:
 		return fb if fb != "" else "未分类"
 	return cn
 
-## 图集图（批次 9：按索引取图；未建则兜底构建；超界回落 0）
+## 图集图（按索引取图；未建则兜底构建；超界回落 0）
 func _img_for(ai: int) -> Image:
 	var imgs: Array = app.canvas.atlas_imgs
 	if (imgs as Array).is_empty():
@@ -166,7 +166,7 @@ func _img_for(ai: int) -> Image:
 		ai = 0
 	return imgs[ai] as Image
 
-## D7（批次 10）：瓦片缩略纹理缓存（图集索引+cell → ImageTexture），类别切换不再逐格重建
+## D7：瓦片缩略纹理缓存（图集索引+cell → ImageTexture），类别切换不再逐格重建
 var _tex_cache := {}
 
 func _tex(ai: int, cell: Vector2i, tsz: int) -> ImageTexture:
@@ -194,7 +194,7 @@ func _fill_full_atlas(tl: ItemList, img: Image, tsz: int, ai: int) -> void:
 			var i2 := tl.add_item("%d,%d" % [x, y], _tex(ai, Vector2i(x, y), tsz))
 			tl.set_item_metadata(i2, {"auto": false, "cell": Vector2i(x, y), "atlas": ai})
 
-## K3 MRU：最近使用置顶（键 "atlas:x,y"——多图集瓦片原样回放）
+## 最近使用置顶（键 "atlas:x,y"——多图集瓦片原样回放）
 func _add_mru_rows(tl: ItemList, tsz: int) -> void:
 	if app.tile_mru.is_empty():
 		return
@@ -248,7 +248,7 @@ func _show_empty(list: ItemList, title: String, hint := "") -> void:
 	holder.add_child(es)
 	es.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	list.set_meta("_empty_node", es)
-	# D8（批次 10）：连接一次并打标——每次 fill 重复连接会越积越多
+	# D8：连接一次并打标——每次 fill 重复连接会越积越多
 	if not list.has_meta("_empty_connected"):
 		list.set_meta("_empty_connected", true)
 		list.visibility_changed.connect(func():

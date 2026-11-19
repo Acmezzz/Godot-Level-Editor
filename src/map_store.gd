@@ -1,14 +1,13 @@
 extends RefCounted
-## 地图 JSON 数据层：名称校验后的读写、实体查找、跨图出口解绑。
-## 全部是无状态静态函数，便于 headless 测试；manifest 只用于取 _maps_dir。
+## 地图 JSON 数据层：名称校验后的读写、实体查找、改名/复制（纯文件操作，引用不迁移）。
+## 全部是无状态静态函数；manifest 只用于取 _maps_dir。
 ## 注意：路径引用（preload）而非全局类名，避免 headless 首次扫描时的 class_name 缓存问题。
 
 const ManifestScript := preload("res://src/manifest.gd")
 const MapValidator := preload("res://src/map_data_validation.gd")
 
 ## 当前地图数据格式版本。老图（无 version 键）视为 1。
-## v3（批次 9）：collision 条目扩展 [x,y,type,shape]；terrain/decor 扩展 [x,y,atlas,ax,ay]。
-## 新旧字段向后兼容（缺省 solid / atlas=0），旧数据零迁移——bump 只作格式信号。
+## v3：collision 条目 [x,y,(type,(shape))]（solid+矩形可短写 [x,y]）；terrain/decor = [x,y,atlas,ax,ay]。
 const FORMAT_VERSION := 3
 ## 项目数据写盘版本号：每次 write_text 成功 +1。派生缓存（实体引用集等）据此判断是否重扫。
 static var project_rev := 0
@@ -19,7 +18,7 @@ static var project_rev := 0
 static var _cache := {}   # path -> {mtime: int, data: Dictionary}
 
 ## 按缓存读单图；读失败不缓存（下次重读）
-## P2-7：mtime 是秒级粒度，同秒内外部改文件会被脏缓存吃掉。缓存键补上文件长度——
+## mtime 是秒级粒度，同秒内外部改文件会被脏缓存吃掉。缓存键补上文件长度——
 ## 尺寸变了必然重读；同秒且同尺寸的改动仍无法识别（自写路径有显式失效，只影响外部编辑器）。
 static func _read_cached(path: String, m: Dictionary) -> Dictionary:
 	var mt := FileAccess.get_modified_time(path)
@@ -85,7 +84,7 @@ static func upgrade(data: Dictionary) -> bool:
 						if iv != v:
 							ent[key] = iv
 							changed = true
-		# P-04：spawn 也取整（与实体同规则），否则读回来会偏移半格
+ # spawn 也取整（与实体同规则），否则读回来会偏移半格
 		var sp = data.get("spawn", null)
 		if sp is Array and (sp as Array).size() >= 2:
 			for i in 2:
@@ -108,7 +107,7 @@ static func read(m: Dictionary, name: String) -> Dictionary:
 	return data
 
 ## 写地图 JSON；名称非法或写盘失败返回 false
-## K19：正式保存轮转备份——写前把当前文件拷进 <maps_dir>/.history/<名>.json.1..3（.1 最新）。
+## 正式保存轮转备份——写前把当前文件拷进 <maps_dir>/.history/<名>.json.1..3（.1 最新）。
 ## 无 git 环境的最后保险；autosave/levels/事务写盘不进历史（各有机制）。
 const HISTORY_DEPTH := 3
 
@@ -120,7 +119,7 @@ static func write(m: Dictionary, name: String, data: Dictionary) -> bool:
 	return write_json(path, data)
 
 ## 轮转 .3←.2←.1←当前（copy 当前而非 rename：备份失败绝不阻断保存本身）
-## P3-14：内容文件也要同样的回滚保险（内容条目是可复用资产），所以开放成公开入口。
+## 内容文件也要同样的回滚保险（内容条目是可复用资产），所以开放成公开入口。
 static func rotate_history(path: String) -> void:
 	_rotate_history(path)
 
@@ -163,7 +162,7 @@ static func write_text(path: String, text: String) -> bool:
 		return false
 	_cache.erase(path)   # D2：写后失效，下次读回源
 	# 任何项目数据落盘都可能改变实体 id 引用（地图 props / 内容步骤）：
-	# 版本号 +1，画布的引用集缓存据此重扫（P2-1 的失效点，避免循环 preload）。
+	# 版本号 +1，画布的引用集缓存据此重扫（的失效点，避免循环 preload）。
 	project_rev += 1
 	return true
 
@@ -269,7 +268,7 @@ static func list_maps(m: Dictionary) -> Array:
 	out.sort()
 	return out
 
-## T16/K18（批次 10）：纯 rename——只改文件名，不迁移引用（拍板：改名不迁移）。
+## 纯 rename——只改文件名，不迁移引用（拍板：改名不迁移）。
 ## 返回错误信息；"" = 成功。
 static func rename_map(m: Dictionary, old_name: String, new_name: String) -> String:
 	new_name = new_name.strip_edges()
@@ -289,7 +288,7 @@ static func rename_map(m: Dictionary, old_name: String, new_name: String) -> Str
 	_cache.erase(dst)
 	return ""
 
-## T16/K18（批次 10）：复制地图文件（新名冲突拒绝）；内容原样复制，引用不动。
+## 复制地图文件（新名冲突拒绝）；内容原样复制，引用不动。
 static func duplicate_map(m: Dictionary, old_name: String, new_name: String) -> String:
 	new_name = new_name.strip_edges()
 	if not ManifestScript.is_valid_map_name(new_name):
@@ -312,7 +311,7 @@ static func duplicate_map(m: Dictionary, old_name: String, new_name: String) -> 
 	return ""
 
 ## 读所有地图 → {地图名: data}。坏图（无法读取/JSON 解析失败/非对象）不进结果，
-## 但记录进 bad_out（P-03：坏图不再对校验页/世界页隐身）。D2：走 mtime 缓存。
+## 但记录进 bad_out（坏图不再对校验页/世界页隐身）。D2：走 mtime 缓存。
 static func read_all(m: Dictionary, bad_out: Array = []) -> Dictionary:
 	var out := {}
 	for name in list_maps(m):

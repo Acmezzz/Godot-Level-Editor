@@ -15,7 +15,7 @@ var manifest := {}
 var canvas: EditorCanvas
 var cur_map_path := ""
 var _cur_map_name := ""
-## P3-6：地图名单一来源 = canvas.cur_map_name。app 侧保留同名属性做代理——
+## 地图名单一来源 = canvas.cur_map_name。app 侧保留同名属性做代理——
 ## 原来两个字段各自被赋值，切图协程窗口期会短暂不一致，读的那一方拿到旧名。
 var cur_map_name: String:
 	get:
@@ -101,7 +101,7 @@ func _load_projects() -> void:
 		if names is Dictionary:
 			project_names = (names as Dictionary).duplicate()
 		cur_project_dir = str(cf.get_value("projects", "last", ""))
-		# 兼容单项目旧格式
+ # 兼容单项目旧格式
 		var old := str(cf.get_value("project", "dir", ""))
 		if old != "" and not project_dirs.has(old):
 			project_dirs.append(old)
@@ -321,11 +321,11 @@ func _save_prefs() -> void:
 	f.store_string(JSON.stringify(_prefs, "\t"))
 	f.close()
 
-## D1（批次 10）：实体缩略图按项目目录缓存——启动/换图不再重复读盘；打开项目时清缓存
+## D1：实体缩略图按项目目录缓存——启动/换图不再重复读盘；打开项目时清缓存
 var _ent_thumbs_cache := {}
 
 func _entity_thumbs() -> Dictionary:
-	# P2-5：键带项目数据版本号——清单新增实体/换 thumb 后保存会让版本号 +1，
+	# 键带项目数据版本号——清单新增实体/换 thumb 后保存会让版本号 +1，
 	# 缓存自动失效，不必重启编辑器。
 	var dk := str(manifest.get("_dir", "")) + "#" + str(MapStore.project_rev)
 	if _ent_thumbs_cache.has(dk):
@@ -350,17 +350,17 @@ func _entity_sizes() -> Dictionary:
 			out[str(e.get("id", ""))] = sz
 	return out
 
-# —— 快捷键（app 级唯一键盘通道：画布在 SubViewport 里收不到键盘，见审查报告 K9c） ——
-# A2.2：方向键微调的撤销会话窗口——1 秒内的连续按键合并为一个撤销步
+# —— 快捷键（app 级唯一键盘通道：画布在 SubViewport 里收不到键盘） ——
+# 方向键微调的撤销会话窗口——1 秒内的连续按键合并为一个撤销步
 var _nudge_undo_msec := 0
-# K3：最近使用瓦片（会话内记忆，最多 8 格；_on_tile_pick 记录，palette_panel 置顶渲染）
+# 最近使用瓦片（会话内记忆，最多 8 格；_on_tile_pick 记录，palette_panel 置顶渲染）
 var tile_mru: Array = []
-# A1.3：图层面板已并入层下拉，行容器字段随之删除
+# 图层面板已并入层下拉，行容器字段随之删除
 ## 只在真正处理了按键时才 set_input_as_handled；未匹配的键放行，不再无条件吞键。
 func _shortcut_input(event: InputEvent) -> void:
 	if not (event is InputEventKey and (event as InputEventKey).pressed):
 		return
-	# A7：过滤 echo——长按 Ctrl+Z 约 30 次/秒重入 load_data 协程，是孤儿 map_root 的触发源之一
+	# 过滤 echo——长按 Ctrl+Z 约 30 次/秒重入 load_data 协程，是孤儿 map_root 的触发源之一
 	if (event as InputEventKey).is_echo():
 		return
 	var focus := get_viewport().gui_get_focus_owner()
@@ -378,7 +378,7 @@ func _shortcut_input(event: InputEvent) -> void:
 			project_shell.save_current()
 			get_viewport().set_input_as_handled()
 		return
-	# A1：TextEdit（对话编辑器等）同样不能触发画布快捷键，否则编辑台词时 Ctrl+Z 撤的是地图
+	# TextEdit（对话编辑器等）同样不能触发画布快捷键，否则编辑台词时 Ctrl+Z 撤的是地图
 	if focus is LineEdit or focus is TextEdit:
 		return
 	# 保存 / 撤销 / 重做
@@ -387,7 +387,7 @@ func _shortcut_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 	if ctrl and k == KEY_Z:
-		# A6：Ctrl+Shift+Z = 重做别名（与 Ctrl+Y 等效，肌肉记忆兼容）
+ # Ctrl+Shift+Z = 重做别名（与 Ctrl+Y 等效，肌肉记忆兼容）
 		if (event as InputEventKey).shift_pressed:
 			_set_status(" 已重做" if await canvas.redo() else " 没有可重做的操作")
 		else:
@@ -416,7 +416,7 @@ func _shortcut_input(event: InputEvent) -> void:
 		return
 	# 删除选中实体（Del，BUG-02 家族：delete_selection 此前无键盘入口）
 	if k == KEY_DELETE:
-		# P0：没开地图时 delete_selection 会动到未初始化的画布状态，先守卫
+ # P0：没开地图时 delete_selection 会动到未初始化的画布状态，先守卫
 		if not map_loaded:
 			_set_status("无地图：先新建或打开一张地图")
 			get_viewport().set_input_as_handled()
@@ -424,7 +424,7 @@ func _shortcut_input(event: InputEvent) -> void:
 		canvas.delete_selection()
 		get_viewport().set_input_as_handled()
 		return
-	# A2.2 方向键微调：有选中实体时整格移动（Shift = 4 格）；1 秒会话内合并撤销
+	# 方向键微调：有选中实体时整格移动（Shift = 4 格）；1 秒会话内合并撤销
 	if k in [KEY_LEFT, KEY_RIGHT, KEY_UP, KEY_DOWN]:
 		var sel: Array = canvas.selected_multi if not canvas.selected_multi.is_empty() else ([] if canvas.selected_entity == null else [canvas.selected_entity])
 		if not sel.is_empty():
@@ -441,7 +441,7 @@ func _shortcut_input(event: InputEvent) -> void:
 			canvas._mark()
 			get_viewport().set_input_as_handled()
 			return
-	# A2.3：Ctrl+D 原位复制（+1 格偏移；props/functions/朝向随复制，新号照发）
+	# Ctrl+D 原位复制（+1 格偏移；props/functions/朝向随复制，新号照发）
 	if ctrl and k == KEY_D:
 		var srcs: Array = canvas.selected_multi if not canvas.selected_multi.is_empty() else ([] if canvas.selected_entity == null else [canvas.selected_entity])
 		if not srcs.is_empty():
@@ -464,7 +464,7 @@ func _shortcut_input(event: InputEvent) -> void:
 			canvas._mark()
 			get_viewport().set_input_as_handled()
 			return
-	# A6：Ctrl+N/O 新建/打开
+	# Ctrl+N/O 新建/打开
 	if ctrl and k == KEY_N:
 		_on_new()
 		get_viewport().set_input_as_handled()
@@ -498,8 +498,8 @@ func _shortcut_input(event: InputEvent) -> void:
 			_open_shortcut_help()
 			get_viewport().set_input_as_handled()
 		KEY_ENTER, KEY_KP_ENTER:
-			# v2 §2.3：Enter 的去处从「打开内容抽屉」改成「去内容编辑器」——
-			# 抽屉已删，功能搬到了独立面板。P3-11：小键盘回车同权。
+ # Enter 的去处从「打开内容抽屉」改成「去内容编辑器」——
+ # 抽屉已删，功能搬到了独立面板。小键盘回车同权。
 			if canvas.selected_entity != null:
 				_set_mode("content")
 				get_viewport().set_input_as_handled()
@@ -507,13 +507,13 @@ func _shortcut_input(event: InputEvent) -> void:
 # —— 工具 / 图层 / 资产 三者联动 ——
 #
 # 这三者本来是互相触发的，谁都能改另外两方，结果互相覆盖：
-#   点资产 A 改工具 → 工具又改图层 → 图层又改工具…
+# 点资产 A 改工具 → 工具又改图层 → 图层又改工具…
 # 旧实现里就会出现「点了资产变成涂刷，但工具按钮还高亮着原工具」，
 # 或者「在实体层点涂刷，图层被悄悄踢回地形」。
 #
 # 现在只有一个方向：**一个入口写状态，其它全部从状态派生**。
-#   _apply_state(tool=?, layer=?) 是唯一的写入口；
-#   _sync_ui() 把按钮高亮/页签/辅助控件从 canvas 的真实状态刷出来。
+# _apply_state(tool=?, layer=?) 是唯一的写入口；
+# _sync_ui() 把按钮高亮/页签/辅助控件从 canvas 的真实状态刷出来。
 # 任何交互（点工具按钮、切图层、点资产、按快捷键）都只调用这两者，不各写一份。
 
 ## 唯一写入口。参数留空表示「保持当前值」。
@@ -600,7 +600,7 @@ func _on_entity_selected(spr: Sprite2D) -> void:
 	# 用户看到的是画布下沿那条极简信息条；参数编辑走内容编辑器与资产目录。
 	selected_spr = spr
 	_refresh_sel_bar()
-	# v2 §3.2 双向同步的另一半：画布选中的实例，切到内容编辑器时左列要定位到它。
+	# 双向同步的另一半：画布选中的实例，切到内容编辑器时左列要定位到它。
 	# 载入地图会以 null 清选（P-10），先挡掉。
 	if spr != null and project_shell != null and project_shell.content_editor != null:
 		var eid := str(spr.get_meta("ent_id", ""))
@@ -619,7 +619,7 @@ func _set_map_loaded(loaded: bool) -> void:
 		tile_list.modulate = Color(1, 1, 1, 1)
 		ent_list.modulate = Color(1, 1, 1, 1)
 		_sync_ui()
-		# 地图载入后：清掉引导态，换成「未选中实体」的提示
+ # 地图载入后：清掉引导态，换成「未选中实体」的提示
 		selected_spr = null
 	_refresh_dirty_badge()
 	_refresh_tool_meta()
@@ -632,7 +632,7 @@ var project_shell = null        # ProjectShell（项目页外壳，含三个视�
 var asset_panel = null
 
 ## 模式切换：mode = map（关卡编辑器）/ content（内容编辑器）/ asset（资产目录）。
-## 三个面板是平级关系（v2 §1），顶栏三个入口直接切，Esc 回关卡编辑器。
+## 三个面板是平级关系，顶栏三个入口直接切，Esc 回关卡编辑器。
 func _set_mode(mode: String, focus_sid := "") -> void:
 	# 离开内容页前提交待提交的 SpinBox 值（连续控件失焦才写盘，直接 Esc 切走会丢）
 	if mode != "content" and project_shell != null and project_shell.content_editor != null:
@@ -763,7 +763,7 @@ func _build_project_view() -> void:
 	_layout_ctrl._build_project_view()
 ## —— 拆到 src/core/side_actions.gd 的委托（调用点保持不变） ——
 
-## T16/K18（批次 10）：地图改名/复制——委托 side_actions 控制器
+## 地图改名/复制——委托 side_actions 控制器
 func _rename_map_by_name(old_name: String, new_name: String) -> void:
 	_side_actions_ctrl._rename_map_by_name(old_name, new_name)
 

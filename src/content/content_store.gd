@@ -1,7 +1,7 @@
 extends RefCounted
-## 内容资源存储层：定义 / 对话 / 事件 / 商店 / 动作 schema 及任意功能内容的读写入口。
+## 内容资源存储层：content/<功能id>/<内容ID>.json 的读写入口。
 ## 只做路径解析与 JSON 读写，不含业务校验；写盘复用 MapStore.write_json 的原子替换。
-## 目录：<项目>/content/<kind>/<id>.json，kind 为合法 id 片段（不含点）。
+## 目录名 = 功能人类 id（给人读的），文件内 "function" 键 = 功能执行码（给代码执行的）。
 
 const Store := preload("res://src/map_store.gd")
 
@@ -93,7 +93,7 @@ static func path_for(m: Dictionary, kind: String, id: String) -> String:
 	return dir.path_join(id + ".json").simplify_path()
 
 ## 读单个资源；缺失/损坏/非法一律返回 {}。
-## D3（批次 10）：按文件 mtime 缓存——属性面板/抽屉/库反复 read 不再逐文件读盘；
+## D3：按文件 mtime 缓存——属性面板/抽屉/库反复 read 不再逐文件读盘；
 ## 返回缓存副本防调用方污染；写盘后 mtime 变化自动失效（与 map_store D2 同款）。
 static var _cache := {}   # path -> {mtime: int, data: Dictionary}
 
@@ -104,7 +104,7 @@ static func read(m: Dictionary, kind: String, id: String) -> Dictionary:
 	var mt := FileAccess.get_modified_time(path)
 	var sz := _file_size(path)
 	var hit = _cache.get(path, null)
-	# P2-7：mtime 秒级粒度，同秒改写会被脏缓存吃掉——缓存键补文件长度兜住绝大多数情形
+	# mtime 秒级粒度，同秒改写会被脏缓存吃掉——缓存键补文件长度兜住绝大多数情形
 	if hit != null and int(hit.get("mtime", -1)) == mt and int(hit.get("size", -1)) == sz:
 		return (hit.get("data", {}) as Dictionary).duplicate(true)
 	var f := FileAccess.open(path, FileAccess.READ)
@@ -146,7 +146,7 @@ static func write(m: Dictionary, kind: String, id: String, data: Dictionary) -> 
 		return false
 	DirAccess.make_dir_recursive_absolute(path.get_base_dir())
 	if FileAccess.file_exists(path):
-		# P3-14：内容文件与地图同权——误写可回滚（3 层 .history，最新 .1）
+ # 内容文件与地图同权——误写可回滚（3 层 .history，最新 .1）
 		Store.rotate_history(path)
 	var payload := data.duplicate(true)
 	payload["id"] = id

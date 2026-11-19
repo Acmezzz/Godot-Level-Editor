@@ -1,5 +1,5 @@
 extends RefCounted
-## 内容编辑器（批次 C）：左本图实例 / 中只读画布预览 / 右实例与功能。
+## 内容编辑器（左本图实例 / 中只读画布预览 / 右实例与功能。
 ##
 ## 与其它控制器同形：RefCounted + _init(host)，UI 全部用 Kit/Th 构建。
 ## 数据真相：实例绑定在画布 Sprite2D 的 meta（props / functions），
@@ -175,8 +175,8 @@ func refresh_list(focus := "") -> void:
 	if focus != "" and _find_ent(focus) != null:
 		_selected_ent = focus
 	elif _find_ent(_selected_ent) == null:
-		# 没有显式 focus 时落在画布当前选中实体上——关卡编辑器「在工作台编辑 →」
-		# 不带参数过来，用户期望看到的就是刚才选中的那个实例。
+ # 没有显式 focus 时落在画布当前选中实体上——关卡编辑器「在工作台编辑 →」
+ # 不带参数过来，用户期望看到的就是刚才选中的那个实例。
 		var sel = app.canvas.selected_entity if app.canvas != null else null
 		if sel != null and is_instance_valid(sel) and sel.has_meta("scene"):
 			_selected_ent = str(sel.get_meta("ent_id", ""))
@@ -208,7 +208,7 @@ func _map_ready() -> bool:
 		and app.canvas.entities != null and is_instance_valid(app.canvas.entities)
 
 ## 本图实例快照（按 ent_id 排序，保持稳定顺序）：[{spr, id, scene, name, fns}]
-## P2-4：按 canvas.ents_rev 缓存——预览每次鼠标移动都调 _hit_ent_at，原实现每个事件
+## 按 canvas.ents_rev 缓存——预览每次鼠标移动都调 _hit_ent_at，原实现每个事件
 ## 都重扫子树 + 重新排序（95×56 满图时每秒上万次临时数组分配）。绑定变更走 _mark() 抬 rev。
 var _ents_cache: Array = []
 var _ents_rev := -1
@@ -369,7 +369,7 @@ func select_inst(ent_id: String) -> void:
 	var spr0 := _find_ent(ent_id)
 	if spr0 != null:
 		_sync_mounted(spr0)
-	# P2-9：内容页隐藏时（关卡编辑器里点实体）不做整套左列/右栏重建，只记住选中，
+	# 内容页隐藏时（关卡编辑器里点实体）不做整套左列/右栏重建，只记住选中，
 	# 等切到内容视图时 refresh_list 再重建。
 	if not _is_view_visible():
 		return
@@ -380,14 +380,14 @@ func select_inst(ent_id: String) -> void:
 	var spr := _find_ent(ent_id)
 	if spr != null and app.canvas != null:
 		app.canvas.selected_entity = spr
-		# 只有「本次选中就是这个多选集合的成员」才保留集合；其它入口（新放置实体等）
-		# 仍按单选收拢，避免旧框选残留在 selected_multi 里。
+ # 只有「本次选中就是这个多选集合的成员」才保留集合；其它入口（新放置实体等）
+ # 仍按单选收拢，避免旧框选残留在 selected_multi 里。
 		var keep_multi: bool = app.canvas.selected_multi.size() > 1 \
 			and app.canvas.selected_multi.has(spr)
 		if not keep_multi:
 			app.canvas.selected_multi = [spr]
-		# P2-12：选中状态改了必须让画布重绘，否则选择框要等下一次任意重绘才落位。
-		# 不发 entity_selected——那会经 app 再转回本函数，形成回环。
+ # 选中状态改了必须让画布重绘，否则选择框要等下一次任意重绘才落位。
+ # 不发 entity_selected——那会经 app 再转回本函数，形成回环。
 		app.canvas.queue_redraw()
 	_rebuild_rows()
 	_rebuild_right()
@@ -596,7 +596,7 @@ func _build_add_row() -> Control:
 	if _add_menu == null:
 		_add_menu = PopupMenu.new()
 		_add_menu.id_pressed.connect(_on_add_menu_id)
-		# PopupMenu 必须进树才能弹出：本控制器是 RefCounted，挂到应用根上
+ # PopupMenu 必须进树才能弹出：本控制器是 RefCounted，挂到应用根上
 		app.add_child(_add_menu)
 	btn.pressed.connect(func():
 		_populate_add_menu()
@@ -820,11 +820,11 @@ func _resolve_options(decl: Dictionary) -> Array:
 
 
 ## 字段改动：写内容文件。content 为空时首次改动即创建条目（ID 生成 + 绑定回写）。
-## P2-12 约定：字段值落在 content/<kind>/<id>.json，属「内容资产」而非地图快照——
+## 约定：字段值落在 content/<kind>/<id>.json，属「内容资产」而非地图快照——
 ## 不进画布撤销栈（撤销恢复的是地图，内容文件不回滚）；改绑定的路径（_set_parallel 等）
 ## 走 _write_fns 各自进撤销。连续控件按 O3 只在失焦/回车提交。
 func _set_field(i: int, fn_id: String, key: String, value) -> void:
-	# P3-7：字符串字段统一 strip_edges——所有字符串值同一口径，避免同一字段
+	# 字符串字段统一 strip_edges——所有字符串值同一口径，避免同一字段
 	# 在两条编辑路径里一个被裁、一个带着首尾空格落盘。
 	if value is String:
 		value = (value as String).strip_edges()
@@ -857,7 +857,7 @@ func _commit_name(i: int, text: String) -> void:
 		nm = fn_id
 	var cid := str(f.get("content", ""))
 	if cid == "":
-		# 只改名字不创建内容：绑定里的 name 先记下，保持列表可读
+ # 只改名字不创建内容：绑定里的 name 先记下，保持列表可读
 		if str(f.get("name", "")) == nm:
 			return
 		var spr0 := _current_spr()
@@ -918,7 +918,7 @@ func _ensure_content(i: int) -> String:
 	return new_id
 
 ## 写盘失败：状态栏 + 徽章双重提示（红色徽章在右栏顶部，不依赖状态栏可见性）
-## P3-5：不再一律甩「目录权限」——真实失败原因多半是身份码没生成或 kind 不合法。
+## 不再一律甩「目录权限」——真实失败原因多半是身份码没生成或 kind 不合法。
 func _ensure_failed() -> void:
 	var cur := _current_spr()
 	if cur == null:

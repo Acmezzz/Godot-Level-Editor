@@ -1,8 +1,8 @@
 extends RefCounted
-## _tool_ops_ctrl：从 src/canvas/editor_canvas.gd 拆出的控制器（审查 8.3 表）。宿主状态经 alias 引用。
+## _tool_ops_ctrl：从 src/canvas/editor_canvas.gd 拆出的控制器。宿主状态经 alias 引用。
 ##
-## v2 §2.2：没有工具概念。`_apply_tool` 现在是「按当前层的语义执行一次左键」：
-##   实体层 = 放置当前资产；其余层 = 涂刷（碰撞层走 set_collision_cell）。
+## 没有工具概念。`_apply_tool` 现在是「按当前层的语义执行一次左键」：
+## 实体层 = 放置当前资产；其余层 = 涂刷（碰撞层走 set_collision_cell）。
 ## 擦除（右键）同样只看层。矩形填充已按用户要求删除。
 
 var cvs   # 宿主引用
@@ -33,7 +33,7 @@ func _paint(c: Vector2i) -> void:
 	if cvs.map_root == null:
 		cvs._hint("无地图：先新建或打开一张地图")
 		return
-	# 批次 9：碰撞层涂刷走统一入口（类型/形状元数据跟笔刷的 collision_type/shape 走）
+	# 碰撞层涂刷走统一入口（类型/形状元数据跟笔刷的 collision_type/shape 走）
 	if cvs._is_grid_layer(cvs.active_layer):
 		for bc in _brush_cells(c):
 			cvs.set_collision_cell(bc, true, cvs.collision_type, cvs.collision_shape)
@@ -45,7 +45,7 @@ func _paint(c: Vector2i) -> void:
 	cvs._mark(false)   # 只改瓦片层
 
 
-## P3-2：这一格到底有没有东西可擦——起手前先判，避免压空撤销快照。
+## 这一格到底有没有东西可擦——起手前先判，避免压空撤销快照。
 func _erase_hits(pos: Vector2) -> bool:
 	if cvs.map_root == null:
 		return false
@@ -74,7 +74,7 @@ func _erase_at(pos: Vector2) -> void:
 	if cvs.active_layer == cvs._ent_layer_index():
 		var hit: Sprite2D = cvs._entity_hit(pos)
 		if hit:
-			# B2b：释放统一为 remove_child + free——queue_free 帧末才消失，同帧擦除→保存会把刚删实体写进文件
+ # B2b：释放统一为 remove_child + free——queue_free 帧末才消失，同帧擦除→保存会把刚删实体写进文件
 			if cvs.selected_entity == hit:
 				cvs.selected_entity = null
 			cvs.selected_multi.erase(hit)
@@ -83,7 +83,7 @@ func _erase_at(pos: Vector2) -> void:
 			cvs.entity_selected.emit(cvs.selected_entity)
 			cvs._mark()
 		return
-	# 批次 9：碰撞层擦除走统一入口（类型元数据一并清）
+	# 碰撞层擦除走统一入口（类型元数据一并清）
 	if cvs._is_grid_layer(cvs.active_layer):
 		for bc in _brush_cells(cvs._cell_of(pos)):
 			cvs.set_collision_cell(bc, false)
@@ -122,7 +122,7 @@ func _stamp(c: Vector2i) -> void:
 	cvs._fit_sprite(spr, cvs.stamp_scene)
 	cvs._assign_id(spr)
 	cvs._mark()
-	# A2.1（批次 12）：放置即选中（"放置→配置"不断档）；连放不受影响
+	# 放置即选中（"放置→配置"不断档）；连放不受影响
 	cvs.entity_selected.emit(spr)
 
 

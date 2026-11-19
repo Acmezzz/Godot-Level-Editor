@@ -36,8 +36,8 @@ static func _validate_functions(data: Dictionary, issues: Array[Dictionary]) -> 
 	var norm: Dictionary = FunctionDecls.functions(data)
 	for fid in norm:
 		var d: Dictionary = norm[fid]
-		# 缺码不是错误：load_from 在 validate 之后调 ensure_codes 补发（新声明补码的正常路径）。
-		# 只有「重复」是错误——上面 duplicate_codes 已报。
+ # 缺码不是错误：load_from 在 validate 之后调 ensure_codes 补发（新声明补码的正常路径）。
+ # 只有「重复」是错误——上面 duplicate_codes 已报。
 		var fseen := {}
 		for fd in d.get("fields", []):
 			if not (fd is Dictionary):
@@ -49,7 +49,7 @@ static func _validate_functions(data: Dictionary, issues: Array[Dictionary]) -> 
 					"field ids must be non-empty and unique (by id, seen: %s)" % field_id)
 			fseen[field_id] = true
 			var kind := str((fd as Dictionary).get("kind", ""))
-			# 零兼容：kind/type 是声明契约的必需键，缺或非法直接报错（UI 侧对应只读兜底）
+ # 零兼容：kind/type 是声明契约的必需键，缺或非法直接报错（UI 侧对应只读兜底）
 			if kind != "input" and kind != "choice":
 				_add(issues, "error", "functions.%s.fields.%s" % [str(fid), field_id],
 					"field kind must be \"input\" or \"choice\"")
@@ -74,7 +74,7 @@ static func _validate_tiles(tiles: Array, project_dir: String, issues: Array[Dic
 		var atlas := str(tile.get("atlas", ""))
 		if atlas == "":
 			_add(issues, "error", path + ".atlas", "must name an atlas")
-		# T21：多图集已支持（批次 9 格式 bump）——tiles[] 每项一个图集，索引即地图格的 atlas 维度
+ # 多图集已支持（格式 bump）——tiles[] 每项一个图集，索引即地图格的 atlas 维度
 		if project_dir != "" and atlas.contains(".."):
 			_add(issues, "error", path + ".atlas", "path cannot traverse outside the project")
 		if tile.has("palette"):
@@ -121,8 +121,8 @@ static func _validate_entities(data: Dictionary, issues: Array[Dictionary]) -> v
 		ids[id] = true
 		if entity.has("fields") and not (entity.fields is Array):
 			_add(issues, "error", path + ".fields", "must be an array")
-		# 自带功能（挂载）：entities[].functions = 已声明功能的 id 数组。
-		# 挂载了未声明的功能 = 挂了个空操作，直接报错误（声明池在上层 functions）。
+ # 自带功能（挂载）：entities[].functions = 已声明功能的 id 数组。
+ # 挂载了未声明的功能 = 挂了个空操作，直接报错误（声明池在上层 functions）。
 		if entity.has("functions"):
 			if not (entity.functions is Array):
 				_add(issues, "error", path + ".functions", "must be an array of function ids")

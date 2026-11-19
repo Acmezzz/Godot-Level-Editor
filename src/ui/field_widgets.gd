@@ -2,8 +2,8 @@ extends RefCounted
 ## 声明式字段控件工厂：清单字段声明 → 控件。
 ##
 ## 只有两个可写 kind：
-##   input  —— type: string / int / float / bool（multiline 则多行；int/float 读 min/max）
-##   choice —— options[] 直给，或 source 从内容库 / 清单实体 / 地图列表动态取
+## input —— type: string / int / float / bool（multiline 则多行；int/float 读 min/max）
+## choice —— options[] 直给，或 source 从内容库 / 清单实体 / 地图列表动态取
 ##
 ## 认不出的声明一律只读展示 + 黄色提示，绝不提供可写控件。
 ## 旧实现把未知类型落进 LineEdit：数组 [1,2,3] 被 str() 成 "[1, 2, 3]"，用户一碰
@@ -137,7 +137,7 @@ static func _build_choice(decl: Dictionary, value, on_set: Callable,
 		if str((o as Dictionary).get("v", "")) == cur:
 			idx = at
 	if cur != "" and idx < 0:
-		# 值已不属于当前选项集（选项库改了/来源目录删了）：保留它，别让用户一碰就丢数据
+ # 值已不属于当前选项集（选项库改了/来源目录删了）：保留它，别让用户一碰就丢数据
 		opt.add_item("(当前值) " + cur)
 		opt.set_item_metadata(opt.get_item_count() - 1, cur)
 		idx = opt.get_item_count() - 1

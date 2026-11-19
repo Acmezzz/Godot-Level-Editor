@@ -90,7 +90,7 @@ static func box(
 		sb.set_border_width_all(0)
 	if shadow > 0:
 		sb.shadow_size = shadow
-		# 阴影带底色倾向，而不是纯黑，避免发灰
+ # 阴影带底色倾向，而不是纯黑，避免发灰
 		sb.shadow_color = Color(0, 0, 0, 0.35)
 		sb.shadow_offset = Vector2(0, 2)
 	return sb
@@ -241,7 +241,7 @@ static func _style_inputs(th: Theme) -> void:
 	for state in ["unchecked", "checked"]:
 		th.set_icon(state, "CheckBox", cb_on if state == "checked" else cb_off)
 	th.set_icon("unchecked_disabled", "CheckBox", cb_off)
-	# U-16：禁用且勾选 = 灰化对勾（旧实现复用未选中图标，看起来像没勾）
+	# 禁用且勾选 = 灰化对勾（旧实现复用未选中图标，看起来像没勾）
 	th.set_icon("checked_disabled", "CheckBox", _checkbox_icon(true, true))
 	th.set_constant("check_v_offset", "CheckBox", 0)
 	# CheckBox 继承 Button 的样式盒，不覆盖就会画出一个假的按钮底框。
@@ -249,7 +249,7 @@ static func _style_inputs(th: Theme) -> void:
 	var no_box := box(Color(0, 0, 0, 0), Color(0, 0, 0, 0), 0, 0, 0, 0)
 	for state in ["normal", "hover", "pressed", "hover_pressed", "disabled", "focus"]:
 		th.set_stylebox(state, "CheckBox", no_box)
-	# U-17：滚动条与进度条主题化——深底上不再回落引擎默认浅灰
+	# 滚动条与进度条主题化——深底上不再回落引擎默认浅灰
 	for sbt in ["HScrollBar", "VScrollBar"]:
 		th.set_stylebox("scroll", sbt, flat(BG_PANEL, 4))
 		th.set_stylebox("grabber", sbt, box(BG_RAISED, BORDER, 4, 3, 3))
@@ -283,7 +283,7 @@ static func _checkbox_icon(checked: bool, muted := false) -> ImageTexture:
 		img.set_pixel(1, i, edge)
 		img.set_pixel(S - 2, i, edge)
 	if checked:
-		# 对勾：短笔 + 长笔，两像素粗以保证小尺寸下可辨；禁用态灰化
+ # 对勾：短笔 + 长笔，两像素粗以保证小尺寸下可辨；禁用态灰化
 		var tick := Color(1, 1, 1, 0.45) if muted else Color.WHITE
 		for i in 4:
 			img.set_pixel(4 + i, 8, tick)

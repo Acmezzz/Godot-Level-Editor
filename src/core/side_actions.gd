@@ -1,11 +1,11 @@
 extends RefCounted
-## _side_actions_ctrl：从 src/app.gd 拆出的控制器（审查 8.3 表）。宿主状态经 alias 引用。
+## _side_actions_ctrl：从 src/app.gd 拆出的控制器。宿主状态经 alias 引用。
 
 var app   # 宿主引用
 
 func _init(host) -> void:
 	app = host
-## T16/K18（批次 10）：地图改名——纯 rename，不迁移引用（拍板）。当前图改名只更新名字记录。
+## 地图改名——纯 rename，不迁移引用（拍板）。当前图改名只更新名字记录。
 func _rename_map_by_name(old_name: String, new_name: String) -> void:
 	if app.manifest.is_empty() or app.map_loaded == false:
 		app._set_status("无项目/无地图上下文：改名被跳过")
@@ -23,7 +23,7 @@ func _rename_map_by_name(old_name: String, new_name: String) -> void:
 		app.cur_map_path = app.MapStore.path_for(app.manifest, new_name)
 	app._set_status("已改名：%s → %s（引用未迁移）" % [old_name, new_name])
 
-## T16/K18（批次 10）：地图复制——文件级复制，引用原样保留在副本里。
+## 地图复制——文件级复制，引用原样保留在副本里。
 func _duplicate_map_by_name(old_name: String, new_name: String) -> void:
 	var err: String = app.MapStore.duplicate_map(app.manifest, old_name, new_name)
 	if err != "":

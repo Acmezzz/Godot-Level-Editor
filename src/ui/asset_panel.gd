@@ -1,9 +1,8 @@
 extends VBoxContainer
-## 实体资产界面（快速总表 + 图鉴详情），从 app.gd 拆出以降低耦合。
+## 实体资产目录：左列图鉴列表 + 右侧详情（名称/缩略图、自带功能挂载、实例分布清点、删除）。
 ## 清单对象与写回动作由 app.gd 注入：manifest 字典、save_manifest 回调。
 ##
-## 视觉统一走 UiTheme / UiKit：顶栏用品牌 + 幽灵返回键，总表用表头带底色的
-## 七列网格，详情页左侧列表 + 右侧编辑区，所有可编辑控件都是明确的输入样式。
+## 视觉统一走 UiTheme / UiKit：详情页左侧列表 + 右侧编辑区，所有可编辑控件都是明确的输入样式。
 
 signal closed   # 返回关卡编辑器
 
@@ -116,7 +115,7 @@ func build() -> void:
 	det.add_child(Kit.divider())
 	det.add_child(extra)
 
-	# U-01：编辑态只改内存；失焦/回车统一提交（每击键全量写盘+整表重建太重）
+	# 编辑态只改内存；失焦/回车统一提交（每击键全量写盘+整表重建太重）
 	name_edit.text_changed.connect(func(t: String):
 		if _edef.is_empty() or _loading:
 			return
@@ -124,7 +123,7 @@ func build() -> void:
 	name_edit.text_submitted.connect(func(_t: String): _commit_name())
 	name_edit.focus_exited.connect(_commit_name)
 
-## U-01：名称提交（写盘）
+## 名称提交（写盘）
 func _commit_name() -> void:
 	if _edef.is_empty() or _loading:
 		return
@@ -140,12 +139,12 @@ func refresh_list(focus_sid := "") -> void:
 	var focus_idx := -1
 	var idx := 0
 	for edef in manifest.get("entities", []):
-		# C1/B7：内置种类不进图鉴（trigger_zone 由编辑器提供，不可编辑/删除）
+ # 
 		if bool(edef.get("builtin", false)):
 			continue
 		var sid := str(edef.get("id", ""))
 		asset_list.add_item(str(edef.get("name", sid)), _asset_texture(edef))
-		# U-05：tooltip 露出 id——地图数据引用的是它，界面上看不到就没法排查
+ # tooltip 露出 id——地图数据引用的是它，界面上看不到就没法排查
 		asset_list.set_item_tooltip(idx, sid + "  ·  " + str(edef.get("name", sid)))
 		asset_list.set_item_metadata(idx, sid)
 		if sid == focus_sid:
@@ -157,12 +156,12 @@ func refresh_list(focus_sid := "") -> void:
 		asset_list.select(focus_idx)
 		_show_detail(str(asset_list.get_item_metadata(focus_idx)))
 	else:
-		# 列表空（含「删掉最后一个资产」）：右栏必须走空态，否则名称框/挂载/分布/删除按钮
-		# 全部滞留上一项，残留闭包还会往已 erase 的字典里写（审查 P1-8）。
+ # 列表空（含「删掉最后一个资产」）：右栏必须走空态，否则名称框/挂载/分布/删除按钮
+ # 全部滞留上一项，残留闭包还会往已 erase 的字典里写。
 		_show_detail("")
 
 func _on_asset_pick(idx: int, _at: Vector2 = Vector2.ZERO, mb: int = 0) -> void:
-	# U-04：只认左键（与实体大纲列表同一约定）
+	# 只认左键（与实体大纲列表同一约定）
 	if mb != MOUSE_BUTTON_LEFT:
 		return
 	_show_detail(str(asset_list.get_item_metadata(idx)))
@@ -174,11 +173,11 @@ func _show_detail(sid: String) -> void:
 			_edef = edef
 			break
 	if _edef.is_empty():
-		# 空匹配（例如详情里删掉了当前资产）不能留上一项的陈旧数据
+ # 空匹配（例如详情里删掉了当前资产）不能留上一项的陈旧数据
 		name_edit.text = ""
 		thumb.texture = null
 		_mount_rows({})
-		# extra 里挂着实例分布与删除按钮，也必须清掉（审查 P1-8 的残留主体）
+ # extra 里挂着实例分布与删除按钮，也必须清掉
 		for child in extra.get_children():
 			extra.remove_child(child)
 			child.queue_free()
@@ -223,12 +222,12 @@ func _fill_distribution(sid: String) -> void:
 	var total := 0
 	for map_name in dist:
 		total += (dist[map_name] as Array).size()
-		# P2-11：实例多时按地图折叠，默认收起，展开时才建行（懒构建）。
+ # 实例多时按地图折叠，默认收起，展开时才建行（懒构建）。
 		_dist_rows.add_child(_dist_map_section(str(map_name), dist[map_name]))
 	var foot := "共 %d 个实例 / %d 张地图 · 自带功能值在内容编辑器按实例填（未填的用声明默认值）" % [total, dist.size()]
 	_dist_rows.add_child(Kit.hint_label(foot, 460))
 
-## 单张地图的折叠段：标题按钮切换，首展时才构建行（P2-11）。
+## 单张地图的折叠段：标题按钮切换，首展时才构建行。
 func _dist_map_section(map_name: String, rows: Array) -> Control:
 	var wrap := Kit.vbox(2)
 	var built := {"done": false}
@@ -250,8 +249,8 @@ func _dist_map_section(map_name: String, rows: Array) -> Control:
 func _dist_head_text(map_name: String, n: int, open: bool) -> String:
 	return ("▾ " if open else "▸ ") + "%s × %d" % [map_name, n]
 
-## 全项目扫描：{地图名: [{id, x, y, def, props}, ...]}——实例分布、K7 删除检查与实例数值显示共用数据源
-## 当前打开的地图以画布内存为底（P1-4）：磁盘底册+内存补丁的混合体会让新增未保存的实例
+## 全项目扫描：{地图名: [{id, x, y, def, props}, ...]}——实例分布、删除检查与实例数值显示共用数据源
+## 当前打开的地图以画布内存为底：磁盘底册+内存补丁的混合体会让新增未保存的实例
 ## 不出现、已删除的还留着。所以当前图直接用实体树生成，其余图读磁盘。
 func _instance_distribution(sid: String) -> Dictionary:
 	var out := {}
@@ -272,7 +271,7 @@ func _instance_distribution(sid: String) -> Dictionary:
 	for map_name in maps:
 		var is_cur: bool = host != null and map_name == str(host.cur_map_name)
 		if is_cur:
-			# 当前图：磁盘内容完全不参与（画布才是真相）
+ # 当前图：磁盘内容完全不参与（画布才是真相）
 			if not live_rows.is_empty():
 				out[map_name] = live_rows
 			continue
@@ -311,9 +310,9 @@ func _dist_row(map_name: String, r: Dictionary) -> Control:
 
 
 
-## K7：删除资产前引用检查——列出仍在使用该类型的地图与实例数；有引用需确认
+## 删除资产前引用检查——列出仍在使用该类型的地图与实例数；有引用需确认
 func _delete_asset_checked(sid: String) -> void:
-	# C1/B7：内置种类拒绝删除
+	# 
 	if bool(_edef.get("builtin", false)):
 		host._set_status(" 内置种类由编辑器提供，不能删除")
 		return

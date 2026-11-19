@@ -61,7 +61,7 @@ static func _validate_entities(entities: Array, manifest: Dictionary, issues: Ar
 		if entity.has("functions"):
 			_validate_functions(entity.get("functions"), path + ".functions", manifest, issues)
 
-## v2 §5.3：实例 functions 数组结构校验——[{fn, content, name, order, parallel}]。
+## 实例 functions 数组结构校验——[{fn, content, name, order, parallel}]。
 ## 空 content = 还没绑定内容（内容编辑器里会按需生成），不是错误；未知码只警告，
 ## 因为项目侧可以先放数据再补声明（清单声明是开发契约，不是硬白名单）。
 ## fn 在磁盘上一律是功能的执行码，按码查声明，无人类名回退。

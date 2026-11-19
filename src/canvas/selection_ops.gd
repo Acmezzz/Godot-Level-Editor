@@ -1,11 +1,11 @@
 extends RefCounted
-## SelectionOps：从 src/canvas/editor_canvas.gd 拆出的控制器（审查 8.3 表）。宿主状态经 alias 引用。
+## SelectionOps：从 src/canvas/editor_canvas.gd 拆出的控制器。宿主状态经 alias 引用。
 
 var cvs   # 宿主引用
 
 func _init(host) -> void:
 	cvs = host
-## P-11：按实体占位尺寸做外接框命中（旧实现写死 16/20px，大实体边缘点不中/擦不掉）。
+## 按实体占位尺寸做外接框命中（旧实现写死 16/20px，大实体边缘点不中/擦不掉）。
 ## 返回命中的实体（命中多个时取中心距最近者）；无命中返回 null。
 func _entity_hit(pos: Vector2) -> Sprite2D:
 	var best: Sprite2D = null
@@ -152,7 +152,7 @@ func _finish_entity_drag() -> void:
 	cvs._drag_origins.clear()
 	cvs._drag_moved = false
 	if not moved or targets.is_empty():
-		# 没真正拖动：把预览位移还原
+ # 没真正拖动：把预览位移还原
 		for i in targets.size():
 			if is_instance_valid(targets[i]):
 				(targets[i] as Sprite2D).position = origins[i]
@@ -197,7 +197,7 @@ func copy_selection() -> void:
 			"dy": spr.position.y - center.y,
 			"flip_h": spr.flip_h,
 			"functions": (spr.get_meta("functions", []) as Array).duplicate(true),
-			# deep=true：props 里的嵌套字典各副本独立，避免改一个影响全部
+ # deep=true：props 里的嵌套字典各副本独立，避免改一个影响全部
 			"props": (spr.get_meta("props", {}) as Dictionary).duplicate(true),
 		})
 	cvs._hint("已复制 %d 个实体（Ctrl+V 粘贴到光标处）" % cvs._clipboard.size())
@@ -264,7 +264,7 @@ func paste_at(pos: Vector2) -> void:
 		spr.position = base + Vector2(t.get("dx", 0.0), t.get("dy", 0.0))
 		spr.flip_h = bool(t.get("flip_h", false))
 		spr.set_meta("scene", scene_id)
-		# 每个副本独立一份数据，并把复制组内部引用改到对应副本。
+ # 每个副本独立一份数据，并把复制组内部引用改到对应副本。
 		var props: Dictionary = (t.get("props", {}) as Dictionary).duplicate(true)
 		for edef in cvs.manifest.get("entities", []):
 			if str(edef.get("id", "")) != scene_id:
@@ -276,7 +276,7 @@ func paste_at(pos: Vector2) -> void:
 					props[field_id] = copied_ids[target_id]
 			break
 		spr.set_meta("props", props)
-		# functions 里对块内实例 id 的字符串引用同样重映射（与 props 同一套 copied_ids）
+ # functions 里对块内实例 id 的字符串引用同样重映射（与 props 同一套 copied_ids）
 		var functions: Array = (t.get("functions", []) as Array).duplicate(true)
 		_remap_refs_in(functions, copied_ids)
 		spr.set_meta("functions", functions)
@@ -330,7 +330,7 @@ func flip_selected() -> bool:
 ## 按下时只快照，不立刻搬；松手才「推撤销 → 擦源 → 写目标」。
 ## 这样拖动中数据没被改过，中途松手/取消都不会留下半截状态。
 ## 状态字段挂宿主 cvs（本项目控制器一律经 cvs 读写宿主状态）：
-##   cvs._move_snap / _move_from / _move_grab / _move_cell_delta / _move_active
+## cvs._move_snap / _move_from / _move_grab / _move_cell_delta / _move_active
 
 ## 点是否落在已有区域选区里（用来区分「拖走这块」和「重新框选」）
 func _in_region_sel(pos: Vector2) -> bool:
@@ -435,7 +435,7 @@ func copy_region() -> void:
 	for y in range(cvs._region_sel.position.y, cvs._region_sel.end.y):
 		for x in range(cvs._region_sel.position.x, cvs._region_sel.end.x):
 			var d: Vector2i = Vector2i(x, y) - cvs._region_sel.position
-			# 批次 9：区域剪贴板带 atlas（source_id）——多图集瓦片整块搬运
+ # 区域剪贴板带 atlas（source_id）——多图集瓦片整块搬运
 			var tac: Vector2i = cvs.terrain.get_cell_atlas_coords(Vector2i(x, y))
 			if tac != Vector2i(-1, -1):
 				var tsid: int = cvs.terrain.get_cell_source_id(Vector2i(x, y))
@@ -445,7 +445,7 @@ func copy_region() -> void:
 				var dsid: int = cvs.decor.get_cell_source_id(Vector2i(x, y))
 				cvs._region_clip["decor"].append([d.x, d.y, dsid, dc.x, dc.y])
 			if cvs.collision.get_cell_source_id(Vector2i(x, y)) != -1:
-				# 批次 9：区域剪贴板带碰撞类型/形状
+ # 区域剪贴板带碰撞类型/形状
 				var cm = cvs._collision_meta.get(Vector2i(x, y), null)
 				if cm != null:
 					cvs._region_clip["collision"].append([d.x, d.y, str(cm.get("type", "solid")), str(cm.get("shape", ""))])
@@ -463,7 +463,7 @@ func copy_region() -> void:
 				"dx": ec.x - cvs._region_sel.position.x,
 				"dy": ec.y - cvs._region_sel.position.y,
 				"scene": str(spr.get_meta("scene", "")),
-				# A3：朝向随块复制；ent_id 是引用重映射（C2）的前提
+ # 朝向随块复制；ent_id 是引用重映射的前提
 				"flip_h": bool(spr.flip_h),
 				"ent_id": str(spr.get_meta("ent_id", "")),
 				"functions": (spr.get_meta("functions", []) as Array).duplicate(true),
@@ -500,7 +500,7 @@ func cut_region() -> void:
 		for x in range(cvs._region_sel.position.x, cvs._region_sel.end.x):
 			var c := Vector2i(x, y)
 			for i in layers.size():
-				# 只擦瓦片/装饰层；碰撞层走 cvs.collision 节点，实体层在下面按位置处理
+ # 只擦瓦片/装饰层；碰撞层走 cvs.collision 节点，实体层在下面按位置处理
 				if i == ci or str(layers[i].get("type", "tiles")) != "tiles":
 					continue
 				cvs._layer_node(i).erase_cell(c)
@@ -525,7 +525,7 @@ func _paste_region(origin: Vector2i) -> void:
 		cvs._hint("有图层处于锁定状态：解锁后再粘贴区域")
 		return
 	cvs._push_undo()
-	# 批次 9：粘贴按 atlas 维度重建（[dx,dy,atlas,ax,ay] 新 / [dx,dy,ax,ay] 旧）
+	# 粘贴按 atlas 维度重建（[dx,dy,atlas,ax,ay] 新 / [dx,dy,ax,ay] 旧）
 	for t in cvs._region_clip.get("terrain", []):
 		var ta := t as Array
 		if ta.size() >= 5:
@@ -554,7 +554,7 @@ func _paste_region(origin: Vector2i) -> void:
 		spr.position = Vector2(origin + Vector2i(int(t.get("dx", 0)), int(t.get("dy", 0)))) * cvs.tile_px \
 			+ Vector2(cvs.tile_px, cvs.tile_px) * 0.5
 		spr.set_meta("scene", scene_id)
-		# A3：恢复朝向；ent_id 不复用（新块给新号），留作 C2 重映射的候选数据
+ # 恢复朝向；ent_id 不复用（新块给新号），留作 
 		spr.flip_h = bool(t.get("flip_h", false))
 		spr.set_meta("props", (t.get("props", {}) as Dictionary).duplicate(true))
 		spr.set_meta("functions", (t.get("functions", []) as Array).duplicate(true))
@@ -565,7 +565,7 @@ func _paste_region(origin: Vector2i) -> void:
 		if old_id != "":
 			id_map[old_id] = str(spr.get_meta("ent_id", ""))
 		pasted.append(spr)
-	# C2：块内引用重映射——props/functions 里命中块内旧 id 的字符串 → 指向粘贴出的新实例；块外引用不动
+	# 
 	for spr2 in pasted:
 		var props2: Dictionary = (spr2.get_meta("props", {}) as Dictionary).duplicate(true)
 		var functions2: Array = (spr2.get_meta("functions", []) as Array).duplicate(true)
@@ -605,7 +605,7 @@ func _remap_refs_in(container, id_map: Dictionary) -> bool:
 					stack.append(v2)
 	return changed
 
-## 取消区域粘贴预览（Esc/右键共用）。键盘入口在 app 级——画布收不到键盘（K9c）。
+## 取消区域粘贴预览（Esc/右键共用）。键盘入口在 app 级——画布收不到键盘。
 
 func _cell_rect(a: Vector2, b: Vector2) -> Rect2i:
 	var ca: Vector2i = cvs._cell_of(a)

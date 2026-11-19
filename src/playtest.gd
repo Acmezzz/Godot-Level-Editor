@@ -44,7 +44,7 @@ static func _first_token(cmd: String) -> String:
 	var sp := s.find(" ")
 	return s if sp < 0 else s.substr(0, sp)
 
-## A5.1：读试玩日志最后 n 行（游戏侧写 <项目>/editor/playtest.log）；无文件返回空串
+## 读试玩日志最后 n 行（游戏侧写 <项目>/editor/playtest.log）；无文件返回空串
 static func log_tail(project_dir: String, n: int) -> String:
 	if project_dir == "":
 		return ""

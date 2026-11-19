@@ -58,7 +58,7 @@ static func load_from(project_dir: String) -> Dictionary:
 	if not (data is Dictionary):
 		return {"_error": "清单 JSON 解析失败: " + p}
 	data["_dir"] = project_dir
-	# K22（批次 12）：清单 version——缺省补 1，结构演进时有迁移锚点
+	# 清单 version——缺省补 1，结构演进时有迁移锚点
 	if not data.has("version") or not (data["version"] is int):
 		data["version"] = 1
 	var issues := validate(data)
@@ -228,7 +228,7 @@ static func prefab_collision_size(project_dir: String, prefab_rel: String) -> Ve
 	for raw2 in text.split("\n"):
 		var line2 := raw2.strip_edges()
 		if line2.begins_with("[node") and line2.contains("CollisionShape2D"):
-			# 在同一节点块内找 shape = SubResource("...")
+ # 在同一节点块内找 shape = SubResource("...")
 			var idx := text.find(line2)
 			if idx < 0:
 				continue

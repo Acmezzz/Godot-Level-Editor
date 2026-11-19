@@ -35,7 +35,7 @@ func open_collision_gen() -> void:
 	var refresh_preview := func():
 		var n: int = app.canvas.count_auto_collision(_collision_strategy(strat.selected), replace_cb.button_pressed)
 		if n == 0 and not replace_cb.button_pressed:
-			# 已有碰撞覆盖了全部候选格：说清为什么是 0，而不是让人以为功能坏了
+ # 已有碰撞覆盖了全部候选格：说清为什么是 0，而不是让人以为功能坏了
 			preview.text = "这些格子已经有碰撞了；要重算请勾选「先清空现有碰撞」"
 			preview.add_theme_color_override("font_color", UiThemeScript.TEXT_MUTE)
 		else:

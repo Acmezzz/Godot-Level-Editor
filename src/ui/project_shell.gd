@@ -1,11 +1,11 @@
 extends VBoxContainer
-## 项目工作台外壳（重构 R1）：资产 / 内容两个全屏视图共用一个壳。
+## 项目工作台外壳：资产 / 内容两个全屏视图共用一个壳。
 ##
 ## 设计基线：资产 / 内容统一进项目工作台（旧的三全屏模式取消）。
-##   右上角与画布顶栏同一套「关卡 / 内容 / 资产」模式切换（Esc 回画布），
-##   底栏状态消息常驻，Ctrl+S 按当前视图分派保存目标。
-##   没有左侧页签栏——切换全靠右上角三个模式按钮。
-##   清单设置、背景图组、关卡清单与世界拓扑均已删除。
+## 右上角与画布顶栏同一套「关卡 / 内容 / 资产」模式切换（Esc 回画布），
+## 底栏状态消息常驻，Ctrl+S 按当前视图分派保存目标。
+## 没有左侧页签栏——切换全靠右上角三个模式按钮。
+## 清单设置、背景图组、关卡清单与世界拓扑均已删除。
 ##
 ## 各视图只负责自己的内容区（原来是各自带顶栏的全屏界面，顶栏已收进本壳）。
 
@@ -108,11 +108,11 @@ func show_view(view: String, focus := "") -> void:
 	_title.text = "项目 · %s" % _label_of(view)
 	match view:
 		"asset":
-			# 图鉴是唯一页面：焦点定位或落到第一项
+ # 图鉴是唯一页面：焦点定位或落到第一项
 			asset_panel.show_detail(focus)
 			_set_status("资产模板改动后点「保存」写回清单，下次试玩生效")
 		"content":
-			# focus 语义在此视图 = 实例 id（右栏定位），空则保留上次选中
+ # focus 语义在此视图 = 实例 id（右栏定位），空则保留上次选中
 			content_editor.refresh_list(focus)
 			_set_status("点实例挂功能、填内容；改动即时写盘（Esc 回关卡编辑器）")
 
@@ -127,7 +127,7 @@ func _label_of(view: String) -> String:
 func save_current() -> void:
 	match _view:
 		"content":
-			# 新内容编辑器改动即时写盘，commit 只回报成功与否
+ # 新内容编辑器改动即时写盘，commit 只回报成功与否
 			content_editor.commit()
 			_set_status("内容已保存（改动即时写盘）")
 		_:

@@ -1,55 +1,62 @@
 # 关卡编辑器 — 功能文档
 
 > 独立 Godot 4.7.2 工程，通用 2D 关卡编辑器（不绑定具体游戏）。入口场景 `src/editor.tscn`，主脚本 `src/app.gd`。
-> 编辑器不依赖游戏工程资源，只读 `<游戏项目>/editor/editor_manifest.json`、`maps/*.json` 与 `content/<功能id>/*.json`。
-> 本文按 2026-11-19 的实际代码重写；凡文档与代码冲突，以代码为准。
+> 编辑器不依赖游戏工程资源，只读 `<游戏项目>/editor/editor_manifest.json`、`maps/*.json` 与 `content/`。
+> 凡本文与代码冲突，以代码为准（本文按 2026-11-20 的代码逐文件核对）。
 
 ---
 
 ## 1. 总体架构
 
+**这个编辑器是什么**：一个不写死任何游戏内容的「组装器」。游戏工程放一份清单
+（`editor/editor_manifest.json`），编辑器按清单摆出图层、瓦片、实体、功能；
+你在画布上摆地图、给实例挂功能填内容，编辑器把结果存成地图 JSON 和内容 JSON，
+游戏侧只读这些文件、自己实现行为。
+
 ```
 src/
-├── app.gd                 宿主：项目选择、快捷键、模式切换、跨控制器委托
-├── editor.tscn            入口场景（只挂 app.gd，界面全部代码构建）
-├── manifest.gd            清单读取（EditorManifest）：路径/命令/角色/功能声明
-├── manifest_validation.gd 清单结构校验
-├── map_store.gd           地图 JSON 读写（原子写、历史轮转、mtime 缓存、事务）
-├── map_data_validation.gd 地图数据结构校验（含实例 functions 结构）
-├── map_export.gd          预览图 PNG 渲染 + 统计文本
-├── playtest.gd            试玩命令拼装、子进程启动与存活跟踪
-├── core/
-│   ├── constants.gd       共享常量（INVISIBLE_CELL 等）
-│   ├── editor_state.gd    状态流唯一写入口 _apply_state + UI 派生 _sync_ui
-│   ├── undo_history.gd    快照式撤销/重做（80 步，JSON 字符串快照）
-│   └── side_actions.gd    改名/复制地图、按名开图、按 id 删实体
-├── canvas/
-│   ├── editor_canvas.gd   画布宿主：load_data、图层节点、相机、序列化、委托
-│   ├── canvas_draw.gd     绘制：网格/幽灵/连线/占位框/触发区/选区/粘贴预览
-│   ├── canvas_input.gd    鼠标输入路由：缩放平移、涂/擦、框选、拖拽
-│   ├── tool_ops.gd        按层语义执行左键（放置 / 涂刷）与右键擦除
-│   ├── selection_ops.gd   选区、剪贴板、区域复制粘贴搬迁、翻转
-│   ├── collision_view.gd  碰撞格可视化（按类型分色、斜坡画三角）
-│   └── tileset_cache.gd   TileSet 构建缓存（路径 + tileSize + 图集 mtime）
-├── content/
-│   ├── content_store.gd   内容资源读写：路径解析、原子写、枚举
-│   ├── content_id.gd      分层身份码：地图/实体/实例 4 位，内容 6 位
-│   ├── builtin_kinds.gd   内置实体种类（trigger_zone）注入/剥离
-│   └── def_model.gd       数值三层合并（实例 > 定义 > 清单）
-└── ui/
-	├── ui_theme.gd        设计系统：全部颜色/圆角/字号/控件样式
-	├── ui_kit.gd          可复用构件：按钮变体、徽章、字段行、空状态
-	├── editor_layout.gd   关卡视图搭建：顶栏/左栏/画布/选中信息条/状态栏
-	├── project_shell.gd   项目工作台外壳：内容 / 资产 两个全屏视图
-	├── top_bar_nav.gd     共享顶栏片段：地图 ▾ + 关卡/内容/资产
-	├── palette_panel.gd   瓦片调色板（类别 → 资产两级导航）与实体列表填充
-	├── map_file.gd        地图生命周期：新建/打开/保存/改名/草稿/尺寸/导出/试玩
-	├── props_panel.gd     只剩「从地形生成碰撞」弹窗
-	├── content_editor.gd  内容编辑器（左实例 / 中预览 / 右实例与功能）
-	└── asset_panel.gd     资产目录（图鉴详情 + 实例分布）
+├── app.gd                  应用外壳：项目列表/切换、快捷键、三个视图的切换与收尾
+├── editor.tscn             入口场景（只挂 app.gd，界面全部代码构建）
+├── manifest.gd             清单读取：路径、试玩命令、实体 role/占位尺寸、图像裁边
+├── manifest_validation.gd  清单校验：瓦片/图层/实体/功能声明/挂载，坏清单给出错误列表
+├── map_store.gd            地图 JSON 读写：原子写、3 层历史备份、缓存、多文件事务
+├── map_data_validation.gd  地图 JSON 校验：打开地图时的读入防线（含实例功能绑定结构）
+├── map_export.gd           导出：PNG 俯视预览图 + 文本统计
+├── playtest.gd             试玩：按清单命令模板拉起游戏进程并跟踪
+├── core/                   —— 与画布无关的编辑器核心 ——
+│   ├── constants.gd        共享常量（地图默认尺寸、碰撞占位格等，只有这一处定义）
+│   ├── editor_state.gd     画布状态的唯一写入口：选了什么层/资产，改完自动刷新界面
+│   ├── undo_history.gd     撤销/重做：整图快照，最多 80 步
+│   └── side_actions.gd     地图改名/复制、按名开图、按 id 删实体
+├── canvas/                 —— 画布（关卡编辑器主体） ——
+│   ├── editor_canvas.gd    画布宿主：装载地图、图层节点、相机、保存时序列化
+│   ├── canvas_draw.gd      画布上画什么：网格、幽灵预览、连线、占位框、触发区、选区
+│   ├── canvas_input.gd     鼠标事件分派：缩放平移、涂/擦、框选、拖拽
+│   ├── tool_ops.gd         左键/右键语义执行：涂刷、放置、擦除、盖章
+│   ├── selection_ops.gd    单选/框选/组拖、剪贴板、区域复制粘贴、引用重映射
+│   ├── collision_view.gd   碰撞格可视化：把隐形碰撞格画成半透明色块（按类型分色）
+│   └── tileset_cache.gd    TileSet 构建缓存：同一图集不重复读 PNG/重建
+├── content/                —— 功能与内容的数据层 ——
+│   ├── function_decl.gd    功能声明域：声明池归一化、执行码补发/查重、码↔名互查、CODES.md
+│   ├── content_id.gd       五段身份数：地图/实体/实例 4 位 + 内容 6 位的生成与拼装
+│   ├── content_store.gd    内容文件读写：content/<功能id>/<内容ID>.json，原子写
+│   └── builtin_kinds.gd    内置实体种类（trigger_zone）：加载清单时注入、保存时剥离
+└── ui/                     —— 界面（每个面板一个控制器） ——
+    ├── ui_theme.gd         视觉系统：全部颜色/圆角/字号/控件样式只有这一处
+    ├── ui_kit.gd           可复用构件：标题、按钮、徽章、字段行、空状态
+    ├── editor_layout.gd    关卡视图：顶栏/左栏/画布容器/选中信息条/状态栏
+    ├── project_shell.gd    项目工作台外壳：内容、资产两个全屏视图共用
+    ├── top_bar_nav.gd      共享顶栏片段：地图 ▾ + 关卡/内容/资产三个按钮
+    ├── palette_panel.gd    瓦片调色板（类别 → 图集两级导航）+ 实体列表
+    ├── map_file.gd         地图文件生命周期：新建/打开/保存/改名/自动保存/尺寸/导出/试玩
+    ├── props_panel.gd      只剩「从地形生成碰撞」弹窗
+    ├── content_editor.gd   内容编辑器：左实例列表 / 右功能列表与内容表单
+    ├── content_preview.gd  内容编辑器的中列只读地图预览（自绘缩放/平移/点选）
+    ├── field_widgets.gd    声明式字段控件工厂：input/choice 两分支，认不出的只读展示
+    └── asset_panel.gd      资产目录：图鉴详情、自带功能挂载、实例分布清点、删除检查
 ```
 
-设计原则：**清单驱动**。图层、图集、实体类型、字段与数值声明、功能声明、试玩命令全部来自清单；
+设计原则：**清单驱动**。图层、图集、实体类型、功能声明与挂载、试玩命令全部来自清单；
 编辑器只编辑数据，不硬编码游戏内容。
 
 架构模式：`app.gd` 与 `editor_canvas.gd` 是两个**宿主**，只保留引导代码与同名薄包装，功能实现在
@@ -127,8 +134,7 @@ src/
 （Rectangle 用 `size`，Circle 用 `radius*2`，Capsule 用 `radius*2 × height`）；都没有 = 用缩略图原始尺寸。
 
 **角色声明**：`entities[].role` = `portal` / `exit` / `landing` / `trigger`（连接语义标签）。
-未声明时按 scene id 回退（`portal` / `exit` / `spawn_point` / `trigger_zone`）。
-画布绘制出口角标、落点描边都按 role 判定，不再硬编码 scene id。
+**只认清单显式声明**——未声明的实体就是普通实体，画布不猜、不画连接标记（零兼容）。
 
 ---
 
@@ -312,8 +318,9 @@ src/
 - 并入清单（`builtin=true`，固定实体码 `TZ99`），保存清单时剥离，不污染游戏工程。
 - 没有 `thumb` 也出现在实体列表里；放置时画 2×2 矩形幽灵，落下带默认
   `props { w:2, h:2, mode:"enter", event:"", once:true }` 并把位置推到矩形中心。
-- 无父属性表单后，`w/h/mode/event/once/require_flag` 不再有专用编辑控件；
-  这些键仍必须随地图保存——`undo_history.TRIGGER_PROP_KEYS` 显式放行，否则保存会静默丢字段。
+- 无父属性表单后，`w/h/mode/event/once` 没有专用编辑控件；值在地图 JSON 的 `props` 里
+  手改（或游戏侧运行时写）。保存时 `props` 只丢「值为 null/空串」的键——未绑定事件的
+  `event` 存盘表现为键消失，游戏侧按「键缺失 = 未绑定」处理；其余键原样保留。
 - 画布绘制：半透明矩形 + 左上角标签 `事件id · 触发方式 · 一次`；未绑定时橙色并显示「(未绑定事件)」，
   绑定时蓝色。
 

@@ -7,7 +7,7 @@ extends Node2D
 ## 所以碰撞层有一个专属的可视节点，和地形/装饰/实体层一样挂在图层节点上——
 ## 可见性、锁定、 SubViewport 显示都由统一的图层接口控制。
 ##
-## 批次 9：按类型分色分形——solid 红块、one_way 琥珀色、ladder 青色、hazard 品红；
+## 按类型分色分形——solid 红块、one_way 琥珀色、ladder 青色、hazard 品红；
 ## 斜坡画三角形（r45 右高 / l45 左高），一眼区分斜坡朝向。颜色刻意饱和。
 
 var layer: TileMapLayer
@@ -46,7 +46,7 @@ func _draw() -> void:
 			cshape = str(cm.get("shape", ""))
 		var cols: Array = TYPE_COLORS.get(ctype, TYPE_COLORS["solid"])
 		var r := Rect2(Vector2(c) * tile_px, Vector2(tile_px, tile_px))
-		# 斜坡画三角形：r45 = 右高（实心在斜线下方），l45 = 左高
+ # 斜坡画三角形：r45 = 右高（实心在斜线下方），l45 = 左高
 		if cshape == "r45":
 			var pts := PackedVector2Array([r.position + Vector2(0, tile_px), r.position + Vector2(tile_px, 0), r.position + Vector2(tile_px, tile_px)])
 			draw_colored_polygon(pts, cols[0])

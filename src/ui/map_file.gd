@@ -1,5 +1,5 @@
 extends RefCounted
-## 地图文件生命周期控制器。状态经宿主访问；写盘暂仍走 FileAccess（S-02 收敛在后续批次）。
+## 地图文件生命周期控制器。状态经宿主访问；写盘暂仍走 FileAccess。
 const MapExport := preload("res://src/map_export.gd")
 const UiKitScript := preload("res://src/ui/ui_kit.gd")
 const UiThemeScript := preload("res://src/ui/ui_theme.gd")
@@ -19,14 +19,14 @@ var _play_started_msec: int = 0
 ## 最近一次在新建/重命名弹窗里确认的名字（顶栏常驻名字框已移除，这里记住值供预填）
 var _name_memo := ""
 
-## 地图文件生命周期（审查 8.2 块 4：从 app.gd 拆出）——新建/打开/保存/改名迁移/自动保存/试玩/尺寸/导出
+## 地图文件生命周期——新建/打开/保存/改名（纯改名，引用不迁移）/自动保存/试玩/尺寸/导出
 func confirm_discard(action: String) -> bool:
 	if not app.map_loaded or not app.canvas.modified_flag:
 		return true
 	var dlg := ConfirmationDialog.new()
 	dlg.title = "未保存的修改"
 	dlg.dialog_text = "地图 %s 有未保存修改。\n继续%s将丢失这些修改。" % [app.cur_map_name, action]
-	# P1-5：自动保存草稿存得进、捞不出——放弃修改时至少把草稿路径说出来，
+	# 自动保存草稿存得进、捞不出——放弃修改时至少把草稿路径说出来，
 	# 否则用户以为这份保险不存在。草稿在「打开」里同样可被识别并归位（见 load_map_file）。
 	var draft_path := str(app.manifest.get("_maps_dir", "")).path_join(str(app.cur_map_name) + ".autosave.json")
 	if FileAccess.file_exists(draft_path):
@@ -192,8 +192,8 @@ func rename_map_now(old_name: String, new_name: String, allow_write_unsaved := f
 		if err != "":
 			return err
 	elif allow_write_unsaved and is_current:
-		# 原图未落盘（新建后还没保存）：改名必须真正落地，否则只改内存名 =
-		# 面板显示新名、磁盘上始终没文件，用户看到的「重命名」是假的。
+ # 原图未落盘（新建后还没保存）：改名必须真正落地，否则只改内存名 =
+ # 面板显示新名、磁盘上始终没文件，用户看到的「重命名」是假的。
 		var data: Dictionary = app.canvas.extract()
 		data.meta.name = nn
 		if not app.MapStore.write(app.manifest, nn, data):
@@ -208,8 +208,8 @@ func rename_map_now(old_name: String, new_name: String, allow_write_unsaved := f
 		if app.canvas.map_data.has("meta"):
 			app.canvas.map_data["meta"]["name"] = nn
 		_opened_mtime = FileAccess.get_modified_time(new_path)
-		# 刚才已把内容写进新文件：脏标记与自动保存计时归零，
-		# 否则状态栏还挂着「未保存」、两分钟后又多写一份 .autosave.json。
+ # 刚才已把内容写进新文件：脏标记与自动保存计时归零，
+ # 否则状态栏还挂着「未保存」、两分钟后又多写一份 .autosave.json。
 		if not on_disk:
 			app.canvas.modified_flag = false
 			_last_autosave_msec = Time.get_ticks_msec()
@@ -238,7 +238,7 @@ func load_map_file(p: String) -> void:
 	var data: Dictionary = result.data
 	if not result.warnings.is_empty():
 		app._set_status(" 地图已打开但有兼容警告: " + _format_issues(result.warnings))
-	# A6：草稿归位——打开 .autosave.json 读草稿数据，但名字/路径/名字框归位正式名；
+	# 草稿归位——打开 .autosave.json 读草稿数据，但名字/路径/名字框归位正式名；
 	# 之后 Ctrl+S 写回正式文件，草稿自然变旧、草稿列表条目消失（与侧栏 tooltip 承诺一致）
 	var was_draft := str(p.get_file()).ends_with(".autosave.json")
 	var base := p.get_file().get_basename()
@@ -297,7 +297,7 @@ func on_save() -> bool:
 	if path == "":
 		app._set_status(" 地图名不合法: " + n)
 		return false
-	# A4.3：外部变更检测——打开后磁盘 mtime 变了 = 别处改过这份文件（本次保存会覆盖外部改动）
+	# 外部变更检测——打开后磁盘 mtime 变了 = 别处改过这份文件（本次保存会覆盖外部改动）
 	var ext_changed := _opened_mtime > 0 and FileAccess.file_exists(path) \
 		and FileAccess.get_modified_time(path) != _opened_mtime
 	# P-02/S-02：写盘收敛到 MapStore 单入口（.tmp 原子替换，中途崩溃不留半截 JSON）
@@ -357,7 +357,7 @@ func on_play(spawn_tiles: Vector2i = Vector2i(-1, -1)) -> void:
 ## 试玩进程跟踪：退出后回报一次（Windows tasklist 轮询）
 
 func poll_playtest() -> void:
-	# PF-04：is_alive 是阻塞的 tasklist 调用，每帧轮询会卡主线程——1s 节流
+	# is_alive 是阻塞的 tasklist 调用，每帧轮询会卡主线程——1s 节流
 	if Time.get_ticks_msec() - _last_alive_poll < 1000:
 		return
 	_last_alive_poll = Time.get_ticks_msec()
@@ -370,7 +370,7 @@ func poll_playtest() -> void:
 		return
 	var secs := int((Time.get_ticks_msec() - _play_started_msec) / 1000.0)
 	_play_pid = 0
-	# A5.1：试玩日志尾随——游戏侧写 editor/playtest.log，退出后取最后几行（无文件 = 原消息）
+	# 试玩日志尾随——游戏侧写 editor/playtest.log，退出后取最后几行（无文件 = 原消息）
 	var tail := Playtest.log_tail(str(app.manifest.get("_dir", "")), 4)
 	if tail != "":
 		app._set_status(" 试玩退出（%d 秒）· 日志: %s" % [secs, tail.replace("\n", " | ")])
@@ -452,7 +452,7 @@ func open_export_dialog() -> void:
 		var dir2 := str(app.manifest.get("_dir", "")).path_join("editor/exports")
 		DirAccess.make_dir_recursive_absolute(dir2)
 		var path2 := dir2.path_join(app.cur_map_name + ".txt")
-		# P-02：导出写盘同样走原子写
+ # 导出写盘同样走原子写
 		if app.MapStore.write_text(path2, txt):
 			app._set_status("已导出 " + path2)
 		else:

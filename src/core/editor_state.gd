@@ -1,11 +1,11 @@
 extends RefCounted
-## _editor_state_ctrl：从 src/app.gd 拆出的控制器（审查 8.3 表）。宿主状态经 alias 引用。
+## _editor_state_ctrl：从 src/app.gd 拆出的控制器。宿主状态经 alias 引用。
 
 var app   # 宿主引用
 
 func _init(host) -> void:
 	app = host
-## 唯一写入口。v2 §2.2：没有工具概念——层类型即画笔语义。
+## 唯一写入口。没有工具概念——层类型即画笔语义。
 ## 第一个参数保留只为兼容吸管的 tool_requested(tool, layer) 信号，值被忽略。
 func _apply_state(_tool := "", layer := -1) -> void:
 	if layer >= 0 and layer != app.canvas.active_layer:
@@ -31,7 +31,7 @@ func _sync_ui() -> void:
 		_sync_collision_controls()
 	elif lt == "tiles":
 		app._set_palette_page("tiles")
-		# 装饰层没有独立资产（图一）：装饰↔地形切换时重填瓦片列表
+ # 装饰层没有独立资产（图一）：装饰↔地形切换时重填瓦片列表
 		app._palette_ctrl.sync_layer_view()
 	else:
 		app._set_palette_page("entities")
@@ -73,14 +73,14 @@ func _on_tile_pick(i: int, _at: Vector2 = Vector2.ZERO, _mb: int = 0) -> void:
 		app._set_status(" 无地图：先新建或打开一张地图")
 		return
 	var meta: Dictionary = app.tile_list.get_item_metadata(i)
-	# K3 MRU：只有带 cell 的行才走选瓦片流程（MRU 标题行/类别行直接忽略）
+	# 只有带 cell 的行才走选瓦片流程（MRU 标题行/类别行直接忽略）
 	if not meta.has("cell"):
 		return
-	# K3 MRU：记录最近使用（会话内，最多 8 格，重复使用时提到最前）
+	# 记录最近使用（会话内，最多 8 格，重复使用时提到最前）
 	var mc: Vector2i = meta.get("cell", Vector2i.ZERO)
 	_record_tile_mru("%d:%d,%d" % [int(meta.get("atlas", 0)), mc.x, mc.y])
 	app.canvas.paint_cell = meta.get("cell", Vector2i.ZERO)
-	# 批次 9：多图集——调色板 metadata 带 atlas（TileSet source_id），选瓦片时一起落笔
+	# 多图集——调色板 metadata 带 atlas（TileSet source_id），选瓦片时一起落笔
 	app.canvas.paint_atlas = int(meta.get("atlas", 0))
 	app.canvas.stamp_thumb = null
 	# 保留碰撞层（在碰撞层选瓦片仍是要画碰撞）；否则回到最近用的瓦片层
@@ -91,7 +91,7 @@ func _on_tile_pick(i: int, _at: Vector2 = Vector2.ZERO, _mb: int = 0) -> void:
 
 ## 资产栏点实体：设好待盖章实体，切到盖章工具，并切到实体层
 
-## K3 MRU：最近使用瓦片记录（批次 9 键 "atlas:x,y"——多图集瓦片各自记录）
+## 最近使用瓦片记录（键 "atlas:x,y"——多图集瓦片各自记录）
 func _record_tile_mru(key_str: String) -> void:
 	if key_str == "":
 		return

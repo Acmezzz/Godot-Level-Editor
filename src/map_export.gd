@@ -35,7 +35,7 @@ static func render_preview(data: Dictionary, px_per_tile := 4, atlas_imgs: Array
 		var ey := int(e.get("y", 0))
 		if ex < 0 or ey < 0 or ex >= w or ey >= h:
 			continue
-		# B6（批次 12）：颜色不再硬编码游戏实体名（编辑器中立）——按 scene id 稳定 hash 从调色板取色
+ # B6：颜色不再硬编码游戏实体名（编辑器中立）——按 scene id 稳定 hash 从调色板取色
 		var col := _scene_color(str(e.get("scene", "")))
 		var p := Vector2i(ex * px_per_tile, ey * px_per_tile)
 		img.fill_rect(Rect2i(p, Vector2i(maxi(px_per_tile, 2), maxi(px_per_tile, 2))), col)
@@ -45,7 +45,7 @@ static func render_preview(data: Dictionary, px_per_tile := 4, atlas_imgs: Array
 	img.fill_rect(sr, Color(1, 1, 1, 1))
 	return img
 
-## B6（批次 12）：scene id → 稳定调色板色（hash 取色，编辑器不认识具体游戏实体）
+## B6：scene id → 稳定调色板色（hash 取色，编辑器不认识具体游戏实体）
 static func _scene_color(scene_id: String) -> Color:
 	var pal := [Color(0.35, 0.85, 1.0), Color(1.0, 0.62, 0.25), Color(0.3, 1.0, 0.5), Color(1.0, 0.35, 0.35), Color(0.75, 0.5, 1.0), Color(0.5, 0.6, 1.0), Color(1.0, 0.9, 0.3), Color(0.95, 0.6, 0.7), Color(0.6, 0.95, 0.8), Color(0.9, 0.9, 0.6)]
 	if scene_id == "":
@@ -58,7 +58,7 @@ static func _scene_color(scene_id: String) -> Color:
 static func _cell_rect(c: Array, px: int) -> Rect2i:
 	return Rect2i(Vector2i(int(c[0]), int(c[1])) * px, Vector2i(px, px))
 
-## 把图集对应格子贴到预览图上（批次 12：v3 多图集解析——5 元条目按 atlas 索引取源；失败返回 false）
+## 把图集对应格子贴到预览图上（v3 多图集解析——5 元条目按 atlas 索引取源；失败返回 false）
 static func _blit_tile(img: Image, dst: Rect2i, c: Array, atlas_imgs: Array, atlas_size: Vector2i, tsz: int, px: int) -> bool:
 	var acx := int(c[2]) if c.size() > 2 else 0
 	var acy := int(c[3]) if c.size() > 3 else 0

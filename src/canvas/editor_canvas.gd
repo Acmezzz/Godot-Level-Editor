@@ -36,13 +36,13 @@ var spawn: Marker2D
 var tile_set: TileSet
 var atlas_tex: Texture2D
 var atlas_img: Image
-# 批次 9 多图集：全部图集（索引 = TileSet source_id = 地图格 atlas 维度）
+# 多图集：全部图集（索引 = TileSet source_id = 地图格 atlas 维度）
 var atlas_imgs: Array = []
-# D5（批次 10）：实体 by_id 索引缓存——_mark/load_data 置脏，绘制连线时 O(n) 复用
+# D5：实体 by_id 索引缓存——_mark/load_data 置脏，绘制连线时 O(n) 复用
 var _ent_by_id := {}
 var _ent_by_id_dirty := true
 var atlas_texs: Array = []
-# 批次 9：当前笔刷的图集索引与碰撞类型/形状（碰撞层涂刷用）
+# 当前笔刷的图集索引与碰撞类型/形状（碰撞层涂刷用）
 var paint_atlas := 0
 var collision_type := "solid"
 var collision_shape := ""
@@ -115,12 +115,12 @@ func set_layer_locked(i: int, locked: bool) -> void:
 func is_layer_locked(i: int) -> bool:
 	return bool(layer_locked.get(i, false))
 
-# —— 运行时 TileSet：从清单图集 PNG 构建（PF-02：按路径缓存，见 tileset_cache.gd） ——
+# —— 运行时 TileSet：从清单图集 PNG 构建（按路径缓存，见 tileset_cache.gd） ——
 func _build_tileset() -> bool:
 	var tiles: Array = manifest.get("tiles", [])
 	if tiles.is_empty():
 		return false
-	# 批次 9 多图集：manifest tiles[] 每项一个图集，source_id = 索引
+	# 多图集：manifest tiles[] 每项一个图集，source_id = 索引
 	var paths := []
 	for t in tiles:
 		var p := str((t as Dictionary).get("atlas_abs", ""))
@@ -139,7 +139,7 @@ func _build_tileset() -> bool:
 
 # —— 装载地图数据 ——
 func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty := false) -> void:
-	# A7：进入即抬代数；await 恢复后比对——过期 = 期间又有更新的重建进入，本协程退出
+	# 进入即抬代数；await 恢复后比对——过期 = 期间又有更新的重建进入，本协程退出
 	_rebuild_gen += 1
 	var gen := _rebuild_gen
 	invalidate_ref_cache()   # 换图后引用集可能来自另一张图，必须重扫
@@ -151,11 +151,11 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	# 节点全部重建：选区/剪贴板引用失效，清空（剪贴板只存模板数据可保留，但引用选区必须清）
 	selected_entity = null
 	selected_multi.clear()
-	# P2-8/O1：手势单点复位——不再逐个清 5 个布尔位
+	# /O1：手势单点复位——不再逐个清 5 个布尔位
 	end_gesture()
 	# 输入/区域状态一并复位：上个图的粘贴预览、区域选区、右键擦除、拖拽中状态
 	# 不能带进这张图（BUG-06）；拖拽标志不重置会让 undo 后松手推出冗余快照（P-13）。
-	# P-17：图层显隐/锁定是按图的编辑状态，跨图泄漏会让人对着空气解锁——换图时清空。
+	# 图层显隐/锁定是按图的编辑状态，跨图泄漏会让人对着空气解锁——换图时清空。
 	# undo（keep_dirty=true）恢复的是同一张图，保留锁定状态不被误清。
 	_paste_mode = false
 	_region_sel = Rect2i(-1, 0, 0, 0)
@@ -174,7 +174,7 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	if map_root:
 		map_root.queue_free()
 		await get_tree().process_frame
-		# A7：代数过期 = 期间又有更新一次的重建进入——本协程退出，root 交给最新协程创建
+ # 代数过期 = 期间又有更新一次的重建进入——本协程退出，root 交给最新协程创建
 		if gen != _rebuild_gen:
 			return
 	map_root = Node2D.new()
@@ -261,7 +261,7 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	entities.name = "Entities"
 	map_root.add_child(entities)
 	var tile := int(manifest.get("tileSize", 16))
-	# K26a：计数器载图清零，由 _assign_id 按本图 id 抬回本图高水位——
+	# 计数器载图清零，由 _assign_id 按本图 id 抬回本图高水位——
 	# 旧实现跨图累积（同会话先开 A 图再开 B 图，B 图新实体接着 A 的号往上排）
 	ent_id_counter = 0
 	for e in data.get("entities", []):
@@ -271,13 +271,13 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 		spr.position = Vector2(int(e.get("x", 0)) * tile + tile / 2.0, int(e.get("y", 0)) * tile + tile / 2.0)
 		spr.set_meta("scene", sid)
 		spr.set_meta("props", e.get("props", {}))
-		# 分层身份码：实例段。老实体没有就由 _assign_id 统一补发
+ # 分层身份码：实例段。老实体没有就由 _assign_id 统一补发
 		spr.set_meta("code", str(e.get("code", "")))
-		# 实例功能绑定：只做存取，UI 由内容编辑器负责；缺失/类型不对时置空数组，
-		# 让 extract 始终能写出 functions 键（含空数组），不清空就残留旧图绑定。
+ # 实例功能绑定：只做存取，UI 由内容编辑器负责；缺失/类型不对时置空数组，
+ # 让 extract 始终能写出 functions 键（含空数组），不清空就残留旧图绑定。
 		var fns = e.get("functions", [])
 		spr.set_meta("functions", fns if fns is Array else [])
-		# 触发区没有缩略图，靠尺寸矩形呈现；位置按矩形中心对齐
+ # 触发区没有缩略图，靠尺寸矩形呈现；位置按矩形中心对齐
 		if BuiltinKinds.is_builtin(sid):
 			spr.texture = null
 			var tprops: Dictionary = e.get("props", {}) if e.get("props", {}) is Dictionary else {}
@@ -313,7 +313,7 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	map_rev += 1              # P2-4：整图替换后下游缓存必须重扫
 	ents_rev += 1
 	modified.emit()
-	# P-10：载入后选区引用已失效——发 null 让属性面板/侧栏同步清空，悬空引用不再滞留
+	# 载入后选区引用已失效——发 null 让属性面板/侧栏同步清空，悬空引用不再滞留
 	entity_selected.emit(null)
 
 # —— 缩略图注入（app 启动时把实体缩略图交给画布） ——
@@ -389,7 +389,7 @@ func _fit_sprite(spr: Sprite2D, scene_id: String) -> void:
 	var tsize := tex.get_size()
 	if tsize.x <= 0.0 or tsize.y <= 0.0:
 		return
-	# 保持比例塞进占位框（不拉伸变形）；放大时取整数倍避免像素糊（P-14：实现与注释对齐）
+	# 保持比例塞进占位框（不拉伸变形）；放大时取整数倍避免像素糊（实现与注释对齐）
 	var k := minf(target.x / tsize.x, target.y / tsize.y)
 	if k > 1.0:
 		k = maxf(1.0, floorf(k))
@@ -427,7 +427,7 @@ func _ent_layer_index() -> int:
 
 # —— 实体 id 分配（稳定引用：传送门/开关等 entity_ref 的标注基础） ——
 var ent_id_counter := 0
-# A7：重建代数——load_data 是协程，期间再进一次 load_data 时，先进者按代数退出防孤儿 map_root
+# 重建代数——load_data 是协程，期间再进一次 load_data 时，先进者按代数退出防孤儿 map_root
 var _rebuild_gen := 0
 
 func _assign_id(spr: Sprite2D, forced := "") -> void:
@@ -440,7 +440,7 @@ func _assign_id(spr: Sprite2D, forced := "") -> void:
 		if n > ent_id_counter:
 			ent_id_counter = n
 		return
-	# K26b：安全空洞复用——本图最小空号发号前做全工程引用扫描，通过才复用；否则高水位+1
+	# 安全空洞复用——本图最小空号发号前做全工程引用扫描，通过才复用；否则高水位+1
 	var used := {}
 	for e in entities.get_children():
 		var eid := str((e as Sprite2D).get_meta("ent_id", ""))
@@ -458,9 +458,9 @@ func _assign_id(spr: Sprite2D, forced := "") -> void:
 	ent_id_counter += 1
 	spr.set_meta("ent_id", "e_%d" % ent_id_counter)
 
-## K26b：全工程实体 id 引用集——地图 props 里 e_N 形字符串值（跨图落点/portal 目标）
+## 全工程实体 id 引用集——地图 props 里 e_N 形字符串值（跨图落点/portal 目标）
 ## + 内容文件步骤里 e_N 形字符串值（entity_ref 参数）。被引用的号绝不复用。
-## P2-1：会话级缓存——每次发号都读全部地图+全部内容文件会被批量粘贴线性放大。
+## 会话级缓存——每次发号都读全部地图+全部内容文件会被批量粘贴线性放大。
 ## 失效点：保存地图、换图（load_data）、内容提交（invalidate_ref_cache）。
 static var _ref_ids_cache: Dictionary = {}
 static var _ref_ids_rev := -1   # 对应的 MapStore.project_rev
@@ -500,10 +500,10 @@ func _referenced_ent_ids() -> Dictionary:
 	_ref_ids_rev = MapStoreRef.project_rev
 	return out
 
-# —— A1.1 吸管 + A6 整图入视野 ——
+# —— 吸管 + 整图入视野 ——
 signal tool_requested(tool: String, layer: int)
 
-## A1.1 吸管：取光标格瓦片为当前笔刷——地形优先，其次装饰；碰撞层无瓦片语义。
+## 吸管：取光标格瓦片为当前笔刷——地形优先，其次装饰；碰撞层无瓦片语义。
 ## 经 tool_requested 信号走 app._apply_state 单一写入口切工具，避免工具按钮高亮失同步。
 func _pick_tile(pos: Vector2) -> void:
 	if map_root == null or not is_instance_valid(map_root) or terrain == null or decor == null:
@@ -526,7 +526,7 @@ func _pick_tile(pos: Vector2) -> void:
 	_hint("已吸取 %s（切到涂刷）" % str(ac))
 	tool_requested.emit("paint", layer)
 
-## A6：整图入视野（Home）——相机对中 + 缩放夹回 0.5~6.0
+## 整图入视野（Home）——相机对中 + 缩放夹回 0.5~6.0
 func _fit_view() -> void:
 	if map_root == null or not is_instance_valid(map_root) or terrain == null:
 		_hint("无地图：先新建或打开一张地图")
@@ -598,7 +598,7 @@ func generate_collision(strategy := "full", replace := false, one_way_top := fal
 			continue
 		if collision.get_cell_source_id(c) != -1:
 			continue
-		# 批次 9：顶部策略可生成 one_way（自动碰撞策略扩展，契约类型 one_way）
+ # 顶部策略可生成 one_way（自动碰撞策略扩展，契约类型 one_way）
 		var typ := "one_way" if (strategy == "top" and one_way_top) else "solid"
 		set_collision_cell(c, true, typ)
 		added += 1
@@ -638,7 +638,7 @@ func _collision_layer_index() -> int:
 			return i
 	return -1
 
-## 批次 9：碰撞格统一写入口——涂刷/擦除/矩形/粘贴/自动生成全走这里，类型元数据跟着走。
+## 碰撞格统一写入口——涂刷/擦除/矩形/粘贴/自动生成全走这里，类型元数据跟着走。
 ## solid+矩形不记 meta（缺省值零冗余）；其余记 {type, shape}；擦除连 meta 一起清。
 func set_collision_cell(c: Vector2i, on: bool, type := "solid", shape := "") -> void:
 	if on:
@@ -654,10 +654,10 @@ func set_collision_cell(c: Vector2i, on: bool, type := "solid", shape := "") -> 
 # ——— 修改标记 ——
 ## 整图版本号：任何写入（瓦片/碰撞/实体/绑定）都 +1。内容编辑器的预览瓦片数组以它为缓存键。
 var map_rev := 0
-## 实体集版本号：只有实体增删/改 id/meta 绑定时 +1。实例列表与预览实体数组以它为缓存键（P2-4）。
+## 实体集版本号：只有实体增删/改 id/meta 绑定时 +1。实例列表与预览实体数组以它为缓存键。
 var ents_rev := 0
 
-## ents_changed=false：只改了地形/装饰/碰撞，实体集没动——不必让实体索引失效（P2-2）。
+## ents_changed=false：只改了地形/装饰/碰撞，实体集没动——不必让实体索引失效。
 func _mark(ents_changed := true) -> void:
 	modified_flag = true
 	map_rev += 1
@@ -670,7 +670,7 @@ func _mark(ents_changed := true) -> void:
 		coll_view.refresh()
 	modified.emit()
 
-## D5（批次 10）：实体 {ent_id: Sprite2D} 索引——绘制连线 O(n) 复用；置脏后首次取用重建
+## D5：实体 {ent_id: Sprite2D} 索引——绘制连线 O(n) 复用；置脏后首次取用重建
 func _ent_by_id_index() -> Dictionary:
 	if _ent_by_id_dirty:
 		var out := {}
@@ -690,7 +690,7 @@ var redo_stack := []
 
 # —— 序列化：画布节点 → JSON 数据（游戏侧 MapLoader.build 消费的同一格式） ——
 # —— 输入状态 ——
-## P2-8/O1：手势互斥。原来平铺 8 个布尔位（_panning/_drag_paint/_drag_box/_drag_spawn/
+## /O1：手势互斥。原来平铺 8 个布尔位（_panning/_drag_paint/_drag_box/_drag_spawn/
 ## _rmb_erase/_drag_entity/_move_active/_paste_mode），无互斥——拖实体时按中键会平移+拖动并行，
 ## 拖出生点时按右键会拖动+擦除并行。现在只留一个枚举：起手即接管，松手即清零，
 ## 任何新起手都会顶掉上一个手势（物理上不可能叠加）。

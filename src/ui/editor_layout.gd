@@ -1,5 +1,5 @@
 extends RefCounted
-## _layout_ctrl：从 src/app.gd 拆出的控制器（审查 8.3 表）。宿主状态经 alias 引用。
+## _layout_ctrl：从 src/app.gd 拆出的控制器。宿主状态经 alias 引用。
 
 const TopBarNavScript := preload("res://src/ui/top_bar_nav.gd")
 
@@ -11,11 +11,11 @@ var _dirty_badge: PanelContainer
 # 画布视图开关（网格 / 框选）
 var _grid_btn: Button
 var _select_btn: Button
-## 层下拉（v2：左栏唯一输入决定者）。按钮显示当前层名，弹层里每层一行 + 👁/🔒。
+## 层下拉（左栏唯一输入决定者）。按钮显示当前层名，弹层里每层一行 + 👁/🔒。
 var _layer_btn: Button
 var _layer_menu: PopupPanel
 var _layer_menu_body: VBoxContainer
-## 选中实体信息条（v2 §2.3：不做属性表单，只给类型名 / 内容状态 / 去内容编辑器）
+## 选中实体信息条（不做属性表单，只给类型名 / 内容状态 / 去内容编辑器）
 var _sel_bar: PanelContainer
 var _sel_name: Label
 var _sel_state: Label
@@ -42,7 +42,7 @@ func _build_editor_ui() -> void:
 	root.add_child(main)
 	main.add_child(_build_palette_column())
 
-	# 中列 = 画布本体。v2 §2.1：画布上方不再有横带，画布吃满剩余宽高。
+	# 中列 = 画布本体。画布上方不再有横带，画布吃满剩余宽高。
 	var mid_col := VBoxContainer.new()
 	mid_col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	mid_col.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -79,7 +79,7 @@ func _build_editor_ui() -> void:
 	app._canvas_empty.visible = false
 	canvas_wrap.add_child(app._canvas_empty)
 
-	# 选中实体信息条（v2 §2.3）：浮在画布下沿，只给「类型 / 内容状态 / 去内容编辑器」。
+	# 选中实体信息条：浮在画布下沿，只给「类型 / 内容状态 / 去内容编辑器」。
 	# 不做属性表单——参数属内容，归内容编辑器与资产目录。
 	canvas_wrap.add_child(_build_sel_bar())
 
@@ -88,7 +88,7 @@ func _build_editor_ui() -> void:
 	app.canvas.cursor_info.connect(_on_cursor)
 	app.canvas.modified.connect(_on_modified)
 	app.canvas.entity_selected.connect(app._on_entity_selected)
-	# A1.1 吸管：画布请求切工具/层，统一走 _apply_state 单一写入口
+	# 吸管：画布请求切工具/层，统一走 _apply_state 单一写入口
 	app.canvas.tool_requested.connect(app._apply_state)
 	app._fill_palettes()
 	app._apply_state("paint", 0)  # 初始：地形层 + 涂刷，按钮高亮由 _sync_ui 统一刷新
@@ -98,7 +98,7 @@ func _build_editor_ui() -> void:
 	_set_status("无地图：先点「新建」填名字，或「打开」已有地图")
 
 
-## 全局横带（v2 §2.1 / §2.4）：项目名 · 地图名▾ · 三个面板 · 试玩。
+## 全局横带（ / §2.4）：项目名 · 地图名▾ · 三个面板 · 试玩。
 ## 地图名本身就是下拉按钮，点开容纳全部地图级动作；编辑工具与剪贴板按钮一概不在顶栏——
 ## 任一层 / 任一窗口宽度下都只有这四组东西，没有挤出可视区的风险。
 func _build_global_bar() -> PanelContainer:
@@ -166,7 +166,7 @@ func _on_map_menu_id(id: int) -> void:
 		5:
 			app._open_size_dialog()
 		10:
-			# 顶栏名字输入框已删：改名只能从菜单进弹窗
+ # 顶栏名字输入框已删：改名只能从菜单进弹窗
 			app._on_rename()
 		20:
 			app._switch_project()
@@ -181,7 +181,7 @@ func _popup_below(pm: PopupMenu, anchor: Control) -> void:
 
 func _build_palette_column() -> PanelContainer:
 	var col := PanelContainer.new()
-	# v2 §6：左栏 200px（原 252）。它是「选一次、用很久」的低频操作，宽度让步给画布。
+	# 左栏 200px（原 252）。它是「选一次、用很久」的低频操作，宽度让步给画布。
 	col.custom_minimum_size = Vector2(200, 0)
 	var sb = app.UiThemeScript.box(app.UiThemeScript.BG_PANEL, app.UiThemeScript.BORDER, 0, 10, 10)
 	sb.set_border_width_all(0)
@@ -191,7 +191,7 @@ func _build_palette_column() -> PanelContainer:
 	var v = app.UiKitScript.vbox(8)
 	col.add_child(v)
 
-	# —— 层下拉：这一列唯一决定输入的东西（v2 §2.2）——
+	# —— 层下拉：这一列唯一决定输入的东西——
 	# 层决定画笔行为：地形/装饰/碰撞 = 按住拖动连续涂、右键擦除；实体 = 左键放、右键删。
 	# 所以不再需要工具按钮，也不再需要「地形瓦片 / 实体」两个页签——层就是那个切换。
 	_layer_btn = app.UiKitScript.button("层：—", Callable(), "plain")
@@ -218,7 +218,7 @@ func _build_palette_column() -> PanelContainer:
 	app.tile_list = ItemList.new()
 	app.tile_list.icon_mode = ItemList.ICON_MODE_TOP
 	app.tile_list.fixed_icon_size = Vector2i(40, 40)
-	# v2 §6：左栏收到 200px 后 4 列 × 68px 会横向溢出（文字被省略成「一 岩块件…」）。
+	# 左栏收到 200px 后 4 列 × 68px 会横向溢出（文字被省略成「一 岩块件…」）。
 	# 3 列 × 56px 刚好吃满，图标尺寸不变。
 	app.tile_list.max_columns = 3
 	app.tile_list.same_column_width = true
@@ -302,7 +302,7 @@ func _build_palette_column() -> PanelContainer:
 	app._editor_state_ctrl = preload("res://src/core/editor_state.gd").new(app)
 	return col
 
-## 资产列表跟随层类型（v2 §2.2）：地形/装饰 → 瓦片，碰撞（grid）无资产 → 空，实体层 → 实体。
+## 资产列表跟随层类型（）：地形/装饰 → 瓦片，碰撞（grid）无资产 → 空，实体层 → 实体。
 func _set_palette_page(which: String) -> void:
 	if app.tile_list:
 		app.tile_list.visible = which == "tiles"
@@ -397,7 +397,7 @@ func _refresh_tool_meta() -> void:
 	if lt == "entities":
 		suffix = " · 单击放置"
 	elif lt == "grid":
-		# 碰撞层没有涂抹尺寸的说法，真正要知道的是「这一笔画的是什么」
+ # 碰撞层没有涂抹尺寸的说法，真正要知道的是「这一笔画的是什么」
 		suffix = " · %s %s" % [_collision_type_label(app.canvas.collision_type),
 			_diagonal_shape_label(app.canvas.collision_shape)]
 	else:
@@ -426,7 +426,7 @@ func _refresh_view_toggles() -> void:
 	_refresh_layer_panel()
 	_refresh_sel_bar()
 
-## 层下拉 + 内联显隐/锁定（v2 §2.2）。当前层用 ACCENT 底标出；
+## 层下拉 + 内联显隐/锁定。当前层用 ACCENT 底标出；
 ## 按钮文字同步成当前层名，这样「现在画哪一层」在左栏一眼可见，不用展开菜单。
 func _refresh_layer_panel() -> void:
 	if _layer_btn == null:
@@ -479,7 +479,7 @@ func _toggle_layer_menu() -> void:
 	_layer_menu.position = Vector2i(at) + Vector2i(0, int(_layer_btn.size.y))
 	_layer_menu.popup()
 
-## 选中实体信息条（v2 §2.3）：类型名 + 内容状态 + 「在工作台编辑 →」。
+## 选中实体信息条：类型名 + 内容状态 + 「在工作台编辑 →」。
 ## 不做属性表单——参数属内容，归内容编辑器与资产目录。
 func _build_sel_bar() -> PanelContainer:
 	_sel_bar = PanelContainer.new()
@@ -550,9 +550,9 @@ func _open_popup(pop: PopupPanel, size := Vector2i.ZERO) -> void:
 	# 先按内容算出最小尺寸（此刻子控件还没排版，直接量会偏小），
 	# 再用 popup_centered() 让引擎按最小尺寸开窗——不带参数的 popup_centered()
 	# 会沿用上次窗口大小，必须显式给尺寸。
-	# C6 回退（批次 12 修正）：单次居中量取不准会裁切内容——恢复两段式（先 1×1 弹出再按
+	# ：单次居中量取不准会裁切内容——恢复两段式（先 1×1 弹出再按
 	# 实际最小尺寸居中）。
-	# P3-12：两段式首帧会在左上角闪一下 1×1 的小窗。把第一段挪到屏幕外再量——
+	# 两段式首帧会在左上角闪一下 1×1 的小窗。把第一段挪到屏幕外再量——
 	# 同一帧内接第二段居中，中间那次布局从未被绘制，闪烁消失。
 	pop.popup_centered(Vector2i(1, 1))
 	pop.position = Vector2i(-32000, -32000)
@@ -580,7 +580,7 @@ func _popup_body(title: String, subtitle := "") -> Dictionary:
 	col.add_child(body)
 	return {"pop": pop, "root": col, "body": body}
 
-## v2 §2.5：快捷键只剩六组（撤销 / 剪贴板 / 删除 / 保存 / 返回 / 速查）。
+## 快捷键只剩六组（撤销 / 剪贴板 / 删除 / 保存 / 返回 / 速查）。
 ## 数字键与工具键已全部删除——它们从未是用户设计的一部分，是历史实现遗留。
 func _open_shortcut_help() -> void:
 	var shell: Dictionary = app._popup_body("快捷键速查", "只剩必要的键盘入口；其余全部交给鼠标与层下拉")

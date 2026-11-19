@@ -1,5 +1,5 @@
 extends RefCounted
-## _undo_history_ctrl：从 src/canvas/editor_canvas.gd 拆出的控制器（审查 8.3 表）。宿主状态经 alias 引用。
+## _undo_history_ctrl：从 src/canvas/editor_canvas.gd 拆出的控制器。宿主状态经 alias 引用。
 
 var cvs   # 宿主引用
 
@@ -16,7 +16,7 @@ func _restore(snapshot) -> void:
 	if snapshot is String:
 		d = JSON.parse_string(snapshot)
 	if d is Dictionary:
-		# keep_dirty=true：恢复的是历史状态，内容与磁盘不一致即为脏（BUG-01）
+ # keep_dirty=true：恢复的是历史状态，内容与磁盘不一致即为脏（BUG-01）
 		await cvs.load_data(d, cvs.cur_map_name, true, true)
 
 
@@ -28,7 +28,7 @@ func _push_undo() -> void:
 		cvs.undo_stack.pop_front()
 	cvs.redo_stack.clear()
 
-## 返回是否真的撤销了（P-16：空栈时调用方要给「没有可撤销的操作」而不是假反馈）。
+## 返回是否真的撤销了（空栈时调用方要给「没有可撤销的操作」而不是假反馈）。
 ## 脏标记与 modified.emit 由 load_data(keep_dirty=true) 统一处理，不再自己置脏。
 func undo() -> bool:
 	if cvs.map_root == null or cvs.undo_stack.is_empty():
@@ -65,7 +65,7 @@ func extract() -> Dictionary:
 		var ac2 = cvs.decor.get_cell_atlas_coords(c)
 		var sid2 = cvs.decor.get_cell_source_id(c)
 		dcells.append([c.x, c.y, sid2, ac2.x, ac2.y])
-	# 批次 9：碰撞条目带类型/形状（solid+矩形只写 [x,y]——契约缺省值零冗余）
+	# 碰撞条目带类型/形状（solid+矩形只写 [x,y]——契约缺省值零冗余）
 	var ccells := []
 	for c in cvs.collision.get_used_cells():
 		var cm = cvs._collision_meta.get(c, null)
@@ -90,30 +90,30 @@ func extract() -> Dictionary:
 	for e in cvs.entities.get_children():
 		var spr := e as Sprite2D
 		if spr and spr.has_meta("scene"):
-			# A8：props 原样保留（契约是"未知字段忽略"而非"剥离"——白名单会把手工
-			# 预留/未来字段在保存时蒸发）。只丢弃空值；字段单值由 UI 控件天然保证。
+ # props 原样保留（契约是"未知字段忽略"而非"剥离"——白名单会把手工
+ # 预留/未来字段在保存时蒸发）。只丢弃空值；字段单值由 UI 控件天然保证。
 			var sid := str(spr.get_meta("scene"))
 			var props: Dictionary = spr.get_meta("props", {})
 			var clean := {}
 			for k in props.keys():
 				if props[k] != null and str(props[k]) != "":
 					clean[k] = props[k]
-			# 无 id 的老实体 → 自动补号（引用跨图落点等依赖 id，不能留空）
+ # 无 id 的老实体 → 自动补号（引用跨图落点等依赖 id，不能留空）
 			var eid := str(spr.get_meta("ent_id", ""))
 			if eid == "":
 				max_id += 1
 				eid = "e_%d" % max_id
 				spr.set_meta("ent_id", eid)
-			# 触发区的位置是矩形中心：还原成左上角格坐标，与数据格式（x/y = 左上角）一致
+ # 触发区的位置是矩形中心：还原成左上角格坐标，与数据格式（x/y = 左上角）一致
 			var cell_pos := Vector2(spr.position.x, spr.position.y)
 			if BuiltinKinds.is_builtin(sid):
 				cell_pos -= cvs.entity_display_size_of(spr) * 0.5 - Vector2(cvs.tile_px, cvs.tile_px) * 0.5
 			elist.append({
 				"scene": sid,
 				"id": eid,
-				# 分层身份码：实例段（丢失会让内容引用的前缀漂移，必须随快照走）
+ # 分层身份码：实例段（丢失会让内容引用的前缀漂移，必须随快照走）
 				"code": str(spr.get_meta("code", "")),
-				# B4：与 _cell_of 一致用 floori——int() 向零截断会让负坐标实体每次保存向 0 漂移
+ # B4：与 _cell_of 一致用 floori——int() 向零截断会让负坐标实体每次保存向 0 漂移
 				"x": floori((cell_pos.x - cvs.tile_px / 2.0) / cvs.tile_px),
 				"y": floori((cell_pos.y - cvs.tile_px / 2.0) / cvs.tile_px),
 				"flip_h": bool(spr.flip_h),
@@ -123,7 +123,7 @@ func extract() -> Dictionary:
 	if used.size == Vector2i.ZERO:
 		used = Rect2i(Vector2i.ZERO, Vector2i(120, 56))
 	var meta0: Dictionary = cvs.map_data.get("meta", {})
-	# P-09：以当前地图 meta 为底（保留游戏侧自定义键），只覆盖编辑器管辖的 name/w/h
+	# 以当前地图 meta 为底（保留游戏侧自定义键），只覆盖编辑器管辖的 name/w/h
 	var meta: Dictionary = meta0.duplicate(true)
 	if not meta.has("w"):
 		meta["w"] = int(used.end.x + 2)
