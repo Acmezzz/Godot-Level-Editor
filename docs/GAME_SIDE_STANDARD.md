@@ -250,9 +250,10 @@ choice 的 `source` 取值：`content:<kind>`（列该目录内容条目）、`e
 `default` 决定新建内容时的初值：`bool`→false、`int`→0、`float`→0.0、其他→`""`。
 
 **功能声明里编辑器不支持的键**（别指望它们生效）：`trigger`、`scope`、`icon`、`params`、
-`category`、`group` 等一律被忽略——`functions()` 归一化时只保留 `id` / `code` / `name` /
-`fields` / `conditions`。功能的触发时机不在清单里声明，由游戏侧实现决定；**条件依赖**声明在
-清单里（见下），触发时机与条件是两回事：条件 = 满足才执行，时机 = 什么时候来问这个条件。
+`category`、`group` 等一律被忽略——`functions()` 归一化保留 `id` / `code` / `name` /
+`fields` / `conditions` / `steps`（演出标记），其余键不进归一化视图。功能的触发时机不在
+清单里声明，由游戏侧实现决定；**条件依赖**声明在清单里（见下），触发时机与条件是两回事：
+条件 = 满足才执行，时机 = 什么时候来问这个条件。
 
 **实例上挂多个功能**：`functions` 是有序数组，每项：
 
@@ -781,7 +782,7 @@ func _apply_door(inst: Node, fn: Dictionary) -> void:
 | `id` | 全局唯一，且**用英文小写下划线**——它就是地图 `scene` 值，也是游戏侧查表的键 |
 | `prefab` | 相对工程根的 `.tscn`。**根节点必须是 `Node2D` 系**，否则 `position` 注入无效 |
 | `thumb` | 96×96 左右的 PNG 到 `editor/previews/`。没有它画布上是空白方块，但仍可放置 |
-| `editorSize` | 像素。省略则编辑器读 prefab 第一个碰撞形状；再省略用缩略图原尺寸 |
+| `editorSize` | 像素。省略则编辑器读 prefab 第一个碰撞形状；再省略按 1 格（tileSize×tileSize）画 |
 | `functions` | 只挂已在顶层 `functions` 声明过的功能 id；资产目录「自带功能」UI 可点选挂载，也可手写清单 |
 | 缩略图烘焙 | 自己写一个截图脚本把 prefab 渲染成 PNG（需窗口，不能 headless）；编辑器只读 `thumb` 路径 |
 

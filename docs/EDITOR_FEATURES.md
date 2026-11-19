@@ -180,7 +180,7 @@ src/
 	  "x": 10, "y": 8, "flip_h": false,
 	  "props": {},
 	  "functions": [{ "fn": "X7K2", "content": "K7QM-D4L3-B3XD-dialogue-A9FK2P",
-					  "name": "初遇", "order": 0, "parallel": false }] }
+					  "name": "初遇", "order": 1, "parallel": false }] }
   ]
 }
 ```
@@ -365,7 +365,7 @@ src/
 
 ```json
 "functions": [
-  { "fn": "X7K2", "content": "<内容ID>", "name": "初遇", "order": 0, "parallel": false }
+  { "fn": "X7K2", "content": "<内容ID>", "name": "初遇", "order": 1, "parallel": false }
 ]
 ```
 
@@ -375,7 +375,7 @@ src/
 | `content` | 内容条目 id；空串 = 还没填（界面显示「未填」），不是错误 |
 | `name` | 内容显示名（列表读这个） |
 | `order` | 组内顺序；**顺序即执行顺序** |
-| `parallel` | 与前一项同时触发 |
+| `parallel` | 编辑器只存取不解释（游戏侧常用语义：与前一项同时触发） |
 
 - **内容文件**：`<项目>/content/<功能id>/<内容id>.json`，结构
   `{id, function: 执行码, name, fields:{字段码: 值}}`。
@@ -556,7 +556,7 @@ field widgets 与 choice source）。步骤引用清单 `steps` 池（值=步骤
 | `tiles` / `entities` / `functions` / `steps` / `audio` 不是数组或对象 | 错误 |
 | `tileSize` 非正数 | 错误 |
 | 图集 `id` 为空或重复 / `atlas` 为空 / 路径含 `..` / 调色板条目缺 `cell` | 错误 |
-| 实体 `id` 空或重复 / `fields` 非数组 / 字段缺 `kind`（`input`/`choice`）或 kind/type 非法 / 挂载未声明功能 | 错误 |
+| 实体 `id` 空或重复 / `fields` 非数组 / 挂载未声明功能（实体字段**不查 kind**，kind 只约束功能/条件/步骤声明） | 错误 |
 | 功能/条件/步骤 **字段码**与功能/步骤/音频**条目码**重复（三池同码空间，跨池跨功能都算） | 错误 |
 | 功能/条件/步骤/音频 id 空或重复（数组写法）/ 步骤条目（dict 写法值）不是对象 | 错误 |
 | 功能引用未声明的条件 | 错误 |
@@ -571,7 +571,7 @@ field widgets 与 choice source）。步骤引用清单 `steps` 池（值=步骤
 | `tiles` 键不在层集 / 瓦片条目不是 5 元数值（x, y, atlas, atlas_x, atlas_y） | 错误 |
 | 实体 `layer` 不在层集 | 错误 |
 | `collision` 条目不是数值（≥2 元）/ `spawn` 不是 2 元数值 | 错误 |
-| 实体不是对象 / `id` 重复 / `x`·`y` 非数值 | 错误 |
+| 实体不是对象 / `code` 重复 / `x`·`y` 非数值 / `scene` 为空 | 错误 |
 | 实体 `scene` 为空 | 错误 |
 | 实体 `scene` 不在当前清单 | 警告 |
 | 实体 `props` 不是对象 | 错误 |

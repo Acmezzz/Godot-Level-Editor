@@ -154,7 +154,7 @@ static func has_role(m: Dictionary, sid: String, role: String) -> bool:
 	return role_of(m, sid) == role
 
 ## 某个实体类型在编辑器画布上的占位尺寸（像素）。
-## 优先级：清单 editorSize → prefab 碰撞形状 → 0（= 用缩略图原始尺寸）
+## 优先级：清单 editorSize → prefab 碰撞形状 → 0（消费方按 1 格兜底）
 static func entity_editor_size(m: Dictionary, edef: Dictionary) -> Vector2:
 	var es = edef.get("editorSize", null)
 	if es is Array and (es as Array).size() >= 2:
