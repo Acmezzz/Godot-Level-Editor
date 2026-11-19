@@ -7,6 +7,7 @@ extends RefCounted
 const SUPPORTED_TILE_LAYERS := ["terrain", "decor", "collision"]
 const FunctionDecls := preload("res://src/content/function_decl.gd")
 const ConditionDecls := preload("res://src/content/condition_decl.gd")
+const StepDecls := preload("res://src/content/step_decl.gd")
 const AudioDecls := preload("res://src/content/audio_decl.gd")
 
 static func validate(data: Dictionary, project_dir := "") -> Array[Dictionary]:
@@ -24,6 +25,8 @@ static func validate(data: Dictionary, project_dir := "") -> Array[Dictionary]:
 		_validate_functions(data, issues)
 	if data.has("conditions"):
 		_validate_conditions(data, issues)
+	if data.has("steps"):
+		_validate_steps(data, issues)
 	if data.has("audio"):
 		_validate_audio(data, issues)
 	var tile_size = data.get("tileSize", 16)
@@ -182,6 +185,79 @@ static func _validate_audio(data: Dictionary, issues: Array[Dictionary]) -> void
 		codes[c] = true
 		if str(body.get("path", "")) == "":
 			_add(issues, "warning", "audio.%s" % aid, "audio path is empty")
+
+## 步骤池：id 非空唯一（array 写法查重）、条目码池内唯一、字段 id/kind/type 合法、
+## 步骤字段码与功能/条件字段同空间查重（跨池同码 = 静默合并，报错）。
+static func _validate_steps(data: Dictionary, issues: Array[Dictionary]) -> void:
+	var decl = data.get("steps", null)
+	if not (decl is Dictionary or decl is Array):
+		_add(issues, "error", "steps", "must be an object or an array")
+		return
+	var sseen := {}
+	if decl is Array:
+		for item in decl:
+			if not (item is Dictionary):
+				_add(issues, "error", "steps", "entries must be objects")
+				continue
+			var sid0 := str((item as Dictionary).get("id", ""))
+			if sid0 == "" or sseen.has(sid0):
+				_add(issues, "error", "steps",
+					"step ids must be non-empty and unique (array form, seen: %s)" % sid0)
+			sseen[sid0] = true
+	elif decl is Dictionary:
+		for k0 in (decl as Dictionary).keys():
+			if str(k0) == "":
+				_add(issues, "error", "steps", "step ids must be non-empty (dict form)")
+	# 条目码池内唯一（内容 steps[].step 存码，重复 = 静默别名）
+	var ecodes := {}
+	for pair in StepDecls._decl_items(decl):
+		var ec := str((pair.body as Dictionary).get("code", ""))
+		if ec != "":
+			if ecodes.has(ec):
+				_add(issues, "error", "steps", "duplicate step code %s (%s)" % [ec, str(pair.id)])
+			ecodes[ec] = true
+	# 字段 id / kind / type（归一化视图逐步骤查）
+	for sid in StepDecls.steps(data):
+		var d: Dictionary = StepDecls.steps(data)[sid]
+		var fseen := {}
+		for fd in d.get("fields", []):
+			if not (fd is Dictionary):
+				_add(issues, "error", "steps.%s.fields" % sid, "entries must be objects")
+				continue
+			var field_id := str((fd as Dictionary).get("id", ""))
+			if field_id == "" or fseen.has(field_id):
+				_add(issues, "error", "steps.%s.fields" % sid,
+					"field ids must be non-empty and unique (seen: %s)" % field_id)
+			fseen[field_id] = true
+			var kind := str((fd as Dictionary).get("kind", ""))
+			if kind != "input" and kind != "choice":
+				_add(issues, "error", "steps.%s.fields.%s" % [sid, field_id],
+					"field kind must be \"input\" or \"choice\"")
+			elif kind == "input":
+				var typ := str((fd as Dictionary).get("type", ""))
+				if not ["string", "int", "float", "bool"].has(typ):
+					_add(issues, "error", "steps.%s.fields.%s" % [sid, field_id],
+						"input type must be string / int / float / bool")
+	# 步骤字段码跨池查重：避开功能 + 条件已占用的码
+	var fcodes := {}
+	for fid in FunctionDecls.functions(data):
+		for fd1 in (FunctionDecls.functions(data)[fid] as Dictionary).get("fields", []):
+			if fd1 is Dictionary and str((fd1 as Dictionary).get("code", "")) != "":
+				fcodes[str((fd1 as Dictionary).get("code", ""))] = true
+	for cid2 in ConditionDecls.conditions(data):
+		for fd2 in (ConditionDecls.conditions(data)[cid2] as Dictionary).get("fields", []):
+			if fd2 is Dictionary and str((fd2 as Dictionary).get("code", "")) != "":
+				fcodes[str((fd2 as Dictionary).get("code", ""))] = true
+	for sid3 in StepDecls.steps(data):
+		for fd3 in (StepDecls.steps(data)[sid3] as Dictionary).get("fields", []):
+			if not (fd3 is Dictionary):
+				continue
+			var fc3 := str((fd3 as Dictionary).get("code", ""))
+			if fc3 != "" and fcodes.has(fc3):
+				_add(issues, "error", "steps.%s.fields" % sid3,
+					"duplicate field code across pools: " + fc3)
+			if fc3 != "":
+				fcodes[fc3] = true
 
 static func _validate_tiles(tiles: Array, project_dir: String, issues: Array[Dictionary]) -> void:
 	var ids := {}

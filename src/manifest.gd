@@ -8,6 +8,7 @@ const BAD_NAME_CHARS := ["/", "\\", ":", "*", "?", "\"", "<", ">", "|"]
 const Validation := preload("res://src/manifest_validation.gd")
 const FunctionDecls := preload("res://src/content/function_decl.gd")
 const ConditionDecls := preload("res://src/content/condition_decl.gd")
+const StepDecls := preload("res://src/content/step_decl.gd")
 const AudioDecls := preload("res://src/content/audio_decl.gd")
 
 ## 变量替换：%mapfile% 当前地图文件；%projectpath% 游戏项目根目录
@@ -94,6 +95,8 @@ static func load_from(project_dir: String) -> Dictionary:
 	FunctionDecls.ensure_codes(data)
 	# 条件字段码：与功能字段共用一个码空间，避开功能字段已占用的码补发。
 	ConditionDecls.ensure_codes(data)
+	# 步骤池：条目码 + 步骤字段码补发（字段码避开功能/条件已占用）。
+	StepDecls.ensure_codes(data)
 	# 音频码：音频池条目补发执行码（保存清单时随 audio 写回）。
 	AudioDecls.ensure_codes(data)
 	return data

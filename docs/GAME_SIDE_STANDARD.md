@@ -49,12 +49,13 @@
 | `playCommand` | string | 试玩命令模板；支持 `%mapfile%`、`%projectpath%` |
 | `godotExe` | string | 可选，覆盖 `playCommand` 首个可执行文件路径；支持 `%projectpath%` |
 
-清单校验把 `tiles/layers/entities/functions/conditions` 非 Array（functions/conditions/audio
-也接受 dict）、`tileSize` 非正数、图层 id 不受支持、瓦片/实体 id 空或重复、**实例码重复**、
-图集路径含 `..` 或为空、palette 元素缺 `cell`、功能/字段**码重复**（功能与条件字段**跨池同码**
-也算）、音频**码重复**、字段缺 `kind` 或 kind/type 非法、挂载引用未声明的功能、功能引用未声明
-的条件，判为**错误**（编辑器拒绝加载）；`terrain/decor/collision` 三个图层缺任何一个只判
-**警告**。功能 id 与条件 id 重复都是错误（数组写法不查会静默后者覆盖前者）。
+清单校验把 `tiles/layers/entities/functions/conditions/steps` 非 Array（functions/conditions/
+steps/audio 也接受 dict）、`tileSize` 非正数、图层 id 不受支持、瓦片/实体 id 空或重复、
+**实例码重复**、图集路径含 `..` 或为空、palette 元素缺 `cell`、功能/字段**码重复**（功能与
+条件与**步骤**字段**跨池同码**也算）、步骤**码重复**、音频**码重复**、字段缺 `kind` 或
+kind/type 非法、挂载引用未声明的功能、功能引用未声明的条件，判为**错误**（编辑器拒绝加载）；
+`terrain/decor/collision` 三个图层缺任何一个只判**警告**。功能 id 与条件 id 重复都是错误
+（数组写法不查会静默后者覆盖前者）。
 
 ### 2.2 图集 `tiles[]`
 
@@ -315,6 +316,43 @@ choice 的 `source` 取值：`content:<kind>`（列该目录内容条目）、`e
 BGM 切换、环境音触发、音效播放在哪一步响起，都是功能代码（游戏侧）的事——例如
 「环境音触发区」= trigger_zone 绑定一个带 `audio:` 字段的功能，进区播放、离区停止由
 功能实现决定。编辑器全程不解释音频语义。
+
+### 2.5.3 步骤池 `steps`（顶层声明池）+ 演出
+
+演出 = 一个功能（挂实例、声明链引用条件库做触发）+ 内容里的**步骤数组**。游戏侧声明
+**步骤池**（与 functions 同形：`{id, code, name, fields}`，条目码由 `ensure_codes` 补发），
+每个步骤是游戏侧代码 + 暴露字段（move_to / play_anim / wait / show_dialogue …）。
+功能声明加可选键 `"steps": true` 标记演出功能。
+
+```json
+"steps": {
+  "move_to": {"name": "走到目标", "fields": [
+    {"id": "target", "code": "T4N8", "name": "目标", "kind": "choice", "source": "entity_inst:"},
+    {"id": "dur",    "code": "D5P9", "name": "时长(秒)", "kind": "input", "type": "float"}
+  ]},
+  "wait": {"name": "等待", "fields": [
+    {"id": "sec", "code": "W6Q2", "name": "秒数", "kind": "input", "type": "float", "min": 0}
+  ]}
+}
+```
+
+对应内容文件（演出内容 = 步骤数组主体，普通字段照常共存）：
+
+```json
+{
+  "id": "…", "function": "<演出功能码>", "name": "开门演出",
+  "fields": {},
+  "steps": [
+    {"step": "<move_to码>", "fields": {"T4N8": "K7Q3", "D5P9": 1.5}},
+    {"step": "<wait码>",    "fields": {"W6Q2": 0.5}}
+  ]
+}
+```
+
+步骤字段与功能/条件字段**共用一个码空间**（ensure_codes 链与跨池查重延伸到步骤池）。
+编辑器：内容表单对带标记的绑定渲染步骤摘要 + 「编辑演出」子面板（增删/拖序/复制步，
+每步填参复用 field widgets 与 choice source）。运行时游戏侧按 steps 顺序解释执行，
+触发条件走条件库链路。
 
 ### 2.6 `role` —— 连接语义标签
 

@@ -1,0 +1,147 @@
+extends RefCounted
+## 步骤声明域：steps 池的归一化视图、字段码补发、码表段。
+## 声明域只依赖 manifest 字典本身，全部静态函数。
+##
+## 步骤模型（游戏侧契约）：演出功能（声明 `"steps": true`）的内容里带步骤数组
+## `steps: [{step: <步骤码>, fields: {<字段码>: 值}}]`，每步引用步骤池条目；
+## 步骤字段与功能/条件字段共用一个码空间。运行时游戏侧按序解释执行。
+
+const FunctionDecls := preload("res://src/content/function_decl.gd")
+const ConditionDecls := preload("res://src/content/condition_decl.gd")
+const ContentId := preload("res://src/content/content_id.gd")
+
+## 归一化结果缓存：指纹 = 项目目录 + steps 声明的 JSON 串（清单保存后必变，天然失效）。
+static var _cache: Dictionary = {}
+static var _cache_key := ""
+
+static func _key(m: Dictionary) -> String:
+	return str(m.get("_dir", "")) + "\u0001" + JSON.stringify(m.get("steps", null))
+
+## 把两种写法统一成 [{id, body}] 对，便于就地补码（与 function_decl 同构）。
+static func _decl_items(decl) -> Array:
+	var out: Array = []
+	if decl is Dictionary:
+		for key in (decl as Dictionary):
+			var body = (decl as Dictionary)[key]
+			if body is Dictionary:
+				out.append({"id": str(key), "body": body})
+	elif decl is Array:
+		for item in (decl as Array):
+			if item is Dictionary:
+				out.append({"id": str((item as Dictionary).get("id", "")), "body": item})
+	return out
+
+## 步骤池归一化视图 {id: {id, code, name, fields}}。
+static func steps(m: Dictionary) -> Dictionary:
+	var key := _key(m)
+	if _cache_key == key:
+		return _cache
+	var out := {}
+	for pair in _decl_items(m.get("steps", null)):
+		var sid := str(pair.id)
+		if sid == "":
+			continue
+		var src: Dictionary = pair.body
+		out[sid] = {
+			"id": sid,
+			"code": str(src.get("code", "")),
+			"name": str(src.get("name", sid)) if str(src.get("name", "")) != "" else sid,
+			"fields": src.get("fields", []) if src.get("fields", []) is Array else [],
+		}
+	_cache = out
+	_cache_key = key
+	return out
+
+## 单个步骤声明；缺失时返回空字典。
+static func step_decl(m: Dictionary, sid: String) -> Dictionary:
+	var all := steps(m)
+	return all.get(sid, {}) if all.get(sid, {}) is Dictionary else {}
+
+## 步骤显示名；缺省用 sid。
+static func step_name(m: Dictionary, sid: String) -> String:
+	return str(step_decl(m, sid).get("name", sid))
+
+## 执行码 → 步骤声明（内容 steps[].step 存码）；未知码返回空字典。
+static func step_by_code(m: Dictionary, code: String) -> Dictionary:
+	if code == "":
+		return {}
+	for sid in steps(m):
+		var d: Dictionary = steps(m)[sid]
+		if str((d as Dictionary).get("code", "")) == code:
+			return d
+	return {}
+
+## 补发步骤字段缺失码：避开功能、条件与步骤池已占用的码（三池共用一个码空间），
+## 就地修改，返回是否有改动。只补「空」的，不碰重复码（重复由校验报错）。
+## 在 FunctionDecl / ConditionDecl 的 ensure_codes 之后调用。
+static func ensure_codes(m: Dictionary) -> bool:
+	var changed := false
+	var seen := {}
+	for fid in FunctionDecls.functions(m):
+		for fd in (FunctionDecls.functions(m)[fid] as Dictionary).get("fields", []):
+			if fd is Dictionary and str((fd as Dictionary).get("code", "")) != "":
+				seen[str((fd as Dictionary).get("code", ""))] = true
+	for pair in _decl_items(m.get("conditions", null)):
+		var body: Dictionary = pair.body
+		for fd0 in body.get("fields", []) if body.get("fields", []) is Array else []:
+			if fd0 is Dictionary and str((fd0 as Dictionary).get("code", "")) != "":
+				seen[str((fd0 as Dictionary).get("code", ""))] = true
+	for pair in _decl_items(m.get("steps", null)):
+		var body2: Dictionary = pair.body
+		for fd1 in body2.get("fields", []) if body2.get("fields", []) is Array else []:
+			if fd1 is Dictionary and str((fd1 as Dictionary).get("code", "")) != "":
+				seen[str((fd1 as Dictionary).get("code", ""))] = true
+	var ecode_seen := {}
+	for pair in _decl_items(m.get("steps", null)):
+		var ec: String = str((pair.body as Dictionary).get("code", ""))
+		if ec != "":
+			ecode_seen[ec] = true
+	for pair in _decl_items(m.get("steps", null)):
+		var d0: Dictionary = pair.body
+		if str(d0.get("code", "")) == "":
+			var nc := ContentId.new_fn_code()
+			while ecode_seen.has(nc):
+				nc = ContentId.new_fn_code()
+			d0["code"] = nc
+			ecode_seen[nc] = true
+			changed = true
+	for pair in _decl_items(m.get("steps", null)):
+		var d: Dictionary = pair.body
+		for fd in d.get("fields", []) if d.get("fields", []) is Array else []:
+			if not (fd is Dictionary):
+				continue
+			if str((fd as Dictionary).get("code", "")) == "":
+				var scode := ContentId.new_fn_code()
+				while seen.has(scode):
+					scode = ContentId.new_fn_code()
+				(fd as Dictionary)["code"] = scode
+				seen[scode] = true
+				changed = true
+	return changed
+
+## 步骤池的码表段（Markdown）；无步骤声明时返回空串，由调用方拼在码表末尾。
+static func codes_doc(m: Dictionary) -> String:
+	var all := steps(m)
+	if all.is_empty():
+		return ""
+	var L: Array[String] = []
+	L.append("## 步骤")
+	L.append("")
+	L.append("演出步骤由游戏工程声明；演出内容文件的 steps 数组按序引用（值=步骤码）。")
+	L.append("步骤字段与功能/条件字段共用一个码空间，参数存在每个步骤自己的 fields 里。")
+	L.append("")
+	L.append("| 码 | 人类 id | 名称 |")
+	L.append("|----|---------|------|")
+	for sid in all:
+		var d: Dictionary = all[sid]
+		L.append("| %s | %s | %s |" % [
+			str((d as Dictionary).get("code", "")), str(sid), str((d as Dictionary).get("name", sid))])
+		var fields: Array = (d as Dictionary).get("fields", [])
+		for fd in fields:
+			if not (fd is Dictionary):
+				continue
+			L.append("| %s | %s.%s | %s |" % [
+				str((fd as Dictionary).get("code", "")), str(sid),
+				str((fd as Dictionary).get("id", "")), str((fd as Dictionary).get("kind", ""))])
+		L.append("")
+	return "\n".join(L)

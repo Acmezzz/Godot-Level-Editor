@@ -106,6 +106,7 @@ static func functions(m: Dictionary) -> Dictionary:
 				"name": str(src.get("name", fid)) if str(src.get("name", "")) != "" else fid,
 				"fields": src.get("fields", []) if src.get("fields", []) is Array else [],
 				"conditions": src.get("conditions", []) if src.get("conditions", []) is Array else [],
+				"steps": bool(src.get("steps", false)),
 			}
 	elif decl is Array:
 		for item in (decl as Array):
@@ -121,6 +122,7 @@ static func functions(m: Dictionary) -> Dictionary:
 				"name": str(src2.get("name", fid2)) if str(src2.get("name", "")) != "" else fid2,
 				"fields": src2.get("fields", []) if src2.get("fields", []) is Array else [],
 				"conditions": src2.get("conditions", []) if src2.get("conditions", []) is Array else [],
+				"steps": bool(src2.get("steps", false)),
 			}
 	_cache = out
 	_cache_key = key
@@ -138,6 +140,10 @@ static func function_fields(m: Dictionary, fn_id: String) -> Array:
 ## 功能显示名；缺省用 fn_id。
 static func function_name(m: Dictionary, fn_id: String) -> String:
 	return str(function_decl(m, fn_id).get("name", fn_id))
+
+## 该功能声明是否为演出功能（声明 "steps": true）——内容表单据此渲染演出子面板入口。
+static func fn_has_steps(m: Dictionary, fn_id: String) -> bool:
+	return bool(function_decl(m, fn_id).get("steps", false))
 
 ## 功能 id（人类名）→ 执行码；缺失返回空串。
 static func fn_code(m: Dictionary, fn_id: String) -> String:

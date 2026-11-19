@@ -13,6 +13,7 @@ const ContentStore := preload("res://src/content/content_store.gd")
 const ContentId := preload("res://src/content/content_id.gd")
 const ConditionDecls := preload("res://src/content/condition_decl.gd")
 const AudioDecls := preload("res://src/content/audio_decl.gd")
+const StepDecls := preload("res://src/content/step_decl.gd")
 const MapStore := preload("res://src/map_store.gd")
 const FieldWidgets := preload("res://src/ui/field_widgets.gd")
 const FunctionDecls := preload("res://src/content/function_decl.gd")
@@ -805,6 +806,23 @@ func _build_form_block() -> Control:
 	name_edit.focus_exited.connect(func(): _commit_name(i, name_edit.text))
 	box.add_child(Kit.field_row("显示名", name_edit, 56))
 
+	# 演出功能（声明 "steps": true）：只读摘要 + 子面板入口。步骤数组是这类功能
+	# 内容的主体；普通字段/条件区照常渲染在下方（演出功能也可以有字段）。
+	if FunctionDecls.fn_has_steps(manifest, fn_id) and content_id != "":
+		var sdata: Array = data.get("steps", []) if data.get("steps", []) is Array else []
+		var parts: Array[String] = []
+		for st in sdata:
+			var sc := str((st as Dictionary).get("step", "")) if st is Dictionary else ""
+			parts.append("%d.%s" % [parts.size() + 1, StepDecls.step_name(manifest, sc)])
+		var sum := " → ".join(parts) if not parts.is_empty() else "（空演出：还没有步骤）"
+		var srow := Kit.hbox(6)
+		var slabel := Kit.hint_label("演出步骤：%s" % sum, RIGHT_W - 200)
+		slabel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		srow.add_child(slabel)
+		srow.add_child(Kit.button("编辑演出", func(): _open_steps_editor(i), "primary"))
+		box.add_child(srow)
+		box.add_child(Kit.divider())
+
 	var fields := FunctionDecls.function_fields(manifest, fn_id)
 	if fields.is_empty():
 		box.add_child(Kit.hint_label("这个功能没有声明可填字段；填个名字即可。", RIGHT_W - 40))
@@ -1134,11 +1152,13 @@ func _duplicate_from_lib(fn_id: String, old_id: String, new_name: String) -> voi
 	if nm == "":
 		nm = str(src.get("name", "")) if str(src.get("name", "")) != "" else fn_id
 	var src_fields = src.get("fields", {})
+	var src_steps = src.get("steps", [])
 	var data := {
 		"id": new_id,
 		"function": FunctionDecls.fn_code(manifest, fn_id),
 		"name": nm,
 		"fields": (src_fields as Dictionary).duplicate(true) if src_fields is Dictionary else {},
+		"steps": (src_steps as Array).duplicate(true) if src_steps is Array else [],
 	}
 	if not ContentStore.write(manifest, fn_id, new_id, data):
 		app._set_status(" 写盘失败: content/%s/%s.json" % [fn_id, new_id])
@@ -1152,3 +1172,239 @@ func _duplicate_from_lib(fn_id: String, old_id: String, new_name: String) -> voi
 	_write_fns(spr, fns)
 	_refresh_all()
 	app._set_status(" 已复制「%s」为新内容 %s" % [nm, new_id])
+
+# ──────────── 演出子面板（steps:true 的功能绑定） ────────────
+
+var _steps_pop: PopupPanel = null
+var _steps_i := -1            # 正在编辑的绑定行下标
+var _steps_fn_id := ""        # 该绑定的功能 id
+var _steps_sel := -1          # 当前选中步骤下标；-1 = 无
+var _steps_list: VBoxContainer = null
+var _steps_form: VBoxContainer = null
+
+## 打开演出子面板：先保证内容条目存在（首改即建），再建弹窗填步骤列表。
+func _open_steps_editor(i: int) -> void:
+	var fns := _current_fns()
+	var f: Dictionary = fns[i] if i >= 0 and i < fns.size() and fns[i] is Dictionary else {}
+	var fn_id := str(_resolve_fn(f).get("id", ""))
+	if fn_id == "":
+		return
+	if _ensure_content(i) == "":
+		_ensure_failed()
+		return
+	_steps_i = i
+	_steps_fn_id = fn_id
+	_steps_sel = -1
+	var shell: Dictionary = app._popup_body("演出编辑：%s" % FunctionDecls.function_name(manifest, fn_id),
+		"步骤自上而下依次执行；每步引用步骤池声明并填参")
+	var pop: PopupPanel = shell.pop
+	var body: VBoxContainer = shell.body
+	_steps_pop = pop
+	_steps_list = Kit.vbox(4)
+	_steps_form = Kit.vbox(6)
+	body.add_child(_steps_list)
+	body.add_child(Kit.divider())
+	body.add_child(_steps_form)
+	pop.popup_hide.connect(func(): _rebuild_right())
+	_rebuild_steps_all()
+	app._open_popup(pop)
+
+## 当前正在编辑的演出内容（绑定 _steps_i 的内容文件）；读不到返回 {}。
+func _steps_data() -> Dictionary:
+	var fns := _current_fns()
+	if _steps_i < 0 or _steps_i >= fns.size() or not (fns[_steps_i] is Dictionary):
+		return {}
+	var cid := str((fns[_steps_i] as Dictionary).get("content", ""))
+	return ContentStore.read(manifest, _steps_fn_id, cid) if cid != "" else {}
+
+## 写回演出内容；失败给可见反馈，不静默吞掉。
+func _steps_write(data: Dictionary) -> void:
+	var fns := _current_fns()
+	if _steps_i < 0 or _steps_i >= fns.size() or not (fns[_steps_i] is Dictionary):
+		return
+	var cid := str((fns[_steps_i] as Dictionary).get("content", ""))
+	if cid == "":
+		return
+	if not ContentStore.write(manifest, _steps_fn_id, cid, data):
+		_ensure_failed()
+
+## 重建子面板全部内容：步骤列表 + 当前步骤表单。
+func _rebuild_steps_all() -> void:
+	if _steps_list == null or _steps_form == null:
+		return
+	for c in _steps_list.get_children():
+		_steps_list.remove_child(c)
+		c.queue_free()
+	for c in _steps_form.get_children():
+		_steps_form.remove_child(c)
+		c.queue_free()
+	var data := _steps_data()
+	var arr: Array = data.get("steps", []) if data.get("steps", []) is Array else []
+	if arr.is_empty():
+		_steps_list.add_child(Kit.hint_label("（空演出：添加步骤开始排）", 320))
+	var pool := StepDecls.steps(manifest)
+	for si in arr.size():
+		var st = arr[si]
+		if not (st is Dictionary):
+			continue
+		_steps_list.add_child(_steps_row(si, st, pool))
+	_rebuild_steps_form(arr)
+
+## 子面板里的一个步骤行：序号+名称（选中高亮）+ 上移/下移/复制/删除。
+func _steps_row(si: int, st: Dictionary, pool: Dictionary) -> Control:
+	var sc := str(st.get("step", ""))
+	var decl: Dictionary = StepDecls.step_by_code(manifest, sc)
+	var known := not decl.is_empty()
+	var nm := str(decl.get("name", sc)) if known else "（未声明的步骤 %s）" % sc
+	var sel := _steps_sel == si
+	var row := Kit.hbox(4)
+	var mark := Kit.text_label("%d. %s" % [si + 1, nm],
+		Th.TEXT if sel else Th.TEXT_DIM, Th.FS_SMALL)
+	mark.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(mark)
+	if not known:
+		row.add_child(Kit.hint_label("⚠", 20))
+	row.add_child(Kit.button("↑", func(): _steps_move(si, -1), "ghost"))
+	row.add_child(Kit.button("↓", func(): _steps_move(si, 1), "ghost"))
+	row.add_child(Kit.button("复制", func(): _steps_dup(si), "ghost"))
+	row.add_child(Kit.del_button(func(): _steps_del(si)))
+	return row
+
+## 当前步骤表单：步骤类型选择 + 该步骤声明的字段 + 未声明键只读保留。
+## 字段改动即时写盘，不重建表单（保持输入焦点，与主表单同一纪律）。
+func _rebuild_steps_form(arr: Array) -> void:
+	var box := _steps_form
+	if box == null:
+		return
+	# 添加步骤：下拉选步骤池条目 → 追加到末尾
+	var add_row := Kit.hbox(6)
+	var pick := OptionButton.new()
+	for sid in StepDecls.steps(manifest):
+		var d: Dictionary = StepDecls.steps(manifest)[sid]
+		pick.add_item(str(d.get("name", sid)))
+		pick.set_item_metadata(pick.item_count - 1, str(d.get("code", "")))
+	add_row.add_child(pick)
+	var add_btn := Kit.button("添加步骤", func():
+		if pick.selected < 0:
+			return
+		_steps_add(str(pick.get_item_metadata(pick.selected))))
+	add_row.add_child(add_btn)
+	box.add_child(add_row)
+	if _steps_sel < 0 or _steps_sel >= arr.size() or not (arr[_steps_sel] is Dictionary):
+		if not arr.is_empty():
+			box.add_child(Kit.hint_label("点上方一个步骤进行编辑", 320))
+		return
+	var st: Dictionary = arr[_steps_sel]
+	var sc := str(st.get("step", ""))
+	var decl: Dictionary = StepDecls.step_by_code(manifest, sc)
+	if decl.is_empty():
+		box.add_child(Kit.hint_label(
+			"⚠ 步骤码 %s 不在清单声明里（声明被删/换码）。只读保留。" % sc, 320))
+		return
+	box.add_child(Kit.divider())
+	box.add_child(Kit.section_header("第 %d 步：%s" % [_steps_sel + 1, str(decl.get("name", sc))]))
+	var sfields: Array = decl.get("fields", [])
+	var sfd: Dictionary = st.get("fields", {}) if st.get("fields", {}) is Dictionary else {}
+	for fd in sfields:
+		if not (fd is Dictionary):
+			continue
+		box.add_child(_step_field_row(fd, sfd))
+	# 该步骤里有声明已删的键：只读保留
+	var known := {}
+	for fd2 in sfields:
+		if fd2 is Dictionary:
+			known[str((fd2 as Dictionary).get("code", ""))] = true
+	var extra := []
+	for k in sfd:
+		if str(k) == "" or known.has(str(k)):
+			continue
+		extra.append(k)
+	if not extra.is_empty():
+		extra.sort()
+		box.add_child(Kit.hint_label("⚠ %d 个参数未在声明里（只读保留）" % extra.size(), 320))
+		for k2 in extra:
+			var v = sfd[k2]
+			var row := LineEdit.new()
+			row.text = "%s = %s" % [str(k2), str(v) if (v is String or v is StringName) else JSON.stringify(v)]
+			row.editable = false
+			box.add_child(row)
+
+## 步骤字段行：复用 field_widgets，值取自步骤自己的 fields（键=字段码）。
+func _step_field_row(fd: Dictionary, sfd: Dictionary) -> Control:
+	var key := str(fd.get("code", ""))
+	var val = sfd.get(key, fd.get("default", FieldWidgets.default_for(fd)))
+	var label := str(fd.get("name", str(fd.get("id", ""))))
+	var built := FieldWidgets.build(fd, val, func(v):
+		_set_step_field(_steps_sel, key, v), _resolve_options)
+	if built.get("commit") is Callable and (built.commit as Callable).is_valid():
+		_pending_commits.append(built.commit)
+	return Kit.field_row(label, built.ctl, 96)
+
+## 写步骤字段：即时写盘，不重建表单（保焦点）。
+func _set_step_field(si: int, key: String, value) -> void:
+	if si < 0 or key == "":
+		return
+	var data := _steps_data()
+	var arr: Array = data.get("steps", []) if data.get("steps", []) is Array else []
+	if si >= arr.size() or not (arr[si] is Dictionary):
+		return
+	var st: Dictionary = arr[si]
+	var sfd: Dictionary = st.get("fields", {}) if st.get("fields", {}) is Dictionary else {}
+	sfd[key] = value
+	st["fields"] = sfd
+	data["steps"] = arr
+	_steps_write(data)
+
+## 添加步骤：追加到末尾并选中。
+func _steps_add(code: String) -> void:
+	if code == "":
+		return
+	var data := _steps_data()
+	var arr: Array = data.get("steps", []) if data.get("steps", []) is Array else []
+	arr.append({"step": code, "fields": {}})
+	data["steps"] = arr
+	_steps_sel = arr.size() - 1
+	_steps_write(data)
+	_rebuild_steps_all()
+
+## 删除步骤；删的是选中的步骤时清除选中。
+func _steps_del(si: int) -> void:
+	var data := _steps_data()
+	var arr: Array = data.get("steps", []) if data.get("steps", []) is Array else []
+	if si < 0 or si >= arr.size():
+		return
+	arr.remove_at(si)
+	data["steps"] = arr
+	if _steps_sel >= arr.size():
+		_steps_sel = arr.size() - 1
+	_steps_write(data)
+	_rebuild_steps_all()
+
+## 上移/下移一格。
+func _steps_move(si: int, dir: int) -> void:
+	var data := _steps_data()
+	var arr: Array = data.get("steps", []) if data.get("steps", []) is Array else []
+	var nj := si + dir
+	if si < 0 or si >= arr.size() or nj < 0 or nj >= arr.size():
+		return
+	var tmp = arr[si]
+	arr[si] = arr[nj]
+	arr[nj] = tmp
+	data["steps"] = arr
+	_steps_sel = nj
+	_steps_write(data)
+	_rebuild_steps_all()
+
+## 复制步骤：浅拷贝 fields 并插到下一步；步骤码引用清单声明、跨内容共享，无需重映射。
+func _steps_dup(si: int) -> void:
+	var data := _steps_data()
+	var arr: Array = data.get("steps", []) if data.get("steps", []) is Array else []
+	if si < 0 or si >= arr.size() or not (arr[si] is Dictionary):
+		return
+	var cp: Dictionary = (arr[si] as Dictionary).duplicate(true)
+	cp["fields"] = (cp.get("fields", {}) as Dictionary).duplicate(true) if cp.get("fields", {}) is Dictionary else {}
+	arr.insert(si + 1, cp)
+	data["steps"] = arr
+	_steps_sel = si + 1
+	_steps_write(data)
+	_rebuild_steps_all()
