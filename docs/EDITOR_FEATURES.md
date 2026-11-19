@@ -117,6 +117,8 @@ src/
 清单校验会拒绝其他 `id`，缺推荐层只警告。碰撞层 id 与类型（solid/one_way/ladder/hazard）由游戏侧
 `map_loader` 消费，两边一一对应。
 
+> 游戏工程该怎样声明清单/读地图/实现功能，见 **[GAME_SIDE_STANDARD.md](GAME_SIDE_STANDARD.md)**（数据契约唯一权威）。
+
 **实体占位尺寸**：`editorSize: [w,h]` 优先；否则读 `prefab` 的第一个碰撞形状
 （Rectangle 用 `size`，Circle 用 `radius*2`，Capsule 用 `radius*2 × height`）；都没有 = 用缩略图原始尺寸。
 

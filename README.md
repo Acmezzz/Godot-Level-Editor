@@ -8,6 +8,7 @@
 | 文档 | 定位 |
 |---|---|
 | [docs/EDITOR_FEATURES.md](docs/EDITOR_FEATURES.md) | **唯一权威功能描述**：架构、全部功能、快捷键、已知边界、已删除功能索引 |
+| [docs/GAME_SIDE_STANDARD.md](docs/GAME_SIDE_STANDARD.md) | **游戏侧开发规范**：清单/地图/内容三种数据的完整契约，怎么声明资产与功能，游戏侧怎么读；附当前 bird 的差距清单 |
 | [docs/code-review-2026-11-19.md](docs/code-review-2026-11-19.md) | 2026-11-19 代码审查报告（全部条目已修复，现作历史记录） |
 | [docs/demo-editor-v2.html](docs/demo-editor-v2.html) | 交互演示稿（单文件 HTML） |
 
@@ -40,7 +41,7 @@ src/
 └── ui/                    设计系统、布局骨架、三面板、各种弹窗
 tests/                     测试脚本（待重写，不作验收口径）
 tools/screenshot.gd        截图辅助（开发期）
-docs/                      EDITOR_FEATURES + 审查报告 + 演示稿
+docs/                      EDITOR_FEATURES + GAME_SIDE_STANDARD + 审查报告 + 演示稿
 ```
 
 ## 验证
