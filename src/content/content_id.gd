@@ -26,6 +26,12 @@ static func new_entity_code() -> String:
 static func new_inst_code() -> String:
 	return _code(LAYER_LEN)
 
+## 功能段 / 字段段的执行码：与地图、实例码同一字符集同一长度。
+## 它才是磁盘上的执行引用（地图 functions[].fn、内容 fields 的键）；
+## 人类名（功能 id / 字段 id）只负责显示与内容目录名，改名不破数据。
+static func new_fn_code() -> String:
+	return _code(LAYER_LEN)
+
 ## 组装内容 ID：前四段稳定身份，末段 6 位随机码保证唯一。
 ## 输入含空段（旧数据没发过码）时返回空串，不产出脏 ID。
 static func content_id(map_code: String, ent_code: String, inst_code: String, fn_id: String) -> String:

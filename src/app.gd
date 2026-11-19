@@ -679,7 +679,12 @@ func _save_manifest_file() -> void:
 	if not MapStore.write_text(p, txt):
 		_set_status(" 清单写入失败: " + p)
 		return
-	_set_status(" 清单已保存（资产模板变更下次试玩生效）")
+		_set_status(" 清单已保存（资产模板变更下次试玩生效）")
+	# 人类名 ↔ 执行码对照表随清单一起刷新（游戏侧重建映射、人工 diff 均用）；
+	# 只在清单落盘成功后写，码表写失败不影响清单本身，状态栏单独报。
+	var cp: String = str(manifest.get("_dir", "")).path_join("editor/CODES.md")
+	if not MapStore.write_text(cp, EditorManifest.codes_doc(manifest)):
+		_set_status(" 清单已保存，但码表写入失败: " + cp)
 ## —— 拆到 src/core/editor_state.gd 的委托（调用点保持不变） ——
 func _apply_state(tool := "", layer := -1) -> void:
 	_editor_state_ctrl._apply_state(tool, layer)

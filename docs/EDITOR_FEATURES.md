@@ -168,7 +168,7 @@ src/
 	{ "scene": "crawler", "id": "e_1", "code": "B3XD",
 	  "x": 10, "y": 8, "flip_h": false,
 	  "props": { "hp": 7 },
-	  "functions": [{ "fn": "dialogue", "content": "K7QM-D4L3-B3XD-dialogue-A9FK2P",
+	  "functions": [{ "fn": "X7K2", "content": "K7QM-D4L3-B3XD-dialogue-A9FK2P",
 					  "name": "初遇", "order": 0, "parallel": false }] }
   ]
 }
@@ -325,27 +325,30 @@ src/
 ### 7.1 模型
 
 - **功能由项目侧实现**，编辑器只暴露「可编辑内容」接口。
-- 功能在清单顶层 `functions` 声明：`{fnId: {name, fields:[...]}}`。`fields` 与实体 `stats/fields` 同构
-  （目前支持 `int` / `float` / `bool` / 其余按 `string`）。
+- 功能在清单顶层 `functions` 声明：`{fnId: {name, code, fields:[...]}}`。字段按 `kind` 两分支：
+  `input`（string/int/float/bool 输入控件）与 `choice`（`options[]` 或 `source` 动态选项）；
+  认不出的声明只读展示，绝不提供可写控件。
 - **实例绑定**存在实体 meta / 地图 JSON 的 `functions` 数组里：
 
 ```json
 "functions": [
-  { "fn": "dialogue", "content": "<内容ID>", "name": "初遇", "order": 0, "parallel": false }
+  { "fn": "X7K2", "content": "<内容ID>", "name": "初遇", "order": 0, "parallel": false }
 ]
 ```
 
 | 字段 | 含义 |
 |---|---|
-| `fn` | 功能 id，必须对应清单 `functions` 声明（未声明的只告警，允许先放数据后补实现） |
+| `fn` | 功能**执行码**；旧数据存人类名也认（先码后名解析，未声明的只告警） |
 | `content` | 内容条目 id；空串 = 还没填（界面显示「未填」），不是错误 |
 | `name` | 内容显示名（列表读这个） |
 | `order` | 组内顺序；**顺序即执行顺序** |
 | `parallel` | 与前一项同时触发 |
 
 - **内容文件**：`<项目>/content/<功能id>/<内容id>.json`，结构
-  `{id, function, name, fields:{字段id: 值}}`。`fields` 子字典留给以后扩展。
+  `{id, function: 执行码, name, fields:{字段码: 值}}`。旧数据的人类名键也认（先码后名）。
 - **复用 = 复制出新 ID**：库里已有的内容可以被复制成一条新内容追加到当前实例，不复用同一份文件。
+- **码表**：保存清单时自动生成 `editor/CODES.md`（人类名 ↔ 执行码对照）；游戏侧启动读清单
+  重建同款映射，改名不破引用。
 
 ### 7.2 分层身份码
 
@@ -356,8 +359,8 @@ src/
 | 地图 | 4 位 | 地图 `meta.code` | 首次载入该图时补发 |
 | 实体类型 | 4 位 | 清单 `entities[].code` | 读清单时补发；内置种类固定（`TZ99`） |
 | 实例 | 4 位 | 实体 meta `code`（随地图保存） | 放置/载入时补发 |
-| 功能 | — | 清单 `functions` 的 id | 声明即身份键（不是显示名） |
-| 内容 | 6 位 | 内容 id 末段 | 创建内容时随机发放 |
+| 功能 | 4 位 | 清单 `functions[].code`（人类 id 只显示；执行引用写码） | 读清单时缺则补发 |
+| 内容 | 6 位 | 内容 id 末段（第四段仍是功能人类 id，显示壳） | 创建内容时随机发放 |
 
 字符集 `ABCDEFGHJKLMNPQRSTUVWXYZ23456789`（去掉易混的 I/O/0/1）。
 **名字完全退出 ID**：地图名、类型名、`e_N` 都只是展示层，改名不影响任何运行时引用。

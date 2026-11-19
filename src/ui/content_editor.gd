@@ -11,6 +11,7 @@ const Th := preload("res://src/ui/ui_theme.gd")
 const ContentStore := preload("res://src/content/content_store.gd")
 const ContentId := preload("res://src/content/content_id.gd")
 const MapStore := preload("res://src/map_store.gd")
+const FieldWidgets := preload("res://src/ui/field_widgets.gd")
 
 ## 序号圈字符；超出后回落到数字
 const ORD := ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨"]
@@ -219,23 +220,16 @@ func refresh_list(focus := "") -> void:
 
 ## Ctrl+S / 切视图：把还没失焦提交的连续控件改动统一写盘，避免 Esc 或直接切走时丢改动。
 func commit() -> bool:
-	if not _pending_fields.is_empty():
-		var pend := _pending_fields.duplicate()
-		_pending_fields.clear()
-		for p in pend:
-			var v = p.get("v")
-			_set_field(int(p.get("i", -1)), str(p.get("fn_id", "")), str(p.get("key", "")),
-				int(v) if str(p.get("type", "")) == "int" else v)
+	var pend := _pending_commits.duplicate()
+	_pending_commits.clear()
+	for cb in pend:
+		if cb is Callable and (cb as Callable).is_valid():
+			(cb as Callable).call()
 	return true
 
-## 待提交的连续控件（SpinBox）：拖值期间只记内存，失焦/回车/commit() 才写内容文件。
-var _pending_fields: Array = []
-
-func _commit_pending(p: Dictionary) -> void:
-	_pending_fields.erase(p)
-	var v = p.get("v")
-	_set_field(int(p.get("i", -1)), str(p.get("fn_id", "")), str(p.get("key", "")),
-		int(v) if str(p.get("type", "")) == "int" else v)
+## 待提交的连续控件提交器（SpinBox / 多行文本）：拖值/输入期间只记内存，
+## 失焦或 commit() 才写内容文件。由 field_widgets.build() 产出，值未变时下游会幂等跳过。
+var _pending_commits: Array = []
 
 # ──────────── 数据读取：只从画布实体读，不另存一份 ────────────
 
@@ -694,8 +688,8 @@ func _clear_all_for_empty() -> void:
 func _rebuild_right() -> void:
 	if _r_body == null:
 		return
-	# 右栏控件整片重建：待提交项按旧下标记录，重建后失效，直接清（提交发生在选择变更前）。
-	_pending_fields.clear()
+	# 右栏控件整片重建：待提交项绑定的是旧控件，重建后失效，直接清（提交发生在选择变更前）。
+	_pending_commits.clear()
 	for c in _r_body.get_children():
 		_r_body.remove_child(c)
 		c.queue_free()
@@ -720,8 +714,9 @@ func _rebuild_right() -> void:
 		_r_body.add_child(Kit.divider())
 		_r_body.add_child(_build_form_block())
 
-## 固定的「类型自带参数」：清单 entities[].stats 声明 → SpinBox / LineEdit。
+## 固定的「类型自带参数」：清单 entities[].stats 声明 → 与功能字段同一套控件工厂。
 ## 值写在实体 meta props 上（实例级覆盖），不碰清单默认值——改模板去资产目录。
+## 旧实现自建控件且没有 bool 分支，同一个声明在两个 UI 里渲染成不同控件；现已统一。
 func _build_fixed_block(sid: String) -> Control:
 	var box := Kit.vbox(6)
 	box.add_child(Kit.section_header("固定功能", null))
@@ -738,27 +733,11 @@ func _build_fixed_block(sid: String) -> Control:
 		var key := str(decl.get("id", ""))
 		if key == "":
 			continue
-		var typ := str(decl.get("type", "int"))
-		var cur = props.get(key, decl.get("default", 0))
-		var ctl: Control = null
-		if typ == "int" or typ == "float":
-			var sp := SpinBox.new()
-			sp.step = 1.0 if typ == "int" else 0.1
-			sp.min_value = float(decl.get("min", -999999))
-			sp.max_value = float(decl.get("max", 999999))
-			sp.value = float(cur) if str(cur) != "" else 0.0
-			sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			sp.value_changed.connect(func(v: float):
-				_set_prop(key, int(v) if typ == "int" else v))
-			ctl = sp
-		else:
-			var le := LineEdit.new()
-			le.text = str(cur)
-			le.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			le.text_submitted.connect(func(t: String): _set_prop(key, t.strip_edges()))
-			le.focus_exited.connect(func(): _set_prop(key, le.text.strip_edges()))
-			ctl = le
-		box.add_child(Kit.field_row(str(decl.get("name", key)), ctl, 96))
+		var cur = props.get(key, decl.get("default", FieldWidgets.default_for(decl)))
+		var built := FieldWidgets.build(decl, cur, func(v): _set_prop(key, v), _resolve_options)
+		if built.get("commit") is Callable and (built.commit as Callable).is_valid():
+			_pending_commits.append(built.commit)
+		box.add_child(Kit.field_row(str(decl.get("name", key)), built.ctl, 96))
 	box.add_child(Kit.hint_label("固定功能由代码实现，只能改值。", RIGHT_W - 40))
 	return box
 
@@ -797,7 +776,8 @@ func _build_fn_block() -> Control:
 
 func _build_fn_row(i: int, item) -> Control:
 	var f: Dictionary = item if item is Dictionary else {}
-	var fn_id := str(f.get("fn", ""))
+	var ref := _resolve_fn(f)
+	var fn_id := str(ref.get("id", ""))
 	var fname := str(f.get("name", ""))
 	var content_id := str(f.get("content", ""))
 	var on := i == _selected_fn
@@ -809,8 +789,11 @@ func _build_fn_row(i: int, item) -> Control:
 	line.add_child(ord)
 
 	# 「库」按钮与「并行」勾选都要吞掉点击，否则会连带展开/收起表单
-	var name_lbl := Kit.text_label(str(EditorManifest.function_name(manifest, fn_id)),
-		Th.TEXT if on else Th.TEXT_SOFT, Th.FS_SMALL)
+	# 未知码：清单里查不到 → 红字显形，数据原样保留（不删、不改写）
+	var known := bool(ref.get("known", false))
+	var name_lbl := Kit.text_label(
+		EditorManifest.function_name(manifest, fn_id) if known else ("(未声明的功能) " + str(f.get("fn", ""))),
+		(Th.TEXT if on else Th.TEXT_SOFT) if known else Th.WARN, Th.FS_SMALL)
 	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	line.add_child(name_lbl)
 
@@ -900,6 +883,11 @@ func _on_add_menu_id(idx: int) -> void:
 func _function_index() -> Dictionary:
 	return EditorManifest.functions(manifest)
 
+## 解析一条绑定里的功能引用。磁盘上的 fn 是执行码；旧数据存的是人类名。
+## 返回 {id, code, known}——UI 全部按 id（人类名）组织，写盘只写 code。
+func _resolve_fn(f: Dictionary) -> Dictionary:
+	return EditorManifest.resolve_fn(manifest, str(f.get("fn", "")))
+
 func _pick_fn(i: int) -> void:
 	commit()
 	_selected_fn = -1 if _selected_fn == i else i
@@ -932,14 +920,17 @@ func _delete_fn(i: int) -> void:
 	_write_fns(spr, fns)
 	_refresh_all()
 
-## 追加功能：内容留空，等用户在表单里第一次改动时再生成 ID（§3.4 的「未填」状态）。
+## 追加功能：内容留空，等用户在表单里第一次改动时再生成 ID。
+## 绑定里写执行码（人类名改名不破数据）；声明缺码时退回人类名。
 func _add_fn(fn_id: String) -> void:
 	var spr := _current_spr()
 	if spr == null or fn_id == "":
 		return
 	commit()   # 追加前先落盘当前表单待提交值（下标保持有效）
 	var fns := _current_fns().duplicate(true)
-	fns.append({"fn": fn_id, "content": "", "name": "", "order": fns.size() + 1, "parallel": false})
+	var code := EditorManifest.fn_code(manifest, fn_id)
+	fns.append({"fn": code if code != "" else fn_id, "content": "", "name": "",
+		"order": fns.size() + 1, "parallel": false})
 	_selected_fn = fns.size() - 1
 	_write_fns(spr, fns)
 	_refresh_all()
@@ -953,17 +944,20 @@ func _refresh_all() -> void:
 
 # ──────────── 右列：内容表单 ────────────
 
-## 内容表单：字段按功能声明渲染（与实体 stats/fields 同一套声明式思路）。
-## 内容文件结构 {id, function, name, fields:{字段id:值}}，fields 子字典留给以后扩展。
+## 内容表单：字段按功能声明渲染（声明 = 游戏侧契约，编辑器只建控件不解释语义）。
+## 内容文件结构 {id, function: 功能码, name, fields:{字段码:值}}。
+## 旧数据里 function 与 fields 键存的是人类名，读取时按名回退（见 manifest.resolve_*）。
 func _build_form_block() -> Control:
 	var box := Kit.vbox(6)
 	var fns := _current_fns()
 	var i := _selected_fn
 	var f: Dictionary = fns[i] if i >= 0 and i < fns.size() and fns[i] is Dictionary else {}
-	var fn_id := str(f.get("fn", ""))
+	var ref := _resolve_fn(f)
+	var fn_id := str(ref.get("id", ""))
 	var content_id := str(f.get("content", ""))
-	var fn_label := str(EditorManifest.function_name(manifest, fn_id))
-	var data: Dictionary = ContentStore.read(manifest, fn_id, content_id) if content_id != "" else {}
+	var fn_label := str(EditorManifest.function_name(manifest, fn_id)) if bool(ref.get("known", false)) \
+		else "(未声明的功能) " + str(f.get("fn", ""))
+	var data: Dictionary = ContentStore.read(manifest, fn_id, content_id) if content_id != "" and fn_id != "" else {}
 	var cname := str(data.get("name", "")) if not data.is_empty() else str(f.get("name", ""))
 
 	var head := Kit.hbox(6)
@@ -1001,51 +995,85 @@ func _build_form_block() -> Control:
 		box.add_child(_build_field_row(i, fn_id, fd, cur))
 	if content_id == "":
 		box.add_child(Kit.hint_label("首次修改任意字段即创建内容条目。", RIGHT_W - 40))
+	var undeclared := _undeclared_block(fields, cur)
+	if undeclared != null:
+		box.add_child(undeclared)
 	return box
 
-## 单个声明字段：int/float → SpinBox，bool → CheckBox，其余 → LineEdit。
-func _build_field_row(i: int, fn_id: String, fd: Dictionary, cur: Dictionary) -> Control:
-	var key := str(fd.get("id", ""))
-	var typ := str(fd.get("type", "string"))
-	var val = cur.get(key, fd.get("default", _default_for(typ)))
-	var label := str(fd.get("name", key))
-	var ctl: Control = null
-	match typ:
-		"bool":
-			var cb := CheckBox.new()
-			cb.button_pressed = bool(val)
-			cb.toggled.connect(func(v: bool): _set_field(i, fn_id, key, v))
-			ctl = cb
-		"int", "float":
-			var sp := SpinBox.new()
-			sp.step = 1.0 if typ == "int" else 0.1
-			sp.min_value = float(fd.get("min", -999999))
-			sp.max_value = float(fd.get("max", 999999))
-			sp.value = float(val) if str(val) != "" else 0.0
-			sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			# 连续控件不在每 tick 写盘（P1-6）：拖动期间只记内存，失焦/回车/commit 统一提交。
-			# 与 asset_panel 的「编辑态只改内存、失焦提交」同一口径（O3）。
-			var pend := {"i": i, "fn_id": fn_id, "key": key, "type": typ, "v": sp.value}
-			_pending_fields.append(pend)
-			sp.value_changed.connect(func(v: float): pend.v = v)
-			sp.get_line_edit().text_submitted.connect(func(_t: String): _commit_pending(pend))
-			sp.get_line_edit().focus_exited.connect(func(): _commit_pending(pend))
-			ctl = sp
-		_:
-			var le := LineEdit.new()
-			le.text = str(val)
-			le.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			le.text_submitted.connect(func(t: String): _set_field(i, fn_id, key, t))
-			le.focus_exited.connect(func(): _set_field(i, fn_id, key, le.text))
-			ctl = le
-	return Kit.field_row(label, ctl, 96)
+## 报告 ③：内容里有清单没声明的键——保留原值、只读呈现，不删不改。
+## 场景：游戏侧删了字段声明（或换了码）、或手工改过 JSON。数据还在，编辑器只是不再替它渲染控件。
+func _undeclared_block(fields: Array, cur: Dictionary) -> Control:
+	var known := {}
+	for fd in fields:
+		if fd is Dictionary:
+			known[str((fd as Dictionary).get("code", ""))] = true
+			known[str((fd as Dictionary).get("id", ""))] = true
+	var extra := []
+	for k in cur:
+		if str(k) == "" or known.has(str(k)):
+			continue
+		extra.append(k)
+	if extra.is_empty():
+		return null
+	extra.sort()
+	var box := Kit.vbox(4)
+	box.add_child(Kit.hint_label(
+		"⚠ %d 个字段未在清单中声明（只读保留，不参与编辑）：" % extra.size(), RIGHT_W - 40))
+	for k in extra:
+		var v = cur[k]
+		var txt := str(v) if (v is String or v is StringName) else JSON.stringify(v)
+		var row := LineEdit.new()
+		row.text = "%s = %s" % [str(k), txt]
+		row.editable = false
+		row.add_theme_font_size_override("font_size", Th.FS_META)
+		row.tooltip_text = "字段码/名：声明缺失。游戏侧补回声明（code 须一致）即可恢复编辑。"
+		box.add_child(row)
+	return box
 
-func _default_for(typ: String):
-	match typ:
-		"bool": return false
-		"int": return 0
-		"float": return 0.0
-		_: return ""
+## 单个声明字段：交给 field_widgets 按 kind（input / choice）建控件。
+## 内容文件里的键是字段码；旧数据里存的是字段 id，读取时按 id 回退。
+func _build_field_row(i: int, fn_id: String, fd: Dictionary, cur: Dictionary) -> Control:
+	var fid := str(fd.get("id", ""))
+	var fcode := str(fd.get("code", ""))
+	var key := fcode if fcode != "" else fid
+	var val = cur.get(key, cur.get(fid, fd.get("default", FieldWidgets.default_for(fd))))
+	var label := str(fd.get("name", fid))
+	var built := FieldWidgets.build(fd, val, func(v):
+		_set_field(i, fn_id, key, v), _resolve_options)
+	if built.get("commit") is Callable and (built.commit as Callable).is_valid():
+		_pending_commits.append(built.commit)
+	return Kit.field_row(label, built.ctl, 96)
+
+## choice.source 的选项来源解析（由游戏侧声明，编辑器只查不解释）。
+## 支持：content:<功能id>（内容库）、entity:<id,id>（清单实体类型）、map（地图文件）。
+func _resolve_options(decl: Dictionary) -> Array:
+	var src := str(decl.get("source", ""))
+	if src.begins_with("content:"):
+		var kind := src.substr(8)
+		var out: Array = []
+		for cid in ContentStore.list_ids(manifest, kind):
+			var d := ContentStore.read(manifest, kind, str(cid))
+			var nm := str(d.get("name", ""))
+			out.append({"v": str(cid), "t": ("%s  %s" % [str(cid), nm]) if nm != "" else str(cid)})
+		return out
+	if src.begins_with("entity:"):
+		var want := src.substr(7).split(",", false)
+		var out2: Array = []
+		for e in manifest.get("entities", []):
+			if not (e is Dictionary):
+				continue
+			var sid := str((e as Dictionary).get("id", ""))
+			if not want.is_empty() and not want.has(sid):
+				continue
+			out2.append({"v": sid, "t": str((e as Dictionary).get("name", sid))})
+		return out2
+	if src == "map":
+		var out3: Array = []
+		for mn in MapStore.list_maps(manifest):
+			out3.append({"v": str(mn), "t": str(mn)})
+		return out3
+	return []
+
 
 ## 字段改动：写内容文件。content 为空时首次改动即创建条目（ID 生成 + 绑定回写）。
 ## P2-12 约定：字段值落在 content/<kind>/<id>.json，属「内容资产」而非地图快照——
@@ -1079,7 +1107,7 @@ func _commit_name(i: int, text: String) -> void:
 	if i < 0 or i >= fns.size():
 		return
 	var f: Dictionary = fns[i] if fns[i] is Dictionary else {}
-	var fn_id := str(f.get("fn", ""))
+	var fn_id := str(_resolve_fn(f).get("id", ""))
 	var nm := text.strip_edges()
 	if nm == "":
 		nm = fn_id
@@ -1109,8 +1137,10 @@ func _commit_name(i: int, text: String) -> void:
 	_write_fns(spr, fns)
 	_refresh_status_only()
 
+## 新内容条目骨架：function 写功能码（执行引用），目录名仍是人类名（可读）。
 func _blank_content(fn_id: String, cid: String) -> Dictionary:
-	return {"id": cid, "function": fn_id, "name": fn_id, "fields": {}}
+	var code := EditorManifest.fn_code(manifest, fn_id)
+	return {"id": cid, "function": code if code != "" else fn_id, "name": fn_id, "fields": {}}
 
 ## 保证该附加功能有 content id：没有就生成并写一条空内容 + 回写绑定。
 ## 返回空串 = 生成/写盘失败（调用方给出可见反馈，不静默吞掉）。
@@ -1122,7 +1152,7 @@ func _ensure_content(i: int) -> String:
 	var cid := str(f.get("content", ""))
 	if cid != "":
 		return cid
-	var fn_id := str(f.get("fn", ""))
+	var fn_id := str(_resolve_fn(f).get("id", ""))
 	var spr := _current_spr()
 	if spr == null or fn_id == "":
 		return ""
@@ -1172,7 +1202,7 @@ func _open_lib(i: int) -> void:
 	if i < 0 or i >= fns.size():
 		return
 	var f: Dictionary = fns[i] if fns[i] is Dictionary else {}
-	var fn_id := str(f.get("fn", ""))
+	var fn_id := str(_resolve_fn(f).get("id", ""))
 	if fn_id == "":
 		return
 	var fn_label := str(EditorManifest.function_name(manifest, fn_id))
@@ -1240,7 +1270,7 @@ func _duplicate_from_lib(fn_id: String, old_id: String, new_name: String) -> voi
 	var src_fields = src.get("fields", {})
 	var data := {
 		"id": new_id,
-		"function": fn_id,
+		"function": EditorManifest.fn_code(manifest, fn_id),
 		"name": nm,
 		"fields": (src_fields as Dictionary).duplicate(true) if src_fields is Dictionary else {},
 	}
@@ -1249,7 +1279,10 @@ func _duplicate_from_lib(fn_id: String, old_id: String, new_name: String) -> voi
 		return
 	commit()   # 复制库内容前先落盘当前表单待提交值（下标保持有效）
 	var fns := _current_fns().duplicate(true)
-	fns.append({"fn": fn_id, "content": new_id, "name": nm, "order": fns.size() + 1, "parallel": false})
+	# 绑定里写执行码；清单里查不到码（声明缺失）时退回人类名，至少不写空值
+	var fn_ref := EditorManifest.fn_code(manifest, fn_id)
+	fns.append({"fn": fn_ref if fn_ref != "" else fn_id, "content": new_id, "name": nm,
+		"order": fns.size() + 1, "parallel": false})
 	_selected_fn = fns.size() - 1
 	_write_fns(spr, fns)
 	_refresh_all()

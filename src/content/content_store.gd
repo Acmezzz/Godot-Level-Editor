@@ -4,11 +4,8 @@ extends RefCounted
 ## 目录：<项目>/content/<kind>/<id>.json，kind 为合法 id 片段（不含点）。
 
 const Store := preload("res://src/map_store.gd")
-const ManifestScript := preload("res://src/manifest.gd")
 
 const DEFAULT_CONTENT_DIR := "content"
-## 单例种类：schema 只有一份动作声明，id 固定为 actions。
-const SCHEMA_ID := "actions"
 
 ## 资源 id 规则：字母/数字/下划线/点/连字符；不能以点开头或结尾，不能含路径分隔符。
 static func is_valid_id(id: String) -> bool:
@@ -93,8 +90,6 @@ static func path_for(m: Dictionary, kind: String, id: String) -> String:
 	var dir := dir_for(m, kind)
 	if dir == "":
 		return ""
-	if kind == "schema" and id != SCHEMA_ID:
-		return ""
 	return dir.path_join(id + ".json").simplify_path()
 
 ## 读单个资源；缺失/损坏/非法一律返回 {}。
@@ -117,7 +112,7 @@ static func read(m: Dictionary, kind: String, id: String) -> Dictionary:
 		return {}
 	var text := f.get_as_text()
 	f.close()
-	var data := _decode(text, id, kind)
+	var data := _decode(text, id)
 	if not data.is_empty():
 		_cache[path] = {"mtime": mt, "size": sz, "data": data}
 	return data
@@ -132,7 +127,7 @@ static func _file_size(path: String) -> int:
 
 ## 静默解析：JSON.parse_string 遇到坏文件会向引擎打 ERROR 日志，
 ## 校验页扫描大量资源时会被噪声淹没；JSON.new().parse() 只返回错误码。
-static func _decode(text: String, id: String, kind: String) -> Dictionary:
+static func _decode(text: String, id: String) -> Dictionary:
 	var json := JSON.new()
 	if json.parse(text) != OK:
 		return {}
@@ -140,7 +135,7 @@ static func _decode(text: String, id: String, kind: String) -> Dictionary:
 		return {}
 	var data: Dictionary = json.data
 	# 文件内 id 缺失时用文件名补齐，便于下游统一读取。
-	if str(data.get("id", "")) == "" and kind != "schema":
+	if str(data.get("id", "")) == "":
 		data["id"] = id
 	return data
 
@@ -154,8 +149,7 @@ static func write(m: Dictionary, kind: String, id: String, data: Dictionary) -> 
 		# P3-14：内容文件与地图同权——误写可回滚（3 层 .history，最新 .1）
 		Store.rotate_history(path)
 	var payload := data.duplicate(true)
-	if kind != "schema":
-		payload["id"] = id
+	payload["id"] = id
 	_cache.erase(path)   # D3：写后失效（同秒重写也不吃脏缓存）
 	return Store.write_json(path, payload)
 

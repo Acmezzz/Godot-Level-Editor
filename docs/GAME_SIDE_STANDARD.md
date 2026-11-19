@@ -203,44 +203,63 @@ solid+矩形碰撞：`col.set_cell(cell, 0, Vector2i(4,0))`。
 "functions": {
   "dialogue": {
     "name": "对话",
-    "fields": [{"id": "text", "name": "台词", "type": "string", "default": ""}]
+    "code": "X7K2",
+    "fields": [
+      {"id": "text", "code": "M3PQ", "name": "台词",
+       "kind": "input", "type": "string", "default": ""}
+    ]
   }
 }
 ```
 
 ```json
 "functions": [
-  {"id": "dialogue", "name": "对话", "fields": [...]}
+  {"id": "dialogue", "code": "X7K2", "name": "对话", "fields": [...]}
 ]
 ```
 
-**功能 id（`dialogue`）是稳定身份键**：它出现在内容 ID 的第四段，出现在实例 `functions[].fn`。
-改名会切断既有内容引用，所以只改 `name`，不改 `id`。
+**功能码 / 字段码**：`code` 是 4 位执行码（与地图/实例码同字符集），编辑器加载清单时给缺码
+声明自动补发并随清单写回（`ensure_codes`）。**不要手工编 code**；两声明同码 = 静默别名，
+校验报**错误**。人类 id 只负责显示与内容目录名——执行引用一律写码：
 
-**字段声明结构与 `stats[]` 完全同构**，控件映射也相同：
-
-| `type` | 控件 |
+| 磁盘引用 | 写什么 |
 |---|---|
-| `bool` | CheckBox，即时写盘 |
-| `int` / `float` | SpinBox（步进 1.0 / 0.1，`min`/`max` 可声明），失焦/回车提交 |
-| 其他任意字符串 | LineEdit，回车/失焦提交，字符串 `strip_edges()` |
+| 地图 `entities[].functions[].fn` | 功能执行码 |
+| 内容文件 `"function"` 键 | 功能执行码 |
+| 内容文件 `fields` 的键 | 字段执行码 |
+
+人类名 ↔ 码对照表在每次保存清单时自动写到 `editor/CODES.md`；游戏侧启动时读清单重建同样的
+映射（约 30 行代码），改名（id 或 name）不破任何磁盘引用。
+
+**字段声明 = kind（input/choice）+ type**。控件映射（`field_widgets.gd`）：
+
+| kind | type | 控件 |
+|---|---|---|
+| input | `string` | LineEdit，回车/失焦提交并 strip_edges；`multiline: true` 则 TextEdit（失焦提交） |
+| input | `int` / `float` | SpinBox（步进 1.0 / 0.1，`min`/`max` 可声明），失焦/回车提交 |
+| input | `bool` | CheckBox，即时写盘 |
+| choice | — | OptionButton：`options: ["a","b"]` 直给，或 `source` 动态取 |
+| input | 其他任意字符串 | 只读展示 + 黄字提示（编辑器不会把数组/对象塞进可写控件） |
+
+choice 的 `source` 取值：`content:<kind>`（列该目录内容条目）、`entity:<id,id>`（清单实体，
+空 = 不过滤）、`map`（地图列表）。值的 JSON 形态与声明不符时只读展示，**绝不自动改写**。
 
 `default` 决定新建内容时的初值：`bool`→false、`int`→0、`float`→0.0、其他→`""`。
 
 **功能声明里编辑器不支持的键**（别指望它们生效）：`trigger`、`scope`、`icon`、`params`、
-`category`、`group` 等一律被忽略——`functions()` 归一化时只保留 `id` / `name` / `fields`。
+`category`、`group` 等一律被忽略——`functions()` 归一化时只保留 `id` / `code` / `name` / `fields`。
 「一个功能在什么时机触发」**不在清单里声明**，由游戏侧实现决定
-（现有 `dialogue` 就是 main.gd 按距离 + 交互键触发）。
+（现有 `dialogue` 就是 game 侧按距离 + 交互键触发）。
 
 **实例上挂多个功能**：`functions` 是有序数组，每项：
 
 ```json
-{"fn": "dialogue", "content": "TEST-D4L3-XXXX-dialogue-ABC123", "name": "自我介绍", "order": 1, "parallel": false}
+{"fn": "X7K2", "content": "TEST-D4L3-XXXX-dialogue-ABC123", "name": "自我介绍", "order": 1, "parallel": false}
 ```
 
 | 键 | 语义 |
 |---|---|
-| `fn` | 功能 id，必须非空；未在清单声明只**警告**不报错（允许先放数据后补实现） |
+| `fn` | 功能**执行码**；旧数据存人类名也认（`resolve_fn` 先按码查再按名查）；两者都不中只**警告**（允许先放数据后补实现） |
 | `content` | 内容 ID；空串 = 已绑定功能但还没建内容（合法状态） |
 | `name` | 显示名，缺省用 `fn` |
 | `order` | 顺序，编辑器在增删时重排为 1..n |
@@ -402,7 +421,7 @@ solid+矩形碰撞：`col.set_cell(cell, 0, Vector2i(4,0))`。
   "flip_h": false,
   "props": {"target_point": "e_10"},
   "functions": [
-    {"fn": "dialogue", "content": "TEST-FY9F-QK3T-dialogue-7M2XK9",
+    {"fn": "X7K2", "content": "TEST-FY9F-QK3T-dialogue-7M2XK9",
      "name": "打招呼", "order": 1, "parallel": false}
   ]
 }
@@ -437,18 +456,18 @@ solid+矩形碰撞：`col.set_cell(cell, 0, Vector2i(4,0))`。
 ```json
 {
   "id": "TEST-FY9F-QK3T-dialogue-7M2XK9",
-  "function": "dialogue",
+  "function": "X7K2",
   "name": "打招呼",
-  "fields": {"text": "你终于回来了。"}
+  "fields": {"M3PQ": "你终于回来了。"}
 }
 ```
 
 | 键 | 语义 |
 |---|---|
 | `id` | 与文件名同名；编辑器写盘时强制覆盖为文件名 |
-| `function` | 功能 id，与所在目录名一致 |
+| `function` | 功能**执行码**（旧数据存人类名也认，见 `resolve_fn`） |
 | `name` | 显示名 |
-| `fields` | `{字段id: 值}`，字段 id 来自清单 `functions[eid].fields[].id` |
+| `fields` | `{字段执行码: 值}`；旧数据键是人类名也认（`resolve_field` 先码后名） |
 
 **路径**：`<工程根>/<contentDir>/<function>/<id>.json`，`contentDir` 缺省 `content`。
 目录名与文件名都**不能含 `.`**（目录）**或路径分隔符 / `..` / `:`**（文件名）。
@@ -457,8 +476,9 @@ solid+矩形碰撞：`col.set_cell(cell, 0, Vector2i(4,0))`。
 **读不到一律当空**：编辑器与游戏侧（`content_db.gd`）对缺失/损坏/非法路径都返回 `{}`，
 调用方自行兜底。运行时不该因为缺一个内容文件而崩。
 
-**未知字段不剥离**：`fields` 里编辑器不认识的键原样保留，游戏侧可自行扩展。
-但编辑器只会渲染清单声明过的字段——**没声明的键不会出现在 UI 上，也不会被编辑器删除**。
+**未知字段不剥离**：`fields` 里编辑器不认识的键（码或人类名都不在声明里）原样保留；
+编辑器以**只读行**展示（「未在清单中声明」+ 黄字说明），不提供可写控件，也**不会被删除**。
+游戏侧补回声明（code 须与磁盘键一致）即可恢复编辑。
 
 **改名/复制语义**：改名只是改 `name`（ID 不变）；「复制成新 ID」会生成新的内容码段，
 名字沿用弹窗输入。删除实例的绑定**不删除内容文件**——内容条目是库资产，可能被别的实例复用。
@@ -472,7 +492,9 @@ solid+矩形碰撞：`col.set_cell(cell, 0, Vector2i(4,0))`。
 | 地图码 | 4 | 地图 `meta.code` | 首次打开该图 |
 | 实体码 | 4 | 清单 `entities[].code` | 首次加载清单；随清单写回 |
 | 实例码 | 4 | 地图 `entities[].code` | 放置实例时 |
-| 功能段 | — | 清单 `functions` 的 key（功能 id 本身） | 手工声明 |
+| 功能码 | 4 | 清单 `functions[].code` | 加载清单时缺则补发（`ensure_codes`） |
+| 字段码 | 4 | 清单 `functions[].fields[].code` | 同上 |
+| 功能段 | — | 内容 ID 第四段 = 功能人类 id（显示壳；执行引用不用它） | 内容创建时取当次声明 |
 | 内容码 | 6 | 内容文件名 | 首次创建内容 |
 
 拼装（`content_id.gd::content_id`）：
@@ -495,6 +517,11 @@ TEST-FY9F-QK3T-dialogue-7M2XK9
 用于「这个内容属于谁」的调试输出或分图校验。
 
 **名字（地图名 / 实体 `name` / 实例号 `e_N`）一律不进 ID**，改名不破坏内容引用。
+
+**显示壳与执行引用**：内容 ID 第四段保留功能人类 id（显示壳，人眼可读）；
+磁盘上的**执行引用**写码——地图 `functions[].fn`、内容文件 `"function"`、内容 `fields` 的键。
+两端映射表：编辑器保存清单时生成 `editor/CODES.md`；游戏侧启动读清单重建同款映射
+（`functions[].code` ↔ `id`，`fields[].code` ↔ `id`）。
 
 ## 6. 游戏侧读取契约
 
@@ -582,21 +609,32 @@ static func build(root: Node2D, data: Dictionary) -> Dictionary:
 "functions": {
   "door_toggle": {
     "name": "开关门",
+    "code": "D9R4",
     "fields": [
-      {"id": "require_flag", "name": "前置标记", "type": "string", "default": ""},
-      {"id": "once",         "name": "只开一次", "type": "bool",   "default": false},
-      {"id": "speed",        "name": "开门速度", "type": "float",  "default": 2.0, "min": 0.1, "max": 20.0}
+      {"id": "require_flag", "code": "F1A2", "name": "前置标记", "type": "string", "default": ""},
+      {"id": "once",         "code": "B3C4", "name": "只开一次", "type": "bool",   "default": false},
+      {"id": "speed",        "code": "E5D6", "name": "开门速度", "type": "float",  "default": 2.0, "min": 0.1, "max": 20.0}
     ]
   }
 }
 ```
 
 声明后编辑器立刻能在实例上选「开关门」、填三个字段，内容写到
-`content/door_toggle/<内容ID>.json` 的 `fields` 下。
+`content/<功能id>/<内容ID>.json` 的 `fields` 下（键是**字段码**）。
 
 ### 7.2 实现（游戏侧，读内容）
 
 ```gdscript
+# 启动时从清单构建 码↔名 映射（这就是 CODES.md 的运行时等价物）：
+var fn_by_code := {}      # 功能码 -> 功能 id
+var field_by_code := {}   # 字段码 -> 字段 id
+func _build_code_tables(manifest: Dictionary) -> void:
+	for fid in (manifest.get("functions", {}) as Dictionary):
+		var d := (manifest["functions"] as Dictionary)[fid] as Dictionary
+		fn_by_code[str(d.get("code", ""))] = str(fid)
+		for fd in (d.get("fields", []) as Array):
+			field_by_code[str((fd as Dictionary).get("code", ""))] = str((fd as Dictionary).get("id", ""))
+
 func _apply_door(inst: Node, fn: Dictionary) -> void:
 	var cid := str(fn.get("content", ""))
 	if cid == "":
@@ -606,9 +644,10 @@ func _apply_door(inst: Node, fn: Dictionary) -> void:
 		push_warning("door_toggle 内容缺失: " + cid)
 		return
 	var f: Dictionary = data.get("fields", {})
-	var flag := str(f.get("require_flag", ""))
-	var once := bool(f.get("once", false))
-	var spd := float(f.get("speed", 2.0))
+	# 内容 fields 的键是字段码 → 用映射表转回人类名再读
+	var flag := str(f.get(field_by_code.get("F1A2", ""), ""))
+	var once := bool(f.get(field_by_code.get("B3C4", ""), false))
+	var spd := float(f.get(field_by_code.get("E5D6", ""), 2.0))
 	# 这里实现行为
 ```
 

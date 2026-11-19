@@ -4,8 +4,6 @@ extends RefCounted
 var cvs   # 宿主引用
 
 const BuiltinKinds := preload("res://src/content/builtin_kinds.gd")
-## 触发区的实例级属性：不在清单 fields 里，但必须随地图保存
-const TRIGGER_PROP_KEYS := ["w", "h", "mode", "event", "require_flag", "once"]
 
 func _init(host) -> void:
 	cvs = host

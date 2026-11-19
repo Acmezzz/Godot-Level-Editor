@@ -14,10 +14,44 @@ static func validate(data: Dictionary, project_dir := "") -> Array[Dictionary]:
 		_validate_layers(data.layers, issues)
 	if data.get("entities", null) is Array:
 		_validate_entities(data.entities, issues)
+	if data.has("functions"):
+		_validate_functions(data, issues)
 	var tile_size = data.get("tileSize", 16)
 	if not (tile_size is int or tile_size is float) or float(tile_size) <= 0.0:
 		_add(issues, "error", "tileSize", "must be a positive number")
 	return issues
+
+## 功能/字段声明：结构 + 身份码唯一性 + 字段种类合法性。
+## 码重复是**错误**：两个声明同码等于静默别名，磁盘上的引用会指向不确定的那个。
+## id 重复同样错误（内容和目录按 id 分目录）。
+static func _validate_functions(data: Dictionary, issues: Array[Dictionary]) -> void:
+	var ManifestScript := preload("res://src/manifest.gd")
+	var decl = data.get("functions", null)
+	if not (decl is Dictionary or decl is Array):
+		_add(issues, "error", "functions", "must be an object or an array")
+		return
+	var dup := ManifestScript.duplicate_codes(data)
+	for d in dup:
+		_add(issues, "error", "functions", "duplicate code %s (%s)" % [str(d.get("code", "")), str(d.get("scope", ""))])
+	var norm: Dictionary = ManifestScript.functions(data)
+	for fid in norm:
+		var d: Dictionary = norm[fid]
+		# 缺码不是错误：load_from 在 validate 之后调 ensure_codes 自动补发（兼容老清单）。
+		# 只有「重复」是错误——上面 duplicate_codes 已报。
+		var fseen := {}
+		for fd in d.get("fields", []):
+			if not (fd is Dictionary):
+				_add(issues, "error", "functions.%s.fields" % str(fid), "entries must be objects")
+				continue
+			var field_id := str((fd as Dictionary).get("id", ""))
+			if field_id == "" or fseen.has(field_id):
+				_add(issues, "error", "functions.%s.fields" % str(fid),
+					"field ids must be non-empty and unique (by id, seen: %s)" % field_id)
+			fseen[field_id] = true
+			var kind := str((fd as Dictionary).get("kind", ""))
+			if kind != "" and kind != "input" and kind != "choice":
+				_add(issues, "error", "functions.%s.fields.%s" % [str(fid), field_id],
+					"unsupported field kind: " + kind)
 
 static func _validate_tiles(tiles: Array, project_dir: String, issues: Array[Dictionary]) -> void:
 	var ids := {}
