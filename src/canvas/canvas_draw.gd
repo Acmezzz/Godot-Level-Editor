@@ -227,21 +227,6 @@ func _draw() -> void:
 				cvs.draw_rect(er, Color(0.6, 1.0, 0.6, 0.4), true)
 		var gr := Rect2(Vector2(org) * cvs.tile_px, Vector2(cvs._region_clip.get("size", Vector2i.ONE)) * cvs.tile_px)
 		cvs.draw_rect(gr, Color(1.0, 0.85, 0.3, 0.9), false, 2.0)
-	# 常驻悬停高亮（实体大纲列表悬停）：青色框 + 十字，稳定不闪，和"看的是哪个"对得上
-	if cvs.hover_id != "":
-		for e5 in cvs.entities.get_children():
-			var s5 := e5 as Sprite2D
-			if s5 == null or str(s5.get_meta("ent_id", "")) != cvs.hover_id:
-				continue
-			var dsz5 = cvs.entity_display_size_of(s5)
-			var hr5 := Rect2(s5.position - dsz5 * 0.5, dsz5).grow(maxf(cvs.tile_px * 0.35, 3.0))
-			cvs.draw_rect(hr5, Color(0.35, 0.95, 0.95, 0.95), false, 2.0)
-			cvs.draw_line(Vector2(hr5.position.x, s5.position.y), Vector2(hr5.end.x, s5.position.y),
-				Color(0.35, 0.95, 0.95, 0.35), 1.0)
-			cvs.draw_line(Vector2(s5.position.x, hr5.position.y), Vector2(s5.position.x, hr5.end.y),
-				Color(0.35, 0.95, 0.95, 0.35), 1.0)
-			break
-
 ## 触发区矩形：半透明填充 + 边框 + 左上角事件名标签。
 ## 未绑定事件时用警示色——它在地图里是"死"的，必须在画布上一眼能看出来。
 func _draw_trigger_zones() -> void:
@@ -265,13 +250,6 @@ func _draw_trigger_zones() -> void:
 			label += " · 一次"
 		cvs.draw_string(ThemeDB.fallback_font, rect.position + Vector2(3, -3),
 			label, HORIZONTAL_ALIGNMENT_LEFT, rect.size.x * cvs.zoom, 10, col)
-
-## 常驻悬停高亮（实体大纲列表用）：一直到被设为""才熄灭，不自动过期。
-func set_hover_entity(id: String) -> void:
-	if cvs.hover_id == id:
-		return
-	cvs.hover_id = id
-	cvs.queue_redraw()
 
 # 笔刷覆盖矩形（世界坐标）
 

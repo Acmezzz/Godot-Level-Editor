@@ -158,6 +158,7 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	_region_sel = Rect2i(-1, 0, 0, 0)
 	_region_clip = {}
 	_last_copy_region = false
+	_collision_meta.clear()
 	_rmb_erase = false
 	_panning = false
 	_drag_entity = null
@@ -499,6 +500,9 @@ signal tool_requested(tool: String, layer: int)
 ## A1.1 吸管：取光标格瓦片为当前笔刷——地形优先，其次装饰；碰撞层无瓦片语义。
 ## 经 tool_requested 信号走 app._apply_state 单一写入口切工具，避免工具按钮高亮失同步。
 func _pick_tile(pos: Vector2) -> void:
+	if map_root == null or not is_instance_valid(map_root) or terrain == null or decor == null:
+		_hint("无地图：先新建或打开一张地图")
+		return
 	var c := _cell_of(pos)
 	var ac := terrain.get_cell_atlas_coords(c)
 	var layer := 0
@@ -518,6 +522,9 @@ func _pick_tile(pos: Vector2) -> void:
 
 ## A6：整图入视野（Home）——相机对中 + 缩放夹回 0.5~6.0
 func _fit_view() -> void:
+	if map_root == null or not is_instance_valid(map_root) or terrain == null:
+		_hint("无地图：先新建或打开一张地图")
+		return
 	var used := terrain.get_used_rect()
 	if used.size == Vector2i.ZERO:
 		used = Rect2i(0, 0, 10, 10)
@@ -696,7 +703,6 @@ func _any_layer_locked() -> bool:
 
 ## 区域剪切 = 复制区域内三层 + 实体，再把源区域清空。整件事一个撤销步。
 # —— 绘制：网格 + 光标幽灵预览 ——
-var hover_id := ""
 
 func _select_entity_at(pos: Vector2) -> void:
 	_selection_ops_ctrl._select_entity_at(pos)
@@ -741,17 +747,8 @@ func paste_at(pos: Vector2) -> void:
 func delete_selection() -> void:
 	_selection_ops_ctrl.delete_selection()
 
-func align_selection(mode: String) -> void:
-	_selection_ops_ctrl.align_selection(mode)
-
 func flip_selected() -> bool:
 	return _selection_ops_ctrl.flip_selected()
-
-func _distribute(targets: Array, horizontal: bool) -> void:
-	_selection_ops_ctrl._distribute(targets, horizontal)
-
-func bulk_update(scene_id: String, stat_set: Dictionary, stat_clear: Array, props_set: Dictionary) -> int:
-	return _selection_ops_ctrl.bulk_update(scene_id, stat_set, stat_clear, props_set)
 
 func copy_region() -> void:
 	_selection_ops_ctrl.copy_region()
@@ -782,25 +779,22 @@ func _snapshot() -> String:
 	return _undo_history_ctrl._snapshot()
 
 func _restore(snapshot) -> void:
-	_undo_history_ctrl._restore(snapshot)
+	await _undo_history_ctrl._restore(snapshot)
 
 func _push_undo() -> void:
 	_undo_history_ctrl._push_undo()
 
 func undo() -> bool:
-	return _undo_history_ctrl.undo()
+	return await _undo_history_ctrl.undo()
 
 func redo() -> bool:
-	return _undo_history_ctrl.redo()
+	return await _undo_history_ctrl.redo()
 
 func extract() -> Dictionary:
 	return _undo_history_ctrl.extract()
 ## —— 拆到 src/canvas/canvas_draw.gd 的委托（调用点保持不变） ——
 func _draw() -> void:
 	_canvas_draw_ctrl._draw()
-
-func set_hover_entity(id: String) -> void:
-	_canvas_draw_ctrl.set_hover_entity(id)
 
 func _brush_rect(c: Vector2i) -> Rect2:
 	return _canvas_draw_ctrl._brush_rect(c)

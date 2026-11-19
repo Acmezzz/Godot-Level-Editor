@@ -100,7 +100,7 @@ func create_map_from_dialog(name_edit: LineEdit, err_label: Label, pop: PopupPan
 	if not await confirm_discard("新建"):
 		return
 	app.canvas.set_thumbs(app._entity_thumbs())
-	app.canvas.load_data({
+	await app.canvas.load_data({
 		"meta": {"name": n, "w": 120, "h": 56},
 		"spawn": [2, 2],
 		"terrain": [], "decor": [], "collision": [], "entities": [],

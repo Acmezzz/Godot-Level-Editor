@@ -195,6 +195,7 @@ func copy_selection() -> void:
 			"dy": spr.position.y - center.y,
 			"flip_h": spr.flip_h,
 			"def_id": str(spr.get_meta("def_id", "")),
+			"functions": (spr.get_meta("functions", []) as Array).duplicate(true),
 			# deep=true：props 里的 stats 等嵌套字典各副本独立，避免改一个影响全部
 			"props": (spr.get_meta("props", {}) as Dictionary).duplicate(true),
 		})
@@ -276,6 +277,10 @@ func paste_at(pos: Vector2) -> void:
 					props[field_id] = copied_ids[target_id]
 			break
 		spr.set_meta("props", props)
+		# functions 里对块内实例 id 的字符串引用同样重映射（与 props 同一套 copied_ids）
+		var functions: Array = (t.get("functions", []) as Array).duplicate(true)
+		_remap_refs_in(functions, copied_ids)
+		spr.set_meta("functions", functions)
 		cvs.entities.add_child(spr)
 		cvs._fit_sprite(spr, scene_id)
 		cvs._assign_id(spr, paste_ids[i])
@@ -305,63 +310,6 @@ func delete_selection() -> void:
 	cvs.queue_redraw()
 
 
-func align_selection(mode: String) -> void:
-	if cvs.map_root == null:
-		return
-	var targets: Array = cvs._valid_multi()
-	if targets.size() < 2:
-		cvs._hint("先框选至少 2 个实体再做对齐/分布")
-		return
-	cvs._push_undo()
-	var min_x := INF
-	var max_x := -INF
-	var min_y := INF
-	var max_y := -INF
-	for s in targets:
-		var p: Vector2 = (s as Sprite2D).position
-		min_x = minf(min_x, p.x)
-		max_x = maxf(max_x, p.x)
-		min_y = minf(min_y, p.y)
-		max_y = maxf(max_y, p.y)
-	match mode:
-		"left":
-			for s in targets:
-				(s as Sprite2D).position.x = min_x
-		"right":
-			for s in targets:
-				(s as Sprite2D).position.x = max_x
-		"top":
-			for s in targets:
-				(s as Sprite2D).position.y = min_y
-		"bottom":
-			for s in targets:
-				(s as Sprite2D).position.y = max_y
-		"center_h":
-			var cx := (min_x + max_x) * 0.5
-			for s in targets:
-				(s as Sprite2D).position.x = cx
-		"center_v":
-			var cy := (min_y + max_y) * 0.5
-			for s in targets:
-				(s as Sprite2D).position.y = cy
-		"dist_h":
-			_distribute(targets, true)
-		"dist_v":
-			_distribute(targets, false)
-		_:
-			cvs._hint("未知对齐方式: " + mode)
-			return
-	# 对齐后吸附格点，保持与保存/加载一致
-	for s in targets:
-		var spr := s as Sprite2D
-		var c: Vector2i = cvs._cell_of(spr.position)
-		spr.position = Vector2(c) * cvs.tile_px + Vector2(cvs.tile_px, cvs.tile_px) * 0.5
-	cvs._mark()
-	cvs.queue_redraw()
-	cvs._hint("已对齐/分布 %d 个实体（Ctrl+Z 撤销）" % targets.size())
-
-## 等间距分布：保持首尾，中间实体在两者之间均分
-
 ## 翻转选中实体（单个或框选集合）：每个精灵 toggle flip_h；一个撤销步。
 ## 返回是否真的翻了（无选中返回 false，快捷键据此决定是否吞键）。
 func flip_selected() -> bool:
@@ -378,62 +326,6 @@ func flip_selected() -> bool:
 	cvs._mark()
 	cvs.queue_redraw()
 	return true
-
-func _distribute(targets: Array, horizontal: bool) -> void:
-	var sorted := targets.duplicate()
-	sorted.sort_custom(func(a, b):
-		var pa: Vector2 = (a as Sprite2D).position
-		var pb: Vector2 = (b as Sprite2D).position
-		return pa.x < pb.x if horizontal else pa.y < pb.y)
-	var n := sorted.size()
-	if n < 3:
-		return
-	var first: Vector2 = (sorted[0] as Sprite2D).position
-	var last: Vector2 = (sorted[n - 1] as Sprite2D).position
-	var step := ((last - first) / float(n - 1))
-	for i in range(1, n - 1):
-		var p := first + step * float(i)
-		if horizontal:
-			(sorted[i] as Sprite2D).position.x = p.x
-		else:
-			(sorted[i] as Sprite2D).position.y = p.y
-
-
-func bulk_update(scene_id: String, stat_set: Dictionary, stat_clear: Array, props_set: Dictionary) -> int:
-	var targets: Array = cvs._valid_multi()
-	var hits := []
-	for s in targets:
-		if str((s as Sprite2D).get_meta("scene", "")) == scene_id:
-			hits.append(s)
-	if hits.is_empty():
-		cvs._hint("选中里没有 " + scene_id + " 类型的实体")
-		return 0
-	cvs._push_undo()
-	for s in hits:
-		var spr := s as Sprite2D
-		var props: Dictionary = (spr.get_meta("props", {}) as Dictionary).duplicate(true)
-		for k in props_set.keys():
-			var v = props_set[k]
-			if v == null or str(v) == "":
-				props.erase(k)
-			else:
-				props[k] = v
-		if not stat_set.is_empty() or not stat_clear.is_empty():
-			var stats: Dictionary = props.get("stats", {})
-			for k in stat_set.keys():
-				stats[k] = stat_set[k]
-			for k in stat_clear:
-				stats.erase(k)
-			if stats.is_empty():
-				props.erase("stats")
-			else:
-				props["stats"] = stats
-		spr.set_meta("props", props)
-	cvs._mark()
-	cvs.queue_redraw()
-	cvs._hint("已批量修改 %d 个 %s" % [hits.size(), scene_id])
-	return hits.size()
-
 
 ## —— 框选区域拖动搬迁（瓦片 / 装饰 / 碰撞三层 + 区域内实体） ——
 ## 按下时只快照，不立刻搬；松手才「推撤销 → 擦源 → 写目标」。
@@ -577,6 +469,7 @@ func copy_region() -> void:
 				"flip_h": bool(spr.flip_h),
 				"def_id": str(spr.get_meta("def_id", "")),
 				"ent_id": str(spr.get_meta("ent_id", "")),
+				"functions": (spr.get_meta("functions", []) as Array).duplicate(true),
 				"props": (spr.get_meta("props", {}) as Dictionary).duplicate(true),
 			})
 	cvs._region_clip["entities"] = ents_clip
@@ -669,6 +562,7 @@ func _paste_region(origin: Vector2i) -> void:
 		if str(t.get("def_id", "")) != "":
 			spr.set_meta("def_id", str(t.get("def_id", "")))
 		spr.set_meta("props", (t.get("props", {}) as Dictionary).duplicate(true))
+		spr.set_meta("functions", (t.get("functions", []) as Array).duplicate(true))
 		cvs.entities.add_child(spr)
 		cvs._fit_sprite(spr, scene_id)
 		cvs._assign_id(spr)
@@ -676,26 +570,45 @@ func _paste_region(origin: Vector2i) -> void:
 		if old_id != "":
 			id_map[old_id] = str(spr.get_meta("ent_id", ""))
 		pasted.append(spr)
-	# C2：块内引用重映射——props 里的字符串值命中块内旧 id → 指向粘贴出的新实例；块外引用不动
+	# C2：块内引用重映射——props/functions 里命中块内旧 id 的字符串 → 指向粘贴出的新实例；块外引用不动
 	for spr2 in pasted:
 		var props2: Dictionary = (spr2.get_meta("props", {}) as Dictionary).duplicate(true)
-		var changed := false
-		var stack: Array = [props2]
-		while not (stack as Array).is_empty():
-			var cur = (stack as Array).pop_back()
-			if cur is Dictionary:
-				for k in (cur as Dictionary).keys():
-					var v = (cur as Dictionary)[k]
-					if v is String and id_map.has(v):
-						(cur as Dictionary)[k] = id_map[v]
-						changed = true
-					elif v is Dictionary or v is Array:
-						stack.append(v)
+		var functions2: Array = (spr2.get_meta("functions", []) as Array).duplicate(true)
+		var changed := _remap_refs_in(props2, id_map)
+		if _remap_refs_in(functions2, id_map):
+			changed = true
 		if changed:
 			spr2.set_meta("props", props2)
+		spr2.set_meta("functions", functions2)
 	cvs._mark()
 	cvs._paste_mode = false
 	cvs._hint("区域已粘贴")
+
+## 区域粘贴的引用重映射：递归遍历 Dictionary/Array，把命中 id_map 的字符串换成新 id。
+## 返回是否发生了替换。props 与 functions 共用（两者都可能有指向实例的字符串）。
+func _remap_refs_in(container, id_map: Dictionary) -> bool:
+	var changed := false
+	var stack: Array = [container]
+	while not stack.is_empty():
+		var cur = stack.pop_back()
+		if cur is Dictionary:
+			for k in (cur as Dictionary).keys():
+				var v = (cur as Dictionary)[k]
+				if v is String and id_map.has(v):
+					(cur as Dictionary)[k] = id_map[v]
+					changed = true
+				elif v is Dictionary or v is Array:
+					stack.append(v)
+		elif cur is Array:
+			var arr := cur as Array
+			for i in arr.size():
+				var v2 = arr[i]
+				if v2 is String and id_map.has(v2):
+					arr[i] = id_map[v2]
+					changed = true
+				elif v2 is Dictionary or v2 is Array:
+					stack.append(v2)
+	return changed
 
 ## 取消区域粘贴预览（Esc/右键共用）。键盘入口在 app 级——画布收不到键盘（K9c）。
 

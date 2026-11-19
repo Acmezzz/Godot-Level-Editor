@@ -158,6 +158,10 @@ func refresh_list(focus_sid := "") -> void:
 	if focus_idx >= 0:
 		asset_list.select(focus_idx)
 		_show_detail(str(asset_list.get_item_metadata(focus_idx)))
+	else:
+		# 列表空（含「删掉最后一个资产」）：右栏必须走空态，否则名称框/stats/分布/删除按钮
+		# 全部滞留上一项，残留闭包还会往已 erase 的字典里写（审查 P1-8）。
+		_show_detail("")
 
 func _on_asset_pick(idx: int, _at: Vector2 = Vector2.ZERO, mb: int = 0) -> void:
 	# U-04：只认左键（与实体大纲列表同一约定）
@@ -176,6 +180,10 @@ func _show_detail(sid: String) -> void:
 		name_edit.text = ""
 		thumb.texture = null
 		_asset_editor_rows(stats_grid, {})
+		# extra 里挂着实例分布与删除按钮，也必须清掉（审查 P1-8 的残留主体）
+		for child in extra.get_children():
+			extra.remove_child(child)
+			child.queue_free()
 		_detail_hint.text = "没有匹配的资产"
 		_detail_hint.visible = true
 		return

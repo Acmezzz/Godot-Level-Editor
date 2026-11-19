@@ -212,21 +212,4 @@ static func remove(m: Dictionary, kind: String, id: String) -> bool:
 	_cache.erase(path)   # D3：删除后失效
 	return ok
 
-## 扫描对某 id 的文本引用（用于删除前提示）；返回 [{kind, id, path}]。
-static func find_references(m: Dictionary, kind: String, id: String) -> Array:
-	var out: Array = []
-	for other_kind in list_kinds(m):
-		for other_id in list_ids(m, other_kind):
-			if other_kind == kind and other_id == id:
-				continue
-			var path := path_for(m, other_kind, other_id)
-			if path == "":
-				continue
-			var f := FileAccess.open(path, FileAccess.READ)
-			if f == null:
-				continue
-			var text := f.get_as_text()
-			f.close()
-			if text.contains("\"" + id + "\""):
-				out.append({"kind": other_kind, "id": other_id, "path": path})
-	return out
+## 扫描对某 id 的文本引用（编辑器无调用方，审查 P1-13 判死代码已删）。

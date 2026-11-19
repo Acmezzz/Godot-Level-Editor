@@ -19,7 +19,7 @@ func _restore(snapshot) -> void:
 		d = JSON.parse_string(snapshot)
 	if d is Dictionary:
 		# keep_dirty=true：恢复的是历史状态，内容与磁盘不一致即为脏（BUG-01）
-		cvs.load_data(d, cvs.cur_map_name, true, true)
+		await cvs.load_data(d, cvs.cur_map_name, true, true)
 
 
 func _push_undo() -> void:
@@ -36,7 +36,7 @@ func undo() -> bool:
 	if cvs.map_root == null or cvs.undo_stack.is_empty():
 		return false
 	cvs.redo_stack.append(_snapshot())
-	_restore(cvs.undo_stack.pop_back())
+	await _restore(cvs.undo_stack.pop_back())
 	return true
 
 
@@ -44,7 +44,7 @@ func redo() -> bool:
 	if cvs.map_root == null or cvs.redo_stack.is_empty():
 		return false
 	cvs.undo_stack.append(_snapshot())
-	_restore(cvs.redo_stack.pop_back())
+	await _restore(cvs.redo_stack.pop_back())
 	return true
 
 

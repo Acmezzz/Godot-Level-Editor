@@ -262,16 +262,16 @@ func _shortcut_input(event: InputEvent) -> void:
 	if ctrl and k == KEY_Z:
 		# A6：Ctrl+Shift+Z = 重做别名（与 Ctrl+Y 等效，肌肉记忆兼容）
 		if (event as InputEventKey).shift_pressed:
-			_set_status(" 已重做" if canvas.redo() else " 没有可重做的操作")
+			_set_status(" 已重做" if await canvas.redo() else " 没有可重做的操作")
 		else:
-			if canvas.undo():
+			if await canvas.undo():
 				_set_status(" 已撤销（剩余 %d 步）" % canvas.undo_stack.size())
 			else:
 				_set_status(" 没有可撤销的操作")
 		get_viewport().set_input_as_handled()
 		return
 	if ctrl and k == KEY_Y:
-		_set_status(" 已重做" if canvas.redo() else " 没有可重做的操作")
+		_set_status(" 已重做" if await canvas.redo() else " 没有可重做的操作")
 		get_viewport().set_input_as_handled()
 		return
 	# 复制 / 剪切 / 粘贴（按当前图层分发实体或区域，BUG-02：键盘入口从画布移到 app）
@@ -330,6 +330,7 @@ func _shortcut_input(event: InputEvent) -> void:
 				dup.position = orig.position + Vector2(canvas.tile_px, 0)
 				dup.set_meta("scene", sid)
 				dup.set_meta("props", (orig.get_meta("props", {}) as Dictionary).duplicate(true))
+				dup.set_meta("functions", (orig.get_meta("functions", []) as Array).duplicate(true))
 				if orig.has_meta("def_id"):
 					dup.set_meta("def_id", str(orig.get_meta("def_id", "")))
 				canvas.entities.add_child(dup)

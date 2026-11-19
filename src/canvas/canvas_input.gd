@@ -173,6 +173,7 @@ func _on_right_press(pos: Vector2) -> void:
 
 
 func _on_left_release(pos: Vector2) -> void:
+	cvs._panning = false
 	if cvs._move_active:
 		cvs._finish_region_move()
 		return
