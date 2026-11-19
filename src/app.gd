@@ -574,6 +574,10 @@ func _paste() -> void:
 const POPUP_BODY_W := 340
 # —— 悬停高亮轮询：候选列表开着时，鼠标指到哪项 → 画布实时黄框那个实体 ——
 func _process(_delta: float) -> void:
+	# 选择页阶段还没构建编辑器界面，_map_file_ctrl 尚不存在（由 editor_layout 赋值），
+	# 自动保存与试玩轮询都必须跳过，否则每帧在 nil 上调方法。
+	if _map_file_ctrl == null:
+		return
 	_maybe_autosave()
 	_poll_playtest()
 
