@@ -290,6 +290,11 @@ func _switch_project() -> void:
 	_map_view = null
 	project_shell = null
 	asset_panel = null
+	# 三个控制器由 editor_layout 建界面时赋值，界面已释放就必须一起置空，
+	# 否则切项目回选择页后 _process / 菜单委托仍会打到旧控制器上（见 6b0c5de）。
+	_map_file_ctrl = null
+	_props_panel_ctrl = null
+	_editor_state_ctrl = null
 	_nav_bars.clear()
 	_ent_thumbs_cache.clear()
 	_show_picker()
