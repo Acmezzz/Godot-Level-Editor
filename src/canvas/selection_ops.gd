@@ -516,7 +516,7 @@ func cut_region() -> void:
 		if cvs._region_sel.has_point(cvs._cell_of(spr.position)):
 			cvs.entities.remove_child(spr)
 			spr.free()
-	cvs._mark()
+	cvs._mark(false)   # 区域剪切只动瓦片/碰撞层；实体已在上面单独移除
 	cvs.queue_redraw()
 	cvs._hint("已剪切区域 %dx%d（Ctrl+V 粘贴 / Ctrl+Z 撤销）" % [cvs._region_sel.size.x, cvs._region_sel.size.y])
 
@@ -580,7 +580,7 @@ func _paste_region(origin: Vector2i) -> void:
 		if changed:
 			spr2.set_meta("props", props2)
 		spr2.set_meta("functions", functions2)
-	cvs._mark()
+	cvs._mark()   # 区域粘贴含实体，保持索引置脏
 	cvs._paste_mode = false
 	cvs._hint("区域已粘贴")
 

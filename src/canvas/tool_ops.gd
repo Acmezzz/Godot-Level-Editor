@@ -37,12 +37,12 @@ func _paint(c: Vector2i) -> void:
 	if cvs._is_grid_layer(cvs.active_layer):
 		for bc in _brush_cells(c):
 			cvs.set_collision_cell(bc, true, cvs.collision_type, cvs.collision_shape)
-		cvs._mark()
+		cvs._mark(false)   # 只改碰撞，实体集没动
 		return
 	var layer = cvs._layer_node(cvs.active_layer)
 	for bc in _brush_cells(c):
 		layer.set_cell(bc, cvs.paint_atlas, cvs.paint_cell)
-	cvs._mark()
+	cvs._mark(false)   # 只改瓦片层
 
 
 func _erase_at(pos: Vector2) -> void:
@@ -73,7 +73,7 @@ func _erase_at(pos: Vector2) -> void:
 		var layer = cvs._layer_node(cvs.active_layer)
 		for bc in _brush_cells(cvs._cell_of(pos)):
 			layer.erase_cell(bc)
-	cvs._mark()
+	cvs._mark(false)   # 纯瓦片/碰撞擦除，实体集不变
 
 
 func _stamp(c: Vector2i) -> void:

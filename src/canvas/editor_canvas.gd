@@ -142,6 +142,7 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	# A7：进入即抬代数；await 恢复后比对——过期 = 期间又有更新的重建进入，本协程退出
 	_rebuild_gen += 1
 	var gen := _rebuild_gen
+	invalidate_ref_cache()   # 换图后引用集可能来自另一张图，必须重扫
 	map_data = data
 	cur_map_name = map_name
 	# 节点全部重建：选区/剪贴板引用失效，清空（剪贴板只存模板数据可保留，但引用选区必须清）
@@ -466,7 +467,17 @@ func _assign_id(spr: Sprite2D, forced := "") -> void:
 
 ## K26b：全工程实体 id 引用集——地图 props 里 e_N 形字符串值（跨图落点/portal 目标）
 ## + 内容文件步骤里 e_N 形字符串值（entity_ref 参数）。被引用的号绝不复用。
+## P2-1：会话级缓存——每次发号都读全部地图+全部内容文件会被批量粘贴线性放大。
+## 失效点：保存地图、换图（load_data）、内容提交（invalidate_ref_cache）。
+static var _ref_ids_cache: Dictionary = {}
+static var _ref_ids_rev := -1   # 对应的 MapStore.project_rev
+
+func invalidate_ref_cache() -> void:
+	_ref_ids_rev = -1
+
 func _referenced_ent_ids() -> Dictionary:
+	if _ref_ids_rev == MapStoreRef.project_rev:
+		return _ref_ids_cache
 	var out := {}
 	var all := MapStoreRef.read_all(manifest)
 	for map_name in all:
@@ -492,6 +503,8 @@ func _referenced_ent_ids() -> Dictionary:
 					var v = st[k]
 					if v is String and str(v).match("e_[0-9]*"):
 						out[str(v)] = true
+	_ref_ids_cache = out
+	_ref_ids_rev = MapStoreRef.project_rev
 	return out
 
 # —— A1.1 吸管 + A6 整图入视野 ——
@@ -597,7 +610,7 @@ func generate_collision(strategy := "full", replace := false, one_way_top := fal
 		var typ := "one_way" if (strategy == "top" and one_way_top) else "solid"
 		set_collision_cell(c, true, typ)
 		added += 1
-	_mark()
+	_mark(false)   # 自动碰撞只写碰撞层
 	queue_redraw()
 	return added
 
@@ -647,9 +660,11 @@ func set_collision_cell(c: Vector2i, on: bool, type := "solid", shape := "") -> 
 		_collision_meta.erase(c)
 
 # —— 修改标记 ——
-func _mark() -> void:
+## ents_changed=false：只改了地形/装饰/碰撞，实体集没动——不必让实体索引失效（P2-2）。
+func _mark(ents_changed := true) -> void:
 	modified_flag = true
-	_ent_by_id_dirty = true   # D5：实体集变了，索引置脏
+	if ents_changed:
+		_ent_by_id_dirty = true   # D5：实体集变了，索引置脏
 	# 碰撞可视节点是数据的镜像，任何写入（涂刷/擦除/矩形/生成/粘贴/撤销）后都要重画。
 	# 统一在这里刷新，避免每个调用点各记一次、漏掉就出现「数据改了但红块没变」。
 	if coll_view and is_instance_valid(coll_view):

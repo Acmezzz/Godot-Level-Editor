@@ -10,6 +10,8 @@ const MapValidator := preload("res://src/map_data_validation.gd")
 ## v3（批次 9）：collision 条目扩展 [x,y,type,shape]；terrain/decor 扩展 [x,y,atlas,ax,ay]。
 ## 新旧字段向后兼容（缺省 solid / atlas=0），旧数据零迁移——bump 只作格式信号。
 const FORMAT_VERSION := 3
+## 项目数据写盘版本号：每次 write_text 成功 +1。派生缓存（实体引用集等）据此判断是否重扫。
+static var project_rev := 0
 
 ## ---- D2：地图数据 mtime 缓存（read/read_all 复用） ----
 ## 刷新链/校验/引用扫描一个会话里反复 read_all——按文件 mtime 缓存；
@@ -145,6 +147,9 @@ static func write_text(path: String, text: String) -> bool:
 		DirAccess.remove_absolute(tmp)
 		return false
 	_cache.erase(path)   # D2：写后失效，下次读回源
+	# 任何项目数据落盘都可能改变实体 id 引用（地图 props / 内容步骤）：
+	# 版本号 +1，画布的引用集缓存据此重扫（P2-1 的失效点，避免循环 preload）。
+	project_rev += 1
 	return true
 
 ## 多地图协调写入：先暂存所有新内容和原文件备份，再逐个替换。

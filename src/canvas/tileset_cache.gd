@@ -11,9 +11,13 @@ static var _mtexs: Array = []
 static var _mts: TileSet = null
 
 ## 批次 9 多图集：按 tiles[] 顺序构建 TileSet（source_id = 图集索引），返回
-## {imgs, texs, ts}；任一图集读不到返回空字典。缓存键 = 路径列表 + tileSize。
+## {imgs, texs, ts}；任一图集读不到返回空字典。
+## 缓存键 = 路径列表 + tileSize + 各图集 mtime（P2-6：外部改了图集，本会话不能继续用旧纹理）。
 static func get_or_build_multi(paths: Array, tsz: int) -> Dictionary:
-	var key := "|".join(PackedStringArray(paths)) + "#" + str(tsz)
+	var stamps := PackedStringArray()
+	for p in paths:
+		stamps.append(str(FileAccess.get_modified_time(str(p))))
+	var key := "|".join(PackedStringArray(paths)) + "#" + str(tsz) + "@" + "|".join(stamps)
 	if _mkey == key and _mts != null:
 		return {"imgs": _mimgs, "texs": _mtexs, "ts": _mts}
 	var imgs: Array = []

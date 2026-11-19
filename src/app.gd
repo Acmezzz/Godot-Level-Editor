@@ -200,7 +200,9 @@ func _save_prefs() -> void:
 var _ent_thumbs_cache := {}
 
 func _entity_thumbs() -> Dictionary:
-	var dk := str(manifest.get("_dir", ""))
+	# P2-5：键带项目数据版本号——清单新增实体/换 thumb 后保存会让版本号 +1，
+	# 缓存自动失效，不必重启编辑器。
+	var dk := str(manifest.get("_dir", "")) + "#" + str(MapStore.project_rev)
 	if _ent_thumbs_cache.has(dk):
 		return _ent_thumbs_cache[dk]
 	var out := {}
