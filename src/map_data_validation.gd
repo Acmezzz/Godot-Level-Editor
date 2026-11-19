@@ -27,19 +27,19 @@ static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 			else:
 				for j in (tiles[lid] as Array).size():
 					var cell = (tiles[lid] as Array)[j]
-					if not (cell is Array) or cell.size() < 5 or not _is_number_prefix(cell, 5):
+					if not (cell is Array) or cell.size() != 5 or not _is_number_prefix(cell, 5):
 						_add(issues, "error", "tiles.%s[%d]" % [str(lid), j],
-							"must contain x, y, atlas, atlas_x, atlas_y")
+							"must contain exactly x, y, atlas, atlas_x, atlas_y")
 	var spawn = data.get("spawn", [2, 2])
-	if not (spawn is Array) or spawn.size() < 2 or not _is_number_pair(spawn):
+	if not (spawn is Array) or spawn.size() != 2 or not _is_number_pair(spawn):
 		_add(issues, "error", "spawn", "must contain two numeric coordinates")
 	if data.get("entities", null) is Array:
 		_validate_entities(data.entities, manifest, layer_ids, issues)
 	if data.get("collision", null) is Array:
 		for i in data.collision.size():
 			var cell = data.collision[i]
-			if not (cell is Array) or cell.size() < 2 or not _is_number_prefix(cell, 2):
-				_add(issues, "error", "collision[%d]" % i, "must contain x and y")
+			if not (cell is Array) or cell.size() < 2 or cell.size() > 4 or not _is_number_prefix(cell, 2):
+				_add(issues, "error", "collision[%d]" % i, "must contain x, y (and optional type/shape)")
 	return issues
 
 ## meta.layers 用户层栈校验：非空数组、条目 id 非空且唯一、name 非空。

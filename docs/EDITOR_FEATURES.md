@@ -557,7 +557,7 @@ field widgets 与 choice source）。步骤引用清单 `steps` 池（值=步骤
 | `tileSize` 非正数 | 错误 |
 | 图集 `id` 为空或重复 / `atlas` 为空 / 路径含 `..` / 调色板条目缺 `cell` | 错误 |
 | 实体 `id` 空或重复 / `fields` 非数组 / 挂载未声明功能（实体字段**不查 kind**，kind 只约束功能/条件/步骤声明） | 错误 |
-| 功能/条件/步骤 **字段码**与功能/步骤/音频**条目码**重复（三池同码空间，跨池跨功能都算） | 错误 |
+| 功能/步骤/音频**条目码**池内重复；功能**字段码**跨功能重复；字段 id 逐步骤/逐条件/逐步骤字段查重 | 错误 |
 | 功能/条件/步骤/音频 id 空或重复（数组写法）/ 步骤条目（dict 写法值）不是对象 | 错误 |
 | 功能引用未声明的条件 | 错误 |
 
@@ -589,30 +589,33 @@ field widgets 与 choice source）。步骤引用清单 `steps` 池（值=步骤
 
 ## 11. 测试与工具
 
-**测试套件待重写，当前全部不可信**：`parse_all.gd` 仍引用已删除的 `def_model.gd`（必失败），
-`content_model_test.gd` / `def_regression_test.gd` 断言已删除的 stats/def 模型，
-`data_layer_test.gd` 里还有 4 元组瓦片的旧断言。重写完成前任何测试结果不作数；
-门禁（`tests/run_gates.ps1`）不再是验收口径。
+**测试套件（2026-11-20 重建）**：旧 8 个脚本 + `run_gates.ps1` 已删（断言已删模型，全部失实）。
+新套件覆盖数据层纯逻辑，headless 一条命令跑完：
 
-截图辅助 `tools/screenshot.gd`：
+```
+godot --headless --path "<编辑器工程>" --script res://tests/run_tests.gd
+```
+
+| 套件 | 覆盖 |
+|---|---|
+| `test_content_id.gd` | 三池字段码收集器（dict/array 写法、空码过滤）、五段身份码拼装与缺段拒发、码形状 |
+| `test_decl_pools.gd` | 功能/条件池归一化、steps 标记保留、功能码查重、字段码跨功能查重、条件补码避让 |
+| `test_step_audio.gd` | 步骤池归一化与按码查询、步骤补码避让三池占用、音频池归一化与补码 |
+| `test_validators.gd` | 清单校验：合法零错误、kind 缺失、条目码池内重复、步骤 dict 值非对象、未声明条件/实体/音频码重 |
+| `test_map_v4.gd` | v4 模板、层栈校验、瓦片 5 元精确校验、实体 code 查重与层归属、spawn、decode_text 门槛 |
+| `test_stores.gd` | MapStore v4 写读回环、ContentStore 写读回环（user:// 临时目录，跑完自清） |
+
+约定：套件 `extends "res://tests/_suite_base.gd"`，方法名 `test_` 开头即被发现；
+`ok()` / `eq()` 收集失败；**每个用例至少一条断言**（崩溃中断的用例断言数不增长，
+runner 判 FAIL——防止半路崩掉变成假 PASS）。退出码非 0 = 有失败。
+
+截图辅助 `tools/screenshot.gd`（模式清单见文件头注释）与警告扫描 `tools/warn_scan.gd`
+（headless 全量加载 src/ 校验可加载性）：
 
 ```
 godot --path "<编辑器工程>" --script res://tools/screenshot.gd -- <模式> <输出.png> [地图名]
+godot --headless --path "<编辑器工程>" --script res://tools/warn_scan.gd
 ```
-
-模式：`empty` / `map` / `topbar` / `map_menu` / `props` / `size` / `collide` / `export` / `play` /
-`layers` / `layer_menu` / `multi` / `multi_dim` / `coll_layer` / `decor_layer` / `ents_page` /
-`props_multi` / `help` / `asset` / `asset_quick` / `asset_dist` / `project` / `project_content` /
-`project_measure`。部分模式会 `print("MEASURE …")` 输出实测值。
-
-运行方式（headless）：
-
-```
-godot --headless --path "<编辑器工程>" --script res://tests/parse_all.gd
-godot --headless --path "<编辑器工程>" --script res://tests/data_layer_test.gd
-```
-
-`EDITOR_PROJECT` 指向游戏工程时，`data_layer_test` 会额外验证真实清单；未设置时跳过相关断言。
 
 ---
 

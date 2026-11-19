@@ -39,7 +39,7 @@ src/
 ├── canvas/                画布宿主与控制器（绘制 / 输入 / 左右键语义执行 / 选区）
 ├── content/               功能、条件、步骤与音频声明池、五段身份数、内容文件读写、内置种类
 └── ui/                    设计系统、布局骨架、三面板、各种弹窗
-tests/                     测试脚本（待重写，不作验收口径）
+tests/                     测试套件（数据层回归，run_tests.gd 一条命令跑完）
 tools/screenshot.gd        截图辅助（开发期，项目路径由 SHOT_PROJECT 环境变量给出）
 docs/                      EDITOR_FEATURES + GAME_SIDE_STANDARD
 ```

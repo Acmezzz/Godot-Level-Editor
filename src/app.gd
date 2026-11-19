@@ -33,7 +33,11 @@ var tile_list: ItemList
 var ent_list: ItemList
 ## 碰撞层左栏：说明 + 类型/形状选择器
 var grid_hint: VBoxContainer
+# 下面三个成员只在 ui/editor_layout.gd（赋值）与 core/editor_state.gd（读取）经 app. 访问，
+# 本类确实不直接使用——但必须在这里声明（动态赋值会静默失败），故定向压制警告。
+@warning_ignore("unused_private_class_variable")
 var _coll_type_opt: OptionButton
+@warning_ignore("unused_private_class_variable")
 var _coll_shape_opt: OptionButton
 var status: Label
 var _props_panel_ctrl   # ui/props_panel.gd 控制器（只剩「从地形生成碰撞」弹窗）
@@ -45,6 +49,8 @@ var _palette_ctrl   # ui/palette_panel.gd 控制器（调色板导航：多图�
 var selected_spr: Sprite2D = null
 var map_loaded := false          # 防呆：是否已载入地图
 ## 顶栏左侧「设置 ▾」锚点（「地图 ▾」按钮是固定文案，不显示当前地图名）
+# 同上：赋值在 editor_layout.gd，连接也在那边（app._map_btn.pressed），本类不直接使用。
+@warning_ignore("unused_private_class_variable")
 var _map_btn: Button
 ## 顶栏导航条（地图 ▾ + 关卡/内容/资产）：关卡视图顶栏与项目页顶栏各嵌一个，
 ## 统一登记在这里同步按下态——_set_mode 是唯一真相。
