@@ -241,37 +241,52 @@ func _fill_distribution(sid: String) -> void:
 	_dist_rows.add_child(Kit.hint_label(foot, 460))
 
 ## 全项目扫描：{地图名: [{id, x, y, def, props}, ...]}——实例分布、K7 删除检查与实例数值显示共用数据源
-## 当前打开的地图优先用画布内存值：磁盘上还没保存的改动也要能在这里看到并继续改。
+## 当前打开的地图以画布内存为底（P1-4）：磁盘底册+内存补丁的混合体会让新增未保存的实例
+## 不出现、已删除的还留着。所以当前图直接用实体树生成，其余图读磁盘。
 func _instance_distribution(sid: String) -> Dictionary:
 	var out := {}
 	var maps := MapStore.read_all(manifest)
-	var by_id := {}
-	if host != null and host.canvas != null and is_instance_valid(host.canvas) and host.canvas.entities != null:
-		by_id = host.canvas._ent_by_id_index()
+	var live_rows: Array = []
+	var canvas_ok: bool = host != null and host.canvas != null and is_instance_valid(host.canvas) and host.canvas.entities != null
+	if canvas_ok:
+		for e in host.canvas.entities.get_children():
+			var spr := e as Sprite2D
+			if spr == null or not spr.has_meta("scene") or str(spr.get_meta("scene", "")) != sid:
+				continue
+			var c: Vector2i = host.canvas._cell_of(spr.position)
+			var lprops = spr.get_meta("props", {})
+			live_rows.append({
+				"id": str(spr.get_meta("ent_id", "")),
+				"x": c.x,
+				"y": c.y,
+				"def": str(spr.get_meta("def_id", "")),
+				"props": lprops if lprops is Dictionary else {},
+			})
 	for map_name in maps:
-		var data: Dictionary = maps[map_name]
 		var is_cur: bool = host != null and map_name == str(host.cur_map_name)
+		if is_cur:
+			# 当前图：磁盘内容完全不参与（画布才是真相）
+			if not live_rows.is_empty():
+				out[map_name] = live_rows
+			continue
+		var data: Dictionary = maps[map_name]
 		var rows: Array = []
 		for ent in data.get("entities", []):
 			if not (ent is Dictionary) or str(ent.get("scene", "")) != sid:
 				continue
-			var ent_id := str(ent.get("id", ""))
 			var props = ent.get("props", {})
-			var row := {
-				"id": ent_id,
+			rows.append({
+				"id": str(ent.get("id", "")),
 				"x": int(ent.get("x", 0)),
 				"y": int(ent.get("y", 0)),
 				"def": str(ent.get("def", "")),
 				"props": props if props is Dictionary else {},
-			}
-			var spr = by_id.get(ent_id, null)
-			if is_cur and spr != null and is_instance_valid(spr):
-				var live = spr.get_meta("props", {})
-				row["props"] = live if live is Dictionary else {}
-				row["def"] = str(spr.get_meta("def_id", ""))
-			rows.append(row)
+			})
 		if not rows.is_empty():
 			out[map_name] = rows
+	# 当前图尚未落盘（新建未保存）：read_all 里没有它，也要把画布实例列出来
+	if canvas_ok and not live_rows.is_empty() and not out.has(str(host.cur_map_name)):
+		out[str(host.cur_map_name)] = live_rows
 	return out
 
 ## 分布行：id · 各数值就地可改。数值框直接写该实例的 props.stats 覆盖。
@@ -318,13 +333,26 @@ func _dist_row(map_name: String, r: Dictionary, sdefs: Array) -> Control:
 			# 撤销合并：连续调同一个框只压一次撤销（和属性面板同一约定）
 			var session := {"started": false}
 			box.get_line_edit().focus_exited.connect(func(): session.started = false)
+			# P1-7：连续控件不在每 tick 落盘。拖值期间只改内存/画布，失焦或回车上提交；
+			# 否则非当前图的每次增量都要全量读改写，还会把 3 层 .history 备份挤满。
+			var pending := {"v": box.value}
 			box.value_changed.connect(func(v: float):
+				pending.v = v
 				if not session.started:
 					session.started = true
 					if host != null and map_name == str(host.cur_map_name) and host.canvas != null and host.canvas.entities != null:
 						host.canvas._push_undo()
-				_set_instance_stat(map_name, rid, stat_id, v)
+				if host != null and map_name == str(host.cur_map_name):
+					_set_instance_stat(map_name, rid, stat_id, v)
 				box.tooltip_text = "只改「%s」这个实例；已覆盖类型模板" % rid)
+			var commit := func(_t := ""):
+				_set_instance_stat(map_name, rid, stat_id, pending.v)
+			box.get_line_edit().text_submitted.connect(commit)
+			box.get_line_edit().focus_exited.connect(commit)
+			# 点上下箭头不会让 LineEdit 获得焦点，focus_exited 等不到——按鼠标松开兜底提交
+			box.gui_input.connect(func(ev: InputEvent):
+				if ev is InputEventMouseButton and not (ev as InputEventMouseButton).pressed:
+					commit.call())
 			cell.add_child(box)
 			cells.add_child(cell)
 		row.add_child(Kit.spacer())

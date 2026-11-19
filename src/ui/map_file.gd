@@ -25,6 +25,11 @@ func confirm_discard(action: String) -> bool:
 	var dlg := ConfirmationDialog.new()
 	dlg.title = "未保存的修改"
 	dlg.dialog_text = "地图 %s 有未保存修改。\n继续%s将丢失这些修改。" % [app.cur_map_name, action]
+	# P1-5：自动保存草稿存得进、捞不出——放弃修改时至少把草稿路径说出来，
+	# 否则用户以为这份保险不存在。草稿在「打开」里同样可被识别并归位（见 load_map_file）。
+	var draft_path := str(app.manifest.get("_maps_dir", "")).path_join(str(app.cur_map_name) + ".autosave.json")
+	if FileAccess.file_exists(draft_path):
+		dlg.dialog_text += "\n\n最近一次自动保存的草稿在：\n%s\n放弃后仍可从「打开」中载入它找回内容。" % draft_path
 	dlg.ok_button_text = "放弃修改并继续"
 	dlg.cancel_button_text = "取消"
 	# 中文正文需要足够宽度，否则 ConfirmationDialog 的 Label 会被压成一条看不见的窄条

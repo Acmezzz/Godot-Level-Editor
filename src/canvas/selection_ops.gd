@@ -297,7 +297,7 @@ func delete_selection() -> void:
 	if victims.is_empty() and cvs.selected_entity and is_instance_valid(cvs.selected_entity):
 		victims.append(cvs.selected_entity)
 	if victims.is_empty():
-		cvs._hint("先用属性工具点选或框选实体，再按 Del 删除")
+		cvs._hint("先在画布上点选或框选实体，再按 Del 删除")
 		return
 	cvs._push_undo()
 	for v in victims:

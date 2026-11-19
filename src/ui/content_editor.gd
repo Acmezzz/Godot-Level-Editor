@@ -217,9 +217,25 @@ func refresh_list(focus := "") -> void:
 	if _preview != null:
 		_preview.queue_redraw()
 
-## Ctrl+S：本面板改动即时写盘，这里只做一次可见反馈。
+## Ctrl+S / 切视图：把还没失焦提交的连续控件改动统一写盘，避免 Esc 或直接切走时丢改动。
 func commit() -> bool:
+	if not _pending_fields.is_empty():
+		var pend := _pending_fields.duplicate()
+		_pending_fields.clear()
+		for p in pend:
+			var v = p.get("v")
+			_set_field(int(p.get("i", -1)), str(p.get("fn_id", "")), str(p.get("key", "")),
+				int(v) if str(p.get("type", "")) == "int" else v)
 	return true
+
+## 待提交的连续控件（SpinBox）：拖值期间只记内存，失焦/回车/commit() 才写内容文件。
+var _pending_fields: Array = []
+
+func _commit_pending(p: Dictionary) -> void:
+	_pending_fields.erase(p)
+	var v = p.get("v")
+	_set_field(int(p.get("i", -1)), str(p.get("fn_id", "")), str(p.get("key", "")),
+		int(v) if str(p.get("type", "")) == "int" else v)
 
 # ──────────── 数据读取：只从画布实体读，不另存一份 ────────────
 
@@ -362,12 +378,22 @@ func _build_row(row: Dictionary) -> Control:
 				_preview.queue_redraw())
 	return b
 
+## 内容页是否在屏上（root 由 project_shell 切 visible）。隐藏时的选中只记状态不重建 UI。
+func _is_view_visible() -> bool:
+	return root != null and is_instance_valid(root) and root.visible
+
 ## 单一选中入口：左列行、中列画布预览、外部定位都走这里，避免两处状态不同步。
 func select_inst(ent_id: String) -> void:
 	if ent_id == "" or _find_ent(ent_id) == null:
 		return
+	# 切实例前先落盘当前 SpinBox 的待提交值（旧下标只对旧实例有效）
+	commit()
 	_selected_ent = ent_id
 	_selected_fn = -1
+	# P2-9：内容页隐藏时（关卡编辑器里点实体）不做整套左列/右栏重建，只记住选中，
+	# 等切到内容视图时 refresh_list 再重建。
+	if not _is_view_visible():
+		return
 	# 选中同步到关卡画布：切回关卡编辑器时选中框落在同一实例上。
 	# 画布上已有框选组（>1）时不能把 selected_multi 覆写成 [spr]——
 	# _box_select 会经 entity_selected 走到这里，覆写就等于「框选完立刻塌缩成单选」，
@@ -641,6 +667,8 @@ func _clear_all_for_empty() -> void:
 func _rebuild_right() -> void:
 	if _r_body == null:
 		return
+	# 右栏控件整片重建：待提交项按旧下标记录，重建后失效，直接清（提交发生在选择变更前）。
+	_pending_fields.clear()
 	for c in _r_body.get_children():
 		_r_body.remove_child(c)
 		c.queue_free()
@@ -846,6 +874,7 @@ func _function_index() -> Dictionary:
 	return EditorManifest.functions(manifest)
 
 func _pick_fn(i: int) -> void:
+	commit()
 	_selected_fn = -1 if _selected_fn == i else i
 	_rebuild_right()
 
@@ -865,7 +894,8 @@ func _delete_fn(i: int) -> void:
 	var fns := _current_fns()
 	if spr == null or i < 0 or i >= fns.size():
 		return
-	fns = fns.duplicate(true)
+	commit()   # 待提交值先落到旧绑定上，随后才增删绑定
+	fns = _current_fns().duplicate(true)
 	fns.remove_at(i)
 	# order 之后重排：序号是执行顺序的唯一真相，删除后不能留空洞
 	for k in fns.size():
@@ -880,6 +910,7 @@ func _add_fn(fn_id: String) -> void:
 	var spr := _current_spr()
 	if spr == null or fn_id == "":
 		return
+	commit()   # 追加前先落盘当前表单待提交值（下标保持有效）
 	var fns := _current_fns().duplicate(true)
 	fns.append({"fn": fn_id, "content": "", "name": "", "order": fns.size() + 1, "parallel": false})
 	_selected_fn = fns.size() - 1
@@ -965,8 +996,13 @@ func _build_field_row(i: int, fn_id: String, fd: Dictionary, cur: Dictionary) ->
 			sp.max_value = float(fd.get("max", 999999))
 			sp.value = float(val) if str(val) != "" else 0.0
 			sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			sp.value_changed.connect(func(v: float):
-				_set_field(i, fn_id, key, int(v) if typ == "int" else v))
+			# 连续控件不在每 tick 写盘（P1-6）：拖动期间只记内存，失焦/回车/commit 统一提交。
+			# 与 asset_panel 的「编辑态只改内存、失焦提交」同一口径（O3）。
+			var pend := {"i": i, "fn_id": fn_id, "key": key, "type": typ, "v": sp.value}
+			_pending_fields.append(pend)
+			sp.value_changed.connect(func(v: float): pend.v = v)
+			sp.get_line_edit().text_submitted.connect(func(_t: String): _commit_pending(pend))
+			sp.get_line_edit().focus_exited.connect(func(): _commit_pending(pend))
 			ctl = sp
 		_:
 			var le := LineEdit.new()
@@ -1170,6 +1206,7 @@ func _duplicate_from_lib(fn_id: String, old_id: String, new_name: String) -> voi
 	if not ContentStore.write(manifest, fn_id, new_id, data):
 		app._set_status(" 写盘失败，检查 content 目录权限")
 		return
+	commit()   # 复制库内容前先落盘当前表单待提交值（下标保持有效）
 	var fns := _current_fns().duplicate(true)
 	fns.append({"fn": fn_id, "content": new_id, "name": nm, "order": fns.size() + 1, "parallel": false})
 	_selected_fn = fns.size() - 1

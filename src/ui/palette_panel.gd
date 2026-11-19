@@ -230,7 +230,7 @@ func fill_entities() -> void:
 			continue
 		var ie := el.add_item(str(e.get("name", eid)), tex)
 		if builtin:
-			el.set_item_tooltip(ie, "内置种类：画布上以矩形呈现，尺寸在属性面板里调")
+			el.set_item_tooltip(ie, "内置种类：画布上以矩形呈现，尺寸由游戏侧声明提供")
 		el.set_item_metadata(ie, eid)
 		shown += 1
 	if shown == 0:
