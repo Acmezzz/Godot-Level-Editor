@@ -105,7 +105,7 @@ func _draw() -> void:
 	var landings: Array = []
 	var boxes: Array = []
 	var zones: Array = []
-	for e in cvs.entities.get_children():
+	for e in cvs.ents_all():
 		var spr := e as Sprite2D
 		if spr == null or not spr.has_meta("scene"):
 			continue

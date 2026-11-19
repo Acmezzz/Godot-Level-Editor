@@ -17,7 +17,8 @@ func _restore(snapshot) -> void:
 	var d = snapshot
 	if snapshot is String:
 		d = JSON.parse_string(snapshot)
-	if d is Dictionary:
+ # 空快照 = extract() 的重建窗口哨兵，恢复它等于清空整图——拒绝
+	if d is Dictionary and not (d as Dictionary).is_empty():
  # keep_dirty=true：恢复的是历史状态，内容与磁盘不一致即为脏
 		await cvs.load_data(d, cvs.cur_map_name, true, true)
 
@@ -33,7 +34,7 @@ func _push_undo() -> void:
 ## 返回是否真的撤销了（空栈时调用方要给「没有可撤销的操作」而不是假反馈）。
 ## 脏标记与 modified.emit 由 load_data(keep_dirty=true) 统一处理，不再自己置脏。
 func undo() -> bool:
-	if cvs.map_root == null or cvs.undo_stack.is_empty():
+	if cvs.map_root == null or not is_instance_valid(cvs.map_root) or cvs.undo_stack.is_empty():
 		return false
 	cvs.redo_stack.append(_snapshot())
 	await _restore(cvs.undo_stack.pop_back())
@@ -41,7 +42,7 @@ func undo() -> bool:
 
 
 func redo() -> bool:
-	if cvs.map_root == null or cvs.redo_stack.is_empty():
+	if cvs.map_root == null or not is_instance_valid(cvs.map_root) or cvs.redo_stack.is_empty():
 		return false
 	cvs.undo_stack.append(_snapshot())
 	await _restore(cvs.redo_stack.pop_back())

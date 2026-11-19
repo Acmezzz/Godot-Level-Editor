@@ -21,6 +21,13 @@ func _gesture_hint(i: int) -> String:
 
 
 func _sync_ui() -> void:
+	# 空状态（无地图）不进碰撞页：此时 collision_index()==0 且 active_layer==0 会假命中
+	if not app.map_loaded:
+		app._set_palette_page("")
+		app._refresh_tool_meta()
+		app._sync_layer_buttons()
+		app._refresh_view_toggles()
+		return
 	# 调色板跟随 place_kind（左栏选了瓦片还是实体）；碰撞元层例外——没有资产，显示类型/形状控件。
 	if app.canvas.active_layer == app.canvas.collision_index():
 		app._set_palette_page("")

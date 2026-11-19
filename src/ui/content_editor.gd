@@ -807,7 +807,7 @@ func _build_form_block() -> Control:
 
 	# 演出功能（声明 "steps": true）：只读摘要 + 子面板入口。步骤数组是这类功能
 	# 内容的主体；普通字段/条件区照常渲染在下方（演出功能也可以有字段）。
-	if FunctionDecls.fn_has_steps(manifest, fn_id) and content_id != "":
+	if FunctionDecls.fn_has_steps(manifest, fn_id):
 		var sdata: Array = data.get("steps", []) if data.get("steps", []) is Array else []
 		var parts: Array[String] = []
 		for st in sdata:
@@ -1191,6 +1191,7 @@ var _steps_form: VBoxContainer = null
 
 ## 打开演出子面板：先保证内容条目存在（首改即建），再建弹窗填步骤列表。
 func _open_steps_editor(i: int) -> void:
+	commit()   # 主表单待提交值先落盘：子面板写盘不该挤掉未提交值
 	var fns := _current_fns()
 	var f: Dictionary = fns[i] if i >= 0 and i < fns.size() and fns[i] is Dictionary else {}
 	var fn_id := str(_resolve_fn(f).get("id", ""))
@@ -1221,6 +1222,9 @@ func _steps_data() -> Dictionary:
 	var fns := _current_fns()
 	if _steps_i < 0 or _steps_i >= fns.size() or not (fns[_steps_i] is Dictionary):
 		return {}
+ # 身份校验：绑定行的功能已不是开面板时的那个 → 数据源失效（防串内容）
+	if str(_resolve_fn(fns[_steps_i]).get("id", "")) != _steps_fn_id:
+		return {}
 	var cid := str((fns[_steps_i] as Dictionary).get("content", ""))
 	return ContentStore.read(manifest, _steps_fn_id, cid) if cid != "" else {}
 
@@ -1228,6 +1232,9 @@ func _steps_data() -> Dictionary:
 func _steps_write(data: Dictionary) -> void:
 	var fns := _current_fns()
 	if _steps_i < 0 or _steps_i >= fns.size() or not (fns[_steps_i] is Dictionary):
+		return
+ # 身份校验同 _steps_data：绑定行功能对不上就不写（防串内容）
+	if str(_resolve_fn(fns[_steps_i]).get("id", "")) != _steps_fn_id:
 		return
 	var cid := str((fns[_steps_i] as Dictionary).get("content", ""))
 	if cid == "":
@@ -1268,6 +1275,12 @@ func _steps_row(si: int, st: Dictionary, pool: Dictionary) -> Control:
 	var mark := Kit.text_label("%d. %s" % [si + 1, nm],
 		Th.TEXT if sel else Th.TEXT_DIM, Th.FS_SMALL)
 	mark.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+ # 行可点：点步骤名选中该步，右侧表单跟着换（不必先按 ↑↓ 才能选）
+	mark.mouse_filter = Control.MOUSE_FILTER_STOP
+	mark.gui_input.connect(func(ev: InputEvent):
+		if ev is InputEventMouseButton and (ev as InputEventMouseButton).pressed \
+				and (ev as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
+			_steps_pick(si))
 	row.add_child(mark)
 	if not known:
 		row.add_child(Kit.hint_label("⚠", 20))
@@ -1276,6 +1289,11 @@ func _steps_row(si: int, st: Dictionary, pool: Dictionary) -> Control:
 	row.add_child(Kit.button("复制", func(): _steps_dup(si), "ghost"))
 	row.add_child(Kit.del_button(func(): _steps_del(si)))
 	return row
+
+## 点步骤名选中该步：右侧表单换到这一步（重建保持 _steps_sel 选中态）。
+func _steps_pick(si: int) -> void:
+	_steps_sel = si
+	_rebuild_steps_all()
 
 ## 当前步骤表单：步骤类型选择 + 该步骤声明的字段 + 未声明键只读保留。
 ## 字段改动即时写盘，不重建表单（保持输入焦点，与主表单同一纪律）。
@@ -1357,6 +1375,8 @@ func _set_step_field(si: int, key: String, value) -> void:
 		return
 	var st: Dictionary = arr[si]
 	var sfd: Dictionary = st.get("fields", {}) if st.get("fields", {}) is Dictionary else {}
+	if sfd.get(key, null) == value:
+		return   # 值没变不写盘（重建触发的同值回调幂等跳过）
 	sfd[key] = value
 	st["fields"] = sfd
 	data["steps"] = arr

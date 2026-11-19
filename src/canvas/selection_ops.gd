@@ -466,6 +466,11 @@ func copy_region() -> void:
 		return
 	# 层栈剪贴板：tiles = {层id: [[dx,dy,atlas,ax,ay]...]}，碰撞/实体照旧（实体带 layer）
 	cvs._region_clip = {"tiles": {}, "collision": [], "size": cvs._region_sel.size}
+	# 层名凭据：粘贴时同图按 id 直配，跨图按层名重映射（谁的名字谁带走）
+	var lnames := {}
+	for li2 in cvs.layer_count():
+		lnames[cvs.layer_id(li2)] = cvs.layer_name(li2)
+	cvs._region_clip["layer_names"] = lnames
 	for li in cvs.layer_tiles.size():
 		var lid: String = cvs.layer_id(li)
 		if lid == "":
@@ -509,7 +514,7 @@ func copy_region() -> void:
 				"functions": (spr.get_meta("functions", []) as Array).duplicate(true),
 				"props": (spr.get_meta("props", {}) as Dictionary).duplicate(true),
 			})
-	cvs._region_clip["entities"] = ents_clip
+	cvs._region_clip["ents"] = ents_clip
 	cvs._last_copy_region = true
 	var tcount := 0
 	for lid2 in (cvs._region_clip["tiles"] as Dictionary):
@@ -563,10 +568,11 @@ func _paste_region(origin: Vector2i) -> void:
 		return
 	cvs._push_undo()
 	# 粘贴按 层id×atlas 维度重建（tiles = {层id: [[dx,dy,atlas,ax,ay]...]}）
+	# 层重映射：同图按 id 直配，跨图按层名，都不匹配则落最底层（末尾黄字提示）
+	var lnames: Dictionary = cvs._region_clip.get("layer_names", {})
+	var missed: Array = []
 	for lid in (cvs._region_clip.get("tiles", {}) as Dictionary):
-		var li: int = cvs._layer_index_of(str(lid))
-		if li < 0:
-			continue   # 粘贴目标图没有同名层就跳过该层瓦片
+		var li: int = _paste_layer_index(str(lid), lnames, missed)
 		for t in (cvs._region_clip.get("tiles", {})[lid] as Array):
 			var ta := t as Array
 			(cvs.layer_tiles[li] as TileMapLayer).set_cell(
@@ -580,7 +586,7 @@ func _paste_region(origin: Vector2i) -> void:
 	# 实体：按相对格位重建，落回各自的层（找不到同码层落最底层）；引用重映射照旧
 	var id_map := {}   # 旧码 → 粘贴后新码
 	var pasted: Array = []
-	for t in cvs._region_clip.get("entities", []):
+	for t in cvs._region_clip.get("ents", []):   # 键统一为 ents（预览也读 ents）
 		var spr := Sprite2D.new()
 		var scene_id := str(t.get("scene", ""))
 		spr.texture = cvs.thumbs.get(scene_id)
@@ -591,9 +597,7 @@ func _paste_region(origin: Vector2i) -> void:
 		spr.flip_h = bool(t.get("flip_h", false))
 		spr.set_meta("props", (t.get("props", {}) as Dictionary).duplicate(true))
 		spr.set_meta("functions", (t.get("functions", []) as Array).duplicate(true))
-		var ei: int = cvs._layer_index_of(str(t.get("layer", "")))
-		if ei < 0:
-			ei = 0
+		var ei: int = _paste_layer_index(str(t.get("layer", "")), lnames, missed)
 		spr.set_meta("layer", cvs.layer_id(ei))
 		(cvs.layer_ents[ei] as Node2D).add_child(spr)
 		cvs._fit_sprite(spr, scene_id)
@@ -612,9 +616,27 @@ func _paste_region(origin: Vector2i) -> void:
 		if changed:
 			spr2.set_meta("props", props2)
 		spr2.set_meta("functions", functions2)
+	if not missed.is_empty():   # 跨图粘贴按名匹配失败的层：黄字提示哪几层落了底层
+		cvs._hint("有 %d 个层按名匹配失败，其内容落在最底层：%s" % [missed.size(), ", ".join(missed)])
 	cvs._mark()   # 区域粘贴含实体，保持索引置脏
 	cvs._paste_mode = false
 	cvs._hint("区域已粘贴")
+
+## 区域粘贴的层重映射：源层 id 在目标图存在则直配；否则按层名匹配；
+## 都不匹配则落最底层（index 0），层名记入 missed（调用方末尾黄字提示）。
+func _paste_layer_index(src_lid: String, lnames: Dictionary, missed: Array) -> int:
+	var li: int = cvs._layer_index_of(src_lid)
+	if li >= 0:
+		return li
+	var nm: String = str(lnames.get(src_lid, ""))
+	if nm != "":
+		for i in cvs.layer_count():
+			if cvs.layer_name(i) == nm:
+				return i
+	# 名字已知但目标图没有同名层、或名字未知：都算没匹配上，记下来提示
+	if not missed.has(nm if nm != "" else src_lid):
+		missed.append(nm if nm != "" else src_lid)
+	return 0
 
 ## 区域粘贴的引用重映射：递归遍历 Dictionary/Array，把命中 id_map 的字符串换成新 id。
 ## 返回是否发生了替换。props 与 functions 共用（两者都可能有指向实例的字符串）。

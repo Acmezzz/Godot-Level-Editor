@@ -463,7 +463,12 @@ func _shortcut_input(event: InputEvent) -> void:
 				dup.set_meta("scene", sid)
 				dup.set_meta("props", (orig.get_meta("props", {}) as Dictionary).duplicate(true))
 				dup.set_meta("functions", (orig.get_meta("functions", []) as Array).duplicate(true))
-				canvas.entities.add_child(dup)
+				# 副本跟随原件所在层（层栈化后实体散在各层容器）
+				var oi: int = canvas._layer_index_of(str(orig.get_meta("layer", "")))
+				if oi < 0:
+					oi = 0
+				dup.set_meta("layer", canvas.layer_id(oi))
+				(canvas.layer_ents[oi] as Node2D).add_child(dup)
 				canvas._fit_sprite(dup, sid)
 				canvas._ensure_code(dup)
 			canvas._mark()
@@ -588,9 +593,9 @@ func _process(_delta: float) -> void:
 	_maybe_autosave()
 	_poll_playtest()
 
-# 按实例码找实体精灵（画布 Entities 子节点里查）
+# 按实例码找实体精灵（层栈化后跨全部层容器查）
 func _ent_by_id(id: String) -> Sprite2D:
-	for e in canvas.entities.get_children():
+	for e in canvas.ents_all():
 		if str(e.get_meta("code", "")) == id:
 			return e as Sprite2D
 	return null

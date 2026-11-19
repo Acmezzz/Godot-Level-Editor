@@ -18,7 +18,7 @@ src/
 ├── app.gd                  应用外壳：项目列表/切换、快捷键、三个视图的切换与收尾
 ├── editor.tscn             入口场景（只挂 app.gd，界面全部代码构建）
 ├── manifest.gd             清单读取：路径、试玩命令、实体 role/占位尺寸、图像裁边
-├── manifest_validation.gd  清单校验：瓦片/图层/实体/功能声明/挂载，坏清单给出错误列表
+├── manifest_validation.gd  清单校验：瓦片/实体/功能/条件/步骤/音频声明/挂载，坏清单给出错误列表
 ├── map_store.gd            地图 JSON 读写：原子写、3 层历史备份、缓存、多文件事务
 ├── map_data_validation.gd  地图 JSON 校验：打开地图时的读入防线（含实例功能绑定结构）
 ├── map_export.gd           导出：PNG 俯视预览图 + 文本统计
@@ -122,6 +122,9 @@ src/
 | `tiles[]` | 图集：`id` / `name` / `atlas` / `palette[]`（多图集时索引即 `source_id`） |
 | `entities[]` | 实体类型：`id` / `name` / `thumb` / `prefab` / `editorSize` / `functions[]`（自带功能挂载）/ `fields[]` / `role` / `code` |
 | `functions` | 功能声明池：`{fnId: {name, code, fields[]}}` 或 `[{id, code, name, fields[]}]`；实体类型从中挂载 |
+| `conditions` | 条件声明池：`{condId: {name, fields[]}}` 或数组；条件无执行码，被功能声明链引用 |
+| `steps` | 步骤池：`{stepId: {name, code, fields[]}}`；演出功能（`"steps": true`）的步骤主体，条目码/字段码三池同空间 |
+| `audio` | 音频池：`{audioId: {name, code, path}}`；choice 字段 `audio:` source 的选项来源 |
 | `playCommand` | 试玩命令模板，支持 `%mapfile%` / `%projectpath%` |
 | `godotExe` | 可选：覆盖 `playCommand` 里的可执行文件（支持 `%projectpath%`） |
 | `contentDir` | 可选：内容根目录，默认 `content` |
@@ -247,31 +250,15 @@ src/
   斜坡画三角形。直接显示 TileMapLayer 会画出图集那格灰白分块。
 - 类型/形状只在非缺省时写入地图（`solid` + 矩形 → 只写 `[x,y]`）。
 - 「自动生成碰撞…」按**当前层**瓦片推导碰撞（层栈化后当前层自审，不再认 terrain id）：
-  策略「全部 / 仅顶部表面 / 仅外轮廓」+ 可选「先清空」与「只碰顶面（one-way）」；
-  整件事一个撤销步；碰撞元层锁定时拒绝。手动摆放仍是首选方式。
-
-### 4.3 碰撞层
-
-- 左栏两组下拉：**类型** `solid`（实心）/ `one_way`（只碰顶面）/ `ladder`（梯子）/ `hazard`（伤害）；
-  **形状** 矩形 / `r45`（右高斜坡）/ `l45`（左高斜坡）。
-- 碰撞格数据上是 `collision` 那个 TileMapLayer 的隐形格（`INVISIBLE_CELL = (4,0)`），
-  但显示交给专属节点 `CollisionView`：按类型分色（solid 红 / one_way 琥珀 / ladder 青 / hazard 品红），
-  斜坡画三角形。直接显示 TileMapLayer 会画出图集那格灰白分块。
-- 类型/形状只在非缺省时写入地图（`solid` + 矩形 → 只写 `[x,y]`）。
-
-### 4.4 从地形生成碰撞（辅助）
-
-左栏碰撞层的「自动生成碰撞…」弹窗：
 
 | 策略 | 行为 |
 |---|---|
-| 全部地形格 | 每个有地形的格子都生成 |
-| 仅顶部表面 | 只给「上方无地形」的格子生成 |
+| 全部地形格 | 每个有瓦片的格子都生成 |
+| 仅顶部表面 | 只给「上方无瓦片」的格子生成 |
 | 仅外轮廓 | 只给四邻有不空位的格子生成 |
 
-可选「先清空现有碰撞再生成」与「只碰顶面（one-way）」（仅顶部表面策略下生效）；
-只写碰撞层、不改地形；整件事一个撤销步；碰撞层锁定时拒绝。
-手动摆放仍是首选方式。
+  可选「先清空现有碰撞再生成」与「只碰顶面（one-way）」（仅顶部表面策略下生效）；
+  整件事一个撤销步；碰撞元层锁定时拒绝。手动摆放仍是首选方式。
 
 ### 4.5 视图与画布绘制
 
@@ -566,12 +553,13 @@ field widgets 与 choice source）。步骤引用清单 `steps` 池（值=步骤
 
 | 检查项 | 级别 |
 |---|---|
-| `tiles` / `layers` / `entities` 不是数组 | 错误 |
+| `tiles` / `entities` / `functions` / `steps` / `audio` 不是数组或对象 | 错误 |
 | `tileSize` 非正数 | 错误 |
-| 图集 `id` 为空或重复 / `atlas` 为空 / 路径含 `..` | 错误 |
-| `palette[]` 条目不是对象 / `cell` 少于两项 | 错误 |
-| 图层 `meta.layers` 缺失/空 / 条目 id 空或重复 / name 空 | 错误 |
-| 实体 `id` 为空或重复 / `fields` 非数组 / 字段 id 空或重复 / 挂载了未声明的功能 | 错误 |
+| 图集 `id` 为空或重复 / `atlas` 为空 / 路径含 `..` / 调色板条目缺 `cell` | 错误 |
+| 实体 `id` 空或重复 / `fields` 非数组 / 字段缺 `kind`（`input`/`choice`）或 kind/type 非法 / 挂载未声明功能 | 错误 |
+| 功能/条件/步骤 **字段码**与功能/步骤/音频**条目码**重复（三池同码空间，跨池跨功能都算） | 错误 |
+| 功能/条件/步骤/音频 id 空或重复（数组写法）/ 步骤条目（dict 写法值）不是对象 | 错误 |
+| 功能引用未声明的条件 | 错误 |
 
 有错误时清单整体作废，进项目错误页；只有警告时正常进入，警告挂在清单 `_warnings`。
 
@@ -579,7 +567,9 @@ field widgets 与 choice source）。步骤引用清单 `steps` 池（值=步骤
 
 | 检查项 | 级别 |
 |---|---|
-| 瓦片条目不是 5 元数值（x, y, atlas, atlas_x, atlas_y） | 错误 |
+| `meta.layers` 缺失/空 / 层 id 空或重复 / name 空 / visible 非布尔 | 错误 |
+| `tiles` 键不在层集 / 瓦片条目不是 5 元数值（x, y, atlas, atlas_x, atlas_y） | 错误 |
+| 实体 `layer` 不在层集 | 错误 |
 | `collision` 条目不是数值（≥2 元）/ `spawn` 不是 2 元数值 | 错误 |
 | 实体不是对象 / `id` 重复 / `x`·`y` 非数值 | 错误 |
 | 实体 `scene` 为空 | 错误 |

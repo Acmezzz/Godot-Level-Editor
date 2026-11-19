@@ -6,8 +6,6 @@ extends RefCounted
 ## `steps: [{step: <步骤码>, fields: {<字段码>: 值}}]`，每步引用步骤池条目；
 ## 步骤字段与功能/条件字段共用一个码空间。运行时游戏侧按序解释执行。
 
-const FunctionDecls := preload("res://src/content/function_decl.gd")
-const ConditionDecls := preload("res://src/content/condition_decl.gd")
 const ContentId := preload("res://src/content/content_id.gd")
 
 ## 归一化结果缓存：指纹 = 项目目录 + steps 声明的 JSON 串（清单保存后必变，天然失效）。
@@ -76,21 +74,8 @@ static func step_by_code(m: Dictionary, code: String) -> Dictionary:
 ## 在 FunctionDecl / ConditionDecl 的 ensure_codes 之后调用。
 static func ensure_codes(m: Dictionary) -> bool:
 	var changed := false
-	var seen := {}
-	for fid in FunctionDecls.functions(m):
-		for fd in (FunctionDecls.functions(m)[fid] as Dictionary).get("fields", []):
-			if fd is Dictionary and str((fd as Dictionary).get("code", "")) != "":
-				seen[str((fd as Dictionary).get("code", ""))] = true
-	for pair in _decl_items(m.get("conditions", null)):
-		var body: Dictionary = pair.body
-		for fd0 in body.get("fields", []) if body.get("fields", []) is Array else []:
-			if fd0 is Dictionary and str((fd0 as Dictionary).get("code", "")) != "":
-				seen[str((fd0 as Dictionary).get("code", ""))] = true
-	for pair in _decl_items(m.get("steps", null)):
-		var body2: Dictionary = pair.body
-		for fd1 in body2.get("fields", []) if body2.get("fields", []) is Array else []:
-			if fd1 is Dictionary and str((fd1 as Dictionary).get("code", "")) != "":
-				seen[str((fd1 as Dictionary).get("code", ""))] = true
+	# 三池字段码占用表：零依赖收集（content_id.field_codes），不 preload 任何声明域
+	var seen := ContentId.field_codes(m)
 	var ecode_seen := {}
 	for pair in _decl_items(m.get("steps", null)):
 		var ec: String = str((pair.body as Dictionary).get("code", ""))
@@ -136,12 +121,22 @@ static func codes_doc(m: Dictionary) -> String:
 		var d: Dictionary = all[sid]
 		L.append("| %s | %s | %s |" % [
 			str((d as Dictionary).get("code", "")), str(sid), str((d as Dictionary).get("name", sid))])
-		var fields: Array = (d as Dictionary).get("fields", [])
+	L.append("")
+	L.append("## 步骤字段")
+	for sid2 in all:
+		var fields: Array = (all[sid2] as Dictionary).get("fields", [])
+		if fields.is_empty():
+			continue
+		L.append("")
+		L.append("### %s" % str(sid2))
+		L.append("")
+		L.append("| 码 | 人类 id | kind | type |")
+		L.append("|----|---------|------|------|")
 		for fd in fields:
 			if not (fd is Dictionary):
 				continue
-			L.append("| %s | %s.%s | %s |" % [
-				str((fd as Dictionary).get("code", "")), str(sid),
-				str((fd as Dictionary).get("id", "")), str((fd as Dictionary).get("kind", ""))])
-		L.append("")
+			L.append("| %s | %s | %s | %s |" % [
+				str((fd as Dictionary).get("code", "")), str((fd as Dictionary).get("id", "")),
+				str((fd as Dictionary).get("kind", "")), str((fd as Dictionary).get("type", ""))])
+	L.append("")
 	return "\n".join(L)

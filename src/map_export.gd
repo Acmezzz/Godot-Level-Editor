@@ -1,5 +1,5 @@
 extends RefCounted
-## 地图导出：PNG 俯视预览（地形/装饰/碰撞/实体色块）与统计文本。
+## 地图导出：PNG 俯视预览（各层瓦片/碰撞/实体色块）与统计文本。
 ## 纯逻辑绘制到 Image，不依赖场景树，可 headless 调用。
 
 const K := preload("res://src/core/constants.gd")
@@ -17,16 +17,16 @@ static func render_preview(data: Dictionary, px_per_tile := 4, atlas_imgs: Array
 	if (atlas_imgs as Array).size() > 0 and (atlas_imgs[0] as Image) != null and not (atlas_imgs[0] as Image).is_empty():
 		atlas_size = (atlas_imgs[0] as Image).get_size()
 
-	for c in data.get("terrain", []):
-		var r := _cell_rect(c, px_per_tile)
-		if _blit_tile(img, r, c, atlas_imgs, atlas_size, tsz, px_per_tile):
-			continue
-		img.fill_rect(r, Color(0.45, 0.70, 0.45, 1))
-	for c in data.get("decor", []):
-		var r2 := _cell_rect(c, px_per_tile)
-		if _blit_tile(img, r2, c, atlas_imgs, atlas_size, tsz, px_per_tile):
-			continue
-		img.fill_rect(r2, Color(0.25, 0.45, 0.30, 1))
+	# v4：瓦片按层存（tiles = {层id: [...]}）——导出统一用 terrain 绿（预览不分层色）
+	var tiles_data = data.get("tiles", {})
+	if not (tiles_data is Dictionary):
+		tiles_data = {}
+	for lid in (tiles_data as Dictionary):
+		for c in ((tiles_data as Dictionary)[lid] as Array):
+			var r := _cell_rect(c, px_per_tile)
+			if _blit_tile(img, r, c, atlas_imgs, atlas_size, tsz, px_per_tile):
+				continue
+			img.fill_rect(r, Color(0.45, 0.70, 0.45, 1))
 	for c in data.get("collision", []):
 		img.fill_rect(_cell_rect(c, px_per_tile), Color(1.0, 0.25, 0.25, 0.55))
 
@@ -100,8 +100,10 @@ static func stats_text(name: String, data: Dictionary) -> String:
 	var lines: Array[String] = []
 	lines.append("地图: %s" % name)
 	lines.append("尺寸: %dx%d 格" % [int(meta.get("w", 0)), int(meta.get("h", 0))])
-	lines.append("地形瓦片: %d" % (data.get("terrain", []) as Array).size())
-	lines.append("装饰瓦片: %d" % (data.get("decor", []) as Array).size())
+	var tile_total := 0
+	for lid in (data.get("tiles", {}) as Dictionary):
+		tile_total += ((data.get("tiles", {}) as Dictionary)[lid] as Array).size()
+	lines.append("瓦片总数: %d" % tile_total)
 	lines.append("碰撞格: %d" % (data.get("collision", []) as Array).size())
 	lines.append("实体总数: %d" % ents.size())
 	var keys := by_scene.keys()

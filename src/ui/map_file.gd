@@ -194,6 +194,8 @@ func rename_map_now(old_name: String, new_name: String, allow_write_unsaved := f
  # 原图未落盘（新建后还没保存）：改名必须真正落地，否则只改内存名 =
  # 面板显示新名、磁盘上始终没文件，用户看到的「重命名」是假的。
 		var data: Dictionary = app.canvas.extract()
+		if data.is_empty():   # 重建窗口哨兵：此刻写盘会把空图落成新文件
+			return " 地图重建中，请稍后再试"
 		data.meta.name = nn
 		if not app.MapStore.write(app.manifest, nn, data):
 			return "无法写入 " + new_path
@@ -254,10 +256,12 @@ func load_map_file(p: String) -> void:
 	app._set_map_loaded(true)
 	app.canvas.undo_stack.clear()
 	app.canvas.redo_stack.clear()
-	var terr: Array = data["terrain"]
-	var ents: Array = data["entities"]
+	var tcount := 0
+	for lid in (data.get("tiles", {}) as Dictionary):
+		tcount += ((data.get("tiles", {}) as Dictionary)[lid] as Array).size()
+	var ents: Array = data.get("entities", [])
 	app._set_status(" 已打开 %s%s（%d 瓦片 / %d 实体）" % [
-		base, "（草稿归位，保存写回正式文件）" if was_draft else "", terr.size(), ents.size()])
+		base, "（草稿归位，保存写回正式文件）" if was_draft else "", tcount, ents.size()])
 
 func _format_issues(issues: Array) -> String:
 	var lines: Array[String] = []
@@ -291,6 +295,9 @@ func on_save() -> bool:
 		app._set_status(" 地图名不合法：不能含 / \\ : * ? \" < > | 或以 . 开头")
 		return false
 	var data: Dictionary = app.canvas.extract()
+	if data.is_empty():   # 重建窗口哨兵：绝不能把空快照写盘
+		app._set_status(" 地图重建中，保存已跳过：请稍后再试")
+		return false
 	data.meta.name = n
 	var path := EditorManifest.map_path(app.manifest, n)
 	if path == "":
@@ -312,7 +319,10 @@ func on_save() -> bool:
 	app._sync_play_cfg_to_map()
 	app.canvas.modified_flag = false
 	_last_autosave_msec = Time.get_ticks_msec()
-	var msg := " 已保存 %s（%d 瓦片 / %d 实体）" % [n, data.terrain.size(), data.entities.size()]
+	var tcount2 := 0
+	for lid2 in (data.get("tiles", {}) as Dictionary):
+		tcount2 += ((data.get("tiles", {}) as Dictionary)[lid2] as Array).size()
+	var msg := " 已保存 %s（%d 瓦片 / %d 实体）" % [n, tcount2, (data.get("entities", []) as Array).size()]
 	if ext_changed:
 		msg += "；注意：磁盘文件在打开后被外部修改过，本次保存覆盖了外部改动"
 	app._set_status(msg)
@@ -326,6 +336,8 @@ func maybe_autosave() -> void:
 	if Time.get_ticks_msec() - _last_autosave_msec < AUTOSAVE_INTERVAL_MS:
 		return
 	var data: Dictionary = app.canvas.extract()
+	if data.is_empty():   # 重建窗口哨兵：本轮跳过，下个周期再存
+		return
 	data.meta.name = app.cur_map_name
 	data["_autosave_of"] = app.cur_map_name
 	var path := str(app.manifest.get("_maps_dir", "")).path_join(app.cur_map_name + ".autosave.json")
@@ -410,6 +422,9 @@ func open_size_dialog() -> void:
 
 func apply_map_size(nw: int, nh: int, pop: PopupPanel) -> void:
 	var d: Dictionary = app.canvas.extract()
+	if d.is_empty():   # 重建窗口哨兵：空快照过 load_data = 清空整图
+		app._set_status(" 地图重建中，请稍后再试")
+		return
 	d["meta"]["w"] = nw
 	d["meta"]["h"] = nh
 	await app.canvas.load_data(d, app.cur_map_name, true)
@@ -438,7 +453,11 @@ func open_export_dialog() -> void:
 	var row := UiKitScript.hbox(8)
 	body.add_child(row)
 	var png_cb := func():
-		var img := MapExport.render_preview(app.canvas.extract(), int(px.value), app.canvas.atlas_imgs, int(app.manifest.get("tileSize", 16)))   # 多图集+tileSize
+		var data: Dictionary = app.canvas.extract()
+		if data.is_empty():   # 重建窗口哨兵：空图导出的是白板 PNG
+			app._set_status(" 地图重建中，请稍后再试")
+			return
+		var img := MapExport.render_preview(data, int(px.value), app.canvas.atlas_imgs, int(app.manifest.get("tileSize", 16)))   # 多图集+tileSize
 		var dir := str(app.manifest.get("_dir", "")).path_join("editor/exports")
 		DirAccess.make_dir_recursive_absolute(dir)
 		var path := dir.path_join(app.cur_map_name + ".png")
@@ -447,7 +466,11 @@ func open_export_dialog() -> void:
 		pop.hide()
 	row.add_child(UiKitScript.button("导出预览 PNG", png_cb, "primary"))
 	var txt_cb := func():
-		var txt := MapExport.stats_text(app.cur_map_name, app.canvas.extract())
+		var data: Dictionary = app.canvas.extract()
+		if data.is_empty():   # 重建窗口哨兵：空图统计无意义
+			app._set_status(" 地图瓦片重建中，请稍后再试")
+			return
+		var txt := MapExport.stats_text(app.cur_map_name, data)
 		var dir2 := str(app.manifest.get("_dir", "")).path_join("editor/exports")
 		DirAccess.make_dir_recursive_absolute(dir2)
 		var path2 := dir2.path_join(app.cur_map_name + ".txt")

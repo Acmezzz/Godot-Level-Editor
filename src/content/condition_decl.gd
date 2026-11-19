@@ -6,7 +6,6 @@ extends RefCounted
 ## 功能声明用 `conditions: [条件 id, ...]` 引用条件（同清单内按 id 引用，同挂载模型）；
 ## 条件参数与功能参数共存于同一份内容 fields（键=字段码），编辑器只渲染填参，不解释语义。
 
-const FunctionDecls := preload("res://src/content/function_decl.gd")
 const ContentId := preload("res://src/content/content_id.gd")
 
 ## 归一化结果缓存：指纹 = 项目目录 + conditions 声明的 JSON 串（清单保存后必变，天然失效）。
@@ -63,20 +62,10 @@ static func condition_fields(m: Dictionary, cond_id: String) -> Array:
 static func condition_name(m: Dictionary, cond_id: String) -> String:
 	return str(condition_decl(m, cond_id).get("name", cond_id))
 
-## 已占用字段码集合（功能池 + 条件池）——条件字段与功能字段共存于同一份内容
-## fields（键=字段码），两个池的码必须同空间唯一。
+## 已占用字段码集合（三池同空间：功能+条件+步骤——步骤池后加，条件补码同样要避开它）。
+## 条件字段与功能字段共存于同一份内容 fields（键=字段码），码必须同空间唯一。
 static func taken_field_codes(m: Dictionary) -> Dictionary:
-	var seen := {}
-	for fid in FunctionDecls.functions(m):
-		for fd in (FunctionDecls.functions(m)[fid] as Dictionary).get("fields", []):
-			if fd is Dictionary:
-				seen[str((fd as Dictionary).get("code", ""))] = true
-	for pair in _decl_items(m.get("conditions", null)):
-		var body: Dictionary = pair.body
-		for fd0 in body.get("fields", []) if body.get("fields", []) is Array else []:
-			if fd0 is Dictionary:
-				seen[str((fd0 as Dictionary).get("code", ""))] = true
-	return seen
+	return ContentId.field_codes(m)
 
 ## 补发条件字段缺失码（避开功能与条件字段已占用的码），就地修改，返回是否有改动。
 ## 只补「空」的，不碰重复码（与 function_decl.ensure_codes 同一纪律——重复由校验报错）。

@@ -205,6 +205,8 @@ static func _validate_steps(data: Dictionary, issues: Array[Dictionary]) -> void
 		for k0 in (decl as Dictionary).keys():
 			if str(k0) == "":
 				_add(issues, "error", "steps", "step ids must be non-empty (dict form)")
+			elif not ((decl as Dictionary)[k0] is Dictionary):
+				_add(issues, "error", "steps", "step entries must be objects (dict form, key: %s)" % str(k0))
 	# 条目码池内唯一（内容 steps[].step 存码，重复 = 静默别名）
 	var ecodes := {}
 	for pair in StepDecls._decl_items(decl):

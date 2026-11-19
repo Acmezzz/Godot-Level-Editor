@@ -68,6 +68,7 @@ static func ensure_codes(m: Dictionary) -> bool:
 static func duplicate_codes(m: Dictionary) -> Array:
 	var out: Array = []
 	var seen := {}
+	var fseen := {}   # 字段码跨功能查重：字段码是一个全局码空间，A 功能占了 B 功能就不能再占
 	for pair in _decl_items(m.get("functions", null)):
 		var d: Dictionary = pair.body
 		var code := str(d.get("code", ""))
@@ -75,7 +76,6 @@ static func duplicate_codes(m: Dictionary) -> Array:
 			if seen.has(code):
 				out.append({"scope": str(pair.id), "code": code})
 			seen[code] = true
-		var fseen := {}
 		for fd in d.get("fields", []) if d.get("fields", []) is Array else []:
 			if not (fd is Dictionary):
 				continue

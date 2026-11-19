@@ -41,20 +41,19 @@
 | `projectName` | string | 顶栏品牌名，缺省空 |
 | `tileSize` | number | 必须 > 0（否则清单报错）；缺省 16。瓦片边长像素 |
 | `screenSize` | [w,h] | 游玩视野框尺寸，缺省 `[640,360]`；纯编辑器视觉 |
-| `tiles` | array | 图集列表，见 2.2 |
-| `layers` | array | 地图图层，见 2.3 |
+| `tiles` | array | 图集 list；清单级 `layers` 键已退役（图层逐图声明，见 2.3），键还在清单里只作未知键忽略 |
 | `entities` | array | 实体类型，见 2.4 |
 | `functions` | dict \| array | 功能声明，见 2.5 |
 | `contentDir` | string | 内容根目录（相对工程根），缺省 `content`；不允许 `..` 或绝对路径 |
 | `playCommand` | string | 试玩命令模板；支持 `%mapfile%`、`%projectpath%` |
 | `godotExe` | string | 可选，覆盖 `playCommand` 首个可执行文件路径；支持 `%projectpath%` |
 
-清单校验把 `tiles/layers/entities/functions/conditions/steps` 非 Array（functions/conditions/
-steps/audio 也接受 dict）、`tileSize` 非正数、图层 id 不受支持、瓦片/实体 id 空或重复、
+清单校验把 `tiles/entities/functions/conditions/steps/audio` 非 Array（functions/conditions/
+steps/audio 也接受 dict）、`tileSize` 非正数、瓦片/实体 id 空或重复、
 **实例码重复**、图集路径含 `..` 或为空、palette 元素缺 `cell`、功能/字段**码重复**（功能与
-条件与**步骤**字段**跨池同码**也算）、步骤**码重复**、音频**码重复**、字段缺 `kind` 或
-kind/type 非法、挂载引用未声明的功能、功能引用未声明的条件，判为**错误**（编辑器拒绝加载）；
-`terrain/decor/collision` 三个图层缺任何一个只判**警告**。功能 id 与条件 id 重复都是错误
+条件与**步骤**字段**跨池同码**也算，字段码跨功能重复同样报错）、步骤**码重复**、音频**码重复**、字段缺 `kind` 或
+kind/type 非法、挂载引用未声明的功能、功能引用未声明的条件，判为**错误**（编辑器拒绝加载）。
+功能 id 与条件 id 重复都是错误
 （数组写法不查会静默后者覆盖前者）。
 
 ### 2.2 图集 `tiles[]`
@@ -354,9 +353,11 @@ BGM 切换、环境音触发、音效播放在哪一步响起，都是功能代�
 ```
 
 步骤字段与功能/条件字段**共用一个码空间**（ensure_codes 链与跨池查重延伸到步骤池）。
-编辑器：内容表单对带标记的绑定渲染步骤摘要 + 「编辑演出」子面板（增删/拖序/复制步，
+编辑器：内容表单对带标记的绑定渲染步骤摘要 + 「编辑演出」子面板（增删/↑↓排序/复制步，
 每步填参复用 field widgets 与 choice source）。运行时游戏侧按 steps 顺序解释执行，
 触发条件走条件库链路。
+**编辑器写法**：子面板改动 = 读全文、改 steps 数组、整文件写回——顶层未知键与
+声明缺失的步骤条目都不剥离（表单给 ⚠ 只读提示）。
 
 ### 2.6 `role` —— 连接语义标签
 
@@ -365,7 +366,7 @@ BGM 切换、环境音触发、音效播放在哪一步响起，都是功能代�
 | `portal` | 图内/跨图传送门 | 无专属标记（引用连线只看 `props.target_point`，与 role 无关） |
 | `exit` | 跨图出口（单向） | 画布画 `↗` + 目标图名角标 |
 | `landing` | 传送落点 | 画布画落点描边 |
-| `trigger` | 触发区 | 画布画半透明矩形 + 事件名 |
+| `trigger` | 事件区 | 画布画半透明矩形 + 事件名 |
 
 实体条目必须**显式声明** `role` 才有画布连接标记；不声明就是普通实体，编辑器不按实体 id 猜语义。
 `trigger_zone` 由编辑器内置声明（`role: trigger`）。
@@ -373,13 +374,15 @@ BGM 切换、环境音触发、音效播放在哪一步响起，都是功能代�
 **role 只影响画布呈现，不影响数据。**地图里不写 role，游戏侧也不该读 role 决定行为——
 按 `scene`（实体 id）或 `prefab` 分发。role 存在的意义是让编辑器在换实体 id 时仍能识别连接语义。
 
-### 2.7 内置实体种类 `trigger_zone`
+### 2.7 内置实体种类 `trigger_zone`（显示名「事件区」）
 
 由编辑器提供，**不需要游戏工程在清单里声明**；加载清单时自动并入（`builtin=true`），
 写盘前再剥掉，所以游戏工程的 `editor_manifest.json` 里看不到它。
+显示名是「事件区」（不一定要触碰触发：绑定功能可含条件，达成条件即触发），
+数据 id、`role: trigger`、props 契约都没变。
 
 ```json
-{"id": "trigger_zone", "name": "触发区", "builtin": true, "role": "trigger", "code": "TZ99", "fields": []}
+{"id": "trigger_zone", "name": "事件区", "builtin": true, "role": "trigger", "code": "TZ99", "fields": []}
 ```
 
 它**没有 prefab、没有缩略图、没有自带功能**。地图里它的 `props` 是编辑器硬编码的：
@@ -431,7 +434,9 @@ BGM 切换、环境音触发、音效播放在哪一步响起，都是功能代�
 | `collision[]` | 否 | 数组，见 3.3；**键缺失与 `[]` 等价**——编辑器没有任何由地形兜底生成碰撞的逻辑 |
 | `entities[]` | 否 | 数组，见 3.4 |
 
-瓦片条目（5 元，v3 起未变）：
+### 3.2 瓦片条目（`tiles` 的值）
+
+瓦片条目 5 元：
 
 ```
 [x, y, atlas, atlasX, atlasY]
@@ -571,6 +576,9 @@ BGM 切换、环境音触发、音效播放在哪一步响起，都是功能代�
 | 实例码 | 4 | 地图 `entities[].code` | 放置实例时 |
 | 功能码 | 4 | 清单 `functions[].code` | 加载清单时缺则补发（`ensure_codes`） |
 | 字段码 | 4 | 清单 `functions[].fields[].code` | 同上 |
+| 步骤码 | 4 | 清单 `steps[].code` | 加载清单时缺则补发（ensure_codes） |
+| 步骤字段码 | 4 | 清单 `steps[].fields[].code` | 同上 |
+| 音频码 | 4 | 清单 `audio[].code` | 加载清单时缺则补发（ensure_codes） |
 | 功能段 | — | 内容 ID 第四段 = 功能人类 id（显示壳；执行引用不用它） | 内容创建时取当次声明 |
 | 内容码 | 6 | 内容文件名 | 首次创建内容 |
 
@@ -660,22 +668,35 @@ static func build(root: Node2D, data: Dictionary) -> Dictionary:
 	var mw := int(meta.get("w", 120))
 	var mh := int(meta.get("h", 56))
 	var ts := _build_tileset()          # 源 0 = 烘焙 .tres；源 1..n = 清单 tiles[1..]
-	var terrain := TileMapLayer.new(); terrain.tile_set = ts; root.add_child(terrain)
-	var decor := TileMapLayer.new(); decor.tile_set = ts; decor.collision_enabled = false; root.add_child(decor)
-	for c in data.get("terrain", []):
-		var a := c as Array
-		if a.size() >= 5:
-			terrain.set_cell(Vector2i(int(a[0]), int(a[1])), int(a[2]), Vector2i(int(a[3]), int(a[4])))
-	for c in data.get("decor", []):
-		var a2 := c as Array
-		if a2.size() >= 5:
-			decor.set_cell(Vector2i(int(a2[0]), int(a2[1])), int(a2[2]), Vector2i(int(a2[3]), int(a2[4])))
+	# meta.layers 栈序 = z 序（底→顶）：每层一个瓦片容器（实体节点夹层见 §3.4）
+	var layers: Array = meta.get("layers", [])
+	var tile_nodes := {}
+	for li in layers.size():
+		var tm := TileMapLayer.new()
+		tm.tile_set = ts
+		root.add_child(tm)
+		tile_nodes[str((layers[li] as Dictionary).get("id", ""))] = tm
+	for lid in (data.get("tiles", {}) as Dictionary):
+		var tn: TileMapLayer = tile_nodes.get(str(lid), null)
+		if tn == null:
+			continue
+		for c in (data.get("tiles", {})[lid] as Array):
+			var a := c as Array
+			if a.size() >= 5:
+				tn.set_cell(Vector2i(int(a[0]), int(a[1])), int(a[2]), Vector2i(int(a[3]), int(a[4])))
+	# 运行时层开关：meta.layers[].visible 先应用（差分视图/BOSS 换景，§2.3）
+	for li2 in layers.size():
+		var lm: Dictionary = layers[li2]
+		var tn2: TileMapLayer = tile_nodes.get(str(lm.get("id", "")), null)
+		if tn2 == null:
+			continue
+		tn2.visible = bool(lm.get("visible", true))
 	# collision / entities / spawn 见 §3.3 / §3.4 / 6.3
-	return {"terrain": terrain, "decor": decor, "rect": Rect2(Vector2.ZERO, Vector2(mw * TILE, mh * TILE))}
+	return {"tiles": tile_nodes, "rect": Rect2(Vector2.ZERO, Vector2(mw * TILE, mh * TILE))}
 ```
 
-**不要照抄别人的工程**。上面这段只覆盖 terrain/decor；碰撞类型、实体实例化、功能消费
-各自取决于目标游戏，§3.3 和 §6.3 给了字段语义，实现自由。
+**不要照抄别人的工程**。上面这段只覆盖分层的瓦片渲染 + 运行时层开关；碰撞类型、实体实例化、
+功能消费各自取决于目标游戏，§2.3、§3.3 和 §6.3 给了字段语义，实现自由。
 ## 7. 新增一个「功能」的标准流程
 
 以「开关门」为例，游戏侧需要动三处、编辑器侧一处。
@@ -688,9 +709,9 @@ static func build(root: Node2D, data: Dictionary) -> Dictionary:
     "name": "开关门",
     "code": "D9R4",
     "fields": [
-      {"id": "require_flag", "code": "F1A2", "name": "前置标记", "type": "string", "default": ""},
-      {"id": "once",         "code": "B3C4", "name": "只开一次", "type": "bool",   "default": false},
-      {"id": "speed",        "code": "E5D6", "name": "开门速度", "type": "float",  "default": 2.0, "min": 0.1, "max": 20.0}
+      {"id": "require_flag", "code": "F1A2", "name": "前置标记", "kind": "input", "type": "string", "default": ""},
+      {"id": "once",         "code": "B3C4", "name": "只开一次", "kind": "input", "type": "bool",   "default": false},
+      {"id": "speed",        "code": "E5D6", "name": "开门速度", "kind": "input", "type": "float",  "default": 2.0, "min": 0.1, "max": 20.0}
     ]
   }
 }
@@ -804,12 +825,12 @@ func _apply_door(inst: Node, fn: Dictionary) -> void:
 |---|---|---|
 | 1 | `editor/editor_manifest.json` 存在且能通过清单校验 | 编辑器打开项目不落错误页 |
 | 2 | `tiles[]` 至少一项，`tiles[0]` 的 PNG 路径存在 | 左栏出现图集列表 |
-| 3 | `layers[]` 含 `terrain` / `decor` / `collision` | 无警告 |
+| 3 | 每图 `meta.layers` 至少一层（新建模板自带 资产层+FL） | 无错误 |
 | 4 | `entities[]` 每项有唯一 `id` + `prefab` 指向真实 `.tscn` | 左栏资产列表出图 |
 | 5 | `editor/previews/*.png` 与 `thumb` 对应 | 画布上实体有缩略图 |
 | 6 | `maps/` 目录存在（可为空） | 新建地图能保存 |
 | 7 | `playCommand` 能拉起游戏并接收 `--map=` | 试玩按钮工作 |
-| 8 | 游戏侧 `MapLoader` 读 `meta.w/h`、`spawn`、`terrain`、`decor`、`collision`、`entities` | 试玩画面与编辑画布一致 |
+| 8 | 游戏侧 `MapLoader` 读 `meta.w/h`、`meta.layers`、`spawn`、`tiles`、`collision`、`entities` | 试玩画面与编辑画布一致 |
 | 9 | 游戏侧按 `scene` 实例化并注入 `code`/`props` | 传送门等按 props 行为正确 |
 | 10 | 若用功能系统：`functions` 已声明 + 游戏侧有对应消费代码 | 挂上功能后行为生效 |
 
@@ -823,8 +844,8 @@ godot --path "<你的游戏工程>" -- --map=maps/<地图名>.json
 
 ## 11. 已知边界（照抄编辑器实现，不是待办）
 
-- **`trigger_zone` 的 props 没有编辑 UI**。见 2.7。
-- **不能新增图层类型**。只用 `terrain` / `decor` / `collision` + 实体层。
+- **`trigger_zone`（事件区）的 props 没有编辑 UI**。见 2.7。
+- **图层即遮挡层**。`meta.layers` 是纯 z 槽混合层栈，每层可摆瓦片+实体；碰撞是栈外元层。
 - **一个实体实例一个功能只挂一条绑定**。同一功能重复绑定只有「添加功能」菜单会过滤（校验不去重；手改 JSON 可造成重复绑定）。
 - **数值参数不走 props**。props 只剩几何/引用（§2.4.1）；值一律内容文件。
 - **引用字段的编辑在内容编辑器「引用」区**（§2.4.2）：entity_ref/map_ref 值写实例 props。

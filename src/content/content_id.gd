@@ -33,6 +33,31 @@ static func new_inst_code() -> String:
 static func new_fn_code() -> String:
 	return _code(LAYER_LEN)
 
+## 三池字段码占用表：功能+条件+步骤的 fields[].code 全量收集。
+## 零依赖——直接读 manifest 原始数组/对象，不 preload 任何声明域
+## （声明域互相 preload 会成环，补码时只需要这份占用表）。
+static func field_codes(m: Dictionary) -> Dictionary:
+	var seen := {}
+	for pool in ["functions", "conditions", "steps"]:
+		var decl = m.get(pool, null)
+		var bodies: Array = []
+		if decl is Dictionary:
+			for k in (decl as Dictionary):
+				if (decl as Dictionary)[k] is Dictionary:
+					bodies.append((decl as Dictionary)[k])
+		elif decl is Array:
+			for it in (decl as Array):
+				if it is Dictionary:
+					bodies.append(it)
+		for body in bodies:
+			for fd in (body as Dictionary).get("fields", []) \
+					if (body as Dictionary).get("fields", []) is Array else []:
+				if fd is Dictionary:
+					var fc := str((fd as Dictionary).get("code", ""))
+					if fc != "":
+						seen[fc] = true
+	return seen
+
 ## 组装内容 ID：前三段稳定身份 + 功能人类 id，末段 6 位随机码保证唯一。
 ## 输入含空段（旧数据没发过码）时返回空串，不产出脏 ID。
 static func content_id(map_code: String, ent_code: String, inst_code: String, fn_id: String) -> String:

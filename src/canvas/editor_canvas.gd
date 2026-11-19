@@ -357,6 +357,8 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	# keep_dirty：撤销/重做恢复路径不抹脏标记（快照恢复后内容与磁盘
 	# 不一致就是脏的），普通载入清零；emit 只在这里发一次，undo/redo 不再自己发。
 	modified_flag = keep_dirty
+	# 换图后层数可能变少：激活层钳回合法区间（0..层栈数，含碰撞元层下标）
+	active_layer = clampi(active_layer, 0, layer_count())
 	_ent_by_id_dirty = true   # 整图载入（含撤销恢复）索引置脏
 	map_rev += 1              # 整图替换后下游缓存必须重扫
 	ents_rev += 1
@@ -583,7 +585,9 @@ func generate_collision(strategy := "full", replace := false, one_way_top := fal
 		_hint("碰撞层已锁定：先解锁")
 		return 0
 	var src := _layer_node(active_layer)
-	if src == null:
+	if src == null or active_layer == collision_index():
+	 # _layer_node 对碰撞元层返回 collision 节点本身——自动碰撞若不拦，
+	 # 就会从碰撞层读瓦片生成碰撞（自己抄自己）
 		_hint("切到一个瓦片层再用自动碰撞（当前是碰撞元层）")
 		return 0
 	_push_undo()
@@ -609,8 +613,8 @@ func count_auto_collision(strategy := "full", replace := false) -> int:
 	if map_root == null:
 		return 0
 	var src := _layer_node(active_layer)
-	if src == null:
-		return 0
+	if src == null or active_layer == collision_index():
+		return 0   # 碰撞元层不是瓦片来源（同 generate_collision）
 	var n := 0
 	for c in src.get_used_cells():
 		if not _collision_wanted(c, strategy):
@@ -726,14 +730,19 @@ func _any_layer_locked() -> bool:
 			return true
 	return false
 
-# —— 层管理：新建/删除/改名/上下移/运行时可见（meta 在整图快照里，操作先进撤销） ——
+# —— 层管理：新建/删除/上下移（先 extract 快照 → 在快照上改 → load_data 重建） ——
+## 顺序是硬约束：extract 按节点下标取瓦片、按声明序取层码，两者必须对齐——
+## 不能「先改活体 meta 再 extract 反向同步」（会串层/丢瓦片）。
+## 撤销快照由 _push_undo 在改动前压栈；重建窗口期（extract 返回 {}）放弃操作。
 ## 新层默认插到栈顶之下——新建即可画前景遮挡。
 func layer_add(name: String) -> void:
-	if map_root == null:
-		_hint("无地图：先新建或打开一张地图")
+	if map_root == null or not is_instance_valid(map_root):
 		return
 	_push_undo()
-	var meta: Dictionary = map_data.get("meta", {})
+	var snap := extract()
+	if snap.is_empty():
+		return
+	var meta: Dictionary = snap.get("meta", {})
 	var L: Array = meta.get("layers", [])
 	var entry := {"id": ContentIdRef.new_inst_code(), "name": name if name != "" else "新层", "visible": true}
 	if L.size() >= 2:
@@ -741,26 +750,36 @@ func layer_add(name: String) -> void:
 	else:
 		L.append(entry)
 	meta["layers"] = L
-	map_data["meta"] = meta
-	_rebuild_layers()
+	snap["meta"] = meta
+	_load_snap_layers(snap, layer_id(active_layer))
 
-## 删层 = 删内容：该层瓦片与实体一并删除（撤销整图快照可回）。
+## 删层 = 删内容：快照上摘掉层声明，该层瓦片与实体一并过滤（撤销可回）。
+## 拒绝时静默返回；调用方（层管理 UI）负责给状态栏反馈。
 func layer_del(i: int) -> void:
-	if map_root == null or i < 0 or i >= layer_count():
+	if map_root == null or not is_instance_valid(map_root) or i < 0 or i >= layer_count():
 		return
 	if layer_count() <= 1:
-		_hint("至少保留一个图层")
 		return
 	_push_undo()
+	var snap := extract()
+	if snap.is_empty():
+		return
+	var active_id := layer_id(active_layer)
 	var lid := layer_id(i)
-	var meta: Dictionary = map_data.get("meta", {})
-	(meta.get("layers", []) as Array).remove_at(i)
-	# 该层活体实体先移除（extract 同步活体状态，不删会在重建时落到第 0 层复活）
-	for s in ents_all():
-		if str((s as Sprite2D).get_meta("layer", "")) == lid:
-			(s.get_parent() as Node2D).remove_child(s)
-			(s as Sprite2D).free()
-	_rebuild_layers()
+	var meta: Dictionary = snap.get("meta", {})
+	var L: Array = meta.get("layers", [])
+	L.remove_at(i)
+	meta["layers"] = L
+	snap["meta"] = meta
+	var tiles: Dictionary = snap.get("tiles", {})
+	tiles.erase(lid)
+	snap["tiles"] = tiles
+	var keep := []
+	for e in (snap.get("entities", []) as Array):
+		if str((e as Dictionary).get("layer", "")) != lid:
+			keep.append(e)
+	snap["entities"] = keep
+	_load_snap_layers(snap, active_id)
 
 func layer_rename(i: int, name: String) -> void:
 	var L := layers_decl()
@@ -771,15 +790,25 @@ func layer_rename(i: int, name: String) -> void:
 	_mark(false)   # 只改 meta，不动节点
 
 func layer_move(i: int, dir: int) -> void:
+	if map_root == null or not is_instance_valid(map_root):
+		return
 	var L := layers_decl()
 	var nj := i + dir
 	if i < 0 or i >= L.size() or nj < 0 or nj >= L.size():
 		return
 	_push_undo()
-	var tmp = L[i]
-	L[i] = L[nj]
-	L[nj] = tmp
-	_rebuild_layers()
+	var snap := extract()
+	if snap.is_empty():
+		return
+	var active_id := layer_id(active_layer)
+	var meta: Dictionary = snap.get("meta", {})
+	var SL: Array = meta.get("layers", [])
+	var tmp = SL[i]
+	SL[i] = SL[nj]
+	SL[nj] = tmp
+	meta["layers"] = SL
+	snap["meta"] = meta
+	_load_snap_layers(snap, active_id)
 
 ## 运行时初始可见（差分视图用）；编辑视图显隐走 set_layer_hidden，两回事。
 func layer_set_visible(i: int, v: bool) -> void:
@@ -790,14 +819,11 @@ func layer_set_visible(i: int, v: bool) -> void:
 	(L[i] as Dictionary)["visible"] = v
 	_mark(false)
 
-## 层操作后全量重建：先用 extract() 把活体状态写回 map_data（未保存的摆放/移动不丢），
-## 再 load_data（异步协程，_rebuild_gen 保护并发；无 await 调用是刻意的 fire-and-forget）。
-func _rebuild_layers() -> void:
-	if map_root == null:
-		return
-	active_layer = clampi(active_layer, 0, maxi(layer_count() - 1, 0))
-	map_data = extract()
-	load_data(map_data, cur_map_name, true, true)
+## 层操作收尾：按新快照重建，激活层跟随身份（同码层下标，层没了落最底层）。
+func _load_snap_layers(snap: Dictionary, active_id: String) -> void:
+	load_data(snap, cur_map_name, true, true)
+	var ni := _layer_index_of(active_id)
+	active_layer = ni if ni >= 0 else 0
 
 # —— 绘制：网格 + 光标幽灵预览 ——
 

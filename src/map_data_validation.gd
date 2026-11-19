@@ -22,6 +22,14 @@ static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 		for lid in tiles.keys():
 			if not layer_ids.has(str(lid)):
 				_add(issues, "error", "tiles." + str(lid), "unknown layer id")
+			elif not (tiles[lid] is Array):
+				_add(issues, "error", "tiles." + str(lid), "must be an array")
+			else:
+				for j in (tiles[lid] as Array).size():
+					var cell = (tiles[lid] as Array)[j]
+					if not (cell is Array) or cell.size() < 5 or not _is_number_prefix(cell, 5):
+						_add(issues, "error", "tiles.%s[%d]" % [str(lid), j],
+							"must contain x, y, atlas, atlas_x, atlas_y")
 	var spawn = data.get("spawn", [2, 2])
 	if not (spawn is Array) or spawn.size() < 2 or not _is_number_pair(spawn):
 		_add(issues, "error", "spawn", "must contain two numeric coordinates")
@@ -57,6 +65,8 @@ static func _validate_layers(meta: Dictionary, issues: Array[Dictionary]) -> Dic
 			ids[lid] = true
 		if str(ldef.get("name", "")) == "":
 			_add(issues, "error", p + ".name", "must be a non-empty layer name")
+		if ldef.has("visible") and not (ldef.visible is bool):
+			_add(issues, "error", p + ".visible", "must be a boolean")
 	return ids
 
 static func _validate_entities(entities: Array, manifest: Dictionary, layer_ids: Dictionary, issues: Array[Dictionary]) -> void:
