@@ -85,4 +85,3 @@ func _open_shortcut_help() -> void:
 	close_btn.size_flags_horizontal = Control.SIZE_SHRINK_END
 	shell.body.add_child(close_btn)
 	app._open_popup(pop)
-

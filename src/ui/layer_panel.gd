@@ -180,4 +180,3 @@ func _layer_mgr_row(i: int, decl: Dictionary) -> Control:
 	del.tooltip_text = "删除该层（层上瓦片与实体一并删除）"
 	row.add_child(del)
 	return row
-

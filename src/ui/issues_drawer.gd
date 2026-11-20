@@ -148,4 +148,3 @@ func _select_by_code(code: String) -> void:
 	app.canvas.selected_multi.clear()
 	app.canvas.entity_selected.emit(n)
 	app.canvas.queue_redraw()
-

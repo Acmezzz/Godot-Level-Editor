@@ -173,4 +173,3 @@ static func entity_editor_size(m: Dictionary, edef: Dictionary) -> Vector2:
 	if prefab == "":
 		return Vector2.ZERO
 	return ImageProbe.prefab_collision_size(m.get("_dir", ""), prefab)
-

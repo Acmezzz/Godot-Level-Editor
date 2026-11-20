@@ -400,4 +400,3 @@ func _steps_dup(si: int) -> void:
 	_steps_sel = si + 1
 	_steps_write(data)
 	_rebuild_steps_all()
-

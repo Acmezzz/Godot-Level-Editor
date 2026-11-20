@@ -95,4 +95,3 @@ func _fresh_inst_code() -> String:
 func _code_taken(c: String) -> bool:
 	# _ent_by_code_index 是脏标记缓存——O(n) 全扫摊平为建一次索引后 O(1) 查
 	return _ent_by_code_index().has(c)
-

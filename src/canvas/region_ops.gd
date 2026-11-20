@@ -410,4 +410,3 @@ func _cell_rect(a: Vector2, b: Vector2) -> Rect2i:
 	var cb: Vector2i = cvs._cell_of(b)
 	return Rect2i(Vector2i(mini(ca.x, cb.x), mini(ca.y, cb.y)),
 		Vector2i(absi(ca.x - cb.x) + 1, absi(ca.y - cb.y) + 1))
-
