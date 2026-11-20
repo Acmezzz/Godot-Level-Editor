@@ -61,7 +61,7 @@ func _fill_multi(tl: ItemList, sets: Array) -> void:
 	_fill_single(tl, sets[_atlas], _atlas)
 
 ## 图集体渲染：单图集与多图集图集内共用（MRU 置顶 → 类别/全图 → 资产行）
-func _fill_single(tl: ItemList, t: Dictionary, ai: int) -> void:
+func _fill_single(tl: ItemList, t: Dictionary, _ai: int) -> void:
 	var aid := str(t.get("id", ""))
 	var img := _img_for(aid)
 	if img == null:

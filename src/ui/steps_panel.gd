@@ -224,7 +224,7 @@ func _rebuild_steps_form_from_data() -> void:
 	_rebuild_steps_form(arr)
 
 ## 子面板里的一个步骤行：序号+名称（选中高亮）+ 上移/下移/复制/删除。
-func _steps_row(si: int, st: Dictionary, pool: Dictionary) -> Control:
+func _steps_row(si: int, st: Dictionary, _pool: Dictionary) -> Control:
 	var sc := str(st.get("step", ""))
 	var decl: Dictionary = StepDecls.step_by_code(manifest, sc)
 	var known := not decl.is_empty()
