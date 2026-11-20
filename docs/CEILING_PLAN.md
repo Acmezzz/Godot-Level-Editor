@@ -27,7 +27,7 @@
 | 3 | v5 格式：瓦片翻转/旋转 + 层 blend | ⏸ 待拍板点 3（图层 parallax/ySort/offset/scale 已在第 5 批落地；缺瓦片 alternative 与 blend） |
 | 4 | 实体变换 | ✅ 已在第 5 批落地（data_transform scale/rotation/flip_h/flip_v + 翻转交互） |
 | 5 | 时间轴补齐 | ✅ steps 时间轴视图已落地；帧动画预览 ✅ ddad276（资产 frames[]，8fps 预览） |
-| 6 | 开放决策收口 | ✅ 碰撞类型声明池已落地；⏸ 试玩面板/target_map 改码/steps 嵌套/事件区参数——逐条拍板后动 |
+| 6 | 开放决策收口 | ✅ 碰撞类型声明池 + 试玩面板通用化（bc11621）+ 事件区行为参数——**经查 mode/event/once 已在第 3 批去特殊化作废**（语义归 functions[]），该项本已解决；⏸ target_map 改存地图码（需引入地图身份码体系，建议缓）/ steps 嵌套 kind:"steps"——仍未拍板 |
 | 7 | 文档收口 | 随批进行（GAME_SIDE_STANDARD 已同步 array/multiple/frames） |
 
 ## 第 1 批：字段系统补齐
@@ -136,6 +136,12 @@ selection_ops 加拖拽把手（角点缩放/旋转柄）；命中测试按变�
 3. v5 bump（瓦片翻转/旋转 + 层 blend）——**唯一剩的数据层缺口**，动工条件：你点头 + 拍板翻转编码。
 5. 试玩面板 bird 残留：留（flags 状态池，照 audio 池模式）还是删。
 6. 事件区行为参数（mode/once/require_flag）改自带功能——触发区编辑 UI 红线，须明确点头。
+
+> **全部落定（2026-11-21「按你推荐的做」）**：
+> ✅ ① v7 bump（瓦片 6 元 alt + 层 blend）——0d9a614；
+> ✅ ⑤ 试玩面板——通用化（清单 playtest 声明驱动），bc11621；
+> ✅ ⑥ 事件区行为参数——经查 mode/event/once 已在第 3 批作废（语义归 functions[]），本已解决。
+> 未拍板遗留：target_map 改存地图码（需先建地图身份码体系，建议缓）、steps 嵌套 kind:"steps"。
 
 > ~~卡牌 cards 池~~ 已删（2026-11-21）：cards 就是 assets 定义（字段声明费用/效果）+
 > 上场实体实例，专用池 = 把第 3 批刚拆掉的特殊化请回来。卡组/抽牌规则在游戏侧。

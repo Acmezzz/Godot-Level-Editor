@@ -690,7 +690,7 @@ godot --headless --path "<编辑器工程>" --script res://tests/run_tests.gd
 | `test_decl_pools.gd` | 功能/条件池归一化、steps 标记保留、功能码查重、字段码跨功能查重、条件补码避让 |
 | `test_step_audio.gd` | 步骤池归一化与按码查询、步骤补码避让三池占用、音频池归一化与补码、时机池归一化/补码/按码反查（时机码不进字段码空间）、时间轴缺省计算/非阻塞与轨道/回写净化/冲突对 |
 | `test_validators.gd` | 清单校验：合法零错误、kind 缺失、条目码池内重复、字段码**跨池**同码、步骤 dict 值非对象、未声明条件/实体/音频码重、功能 id 字符集、时机池 id/码重复与引用校验、`timing.mode` 非法、新字段类型全合法 |
-| `test_map_v4.gd` | v6 模板、层栈校验、瓦片 5 元精确校验（第 3 位资产 id）、`objects[]` 各道防线（code 查重、场景实例不得发码、图集场景不可摆放、层归属、transform/visible/zPolicy 类型、退役 entities 段）、碰撞对象条目（v5 数组报退役）、层参数类型、spawn、decode_text 门槛 |
+| `test_map_v4.gd` | v6 模板、层栈校验、瓦片 6 元精确校验（第 3 位资产 id、第 6 位 alt 0-7）、`objects[]` 各道防线（code 查重、场景实例不得发码、图集场景不可摆放、层归属、transform/visible/zPolicy 类型、退役 entities 段）、碰撞对象条目（v5 数组报退役）、层参数类型、spawn、decode_text 门槛 |
 | `test_grid_space.gd` | GridSpace 正交/等距往返换算、collisionTypes 池归一化（缺省池/声明覆盖/按 id 查声明） |
 | `test_audit.gd` | 全项目审计：清单/地图条目包装（kind/map/jump 可跳转性）、引用悬空（entity_ref/map_ref → 警告，未填合法不报） |
 | `test_assets.gd` | `assets[]` 归一化：kind 分派、未知键保留、palette 展平、非正方形 `cell`、`editorSize`/`sizeFields` 尺寸、编辑期原件入口、挂载过滤 |
