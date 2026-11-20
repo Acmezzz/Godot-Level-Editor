@@ -46,6 +46,7 @@ src/
 │   ├── audio_decl.gd       音频声明域：audio 池归一化、执行码补发、音频码表段
 │   ├── trigger_decl.gd     时机声明域：triggers 池归一化、执行码补发、时机码表段（无字段）
 │   ├── step_decl.gd        步骤声明域：steps 池归一化、条目/字段码补发（三池同码空间）、码表段
+│   ├── step_timeline.gd    步骤时间轴：at/duration/track/blocking 缺省计算、回写净化、重叠/负值警告
 │   ├── content_id.gd       五段身份数：地图/实体/实例 4 位 + 内容 6 位的生成与拼装
 │   └── content_store.gd    内容文件读写：content/<功能id>/<内容ID>.json，原子写
 └── ui/                     —— 界面（每个面板一个控制器） ——
@@ -58,6 +59,7 @@ src/
 	├── map_file.gd         地图文件生命周期：新建/打开/保存/改名/自动保存/尺寸/导出/试玩
 	├── props_panel.gd      只剩「从地形生成碰撞」弹窗
 	├── content_editor.gd   内容编辑器：左实例列表 / 右功能列表与内容表单
+	├── timeline_view.gd    演出时间轴视图：横轴时间纵轴轨道，拖块改 at/duration/轨道，重叠描红
 	├── content_preview.gd  内容编辑器的中列只读地图预览（自绘缩放/平移/点选）
 	├── field_widgets.gd    声明式字段控件工厂：input（string/int/float/bool/color/vector2/range/asset_ref）/ choice，认不出的只读展示
 	└── asset_panel.gd      资产目录：图鉴详情、自带功能挂载、实例分布清点、删除检查
@@ -450,9 +452,12 @@ src/
 **条件区**：功能声明引用了条件库条目（`conditions: [id, ...]`）时，逐条渲染条件名小节 +
 可调字段——与功能字段共用同一份内容 `fields`，同一条件在不同实例上参数各填各的。
 **演出区**：功能声明带 `"steps": true` 时渲染步骤只读摘要 + 「编辑演出」按钮，进入
-**演出子面板**：步骤列表（添加/删除/上移/下移/复制）+ 当前步骤参数表单（复用同一套
-field widgets 与 choice source）。步骤引用清单 `steps` 池（值=步骤码），步骤参数存在
-每个步骤自己的 `fields` 里；未声明的步骤码/参数键只读保留 + ⚠ 提示。
+**演出子面板**：「列表 / 时间轴」两个页签渲染同一份 `steps` 数组 + 当前步骤参数表单
+（复用同一套 field widgets 与 choice source）。列表页签：添加/删除/上移/下移/复制；
+时间轴页签：条块按 `at/duration/track` 布局，拖块改 `at`、拖右缘改 `duration`、上下拖换轨
+（0.1 秒吸附，负值夹回 0），松手净化回写（剥掉等于缺省的键）；同轨重叠/负值给 ⚠ 警告
+（不改数据）。步骤引用清单 `steps` 池（值=步骤码），步骤参数存在每个步骤自己的 `fields` 里；
+未声明的步骤码/参数键只读保留 + ⚠ 提示。
 
 **写盘策略（重要）**：
 
@@ -634,7 +639,7 @@ godot --headless --path "<编辑器工程>" --script res://tests/run_tests.gd
 |---|---|
 | `test_content_id.gd` | 三池字段码收集器（dict/array 写法、空码过滤）、五段身份码拼装与缺段拒发、码形状 |
 | `test_decl_pools.gd` | 功能/条件池归一化、steps 标记保留、功能码查重、字段码跨功能查重、条件补码避让 |
-| `test_step_audio.gd` | 步骤池归一化与按码查询、步骤补码避让三池占用、音频池归一化与补码、时机池归一化/补码/按码反查（时机码不进字段码空间） |
+| `test_step_audio.gd` | 步骤池归一化与按码查询、步骤补码避让三池占用、音频池归一化与补码、时机池归一化/补码/按码反查（时机码不进字段码空间）、时间轴缺省计算/非阻塞与轨道/回写净化/冲突对 |
 | `test_validators.gd` | 清单校验：合法零错误、kind 缺失、条目码池内重复、字段码**跨池**同码、步骤 dict 值非对象、未声明条件/实体/音频码重、功能 id 字符集、时机池 id/码重复与引用校验、`timing.mode` 非法、新字段类型全合法 |
 | `test_map_v4.gd` | v5 模板、层栈校验、瓦片 5 元精确校验（第 3 位资产 id）、`objects[]` 各道防线（code 查重、场景实例不得发码、图集场景不可摆放、层归属、transform/visible/zPolicy 类型、退役 entities 段）、spawn、decode_text 门槛 |
 | `test_assets.gd` | `assets[]` 归一化：kind 分派、未知键保留、palette 展平、非正方形 `cell`、`editorSize`/`sizeFields` 尺寸、编辑期原件入口、挂载过滤 |
@@ -643,7 +648,7 @@ godot --headless --path "<编辑器工程>" --script res://tests/run_tests.gd
 
 约定：套件 `extends "res://tests/_suite_base.gd"`，方法名 `test_` 开头即被发现；
 `ok()` / `eq()` 收集失败；**每个用例至少一条断言**（崩溃中断的用例断言数不增长，
-runner 判 FAIL——防止半路崩掉变成假 PASS）。退出码非 0 = 有失败。当前 8 套件 53 用例。
+runner 判 FAIL——防止半路崩掉变成假 PASS）。退出码非 0 = 有失败。当前 8 套件 57 用例。
 
 截图辅助 `tools/screenshot.gd`（模式清单见文件头注释）与警告扫描 `tools/warn_scan.gd`
 （headless 全量加载 src/ 校验可加载性）；`tools/migrate_project.gd` 是一次性迁移脚本
@@ -673,6 +678,7 @@ godot --headless --path "<编辑器工程>" --script res://tools/migrate_project
   没有旋转/缩放的编辑控件——`transform` 目前由数据侧读写，`F` 只 toggle 水平翻转。
 - 编辑器写盘只有一条路径：`editor_canvas.extract()`；游戏侧 `MapLoader` 只读，不反向写回，避免格式分叉。
 - 内容系统只做「绑定 + 内容字段编辑」，功能行为完全在项目侧；编辑器不校验内容语义。
+- 时间轴只做条块摆放（at/duration/track/blocking）：不做关键帧曲线、嵌套时间轴、音频波形。
 
 ---
 

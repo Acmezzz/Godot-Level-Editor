@@ -14,6 +14,7 @@ const ContentId := preload("res://src/content/content_id.gd")
 const ConditionDecls := preload("res://src/content/condition_decl.gd")
 const AudioDecls := preload("res://src/content/audio_decl.gd")
 const StepDecls := preload("res://src/content/step_decl.gd")
+const StepTimeline := preload("res://src/content/step_timeline.gd")
 const TriggerDecls := preload("res://src/content/trigger_decl.gd")
 const MapStore := preload("res://src/map_store.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
@@ -1281,6 +1282,12 @@ var _steps_fn_id := ""        # 该绑定的功能 id
 var _steps_sel := -1          # 当前选中步骤下标；-1 = 无
 var _steps_list: VBoxContainer = null
 var _steps_form: VBoxContainer = null
+# 时间轴视图页签（第 4 批）：同一份 steps，两种呈现。
+var _steps_view := "list"     # "list" / "timeline"
+var _steps_tabs: HBoxContainer = null
+var _steps_tl_box: VBoxContainer = null
+var _steps_scroll: ScrollContainer = null
+var _steps_tl: TimelineView = null
 
 ## 打开演出子面板：先保证内容条目存在（首改即建），再建弹窗填步骤列表。
 func _open_steps_editor(i: int) -> void:
@@ -1296,19 +1303,71 @@ func _open_steps_editor(i: int) -> void:
 	_steps_i = i
 	_steps_fn_id = fn_id
 	_steps_sel = -1
+	_steps_view = "list"
 	var shell: Dictionary = app._popup_body("演出编辑：%s" % FunctionDecls.function_name(manifest, fn_id),
-		"步骤自上而下依次执行；每步引用步骤池声明并填参")
+		"步骤按 at/duration/track 排布；列表保序、时间轴可拖")
 	var pop: PopupPanel = shell.pop
 	var body: VBoxContainer = shell.body
 	_steps_pop = pop
 	_steps_list = Kit.vbox(4)
+	_steps_tl_box = Kit.vbox(4)
 	_steps_form = Kit.vbox(6)
+	_build_steps_tabs(body)
 	body.add_child(_steps_list)
+	body.add_child(_steps_tl_box)
 	body.add_child(Kit.divider())
 	body.add_child(_steps_form)
+	# 时间轴视图建一次、反复复用（set_steps 换数据源）；滚动容器兜住超宽/超高的排布
+	_steps_tl = TimelineView.new()
+	_steps_tl.set_steps([], _step_name_of)
+	_steps_tl.picked.connect(func(idx: int): _steps_pick_tl(idx))
+	_steps_tl.changed.connect(_on_steps_tl_changed)
+	_steps_scroll = ScrollContainer.new()
+	_steps_scroll.custom_minimum_size = Vector2(0, 120)
+	_steps_scroll.add_child(_steps_tl)
+	_steps_tl_box.add_child(_steps_scroll)
 	pop.popup_hide.connect(func(): _rebuild_right())
 	_rebuild_steps_all()
 	app._open_popup(pop)
+
+## 页签：列表 / 时间轴。同一份数据，两种呈现。
+func _build_steps_tabs(parent: Control) -> void:
+	_steps_tabs = Kit.hbox(6)
+	var grp := ButtonGroup.new()
+	for pair in [["列表", "list"], ["时间轴", "timeline"]]:
+		var b := Kit.button(str(pair[0]), func(): _set_steps_view(str(pair[1])), "ghost")
+		b.toggle_mode = true
+		b.button_group = grp
+		b.set_meta("view", str(pair[1]))
+		_steps_tabs.add_child(b)
+	parent.add_child(_steps_tabs)
+
+func _set_steps_view(mode: String) -> void:
+	if mode != "list" and mode != "timeline":
+		return
+	_steps_view = mode
+	_rebuild_steps_all()
+
+func _sync_steps_tabs() -> void:
+	if _steps_tabs == null:
+		return
+	for c in _steps_tabs.get_children():
+		var b := c as Button
+		if b != null:
+			b.button_pressed = str(b.get_meta("view", "")) == _steps_view
+
+## 时间轴名称回调：未知码原样返回（视图据此画 ⚠）。
+func _step_name_of(sc: String) -> String:
+	var d: Dictionary = StepDecls.step_by_code(manifest, sc)
+	return str(d.get("name", sc)) if not d.is_empty() else sc
+
+## 时间轴点选：只换选中与表单，不重建视图（拖拽进行中 picked 会被发多次）。
+func _steps_pick_tl(idx: int) -> void:
+	_steps_sel = idx
+	if _steps_tl != null and is_instance_valid(_steps_tl):
+		_steps_tl.sel = idx
+		_steps_tl.queue_redraw()
+	_rebuild_steps_form_from_data()
 
 ## 当前正在编辑的演出内容（绑定 _steps_i 的内容文件）；读不到返回 {}。
 func _steps_data() -> Dictionary:
@@ -1335,18 +1394,30 @@ func _steps_write(data: Dictionary) -> void:
 	if not ContentStore.write(manifest, _steps_fn_id, cid, data):
 		_ensure_failed()
 
-## 重建子面板全部内容：步骤列表 + 当前步骤表单。
+## 重建子面板：页签同步 + 列表/时间轴互斥重建 + 当前步骤表单。
 func _rebuild_steps_all() -> void:
 	if _steps_list == null or _steps_form == null:
+		return
+	_sync_steps_tabs()
+	var data := _steps_data()
+	var arr: Array = data.get("steps", []) if data.get("steps", []) is Array else []
+	if _steps_view == "timeline":
+		_steps_list.visible = false
+		_steps_tl_box.visible = true
+		_rebuild_steps_tl(arr)
+	else:
+		_steps_tl_box.visible = false
+		_steps_list.visible = true
+		_rebuild_steps_list(arr)
+	_rebuild_steps_form(arr)
+
+## 步骤列表（列表视图）：空态 + 逐行渲染。
+func _rebuild_steps_list(arr: Array) -> void:
+	if _steps_list == null:
 		return
 	for c in _steps_list.get_children():
 		_steps_list.remove_child(c)
 		c.queue_free()
-	for c in _steps_form.get_children():
-		_steps_form.remove_child(c)
-		c.queue_free()
-	var data := _steps_data()
-	var arr: Array = data.get("steps", []) if data.get("steps", []) is Array else []
 	if arr.is_empty():
 		_steps_list.add_child(Kit.hint_label("（空演出：添加步骤开始排）", 320))
 	var pool := StepDecls.steps(manifest)
@@ -1355,6 +1426,35 @@ func _rebuild_steps_all() -> void:
 		if not (st is Dictionary):
 			continue
 		_steps_list.add_child(_steps_row(si, st, pool))
+
+## 时间轴视图：换数据源 + 选中态 + 滚动容器高度。
+func _rebuild_steps_tl(arr: Array) -> void:
+	if _steps_tl == null or not is_instance_valid(_steps_tl):
+		return
+	_steps_tl.set_steps(arr, _step_name_of)
+	_steps_tl.sel = _steps_sel
+	_steps_tl.sync_min_size()
+	if _steps_scroll != null:
+		_steps_scroll.custom_minimum_size = Vector2(0, minf(_steps_tl.fit_height() + 8.0, 220.0))
+
+## 时间轴拖拽落定：净化回写（剥缺省键），整体重建（视图重新指向净化后的数组）。
+func _on_steps_tl_changed() -> void:
+	var data := _steps_data()
+	var arr: Array = data.get("steps", [])
+	if not (arr is Array):
+		arr = []
+	data["steps"] = StepTimeline.from_timeline(arr)
+	_steps_write(data)
+	if _steps_sel >= (data["steps"] as Array).size():
+		_steps_sel = (data["steps"] as Array).size() - 1
+	_rebuild_steps_all()
+
+## 表单重建（数据自取）：时间轴点选后只换表单、不动视图。
+func _rebuild_steps_form_from_data() -> void:
+	if _steps_form == null:
+		return
+	var data := _steps_data()
+	var arr: Array = data.get("steps", []) if data.get("steps", []) is Array else []
 	_rebuild_steps_form(arr)
 
 ## 子面板里的一个步骤行：序号+名称（选中高亮）+ 上移/下移/复制/删除。
@@ -1394,6 +1494,9 @@ func _rebuild_steps_form(arr: Array) -> void:
 	var box := _steps_form
 	if box == null:
 		return
+	for c in box.get_children():
+		box.remove_child(c)
+		c.queue_free()
 	# 添加步骤：下拉选步骤池条目 → 追加到末尾
 	var add_row := Kit.hbox(6)
 	var pick := OptionButton.new()
@@ -1408,6 +1511,9 @@ func _rebuild_steps_form(arr: Array) -> void:
 		_steps_add(str(pick.get_item_metadata(pick.selected))))
 	add_row.add_child(add_btn)
 	box.add_child(add_row)
+	# 时间轴警告（负 at/duration、同轨重叠）：只提示不阻断
+	for wtext in StepTimeline.warnings(arr):
+		box.add_child(Kit.hint_label("⚠ " + str(wtext), 320))
 	if _steps_sel < 0 or _steps_sel >= arr.size() or not (arr[_steps_sel] is Dictionary):
 		if not arr.is_empty():
 			box.add_child(Kit.hint_label("点上方一个步骤进行编辑", 320))
