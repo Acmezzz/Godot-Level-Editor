@@ -57,6 +57,8 @@ var _r_body: VBoxContainer = null
 # 表单里需要就地更新的那处：首次改动创建内容后只改 ID 文本，不重建表单（重建会丢焦点）
 var _form_id_edit: LineEdit = null
 ## 「+ 添加功能」弹层：控制器级单例，跨 _rebuild_right 复用
+## 「+ 添加功能」弹层单例：fn_bind 经 host._add_menu 复用
+@warning_ignore("unused_private_class_variable")
 var _add_menu: PopupMenu = null
 
 func _init(host) -> void:

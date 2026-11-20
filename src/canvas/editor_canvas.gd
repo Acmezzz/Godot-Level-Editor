@@ -510,7 +510,10 @@ var _paste_mode := false         # 区域粘贴预览态（幽灵跟随鼠标）
 # 区域拖动搬迁（框选后按住区内拖动）：按下只快照，松手才擦源写目标
 var _move_snap := {}
 var _move_from := Vector2i.ZERO
+## 拆分后经 cvs._move_grab 供 region_ops 读写（类内未用 = 分析器看不到跨控制器引用）
+@warning_ignore("unused_private_class_variable")
 var _move_grab := Vector2.ZERO
+@warning_ignore("unused_private_class_variable")
 var _move_cell_delta := Vector2i.ZERO
 var _selection_ops_ctrl   # SelectionOps：实体选区/剪贴板控制器
 var _region_ops_ctrl   # RegionOps：区域复制/剪切/粘贴/搬迁控制器
@@ -602,9 +605,12 @@ func end_gesture() -> void:
 	gesture_button = 0
 
 ## 派生只读位（绘制块与松手分派仍按这两个语义判断）
+## 手势派生只读位：canvas_draw/canvas_input 经 cvs._drag_box 读取
+@warning_ignore("unused_private_class_variable")
 var _drag_box: bool:
 	get:
 		return gesture == Gesture.BOX
+@warning_ignore("unused_private_class_variable")
 var _move_active: bool:
 	get:
 		return gesture == Gesture.REGION_MOVE
@@ -619,6 +625,8 @@ var _drag_origins: Array = []
 var _drag_grab := Vector2.ZERO
 var _drag_moved := false
 ## 涂刷笔画的撤销快照推迟到首个真实改动前才压（点击不动 = 零副作用，与出生点拖动同模式）
+## 涂刷撤销快照推迟标记：tool_ops 经 cvs._paint_pushed 读写
+@warning_ignore("unused_private_class_variable")
 var _paint_pushed := false
 
 # —— 区域复制粘贴（层栈瓦片 + 碰撞 + 实体打包快照） ——
@@ -791,12 +799,12 @@ func set_layer_locked(i: int, locked: bool) -> void:
 	_layer_ops_ctrl.set_layer_locked(i, locked)
 func is_layer_locked(i: int) -> bool:
 	return _layer_ops_ctrl.is_layer_locked(i)
-func layer_add(name: String) -> void:
-	_layer_ops_ctrl.layer_add(name)
+func layer_add(layer_name: String) -> void:
+	_layer_ops_ctrl.layer_add(layer_name)
 func layer_del(i: int) -> void:
 	_layer_ops_ctrl.layer_del(i)
-func layer_rename(i: int, name: String) -> void:
-	_layer_ops_ctrl.layer_rename(i, name)
+func layer_rename(i: int, layer_name: String) -> void:
+	_layer_ops_ctrl.layer_rename(i, layer_name)
 func layer_move(i: int, dir: int) -> void:
 	_layer_ops_ctrl.layer_move(i, dir)
 func layer_set_visible(i: int, v: bool) -> void:

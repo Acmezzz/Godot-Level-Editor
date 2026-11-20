@@ -27,9 +27,14 @@ var _layer_btn: Button
 var _layer_menu: PopupPanel
 var _layer_menu_body: VBoxContainer
 ## 层管理弹窗（新建/改名/上下移/删除/运行时可见）
+# 层管理弹窗控件：layer_panel 经 host._layer_mgr 系列读写
+@warning_ignore("unused_private_class_variable")
 var _layer_mgr: PopupPanel
+@warning_ignore("unused_private_class_variable")
 var _layer_mgr_body: VBoxContainer
+@warning_ignore("unused_private_class_variable")
 var _layer_mgr_rows: VBoxContainer
+@warning_ignore("unused_private_class_variable")
 var _layer_mgr_input: LineEdit
 ## 选中实体信息条（不做属性表单，只给类型名 / 内容状态 / 去内容编辑器）
 var _sel_bar: PanelContainer
@@ -37,10 +42,16 @@ var _sel_name: Label
 var _sel_state: Label
 var _sel_eye: Button
 ## 问题抽屉（REFACTOR_PLAN 4.6-3）：审计条目缓存 + 折叠面板 + 状态栏徽标
+# 问题抽屉控件：issues_drawer 经 host._issues_* 系列读写
+@warning_ignore("unused_private_class_variable")
 var _issues_btn: Button
+@warning_ignore("unused_private_class_variable")
 var _issues_drawer: PanelContainer
+@warning_ignore("unused_private_class_variable")
 var _issues_list: VBoxContainer
+@warning_ignore("unused_private_class_variable")
 var _issues_scroll: ScrollContainer
+@warning_ignore("unused_private_class_variable")
 var _issues_items: Array = []
 
 func _init(host) -> void:

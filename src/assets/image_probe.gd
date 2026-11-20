@@ -93,4 +93,3 @@ static func prefab_collision_size(project_dir: String, prefab_rel: String) -> Ve
 	for k in sizes:
 		return sizes[k]
 	return Vector2.ZERO
-
