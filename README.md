@@ -34,13 +34,16 @@ godot --path "<Level Editor 目录>"     # 打开编辑器（主场景 src/edito
 ```
 src/
 ├── app.gd / editor.tscn   宿主：项目列表与切换、快捷键、模式切换、跨控制器委托
-├── *.gd                   清单读取与校验、地图数据读写、导出、试玩
-├── core/                  状态流、撤销栈、侧栏动作
+├── core/                  常量、撤销栈
+├── project/               清单读取与校验、项目审计、试玩启动
+├── map/                   地图存取、格式常量与瓦片变换互转、数据校验、导出、侧栏动作
+├── assets/                资产声明归一化、内置种类、碰撞类型池、图像探测
 ├── canvas/                画布宿主与控制器（绘制 / 输入 / 左右键语义执行 / 选区）
-├── content/               功能、条件、步骤与音频声明池、五段身份数、内容文件读写、内置种类
+├── content/               功能/条件/步骤/音频/时机声明池、五段身份数、内容文件读写
 └── ui/                    设计系统、布局骨架、三面板、各种弹窗
-tests/                     测试套件（数据层回归，run_tests.gd 一条命令跑完）
-tools/screenshot.gd        截图辅助（开发期，项目路径由 SHOT_PROJECT 环境变量给出）
+tests/                     数据层回归测试（10 套件 67 用例，run_tests.gd 一条命令跑完）
+tools/                     开发期脚本：截图 / 迁移(migrate_project.gd) / 警告扫描(warn_scan.gd)
+mcp/                       bird-editor MCP server（AI 协作验证链，见 mcp/README.md）
 docs/                      EDITOR_FEATURES + GAME_SIDE_STANDARD
 ```
 
@@ -52,14 +55,13 @@ docs/                      EDITOR_FEATURES + GAME_SIDE_STANDARD
 godot --headless --path . --check-only --script res://src/app.gd
 ```
 
-完整清单与测试说明见 `docs/EDITOR_FEATURES.md` §11。测试套件已重建（32 用例，含崩溃即判失败的
-断言计数守卫），一条命令跑完：
+完整清单与测试说明见 `docs/EDITOR_FEATURES.md` §11。覆盖数据层纯逻辑（10 套件 67 用例，
+崩溃即判失败——断言计数守卫），一条命令跑完：
 
 ```
 godot --headless --path . --script res://tests/run_tests.gd
 ```
 
-旧门禁脚本（`tests/run_gates.ps1`）已随旧测试一并删除。
 
 ## 约定（改代码前必读）
 
