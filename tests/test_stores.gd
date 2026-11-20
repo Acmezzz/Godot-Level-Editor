@@ -1,7 +1,7 @@
 extends "res://tests/_suite_base.gd"
 ## 两个存储层：MapStore v4 写读回环 + ContentStore 写读回环（临时目录，跑完清理）。
 
-const MapStore := preload("res://src/map_store.gd")
+const MapStore := preload("res://src/map/map_store.gd")
 const ContentStore := preload("res://src/content/content_store.gd")
 
 const TMP := "user://test_stores_tmp"

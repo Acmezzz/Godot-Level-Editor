@@ -4,9 +4,9 @@ extends RefCounted
 ## manifest 除取 _maps_dir 外，还随读取传入 map_data_validation 做结构校验（查实体类型/功能声明）。
 ## 注意：路径引用（preload）而非全局类名，避免 headless 首次扫描时的 class_name 缓存问题。
 
-const ManifestScript := preload("res://src/manifest.gd")
-const MapValidator := preload("res://src/map_data_validation.gd")
-const MapFormat := preload("res://src/map_format.gd")
+const ManifestScript := preload("res://src/project/manifest.gd")
+const MapValidator := preload("res://src/map/map_data_validation.gd")
+const MapFormat := preload("res://src/map/map_format.gd")
 
 ## 当前地图数据格式版本（常量在 map_format.gd：校验器也要读，反向 preload 会成环）。
 const FORMAT_VERSION := MapFormat.VERSION

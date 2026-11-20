@@ -2,10 +2,10 @@ extends RefCounted
 ## MapDialogs：地图尺寸 / 导出弹窗（从 map_file.gd 拆出，宿主 = app）。
 ## 弹窗体零交叉依赖：只读清单常量 + 经 app 访问画布/状态栏/确认框。
 
-const MapExport := preload("res://src/map_export.gd")
+const MapExport := preload("res://src/map/map_export.gd")
 const UiKitScript := preload("res://src/ui/ui_kit.gd")
 const K := preload("res://src/core/constants.gd")
-const MapStore := preload("res://src/map_store.gd")
+const MapStore := preload("res://src/map/map_store.gd")
 
 var app   # app 宿主
 

@@ -5,7 +5,7 @@ var cvs   # 宿主引用
 
 const Constants := preload("res://src/core/constants.gd")
 const ContentId := preload("res://src/content/content_id.gd")
-const MapFormat := preload("res://src/map_format.gd")
+const MapFormat := preload("res://src/map/map_format.gd")
 
 func _init(host) -> void:
 	cvs = host

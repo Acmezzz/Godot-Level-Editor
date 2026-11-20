@@ -10,7 +10,7 @@ extends Node2D
 ## 颜色/形状按清单 `collisionTypes` 声明（缺省池 = 内置四类）；斜坡画三角形
 ## （r45 右高 / l45 左高），一眼区分朝向。形状画法只认 rect/斜坡，其余声明形状暂按矩形画。
 
-const CollisionTypes := preload("res://src/core/collision_types.gd")
+const CollisionTypes := preload("res://src/assets/collision_types.gd")
 
 var layer: TileMapLayer
 var tile_px := 16

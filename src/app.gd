@@ -7,10 +7,11 @@ extends Control
 const SettingsCfg := "user://settings.cfg"
 const ProjectShellScript := preload("res://src/ui/project_shell.gd")
 const ProjectPicker := preload("res://src/ui/project_picker.gd")
+const ImageProbe := preload("res://src/assets/image_probe.gd")
 const MapDialogs := preload("res://src/ui/map_dialogs.gd")
 const UiThemeScript := preload("res://src/ui/ui_theme.gd")
 const UiKitScript := preload("res://src/ui/ui_kit.gd")
-const MapStore := preload("res://src/map_store.gd")
+const MapStore := preload("res://src/map/map_store.gd")
 const FunctionDecls := preload("res://src/content/function_decl.gd")
 const ConditionDecls := preload("res://src/content/condition_decl.gd")
 const StepDecls := preload("res://src/content/step_decl.gd")
@@ -69,7 +70,7 @@ func _ready() -> void:
 	_load_prefs()
 	_load_projects()
 	_layout_ctrl = preload("res://src/ui/editor_layout.gd").new(self)
-	_side_actions_ctrl = preload("res://src/core/side_actions.gd").new(self)
+	_side_actions_ctrl = preload("res://src/map/side_actions.gd").new(self)
 	_palette_ctrl = preload("res://src/ui/palette_panel.gd").new(self)
 	_build_theme()
 	manifest = _load_last_project()
@@ -217,7 +218,7 @@ func _entity_thumbs() -> Dictionary:
 			var img := Image.load_from_file(tpath)
 			if img != null:
 				out[str((a as Dictionary).get("id", ""))] = ImageTexture.create_from_image(
-					EditorManifest.trim_alpha(img))
+					ImageProbe.trim_alpha(img))
 	_ent_thumbs_cache[dk] = out
 	return out
 
@@ -599,7 +600,7 @@ func _save_manifest_file() -> void:
 		doc += "\n" + tdoc
 	if not MapStore.write_text(cp, doc):
 		_set_status(" 清单已保存，但码表写入失败: " + cp)
-## —— 拆到 src/core/editor_state.gd 的委托（调用点保持不变） ——
+## —— 拆到 src/canvas/editor_state.gd 的委托（调用点保持不变） ——
 func _apply_state(tool := "", layer := -1) -> void:
 	_editor_state_ctrl._apply_state(tool, layer)
 
@@ -673,7 +674,7 @@ func _sync_play_cfg_to_map() -> void:
 ## 项目页外壳（src/ui/project_shell.gd）：资产/内容两视图互斥切换
 func _build_project_view() -> void:
 	_layout_ctrl._build_project_view()
-## —— 拆到 src/core/side_actions.gd 的委托（调用点保持不变） ——
+## —— 拆到 src/map/side_actions.gd 的委托（调用点保持不变） ——
 
 ## 地图改名/复制——委托 side_actions 控制器
 func _rename_map_by_name(old_name: String, new_name: String) -> void:
@@ -696,4 +697,3 @@ func _load_projects() -> void:
 
 func _show_picker(err := "") -> void:
 	_picker_ctrl._show_picker(err)
-

@@ -1,7 +1,7 @@
 extends "res://tests/_suite_base.gd"
 ## 清单校验：合法清单零错误；各类坏清单报出具体错误。
 
-const V := preload("res://src/manifest_validation.gd")
+const V := preload("res://src/project/manifest_validation.gd")
 
 func _good() -> Dictionary:
 	return {

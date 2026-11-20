@@ -3,8 +3,8 @@ extends RefCounted
 ## 引用悬空，统一产出 {kind, severity, path, message, map, jump} 条目。
 ## 纯字典/文件扫描，不碰场景树——UI（问题抽屉/自检入口）只是它的呈现层。
 
-const ManifestValidation := preload("res://src/manifest_validation.gd")
-const MapStore := preload("res://src/map_store.gd")
+const ManifestValidation := preload("res://src/project/manifest_validation.gd")
+const MapStore := preload("res://src/map/map_store.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
 
 ## 审计全项目。manifest = 编辑器清单（含 _dir/_maps_dir）。

@@ -3,7 +3,7 @@ extends RefCounted
 ## 只做路径解析与 JSON 读写，不含业务校验；写盘复用 MapStore.write_json 的原子替换。
 ## 目录名 = 功能人类 id（给人读的），文件内 "function" 键 = 功能执行码（给代码执行的）。
 
-const Store := preload("res://src/map_store.gd")
+const Store := preload("res://src/map/map_store.gd")
 
 const DEFAULT_CONTENT_DIR := "content"
 

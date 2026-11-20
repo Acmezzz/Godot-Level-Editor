@@ -2,7 +2,7 @@ extends "res://tests/_suite_base.gd"
 ## 空间与类型池：GridSpace 正交/等距换算、collisionTypes 池归一化。
 
 const GridSpaceScript := preload("res://src/canvas/grid_space.gd")
-const CollisionTypes := preload("res://src/core/collision_types.gd")
+const CollisionTypes := preload("res://src/assets/collision_types.gd")
 
 func test_grid_orthogonal() -> void:
 	var g = GridSpaceScript.new(Vector2i(16, 16), "orthogonal")

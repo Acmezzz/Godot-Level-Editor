@@ -17,19 +17,20 @@
 src/
 ├── app.gd                  应用外壳：项目列表/切换、快捷键、三个视图的切换与收尾
 ├── editor.tscn             入口场景（只挂 app.gd，界面全部代码构建）
-├── manifest.gd             清单读取：路径、试玩命令、资产 role/占位尺寸、图像裁边
-├── manifest_validation.gd  清单校验：资产/功能/条件/步骤/音频声明/挂载，坏清单给出错误列表
-├── map_store.gd            地图 JSON 读写：原子写、3 层历史备份、缓存、多文件事务
-├── map_data_validation.gd  地图 JSON 校验：打开地图时的读入防线（含实例功能绑定结构）
-├── map_export.gd           导出：PNG 俯视预览图 + 文本统计
-├── playtest.gd             试玩：按清单命令模板拉起游戏进程并跟踪
-├── core/                   —— 与画布无关的编辑器核心 ——
+├── core/                   —— 全局共享（常量 / 撤销） ——
 │   ├── constants.gd        共享常量（地图默认尺寸、碰撞占位格等，只有这一处定义）
-│   ├── collision_types.gd  碰撞类型池：collisionTypes 归一化 + 内置缺省池（声明即整体覆盖）
-│   ├── editor_state.gd     画布状态的唯一写入口：选了什么层/资产，改完自动刷新界面
-│   ├── undo_history.gd     撤销/重做：整图快照，最多 80 步
+│   └── undo_history.gd     撤销/重做：整图快照，最多 80 步
+├── project/                —— 项目域（清单 / 校验 / 自检 / 试玩） ——
+│   ├── manifest.gd         清单读取器：路径/试玩命令/role/占位尺寸，加载链补发身份码、并入内置种类
+│   ├── manifest_validation.gd  清单校验：资产/功能/条件/步骤/音频声明/挂载，坏清单给出错误列表
 │   ├── project_audit.gd    全项目自检：清单+地图校验汇总、引用悬空（纯数据收集器）
-│   └── side_actions.gd     地图改名/复制、按名开图、按 id 删实体
+│   └── playtest.gd         试玩：按清单命令模板拉起游戏进程并跟踪
+├── map/                    —— 地图数据域 ——
+│   ├── map_format.gd       地图格式版本常量
+│   ├── map_store.gd        地图 JSON 读写：原子写、3 层历史备份、缓存、多文件事务
+│   ├── map_data_validation.gd  地图 JSON 校验：打开地图时的读入防线（含实例功能绑定结构）
+│   ├── map_export.gd       导出：PNG 俯视预览图 + 文本统计
+│   └── side_actions.gd     地图改名/复制、按名开图
 ├── canvas/                 —— 画布（关卡编辑器主体） ——
 │   ├── editor_canvas.gd    画布宿主：装载地图、三段遮挡容器层栈（meta.layers 逐图声明）、相机、序列化
 │   ├── grid_space.gd       格↔像素转换层：正交/等距两套（等距 = Godot 原生菱形 tile_shape）
@@ -37,6 +38,7 @@ src/
 │   ├── canvas_draw.gd      画布上画什么：网格、幽灵预览、连线、占位框、visual:rect 实体、选区
 │   ├── canvas_input.gd     鼠标事件分派：缩放平移、涂/擦、框选、拖拽
 │   ├── tool_ops.gd         左键/右键语义执行：涂刷、放置、擦除、盖章 + 碰撞自动生成
+│   ├── editor_state.gd     画布状态的唯一写入口：选了什么层/资产，改完自动刷新界面（core 拆出）
 │   ├── selection_ops.gd    单选/框选/组拖、实体剪贴板（复制/剪切/粘贴/翻转）
 │   ├── region_ops.gd       区域操作：快照/复制/剪切/粘贴/拖动搬迁 + 层与引用重映射
 │   ├── layer_ops.gd        层栈运行时与管理：三段容器/显隐锁定/增删改名移（editor_canvas 拆出）
@@ -45,7 +47,9 @@ src/
 │   └── tileset_cache.gd    TileSet 构建缓存：按资产建源（cell 可为非正方形），同一图集不重复读 PNG/重建
 ├── assets/                 —— 资产表 assets[] 的声明域 ——
 │   ├── asset_decl.gd       资产归一化：kind/shape 分派、palette 展平、cell 尺寸、编辑期原件入口
-│   └── builtin_kinds.gd    内置资产种类（trigger_zone）：加载清单时注入、保存时剥离
+│   ├── builtin_kinds.gd    内置资产种类（trigger_zone）：加载清单时注入、保存时剥离
+│   ├── collision_types.gd  碰撞类型池：collisionTypes 归一化 + 内置缺省池（声明即整体覆盖）
+│   └── image_probe.gd      图像/场景探针：预览图透明裁边 + prefab 碰撞尺寸探测（manifest 拆出）
 ├── content/                —— 功能与内容的数据层 ——
 │   ├── function_decl.gd    功能声明域：声明池归一化、执行码补发/查重、码↔名互查、CODES.md
 │   ├── condition_decl.gd   条件声明域：条件池归一化、字段码补发（与功能字段同码空间）、条件码表段

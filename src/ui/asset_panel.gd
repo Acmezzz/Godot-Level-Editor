@@ -3,9 +3,10 @@ extends VBoxContainer
 ## 清单对象与写回动作由 app.gd 注入：manifest 字典、save_manifest 回调。
 ## 视觉统一走 UiTheme / UiKit。
 
+const ImageProbe := preload("res://src/assets/image_probe.gd")
 const Kit := preload("res://src/ui/ui_kit.gd")
 const Th := preload("res://src/ui/ui_theme.gd")
-const MapStore := preload("res://src/map_store.gd")
+const MapStore := preload("res://src/map/map_store.gd")
 const FunctionDecls := preload("res://src/content/function_decl.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
 
@@ -418,6 +419,6 @@ func _asset_texture(edef: Dictionary) -> Texture2D:
 	var img := Image.load_from_file(p)
 	if img == null:
 		return null
-	var tex := ImageTexture.create_from_image(EditorManifest.trim_alpha(img))
+	var tex: ImageTexture = ImageTexture.create_from_image(ImageProbe.trim_alpha(img))
 	_tex_cache[p] = tex
 	return tex

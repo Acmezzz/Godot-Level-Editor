@@ -4,7 +4,7 @@ extends RefCounted
 var cvs   # 宿主引用
 
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
-const ManifestScript := preload("res://src/manifest.gd")   # 出口 role 判定
+const ManifestScript := preload("res://src/project/manifest.gd")   # 出口 role 判定
 const K := preload("res://src/core/constants.gd")
 
 func _init(host) -> void:

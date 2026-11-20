@@ -12,7 +12,7 @@ signal cursor_info(text: String)
 const K := preload("res://src/core/constants.gd")   # 共享常量统一在 core/constants.gd
 const TilesetCache := preload("res://src/canvas/tileset_cache.gd")   # PF-02：TileSet 构建缓存
 const INVISIBLE_CELL := K.INVISIBLE_CELL
-const MapStoreRef := preload("res://src/map_store.gd")   # 地图数据层（读全工程/写盘）
+const MapStoreRef := preload("res://src/map/map_store.gd")   # 地图数据层（读全工程/写盘）
 const ContentIdRef := preload("res://src/content/content_id.gd")   # 分层身份码
 const AssetDecl := preload("res://src/assets/asset_decl.gd")   # 清单资产表（assets[]）
 const EntityNodeRef := preload("res://src/canvas/entity_node.gd")   # 摆放物节点（场景/实体共用）

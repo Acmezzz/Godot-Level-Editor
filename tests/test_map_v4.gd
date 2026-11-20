@@ -1,8 +1,8 @@
 extends "res://tests/_suite_base.gd"
 ## 地图 JSON v6：new_map 模板 + map_data_validation 各道防线。
 
-const Store := preload("res://src/map_store.gd")
-const MV := preload("res://src/map_data_validation.gd")
+const Store := preload("res://src/map/map_store.gd")
+const MV := preload("res://src/map/map_data_validation.gd")
 
 ## 最小清单：一张图集场景、一张图片场景、一个实体种类——够覆盖 assets 归属检查
 const MANIFEST := {"assets": [

@@ -12,7 +12,7 @@ extends SceneTree
 ## 明确不搬运的东西（结构不同，交人工处理，脚本只报告）：
 ##   - 清单 entities[] 里同时带 role/functions/fields 的条目会被原样保留这些键
 
-const MapStore := preload("res://src/map_store.gd")
+const MapStore := preload("res://src/map/map_store.gd")
 
 func _initialize() -> void:
 	var args := OS.get_cmdline_user_args()

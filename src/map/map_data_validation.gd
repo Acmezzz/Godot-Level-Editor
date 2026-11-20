@@ -1,7 +1,7 @@
 extends RefCounted
 ## 地图 JSON 结构校验，与场景树状态无关（纯字典操作，读图必经之路）。
 
-const MapFormat := preload("res://src/map_format.gd")
+const MapFormat := preload("res://src/map/map_format.gd")
 
 static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 	var issues: Array[Dictionary] = []

@@ -1,8 +1,8 @@
 extends "res://tests/_suite_base.gd"
 ## 全项目审计：条目包装（kind/map/jump）+ 引用悬空检查（entity_ref/map_ref）。
 
-const ProjectAudit := preload("res://src/core/project_audit.gd")
-const MapStore := preload("res://src/map_store.gd")
+const ProjectAudit := preload("res://src/project/project_audit.gd")
+const MapStore := preload("res://src/map/map_store.gd")
 
 const TMP := "user://test_audit_tmp"
 

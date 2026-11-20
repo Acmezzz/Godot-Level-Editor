@@ -14,7 +14,7 @@ extends RefCounted
 const Kit := preload("res://src/ui/ui_kit.gd")
 const Th := preload("res://src/ui/ui_theme.gd")
 const ContentStore := preload("res://src/content/content_store.gd")
-const MapStore := preload("res://src/map_store.gd")
+const MapStore := preload("res://src/map/map_store.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
 
 const KIND_INPUT := "input"

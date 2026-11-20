@@ -9,7 +9,7 @@ const ConditionDecls := preload("res://src/content/condition_decl.gd")
 const StepDecls := preload("res://src/content/step_decl.gd")
 const AudioDecls := preload("res://src/content/audio_decl.gd")
 const TriggerDecls := preload("res://src/content/trigger_decl.gd")
-const CollisionTypes := preload("res://src/core/collision_types.gd")
+const CollisionTypes := preload("res://src/assets/collision_types.gd")
 const ContentStore := preload("res://src/content/content_store.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
 

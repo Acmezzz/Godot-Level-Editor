@@ -1,7 +1,7 @@
 extends RefCounted
 ## IssuesDrawer：问题抽屉 + 全项目自检（从 editor_layout.gd 拆出，宿主 = editor_layout）
 
-const ProjectAudit := preload("res://src/core/project_audit.gd")
+const ProjectAudit := preload("res://src/project/project_audit.gd")
 const EntityNodeScript := preload("res://src/canvas/entity_node.gd")
 
 var host   # editor_layout 宿主

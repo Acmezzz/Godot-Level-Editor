@@ -373,4 +373,3 @@ func _instantiate(t: Dictionary, origin: Vector2i) -> EntityNode:
 	return cvs._region_ops_ctrl._instantiate(t, origin)
 func _remap_refs_in(container, id_map: Dictionary) -> bool:
 	return cvs._region_ops_ctrl._remap_refs_in(container, id_map)
-
