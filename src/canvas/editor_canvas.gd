@@ -94,127 +94,6 @@ func _update_cam() -> void:
 			root.set_meta("base_pos", root.position)
 		root.position = off + (cam_pos - center) * (1.0 - par)
 
-# —— 图层栈：地图 meta.layers 声明（[{id, name, visible}]，栈序 = 数组序，底→顶） ——
-## 层=纯 z 槽只管画画；清单 layers[] 已退役，层词汇逐图声明。
-func layers_decl() -> Array:
-	var m: Dictionary = map_data.get("meta", {}) if map_data != null else {}
-	var L = m.get("layers", null)
-	return L if L is Array and not (L as Array).is_empty() else []
-
-func layer_count() -> int:
-	return layers_decl().size()
-
-func layer_id(i: int) -> String:
-	var L := layers_decl()
-	return str((L[i] as Dictionary).get("id", "")) if i >= 0 and i < L.size() else ""
-
-func layer_name(i: int) -> String:
-	var L := layers_decl()
-	return str((L[i] as Dictionary).get("name", "")) if i >= 0 and i < L.size() else ""
-
-## 层码 → 栈下标；未知返回 -1
-func _layer_index_of(lid: String) -> int:
-	for i in layer_count():
-		if layer_id(i) == lid:
-			return i
-	return -1
-
-## 碰撞是栈外元层：下标恒 = 栈层数（下拉里排最后）
-func collision_index() -> int:
-	return layer_count()
-
-func _is_grid_layer(i: int) -> bool:
-	return i == collision_index() and collision != null
-
-func _layer_node(i: int) -> TileMapLayer:
-	if _is_grid_layer(i):
-		return collision
-	if i >= 0 and i < layer_tiles.size():
-		return layer_tiles[i]
-	return null
-
-## 全层摆放物合集（遮挡模型后实例分散在每层 below/YSort/above 三段容器）
-func ents_all() -> Array:
-	var out := []
-	for n in layer_ents:
-		var root := n as Node2D
-		if root == null or not is_instance_valid(root):
-			continue
-		out.append_array(_layer_entities_of(root))
-	return out
-
-## 一层的三段容器里所有 EntityNode（不含瓦片节点）。
-func _layer_entities_of(root: Node2D) -> Array:
-	var out: Array = []
-	for cname in ["Below", "YSort", "Above"]:
-		var box := root.get_node_or_null(NodePath(cname)) as Node2D
-		if box == null:
-			continue
-		for c in box.get_children():
-			if c is EntityNode:
-				out.append(c)
-	return out
-
-## 单层摆放物合集（命中判定/逐层遍历用）。
-func _layer_entities(li: int) -> Array:
-	if li < 0 or li >= layer_ents.size():
-		return []
-	return _layer_entities_of(layer_ents[li] as Node2D)
-
-## 摆放物按 zPolicy 入段容器（below/YSort/above，缺省 auto）。
-func _place_in_layer(n: EntityNode, li: int) -> void:
-	var root := layer_ents[li] as Node2D
-	if root == null:
-		return
-	var box: Node2D = root.get_node_or_null(NodePath("Below")) if n.z_policy == "below" \
-		else (root.get_node_or_null(NodePath("Above")) if n.z_policy == "above" \
-		else root.get_node_or_null(NodePath("YSort")))
-	if box == null:
-		box = root
-	box.add_child(n)
-	# 同层混放提示（作者提示 ⑤ 前半）：层没开 ySort 但该层已有瓦片又有实例 → 状态栏提示一次
-	if str(root.get_meta("yhint", "")) == "":
-		var has_tiles: bool = (layer_tiles[li] as TileMapLayer).get_used_cells().size() > 0
-		var others: Array = _layer_entities_of(root)
-		var mixed: bool = has_tiles and others.size() > 1
-		if mixed:
-			root.set_meta("yhint", "1")
-			_hint("层「%s」没开 ySort，瓦片与实例按先后绘制；要交错遮挡请给层声明 ySort: true" \
-				% layer_name(li))
-
-## 图层「看得到的那个节点」：碰撞层看 coll_view（红块），其余看数据节点本身。
-## 可见性/隐藏一律作用在这个节点上，保证所有图层的显示逻辑走同一条路。
-func _layer_display_node(i: int) -> Node2D:
-	if _is_grid_layer(i):
-		return coll_view
-	if i >= 0 and i < layer_ents.size():
-		return layer_ents[i]
-	return null
-
-## 设置图层可见/锁定；隐藏 = 该层瓦片与实体一起隐（视觉遮挡，锁定阻止编辑写入）
-func set_layer_hidden(i: int, now_hidden: bool) -> void:
-	layer_hidden[i] = now_hidden
-	if _is_grid_layer(i):
-		if coll_view:
-			coll_view.visible = not now_hidden
-	elif i >= 0 and i < layer_tiles.size():
-		(layer_tiles[i] as TileMapLayer).visible = not now_hidden
-		if i < layer_ents.size():
-			(layer_ents[i] as Node2D).visible = not now_hidden
-	queue_redraw()
-
-## 图层当前是否可见（未隐藏）。所有图层默认可见——包括碰撞层：用户明确要求
-## 开图就能看到碰撞（整图染红是可接受的代价）。显隐只由 layer_hidden 记录决定。
-func is_layer_visible(i: int) -> bool:
-	if layer_hidden.has(i):
-		return not bool(layer_hidden[i])
-	return true
-
-func set_layer_locked(i: int, locked: bool) -> void:
-	layer_locked[i] = locked
-
-func is_layer_locked(i: int) -> bool:
-	return bool(layer_locked.get(i, false))
 
 # —— 运行时 TileSet：从清单 assets[] 的 shape=tile 资产构建（按资产缓存，见 tileset_cache.gd） ——
 func _build_tileset() -> bool:
@@ -501,6 +380,9 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 func _ready() -> void:
 	z_index = 5   # canvas 自绘（网格/幽灵/碰撞叠加/出生标记）盖在地图子树之上
 	_selection_ops_ctrl = preload("res://src/canvas/selection_ops.gd").new(self)
+	_region_ops_ctrl = preload("res://src/canvas/region_ops.gd").new(self)
+	_layer_ops_ctrl = preload("res://src/canvas/layer_ops.gd").new(self)
+	_entity_factory_ctrl = preload("res://src/canvas/entity_factory.gd").new(self)
 	_undo_history_ctrl = preload("res://src/core/undo_history.gd").new(self)
 	_canvas_draw_ctrl = preload("res://src/canvas/canvas_draw.gd").new(self)
 	_canvas_input_ctrl = preload("res://src/canvas/canvas_input.gd").new(self)
@@ -512,44 +394,6 @@ func _ready() -> void:
 func set_thumbs(t: Dictionary) -> void:
 	thumbs = t
 
-## 设置实体的编辑器占位尺寸（像素）；用于画布上画真实占位框
-func set_entity_sizes(sizes: Dictionary) -> void:
-	ent_sizes = sizes
-
-## 某个资产的编辑器占位尺寸（像素）；0 表示未知（退回 1 格）
-func _size_of(aid: String) -> Vector2:
-	var v = ent_sizes.get(aid, null)
-	if v is Vector2 and (v as Vector2) != Vector2.ZERO:
-		return v
-	return Vector2.ZERO
-
-## 资产声明的显示尺寸（像素）。唯一来源：清单 editorSize / prefab 碰撞尺寸；没有就用 1 格。
-## 缩略图只作为贴图内容，尺寸一律由这里定——不同大小的资产因此能正确呈现。
-func entity_display_size(aid: String) -> Vector2:
-	var sz := _size_of(aid)
-	if sz == Vector2.ZERO:
-		sz = Vector2(tile_px, tile_px)
-	return sz
-
-## 实例级显示尺寸：带 sizeFields 的资产（事件区）尺寸写在实例 props 里，
-## 其余等价于资产声明尺寸。旧调用点传节点，直接取节点自己的口径。
-func entity_display_size_of(node: Node) -> Vector2:
-	if node is EntityNode:
-		return (node as EntityNode).display_size()
-	return entity_display_size("")
-
-## 建一个摆放物节点：尺寸按资产声明算，视觉（缩略图/图片/无）由 EntityNode 自己装配。
-## 落层、props、code 由调用方填——这里只管「一个形状正确的空实例」。
-func make_object(aid: String) -> EntityNode:
-	return EntityNodeRef.create(manifest, aid, entity_display_size(aid), tile_px, thumbs)
-
-## 该资产是否可以摆到画布上：实体（kind=entity）与图片场景（shape=image）。
-## 图集型场景（shape=tile）走瓦片通道，不是摆放物。
-func is_placeable(aid: String) -> bool:
-	var d := AssetDecl.by_id(manifest, aid)
-	if d.is_empty():
-		return false
-	return str(d.get("kind", "")) == "entity" or str(d.get("shape", "")) == "image"
 
 ## 出生点：画布上的可拖对象。
 ## 命中容差 0.6 格——它只有一个绿十字那么大，严格点中几乎不可能。
@@ -603,31 +447,6 @@ func _hint(t: String) -> void:
 ## 码出生即定、永不回收，所以不需要「发号前防空洞复用」的全工程扫描。
 # 重建代数——load_data 是协程，期间再进一次 load_data 时，先进者按代数退出防孤儿 map_root
 var _rebuild_gen := 0
-
-## 老实体/新建实体没有码就补发；已有（载图恢复）保留。
-## 只有 kind=entity 的资产需要实例码——场景实例（图片）永不产码。
-func _ensure_code(n: EntityNode) -> void:
-	if n == null or not n.is_entity():
-		n.code = ""
-		return
-	if n.code == "":
-		var c := _fresh_inst_code()
-		n.code = c
-		# 新码即时入索引（索引已建时）：防止同批次后续补码查不到它而撞码
-		if not _ent_by_id_dirty:
-			_ent_by_id[c] = n
-
-## 生成一个本图未占用的实例码（码空间 100 万+，撞码重摇即可）
-func _fresh_inst_code() -> String:
-	for i in 64:
-		var c := ContentIdRef.new_inst_code()
-		if not _code_taken(c):
-			return c
-	return ContentIdRef.new_inst_code()
-
-func _code_taken(c: String) -> bool:
-	# _ent_by_code_index 是脏标记缓存——O(n) 全扫摊平为建一次索引后 O(1) 查
-	return _ent_by_code_index().has(c)
 
 # —— 吸管 + 整图入视野 ——
 signal tool_requested(tool: String, layer: int)
@@ -693,7 +512,10 @@ var _move_snap := {}
 var _move_from := Vector2i.ZERO
 var _move_grab := Vector2.ZERO
 var _move_cell_delta := Vector2i.ZERO
-var _selection_ops_ctrl   # SelectionOps：实体选区/剪贴板/区域复制粘贴控制器
+var _selection_ops_ctrl   # SelectionOps：实体选区/剪贴板控制器
+var _region_ops_ctrl   # RegionOps：区域复制/剪切/粘贴/搬迁控制器
+var _layer_ops_ctrl   # LayerOps：层栈运行时与管理
+var _entity_factory_ctrl   # EntityFactory：实体工厂/实例码发号
 var _undo_history_ctrl   # UndoHistory：快照式撤销/重做控制器
 var _canvas_draw_ctrl   # CanvasDraw：绘制控制器
 var _canvas_input_ctrl   # CanvasInput：鼠标输入路由控制器
@@ -708,71 +530,6 @@ func _valid_multi() -> Array:
 			out.append(s)
 	return out
 
-# —— 自动生成碰撞：从**当前层**瓦片推导碰撞（层栈化后「当前层自审」，不再认 terrain id） ——
-## strategy: "full"(全部) / "top"(仅顶部表面) / "outline"(仅外轮廓)
-## replace=true 先清空碰撞层再生成
-func generate_collision(strategy := "full", replace := false, one_way_top := false) -> int:
-	if map_root == null:
-		_hint("无地图：先新建或打开一张地图")
-		return 0
-	if is_layer_locked(collision_index()):
-		_hint("碰撞层已锁定：先解锁")
-		return 0
-	# 预判：无可生成（且不是替换模式）就不压撤销快照——与 _erase_hits 的「不压空撤销」同纪律
-	if not replace and count_auto_collision(strategy, false) == 0:
-		_hint("没有可生成的碰撞格（换策略或换层再试）")
-		return 0
-	var src := _layer_node(active_layer)
-	if src == null or active_layer == collision_index():
-	 # _layer_node 对碰撞元层返回 collision 节点本身——自动碰撞若不拦，
-	 # 就会从碰撞层读瓦片生成碰撞（自己抄自己）
-		_hint("切到一个瓦片层再用自动碰撞（当前是碰撞元层）")
-		return 0
-	_push_undo()
-	if replace:
-		for c in collision.get_used_cells():
-			set_collision_cell(c, false)
-	var added := 0
-	for c in src.get_used_cells():
-		if not _collision_wanted(c, strategy):
-			continue
-		if collision.get_cell_source_id(c) != -1:
-			continue
- # 顶部策略可生成 one_way（自动碰撞策略扩展，契约类型 one_way）
-		var typ := "one_way" if (strategy == "top" and one_way_top) else "solid"
-		set_collision_cell(c, true, typ)
-		added += 1
-	_mark(false)   # 自动碰撞只写碰撞层
-	queue_redraw()
-	return added
-
-## 预览：不写入，只算会新增多少格
-func count_auto_collision(strategy := "full", replace := false) -> int:
-	if map_root == null:
-		return 0
-	var src := _layer_node(active_layer)
-	if src == null or active_layer == collision_index():
-		return 0   # 碰撞元层不是瓦片来源（同 generate_collision）
-	var n := 0
-	for c in src.get_used_cells():
-		if not _collision_wanted(c, strategy):
-			continue
-		if not replace and collision.get_cell_source_id(c) != -1:
-			continue
-		n += 1
-	return n
-
-func _collision_wanted(c: Vector2i, strategy: String) -> bool:
-	match strategy:
-		"top":
-			return not _has_terrain_at(c + Vector2i(0, -1))
-		"outline":
-			return not _has_terrain_at(c + Vector2i(1, 0)) \
-				or not _has_terrain_at(c + Vector2i(-1, 0)) \
-				or not _has_terrain_at(c + Vector2i(0, 1)) \
-				or not _has_terrain_at(c + Vector2i(0, -1))
-		_:
-			return true
 
 ## 碰撞格统一写入口——涂刷/擦除/矩形/粘贴/自动生成全走这里，类型元数据跟着走。
 ## solid+矩形不记 meta（缺省值零冗余）；其余记 {type, shape}；擦除连 meta 一起清。
@@ -871,124 +628,6 @@ func _any_layer_locked() -> bool:
 			return true
 	return false
 
-# —— 层管理：新建/删除/上下移（先 extract 快照 → 在快照上改 → load_data 重建） ——
-## 顺序是硬约束：extract 按节点下标取瓦片、按声明序取层码，两者必须对齐——
-## 不能「先改活体 meta 再 extract 反向同步」（会串层/丢瓦片）。
-## 撤销快照由 _push_undo 在改动前压栈；重建窗口期（extract 返回 {}）放弃操作。
-## 新层默认插到栈顶之下——新建即可画前景遮挡。
-func layer_add(name: String) -> void:
-	if map_root == null or not is_instance_valid(map_root):
-		return
-	_push_undo()
-	var snap := extract()
-	if snap.is_empty():
-		return
-	var meta: Dictionary = snap.get("meta", {})
-	var L: Array = meta.get("layers", [])
-	var entry := {"id": ContentIdRef.new_inst_code(), "name": name if name != "" else "新层", "visible": true}
-	if L.size() >= 2:
-		L.insert(L.size() - 1, entry)
-	else:
-		L.append(entry)
-	meta["layers"] = L
-	snap["meta"] = meta
-	_load_snap_layers(snap, layer_id(active_layer))
-
-## 删层 = 删内容：快照上摘掉层声明，该层瓦片与实体一并过滤（撤销可回）。
-## 拒绝时静默返回；调用方（层管理 UI）负责给状态栏反馈。
-func layer_del(i: int) -> void:
-	if map_root == null or not is_instance_valid(map_root) or i < 0 or i >= layer_count():
-		return
-	if layer_count() <= 1:
-		return
-	_push_undo()
-	var snap := extract()
-	if snap.is_empty():
-		return
-	var active_id := layer_id(active_layer)
-	var lid := layer_id(i)
-	var meta: Dictionary = snap.get("meta", {})
-	var L: Array = meta.get("layers", [])
-	L.remove_at(i)
-	meta["layers"] = L
-	snap["meta"] = meta
-	var tiles: Dictionary = snap.get("tiles", {})
-	tiles.erase(lid)
-	snap["tiles"] = tiles
-	var keep := []
-	for e in (snap.get("entities", []) as Array):
-		if str((e as Dictionary).get("layer", "")) != lid:
-			keep.append(e)
-	snap["entities"] = keep
-	_load_snap_layers(snap, active_id)
-
-func layer_rename(i: int, name: String) -> void:
-	if map_root == null or not is_instance_valid(map_root):
-		return
-	var L := layers_decl()
-	if i < 0 or i >= L.size() or str(name) == "":
-		return
-	# 快照先行（契约 1）：只改 name 也走同一纪律，防止照抄成改 id/顺序时串层
-	_push_undo()
-	var snap := extract()
-	if snap.is_empty():
-		return
-	var meta: Dictionary = snap.get("meta", {})
-	var SL: Array = (meta.get("layers", []) as Array).duplicate(true)
-	if i < 0 or i >= SL.size():
-		return
-	(SL[i] as Dictionary)["name"] = str(name)
-	meta["layers"] = SL
-	snap["meta"] = meta
-	_load_snap_layers(snap, layer_id(active_layer))
-
-func layer_move(i: int, dir: int) -> void:
-	if map_root == null or not is_instance_valid(map_root):
-		return
-	var L := layers_decl()
-	var nj := i + dir
-	if i < 0 or i >= L.size() or nj < 0 or nj >= L.size():
-		return
-	_push_undo()
-	var snap := extract()
-	if snap.is_empty():
-		return
-	var active_id := layer_id(active_layer)
-	var meta: Dictionary = snap.get("meta", {})
-	var SL: Array = meta.get("layers", [])
-	var tmp = SL[i]
-	SL[i] = SL[nj]
-	SL[nj] = tmp
-	meta["layers"] = SL
-	snap["meta"] = meta
-	_load_snap_layers(snap, active_id)
-
-## 运行时初始可见（差分视图用）；编辑视图显隐走 set_layer_hidden，两回事。
-func layer_set_visible(i: int, v: bool) -> void:
-	if map_root == null or not is_instance_valid(map_root):
-		return
-	var L := layers_decl()
-	if i < 0 or i >= L.size():
-		return
-	# 快照先行（同 layer_rename：只改 visible 也走同一纪律）
-	_push_undo()
-	var snap := extract()
-	if snap.is_empty():
-		return
-	var meta: Dictionary = snap.get("meta", {})
-	var SL: Array = (meta.get("layers", []) as Array).duplicate(true)
-	if i < 0 or i >= SL.size():
-		return
-	(SL[i] as Dictionary)["visible"] = v
-	meta["layers"] = SL
-	snap["meta"] = meta
-	_load_snap_layers(snap, layer_id(active_layer))
-
-## 层操作收尾：按新快照重建，激活层跟随身份（同码层下标，层没了落最底层）。
-func _load_snap_layers(snap: Dictionary, active_id: String) -> void:
-	load_data(snap, cur_map_name, true, true)
-	var ni := _layer_index_of(active_id)
-	active_layer = ni if ni >= 0 else 0
 
 # —— 绘制：网格 + 光标幽灵预览 ——
 
@@ -1039,26 +678,26 @@ func flip_selected() -> bool:
 	return _selection_ops_ctrl.flip_selected()
 
 func copy_region() -> void:
-	_selection_ops_ctrl.copy_region()
+	_region_ops_ctrl.copy_region()
 
 ## 区域拖动搬迁（框选后按住区内拖动）
 func _in_region_sel(pos: Vector2) -> bool:
 	return _selection_ops_ctrl._in_region_sel(pos)
 
 func _begin_region_move(pos: Vector2) -> void:
-	_selection_ops_ctrl._begin_region_move(pos)
+	_region_ops_ctrl._begin_region_move(pos)
 
 func _move_region_preview(pos: Vector2) -> void:
-	_selection_ops_ctrl._move_region_preview(pos)
+	_region_ops_ctrl._move_region_preview(pos)
 
 func _finish_region_move() -> void:
-	_selection_ops_ctrl._finish_region_move()
+	_region_ops_ctrl._finish_region_move()
 
 func cut_region() -> void:
-	_selection_ops_ctrl.cut_region()
+	_region_ops_ctrl.cut_region()
 
 func _paste_region(origin: Vector2i) -> void:
-	_selection_ops_ctrl._paste_region(origin)
+	_region_ops_ctrl._paste_region(origin)
 
 func _cell_rect(a: Vector2, b: Vector2) -> Rect2i:
 	return _selection_ops_ctrl._cell_rect(a, b)
@@ -1115,3 +754,58 @@ func _stamp(c: Vector2i) -> void:
 func _has_terrain_at(c: Vector2i) -> bool:
 	var tn := _layer_node(active_layer)
 	return tn != null and tn.get_cell_source_id(c) != -1
+
+## —— 拆到 src/canvas/layer_ops.gd / entity_factory.gd / tool_ops.gd（调用点保持不变） ——
+
+func layers_decl() -> Array:
+	return _layer_ops_ctrl.layers_decl()
+func layer_count() -> int:
+	return _layer_ops_ctrl.layer_count()
+func layer_id(i: int) -> String:
+	return _layer_ops_ctrl.layer_id(i)
+func layer_name(i: int) -> String:
+	return _layer_ops_ctrl.layer_name(i)
+func _layer_index_of(lid: String) -> int:
+	return _layer_ops_ctrl._layer_index_of(lid)
+func collision_index() -> int:
+	return _layer_ops_ctrl.collision_index()
+func _is_grid_layer(i: int) -> bool:
+	return _layer_ops_ctrl._is_grid_layer(i)
+func _layer_node(i: int) -> TileMapLayer:
+	return _layer_ops_ctrl._layer_node(i)
+func ents_all() -> Array:
+	return _layer_ops_ctrl.ents_all()
+func _layer_entities_of(root: Node2D) -> Array:
+	return _layer_ops_ctrl._layer_entities_of(root)
+func _layer_entities(li: int) -> Array:
+	return _layer_ops_ctrl._layer_entities(li)
+func _place_in_layer(n: EntityNode, li: int) -> void:
+	_layer_ops_ctrl._place_in_layer(n, li)
+func _layer_display_node(i: int) -> Node2D:
+	return _layer_ops_ctrl._layer_display_node(i)
+func set_layer_hidden(i: int, now_hidden: bool) -> void:
+	_layer_ops_ctrl.set_layer_hidden(i, now_hidden)
+func is_layer_visible(i: int) -> bool:
+	return _layer_ops_ctrl.is_layer_visible(i)
+func set_layer_locked(i: int, locked: bool) -> void:
+	_layer_ops_ctrl.set_layer_locked(i, locked)
+func is_layer_locked(i: int) -> bool:
+	return _layer_ops_ctrl.is_layer_locked(i)
+func layer_add(name: String) -> void:
+	_layer_ops_ctrl.layer_add(name)
+func layer_del(i: int) -> void:
+	_layer_ops_ctrl.layer_del(i)
+func layer_rename(i: int, name: String) -> void:
+	_layer_ops_ctrl.layer_rename(i, name)
+func layer_move(i: int, dir: int) -> void:
+	_layer_ops_ctrl.layer_move(i, dir)
+func layer_set_visible(i: int, v: bool) -> void:
+	_layer_ops_ctrl.layer_set_visible(i, v)
+func _load_snap_layers(snap: Dictionary, active_id: String) -> void:
+	_layer_ops_ctrl._load_snap_layers(snap, active_id)
+func make_object(aid: String) -> EntityNode:
+	return _entity_factory_ctrl.make_object(aid)
+func is_placeable(aid: String) -> bool:
+	return _entity_factory_ctrl.is_placeable(aid)
+func _ensure_code(n: EntityNode) -> void:
+	_entity_factory_ctrl._ensure_code(n)

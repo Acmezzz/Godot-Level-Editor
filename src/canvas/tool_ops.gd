@@ -164,3 +164,95 @@ func _stamp(pos: Vector2) -> void:
 	cvs._mark()
 	# 放置即选中（"放置→配置"不断档）；连放不受影响
 	cvs.entity_selected.emit(n)
+
+## —— 从 editor_canvas.gd 并入：碰撞自动生成（宿主经 cvs 转发） ——
+
+var active_layer:
+	get: return cvs.active_layer
+var collision:
+	get: return cvs.collision
+var map_root:
+	get: return cvs.map_root
+
+func _has_terrain_at(c: Vector2i) -> bool:
+	return cvs._has_terrain_at(c)
+func _hint(t: String) -> void:
+	cvs._hint(t)
+func _layer_node(i: int) -> TileMapLayer:
+	return cvs._layer_node(i)
+func _mark(ents_changed := true) -> void:
+	cvs._mark(ents_changed)
+func _push_undo() -> void:
+	cvs._push_undo()
+func collision_index() -> int:
+	return cvs.collision_index()
+func is_layer_locked(i: int) -> bool:
+	return cvs.is_layer_locked(i)
+func set_collision_cell(c: Vector2i, on: bool, type := "solid", shape := "") -> void:
+	cvs.set_collision_cell(c, on, type, shape)
+
+# —— 自动生成碰撞：从**当前层**瓦片推导碰撞（层栈化后「当前层自审」，不再认 terrain id） ——
+## strategy: "full"(全部) / "top"(仅顶部表面) / "outline"(仅外轮廓)
+## replace=true 先清空碰撞层再生成
+func generate_collision(strategy := "full", replace := false, one_way_top := false) -> int:
+	if map_root == null:
+		_hint("无地图：先新建或打开一张地图")
+		return 0
+	if is_layer_locked(collision_index()):
+		_hint("碰撞层已锁定：先解锁")
+		return 0
+	# 预判：无可生成（且不是替换模式）就不压撤销快照——与 _erase_hits 的「不压空撤销」同纪律
+	if not replace and count_auto_collision(strategy, false) == 0:
+		_hint("没有可生成的碰撞格（换策略或换层再试）")
+		return 0
+	var src := _layer_node(active_layer)
+	if src == null or active_layer == collision_index():
+	 # _layer_node 对碰撞元层返回 collision 节点本身——自动碰撞若不拦，
+	 # 就会从碰撞层读瓦片生成碰撞（自己抄自己）
+		_hint("切到一个瓦片层再用自动碰撞（当前是碰撞元层）")
+		return 0
+	_push_undo()
+	if replace:
+		for c in collision.get_used_cells():
+			set_collision_cell(c, false)
+	var added := 0
+	for c in src.get_used_cells():
+		if not _collision_wanted(c, strategy):
+			continue
+		if collision.get_cell_source_id(c) != -1:
+			continue
+ # 顶部策略可生成 one_way（自动碰撞策略扩展，契约类型 one_way）
+		var typ := "one_way" if (strategy == "top" and one_way_top) else "solid"
+		set_collision_cell(c, true, typ)
+		added += 1
+	_mark(false)   # 自动碰撞只写碰撞层
+	cvs.queue_redraw()
+	return added
+
+## 预览：不写入，只算会新增多少格
+func count_auto_collision(strategy := "full", replace := false) -> int:
+	if map_root == null:
+		return 0
+	var src := _layer_node(active_layer)
+	if src == null or active_layer == collision_index():
+		return 0   # 碰撞元层不是瓦片来源（同 generate_collision）
+	var n := 0
+	for c in src.get_used_cells():
+		if not _collision_wanted(c, strategy):
+			continue
+		if not replace and collision.get_cell_source_id(c) != -1:
+			continue
+		n += 1
+	return n
+
+func _collision_wanted(c: Vector2i, strategy: String) -> bool:
+	match strategy:
+		"top":
+			return not _has_terrain_at(c + Vector2i(0, -1))
+		"outline":
+			return not _has_terrain_at(c + Vector2i(1, 0)) \
+				or not _has_terrain_at(c + Vector2i(-1, 0)) \
+				or not _has_terrain_at(c + Vector2i(0, 1)) \
+				or not _has_terrain_at(c + Vector2i(0, -1))
+		_:
+			return true

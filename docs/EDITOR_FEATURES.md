@@ -36,8 +36,11 @@ src/
 │   ├── entity_node.gd      一个摆放物的唯一运行时表示（场景图片实例与实体实例共用，anchors/transform/尺寸）
 │   ├── canvas_draw.gd      画布上画什么：网格、幽灵预览、连线、占位框、visual:rect 实体、选区
 │   ├── canvas_input.gd     鼠标事件分派：缩放平移、涂/擦、框选、拖拽
-│   ├── tool_ops.gd         左键/右键语义执行：涂刷、放置、擦除、盖章
-│   ├── selection_ops.gd    单选/框选/组拖、剪贴板、区域复制粘贴、引用重映射
+│   ├── tool_ops.gd         左键/右键语义执行：涂刷、放置、擦除、盖章 + 碰撞自动生成
+│   ├── selection_ops.gd    单选/框选/组拖、实体剪贴板（复制/剪切/粘贴/翻转）
+│   ├── region_ops.gd       区域操作：快照/复制/剪切/粘贴/拖动搬迁 + 层与引用重映射
+│   ├── layer_ops.gd        层栈运行时与管理：三段容器/显隐锁定/增删改名移（editor_canvas 拆出）
+│   ├── entity_factory.gd   实体工厂：建节点/实例码发号/占位尺寸（editor_canvas 拆出）
 │   ├── collision_view.gd   碰撞格可视化：把隐形碰撞格画成半透明色块（按类型分色）
 │   └── tileset_cache.gd    TileSet 构建缓存：按资产建源（cell 可为非正方形），同一图集不重复读 PNG/重建
 ├── assets/                 —— 资产表 assets[] 的声明域 ——
@@ -55,13 +58,21 @@ src/
 └── ui/                     —— 界面（每个面板一个控制器） ——
 	├── ui_theme.gd         视觉系统：全部颜色/圆角/字号/控件样式只有这一处
 	├── ui_kit.gd           可复用构件：标题、按钮、徽章、字段行、空状态
-	├── editor_layout.gd    关卡视图：顶栏/左栏/画布容器/选中信息条/状态栏
+	├── editor_layout.gd    关卡视图骨架：顶栏/左栏/画布容器/选中信息条/状态栏
+	├── layer_panel.gd      层下拉 + 层管理弹窗（editor_layout 拆出）
+	├── issues_drawer.gd    问题抽屉 + 全项目自检（editor_layout 拆出）
+	├── popups.gd           主题构建/徽章/统一弹窗外壳/快捷键速查（editor_layout 拆出）
 	├── project_shell.gd    项目工作台外壳：内容、资产两个全屏视图共用
 	├── top_bar_nav.gd      共享顶栏片段：地图 ▾ + 关卡/内容/资产三个按钮
 	├── palette_panel.gd    瓦片调色板（类别 → 图集两级导航）+ 实体列表
-	├── map_file.gd         地图文件生命周期：新建/打开/保存/改名/自动保存/尺寸/导出/试玩
+	├── map_file.gd         地图文件生命周期：新建/打开/保存/改名/自动保存/试玩
+	├── map_dialogs.gd      地图尺寸 / 导出弹窗（map_file 拆出）
+	├── project_picker.gd   项目选择页 + 项目记忆（app.gd 拆出）
 	├── props_panel.gd      只剩「从地形生成碰撞」弹窗
-	├── content_editor.gd   内容编辑器：左实例列表 / 右功能列表与内容表单
+	├── content_editor.gd   内容编辑器骨架：实例列表/画布预览/选中与挂载补齐
+	├── fn_bind.gd          功能绑定行：添加/↑↓排序/并行/时机/启用/删除（content_editor 拆出）
+	├── content_form.gd     内容表单 + 内容库复制成新 ID（content_editor 拆出）
+	├── steps_panel.gd      演出子面板：列表/时间轴双视图 + 步骤表单（content_editor 拆出）
 	├── timeline_view.gd    演出时间轴视图：横轴时间纵轴轨道，拖块改 at/duration/轨道，重叠描红
 	├── content_preview.gd  内容编辑器的中列只读地图预览（自绘缩放/平移/点选）
 	├── field_widgets.gd    声明式字段控件工厂：input（string/int/float/bool/color/vector2/range/asset_ref）/ choice，认不出的只读展示

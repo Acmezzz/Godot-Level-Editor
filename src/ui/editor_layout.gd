@@ -5,8 +5,15 @@ const TopBarNavScript := preload("res://src/ui/top_bar_nav.gd")
 const CollisionTypes := preload("res://src/core/collision_types.gd")
 const ProjectAudit := preload("res://src/core/project_audit.gd")
 const EntityNodeScript := preload("res://src/canvas/entity_node.gd")
+const IssuesDrawer := preload("res://src/ui/issues_drawer.gd")
+const LayerPanel := preload("res://src/ui/layer_panel.gd")
+const Popups := preload("res://src/ui/popups.gd")
 
 var app   # 宿主引用
+## 拆分出的子控制器
+var _issues_ctrl   # issues_drawer.gd：问题抽屉
+var _layer_ctrl   # layer_panel.gd：层下拉+层管理
+var _popups_ctrl   # popups.gd：弹窗外壳/主题/速查
 # 状态栏的常驻指示（与左侧消息分离，避免互相覆盖）
 var _meta_tool: Label
 var _meta_cursor: Label
@@ -38,6 +45,9 @@ var _issues_items: Array = []
 
 func _init(host) -> void:
 	app = host
+	_issues_ctrl = IssuesDrawer.new(self)
+	_layer_ctrl = LayerPanel.new(self)
+	_popups_ctrl = Popups.new(self)
 func _build_editor_ui() -> void:
 	app._nav_bars.clear()  # 重建时丢弃旧顶栏导航条引用（控件已 queue_free）
 	for c in app.get_children():
@@ -420,40 +430,6 @@ func _refresh_dirty_badge() -> void:
 		_dirty_badge.visible = app.map_loaded and app.canvas != null and app.canvas.modified_flag
 
 
-## —— 问题抽屉（REFACTOR_PLAN 4.6-3）：project_audit 的呈现层 ——
-
-func _build_issues_drawer() -> PanelContainer:
-	var wrap := PanelContainer.new()
-	var sb = app.UiThemeScript.box(app.UiThemeScript.BG_PANEL, app.UiThemeScript.BORDER, 0, 10, 6)
-	sb.set_border_width_all(0)
-	sb.border_width_top = 1
-	wrap.add_theme_stylebox_override("panel", sb)
-	var head = app.UiKitScript.hbox(8)
-	# 标题即开关：点一下折叠/展开条目列表
-	var head_btn: Button = app.UiKitScript.button("问题 0", func(): _toggle_issues_drawer(), "plain")
-	head_btn.tooltip_text = "展开 / 收起问题列表（自检入口：地图菜单「检查项目完整性」）"
-	_issues_btn = head_btn
-	head.add_child(head_btn)
-	head.add_child(app.UiKitScript.spacer())
-	var rerun: Button = app.UiKitScript.button("重扫", func(): _run_audit(false), "ghost")
-	rerun.tooltip_text = "重新扫描全项目"  # 读回校验锚
-	head.add_child(rerun)
-	# 条目列表（展开时显示；行点击跳转；ScrollContainer 封顶防吞屏）
-	_issues_drawer = wrap
-	var scroll := ScrollContainer.new()
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	_issues_scroll = scroll
-	var body := VBoxContainer.new()
-	body.add_theme_constant_override("separation", 2)
-	_issues_list = body
-	var col := VBoxContainer.new()
-	col.add_child(head)
-	col.add_child(scroll)
-	scroll.add_child(body)
-	wrap.add_child(col)
-	body.visible = false
-	wrap.visible = false
-	return wrap
 
 ## 状态栏右侧的层指示（工具概念已废除，这里只说「在哪一层、笔刷多大」）
 func _refresh_tool_meta() -> void:
@@ -491,147 +467,6 @@ func _refresh_view_toggles() -> void:
 		_snap_btn.button_pressed = app.canvas == null or app.canvas.snap_to_grid
 	_refresh_layer_panel()
 	_refresh_sel_bar()
-
-## 层下拉 + 内联显隐/锁定。当前层用 ACCENT 底标出；
-## 按钮文字同步成当前层名，这样「现在画哪一层」在左栏一眼可见，不用展开菜单。
-func _refresh_layer_panel() -> void:
-	if _layer_btn == null:
-		return
-	_layer_btn.text = "层：%s  ▾" % app._layer_label(app.canvas.active_layer)
-	if _layer_menu_body == null:
-		return
-	for c in _layer_menu_body.get_children():
-		_layer_menu_body.remove_child(c)
-		c.queue_free()
-	# 层数 = 地图 meta.layers 层栈 + 碰撞元层（下拉最后，名字走 app._layer_label）
-	for i in app.canvas.layer_count() + 1:
-		var lname: String = app._layer_label(i)
-		var is_cur: bool = i == app.canvas.active_layer
-		var row = app.UiKitScript.hbox(2)
-		var sel_btn = app.UiKitScript.button(lname, func():
-			_layer_menu.hide()
-			app._on_layer(i), "ghost")
-		sel_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		sel_btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		sel_btn.add_theme_font_size_override("font_size", app.UiThemeScript.FS_SMALL)
-		if is_cur:
-			var sb = app.UiThemeScript.box(app.UiThemeScript.ACCENT_BG,
-				app.UiThemeScript.ACCENT, app.UiThemeScript.R_INNER, 4, 4)
-			sel_btn.add_theme_stylebox_override("normal", sb)
-			sel_btn.add_theme_color_override("font_color", app.UiThemeScript.TEXT)
-		row.add_child(sel_btn)
-		var vis_btn = app.UiKitScript.button("👁" if app.canvas.is_layer_visible(i) else "·", func():
-			app.canvas.set_layer_hidden(i, app.canvas.is_layer_visible(i))
-			_refresh_layer_panel(), "ghost")
-		vis_btn.tooltip_text = "显示 / 隐藏本层（👁 显示中 · · 已隐藏）"
-		row.add_child(vis_btn)
-		var lock_btn = app.UiKitScript.button("🔒" if app.canvas.is_layer_locked(i) else "·", func():
-			app.canvas.set_layer_locked(i, not app.canvas.is_layer_locked(i))
-			_refresh_layer_panel(), "ghost")
-		lock_btn.tooltip_text = "锁定 / 解锁本层（🔒 已锁定 · · 可编辑）"
-		row.add_child(lock_btn)
-		_layer_menu_body.add_child(row)
-
-## 展开层下拉：定位在按钮正下方
-func _toggle_layer_menu() -> void:
-	if _layer_menu == null:
-		return
-	if _layer_menu.visible:
-		_layer_menu.hide()
-		return
-	_refresh_layer_panel()
-	var at := _layer_btn.get_screen_position()
-	_layer_menu.position = Vector2i(at) + Vector2i(0, int(_layer_btn.size.y))
-	_layer_menu.popup()
-
-## 层管理弹窗：每层一行（改名 / 运行时可见 / ↑↓ / 删除），底部新建层。
-## 行操作走画布 layer_* API；meta.layers 同步更新，弹窗内容直接读它重填
-## （画布 load_data 重建是异步的，不阻塞弹窗刷新）。碰撞元层不是栈层，不进列表。
-func _open_layer_manager() -> void:
-	var shell: Dictionary = app._popup_body("图层管理",
-		"新建 / 改名（回车提交）/ 上下排序 / 删除；「运行时」= 游戏开局该层是否显示")
-	_layer_mgr = shell.pop
-	_layer_mgr_body = shell.body
-	_layer_mgr_rows = app.UiKitScript.vbox(2)
-	_layer_mgr_body.add_child(_layer_mgr_rows)
-	var row = app.UiKitScript.hbox(6)
-	var input := LineEdit.new()
-	input.placeholder_text = "新层名"
-	input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_layer_mgr_input = input
-	row.add_child(input)
-	row.add_child(app.UiKitScript.button("新建层", func():
-		app.canvas.layer_add(_layer_mgr_input.text)
-		_layer_mgr_input.clear()
-		_rebuild_layer_mgr()
-		app._sync_ui()), "primary")
-	_layer_mgr_body.add_child(row)
-	var close_btn: Button = app.UiKitScript.button("关闭", func(): _layer_mgr.hide(), "plain")
-	close_btn.size_flags_horizontal = Control.SIZE_SHRINK_END
-	_layer_mgr_body.add_child(close_btn)
-	_rebuild_layer_mgr()
-	app._open_popup(_layer_mgr)
-
-## 重填层管理列表：读 meta.layers（layers_decl）直接重建，不依赖画布异步重建完成
-func _rebuild_layer_mgr() -> void:
-	if _layer_mgr == null or not is_instance_valid(_layer_mgr):
-		return
-	if _layer_mgr_rows == null or not is_instance_valid(_layer_mgr_rows):
-		return
-	for c in _layer_mgr_rows.get_children():
-		_layer_mgr_rows.remove_child(c)
-		c.queue_free()
-	var decl: Array = app.canvas.layers_decl()
-	if decl.is_empty():
-		_layer_mgr_rows.add_child(app.UiKitScript.hint_label(
-			"还没有图层——下方输入名字后点「新建层」。", app.POPUP_BODY_W))
-		return
-	for i in decl.size():
-		_layer_mgr_rows.add_child(_layer_mgr_row(i, decl[i] as Dictionary))
-
-## 一层一行：名字（行内改名，回车提交）+ 运行时可见 + ↑ ↓ 删除
-func _layer_mgr_row(i: int, decl: Dictionary) -> Control:
-	var row = app.UiKitScript.hbox(4)
-	var nm := LineEdit.new()
-	nm.text = str(decl.get("name", ""))
-	nm.placeholder_text = str(decl.get("id", ""))
-	nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	nm.tooltip_text = "层名（改成新名字后回车提交）"
-	nm.text_submitted.connect(func(s: String):
-		app.canvas.layer_rename(i, s)
-		app._sync_ui())
-	row.add_child(nm)
-	var vis := CheckBox.new()
-	vis.button_pressed = bool(decl.get("visible", true))
-	vis.tooltip_text = "运行时初始可见（差分视图用）"
-	vis.toggled.connect(func(on: bool):
-		app.canvas.layer_set_visible(i, on)
-		app._sync_ui())
-	row.add_child(vis)
-	var up = app.UiKitScript.button("↑", func():
-		app.canvas.layer_move(i, -1)
-		_rebuild_layer_mgr()
-		app._sync_ui(), "ghost")
-	up.disabled = i == 0
-	up.tooltip_text = "上移一层"
-	row.add_child(up)
-	var down = app.UiKitScript.button("↓", func():
-		app.canvas.layer_move(i, 1)
-		_rebuild_layer_mgr()
-		app._sync_ui(), "ghost")
-	down.disabled = i >= app.canvas.layer_count() - 1
-	down.tooltip_text = "下移一层"
-	row.add_child(down)
-	var del = app.UiKitScript.button("删除", func():
-		var before: int = app.canvas.layer_count()
-		app.canvas.layer_del(i)
-		if app.canvas.layer_count() == before:
-			app._set_status("至少保留一个图层")
-		_rebuild_layer_mgr()
-		app._sync_ui(), "ghost")
-	del.tooltip_text = "删除该层（层上瓦片与实体一并删除）"
-	row.add_child(del)
-	return row
 
 ## 选中实体信息条：类型名 + 内容状态 + 「在工作台编辑 →」。
 ## 不做属性表单——参数属内容，归内容编辑器与资产目录。
@@ -704,83 +539,6 @@ func _toggle_sel_visible(v: bool) -> void:
 func _sync_layer_buttons() -> void:
 	_refresh_layer_panel()
 
-func _build_theme() -> void:
-	app.theme = app.UiThemeScript.build()
-
-## 原地切换徽章状态（继承 → 覆盖）
-
-func _set_badge(p: PanelContainer, text: String, color: Color) -> void:
-	app.UiKitScript.set_badge(p, text, color)
-
-## 统一的弹窗挂载：挂到窗口根（不再挂进资产栏，避免被布局裁切与节点泄漏），
-## 居中显示，关闭后自动释放。所有弹窗面板都必须走这里。
-
-func _open_popup(pop: PopupPanel, size := Vector2i.ZERO) -> void:
-	app.add_child(pop)
-	pop.popup_hide.connect(func(): pop.queue_free())
-	# 先按内容算出最小尺寸（此刻子控件还没排版，直接量会偏小），
-	# 再用 popup_centered() 让引擎按最小尺寸开窗——不带参数的 popup_centered()
-	# 会沿用上次窗口大小，必须显式给尺寸。
-	# 单次居中量取不准会裁切内容——两段式（先 1×1 弹出再按实际最小尺寸居中）。
-	# 两段式首帧会在左上角闪一下 1×1 的小窗。把第一段挪到屏幕外再量——
-	# 同一帧内接第二段居中，中间那次布局从未被绘制，闪烁消失。
-	pop.popup_centered(Vector2i(1, 1))
-	pop.position = Vector2i(-32000, -32000)
-	var want := pop.get_contents_minimum_size().ceil()
-	var vp = app.get_viewport_rect().size
-	want.x = minf(want.x, vp.x - 40)
-	want.y = minf(want.y, vp.y - 40)
-	if size != Vector2i.ZERO:
-		want = Vector2(size)
-	pop.popup_centered(Vector2i(want))
-
-## 弹窗标准外壳：标题 + 副标题 + 内容区，保证所有面板视觉一致
-## 内容列宽度固定（body_w），所有内部换行标签都以此为准，避免弹窗高度失控。
-
-func _popup_body(title: String, subtitle := "") -> Dictionary:
-	var pop := PopupPanel.new()
-	var col = app.UiKitScript.vbox(10)
-	col.custom_minimum_size = Vector2(app.POPUP_BODY_W, 0)
-	pop.add_child(col)
-	col.add_child(app.UiKitScript.text_label(title, app.UiThemeScript.TEXT, app.UiThemeScript.FS_MD))
-	if subtitle != "":
-		col.add_child(app.UiKitScript.hint_label(subtitle, app.POPUP_BODY_W))
-	var body = app.UiKitScript.vbox(8)
-	body.custom_minimum_size = Vector2(app.POPUP_BODY_W, 0)
-	col.add_child(body)
-	return {"pop": pop, "root": col, "body": body}
-
-## 快捷键速查共 8 行（撤销 / 剪贴板 / 编辑 / 框选 / 文件 / 返回 / 视图 / 速查）。
-## 数字键与工具键已全部删除——它们从未是用户设计的一部分，是历史实现遗留。
-func _open_shortcut_help() -> void:
-	var shell: Dictionary = app._popup_body("快捷键速查", "只剩必要的键盘入口；其余全部交给鼠标与层下拉")
-	var pop: PopupPanel = shell.pop
-	var rows := [
-		["撤销", "Ctrl+Z 撤销 · Ctrl+Y / Ctrl+Shift+Z 重做"],
-		["剪贴板", "Ctrl+C 复制 · Ctrl+V 粘贴 · Ctrl+X 剪切 · Ctrl+D 原位复制"],
-		["编辑", "Del 删除选中 · F 水平翻转 · 方向键 微调 1 格（Shift = 4 格）"],
-		["框选", "点状态栏「框选」开关后左键拖动框选；选中后可直接整组拖动"],
-		["文件", "Ctrl+S 保存 · Ctrl+N 新建 · Ctrl+O 打开"],
-		["返回", "Esc 回到关卡编辑器 / 取消区域粘贴预览"],
-		["视图", "滚轮 缩放 · 中键/空格拖拽 平移 · Home 适应窗口 · = / - 缩放"],
-		["速查", "? 本速查"],
-	]
-	for r in rows:
-		var line: HBoxContainer = app.UiKitScript.hbox(8)
-		var k: Label = app.UiKitScript.text_label(str(r[0]), app.UiThemeScript.ACCENT_HI, app.UiThemeScript.FS_SMALL)
-		k.custom_minimum_size = Vector2(56, 0)
-		line.add_child(k)
-		line.add_child(app.UiKitScript.wrap_label(str(r[1]), app.POPUP_BODY_W - 64))
-		shell.body.add_child(line)
-	shell.body.add_child(app.UiKitScript.hint_label(
-		"左键放置/涂刷、右键擦除；层下拉决定当前画笔，没有工具要选。" +
-		"新建/打开地图时填名字，不再在顶栏就地改名。",
-		app.POPUP_BODY_W))
-	var close_btn: Button = app.UiKitScript.button("关闭", func(): pop.hide(), "primary")
-	close_btn.size_flags_horizontal = Control.SIZE_SHRINK_END
-	shell.body.add_child(close_btn)
-	app._open_popup(pop)
-
 
 func _build_project_view() -> void:
 	app.project_shell = app.ProjectShellScript.new(app)
@@ -792,84 +550,25 @@ func _build_project_view() -> void:
 	app.asset_panel = app.project_shell.asset_panel
 
 
-## —— 全项目自检（REFACTOR_PLAN 4.6-3）：project_audit 的呈现层 ——
+## —— 拆到 src/ui/issues_drawer.gd / layer_panel.gd / popups.gd（调用点保持不变） ——
 
-## 展开/收起条目列表
-func _toggle_issues_drawer() -> void:
-	if _issues_list:
-		_issues_list.visible = not _issues_list.visible
-
-## 跑全项目审计并刷新抽屉。open_after=自检菜单入口（跑完自动展开列表）。
+func _build_issues_drawer() -> PanelContainer:
+	return _issues_ctrl._build_issues_drawer()
 func _run_audit(open_after := true) -> void:
-	var items: Array = ProjectAudit.audit(app.manifest)
-	_issues_items = items
-	if _issues_btn:
-		_issues_btn.text = "问题 %d" % items.size()
-	_populate_issues()
-	if _issues_scroll:
-		_issues_scroll.custom_minimum_size.y = minf(items.size() * 26.0 + 6.0, 160.0)
-	if open_after and _issues_list:
-		_issues_list.visible = true
-	if _issues_drawer:
-		_issues_drawer.visible = true
-	if items.is_empty():
-		app._set_status("自检通过：未发现问题")
-	else:
-		app._set_status("自检完成：发现 %d 个问题" % items.size())
-
-## 条目列表：一行一条，点击跳转
-func _populate_issues() -> void:
-	for c in _issues_list.get_children():
-		_issues_list.remove_child(c)
-		c.queue_free()
-	if _issues_items.is_empty():
-		var lb = app.UiKitScript.text_label("扫描完成：未发现问题",
-			app.UiThemeScript.OK, app.UiThemeScript.FS_SMALL)
-		_issues_list.add_child(lb)
-		return
-	for it in _issues_items:
-		_issues_list.add_child(_issue_row(it))
-
-func _issue_row(it: Dictionary) -> Control:
-	var sev := str(it.get("severity", "warning"))
-	var icon := "⛔" if sev == "error" else "⚠"
-	var txt := "%s %s — %s" % [icon, str(it.get("path", "")), str(it.get("message", ""))]
-	var b: Button = app.UiKitScript.button(txt, func(): _jump_to(it), "ghost")
-	b.alignment = HORIZONTAL_ALIGNMENT_LEFT
-	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	b.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	b.tooltip_text = txt
-	return b
-
-## 行点击跳转：地图问题开图；实例问题开图后选中；清单问题不可跳转
-func _jump_to(it: Dictionary) -> void:
-	var j := it.get("jump", {}) as Dictionary
-	var typ := str(j.get("type", ""))
-	if typ == "" or app.canvas == null:
-		return
-	var map := str(j.get("map", ""))
-	if typ == "entity":
-		if map != "" and (map != app.cur_map_name or not app.map_loaded):
-			await app._open_map_by_name(map)
-		if app.map_loaded and map == app.cur_map_name:
-			_select_by_code(str(j.get("code", "")))
-	elif map != "" and (map != app.cur_map_name or not app.map_loaded):
-		app._open_map_by_name(map)
-
-## 选中本图指定实例码的节点（找不到给状态提示）
-func _select_by_code(code: String) -> void:
-	if code == "" or app.canvas == null:
-		return
-	var n: Node = null
-	for e in app.canvas.ents_all():
-		var en := e as EntityNodeScript
-		if en != null and en.code == code:
-			n = en
-			break
-	if n == null:
-		app._set_status("未找到实例 %s" % code)
-		return
-	app.canvas.selected_entity = n
-	app.canvas.selected_multi.clear()
-	app.canvas.entity_selected.emit(n)
-	app.canvas.queue_redraw()
+	_issues_ctrl._run_audit(open_after)
+func _toggle_layer_menu() -> void:
+	_layer_ctrl._toggle_layer_menu()
+func _open_layer_manager() -> void:
+	_layer_ctrl._open_layer_manager()
+func _refresh_layer_panel() -> void:
+	_layer_ctrl._refresh_layer_panel()
+func _build_theme() -> void:
+	_popups_ctrl._build_theme()
+func _set_badge(p: PanelContainer, text: String, color: Color) -> void:
+	_popups_ctrl._set_badge(p, text, color)
+func _open_popup(pop: PopupPanel, size := Vector2i.ZERO) -> void:
+	_popups_ctrl._open_popup(pop, size)
+func _popup_body(title: String, subtitle := "") -> Dictionary:
+	return _popups_ctrl._popup_body(title, subtitle)
+func _open_shortcut_help() -> void:
+	_popups_ctrl._open_shortcut_help()

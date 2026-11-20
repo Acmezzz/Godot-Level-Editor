@@ -6,6 +6,8 @@ extends Control
 
 const SettingsCfg := "user://settings.cfg"
 const ProjectShellScript := preload("res://src/ui/project_shell.gd")
+const ProjectPicker := preload("res://src/ui/project_picker.gd")
+const MapDialogs := preload("res://src/ui/map_dialogs.gd")
 const UiThemeScript := preload("res://src/ui/ui_theme.gd")
 const UiKitScript := preload("res://src/ui/ui_kit.gd")
 const MapStore := preload("res://src/map_store.gd")
@@ -45,6 +47,8 @@ var _props_panel_ctrl   # ui/props_panel.gd 控制器（只剩「从地形生成
 var _map_file_ctrl   # ui/map_file.gd 控制器
 var _editor_state_ctrl   # core/editor_state.gd 控制器（状态流）
 var _layout_ctrl   # ui/editor_layout.gd 控制器（界面搭建）
+var _picker_ctrl   # ui/project_picker.gd 控制器（项目选择页）
+var _map_dialogs_ctrl   # ui/map_dialogs.gd 控制器（尺寸/导出弹窗）
 var _side_actions_ctrl   # core/side_actions.gd 控制器（侧栏动作）
 var _palette_ctrl   # ui/palette_panel.gd 控制器（调色板导航：多图集三级/单图集两级）
 var selected_spr: EntityNode = null
@@ -60,6 +64,8 @@ var _nav_bars := []
 var _canvas_empty: Control
 
 func _ready() -> void:
+	_picker_ctrl = ProjectPicker.new(self)
+	_map_dialogs_ctrl = MapDialogs.new(self)
 	_load_prefs()
 	_load_projects()
 	_layout_ctrl = preload("res://src/ui/editor_layout.gd").new(self)
@@ -98,145 +104,6 @@ var project_dirs: Array = []
 var project_names := {}
 var cur_project_dir := ""
 
-func _load_projects() -> void:
-	var cf := ConfigFile.new()
-	if cf.load(SettingsCfg) == OK:
-		var dirs = cf.get_value("projects", "dirs", [])
-		if dirs is Array:
-			for d in dirs:
-				if str(d) != "" and not project_dirs.has(str(d)):
-					project_dirs.append(str(d))
-		var names = cf.get_value("projects", "names", {})
-		if names is Dictionary:
-			project_names = (names as Dictionary).duplicate()
-		cur_project_dir = str(cf.get_value("projects", "last", ""))
- # 兼容单项目旧格式
-		var old := str(cf.get_value("project", "dir", ""))
-		if old != "" and not project_dirs.has(old):
-			project_dirs.append(old)
-			if cur_project_dir == "":
-				cur_project_dir = old
-
-func _save_projects() -> void:
-	var cf := ConfigFile.new()
-	cf.set_value("projects", "dirs", project_dirs)
-	cf.set_value("projects", "names", project_names)
-	cf.set_value("projects", "last", cur_project_dir)
-	cf.save(SettingsCfg)
-
-## 登记一个项目到列表头（最近使用置顶）；名字取清单 projectName，缺省用目录名。
-func _remember_project(dir: String, pname: String) -> void:
-	project_dirs.erase(dir)
-	project_dirs.push_front(dir)
-	project_names[dir] = pname if pname != "" else dir.get_file()
-	cur_project_dir = dir
-	_save_projects()
-
-func _forget_project(dir: String) -> void:
-	project_dirs.erase(dir)
-	project_names.erase(dir)
-	if cur_project_dir == dir:
-		cur_project_dir = ""
-	_save_projects()
-
-# —— 项目选择页 ——
-func _show_picker(err := "") -> void:
-	for c in get_children():
-		remove_child(c)
-		c.queue_free()
-	var v := VBoxContainer.new()
-	v.set_anchors_preset(Control.PRESET_FULL_RECT)
-	v.alignment = BoxContainer.ALIGNMENT_CENTER
-	v.add_theme_constant_override("separation", 10)
-	add_child(v)
-	var t := Label.new()
-	t.text = "关卡编辑器"
-	t.add_theme_font_size_override("font_size", 28)
-	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	v.add_child(t)
-	var hint := Label.new()
-	hint.text = "选一个游戏项目（内含 editor/editor_manifest.json）；可同时管理多个项目"
-	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	v.add_child(hint)
-	if err != "":
-		var el := Label.new()
-		el.text = err
-		el.modulate = Color(1, 0.4, 0.4)
-		el.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		v.add_child(el)
-	if not project_dirs.is_empty():
-		var list := VBoxContainer.new()
-		list.custom_minimum_size = Vector2(520, 0)
-		v.add_child(list)
-		for dir in project_dirs:
-			list.add_child(_project_row(str(dir)))
-		var row := HBoxContainer.new()
-		row.alignment = BoxContainer.ALIGNMENT_CENTER
-		var add := Button.new()
-		add.text = "打开其它项目文件夹…"
-		add.pressed.connect(_pick_project)
-		row.add_child(add)
-		v.add_child(row)
-	else:
-		var hb := HBoxContainer.new()
-		hb.alignment = BoxContainer.ALIGNMENT_CENTER
-		var btn := Button.new()
-		btn.text = "打开项目文件夹…"
-		btn.pressed.connect(_pick_project)
-		hb.add_child(btn)
-		v.add_child(hb)
-
-## 选择页的一行：项目名（+ 路径）+ 「打开」+「移除记录」。
-## 移除只删记录不动磁盘——用户可能只是临时不想看见它。
-func _project_row(dir: String) -> Control:
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 8)
-	var info := VBoxContainer.new()
-	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var nm := Label.new()
-	nm.text = str(project_names.get(dir, dir.get_file()))
-	nm.add_theme_font_size_override("font_size", 16)
-	info.add_child(nm)
-	var path_lbl := Label.new()
-	path_lbl.text = dir
-	path_lbl.modulate = Color(1, 1, 1, 0.5)
-	path_lbl.add_theme_font_size_override("font_size", 11)
-	info.add_child(path_lbl)
-	row.add_child(info)
-	var open := Button.new()
-	open.text = "打开"
-	open.pressed.connect(func(): _open_project(dir))
-	row.add_child(open)
-	var forget := Button.new()
-	forget.text = "移除记录"
-	forget.pressed.connect(func():
-		_forget_project(dir)
-		_show_picker())
-	row.add_child(forget)
-	return row
-
-## 从列表里选一个项目打开；清单坏了就回选择页并说明原因。
-func _open_project(dir: String) -> void:
-	var m := EditorManifest.load_from(dir)
-	if m.has("_error"):
-		_show_picker(m["_error"])
-		return
-	manifest = m
-	_ent_thumbs_cache.clear()   # D1：换项目清缩略图缓存
-	_remember_project(dir, str(m.get("projectName", "")))
-	_build_editor_ui()
-
-func _pick_project() -> void:
-	var fd := FileDialog.new()
-	fd.file_mode = FileDialog.FILE_MODE_OPEN_DIR
-	fd.access = FileDialog.ACCESS_FILESYSTEM
-	fd.dir_selected.connect(_on_project_picked)
-	add_child(fd)
-	fd.popup_centered(Vector2i(700, 500))
-
-# —— 项目选定：读清单 → 进编辑器界面 ——
-func _on_project_picked(dir: String) -> void:
-	_open_project(dir)
 
 # —— 编辑器主界面 ——
 # —— 调色板填充（控制器在 ui/palette_panel.gd） ——
@@ -279,10 +146,10 @@ func _poll_playtest() -> void:
 	_map_file_ctrl.poll_playtest()
 
 func _open_size_dialog() -> void:
-	_map_file_ctrl.open_size_dialog()
+	_map_dialogs_ctrl.open_size_dialog()
 
 func _open_export_dialog() -> void:
-	_map_file_ctrl.open_export_dialog()
+	_map_dialogs_ctrl.open_export_dialog()
 
 ## 切换项目：有未保存修改先确认，然后回选择页。
 ## 回选择页会 free 掉整个编辑器界面（画布/三面板），切项目后由 _build_editor_ui 全量重建，
@@ -822,3 +689,11 @@ func _scene_name(sid: String) -> String:
 ## 否则弹窗一弹出就返回，新图还没加载完（顶栏切图刷新曾踩过这个坑）。
 func _open_map_by_name(map_name: String) -> void:
 	await _side_actions_ctrl._open_map_by_name(map_name)
+## —— 拆到 src/ui/project_picker.gd（调用点保持不变） ——
+
+func _load_projects() -> void:
+	_picker_ctrl._load_projects()
+
+func _show_picker(err := "") -> void:
+	_picker_ctrl._show_picker(err)
+
