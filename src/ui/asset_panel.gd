@@ -224,7 +224,7 @@ func _fill_distribution(sid: String) -> void:
 
 ## 单张地图的折叠段：标题按钮切换，首展时才构建行。
 func _dist_map_section(map_name: String, rows: Array) -> Control:
-	var wrap := Kit.vbox(2)
+	var box := Kit.vbox(2)
 	var built := {"done": false}
 	var body := Kit.vbox(2)
 	body.visible = false
@@ -237,9 +237,9 @@ func _dist_map_section(map_name: String, rows: Array) -> Control:
 				body.add_child(_dist_row(map_name, r))
 		body.visible = not body.visible
 		head.text = _dist_head_text(map_name, rows.size(), body.visible))
-	wrap.add_child(head)
-	wrap.add_child(body)
-	return wrap
+	box.add_child(head)
+	box.add_child(body)
+	return box
 
 func _dist_head_text(map_name: String, n: int, open: bool) -> String:
 	return ("▾ " if open else "▸ ") + "%s × %d" % [map_name, n]

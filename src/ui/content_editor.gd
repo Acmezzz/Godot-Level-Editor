@@ -90,14 +90,14 @@ func build() -> Control:
 # ──────────── 左列：本图实例列表 ────────────
 
 func _build_left() -> Control:
-	var wrap := PanelContainer.new()
-	wrap.custom_minimum_size = Vector2(LEFT_W, 0)
+	var box := PanelContainer.new()
+	box.custom_minimum_size = Vector2(LEFT_W, 0)
 	var sb := Th.box(Th.BG_PANEL, Th.BORDER, 0, 10, 10)
 	sb.set_border_width_all(0)
 	sb.border_width_right = 1
-	wrap.add_theme_stylebox_override("panel", sb)
+	box.add_theme_stylebox_override("panel", sb)
 	var col := Kit.vbox(8)
-	wrap.add_child(col)
+	box.add_child(col)
 
 	var head := Kit.hbox(6)
 	_left_title = Kit.section_label("实例")
@@ -114,42 +114,42 @@ func _build_left() -> Control:
 	col.add_child(scroll)
 
 	col.add_child(Kit.hint_label("点画布上的实体选中同一行。", LEFT_W - 24))
-	return wrap
+	return box
 
 # ──────────── 中列：只读画布预览（实现在 src/ui/content_preview.gd） ────────────
 
 func _build_middle() -> Control:
-	var wrap := Control.new()
-	wrap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	wrap.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	wrap.custom_minimum_size = Vector2(240, 0)
+	var box := Control.new()
+	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	box.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	box.custom_minimum_size = Vector2(240, 0)
 
 	var bg := PanelContainer.new()
 	bg.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	bg.add_theme_stylebox_override("panel", Th.flat(Th.BG_VOID, 0))
-	wrap.add_child(bg)
+	box.add_child(bg)
 
 	_preview = Preview.new(self)
 	_preview.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	wrap.add_child(_preview)
+	box.add_child(_preview)
 
 	var hint := Kit.text_label("只读预览 · 滚轮缩放 · 中键拖动 · 点击实例选中", Th.TEXT_MUTE, Th.FS_META)
 	hint.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	hint.position = Vector2(12, 10)
-	wrap.add_child(hint)
-	return wrap
+	box.add_child(hint)
+	return box
 
 # ──────────── 右列：实例与功能 ────────────
 
 func _build_right() -> Control:
-	var wrap := PanelContainer.new()
-	wrap.custom_minimum_size = Vector2(RIGHT_W, 0)
+	var box := PanelContainer.new()
+	box.custom_minimum_size = Vector2(RIGHT_W, 0)
 	var sb := Th.box(Th.BG_PANEL, Th.BORDER, 0, 12, 10)
 	sb.set_border_width_all(0)
 	sb.border_width_left = 1
-	wrap.add_theme_stylebox_override("panel", sb)
+	box.add_theme_stylebox_override("panel", sb)
 	var col := Kit.vbox(10)
-	wrap.add_child(col)
+	box.add_child(col)
 
 	var head := Kit.hbox(8)
 	_r_name = Kit.text_label("—", Th.TEXT, Th.FS_MD)
@@ -170,7 +170,7 @@ func _build_right() -> Control:
 	_r_body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.add_child(_r_body)
 	col.add_child(scroll)
-	return wrap
+	return box
 
 # ──────────── 刷新入口（project_shell 调用） ────────────
 

@@ -45,13 +45,13 @@ func build() -> void:
 
 ## 顶栏：模式切换（关卡/内容/资产）+ 当前视图名 + 项目徽章 + 保存
 func _build_top_bar() -> PanelContainer:
-	var wrap := PanelContainer.new()
+	var box := PanelContainer.new()
 	var sb := Th.box(Th.BG_BASE, Th.BORDER, 0, 12, 8)
 	sb.set_border_width_all(0)
 	sb.border_width_bottom = 1
-	wrap.add_theme_stylebox_override("panel", sb)
+	box.add_theme_stylebox_override("panel", sb)
 	var bar := Kit.hbox(10)
-	wrap.add_child(bar)
+	box.add_child(bar)
 	_title = Kit.text_label("项目", Th.TEXT, Th.FS_LG)
 	bar.add_child(_title)
 	bar.add_child(Kit.badge(str(manifest.get("projectName", "?")), Th.ACCENT))
@@ -66,22 +66,22 @@ func _build_top_bar() -> PanelContainer:
 	var save := Kit.button("保存", func(): save_current(), "primary")
 	save.tooltip_text = "保存当前视图对应的数据（Ctrl+S）"
 	bar.add_child(save)
-	return wrap
+	return box
 
 ## 底栏：状态消息常驻，与画布状态栏同一套视觉
 func _build_status_bar() -> PanelContainer:
-	var wrap := PanelContainer.new()
+	var box := PanelContainer.new()
 	var sb := Th.box(Th.BG_BASE, Th.BORDER, 0, 12, 5)
 	sb.set_border_width_all(0)
 	sb.border_width_top = 1
-	wrap.add_theme_stylebox_override("panel", sb)
+	box.add_theme_stylebox_override("panel", sb)
 	var h := Kit.hbox(10)
-	wrap.add_child(h)
+	box.add_child(h)
 	_status = Kit.text_label("就绪", Th.TEXT_DIM, Th.FS_SMALL)
 	_status.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_status.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	h.add_child(_status)
-	return wrap
+	return box
 
 func _build_views() -> void:
 	asset_panel = AssetPanelScript.new()

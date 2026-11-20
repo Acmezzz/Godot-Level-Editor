@@ -35,11 +35,11 @@ func _set_status(msg: String) -> void:
 ## —— 问题抽屉（REFACTOR_PLAN 4.6-3）：project_audit 的呈现层 ——
 
 func _build_issues_drawer() -> PanelContainer:
-	var wrap := PanelContainer.new()
+	var box := PanelContainer.new()
 	var sb = app.UiThemeScript.box(app.UiThemeScript.BG_PANEL, app.UiThemeScript.BORDER, 0, 10, 6)
 	sb.set_border_width_all(0)
 	sb.border_width_top = 1
-	wrap.add_theme_stylebox_override("panel", sb)
+	box.add_theme_stylebox_override("panel", sb)
 	var head = app.UiKitScript.hbox(8)
 	# 标题即开关：点一下折叠/展开条目列表
 	var head_btn: Button = app.UiKitScript.button("问题 0", func(): _toggle_issues_drawer(), "plain")
@@ -51,7 +51,7 @@ func _build_issues_drawer() -> PanelContainer:
 	rerun.tooltip_text = "重新扫描全项目"  # 读回校验锚
 	head.add_child(rerun)
 	# 条目列表（展开时显示；行点击跳转；ScrollContainer 封顶防吞屏）
-	_issues_drawer = wrap
+	_issues_drawer = box
 	var scroll := ScrollContainer.new()
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	_issues_scroll = scroll
@@ -62,10 +62,10 @@ func _build_issues_drawer() -> PanelContainer:
 	col.add_child(head)
 	col.add_child(scroll)
 	scroll.add_child(body)
-	wrap.add_child(col)
+	box.add_child(col)
 	body.visible = false
-	wrap.visible = false
-	return wrap
+	box.visible = false
+	return box
 
 ## —— 全项目自检（REFACTOR_PLAN 4.6-3）：project_audit 的呈现层 ——
 

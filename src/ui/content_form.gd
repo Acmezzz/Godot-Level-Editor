@@ -266,7 +266,7 @@ func _resolve_options(decl: Dictionary) -> Array:
 		# asset:<kind>[:<id,id>] —— 资产引用（asset_ref）的选项来源；值 = 资产 id。
 		var parts := src.substr(6).split(":", false)
 		var want_kind := str(parts[0]) if parts.size() > 0 else ""
-		var want_ids: Array = str(parts[1]).split(",", false) if parts.size() > 1 and str(parts[1]) != "" else []
+		var want_ids: Array = Array(str(parts[1]).split(",", false)) if parts.size() > 1 and str(parts[1]) != "" else []
 		var assets := AssetDecl.all(manifest)
 		var out6: Array = []
 		for a in assets:
