@@ -1,12 +1,12 @@
 extends SceneTree
-## 一次性迁移脚本：把游戏工程搬成 v5 契约（跑完即可删除，不进长期代码库）。
+## 一次性迁移脚本：把游戏工程搬成 v6 契约（跑完即可删除，不进长期代码库）。
 ##
 ##   godot --headless --path <编辑器工程> --script res://tools/migrate_project.gd -- <游戏项目目录>
 ##
 ## 做三件事：
 ##   1. 清单 tiles[] + entities[] → assets[]（kind=scene/entity；tile 场景带 shape=tile）
-##   2. 地图 version → 5；瓦片条目第 3 位「图集索引」→「资产 id 字符串」
-##   3. 地图 entities[] → objects[]（scene→asset 键；x/y 保持整数，浮点由编辑器按需写）
+##   2. 地图 version → 6；瓦片条目第 3 位「图集索引」→「资产 id 字符串」
+##   3. 地图 entities[] → objects[]（scene→asset 键）；collision[] 数组条目 → 对象 {x, y}
 ##   4. 幂等：已是终态的数据再跑一遍不产生改动；缺失目录/空清单/半截数据一律跳过并打印
 ##
 ## 明确不搬运的东西（结构不同，交人工处理，脚本只报告）：
@@ -170,6 +170,29 @@ func _migrate_maps(dir: String) -> int:
 			md["objects"] = objs
 			md.erase("entities")
 			dirty = true
+		# collision[]：v5 数组条目 → v6 对象 {x, y, type?, shape?}（缺省省略，幂等）
+		var cols = md.get("collision", null)
+		if cols is Array:
+			var outc: Array = []
+			var conv := false
+			for ce in (cols as Array):
+				if ce is Dictionary:
+					outc.append(ce)
+					continue
+				if not (ce is Array) or (ce as Array).size() < 2:
+					continue
+				var ca: Array = ce
+				var od := {"x": int(ca[0]), "y": int(ca[1])}
+				if (ca as Array).size() >= 3 and str(ca[2]) != "" and str(ca[2]) != "solid":
+					od["type"] = str(ca[2])
+				if (ca as Array).size() >= 4 and str(ca[3]) != "":
+					od["shape"] = str(ca[3])
+				outc.append(od)
+				conv = true
+			if conv:
+				md["collision"] = outc
+				dirty = true
+		# 层参数 / collisionTypes / ySortOrigin 是**加键不破形**：清单/地图加可选键不迁移。
 		if int(md.get("version", 0)) != MapStore.FORMAT_VERSION:
 			md["version"] = MapStore.FORMAT_VERSION
 			dirty = true
@@ -178,7 +201,7 @@ func _migrate_maps(dir: String) -> int:
 				print("  写盘失败：%s" % f)
 				continue
 			changed += 1
-	print("  地图 → v5（改动 %d 个文件）" % changed)
+	print("  地图 → v6（改动 %d 个文件）" % changed)
 	return 0
 
 func _read_json(path: String):

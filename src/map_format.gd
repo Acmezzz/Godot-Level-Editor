@@ -10,4 +10,7 @@ extends RefCounted
 ## （tiles={层id:[[x,y,<资产id>,ax,ay]...]}）；清单侧 tiles[]/entities[] 合并为
 ## assets[]（kind=scene/entity）；地图侧 entities[] 并入 objects[]（场景图片与实体实例
 ## 同形，`asset` 指资产、`code` 只属于实体、x/y 为浮点格坐标、transform 缺省省略）。
-const VERSION := 5
+## v6：collision[] 条目由定长数组 [x,y,(type,(shape))] 改为**对象** {x, y, type?, shape?}
+## （缺省省略：type 缺省 solid、shape 缺省矩形）；清单顶层新增 collisionTypes 声明池、
+## meta.layers 层参数（parallax/ySort/offset/scale）、瓦片 palette 条目 ySortOrigin。
+const VERSION := 6

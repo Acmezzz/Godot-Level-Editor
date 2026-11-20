@@ -2,6 +2,7 @@ extends RefCounted
 ## _layout_ctrl：从 src/app.gd 拆出的控制器。宿主状态经 app 引用。
 
 const TopBarNavScript := preload("res://src/ui/top_bar_nav.gd")
+const CollisionTypes := preload("res://src/core/collision_types.gd")
 
 var app   # 宿主引用
 # 状态栏的常驻指示（与左侧消息分离，避免互相覆盖）
@@ -257,16 +258,18 @@ func _build_palette_column() -> PanelContainer:
 	var grid_hint: VBoxContainer = app.UiKitScript.vbox(8)
 	grid_hint.visible = false
 
-	# 类型：solid / one_way / ladder / hazard（与 game 侧 map_loader 消费的类型一一对应）
+	# 类型：清单 collisionTypes 声明（没声明用内置缺省池）；gameplay 语义归游戏侧
 	var type_row: HBoxContainer = app.UiKitScript.hbox(8)
 	type_row.add_child(app.UiKitScript.text_label("类型", app.UiThemeScript.TEXT_DIM, app.UiThemeScript.FS_SMALL))
 	var type_opt := OptionButton.new()
 	type_opt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	for spec in [["solid", "实心（整格阻挡）"], ["one_way", "只碰顶面（可下跳穿）"],
-			["ladder", "梯子（可攀爬）"], ["hazard", "危险格（伤害）"]]:
-		type_opt.add_item(str(spec[1]))
-		type_opt.set_item_metadata(type_opt.item_count - 1, str(spec[0]))
-	type_opt.tooltip_text = "这一笔画下去的碰撞类型；游戏侧按类型生成不同物理体"
+	for row in CollisionTypes.pool(app.manifest):
+		var d: Dictionary = row
+		var tid := str(d.get("id", ""))
+		var nm := str(d.get("name", tid))
+		type_opt.add_item("%s（%s）" % [nm, tid] if nm != tid else tid)
+		type_opt.set_item_metadata(type_opt.item_count - 1, tid)
+	type_opt.tooltip_text = "这一笔画下去的碰撞类型；类型池与形状/颜色由清单 collisionTypes 声明"
 	type_opt.item_selected.connect(func(i: int):
 		app.canvas.collision_type = str(type_opt.get_item_metadata(i))
 		app._set_status("碰撞类型：%s" % str(type_opt.get_item_text(i)))
@@ -419,11 +422,8 @@ func _refresh_tool_meta() -> void:
 	_meta_tool.text = "%s%s" % [app._layer_label(app.canvas.active_layer), suffix]
 
 func _collision_type_label(t: String) -> String:
-	match t:
-		"one_way": return "只碰顶面"
-		"ladder": return "梯子"
-		"hazard": return "危险格"
-		_: return "实心"
+	var d: Dictionary = CollisionTypes.decl_of(app.manifest, t)
+	return str(d.get("name", t))
 
 func _diagonal_shape_label(s: String) -> String:
 	match s:

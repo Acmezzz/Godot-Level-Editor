@@ -46,6 +46,7 @@
 | `entities` | — | **已退役**：并入 `assets[]`（`kind: "entity"`）。清单里出现即报错 |
 | `functions` | dict \| array | 功能声明，见 2.5 |
 | `triggers` | dict \| array | 时机池，见 2.5.4。只有 `{id, name}`，是功能/绑定引用的标签 |
+| `collisionTypes` | dict \| array | 碰撞类型池，见 2.8：画布画什么形状/颜色 + 游戏侧解释标签 gameplay |
 | `contentDir` | string | 内容根目录（相对工程根），缺省 `content`；不允许 `..` 或绝对路径 |
 | `playCommand` | string | 试玩命令模板；支持 `%mapfile%`、`%projectpath%` |
 | `godotExe` | string | 可选，覆盖 `playCommand` 首个可执行文件路径；支持 `%projectpath%` |
@@ -112,8 +113,8 @@ solid+矩形碰撞：`col.set_cell(cell, 0, Vector2i(4,0))`。
 层只进渲染管线。
 
 - **混合层**：一层可同时有瓦片和实体；没有固定 BG/FL 语义（`资产层`/`FL` 只是新建图的
-  默认名），用户自建任意数量的层（背景差分、前景遮挡、事件区专用层……）。
-- 数组序 = **栈序**（底→顶）= 绘制序；同层内瓦片先画、实体后画。
+  默认名），用户自建任意数量的层（背景差分、前景编辑、事件区专用层……）。
+- 数组序 = **栈序**（底→顶）= 绘制序；同层内瓦片先画、实体后画（层未开 `ySort` 时）。
 - `id` = 4 位码，出生即定、改名不破引用（实体 `layer` / 瓦片 `tiles` 键都引用它）。
 - `visible` = **运行时初始可见**（差分视图用，默认 true）；游戏侧「开关图层显示」类功能
   配合功能字段 `source: "layer:"` 在运行时切层显隐（BOSS 转阶段换景走这条路）。
@@ -121,8 +122,32 @@ solid+矩形碰撞：`col.set_cell(cell, 0, Vector2i(4,0))`。
 - **碰撞不在层栈里**：碰撞与 z 序无关（游戏内不可见），是独立的元数据网格（见 3.3）。
 - **清单 `layers[]` 已退役**：图层逐图声明，清单不再有 layers 键。
 
-游戏侧对应：按 `meta.layers` 栈序建渲染容器（栈序 = z 序），每层一个瓦片容器 + 实体节点，
-同层瓦片先实体后；碰撞读 `collision` 网格（约 30 行，同 CODES.md 映射模式）。
+**层参数（可选，缺省省略）**：
+
+| 键 | 语义 | 缺省 |
+|---|---|---|
+| `parallax` | 视差系数：1.0 = 跟随，0.5 = 半速，0 = 固定（编辑器画布按相机位移反向平移预览） | 1.0 |
+| `ySort` | 该层内瓦片与实例一起按排序点 y 绘制（遮挡模型，见下） | false |
+| `offset` | `[x, y]` 像素，层的整体偏移 | `[0, 0]` |
+| `scale` | 层的整体缩放 | 1.0 |
+
+**遮挡模型（3.7）**：层是硬边界——跨层只按栈序，任何对象都不能越过层；**全程不写 `z_index`**。
+同层内三个分段，树序保证顺序、段内 y-sort 保证交错：
+
+```
+层容器（不启用 y_sort）
+├── below   永久被同层所有东西盖住（zPolicy: below 的实例进这里）
+├── YSort   瓦片 + zPolicy:auto 的实例同住一个 y-sorted 父（层声明 ySort:true 时生效）
+└── above   永久盖住同层所有东西（zPolicy: above 的实例进这里）
+```
+
+排序点 = 资产 `anchor`（实例覆盖 `sortAnchor`），瓦片用 palette 条目 `ySortOrigin`
+（像素，相对切片顶部，缺省 = 切片底部）。`zPolicy` 是同层内的分组，不是全局 z。
+未开 `ySort` 的层：YSort 段退化为摆放先后（树序）。
+
+游戏侧对应：按 `meta.layers` 栈序建渲染容器，**每层建同样的三段容器、不写 `z_index`**；
+瓦片与 auto 实例放进同一个 y-sorted 父节点（层声明 ySort 时开 `y_sort_enabled`）；
+碰撞读 `collision` 网格。
 
 ### 2.4 实体资产 `kind: "entity"`
 
@@ -461,19 +486,43 @@ BGM 切换、环境音触发、音效播放在哪一步响起，都是功能代�
 `trigger_zone` **没有 prefab**，游戏侧必须自己按 `props.w/h` 建 Area2D
 （不要指望按 scene 查 prefab 的通用实例化逻辑能处理它，那一步会取不到 prefab 而跳过）。
 
+### 2.8 碰撞类型池 `collisionTypes`（顶层声明池）
+
+碰撞**类型集**由清单声明；类型决定画布画什么（形状/颜色），语义归游戏侧：
+
+```json
+"collisionTypes": {
+  "solid":   {"name": "阻挡", "shape": "rect", "gameplay": "block"},
+  "one_way": {"name": "单向", "shape": "rect", "gameplay": "one_way"},
+  "ice":     {"name": "冰面", "shape": "rect", "gameplay": "slide", "color": "#88ccff"}
+}
+```
+
+| 键 | 说明 |
+|---|---|
+| `name` | 编辑器下拉显示名 |
+| `shape` | 编辑器画什么：`rect` / `triangle_r` / `triangle_l` / `circle` / `polygon`（缺省 `rect`；画布目前只画 rect/斜坡，其余按矩形画） |
+| `gameplay` | 游戏侧自己的解释标签，编辑器只存取不解释 |
+| `color` | 可选，画布色块颜色（`#rrggbb`）；未声明按 id 稳定取色 |
+
+缺省池 = 内置四类（solid/one_way/ladder/hazard）；**声明即整体覆盖**（不混搭内置）。
+碰撞条目的 `type` 写类型 id，校验只查形状与唯一性；未声明的类型 id 游戏侧自行降级。
+
 ## 3. 地图 JSON `maps/<名>.json`
 
-### 3.1 顶层结构（格式版本 `version: 5`）
+### 3.1 顶层结构（格式版本 `version: 6`）
 
 ```json
 {
-  "version": 5,
+  "version": 6,
   "meta": {"name": "TEST", "w": 95, "h": 56, "code": "K7QM",
-           "layers": [{"id": "K2M8", "name": "资产层", "visible": true},
+           "layers": [{"id": "K2M8", "name": "资产层", "visible": true,
+                       "parallax": 0.5, "ySort": false, "offset": [0, 0], "scale": 1.0},
                       {"id": "F9W3", "name": "FL", "visible": true}]},
   "spawn": [28, 28],
   "tiles": {"K2M8": [[21, 24, "terrain", 1, 2]], "F9W3": [[5, 9, "terrain", 3, 0]]},
-  "collision": [[21, 24], [30, 12, "one_way"], [33, 4, "solid", "r45"]],
+  "collision": [{"x": 21, "y": 24}, {"x": 30, "y": 12, "type": "one_way"},
+                {"x": 33, "y": 4, "type": "hazard", "shape": "r45"}],
   "objects": [
     {"asset": "portal", "code": "QK3T", "layer": "K2M8", "x": 31.5, "y": 28,
      "props": {"target_point": "L8WM"}, "functions": []},
@@ -485,10 +534,12 @@ BGM 切换、环境音触发、音效播放在哪一步响起，都是功能代�
 > **`objects[]` 是唯一入口**：场景图片实例与实体实例同形（`asset` 指资产），
 > 差别只有 `code`——只有 `kind: "entity"` 的资产才有实例码。旧 `entities[]` 段
 > 已被校验拒绝，用 `tools/migrate_project.gd` 转换（`scene` 键改名 `asset`）。
+> **v6**：`collision[]` 条目由定长数组改为对象 `{x, y, type?, shape?}`（缺省省略）；
+> v5 数组条目校验报错，跑迁移脚本转换。
 
 | 键 | 必填 | 语义 |
 |---|---|---|
-| `version` | 是 | 当前为 5；高于 5 = 编辑器打不开（报错），低于 5 = 警告并按当前结构读 |
+| `version` | 是 | 当前为 6；高于 6 = 编辑器打不开（报错），低于 6 = 警告并按当前结构读 |
 | `meta` | 否 | 对象。编辑器只读 `name`/`w`/`h`/`code`/`layers`；**其他键原样保留**（游戏侧自定义键安全） |
 | `meta.w` / `meta.h` | 否 | 地图格尺寸，缺省 120×56 |
 | `meta.code` | 否 | 4 位地图身份码，编辑器缺省补发。改名不改变它 |
@@ -520,28 +571,25 @@ BGM 切换、环境音触发、音效播放在哪一步响起，都是功能代�
 
 ### 3.3 碰撞条目 `collision[]`
 
-三种写法，**由长到短**（缺省值零冗余写出）：
+### 3.3 碰撞条目 `collision[]`（v6 对象）
 
+**v6 起 `collision[]` 条目是对象**，缺省省略（写盘规则 `undo_history.extract`）：
+
+```json
+{"x": 21, "y": 24}                                # = solid + 矩形
+{"x": 30, "y": 12, "type": "one_way"}             # 类型化的矩形
+{"x": 33, "y": 4, "type": "hazard", "shape": "r45"}   # 类型化 + 斜坡
 ```
-[x, y]                        # = solid + 矩形
-[x, y, type]                  # 类型化的矩形
-[x, y, type, shape]           # 类型化 + 斜坡
-```
 
-| 位 | 语义 |
-|---|---|
-| 0, 1 | 格坐标 |
-| 2 | 类型，缺省 `"solid"` |
-| 3 | 形状，缺省 `""`（矩形） |
-
-**类型**（编辑器 UI 的 4 个选项，游戏侧按此语义实现）：
-
-| type | 语义 | 游戏侧实现 |
+| 键 | 语义 | 缺省 |
 |---|---|---|
-| `solid` | 整格阻挡 | `solid` + 矩形 → 隐形瓦片；其余 → StaticBody2D |
-| `one_way` | 只碰顶面，可下跳穿 | StaticBody2D + `one_way_collision = true` |
-| `ladder` | 可攀爬 | Area2D，加入组 `ladder`，`meta.ctype = "ladder"` |
-| `hazard` | 伤害格 | Area2D，加入组 `hazard`，`meta.ctype = "hazard"` |
+| `x` / `y` | 格坐标 | 必填 |
+| `type` | 碰撞类型 id；语义归游戏侧 | `"solid"` |
+| `shape` | 形状：`""`（矩形）/ `r45` / `l45` | `""` |
+
+**类型集由清单 `collisionTypes` 声明**（见 §2.8）。缺省池是内置四类（solid/one_way/ladder/hazard），
+声明即整体覆盖；`gameplay` 是游戏侧自己的解释标签，编辑器只存取不解释。
+编辑器画布按声明的 `shape`/`color` 画色块；游戏侧按 `type` 分发行为。
 
 **形状**（只对 solid / one_way 有意义，其他类型按整格）：
 
@@ -551,9 +599,8 @@ BGM 切换、环境音触发、音效播放在哪一步响起，都是功能代�
 | `r45` | 右高：`(0,T)-(T,0)-(T,T)` |
 | `l45` | 左高：`(0,0)-(T,T)-(0,T)` |
 
-写盘规则（`undo_history.extract`）：`type == "solid" && shape == ""` → 只写 `[x,y]`；
-`shape == ""` → 写 `[x,y,type]`；否则写 4 元。编辑器读回来时按同样规则还原，
-所以**游戏侧也必须按缺省值解释**，不能要求显式 `"solid"`。
+**游戏侧必须按缺省值解释**（没有 `type` 键 = solid、没有 `shape` 键 = 矩形），不能要求显式键。
+v5 的定长数组条目校验报错（跑 `tools/migrate_project.gd`）。
 
 **`collision` 键缺失与 `[]` 等价**——两侧都是「无碰撞」。编辑器没有任何由地形生成碰撞的兜底
 （「从地形生成碰撞」是编辑器里的手动辅助功能，只在你点弹窗时执行）。

@@ -83,19 +83,19 @@ func extract() -> Dictionary:
 				continue   # source 不属于任何声明资产：不写出坏条目
 			cells.append([c.x, c.y, aid, ac.x, ac.y])
 		tiles[lid] = cells
-	# 碰撞条目带类型/形状（solid+矩形只写 [x,y]——契约缺省值零冗余）
+	# 碰撞条目对象（v6）：{x, y}，type 缺省省略（solid）、shape 缺省省略（矩形）。
 	var ccells := []
 	for c in cvs.collision.get_used_cells():
 		var cm = cvs._collision_meta.get(c, null)
+		var d := {"x": c.x, "y": c.y}
 		if cm != null:
 			var ct := str(cm.get("type", "solid"))
 			var cs := str(cm.get("shape", ""))
+			if ct != "" and ct != "solid":
+				d["type"] = ct
 			if cs != "":
-				ccells.append([c.x, c.y, ct, cs])
-			else:
-				ccells.append([c.x, c.y, ct])
-		else:
-			ccells.append([c.x, c.y])
+				d["shape"] = cs
+		ccells.append(d)
 	# 摆放物：以加载时保存的原条目为底（保留游戏侧自定义键），只覆盖编辑器管辖的键。
 	# 白名单重建会让未知键在保存时蒸发——这是最早发现、影响最大的一处丢数据。
 	var olist := []

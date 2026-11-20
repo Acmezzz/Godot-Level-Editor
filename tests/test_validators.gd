@@ -115,3 +115,14 @@ func test_new_input_types_accepted() -> void:
 	fields.append({"id": "curve", "code": "A444", "kind": "input", "type": "range", "default": 0.5, "min": 0.0, "max": 1.0})
 	fields.append({"id": "asset", "code": "A555", "kind": "input", "type": "asset_ref", "default": ""})
 	eq(_errs_of(m).size(), 0, "新字段类型全部合法：%s" % str(_errs_of(m)))
+
+func test_collision_types_decl() -> void:
+	var m := _good()
+	m["collisionTypes"] = {"ice": {"name": "冰面", "shape": "rect", "gameplay": "slide"}}
+	eq(_errs_of(m).size(), 0, "合法碰撞类型池零错误")
+	var m2 := _good()
+	m2["collisionTypes"] = {"bad": {"name": "斜", "shape": "wedge"}}
+	ok(_errs_of(m2).size() >= 1, "shape 非法报错")
+	var m3 := _good()
+	m3["collisionTypes"] = [{"id": "a"}, {"id": "a"}]
+	ok(_errs_of(m3).size() >= 1, "数组写法 id 重复报错")

@@ -16,6 +16,7 @@ const MapStoreRef := preload("res://src/map_store.gd")   # 地图数据层（读
 const ContentIdRef := preload("res://src/content/content_id.gd")   # 分层身份码
 const AssetDecl := preload("res://src/assets/asset_decl.gd")   # 清单资产表（assets[]）
 const EntityNodeRef := preload("res://src/canvas/entity_node.gd")   # 摆放物节点（场景/实体共用）
+const GridSpaceScript := preload("res://src/canvas/grid_space.gd")   # 格↔像素转换层（正交/等距）
 
 var active_layer := 0          # 0..N-1 = 层栈下标，N = 碰撞元层
 var place_kind := "tiles"      # 放置语义跟资产走："tiles"=涂瓦片 / "object"=摆实例（左栏驱动）
@@ -61,6 +62,7 @@ var thumbs := {}
 ## 实体类型 → 编辑器占位尺寸（像素）。有值时画布按该尺寸画框（比缩略图更接近游戏碰撞）。
 var ent_sizes := {}
 var tile_px := 16
+var grid   # GridSpaceScript：格↔像素转换层（正交/等距），_cell_of 与落点换算走它
 var modified_flag := false
 var cam_pos := Vector2.ZERO      # 相机中心（世界坐标）
 var collision: TileMapLayer      # 碰撞图层（grid 型：只有隐形块）
@@ -76,6 +78,21 @@ func _update_cam() -> void:
 		return  # 无视口（headless 测试）时跳过相机更新
 	var half := vp.get_visible_rect().size * 0.5
 	vp.canvas_transform = Transform2D(0.0, Vector2(zoom, zoom), 0.0, half - cam_pos * zoom)
+	# 层参数预览：parallax ≠ 1 的层按相机位移反向平移（远景半速、0 = 固定）。
+	# offset/scale 在 load_data 时已作用到层容器；这里只补视差分量。
+	var meta: Dictionary = map_data.get("meta", {}) if map_data != null else {}
+	var mw := int(meta.get("w", 0)) * tile_px
+	var mh := int(meta.get("h", 0)) * tile_px
+	var center := Vector2(mw * 0.5, mh * 0.5)
+	for n in layer_ents:
+		var root := n as Node2D
+		if root == null or not is_instance_valid(root):
+			continue
+		var par := float(root.get_meta("parallax", 1.0))
+		var off: Vector2 = root.get_meta("base_pos", root.position)
+		if not root.has_meta("base_pos"):
+			root.set_meta("base_pos", root.position)
+		root.position = off + (cam_pos - center) * (1.0 - par)
 
 # —— 图层栈：地图 meta.layers 声明（[{id, name, visible}]，栈序 = 数组序，底→顶） ——
 ## 层=纯 z 槽只管画画；清单 layers[] 已退役，层词汇逐图声明。
@@ -116,13 +133,54 @@ func _layer_node(i: int) -> TileMapLayer:
 		return layer_tiles[i]
 	return null
 
-## 全层摆放物合集（层栈化后实例分散在各层容器）
+## 全层摆放物合集（遮挡模型后实例分散在每层 below/YSort/above 三段容器）
 func ents_all() -> Array:
 	var out := []
 	for n in layer_ents:
-		if n != null and is_instance_valid(n):
-			out.append_array((n as Node2D).get_children())
+		var root := n as Node2D
+		if root == null or not is_instance_valid(root):
+			continue
+		out.append_array(_layer_entities_of(root))
 	return out
+
+## 一层的三段容器里所有 EntityNode（不含瓦片节点）。
+func _layer_entities_of(root: Node2D) -> Array:
+	var out: Array = []
+	for cname in ["Below", "YSort", "Above"]:
+		var box := root.get_node_or_null(NodePath(cname)) as Node2D
+		if box == null:
+			continue
+		for c in box.get_children():
+			if c is EntityNode:
+				out.append(c)
+	return out
+
+## 单层摆放物合集（命中判定/逐层遍历用）。
+func _layer_entities(li: int) -> Array:
+	if li < 0 or li >= layer_ents.size():
+		return []
+	return _layer_entities_of(layer_ents[li] as Node2D)
+
+## 摆放物按 zPolicy 入段容器（below/YSort/above，缺省 auto）。
+func _place_in_layer(n: EntityNode, li: int) -> void:
+	var root := layer_ents[li] as Node2D
+	if root == null:
+		return
+	var box: Node2D = root.get_node_or_null(NodePath("Below")) if n.z_policy == "below" \
+		else (root.get_node_or_null(NodePath("Above")) if n.z_policy == "above" \
+		else root.get_node_or_null(NodePath("YSort")))
+	if box == null:
+		box = root
+	box.add_child(n)
+	# 同层混放提示（作者提示 ⑤ 前半）：层没开 ySort 但该层已有瓦片又有实例 → 状态栏提示一次
+	if str(root.get_meta("yhint", "")) == "":
+		var has_tiles: bool = (layer_tiles[li] as TileMapLayer).get_used_cells().size() > 0
+		var others: Array = _layer_entities_of(root)
+		var mixed: bool = has_tiles and others.size() > 1
+		if mixed:
+			root.set_meta("yhint", "1")
+			_hint("层「%s」没开 ySort，瓦片与实例按先后绘制；要交错遮挡请给层声明 ySort: true" \
+				% layer_name(li))
 
 ## 图层「看得到的那个节点」：碰撞层看 coll_view（红块），其余看数据节点本身。
 ## 可见性/隐藏一律作用在这个节点上，保证所有图层的显示逻辑走同一条路。
@@ -166,10 +224,16 @@ func _build_tileset() -> bool:
 	var lst: Array = []
 	for a in _tile_assets:
 		var d: Dictionary = a
-		lst.append({"id": str(d.get("id", "")),
+		var aid := str(d.get("id", ""))
+		var ys := {}
+		for p in AssetDecl.palette_of(manifest, aid):
+			var pe: Dictionary = p
+			ys["%d,%d" % [(pe.cell as Vector2i).x, (pe.cell as Vector2i).y]] = int(pe.get("ySortOrigin", 0))
+		lst.append({"id": aid,
 			"atlas_abs": str(d.get("atlas_abs", "")),
-			"cell": AssetDecl.cell_size(manifest, str(d.get("id", "")))})
-	var got := TilesetCache.build(lst, Vector2i(tile_px, tile_px))
+			"cell": AssetDecl.cell_size(manifest, aid),
+			"ysort": ys})
+	var got := TilesetCache.build(lst, Vector2i(tile_px, tile_px), _map_projection())
 	if got.is_empty():
 		return false
 	atlas_imgs = got.imgs
@@ -248,6 +312,8 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	map_root.name = "MapRoot"
 	add_child(map_root)
 	_build_tileset()
+	# 格↔像素转换层（正交/等距）：瓦片资产清单就位后才能判投影
+	grid = GridSpaceScript.new(Vector2i(tile_px, tile_px), _map_projection())
 	# 背景：整块铺满视口（比地图尺寸大得多），作为地图之外区域的底色
 	var meta: Dictionary = data.get("meta", {})
 	# 分层身份码：地图段。老图没有就补发（保存在 meta.code，地图改名不影响它）
@@ -285,20 +351,42 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	field.z_index = -9
 	field.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	map_root.add_child(field)
-	# 层栈节点：按 meta.layers 栈序创建（每层 = 瓦片 TileMapLayer + 实体容器），树序 = 栈序
+	# 层栈节点：按 meta.layers 栈序创建。遮挡模型（REFACTOR_PLAN 3.7）：层 = 三段容器，
+	# below / YSort（瓦片 + auto 实体同住一个 y-sorted 父）/ above；全程不写 z_index，跨层只认栈序。
 	layer_tiles.clear()
 	layer_ents.clear()
 	var L := layers_decl()
 	for li in L.size():
+		var ld: Dictionary = L[li] if L[li] is Dictionary else {}
+		var ly := bool(ld.get("ySort", false))
+		var root := Node2D.new()
+		root.name = "Layer%d" % li
+		var below := Node2D.new()
+		below.name = "Below"
+		var ysp := Node2D.new()
+		ysp.name = "YSort"
+		ysp.y_sort_enabled = ly
 		var tn := TileMapLayer.new()
-		tn.name = "LayerTiles%d" % li
+		tn.name = "Tiles"
 		tn.tile_set = tile_set
-		map_root.add_child(tn)
+		tn.y_sort_enabled = ly
+		ysp.add_child(tn)
+		var above := Node2D.new()
+		above.name = "Above"
+		root.add_child(below)
+		root.add_child(ysp)
+		root.add_child(above)
+		# 层参数预览：offset/scale 作用在层容器；parallax 在 _update_cam 里叠加相机位移
+		var off = ld.get("offset", null)
+		if off is Array and (off as Array).size() >= 2:
+			root.position = Vector2(float((off as Array)[0]), float((off as Array)[1]))
+		var sc = ld.get("scale", null)
+		if sc is int or sc is float:
+			root.scale = Vector2.ONE * float(sc)
+		root.set_meta("parallax", float(ld.get("parallax", 1.0)))
+		map_root.add_child(root)
 		layer_tiles.append(tn)
-		var en := Node2D.new()
-		en.name = "LayerEnts%d" % li
-		map_root.add_child(en)
-		layer_ents.append(en)
+		layer_ents.append(root)
 	# 碰撞图层（grid 型：画上去的都是隐形碰撞块）
 	# 数据仍是 TileMapLayer（隐形格），但节点本身不显示——它那格图集像素会画成灰白网格。
 	# 可视表达交给 CollisionView，由图层接口统一控制显隐，和地形/装饰/实体一致。
@@ -314,6 +402,7 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	map_root.add_child(coll_view)
 	coll_view.setup(collision, tile_px)
 	coll_view.canvas_ref = self   # 读 _collision_meta 做类型化分色分形
+	coll_view.manifest = manifest   # 碰撞类型颜色按清单 collisionTypes 声明
 	# 涂瓦片：tiles = {层id: [[x,y,资产id,ax,ay]...]}（5 元，第 3 位是资产 id 字符串）
 	var tiles_data = data.get("tiles", {})
 	if not (tiles_data is Dictionary):
@@ -327,14 +416,27 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 			if src < 0:
 				continue   # 指向已删资产：跳过，不写坏格子
 			tn2.set_cell(Vector2i(int(arr[0]), int(arr[1])), src, Vector2i(int(arr[3]), int(arr[4])))
-	# 碰撞：[x,y] = solid 缺省（契约零冗余）；[x,y,type,shape] 记入类型元数据（solid+矩形不记）
+	# 碰撞条目对象（v6）：{x, y}，type 缺省省略（solid）、shape 缺省省略（矩形）。
+	# 读侧兼容 v5 数组条目（在内存里归一成对象，保存时写对象），写侧只产对象。
 	for c in data.get("collision", []):
-		var ccell := Vector2i(int(c[0]), int(c[1]))
+		var ce := {}
+		if c is Dictionary:
+			ce = c
+		elif c is Array and (c as Array).size() >= 2:
+			var ca: Array = c
+			ce = {"x": int(ca[0]), "y": int(ca[1])}
+			if (ca as Array).size() >= 3 and str(ca[2]) != "" and str(ca[2]) != "solid":
+				ce["type"] = str(ca[2])
+			if (ca as Array).size() >= 4 and str(ca[3]) != "":
+				ce["shape"] = str(ca[3])
+		else:
+			continue
+		var ccell := Vector2i(int(ce.get("x", 0)), int(ce.get("y", 0)))
 		collision.set_cell(ccell, 0, INVISIBLE_CELL)
-		var tname := str(c[2]) if (c as Array).size() >= 3 else "solid"
-		var sname := str(c[3]) if (c as Array).size() >= 4 else ""
+		var tname := str(ce.get("type", "solid"))
+		var sname := str(ce.get("shape", ""))
 		if tname != "solid" or sname != "":
-			_collision_meta[ccell] = {"type": tname if tname != "" else "solid", "shape": sname}
+			_collision_meta[ccell] = {"type": tname, "shape": sname}
 	# 摆放物：objects[] 统一收场景图片与实体（数据形状一致，仅 entity 带 code）。
 	# 位置 = 浮点格坐标 + anchor 换算；transform/visible/zPolicy 缺省整键省略。
 	var bottom := layer_id(0)
@@ -359,7 +461,7 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 		n.layer_id = layer_id(ei)
 		n.refresh_visual()   # props 就位后再算一次尺寸（sizeFields 资产按 props 定大小）
 		n.apply_grid(float((e as Dictionary).get("x", 0)), float((e as Dictionary).get("y", 0)))
-		(layer_ents[ei] as Node2D).add_child(n)
+		_place_in_layer(n, ei)
 		_ensure_code(n)
 	# 出生点（数据是格坐标，画布上落在格中心）
 	spawn = Marker2D.new()
@@ -471,12 +573,18 @@ func _entity_hit(pos: Vector2) -> EntityNode:
 
 ## 指定层的实体命中（擦除只认当前层）
 func _entity_hit_on(li: int, pos: Vector2) -> EntityNode:
-	if li < 0 or li >= layer_ents.size():
-		return null
-	return _selection_ops_ctrl._entity_hit_in((layer_ents[li] as Node2D).get_children(), pos)
+	return _selection_ops_ctrl._entity_hit_in(_layer_entities(li), pos)
 
 func _cell_of(pos: Vector2) -> Vector2i:
-	return Vector2i(int(floor(pos.x / tile_px)), int(floor(pos.y / tile_px)))
+	var g: Vector2 = grid.to_grid(pos)
+	return Vector2i(floori(g.x), floori(g.y))
+
+## 地图投影：任一瓦片资产声明 isometric 即等距（混投影由清单校验给警告）。
+func _map_projection() -> String:
+	for a in _tile_assets:
+		if str((a as Dictionary).get("gridProjection", "orthogonal")) == "isometric":
+			return "isometric"
+	return "orthogonal"
 
 ## 放置/拖动落点：吸附开启时把「数据格坐标」四舍五入到整格（对齐锚点在格内的位置，
 ## 与实例尺寸无关）。关闭时原样保留。

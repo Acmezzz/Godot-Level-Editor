@@ -25,11 +25,13 @@ src/
 ├── playtest.gd             试玩：按清单命令模板拉起游戏进程并跟踪
 ├── core/                   —— 与画布无关的编辑器核心 ——
 │   ├── constants.gd        共享常量（地图默认尺寸、碰撞占位格等，只有这一处定义）
+│   ├── collision_types.gd  碰撞类型池：collisionTypes 归一化 + 内置缺省池（声明即整体覆盖）
 │   ├── editor_state.gd     画布状态的唯一写入口：选了什么层/资产，改完自动刷新界面
 │   ├── undo_history.gd     撤销/重做：整图快照，最多 80 步
 │   └── side_actions.gd     地图改名/复制、按名开图、按 id 删实体
 ├── canvas/                 —— 画布（关卡编辑器主体） ——
-│   ├── editor_canvas.gd    画布宿主：装载地图、混合层栈节点（meta.layers 逐图声明）、相机、序列化
+│   ├── editor_canvas.gd    画布宿主：装载地图、三段遮挡容器层栈（meta.layers 逐图声明）、相机、序列化
+│   ├── grid_space.gd       格↔像素转换层：正交/等距两套（等距 = Godot 原生菱形 tile_shape）
 │   ├── entity_node.gd      一个摆放物的唯一运行时表示（场景图片实例与实体实例共用，anchors/transform/尺寸）
 │   ├── canvas_draw.gd      画布上画什么：网格、幽灵预览、连线、占位框、visual:rect 实体、选区
 │   ├── canvas_input.gd     鼠标事件分派：缩放平移、涂/擦、框选、拖拽
@@ -137,7 +139,8 @@ src/
 | `contentDir` | 可选：内容根目录，默认 `content` |
 
 **图层**：地图 `meta.layers` 逐图声明（见 §4.1），清单不再有 layers 键。
-碰撞类型（solid/one_way/ladder/hazard）由游戏侧 `map_loader` 消费，两边一一对应。
+碰撞类型集由清单 `collisionTypes` 声明（缺省池 = 内置四类 solid/one_way/ladder/hazard；
+声明即整体覆盖），`gameplay` 标签由游戏侧 `map_loader` 消费实现行为。
 
 > 游戏工程该怎样声明清单/读地图/实现功能，见 **[GAME_SIDE_STANDARD.md](GAME_SIDE_STANDARD.md)**（数据契约唯一权威）。
 
@@ -169,19 +172,19 @@ src/
 | **外部改动检测** | 打开后磁盘 mtime 变了 → 保存时提示「本次保存覆盖了外部改动」 |
 | 地图名校验 | 拒绝 `/ \ : * ? " < > \|`、`..`、点开头/结尾、`con/prn/aux/nul`；路径必须仍在 maps 目录内 |
 | 读取容错 | 文件打不开 / JSON 非对象 / 结构校验失败 → 状态栏报错并附问题条目，不崩溃 |
-| 格式版本 | 当前 `FORMAT_VERSION = 5`（零兼容，旧版本不升级）；层栈/瓦片按层键存，见 §4.1 |
+| 格式版本 | 当前 `FORMAT_VERSION = 6`（零兼容，旧版本不升级；v5 碰撞数组条目校验报错，跑迁移脚本）；层栈/瓦片按层键存，见 §4.1 |
 
 地图 JSON（与游戏侧 `MapLoader` 同构）：
 
 ```json
 {
-  "version": 5,
+  "version": 6,
   "meta": { "name": "level_1", "w": 120, "h": 56, "code": "K7QM",
 			"layers": [{ "id": "L1C3", "name": "资产层", "visible": true },
-					   { "id": "T8N5", "name": "FL", "visible": true }] },
+					   { "id": "T8N5", "name": "远景", "visible": true, "parallax": 0.5, "ySort": false, "offset": [0, 0], "scale": 1.0 }] },
   "spawn": [2, 2],
   "tiles": { "L1C3": [[x, y, "terrain", ax, ay]], "T8N5": [[x, y, "decor", ax, ay]] },
-  "collision": [[x, y, "one_way", "r45"], [x, y]],
+  "collision": [{ "x": 21, "y": 24 }, { "x": 30, "y": 12, "type": "one_way", "shape": "r45" }],
   "objects": [
 	{ "asset": "crawler", "code": "B3XD", "layer": "L1C3",
 	  "x": 10.5, "y": 8,
@@ -198,7 +201,8 @@ src/
 - 瓦片按层存：`tiles` 键 = 层码，数组条目 [x, y, 资产id, ax, ay]，第 3 位是**资产 id 字符串**
   （指向清单 `assets[]` 里 `shape=tile` 的条目），4/5 位是图集内格坐标。切片尺寸取该资产的 `cell`
   （可为非正方形、可大于地图格），不写在地图里——换图集/重排 `assets[]` 都不会破引用。
-- `collision` 只有类型非 `solid` 或形状非矩形时才追加第 3/4 位，缺省值零冗余。
+- `collision` 条目为**对象**（v6）：`{x, y}`，`type` 缺省省略（solid）、`shape` 缺省省略（矩形）；
+  类型集由清单 `collisionTypes` 声明（缺省池 = 内置四类，声明即整体覆盖）。
 - `objects[]` 统一收**场景图片实例**（`kind=scene`、`shape=image`）与**实体实例**（`kind=entity`）：
   同形，差别只有 `code`——只有实体才产实例码。`scene` 键已作废（改为 `asset`）。
   `transform` 缺省整键省略；`visible`/`zPolicy`/`sortAnchor` 同样缺省省略。
@@ -212,12 +216,23 @@ src/
 
 ## 4. 画布与图层
 
-### 4.1 图层栈（层 = 纯 z 槽，只管画画）
+### 4.1 图层栈（层 = 纯 z 槽 + 三段遮挡容器）
 
 图层来自**地图 `meta.layers`**（不是清单）：新建图默认「资产层 / FL」两层（纯命名约定），
-用户可自建任意数量的层（背景差分、前景遮挡、事件区专用层……）。数组序 = 栈序（底→顶）=
-绘制序；**一层可混瓦片与实体**（同层瓦片先画、实体后画）；执行层面与层无关——
-不同层的实体照常交互。
+用户可自建任意数量的层。数组序 = 栈序（底→顶）= 绘制序，跨层只认栈序、全程不写 `z_index`；
+**一层可混瓦片与实例**。层条目可选参数（缺省省略）：
+
+| 参数 | 语义（编辑器预览） |
+|---|---|
+| `parallax` | 视差系数（0–1）：画布按相机位移反向平移，远景半速、0 = 固定 |
+| `ySort` | 层内瓦片与实例一起按排序点 y 绘制（层容器建三段：below / YSort / above） |
+| `offset` / `scale` | 层容器的整体偏移与缩放，画布直接生效 |
+
+**遮挡模型**：每层建 below / YSort(含瓦片与 auto 实体) / above 三段容器，
+实例按 `zPolicy` 入段（缺省 auto）；排序点 = 资产 `anchor` + 实例 `sortAnchor` 覆盖，
+瓦片排序点 = palette 条目 `ySortOrigin`（缺省切片底部）。
+层未开 `ySort` 时 YSort 段退化为摆放先后；同层混放但没开 ySort 会给状态栏提示。
+层参数目前**手改 JSON**（层管理弹窗暂不提供编辑控件）。
 
 左栏顶部「层：…」下拉列**栈层 + 碰撞元层**（碰撞不在层栈里，排最后），
 旁边「管理」按钮弹**层管理弹窗**：
@@ -257,12 +272,15 @@ src/
 
 ### 4.4 碰撞元层
 
-- 左栏两组下拉：**类型** `solid`（实心）/ `one_way`（只碰顶面）/ `ladder`（梯子）/ `hazard`（伤害）；
+碰撞类型/颜色/形状由清单 `collisionTypes` 声明（缺省池 = 内置四类，声明即整体覆盖）；
+画布色块按声明的 `color` 分色（未声明按 id 稳定取色）。
+
+- 左栏两组下拉：**类型** 来自 `collisionTypes`（显示名 + 类型 id）；
   **形状** 矩形 / `r45`（右高斜坡）/ `l45`（左高斜坡）。
 - 碰撞格数据上是碰撞 TileMapLayer 的隐形格（`INVISIBLE_CELL = (4,0)`），
-  显示交给专属节点 `CollisionView`：按类型分色（solid 红 / one_way 琥珀 / ladder 青 / hazard 品红），
-  斜坡画三角形。直接显示 TileMapLayer 会画出图集那格灰白分块。
-- 类型/形状只在非缺省时写入地图（`solid` + 矩形 → 只写 `[x,y]`）。
+  显示交给专属节点 `CollisionView`：按声明分色分形，斜坡画三角形。
+  直接显示 TileMapLayer 会画出图集那格灰白分块。
+- 类型/形状只在非缺省时写入地图（`solid` + 矩形 → 只写 `{x, y}`）。
 - 「自动生成碰撞…」按**当前层**瓦片推导碰撞（层栈化后当前层自审，不再认 terrain id）：
 
 | 策略 | 行为 |
@@ -641,14 +659,15 @@ godot --headless --path "<编辑器工程>" --script res://tests/run_tests.gd
 | `test_decl_pools.gd` | 功能/条件池归一化、steps 标记保留、功能码查重、字段码跨功能查重、条件补码避让 |
 | `test_step_audio.gd` | 步骤池归一化与按码查询、步骤补码避让三池占用、音频池归一化与补码、时机池归一化/补码/按码反查（时机码不进字段码空间）、时间轴缺省计算/非阻塞与轨道/回写净化/冲突对 |
 | `test_validators.gd` | 清单校验：合法零错误、kind 缺失、条目码池内重复、字段码**跨池**同码、步骤 dict 值非对象、未声明条件/实体/音频码重、功能 id 字符集、时机池 id/码重复与引用校验、`timing.mode` 非法、新字段类型全合法 |
-| `test_map_v4.gd` | v5 模板、层栈校验、瓦片 5 元精确校验（第 3 位资产 id）、`objects[]` 各道防线（code 查重、场景实例不得发码、图集场景不可摆放、层归属、transform/visible/zPolicy 类型、退役 entities 段）、spawn、decode_text 门槛 |
+| `test_map_v4.gd` | v6 模板、层栈校验、瓦片 5 元精确校验（第 3 位资产 id）、`objects[]` 各道防线（code 查重、场景实例不得发码、图集场景不可摆放、层归属、transform/visible/zPolicy 类型、退役 entities 段）、碰撞对象条目（v5 数组报退役）、层参数类型、spawn、decode_text 门槛 |
+| `test_grid_space.gd` | GridSpace 正交/等距往返换算、collisionTypes 池归一化（缺省池/声明覆盖/按 id 查声明） |
 | `test_assets.gd` | `assets[]` 归一化：kind 分派、未知键保留、palette 展平、非正方形 `cell`、`editorSize`/`sizeFields` 尺寸、编辑期原件入口、挂载过滤 |
 | `test_entity_node.gd` | `EntityNode` 锚点↔格坐标换算（center/top_left/bottom_center 正反算）、浮点坐标与所在格、`sizeFields` 尺寸覆盖、`transform` 缺省判定（1/0/false 算缺省、翻转 toggle 后键被删掉） |
-| `test_stores.gd` | MapStore v5 写读回环、ContentStore 写读回环（user:// 临时目录，跑完自清） |
+| `test_stores.gd` | MapStore v6 写读回环、ContentStore 写读回环（user:// 临时目录，跑完自清） |
 
 约定：套件 `extends "res://tests/_suite_base.gd"`，方法名 `test_` 开头即被发现；
 `ok()` / `eq()` 收集失败；**每个用例至少一条断言**（崩溃中断的用例断言数不增长，
-runner 判 FAIL——防止半路崩掉变成假 PASS）。退出码非 0 = 有失败。当前 8 套件 57 用例。
+runner 判 FAIL——防止半路崩掉变成假 PASS）。退出码非 0 = 有失败。当前 9 套件 63 用例。
 
 截图辅助 `tools/screenshot.gd`（模式清单见文件头注释）与警告扫描 `tools/warn_scan.gd`
 （headless 全量加载 src/ 校验可加载性）；`tools/migrate_project.gd` 是一次性迁移脚本
@@ -679,6 +698,11 @@ godot --headless --path "<编辑器工程>" --script res://tools/migrate_project
 - 编辑器写盘只有一条路径：`editor_canvas.extract()`；游戏侧 `MapLoader` 只读，不反向写回，避免格式分叉。
 - 内容系统只做「绑定 + 内容字段编辑」，功能行为完全在项目侧；编辑器不校验内容语义。
 - 时间轴只做条块摆放（at/duration/track/blocking）：不做关键帧曲线、嵌套时间轴、音频波形。
+- 等距（`gridProjection: isometric`）只覆盖**涂刷与格号**（`grid_space.gd` 转换层 + 菱形 tile_shape）：
+  画布网格按菱形画，但幽灵预览/选区框/实例锚点换算仍是轴对齐矩形近似；六边形不做。
+- 层参数（parallax/ySort/offset/scale）与层内三段遮挡容器由画布直接预览，
+  **没有层参数编辑控件**（手改地图 JSON）；碰撞自动生成不区分声明形状（按整格矩形推）。
+- 排序点（`sortAnchor`）在画布上只参与数据，选中十字标记未实现（排序点视觉反馈待第 6 批补）。
 
 ---
 

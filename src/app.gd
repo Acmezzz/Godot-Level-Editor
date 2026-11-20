@@ -482,7 +482,7 @@ func _shortcut_input(event: InputEvent) -> void:
 				if oi < 0:
 					oi = 0
 				dup.layer_id = canvas.layer_id(oi)
-				(canvas.layer_ents[oi] as Node2D).add_child(dup)
+				canvas._place_in_layer(dup, oi)
 				canvas._ensure_code(dup)
 			canvas._mark()
 			get_viewport().set_input_as_handled()

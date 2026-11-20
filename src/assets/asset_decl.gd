@@ -97,7 +97,8 @@ static func palette_of(m: Dictionary, aid: String) -> Array:
 			"cell": Vector2i(int(cell[0]), int(cell[1])),
 			"name": str((p as Dictionary).get("name", "")),
 			"cat": str((p as Dictionary).get("cat", "")),
-			"ySortOrigin": int((p as Dictionary).get("ySortOrigin", 0)),
+			# ySortOrigin 缺省 = 切片底部（遮挡模型的瓦片排序点口径，见 REFACTOR_PLAN 3.7）
+			"ySortOrigin": int((p as Dictionary).get("ySortOrigin", cell_size(m, aid).y)),
 		})
 	return out
 

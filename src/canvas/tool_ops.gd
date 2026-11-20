@@ -159,7 +159,7 @@ func _stamp(pos: Vector2) -> void:
 	n.refresh_visual()   # props 就位后按 sizeFields 定尺寸
 	n.layer_id = cvs.layer_id(cvs.active_layer)
 	n.position = cvs.snap_point(pos, n)
-	(cvs.layer_ents[cvs.active_layer] as Node2D).add_child(n)
+	cvs._place_in_layer(n, cvs.active_layer)
 	cvs._ensure_code(n)
 	cvs._mark()
 	# 放置即选中（"放置→配置"不断档）；连放不受影响

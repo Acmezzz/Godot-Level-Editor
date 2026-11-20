@@ -14,9 +14,7 @@ func _init(host) -> void:
 ## 跨层命中：从顶层向下取第一个命中的层，层内取中心距最近者；无命中返回 null。
 func _entity_hit(pos: Vector2) -> EntityNode:
 	for li in range(cvs.layer_count() - 1, -1, -1):
-		if li >= cvs.layer_ents.size():
-			continue
-		var hit := _entity_hit_in((cvs.layer_ents[li] as Node2D).get_children(), pos)
+		var hit := _entity_hit_in(cvs._layer_entities(li), pos)
 		if hit != null:
 			return hit
 	return null
@@ -286,7 +284,7 @@ func paste_at(pos: Vector2) -> void:
 			"functions": (t.get("functions", []) as Array).duplicate(true),
 		})
 		n.layer_id = cvs.layer_id(target)
-		(cvs.layer_ents[target] as Node2D).add_child(n)
+		cvs._place_in_layer(n, target)
 	# 副本间引用重映射：props 声明驱动（entity_ref fields）+ functions 盲重映射
 	for b in built:
 		var n2: EntityNode = b.node
@@ -540,7 +538,7 @@ func _instantiate(t: Dictionary, origin: Vector2i) -> EntityNode:
 	n.refresh_visual()
 	n.apply_grid(origin.x + float(t.get("dx", 0.0)), origin.y + float(t.get("dy", 0.0)))
 	var ei: int = cvs._layer_index_of(n.layer_id)
-	(cvs.layer_ents[maxi(ei, 0)] as Node2D).add_child(n)
+	cvs._place_in_layer(n, maxi(ei, 0))
 	# 新实例按需发码（场景实例不产码）；旧码只作为引用重映射的键
 	if n.is_entity() and n.code == "":
 		n.code = cvs._fresh_inst_code()

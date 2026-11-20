@@ -63,8 +63,18 @@ static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 	if data.get("collision", null) is Array:
 		for i in data.collision.size():
 			var cell = data.collision[i]
-			if not (cell is Array) or cell.size() < 2 or cell.size() > 4 or not _is_number_prefix(cell, 2):
-				_add(issues, "error", "collision[%d]" % i, "must contain x, y (and optional type/shape)")
+			var p := "collision[%d]" % i
+			# v6：对象条目 {x, y, type?, shape?}；v5 数组条目报错（跑迁移脚本）
+			if not (cell is Dictionary):
+				_add(issues, "error", p, "must be an object {x, y} (v5 arrays are retired: run tools/migrate_project.gd)")
+				continue
+			if not (cell.has("x") and (cell.x is int or cell.x is float) \
+					and cell.has("y") and (cell.y is int or cell.y is float)):
+				_add(issues, "error", p, "must contain numeric x, y")
+			if cell.has("type") and not (cell.type is String):
+				_add(issues, "error", p + ".type", "must be a collision type id string")
+			if cell.has("shape") and not (cell.shape is String):
+				_add(issues, "error", p + ".shape", "must be a shape id string")
 	return issues
 
 ## meta.layers 用户层栈校验：非空数组、条目 id 非空且唯一、name 非空。
@@ -92,6 +102,18 @@ static func _validate_layers(meta: Dictionary, issues: Array[Dictionary]) -> Dic
 			_add(issues, "error", p + ".name", "must be a non-empty layer name")
 		if ldef.has("visible") and not (ldef.visible is bool):
 			_add(issues, "error", p + ".visible", "must be a boolean")
+		# 层参数（第 5 批）：parallax/ySort/offset/scale 可选，类型错就报错
+		if ldef.has("parallax") and not (ldef.parallax is int or ldef.parallax is float):
+			_add(issues, "error", p + ".parallax", "must be a number")
+		if ldef.has("ySort") and not (ldef.ySort is bool):
+			_add(issues, "error", p + ".ySort", "must be a boolean")
+		var loff = ldef.get("offset", null)
+		if loff != null and not (loff is Array and (loff as Array).size() == 2 \
+				and ((loff as Array)[0] is int or (loff as Array)[0] is float) \
+				and ((loff as Array)[1] is int or (loff as Array)[1] is float)):
+			_add(issues, "error", p + ".offset", "must be [x, y] numbers")
+		if ldef.has("scale") and not (ldef.scale is int or ldef.scale is float):
+			_add(issues, "error", p + ".scale", "must be a number")
 	return ids
 
 ## objects[] 校验：场景实例与实体实例同形，差别只在 code（仅 entity 合法）。

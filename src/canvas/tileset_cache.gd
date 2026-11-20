@@ -16,23 +16,26 @@ static var _texs: Array = []       # source_id -> ImageTexture
 static var _ids: Array = []        # source_id -> 资产 id
 
 ## 构建（或复用）TileSet。
-## `tile_assets` = [{id, atlas_abs, cell: Vector2i}]，顺序即 source_id 顺序。
-## `grid` = 地图格尺寸（TileSet.tile_size）。
+## `tile_assets` = [{id, atlas_abs, cell: Vector2i, ysort: {Vector2i: int}}]，
+## 顺序即 source_id 顺序；`grid` = 地图格尺寸（TileSet.tile_size）。
+## `proj` = "orthogonal"/"isometric"（等距时 TileSet.tile_shape = 菱形，TileMapLayer 渲染菱形瓦片）。
 ## 返回 {ts, imgs, texs, ids}；任一图集读不到返回空字典（调用方保持在无图集状态）。
-static func build(tile_assets: Array, grid: Vector2i) -> Dictionary:
-	# 缓存键 = 资产 id / 图集路径 / 切片尺寸 / 图集 mtime。
-	# mtime 是秒级粒度，外部改图集后同秒内可能命中旧缓存——可接受（改图集就重开会话）。
+static func build(tile_assets: Array, grid: Vector2i, proj := "orthogonal") -> Dictionary:
+	# 缓存键 = 投影 + 资产 id / 图集路径 / 切片尺寸 / ysort 表 / 图集 mtime。
+	# mtime 是秒级粒度，外部改图集或 ySortOrigin 后同秒内可能命中旧缓存——可接受（重开图即重建）。
 	var stamps: Array = []
 	for a in tile_assets:
 		var d: Dictionary = a
 		var p := str(d.get("atlas_abs", ""))
-		stamps.append("%s|%s|%s|%d" % [str(d.get("id", "")), p, str(d.get("cell", "")),
-			FileAccess.get_modified_time(p)])
-	var key := "%dx%d@" % [grid.x, grid.y] + "|".join(PackedStringArray(stamps))
+		stamps.append("%s|%s|%s|%s|%d" % [str(d.get("id", "")), p, str(d.get("cell", "")),
+			JSON.stringify(d.get("ysort", {})), FileAccess.get_modified_time(p)])
+	var key := "%dx%d:%s@" % [grid.x, grid.y, proj] + "|".join(PackedStringArray(stamps))
 	if _key == key and _ts != null:
 		return {"ts": _ts, "imgs": _imgs, "texs": _texs, "ids": _ids}
 	var ts := TileSet.new()
 	ts.tile_size = grid
+	if proj == "isometric":
+		ts.tile_shape = TileSet.TILE_SHAPE_ISOMETRIC
 	var imgs: Array = []
 	var texs: Array = []
 	var ids: Array = []
@@ -56,6 +59,18 @@ static func build(tile_assets: Array, grid: Vector2i) -> Dictionary:
 		for y in rows:
 			for x in cols:
 				src.create_tile(Vector2i(x, y))
+				var td := src.get_tile_data(Vector2i(x, y), 0)
+				if td != null:
+					td.y_sort_origin = cell.y   # 缺省排序点 = 切片底部（遮挡模型 3.7 口径）
+		# palette 条目 ySortOrigin（像素，相对切片顶部）逐瓦片覆盖缺省
+		var ys: Dictionary = d2.get("ysort", {}) if d2.get("ysort", {}) is Dictionary else {}
+		for yk in ys:
+			var pc := str(yk).split(",")
+			if pc.size() < 2:
+				continue
+			var td2 := src.get_tile_data(Vector2i(int(pc[0]), int(pc[1])), 0)
+			if td2 != null:
+				td2.y_sort_origin = int(ys[yk])
 		var sid := imgs.size()
 		ts.add_source(src, sid)
 		imgs.append(img)

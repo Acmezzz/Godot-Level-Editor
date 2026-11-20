@@ -9,6 +9,7 @@ const ConditionDecls := preload("res://src/content/condition_decl.gd")
 const StepDecls := preload("res://src/content/step_decl.gd")
 const AudioDecls := preload("res://src/content/audio_decl.gd")
 const TriggerDecls := preload("res://src/content/trigger_decl.gd")
+const CollisionTypes := preload("res://src/core/collision_types.gd")
 const ContentStore := preload("res://src/content/content_store.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
 
@@ -37,6 +38,8 @@ static func validate(data: Dictionary, project_dir := "") -> Array[Dictionary]:
 		_validate_audio(data, issues)
 	if data.has("triggers"):
 		_validate_triggers(data, issues)
+	if data.has("collisionTypes"):
+		_validate_collision_types(data, issues)
 	var tile_size = data.get("tileSize", 16)
 	if not (tile_size is int or tile_size is float) or float(tile_size) <= 0.0:
 		_add(issues, "error", "tileSize", "must be a positive number")
@@ -236,6 +239,26 @@ static func _validate_triggers(data: Dictionary, issues: Array[Dictionary]) -> v
 		if c != "" and codes.has(c):
 			_add(issues, "error", "triggers", "duplicate code %s (%s)" % [c, tid])
 		codes[c] = true
+
+## 碰撞类型池：形状枚举 + 颜色形态；id 非空唯一（数组写法）。
+static func _validate_collision_types(data: Dictionary, issues: Array[Dictionary]) -> void:
+	var decl = data.get("collisionTypes", null)
+	if not (decl is Dictionary or decl is Array):
+		_add(issues, "error", "collisionTypes", "must be an object or an array")
+		return
+	var ids := {}
+	for pair in CollisionTypes._decl_items(decl):
+		var tid := str(pair.id)
+		if tid == "" or ids.has(tid):
+			_add(issues, "error", "collisionTypes",
+				"collision type ids must be non-empty and unique (seen: %s)" % tid)
+		ids[tid] = true
+		var body: Dictionary = pair.body
+		var shape := str(body.get("shape", ""))
+		if shape != "" and not ["rect", "triangle_r", "triangle_l", "circle", "polygon"].has(shape):
+			_add(issues, "error", "collisionTypes", "invalid shape: " + shape)
+		if body.has("color") and not (body.color is String):
+			_add(issues, "error", "collisionTypes", "color must be a #rrggbb string")
 
 ## 步骤池：id 非空唯一（array 写法查重）、条目码池内唯一、字段 id/kind/type 合法、
 ## 步骤字段码与功能/条件字段同空间查重（跨池同码 = 静默合并，报错）。

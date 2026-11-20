@@ -1,5 +1,5 @@
 extends "res://tests/_suite_base.gd"
-## 地图 JSON v5：new_map 模板 + map_data_validation 各道防线。
+## 地图 JSON v6：new_map 模板 + map_data_validation 各道防线。
 
 const Store := preload("res://src/map_store.gd")
 const MV := preload("res://src/map_data_validation.gd")
@@ -99,6 +99,35 @@ func test_spawn() -> void:
 	var d := Store.new_map("t", 40, 30)
 	d["spawn"] = [1]
 	ok(_errs(d).size() >= 1, "spawn 非 2 元报错")
+
+func test_collision_objects() -> void:
+	var d := Store.new_map("t", 40, 30)
+	(d.collision as Array).append({"x": 3, "y": 4})
+	eq(_errs(d).size(), 0, "缺省碰撞条目零错误")
+	(d.collision as Array).append({"x": 1, "y": 2, "type": "one_way", "shape": "r45"})
+	eq(_errs(d).size(), 0, "带类型形状零错误")
+	(d.collision as Array).append([5, 6])
+	ok(_errs(d).size() >= 1, "v5 数组条目报退役（跑迁移）")
+	(d.collision as Array).append({"y": 7})
+	ok(_errs(d).size() >= 1, "缺 x 报错")
+	(d.collision as Array).append({"x": 1, "y": 2, "type": 3})
+	ok(_errs(d).size() >= 1, "type 非字符串报错")
+
+func test_layer_params() -> void:
+	var d := Store.new_map("t", 40, 30)
+	var lm: Dictionary = d.meta.layers[0]
+	lm["parallax"] = 0.5
+	lm["ySort"] = true
+	lm["offset"] = [0, -8]
+	lm["scale"] = 1.0
+	eq(_errs(d).size(), 0, "层参数全合法")
+	var d2 := Store.new_map("t", 40, 30)
+	var lm2: Dictionary = d2.meta.layers[0]
+	lm2["parallax"] = "half"
+	lm2["ySort"] = 1
+	lm2["offset"] = [0]
+	lm2["scale"] = "2"
+	ok(_errs(d2).size() >= 4, "层参数类型错各报一条：%s" % str(_errs(d2)))
 
 func test_decode_text_gate() -> void:
 	var good := Store.new_map("t", 40, 30)
