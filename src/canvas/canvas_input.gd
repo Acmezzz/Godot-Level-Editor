@@ -98,14 +98,14 @@ func _on_left_press(pos: Vector2, b: InputEventMouseButton) -> void:
 		return
 	# 出生点标记可在实体放置模式下直接拖动——瓦片/碰撞笔刷优先，
 	# 框选模式下让位给框选。当前图层锁定时也不拖。
-		if not cvs.select_mode and cvs.place_kind == "object" and cvs._on_spawn(pos):
-			if cvs.is_layer_locked(cvs.active_layer):
-				cvs._hint("当前图层已锁定：解锁后再移动出生点")
-				return
-			_spawn_moved = false   # 撤销快照推迟到首次真移动前才压（点击不动 = 零副作用）
-			cvs.begin_gesture(cvs.Gesture.SPAWN_DRAG, MOUSE_BUTTON_LEFT)
-			cvs._drag_start = pos
+	if not cvs.select_mode and cvs.place_kind == "object" and cvs._on_spawn(pos):
+		if cvs.is_layer_locked(cvs.active_layer):
+			cvs._hint("当前图层已锁定：解锁后再移动出生点")
 			return
+		_spawn_moved = false   # 撤销快照推迟到首次真移动前才压（点击不动 = 零副作用）
+		cvs.begin_gesture(cvs.Gesture.SPAWN_DRAG, MOUSE_BUTTON_LEFT)
+		cvs._drag_start = pos
+		return
 	if cvs.place_kind == "object":
 		_on_object_layer_press(pos, b)
 	else:
@@ -116,11 +116,11 @@ func _on_left_press(pos: Vector2, b: InputEventMouseButton) -> void:
 func _on_object_layer_press(pos: Vector2, b: InputEventMouseButton) -> void:
 	var hit = cvs._entity_at(pos)
 	if cvs.select_mode:
- # 框选开关打开：
- # a) 按在「当前已选集合」的成员上 → 直接拖（单选也能拖，整组一起走）；
- # b) 按在已框选组的外接框内 → 整组拖；
- # c) 其余一律框选——包括压在「没被选中」的实体上，起手必须是拉框。
- # 先走 a/b 而不是无脑框选，否则框完之后永远拖不动（用户报的核心问题）。
+	# 框选开关打开：
+	# a) 按在「当前已选集合」的成员上 → 直接拖（单选也能拖，整组一起走）；
+	# b) 按在已框选组的外接框内 → 整组拖；
+	# c) 其余一律框选——包括压在「没被选中」的实体上，起手必须是拉框。
+	# 先走 a/b 而不是无脑框选，否则框完之后永远拖不动（用户报的核心问题）。
 		if hit != null and (cvs.selected_multi.has(hit) or hit == cvs.selected_entity):
 			cvs.selected_entity = hit
 			cvs._begin_entity_drag(hit, pos)

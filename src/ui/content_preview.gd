@@ -23,8 +23,8 @@ var _panning := false   # 中键按住拖动平移（手势同关卡画布）
 var _tiles_cache := {}
 var _tiles_rev := {}   # 层栈下标 -> 缓存对应的 map_rev
 
-func _init(host) -> void:
-	self.host = host
+func _init(h) -> void:
+	self.host = h
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	# 缩放/平移后地图不能画出控件边界（曾盖到左列）——同关卡画布的裁剪语义
 	clip_contents = true
@@ -283,4 +283,3 @@ func _tiles(li: int, layer_id: String) -> Array:
 	_tiles_cache[li] = out
 	_tiles_rev[li] = rev
 	return out
-

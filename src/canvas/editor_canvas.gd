@@ -799,12 +799,12 @@ func set_layer_locked(i: int, locked: bool) -> void:
 	_layer_ops_ctrl.set_layer_locked(i, locked)
 func is_layer_locked(i: int) -> bool:
 	return _layer_ops_ctrl.is_layer_locked(i)
-func layer_add(layer_name: String) -> void:
-	_layer_ops_ctrl.layer_add(layer_name)
+func layer_add(new_name: String) -> void:
+	_layer_ops_ctrl.layer_add(new_name)
 func layer_del(i: int) -> void:
 	_layer_ops_ctrl.layer_del(i)
-func layer_rename(i: int, layer_name: String) -> void:
-	_layer_ops_ctrl.layer_rename(i, layer_name)
+func layer_rename(i: int, new_name: String) -> void:
+	_layer_ops_ctrl.layer_rename(i, new_name)
 func layer_move(i: int, dir: int) -> void:
 	_layer_ops_ctrl.layer_move(i, dir)
 func layer_set_visible(i: int, v: bool) -> void:
