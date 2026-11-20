@@ -27,7 +27,7 @@
 | 3 | v5 格式：瓦片翻转/旋转 + 层 blend | ⏸ 待拍板点 3（图层 parallax/ySort/offset/scale 已在第 5 批落地；缺瓦片 alternative 与 blend） |
 | 4 | 实体变换 | ✅ 已在第 5 批落地（data_transform scale/rotation/flip_h/flip_v + 翻转交互） |
 | 5 | 时间轴补齐 | ✅ steps 时间轴视图已落地；帧动画预览 ✅ ddad276（资产 frames[]，8fps 预览） |
-| 6 | 开放决策收口 | ✅ 碰撞类型声明池 + 试玩面板通用化（bc11621）+ 事件区行为参数——**经查 mode/event/once 已在第 3 批去特殊化作废**（语义归 functions[]），该项本已解决；⏸ target_map 改存地图码（需引入地图身份码体系，建议缓）/ steps 嵌套 kind:"steps"——仍未拍板 |
+| 6 | 开放决策收口 | ✅ 碰撞类型声明池 + 试玩面板通用化（bc11621）+ 事件区行为参数——**经查 mode/event/once 已在第 3 批去特殊化作废**（语义归 functions[]），该项本已解决；✅ target_map 改存地图码——0ca8a52（meta.code 4 位码，跨图引用全码化，改名不再破引用）；⏸ steps 嵌套 kind:"steps"——唯一未拍板项 |
 | 7 | 文档收口 | 随批进行（GAME_SIDE_STANDARD 已同步 array/multiple/frames） |
 
 ## 第 1 批：字段系统补齐
