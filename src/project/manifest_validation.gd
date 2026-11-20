@@ -433,6 +433,8 @@ static func _validate_entity_asset(data: Dictionary, ad: Dictionary, path: Strin
 				elif not pool.has(str(fid)):
 					_add(issues, "error", path + ".functions",
 						"mounted function is not declared: " + str(fid))
+	if ad.has("frames") and not (ad.frames is Array):
+		_add(issues, "error", path + ".frames", "must be an array of texture paths")
 	var fields := {}
 	for field in ad.get("fields", []) if ad.get("fields", []) is Array else []:
 		if not (field is Dictionary):

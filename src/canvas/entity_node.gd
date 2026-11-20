@@ -107,6 +107,11 @@ var tile_px := 16
 ## 贴图按显示框缩放的比例（与数据 transform 的 scale 分开存，互不干扰）
 var _fit := Vector2.ONE
 
+## 帧动画预览状态：声明 frames[] 的实体按 8fps 循环（预览口径，游戏侧自定播放节奏）
+var _frames: Array = []
+var _frame_i := 0
+var _frame_t := 0.0
+
 ## 建一个摆放物节点（视觉贴图取 thumb；图片场景资产退回资产 texture）
 static func create(m: Dictionary, aid: String, size: Vector2, tile: int,
 		thumbs: Dictionary = {}) -> EntityNode:
@@ -118,6 +123,16 @@ static func create(m: Dictionary, aid: String, size: Vector2, tile: int,
 	var tex: Texture2D = thumbs.get(aid, null)
 	if tex == null and str((n.decl as Dictionary).get("shape", "")) == "image":
 		tex = texture_of(m, str((n.decl as Dictionary).get("texture", "")))
+	# 帧动画声明 frames[]：多帧贴图按固定帧率循环预览（8fps；游戏侧自定播放节奏）
+	if tex == null:
+		var fr = (n.decl as Dictionary).get("frames", null)
+		if fr is Array:
+			for rel in fr:
+				var t := texture_of(m, str(rel))
+				if t != null:
+					n._frames.append(t)
+			if n._frames.size() > 0:
+				tex = n._frames[0]
 	n.texture = tex
 	n.refresh_visual()
 	return n
@@ -264,3 +279,14 @@ func refresh_visual() -> void:
 		(display_size().x * 0.5 - anchor_off().x) / sc.x if sc.x != 0.0 else 0.0,
 		(display_size().y * 0.5 - anchor_off().y) / sc.y if sc.y != 0.0 else 0.0)
 	visible = visible_flag
+
+## 帧动画预览：frames[] 多于 1 帧时按 8fps 循环换帧；换帧后 refresh_visual 重算
+## fit/offset（帧尺寸不一致时也对）。游戏侧播放节奏自定，编辑器预览仅为确认帧序。
+func _process(delta: float) -> void:
+	if _frames.size() > 1:
+		_frame_t += delta
+		if _frame_t >= 0.125:
+			_frame_t = 0.0
+			_frame_i = (_frame_i + 1) % _frames.size()
+			texture = _frames[_frame_i]
+			refresh_visual()

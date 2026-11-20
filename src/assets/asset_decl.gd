@@ -204,6 +204,8 @@ static func _normalize(m: Dictionary, aid: String, src: Dictionary) -> Dictionar
 		d["code"] = str(src.get("code", ""))
 		d["functions"] = src.get("functions", []) if src.get("functions", []) is Array else []
 		d["fields"] = src.get("fields", []) if src.get("fields", []) is Array else []
+		# 帧动画声明：多帧贴图路径数组（编辑器画布按 8fps 循环预览，游戏侧自定播放节奏）
+		d["frames"] = src.get("frames", []) if src.get("frames", []) is Array else []
 	return d
 
 ## 资产 id 池（校验用；保证非空唯一）。

@@ -177,6 +177,7 @@ solid+矩形碰撞：`col.set_cell(cell, 0, Vector2i(4,0))`。
 | `prefab` | 二者之一 | 相对工程根的 `.tscn` 路径；**游戏侧按此加载** |
 | `visual` | 二者之一 | 无 prefab 时的编辑器呈现：`{mode: "rect"/"sprite"/"none", color, alpha}`；`prefab` 与 `visual` 都没有 = 校验报错 |
 | `thumb` | 否 | 缩略图 PNG 路径；缺失时编辑器按 `visual` 声明画占位（不再空白） |
+| `frames` | 否 | 帧动画贴图路径数组（按播放顺序）；编辑器画布按 8fps 循环**预览**（只确认帧序），游戏侧自定播放节奏。预览优先级：thumb > texture（image 资产）> frames 首帧 |
 | `editorSize` | 否 | `[w,h]` **像素**，画布占位尺寸。缺省读 prefab 的第一个碰撞形状；再缺用 1 格（tileSize×tileSize） |
 | `sizeFields` | 否 | `["w","h"]`：尺寸写在实例 `props` 的这两个键里（格数），取代「按 id 硬编码矩形」 |
 | `role` | 否 | 连接语义：`portal` / `exit` / `landing` / `trigger`；见 2.6 |
