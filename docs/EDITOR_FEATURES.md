@@ -2,7 +2,7 @@
 
 > 独立 Godot 4.7.2 工程，通用 2D 关卡编辑器（不绑定具体游戏）。入口场景 `src/editor.tscn`，主脚本 `src/app.gd`。
 > 编辑器不依赖游戏工程资源，只读 `<游戏项目>/editor/editor_manifest.json`、`maps/*.json` 与 `content/`。
-> 凡本文与代码冲突，以代码为准（本文按 2026-11-20 的代码逐文件核对）。
+> 凡本文与代码冲突，以代码为准。
 
 ---
 
@@ -154,7 +154,7 @@ src/
 | `godotExe` | 可选：覆盖 `playCommand` 里的可执行文件（支持 `%projectpath%`） |
 | `contentDir` | 可选：内容根目录，默认 `content` |
 
-**图层**：地图 `meta.layers` 逐图声明（见 §4.1），清单不再有 layers 键。
+**图层**：地图 `meta.layers` 逐图声明（见 §4.1）。
 碰撞类型集由清单 `collisionTypes` 声明（缺省池 = 内置四类 solid/one_way/ladder/hazard；
 声明即整体覆盖），`gameplay` 标签由游戏侧 `map_loader` 消费实现行为。
 
@@ -179,7 +179,7 @@ src/
 | 保存 | `Ctrl+S` 或菜单「保存」；写 `<项目>/maps/<名>.json`（制表符缩进 JSON） |
 | **原子写盘** | 先写 `.tmp` 再 rename；中途崩溃不留半截 JSON |
 | **历史轮转** | 正式保存前把当前文件拷进 `maps/.history/<名>.json.1..3`（`.1` 最新），备份失败不阻断保存 |
-| 重命名地图 | 弹窗输入新名；**纯改名，不迁移跨图引用**；原图未落盘时按新名直接写盘 |
+| 重命名地图 | 弹窗输入新名；跨图引用写地图码，改名不影响引用；原图未落盘时按新名直接写盘 |
 | 改名防覆盖 | 目标名已存在 → 拒绝 |
 | 调整尺寸 | 改 `meta.w/h`（8–4000 格）；裁剪只改边界，不删已画内容 |
 | 导出 | PNG 预览（1–16 px/格）+ 统计文本 → `<项目>/editor/exports`；可一键批量出全部地图（批量精度上限 4 px/格） |
@@ -188,18 +188,18 @@ src/
 | **外部改动检测** | 打开后磁盘 mtime 变了 → 保存时提示「本次保存覆盖了外部改动」 |
 | 地图名校验 | 拒绝 `/ \ : * ? " < > \|`、`..`、点开头/结尾、`con/prn/aux/nul`；路径必须仍在 maps 目录内 |
 | 读取容错 | 文件打不开 / JSON 非对象 / 结构校验失败 → 状态栏报错并附问题条目，不崩溃 |
-| 格式版本 | 当前 `FORMAT_VERSION = 6`（零兼容，旧版本不升级；v5 碰撞数组条目校验报错，跑迁移脚本）；层栈/瓦片按层键存，见 §4.1 |
+| 格式版本 | 当前 `FORMAT_VERSION = 7`（旧版本地图跑 `tools/migrate_project.gd` 迁移）；层栈/瓦片按层键存，见 §4.1 |
 
 地图 JSON（与游戏侧 `MapLoader` 同构）：
 
 ```json
 {
-  "version": 6,
+  "version": 7,
   "meta": { "name": "level_1", "w": 120, "h": 56, "code": "K7QM",
 			"layers": [{ "id": "L1C3", "name": "资产层", "visible": true },
 					   { "id": "T8N5", "name": "远景", "visible": true, "parallax": 0.5, "ySort": false, "offset": [0, 0], "scale": 1.0 }] },
   "spawn": [2, 2],
-  "tiles": { "L1C3": [[x, y, "terrain", ax, ay]], "T8N5": [[x, y, "decor", ax, ay]] },
+  "tiles": { "L1C3": [[x, y, "terrain", ax, ay, 0]], "T8N5": [[x, y, "decor", ax, ay, 0]] },
   "collision": [{ "x": 21, "y": 24 }, { "x": 30, "y": 12, "type": "one_way", "shape": "r45" }],
   "objects": [
 	{ "asset": "crawler", "code": "B3XD", "layer": "L1C3",
@@ -220,7 +220,7 @@ src/
 - `collision` 条目为**对象**（v6）：`{x, y}`，`type` 缺省省略（solid）、`shape` 缺省省略（矩形）；
   类型集由清单 `collisionTypes` 声明（缺省池 = 内置四类，声明即整体覆盖）。
 - `objects[]` 统一收**场景图片实例**（`kind=scene`、`shape=image`）与**实体实例**（`kind=entity`）：
-  同形，差别只有 `code`——只有实体才产实例码。`scene` 键已作废（改为 `asset`）。
+  同形，差别只有 `code`——只有实体才产实例码。`scene` 键非法（实体实例键是 `asset`）。
   `transform` 缺省整键省略；`visible`/`zPolicy`/`sortAnchor` 同样缺省省略。
 - `x/y` 是**浮点格坐标**（可半格、可超出格），锚点换算见 `GAME_SIDE_STANDARD` §3.4。
   关掉吸附后拖到半格处，保存重开仍在原位（吸附默认开）。
@@ -243,12 +243,13 @@ src/
 | `parallax` | 视差系数（0–1）：画布按相机位移反向平移，远景半速、0 = 固定 |
 | `ySort` | 层内瓦片与实例一起按排序点 y 绘制（层容器建三段：below / YSort / above） |
 | `offset` / `scale` | 层容器的整体偏移与缩放，画布直接生效 |
+| `blend` | 层混合模式：`mix`（缺省）/ `add` / `mul`，画布挂 CanvasItemMaterial 预览 |
 
 **遮挡模型**：每层建 below / YSort(含瓦片与 auto 实体) / above 三段容器，
 实例按 `zPolicy` 入段（缺省 auto）；排序点 = 资产 `anchor` + 实例 `sortAnchor` 覆盖，
 瓦片排序点 = palette 条目 `ySortOrigin`（缺省切片底部）。
 层未开 `ySort` 时 YSort 段退化为摆放先后；同层混放但没开 ySort 会给状态栏提示。
-层参数目前**手改 JSON**（层管理弹窗暂不提供编辑控件）。
+混合模式在层管理弹窗每层「混合」下拉可改（mix/add/mul）；parallax/ySort/offset/scale 手改地图 JSON。
 
 左栏顶部「层：…」下拉列**栈层 + 碰撞元层**（碰撞不在层栈里，排最后），
 旁边「管理」按钮弹**层管理弹窗**：
@@ -297,7 +298,7 @@ src/
   显示交给专属节点 `CollisionView`：按声明分色分形，斜坡画三角形。
   直接显示 TileMapLayer 会画出图集那格灰白分块。
 - 类型/形状只在非缺省时写入地图（`solid` + 矩形 → 只写 `{x, y}`）。
-- 「自动生成碰撞…」按**当前层**瓦片推导碰撞（层栈化后当前层自审，不再认 terrain id）：
+- 「自动生成碰撞…」按**当前层**瓦片推导碰撞（当前层自审）：
 
 | 策略 | 行为 |
 |---|---|
@@ -327,8 +328,8 @@ src/
 | 功能 | 说明 |
 |---|---|
 | 涂刷 | 左键单格或拖动连续；笔刷边长 `brush_size`（默认 1，`_brush_cells` 以光标格为基准铺边长方形，偶数边长时基准格偏右下） |
+| 瓦片变换 | 瓦片笔刷模式下 `R` 循环旋转 0/90/180/270、`X` 切水平翻转（状态栏提示当前变换）；只影响后续涂刷 |
 | 擦除 | 右键单格或拖动连续擦 |
-| 矩形填充 | **已删除**（用户要求），不再提供 |
 | 图层锁定守卫 | 涂/擦/放置/拖拽/区域操作全部检查当前层锁 |
 | 隐藏格 | `INVISIBLE_CELL` 作为碰撞占位，调色板自动跳过 |
 | 缺失 = 空 | `collision` 键缺失与 `[]` 行为相同，编辑器没有任何「地形兜底生成碰撞」的逻辑 |
@@ -343,11 +344,12 @@ src/
 
 | 功能 | 说明 |
 |---|---|
-| 实体列表 | 清单 `assets[]` 里 `kind=entity`（含内置 `trigger_zone`）；无缩略图的按 `visual` 声明画占位图标（不再被跳过） |
+| 实体列表 | 清单 `assets[]` 里 `kind=entity`（含内置 `trigger_zone`）；无缩略图的按 `visual` 声明画占位图标 |
+| 帧动画预览 | 类型声明 `frames[]`（贴图路径数组）时画布按 8fps 循环预览（只确认帧序，播放节奏归游戏侧） |
 | 放置 | 实体放置模式下左键点格 → 落一个 `EntityNode` 到**当前层**，位置吸附到锚点所在格；关掉状态栏「吸附」后按像素落位（存浮点格坐标） |
 | 放置即选中 | 放下后立刻发 `entity_selected`，「放置 → 配置」不断档；连放不受影响 |
 | 实例身份 | 每个实例一个 4 位**实例码**（出生即定、永不回收，无需防复用扫描）；唯一身份，引用/重映射/连线全用它 |
-| **引用编辑** | 内容编辑器右栏「引用」区：实体类型声明了 entity_ref/map_ref 字段就出下拉——entity_ref 列当前图实例（`of` 限定类型，未声明列全部，显示"类型 · (x,y)"），map_ref 列地图；值写实例 props，进撤销栈；选中即**指向预览**（画布/预览高亮被指实例） |
+| **引用编辑** | 内容编辑器右栏「引用」区：实体类型声明了 entity_ref/map_ref 字段就出下拉——entity_ref 列当前图实例（`of` 限定类型，未声明列全部，显示"类型 · (x,y)"），map_ref 列地图（值 = 地图码）；值写实例 props，进撤销栈；选中即**指向预览**（画布/预览高亮被指实例） |
 | **实例级来源** | 功能字段 `kind: choice` + `source: "entity_inst:类型id,..."`：下拉列当前图实例，值=实例码；类型列表空 = 全部实例 |
 | **音频来源** | 功能/条件字段 `source: "audio:"`：下拉列清单 `audio` 池（值=音频码）；编辑器不播放音频，播放归游戏侧功能代码 |
 | 实例身份码 | 每个实例带 4 位 `code`（存在于实体 meta，随地图保存），改名/换 id 不变 |
@@ -361,8 +363,6 @@ src/
 | 复制粘贴 | `Ctrl+C` / `Ctrl+V` 保持相对布局，粘到光标处吸附到锚点所在格；`props` / `functions` / `transform` **深拷贝**，副本互不影响；内部引用重映射到新实例码 |
 | 原位复制 | `Ctrl+D` 偏移 1 格复制，带 `props` / `functions` / `transform`，新号照发 |
 | 剪切 | `Ctrl+X` 复制进剪贴板并删除选区，整件事**一个**撤销步 |
-| 实体大纲 | **已删除**（右侧五页签面板整体删除）；找实体靠画布与内容编辑器左列 |
-| 属性面板 | **已删除**；参数编辑在内容编辑器「固定功能」块与资产目录里 |
 | 图层锁定守卫 | 涂/擦/放置/拖拽/选区删除/翻转/粘贴/区域操作全部检查层锁——跨层选区逐成员查，任一命中即整体拒绝 |
 
 ### 6.2 选中信息条
@@ -402,10 +402,9 @@ src/
   （功能的 `timing` 声明 + 绑定的 `trigger` 时机码）。
 - 没有 `thumb` 也出现在实体列表里；放置时画 2×2 矩形幽灵，落下带默认 `props {w:2, h:2}`，
   位置按 `anchor: "top_left"` 落在矩形左上格。
-- `w/h` **没有专用编辑控件**（Q8 未开）；值在地图 JSON 的 `props` 里手改。保存时 `props`
+- `w/h` 没有专用编辑控件；值在地图 JSON 的 `props` 里手改。保存时 `props`
   只丢「值为 null/空串」的键，其余键原样保留。
-- 画布绘制：半透明矩形，颜色/透明度读资产的 `visual` 声明——**不再有事件 id / 触发方式标签**，
-  旧的三键 `props.mode/event/once` 已作废（编辑器不读不写）。
+- 画布绘制：半透明矩形，颜色/透明度读资产的 `visual` 声明，无事件 id / 触发方式标签。
 - 绑定行（内容编辑器右侧功能列表）提供**时机下拉**（写 `functions[].trigger`，时机码）与
   **启用勾选**（写 `functions[].enabled`，仅 `false` 落盘）。
 
@@ -418,8 +417,9 @@ src/
 
 - **功能由项目侧实现**，编辑器只暴露「可编辑内容」接口。
 - 功能在清单顶层 `functions` 声明：`{fnId: {name, code, fields:[...], triggers:[...], timing:{mode}, view:{}}}`。
-  字段按 `kind` 两分支：`input`（string/int/float/bool/color/vector2/range/asset_ref 输入控件）
-  与 `choice`（`options[]` 或 `source` 动态选项）；认不出的声明只读展示，绝不提供可写控件。
+  字段按 `kind` 两分支：`input`（string/int/float/bool/color/vector2/range/asset_ref/array 输入控件；
+  string 可 `multiline`，array 用 `of` 指元素类型，可增删行）
+  与 `choice`（`options[]` 或 `source` 动态选项，`multiple: true` 切勾选组）；认不出的声明只读展示，绝不提供可写控件。
   `triggers` 是引用 `triggers` 池的可选时机白名单，`timing`/`view` 编辑器只存取。
 - **实例绑定**存在实体 meta / 地图 JSON 的 `functions` 数组里：
 
@@ -478,7 +478,7 @@ src/
 |---|---|
 | 点行 | 展开该功能的内容表单 |
 | 「↑↓」 | 与相邻一条交换执行顺序（`order` 按交换后的数组序重排；选中的表单跟着行走） |
-| 「+ 添加功能 …」 | 列出清单 `functions` 声明中**未绑定**的功能（声明 = 开发契约，编辑器只读；已绑定的不再出现在菜单里） |
+| 「+ 添加功能 …」 | 列出清单 `functions` 声明中**未绑定**的功能（声明 = 开发契约，编辑器只读；已绑定的不出现在菜单里） |
 | 「库」 | 列同功能的全部内容条目，选中一条 → **复制成新 ID** 追加到实例末尾并选中；跨功能不列（字段声明不同，复用没意义） |
 | 「时机 ▾」 | 该功能声明的 `triggers` 白名单 → 写绑定 `trigger`（时机码）；首项「默认时机」= 删掉该键 |
 | 「启用」勾选 | 写绑定 `enabled`：勾上 = 删键（缺省即启用），取消 = 写 `false` |
@@ -517,8 +517,7 @@ src/
 | 删除此资产 | 先扫全项目引用（哪些地图、多少个实例），有引用需二次确认 |
 
 **实例分布的数据来源**：当前打开的地图**只读画布内存**（新增未保存的会出现、已删除的不残留），
-其余地图读磁盘。数值编辑入口只有内容编辑器一个——实例值 = 实例绑定内容
-（未填 = 声明 default），不再有第二套 props.stats 编辑面。
+其余地图读磁盘。数值编辑入口只有内容编辑器一个——实例值 = 实例绑定内容（未填 = 声明 default）。
 列表为空（含刚删掉最后一个资产）时右栏整体走空态，不留上一项的陈旧控件。
 
 清单写回：剥内部键（`_` 开头、`assets[].atlas_abs`、内置种类）后 JSON 校验再写盘。
@@ -537,8 +536,8 @@ src/
 | 保存前置 | 试玩前强制保存；保存失败即中止并提示 |
 | 进程跟踪 | 启动后记 pid；`tasklist` 轮询（1 秒节流，启动后 4 秒内不判死），退出时报「运行 N 秒」 |
 | 日志尾随 | 退出时读 `<项目>/editor/playtest.log` 最后 4 行一起报 |
-| 试玩配置 | 弹窗勾选初始冲刺/滑翔、血量（0 = 游戏默认 3 心）；存 `user://playtest_prefs.json`，**按地图名独立**，不写进地图 JSON |
-| 启动参数 | 追加 `--abilities=dash,glide`、`--hp=N`；带出生点参数时追加 `--spawnx/--spawny`（格坐标） |
+| 试玩配置 | 弹窗由清单 `playtest.flags` / `playtest.params` 声明驱动渲染（flags → 勾选框启用时原样追加 arg；params → 数字参数，值 ≠ def 才追加）；值存 `user://playtest_prefs.json`，按地图独立，不写进地图 JSON；清单未声明 = 面板空态提示 |
+| 启动参数 | 追加声明里的 `arg`；带出生点参数时追加 `--spawnx/--spawny`（格坐标） |
 
 试玩配置在切换地图时自动跟随该图（`_sync_play_cfg_to_map`）。
 
@@ -552,7 +551,7 @@ src/
 |---|---|
 | 撤销 / 重做 | `Ctrl+Z` / `Ctrl+Y`（`Ctrl+Shift+Z` 同效） |
 | 剪贴板 | `Ctrl+C` 复制 · `Ctrl+V` 粘贴 · `Ctrl+X` 剪切 · `Ctrl+D` 原位复制 |
-| 编辑 | `Del` 删除选中 · `F` 水平翻转 · 方向键微调 1 格（`Shift` = 4 格） |
+| 编辑 | `Del` 删除选中 · `F` 水平翻转（实体）· `R` / `X` 瓦片笔刷旋转 / 翻转 · 方向键微调 1 格（`Shift` = 4 格） |
 | 文件 | `Ctrl+S` 保存 · `Ctrl+N` 新建 · `Ctrl+O` 打开 |
 | 返回 | `Esc` 回关卡编辑器 / 取消区域粘贴预览 |
 | 视图 | 滚轮缩放 · 中键或 `空格+拖动` 平移 · `Home` 适应窗口 · `=` / `-` 缩放 |
@@ -562,7 +561,6 @@ src/
 **键盘入口唯一在 `app._shortcut_input`**：画布在 `SubViewport` 里收不到键盘。
 输入框（`LineEdit` / `TextEdit`）获得焦点时全部画布快捷键放行；项目页（内容/资产）只接管
 `Esc` 与 `Ctrl+S`，其余键交给视图内控件。
-**已删除的快捷键**：`1`–`5` 工具键（工具概念已废除）、`Ctrl+L` 对齐面板（对齐/分布已删）。
 
 ### 9.2 交互约定
 
@@ -657,10 +655,6 @@ src/
 
 有错误则该图拒收（`decode_text` 返回空数据 + 问题列表），不把坏数据交给画布。
 
-> **已删除**：`map_validate.gd`（跨图引用完整性 / portal 配对 / exit 死链 / 改名引用迁移）、
-> `level_list.gd`（关卡清单与世界拓扑）、`content_validate.gd`（跨资源总校验）。
-> 传送配对、跨图选点、世界拓扑、关卡清单都已从产品中移除。
-
 ---
 
 ### 10.3 全项目自检（`project_audit.gd` + 问题抽屉）
@@ -677,8 +671,7 @@ src/
 
 ## 11. 测试与工具
 
-**测试套件（2026-11-20 重建）**：旧 8 个脚本 + `run_gates.ps1` 已删（断言已删模型，全部失实）。
-新套件覆盖数据层纯逻辑，headless 一条命令跑完：
+**测试套件**：覆盖数据层纯逻辑，headless 一条命令跑完：
 
 ```
 godot --headless --path "<编辑器工程>" --script res://tests/run_tests.gd
@@ -690,12 +683,12 @@ godot --headless --path "<编辑器工程>" --script res://tests/run_tests.gd
 | `test_decl_pools.gd` | 功能/条件池归一化、steps 标记保留、功能码查重、字段码跨功能查重、条件补码避让 |
 | `test_step_audio.gd` | 步骤池归一化与按码查询、步骤补码避让三池占用、音频池归一化与补码、时机池归一化/补码/按码反查（时机码不进字段码空间）、时间轴缺省计算/非阻塞与轨道/回写净化/冲突对 |
 | `test_validators.gd` | 清单校验：合法零错误、kind 缺失、条目码池内重复、字段码**跨池**同码、步骤 dict 值非对象、未声明条件/实体/音频码重、功能 id 字符集、时机池 id/码重复与引用校验、`timing.mode` 非法、新字段类型全合法 |
-| `test_map_v4.gd` | v6 模板、层栈校验、瓦片 6 元精确校验（第 3 位资产 id、第 6 位 alt 0-7）、`objects[]` 各道防线（code 查重、场景实例不得发码、图集场景不可摆放、层归属、transform/visible/zPolicy 类型、退役 entities 段）、碰撞对象条目（v5 数组报退役）、层参数类型、spawn、decode_text 门槛 |
+| `test_map_v4.gd` | v6 模板、层栈校验、瓦片 6 元精确校验（第 3 位资产 id、第 6 位 alt 0-7）、`objects[]` 各道防线（code 查重、场景实例不得发码、图集场景不可摆放、层归属、transform/visible/zPolicy 类型、entities 旧键报错）、碰撞条目（旧数组形态报错）、层参数类型、spawn、decode_text 门槛 |
 | `test_grid_space.gd` | GridSpace 正交/等距往返换算、collisionTypes 池归一化（缺省池/声明覆盖/按 id 查声明） |
 | `test_audit.gd` | 全项目审计：清单/地图条目包装（kind/map/jump 可跳转性）、引用悬空（entity_ref/map_ref → 警告，未填合法不报） |
 | `test_assets.gd` | `assets[]` 归一化：kind 分派、未知键保留、palette 展平、非正方形 `cell`、`editorSize`/`sizeFields` 尺寸、编辑期原件入口、挂载过滤 |
 | `test_entity_node.gd` | `EntityNode` 锚点↔格坐标换算（center/top_left/bottom_center 正反算）、浮点坐标与所在格、`sizeFields` 尺寸覆盖、`transform` 缺省判定（1/0/false 算缺省、翻转 toggle 后键被删掉） |
-| `test_stores.gd` | MapStore v6 写读回环、ContentStore 写读回环（user:// 临时目录，跑完自清） |
+| `test_stores.gd` | MapStore v7 写读回环、ContentStore 写读回环（user:// 临时目录，跑完自清） |
 
 约定：套件 `extends "res://tests/_suite_base.gd"`，方法名 `test_` 开头即被发现；
 `ok()` / `eq()` 收集失败；**每个用例至少一条断言**（崩溃中断的用例断言数不增长，
@@ -703,7 +696,7 @@ runner 判 FAIL——防止半路崩掉变成假 PASS）。退出码非 0 = 有�
 
 截图辅助 `tools/screenshot.gd`（模式清单见文件头注释）与警告扫描 `tools/warn_scan.gd`
 （headless 全量加载 src/ 校验可加载性）；`tools/migrate_project.gd` 是一次性迁移脚本
-（清单 `tiles[]`/`entities[]` → `assets[]`、地图瓦片索引 → 资产 id、地图 `entities[]` → `objects[]`、版本抬到 5，幂等）：
+（清单 `tiles[]`/`entities[]` → `assets[]`、瓦片索引 → 资产 id 并补变换位、`entities[]` → `objects[]`、全图补发地图码并把跨图引用的图名重映射成码，抬到当前版本，幂等）：
 
 ```
 godot --path "<编辑器工程>" --script res://tools/screenshot.gd -- <模式> <输出.png> [地图名]
@@ -715,14 +708,13 @@ godot --headless --path "<编辑器工程>" --script res://tools/migrate_project
 
 ## 12. 已知边界
 
-- 地图改名不迁移任何引用（`target_map` 之类跨图引用需手工改），旧版本曾做过迁移，现已按拍板取消。
+- 跨图引用写地图码（`meta.code`）：图改名不影响引用；旧图引用值存图名的，跑迁移脚本重映射。
 - 自动草稿整图覆盖写、不做多版本；草稿不会自动载入，需手动打开（放弃修改时弹窗会打印路径）。
   正式保存另有 `maps/.history/*.1..3` 三轮备份。
 - 撤销快照是整图快照，大图（数千格 + 数百实体）连续操作仍有内存与耗时成本。
 - 校验只做静态数据检查，不验证运行时可达性（例如落点是否在实心碰撞里）。
 - 试玩进程跟踪基于 Windows `tasklist` 轮询；其它平台视为一直在运行。
-- `trigger_zone`（事件）的 `w/h` 尺寸**没有专用编辑控件**，只能直接改地图 JSON（Q8 未开）；
-  时机/启用已有绑定行控件，语义（`mode/event/once` 三键）已退役。
+- `trigger_zone`（事件）的 `w/h` 尺寸没有专用编辑控件，只能直接改地图 JSON；触发语义在绑定的 `functions[]`（timing + 时机码）。
 - 不做瓦片自动拼接（autotile）；碰撞自动生成是辅助功能，生成后仍可手改。
 - 无图集编辑器入口；新增瓦片组需要直接改清单。
 - 只在格对齐意义上吸附（吸附默认开）：关掉后可放在任意像素位置，存浮点格坐标。
@@ -734,26 +726,8 @@ godot --headless --path "<编辑器工程>" --script res://tools/migrate_project
   画布网格按菱形画，但幽灵预览/选区框/实例锚点换算仍是轴对齐矩形近似；六边形不做。
 - 层参数（parallax/ySort/offset/scale）与层内三段遮挡容器由画布直接预览，
   **没有层参数编辑控件**（手改地图 JSON）；碰撞自动生成不区分声明形状（按整格矩形推）。
-- 排序点（`sortAnchor`）在画布上只参与数据，选中十字标记未实现（遗留项）。
-- 资产浏览器**没有新建资产流程**（第 6 批唯一砍掉项；新建资产仍走手改清单）。
+- 排序点（`sortAnchor`）在画布上只参与数据，选中十字标记未实现。
+- 资产浏览器没有新建资产流程：新建资产走手改清单。
 - 问题抽屉的引用悬空只列条目 + 跳转，**没有一键清除**；编辑器改动后不自动重扫（手动「重扫」）。
 
 ---
-
-## 13. 已删除的功能（历史索引）
-
-被整体删除、文档不再描述的模块与概念，留一份索引避免误以为还存在：
-
-| 已删除 | 说明 |
-|---|---|
-| 工具按钮 `1`–`5`、吸管工具按钮 | 层下拉取代；吸管只保留 `Alt+左键` |
-| 属性工具 / 实体属性面板 / 批量属性编辑 / 对齐分布（`Ctrl+L`） | 参数编辑搬去内容编辑器与资产目录 |
-| 右侧五页签面板（地图 / 实体 / 校验 / 关卡 / 世界） | 改为三个平级面板 |
-| 地图列表 / 实体大纲 / 校验页签 | 地图切换进「地图 ▾」，实体在内容编辑器左列 |
-| 关卡清单 `levels.json`、世界拓扑、区域分组与可达性分析 | 产品方向取消 |
-| 传送系统（portal 配对、跨图 exit 选点、`cross_map.gd`、`cross_map_picker.gd`） | 已移除；`role` 声明与画布连线仍在，作为数据表达 |
-| 背景图组 `bgGroups` 与视差预览（`bg_preview.gd`） | 已移除 |
-| 内容抽屉 `content_dock.gd`、内容库五页签 `content_panel.gd`、四个内容编辑器 `content_editors/` | 统一为内容编辑器 |
-| 对话/事件/商店/定义模型与 `content_validate.gd`、`content_templates.gd` | 改为清单 `functions` 声明 + 通用字段表单 |
-| 地图缩略图控件 `map_thumb.gd`、`side_panel.gd`、`map_validate.gd`、`level_list.gd` | 已删除 |
-| 矩形填充工具、清单设置面板 | 已删除 |

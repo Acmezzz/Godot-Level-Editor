@@ -42,8 +42,8 @@
 | `tileSize` | number | 必须 > 0（否则清单报错）；缺省 16。瓦片边长像素 |
 | `screenSize` | [w,h] | 游玩视野框尺寸，缺省 `[640,360]`；纯编辑器视觉 |
 | `assets` | array | **统一资产表**，`kind` 区分场景/实体，见 2.2 / 2.4 |
-| `tiles` | — | **已退役**：并入 `assets[]`（`kind: "scene"`, `shape: "tile"`）。清单里出现即报错 |
-| `entities` | — | **已退役**：并入 `assets[]`（`kind: "entity"`）。清单里出现即报错 |
+| `tiles` | — | 非法键：出现即校验报错；瓦片资产在 `assets[]`（`kind: "scene"`, `shape: "tile"`） |
+| `entities` | — | 非法键：出现即校验报错；实体资产在 `assets[]`（`kind: "entity"`） |
 | `functions` | dict \| array | 功能声明，见 2.5 |
 | `triggers` | dict \| array | 时机池，见 2.5.4。只有 `{id, name}`，是功能/绑定引用的标签 |
 | `collisionTypes` | dict \| array | 碰撞类型池，见 2.8：画布画什么形状/颜色 + 游戏侧解释标签 gameplay |
@@ -91,8 +91,8 @@
 | `palette[].name` | 否 | 显示名，缺省 `"x,y"` |
 | `palette[].cat` | 否 | 类别名；缺省用资产 `name` 作类别；再缺「未分类」 |
 
-**索引契约已作废**：地图瓦片条目不再写「图集在清单里的下标」，而是写**资产 id 字符串**。
-清单重排、插队、删除资产都不会让既有地图错位（这是 v5 相对 v4 唯一的破坏性变更）。
+**索引契约**：地图瓦片条目写**资产 id 字符串**，不写「图集在清单里的下标」。
+清单重排、插队、删除资产都不会让既有地图错位。
 游戏侧按资产 id 在启动时建立 `{资产 id → TileSet source_id}` 映射，再按映射落瓦片。
 
 游戏侧烘焙 TileSet 的源 0 里必须有 `(4,0)` 这个格子作为隐形碰撞占位瓦片
@@ -121,7 +121,7 @@ solid+矩形碰撞：`col.set_cell(cell, 0, Vector2i(4,0))`。
   配合功能字段 `source: "layer:"` 在运行时切层显隐（BOSS 转阶段换景走这条路）。
 - 编辑器里新建层默认插到栈顶之下；删层 = 删内容（该层瓦片与实体一并删除，撤销可回）。
 - **碰撞不在层栈里**：碰撞与 z 序无关（游戏内不可见），是独立的元数据网格（见 3.3）。
-- **清单 `layers[]` 已退役**：图层逐图声明，清单不再有 layers 键。
+- 图层逐图声明：图层在每张地图的 `meta.layers`，清单没有 layers 键。
 
 **层参数（可选，缺省省略）**：
 
@@ -178,7 +178,7 @@ solid+矩形碰撞：`col.set_cell(cell, 0, Vector2i(4,0))`。
 | `name` | 否 | 显示名，缺省用 `id` |
 | `prefab` | 二者之一 | 相对工程根的 `.tscn` 路径；**游戏侧按此加载** |
 | `visual` | 二者之一 | 无 prefab 时的编辑器呈现：`{mode: "rect"/"sprite"/"none", color, alpha}`；`prefab` 与 `visual` 都没有 = 校验报错 |
-| `thumb` | 否 | 缩略图 PNG 路径；缺失时编辑器按 `visual` 声明画占位（不再空白） |
+| `thumb` | 否 | 缩略图 PNG 路径；缺失时编辑器按 `visual` 声明画占位 |
 | `frames` | 否 | 帧动画贴图路径数组（按播放顺序）；编辑器画布按 8fps 循环**预览**（只确认帧序），游戏侧自定播放节奏。预览优先级：thumb > texture（image 资产）> frames 首帧 |
 | `editorSize` | 否 | `[w,h]` **像素**，画布占位尺寸。缺省读 prefab 的第一个碰撞形状；再缺用 1 格（tileSize×tileSize） |
 | `sizeFields` | 否 | `["w","h"]`：尺寸写在实例 `props` 的这两个键里（格数），取代「按 id 硬编码矩形」 |
@@ -476,12 +476,12 @@ BGM 切换、环境音触发、音效播放在哪一步响起，都是功能代�
 ```
 
 它**没有 prefab、没有缩略图**，靠 `sizeFields: ["w", "h"]` 从实例 `props` 读尺寸（单位是**格**）。
-放置时编辑器写 `props: {"w": 2, "h": 2}`；`w/h` **没有编辑控件**（见 Q8，未开），
+放置时编辑器写 `props: {"w": 2, "h": 2}`；`w/h` 没有编辑控件，
 要改只能直接改地图 JSON 或靠游戏工程声明自己的同名实体覆盖内置定义。
 
-旧的 `props.mode` / `props.event` / `props.once` **已作废**：触发方式归功能代码，
+`props.mode` / `props.event` / `props.once` 不是有效键：触发方式归功能代码，
 绑定哪个时机写 `functions[].trigger`（时机码），"只触发一次"由功能实现决定。
-这三键留着不影响地图加载，但编辑器既不读也不写，校验也不认它们。
+编辑器既不读也不写这三键，校验也不认它们。
 
 **位置语义**：`trigger_zone` 声明 `anchor: "top_left"`，所以它的 `x/y` 是矩形**左上角格坐标**
 （旧数据的语义因此原样保留，不需要迁移）；其他资产缺省 `anchor: "center"`，`x/y` 是锚点所在格的中心。
@@ -514,17 +514,17 @@ BGM 切换、环境音触发、音效播放在哪一步响起，都是功能代�
 
 ## 3. 地图 JSON `maps/<名>.json`
 
-### 3.1 顶层结构（格式版本 `version: 6`）
+### 3.1 顶层结构（格式版本 `version: 7`）
 
 ```json
 {
-  "version": 6,
+  "version": 7,
   "meta": {"name": "TEST", "w": 95, "h": 56, "code": "K7QM",
            "layers": [{"id": "K2M8", "name": "资产层", "visible": true,
                        "parallax": 0.5, "ySort": false, "offset": [0, 0], "scale": 1.0},
                       {"id": "F9W3", "name": "FL", "visible": true}]},
   "spawn": [28, 28],
-  "tiles": {"K2M8": [[21, 24, "terrain", 1, 2]], "F9W3": [[5, 9, "terrain", 3, 0]]},
+  "tiles": {"K2M8": [[21, 24, "terrain", 1, 2, 0]], "F9W3": [[5, 9, "terrain", 3, 0, 0]]},
   "collision": [{"x": 21, "y": 24}, {"x": 30, "y": 12, "type": "one_way"},
                 {"x": 33, "y": 4, "type": "hazard", "shape": "r45"}],
   "objects": [
@@ -536,14 +536,13 @@ BGM 切换、环境音触发、音效播放在哪一步响起，都是功能代�
 ```
 
 > **`objects[]` 是唯一入口**：场景图片实例与实体实例同形（`asset` 指资产），
-> 差别只有 `code`——只有 `kind: "entity"` 的资产才有实例码。旧 `entities[]` 段
-> 已被校验拒绝，用 `tools/migrate_project.gd` 转换（`scene` 键改名 `asset`）。
-> **v6**：`collision[]` 条目由定长数组改为对象 `{x, y, type?, shape?}`（缺省省略）；
-> v5 数组条目校验报错，跑迁移脚本转换。
+> 差别只有 `code`——只有 `kind: "entity"` 的资产才有实例码。`entities[]` 键校验报错，
+> 用 `tools/migrate_project.gd` 转换（`scene` 键改名 `asset`）；`collision[]` 条目是对象
+> `{x, y, type?, shape?}`（缺省省略），旧数组形态校验报错，跑迁移脚本转换。
 
 | 键 | 必填 | 语义 |
 |---|---|---|
-| `version` | 是 | 当前为 6；高于 6 = 编辑器打不开（报错），低于 6 = 警告并按当前结构读 |
+| `version` | 是 | 当前为 7；高于 7 = 编辑器打不开（报错），低于 7 = 警告并按当前结构读（跑迁移脚本升级） |
 | `meta` | 否 | 对象。编辑器只读 `name`/`w`/`h`/`code`/`layers`；**其他键原样保留**（游戏侧自定义键安全） |
 | `meta.w` / `meta.h` | 否 | 地图格尺寸，缺省 120×56 |
 | `meta.code` | 否 | 4 位地图身份码，编辑器缺省补发。改名不改变它 |
@@ -555,10 +554,11 @@ BGM 切换、环境音触发、音效播放在哪一步响起，都是功能代�
 
 ### 3.2 瓦片条目（`tiles` 的值）
 
-瓦片条目 6 元（v7，第 6 位 alt=变换位 0-7：bit0 水平翻转/bit1 垂直翻转/bit2 转置90°，Godot alternative 12/13 位互转见 map_format.gd；0=原样）：
+瓦片条目 6 元。第 6 位 alt = 变换位（0-7：bit0 水平翻转 / bit1 垂直翻转 / bit2 转置90°，0 = 原样）；
+游戏侧落瓦片时转成 TileSet alternative，与编辑器互转口径见 `src/map/map_format.gd` 的 `alt_to_godot`/`alt_of_godot`：
 
 ```
-[x, y, <资产 id>, atlasX, atlasY]
+[x, y, <资产 id>, atlasX, atlasY, alt]
 ```
 
 | 位 | 语义 |
@@ -568,6 +568,7 @@ BGM 切换、环境音触发、音效播放在哪一步响起，都是功能代�
 | 2 | **资产 id 字符串**（清单 `assets[]` 里 `kind: "scene"` 的 `id`）；编辑器内部映射成 TileSet `source_id`，磁盘不存整数索引 |
 | 3 | 图集内格坐标 x |
 | 4 | 图集内格坐标 y |
+| 5 | 变换位 alt（0-7）；`alt != 0` 的瓦片用对应变换落盘/渲染，缺省 0 |
 
 瓦片原点：格 `(x,y)` 的像素矩形 = `Rect2(x*tileSize, y*tileSize, tileSize, tileSize)`，
 `tileSize` 取自清单，不是地图。**游戏侧的瓦片像素常量必须与清单 `tileSize` 一致，否则整体错位**
@@ -575,9 +576,7 @@ BGM 切换、环境音触发、音效播放在哪一步响起，都是功能代�
 
 ### 3.3 碰撞条目 `collision[]`
 
-### 3.3 碰撞条目 `collision[]`（v6 对象）
-
-**v6 起 `collision[]` 条目是对象**，缺省省略（写盘规则 `undo_history.extract`）：
+`collision[]` 条目是对象，缺省省略（写盘规则 `undo_history.extract`）：
 
 ```json
 {"x": 21, "y": 24}                                # = solid + 矩形
@@ -627,7 +626,7 @@ v5 的定长数组条目校验报错（跑 `tools/migrate_project.gd`）。
 | 键 | 必填 | 语义 |
 |---|---|---|
 | `asset` | 是 | 资产 id。`kind: "entity"` → 实体实例；`kind: "scene"` + `shape: "image"` → 场景图片实例。**编辑器校验：空 → 错误；不在清单 → 仅警告；图集场景（`shape: "tile"`）不能当摆放物 → 错误** |
-| `code` | 仅 entity | 图内唯一实例码（4 位身份码）。**唯一身份**：引用（props 里的 entity_ref 值）、复制重映射、画布连线全靠它。码出生即定、永不回收。**场景实例写 `code` = 校验错误**（`scene` 键本身已作废） |
+| `code` | 仅 entity | 图内唯一实例码（4 位身份码）。**唯一身份**：引用（props 里的 entity_ref 值）、复制重映射、画布连线全靠它。码出生即定、永不回收。**场景实例写 `code` = 校验错误**（`scene` 键非法） |
 | `layer` | 否 | 4 位**层码**（= `meta.layers[].id`），摆在哪一层。缺省 = 最底层 |
 | `x` / `y` | 否 | **浮点格坐标**，不是像素。锚点换算见下 |
 | `transform` | 否 | `{scale: [sx, sy], rotation: 弧度, flip_h: bool, flip_v: bool}`。**缺省整键省略**——读不到就等于 `scale 1/1、rotation 0、不翻转` |
@@ -819,7 +818,7 @@ func _apply_transform(inst: Node2D, t: Dictionary) -> void:
 
 ### 6.4 参考实现
 
-编辑器不再附带任何示例游戏工程（原 `D:\Game\BIRD\bird` 已于 2026-11-19 删除）。
+编辑器不附带示例游戏工程。
 新工程从零接入时，按 §10 的检查清单逐条自己实现；下面是最小可用的读取骨架：
 
 ```gdscript
@@ -855,7 +854,7 @@ static func build(root: Node2D, data: Dictionary, manifest: Dictionary) -> Dicti
 		for c in (data.get("tiles", {})[lid] as Array):
 			var a := c as Array
 			if a.size() >= 5:
-				# 第 3 位是资产 id → 查 source_id；查不到 = 已删资产，跳过
+				# 第 3 位是资产 id → 查 source_id；查不到 = 资产不在清单，跳过
 				var sid: int = int(src_of.get(str(a[2]), -1))
 				if sid >= 0:
 					tn.set_cell(Vector2i(int(a[0]), int(a[1])), sid, Vector2i(int(a[3]), int(a[4])))
