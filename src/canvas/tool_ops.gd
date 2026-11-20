@@ -104,7 +104,7 @@ func _erase_at(pos: Vector2) -> void:
 	# 擦除只看当前层：命中本层实例删实例，否则擦本层瓦片/碰撞
 	var hit: EntityNode = cvs._entity_hit_on(cvs.active_layer, pos)
 	if hit:
- # B2b：释放统一为 remove_child + free——queue_free 帧末才消失，同帧擦除→保存会把刚删实体写进文件
+		# B2b：释放统一为 remove_child + free——queue_free 帧末才消失，同帧擦除→保存会把刚删实体写进文件
 		if cvs.selected_entity == hit:
 			cvs.selected_entity = null
 		cvs.selected_multi.erase(hit)
@@ -221,7 +221,7 @@ func generate_collision(strategy := "full", replace := false, one_way_top := fal
 			continue
 		if collision.get_cell_source_id(c) != -1:
 			continue
- # 顶部策略可生成 one_way（自动碰撞策略扩展，契约类型 one_way）
+		# 顶部策略可生成 one_way（自动碰撞策略扩展，契约类型 one_way）
 		var typ := "one_way" if (strategy == "top" and one_way_top) else "solid"
 		set_collision_cell(c, true, typ)
 		added += 1

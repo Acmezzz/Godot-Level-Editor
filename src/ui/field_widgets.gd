@@ -209,7 +209,7 @@ static func _build_choice(decl: Dictionary, value, on_set: Callable,
 		if str((o as Dictionary).get("v", "")) == cur:
 			idx = at
 	if cur != "" and idx < 0:
- # 值已不属于当前选项集（选项库改了/来源目录删了）：保留它，别让用户一碰就丢数据
+		# 值已不属于当前选项集（选项库改了/来源目录删了）：保留它，别让用户一碰就丢数据
 		opt.add_item("(当前值) " + cur)
 		opt.set_item_metadata(opt.get_item_count() - 1, cur)
 		idx = opt.get_item_count() - 1

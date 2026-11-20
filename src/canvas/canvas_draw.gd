@@ -20,8 +20,8 @@ func _draw() -> void:
 	if cvs.show_grid:
 		var origin = Vector2(map_rect.position) * cvs.tile_px
 		var endv = Vector2(map_rect.end) * cvs.tile_px
- # 网格按可视区间裁剪——120×56 满图每帧 176 条抗锯齿线，鼠标一动就全付。
- # 可见世界矩形由 canvas_transform 反变换得到（headless 无视口时退回整图）。
+		# 网格按可视区间裁剪——120×56 满图每帧 176 条抗锯齿线，鼠标一动就全付。
+		# 可见世界矩形由 canvas_transform 反变换得到（headless 无视口时退回整图）。
 		var vis := Rect2(origin, endv - origin)
 		var vp: Viewport = cvs.get_viewport()
 		if vp != null:
@@ -42,7 +42,7 @@ func _draw() -> void:
 	var on_ent: bool = cvs.place_kind == "object"
 	if Rect2(Vector2(map_rect.position) * cvs.tile_px, Vector2(map_rect.size) * cvs.tile_px).has_point(pos):
 		if on_ent:
- # 摆放模式：手上拿着资产就画它的幽灵，否则画「点这里会选中」的提示框
+			# 摆放模式：手上拿着资产就画它的幽灵，否则画「点这里会选中」的提示框
 			if cvs.stamp_asset != "":
 				var ad := AssetDecl.by_id(cvs.manifest, cvs.stamp_asset)
 				var unit: Vector2 = EntityNode.anchor_unit_of(ad)
@@ -75,11 +75,11 @@ func _draw() -> void:
 				cvs.draw_rect(Rect2(Vector2(c) * cvs.tile_px, Vector2(cvs.tile_px, cvs.tile_px)),
 					Color(0.55, 0.85, 1.0, 0.5), false, 1.0)
 		else:
- # 瓦片 / 碰撞层：笔刷范围轮廓 + 中心格瓦片幽灵（碰撞层不画瓦片图，只画范围）
+			# 瓦片 / 碰撞层：笔刷范围轮廓 + 中心格瓦片幽灵（碰撞层不画瓦片图，只画范围）
 			var brect := _brush_rect(c)
 			var tint := Color(1.0, 0.45, 0.45, 0.55) if cvs._is_grid_layer(cvs.active_layer) else Color(1, 1, 1, 0.5)
 			cvs.draw_rect(brect, tint, false, 1.0)
- # 无图集（headless 测试/清单缺图）时不画幽灵，避免 draw_texture_rect_region 空纹理警告
+			# 无图集（headless 测试/清单缺图）时不画幽灵，避免 draw_texture_rect_region 空纹理警告
 			if not cvs._is_grid_layer(cvs.active_layer):
 				# 笔刷幽灵跟 paint_asset 走（多图集项目不再画成 0 号图集的错图）
 				var bsrc: int = cvs.source_of_asset(cvs.paint_asset)
@@ -129,7 +129,7 @@ func _draw() -> void:
 			continue
 		var sid := n.asset
 		var props: Dictionary = n.props
- # 同图引用连线
+		# 同图引用连线
 		var tid := str(props.get("target_point", ""))
 		if tid != "":
 			var n2 = by_code.get(tid, null)
@@ -137,15 +137,15 @@ func _draw() -> void:
 				var wobble := str(props.get("target_map", "")) != ""
 				var col := Color(0.4, 0.4, 1.0, 0.6) if wobble else Color(1.0, 0.85, 0.3, 0.6)
 				cvs.draw_line(n.position, n2.position, col, 1.5)
- # 跨图出口「已接好」角标——有 target_map 的 exit 画 ↗+目标图名
+		# 跨图出口「已接好」角标——有 target_map 的 exit 画 ↗+目标图名
 		if ManifestScript.has_role(cvs.manifest, sid, "exit"):
 			var tmap := str(props.get("target_map", ""))
 			if tmap != "":
 				exits.append([n.position, tmap])
- # 传送落点（青色描边）与出生 marker（绿十字）拉开色系
+		# 传送落点（青色描边）与出生 marker（绿十字）拉开色系
 		if ManifestScript.has_role(cvs.manifest, sid, "landing"):
 			landings.append(n)
- # 实例实际占位（清单 editorSize 或 prefab 碰撞尺寸）：青色实框
+		# 实例实际占位（清单 editorSize 或 prefab 碰撞尺寸）：青色实框
 		boxes.append(n.rect())
 		# 无贴图的 visual:rect 资产（内置事件区等）：按声明画彩色矩形，不再认 props.event/mode/once。
 		var vis = AssetDecl.by_id(cvs.manifest, sid).get("visual", null)
@@ -188,7 +188,7 @@ func _draw() -> void:
 		cvs.draw_rect(mb, Color(1.0, 0.85, 0.3, 0.22 if hot else 0.10), true)
 		cvs.draw_rect(mb, Color(1.0, 0.85, 0.3, 0.9 if hot else 0.5), false, 2.0 if hot else 1.0)
 		if cvs._drag_entity == null:
- # 角标提示：拖动整组
+			# 角标提示：拖动整组
 			cvs.draw_string(ThemeDB.fallback_font, mb.position + Vector2(4, -4),
 				"%d 个实例 · 拖动可整体移动" % multi.size(),
 				HORIZONTAL_ALIGNMENT_LEFT, -1, 11,
@@ -197,7 +197,7 @@ func _draw() -> void:
 	for it in boxes:
 		var r4: Rect2 = it
 		cvs.draw_rect(r4, Color(0.35, 0.95, 0.95, 0.85), false, 1.0)
- # 十字标中心，便于对格
+		# 十字标中心，便于对格
 		var c4 := r4.get_center()
 		cvs.draw_line(Vector2(r4.position.x, c4.y), Vector2(r4.end.x, c4.y), Color(0.35, 0.95, 0.95, 0.25), 1.0)
 		cvs.draw_line(Vector2(c4.x, r4.position.y), Vector2(c4.x, r4.end.y), Color(0.35, 0.95, 0.95, 0.25), 1.0)

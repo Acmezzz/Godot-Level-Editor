@@ -54,7 +54,7 @@ func reset_view() -> void:
 func _gui_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
 		var mm := event as InputEventMouseMotion
- # 中键拖动平移：pan 是屏幕偏移，手势语义与画布 cam_pos 相同（跟手走）
+		# 中键拖动平移：pan 是屏幕偏移，手势语义与画布 cam_pos 相同（跟手走）
 		if _panning:
 			_pan += mm.relative
 			refresh()
@@ -197,7 +197,7 @@ func _draw_map() -> void:
 			continue
 		var fallback: Color = Th.MAP_TERRAIN
 		for t in _tiles(li, str(ldef.get("id", ""))):
- # 只画地图边界内的格：画布允许在边界外涂，预览出框会显得脏
+			# 只画地图边界内的格：画布允许在边界外涂，预览出框会显得脏
 			var cx := int(t[0])
 			var cy := int(t[1])
 			if cx < 0 or cy < 0 or cx >= mw or cy >= mh:
@@ -229,10 +229,10 @@ func _draw_map() -> void:
 		if tex != null:
 			draw_texture_rect(tex, rect, false)
 		else:
- # 内置种类（事件区等）没有缩略图：画半透明块，尺寸就是它在游戏里的占位
+			# 内置种类（事件区等）没有缩略图：画半透明块，尺寸就是它在游戏里的占位
 			draw_rect(rect, Color(Th.ACCENT, 0.35), true)
 			draw_rect(rect, Color(Th.ACCENT_HI, 0.8), false, 1.0)
- # 悬停框记下来，循环结束后再画：否则被后画的实体盖住，悬停看起来像没生效
+		# 悬停框记下来，循环结束后再画：否则被后画的实体盖住，悬停看起来像没生效
 		if str(row.code) == hover_ent and str(row.code) != sel:
 			hover_rect = rect
 		if str(row.code) == highlight_ent:

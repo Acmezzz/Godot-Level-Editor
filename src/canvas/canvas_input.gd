@@ -28,9 +28,9 @@ func _unhandled_input(event: InputEvent) -> void:
 		if b.pressed:
 			match b.button_index:
 				MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN:
- # 滚轮缩放以鼠标为锚——鼠标下的世界点缩放前后不动。
- # 局部鼠标读于缩放前（=锚点世界坐标）：S-half = (L-cam)*zw0，
- # 代入 cam1 = cam0 + (S-half)*(1/zw0 - 1/z1) 化简得下式；光标在屏中心时相机不动
+					# 滚轮缩放以鼠标为锚——鼠标下的世界点缩放前后不动。
+					# 局部鼠标读于缩放前（=锚点世界坐标）：S-half = (L-cam)*zw0，
+					# 代入 cam1 = cam0 + (S-half)*(1/zw0 - 1/z1) 化简得下式；光标在屏中心时相机不动
 					var lm: Vector2 = cvs.get_local_mouse_position()
 					var zw0: float = cvs.zoom
 					cvs.zoom = clampf(cvs.zoom * (1.15 if b.button_index == MOUSE_BUTTON_WHEEL_UP else 1.0 / 1.15), 0.5, 6.0)
@@ -44,7 +44,7 @@ func _unhandled_input(event: InputEvent) -> void:
 				MOUSE_BUTTON_RIGHT:
 					_on_right_press(pos)
 		else:
- # 松手只处理「是这一颗键起的那个手势」，避免中键松手误杀左键起手的平移
+			# 松手只处理「是这一颗键起的那个手势」，避免中键松手误杀左键起手的平移
 			if b.button_index == MOUSE_BUTTON_MIDDLE and cvs.gesture == cvs.Gesture.PAN \
 					and cvs.gesture_button == MOUSE_BUTTON_MIDDLE:
 				cvs.end_gesture()
@@ -132,22 +132,22 @@ func _on_object_layer_press(pos: Vector2, b: InputEventMouseButton) -> void:
 		cvs._drag_start = pos
 		return
 	if hit != null and cvs.selected_multi.size() > 1 and cvs.selected_multi.has(hit):
- # 按在「已框选的成员」上：保持整组，直接整组拖。
- # 不调 _select_entity_at，否则会先把选区塌缩成单选。
+		# 按在「已框选的成员」上：保持整组，直接整组拖。
+		# 不调 _select_entity_at，否则会先把选区塌缩成单选。
 		cvs.selected_entity = hit
 		cvs._begin_entity_drag(hit, pos)
 	elif hit != null:
 		cvs._select_entity_at(pos)
 		cvs._begin_entity_drag(hit, pos)
 	elif cvs._inside_multi_box(pos):
- # 按在已有框选范围内（但没按到具体某个实体）：拖动整组
+		# 按在已有框选范围内（但没按到具体某个实体）：拖动整组
 		cvs._begin_group_drag(pos)
 	elif b.ctrl_pressed:
- # 空白处 Ctrl+拖动 = 框选（框选开关关闭时的兼容入口）
+		# 空白处 Ctrl+拖动 = 框选（框选开关关闭时的兼容入口）
 		cvs.begin_gesture(cvs.Gesture.BOX, MOUSE_BUTTON_LEFT)
 		cvs._drag_start = pos
 	elif cvs.stamp_asset == "":
- # 没选资产就点到空白：把「先选资产」这条前置条件说出来，而不是静默无反应
+		# 没选资产就点到空白：把「先选资产」这条前置条件说出来，而不是静默无反应
 		cvs._hint("先在左栏资产列表选一个资产，再左键放置")
 	else:
 		cvs._apply_tool(pos)
@@ -160,7 +160,7 @@ func _on_tile_layer_press(pos: Vector2, b: InputEventMouseButton) -> void:
 		return
 	# 框选开关：优先于涂刷，否则每次起手都会先落一笔
 	if cvs.select_mode or b.ctrl_pressed:
- # 区内起手 = 搬走这块（否则框完之后只能复制，不能移动）
+		# 区内起手 = 搬走这块（否则框完之后只能复制，不能移动）
 		if cvs._in_region_sel(pos):
 			cvs._begin_region_move(pos)
 			return
@@ -212,7 +212,7 @@ func _on_left_release(pos: Vector2) -> void:
 		return
 	match cvs.gesture:
 		cvs.Gesture.REGION_MOVE:
- # 先收尾再清手势：_finish_region_move 靠 gesture 判断这次搬动是否有效
+			# 先收尾再清手势：_finish_region_move 靠 gesture 判断这次搬动是否有效
 			cvs._finish_region_move()
 			cvs.end_gesture()
 		cvs.Gesture.SPAWN_DRAG:

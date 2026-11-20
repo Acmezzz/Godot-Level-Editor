@@ -54,7 +54,7 @@ func _draw() -> void:
 			d = {"id": ctype, "name": ctype, "shape": cshape}
 		var cols: Array = _colors_of(d)
 		var r := Rect2(Vector2(c) * tile_px, Vector2(tile_px, tile_px))
- # 斜坡画三角形：r45 = 右高（实心在斜线下方），l45 = 左高
+		# 斜坡画三角形：r45 = 右高（实心在斜线下方），l45 = 左高
 		if cshape == "r45":
 			var pts := PackedVector2Array([r.position + Vector2(0, tile_px), r.position + Vector2(tile_px, 0), r.position + Vector2(tile_px, tile_px)])
 			draw_colored_polygon(pts, cols[0])

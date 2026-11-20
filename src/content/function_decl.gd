@@ -199,7 +199,7 @@ static func codes_doc(m: Dictionary) -> String:
 	L.append("")
 	var all := functions(m)
 	if all.is_empty():
- # 无功能声明：只留说明，避免空表让游戏侧误以为码表缺失
+		# 无功能声明：只留说明，避免空表让游戏侧误以为码表缺失
 		L.append("（清单未声明功能。）")
 		return "\n".join(L)
 	L.append("## 功能")

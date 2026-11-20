@@ -206,7 +206,7 @@ func _on_map_menu_id(id: int) -> void:
 		5:
 			app._open_size_dialog()
 		10:
- # 顶栏名字输入框已删：改名只能从菜单进弹窗
+			# 顶栏名字输入框已删：改名只能从菜单进弹窗
 			app._on_rename()
 		20:
 			app._switch_project()
@@ -449,7 +449,7 @@ func _refresh_tool_meta() -> void:
 	var lt := _layer_type_of(app.canvas.active_layer)
 	var suffix := ""
 	if lt == "collision":
- # 碰撞层没有涂抹尺寸的说法，真正要知道的是「这一笔画的是什么」
+		# 碰撞层没有涂抹尺寸的说法，真正要知道的是「这一笔画的是什么」
 		suffix = " · %s %s" % [_collision_type_label(app.canvas.collision_type),
 			_diagonal_shape_label(app.canvas.collision_shape)]
 	elif app.canvas.place_kind == "object":

@@ -108,11 +108,11 @@ func show_view(view: String, focus := "") -> void:
 	_title.text = "项目 · %s" % _label_of(view)
 	match view:
 		"asset":
- # 图鉴是唯一页面：焦点定位或落到第一项
+			# 图鉴是唯一页面：焦点定位或落到第一项
 			asset_panel.show_detail(focus)
 			_set_status("资产模板改动后点「保存」写回清单，下次试玩生效")
 		"content":
- # focus 语义在此视图 = 实例 id（右栏定位），空则保留上次选中
+			# focus 语义在此视图 = 实例 id（右栏定位），空则保留上次选中
 			content_editor.refresh_list(focus)
 			_set_status("点实例挂功能、填内容；改动即时写盘（Esc 回关卡编辑器）")
 
@@ -127,7 +127,7 @@ func _label_of(view: String) -> String:
 func save_current() -> void:
 	match _view:
 		"content":
- # 新内容编辑器改动即时写盘，commit 只回报成功与否
+			# 新内容编辑器改动即时写盘，commit 只回报成功与否
 			content_editor.commit()
 			# 加载清单时补发过执行码（D6）：内容文件此刻已带新码，清单也必须落盘，
 			# 否则磁盘上「内容里的码」在清单里查无对应，游戏侧重建映射直接断链。

@@ -142,7 +142,7 @@ func refresh_list(focus_sid := "") -> void:
 			continue
 		var sid := str((edef as Dictionary).get("id", ""))
 		asset_list.add_item(str((edef as Dictionary).get("name", sid)), _asset_texture(edef))
- # tooltip 露出 id——地图数据引用的是它，界面上看不到就没法排查
+		# tooltip 露出 id——地图数据引用的是它，界面上看不到就没法排查
 		asset_list.set_item_tooltip(idx, sid + "  ·  " + str((edef as Dictionary).get("name", sid)))
 		asset_list.set_item_metadata(idx, sid)
 		if sid == focus_sid:
@@ -154,8 +154,8 @@ func refresh_list(focus_sid := "") -> void:
 		asset_list.select(focus_idx)
 		_show_detail(str(asset_list.get_item_metadata(focus_idx)))
 	else:
- # 列表空（含「删掉最后一个资产」）：右栏必须走空态，否则名称框/挂载/分布/删除按钮
- # 全部滞留上一项，残留闭包还会往已 erase 的字典里写。
+		# 列表空（含「删掉最后一个资产」）：右栏必须走空态，否则名称框/挂载/分布/删除按钮
+		# 全部滞留上一项，残留闭包还会往已 erase 的字典里写。
 		_show_detail("")
 
 func _on_asset_pick(idx: int, _at: Vector2 = Vector2.ZERO, mb: int = 0) -> void:
@@ -168,11 +168,11 @@ func _show_detail(sid: String) -> void:
 	# 清单原件（不是归一化副本）：名称/挂载的改动要直接写回 assets[]
 	_edef = AssetDecl.live_by_id(manifest, sid)
 	if _edef.is_empty():
- # 空匹配（例如详情里删掉了当前资产）不能留上一项的陈旧数据
+		# 空匹配（例如详情里删掉了当前资产）不能留上一项的陈旧数据
 		name_edit.text = ""
 		thumb.texture = null
 		_mount_rows({})
- # extra 里挂着实例分布与删除按钮，也必须清掉
+		# extra 里挂着实例分布与删除按钮，也必须清掉
 		for child in extra.get_children():
 			extra.remove_child(child)
 			child.queue_free()
@@ -217,7 +217,7 @@ func _fill_distribution(sid: String) -> void:
 	var total := 0
 	for map_name in dist:
 		total += (dist[map_name] as Array).size()
- # 每张地图一个折叠段（默认收起，展开时才建行——懒构建）。
+		# 每张地图一个折叠段（默认收起，展开时才建行——懒构建）。
 		_dist_rows.add_child(_dist_map_section(str(map_name), dist[map_name]))
 	var foot := "共 %d 个实例 / %d 张地图 · 自带功能值在内容编辑器按实例填（未填的用声明默认值）" % [total, dist.size()]
 	_dist_rows.add_child(Kit.hint_label(foot, 460))
@@ -266,7 +266,7 @@ func _instance_distribution(sid: String) -> Dictionary:
 	for map_name in maps:
 		var is_cur: bool = host != null and map_name == str(host.cur_map_name)
 		if is_cur:
- # 当前图：磁盘内容完全不参与（画布才是真相）
+			# 当前图：磁盘内容完全不参与（画布才是真相）
 			if not live_rows.is_empty():
 				out[map_name] = live_rows
 			continue

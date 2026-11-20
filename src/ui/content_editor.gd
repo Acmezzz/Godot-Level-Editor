@@ -194,8 +194,8 @@ func refresh_list(focus := "") -> void:
 	if focus != "" and _find_ent(focus) != null:
 		_selected_ent = focus
 	elif _find_ent(_selected_ent) == null:
- # 没有显式 focus 时落在画布当前选中实体上——关卡编辑器「在工作台编辑 →」
- # 不带参数过来，用户期望看到的就是刚才选中的那个实例。
+		# 没有显式 focus 时落在画布当前选中实体上——关卡编辑器「在工作台编辑 →」
+		# 不带参数过来，用户期望看到的就是刚才选中的那个实例。
 		var sel = app.canvas.selected_entity if app.canvas != null else null
 		if sel is EntityNode and is_instance_valid(sel) and (sel as EntityNode).code != "":
 			_selected_ent = (sel as EntityNode).code
@@ -385,14 +385,14 @@ func select_inst(code: String) -> void:
 	var spr := _find_ent(code)
 	if spr != null and app.canvas != null:
 		app.canvas.selected_entity = spr
- # 只有「本次选中就是这个多选集合的成员」才保留集合；其它入口（新放置实体等）
- # 仍按单选收拢，避免旧框选残留在 selected_multi 里。
+		# 只有「本次选中就是这个多选集合的成员」才保留集合；其它入口（新放置实体等）
+		# 仍按单选收拢，避免旧框选残留在 selected_multi 里。
 		var keep_multi: bool = app.canvas.selected_multi.size() > 1 \
 			and app.canvas.selected_multi.has(spr)
 		if not keep_multi:
 			app.canvas.selected_multi = [spr]
- # 选中状态改了必须让画布重绘，否则选择框要等下一次任意重绘才落位。
- # 不发 entity_selected——那会经 app 再转回本函数，形成回环。
+		# 选中状态改了必须让画布重绘，否则选择框要等下一次任意重绘才落位。
+		# 不发 entity_selected——那会经 app 再转回本函数，形成回环。
 		app.canvas.queue_redraw()
 	_rebuild_rows()
 	_rebuild_right()

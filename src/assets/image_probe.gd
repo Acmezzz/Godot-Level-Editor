@@ -78,7 +78,7 @@ static func prefab_collision_size(project_dir: String, prefab_rel: String) -> Ve
 	for raw2 in text.split("\n"):
 		var line2 := raw2.strip_edges()
 		if line2.begins_with("[node") and line2.contains("CollisionShape2D"):
- # 在同一节点块内找 shape = SubResource("...")
+			# 在同一节点块内找 shape = SubResource("...")
 			var idx := text.find(line2)
 			if idx < 0:
 				continue

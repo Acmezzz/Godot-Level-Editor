@@ -191,8 +191,8 @@ func rename_map_now(old_name: String, new_name: String, allow_write_unsaved := f
 		if err != "":
 			return err
 	elif allow_write_unsaved and is_current:
- # 原图未落盘（新建后还没保存）：改名必须真正落地，否则只改内存名 =
- # 面板显示新名、磁盘上始终没文件，用户看到的「重命名」是假的。
+		# 原图未落盘（新建后还没保存）：改名必须真正落地，否则只改内存名 =
+		# 面板显示新名、磁盘上始终没文件，用户看到的「重命名」是假的。
 		var data: Dictionary = app.canvas.extract()
 		if data.is_empty():   # 重建窗口哨兵：此刻写盘会把空图落成新文件
 			return " 地图重建中，请稍后再试"
@@ -209,8 +209,8 @@ func rename_map_now(old_name: String, new_name: String, allow_write_unsaved := f
 		if app.canvas.map_data.has("meta"):
 			app.canvas.map_data["meta"]["name"] = nn
 		_opened_mtime = FileAccess.get_modified_time(new_path)
- # 刚才已把内容写进新文件：脏标记与自动保存计时归零，
- # 否则状态栏还挂着「未保存」、两分钟后又多写一份 .autosave.json。
+		# 刚才已把内容写进新文件：脏标记与自动保存计时归零，
+		# 否则状态栏还挂着「未保存」、两分钟后又多写一份 .autosave.json。
 		if not on_disk:
 			app.canvas.modified_flag = false
 			_last_autosave_msec = Time.get_ticks_msec()

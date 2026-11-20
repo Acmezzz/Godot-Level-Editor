@@ -90,7 +90,7 @@ static func box(
 		sb.set_border_width_all(0)
 	if shadow > 0:
 		sb.shadow_size = shadow
- # 阴影带底色倾向，而不是纯黑，避免发灰
+		# 阴影带底色倾向，而不是纯黑，避免发灰
 		sb.shadow_color = Color(0, 0, 0, 0.35)
 		sb.shadow_offset = Vector2(0, 2)
 	return sb
@@ -283,7 +283,7 @@ static func _checkbox_icon(checked: bool, muted := false) -> ImageTexture:
 		img.set_pixel(1, i, edge)
 		img.set_pixel(S - 2, i, edge)
 	if checked:
- # 对勾：短笔 + 长笔，两像素粗以保证小尺寸下可辨；禁用态灰化
+		# 对勾：短笔 + 长笔，两像素粗以保证小尺寸下可辨；禁用态灰化
 		var tick := Color(1, 1, 1, 0.45) if muted else Color.WHITE
 		for i in 4:
 			img.set_pixel(4 + i, 8, tick)

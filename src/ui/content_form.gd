@@ -324,7 +324,7 @@ func _commit_name(i: int, text: String) -> void:
 		nm = fn_id
 	var cid := str(f.get("content", ""))
 	if cid == "":
- # 只改名字不创建内容：绑定里的 name 先记下，保持列表可读
+		# 只改名字不创建内容：绑定里的 name 先记下，保持列表可读
 		if str(f.get("name", "")) == nm:
 			return
 		var spr0 := _current_spr()

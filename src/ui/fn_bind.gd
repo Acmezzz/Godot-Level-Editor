@@ -187,7 +187,7 @@ func _build_add_row() -> Control:
 	if _add_menu == null:
 		_add_menu = PopupMenu.new()
 		_add_menu.id_pressed.connect(_on_add_menu_id)
- # PopupMenu 必须进树才能弹出：本控制器是 RefCounted，挂到应用根上
+		# PopupMenu 必须进树才能弹出：本控制器是 RefCounted，挂到应用根上
 		app.add_child(_add_menu)
 	btn.pressed.connect(func():
 		_populate_add_menu()

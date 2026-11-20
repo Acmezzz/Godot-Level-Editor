@@ -164,7 +164,7 @@ func _finish_entity_drag() -> void:
 	cvs._drag_origins.clear()
 	cvs._drag_moved = false
 	if not moved or targets.is_empty():
- # 没真正拖动：把预览位移还原
+		# 没真正拖动：把预览位移还原
 		for i in targets.size():
 			if is_instance_valid(targets[i]):
 				(targets[i] as EntityNode).position = origins[i]
@@ -207,7 +207,7 @@ func copy_selection() -> void:
 			"layer": n.layer_id,
 			"transform": n.data_transform.duplicate(true),
 			"functions": n.functions.duplicate(true),
- # deep=true：props 里的嵌套字典各副本独立，避免改一个影响全部
+			# deep=true：props 里的嵌套字典各副本独立，避免改一个影响全部
 			"props": n.props.duplicate(true),
 			"zPolicy": n.z_policy,
 			"visible": n.visible_flag,
@@ -276,7 +276,7 @@ func paste_at(pos: Vector2) -> void:
 			n.code = code
 			if src != "":
 				copied[src] = code
- # 每个副本独立一份数据；组内引用的重映射在下面统一做
+		# 每个副本独立一份数据；组内引用的重映射在下面统一做
 		built.append({
 			"node": n,
 			"asset": aid,

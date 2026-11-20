@@ -49,7 +49,7 @@ func _load_projects() -> void:
 		if names is Dictionary:
 			project_names = (names as Dictionary).duplicate()
 		cur_project_dir = str(cf.get_value("projects", "last", ""))
- # 兼容单项目旧格式
+		# 兼容单项目旧格式
 		var old := str(cf.get_value("project", "dir", ""))
 		if old != "" and not project_dirs.has(old):
 			project_dirs.append(old)

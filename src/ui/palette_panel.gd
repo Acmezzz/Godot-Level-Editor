@@ -84,7 +84,7 @@ func _fill_single(tl: ItemList, t: Dictionary, _ai: int) -> void:
 	# 类别视图与 MRU 行是「一行一个名字」，用单列吃满宽度——用 3 列网格会被截成「→ 岩块…」
 	_set_grid(tl, 1, 0)
 	if pal.is_empty():
- # 没配 palette = 全图集平铺，那种视图必须是网格；MRU 行混进网格会被压成豆点，故跳过
+		# 没配 palette = 全图集平铺，那种视图必须是网格；MRU 行混进网格会被压成豆点，故跳过
 		_set_grid(tl, 3, 56)
 		_fill_full_atlas(tl, img, aid)
 		return

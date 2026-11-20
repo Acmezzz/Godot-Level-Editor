@@ -38,7 +38,7 @@ static func render_preview(data: Dictionary, px_per_tile := 4, manifest: Diction
 		var ey := floori(float(e.get("y", 0)))
 		if ex < 0 or ey < 0 or ex >= w or ey >= h:
 			continue
- # 颜色按资产 id 稳定 hash 从调色板取色（编辑器中立，不硬编码游戏资产名）
+		# 颜色按资产 id 稳定 hash 从调色板取色（编辑器中立，不硬编码游戏资产名）
 		var col := _asset_color(str(e.get("asset", "")))
 		var p := Vector2i(ex * px_per_tile, ey * px_per_tile)
 		img.fill_rect(Rect2i(p, Vector2i(maxi(px_per_tile, 2), maxi(px_per_tile, 2))), col)

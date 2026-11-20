@@ -81,8 +81,8 @@ static func _validate_functions(data: Dictionary, issues: Array[Dictionary]) -> 
 	var norm: Dictionary = FunctionDecls.functions(data)
 	for fid in norm:
 		var d: Dictionary = norm[fid]
- # 缺码不是错误：load_from 在 validate 之后调 ensure_codes 补发（新声明补码的正常路径）。
- # 只有「重复」是错误——上面 duplicate_codes 已报。
+		# 缺码不是错误：load_from 在 validate 之后调 ensure_codes 补发（新声明补码的正常路径）。
+		# 只有「重复」是错误——上面 duplicate_codes 已报。
 		var fseen := {}
 		for fd in d.get("fields", []):
 			if not (fd is Dictionary):
@@ -94,7 +94,7 @@ static func _validate_functions(data: Dictionary, issues: Array[Dictionary]) -> 
 					"field ids must be non-empty and unique (by id, seen: %s)" % field_id)
 			fseen[field_id] = true
 			var kind := str((fd as Dictionary).get("kind", ""))
- # 零兼容：kind/type 是声明契约的必需键，缺或非法直接报错（UI 侧对应只读兜底）
+			# 零兼容：kind/type 是声明契约的必需键，缺或非法直接报错（UI 侧对应只读兜底）
 			if kind != "input" and kind != "choice":
 				_add(issues, "error", "functions.%s.fields.%s" % [str(fid), field_id],
 					"field kind must be \"input\" or \"choice\"")

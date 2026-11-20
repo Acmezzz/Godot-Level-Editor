@@ -98,7 +98,7 @@ func open_export_dialog() -> void:
 		var dir2 := str(app.manifest.get("_dir", "")).path_join("editor/exports")
 		DirAccess.make_dir_recursive_absolute(dir2)
 		var path2 := dir2.path_join(app.cur_map_name + ".txt")
- # 导出写盘同样走原子写
+		# 导出写盘同样走原子写
 		if app.MapStore.write_text(path2, txt):
 			app._set_status("已导出 " + path2)
 		else:

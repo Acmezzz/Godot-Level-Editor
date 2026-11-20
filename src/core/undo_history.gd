@@ -17,9 +17,9 @@ func _restore(snapshot) -> void:
 	var d = snapshot
 	if snapshot is String:
 		d = JSON.parse_string(snapshot)
- # 空快照 = extract() 的重建窗口哨兵，恢复它等于清空整图——拒绝
+	# 空快照 = extract() 的重建窗口哨兵，恢复它等于清空整图——拒绝
 	if d is Dictionary and not (d as Dictionary).is_empty():
- # keep_dirty=true：恢复的是历史状态，内容与磁盘不一致即为脏
+		# keep_dirty=true：恢复的是历史状态，内容与磁盘不一致即为脏
 		await cvs.load_data(d, cvs.cur_map_name, true, true)
 
 
@@ -150,7 +150,7 @@ func extract() -> Dictionary:
 		used = used.merge((tn as TileMapLayer).get_used_rect())
 	if used.size == Vector2i.ZERO:
 		used = Rect2i(Vector2i.ZERO, Vector2i(Constants.DEFAULT_MAP_W, Constants.DEFAULT_MAP_H))
- # 以整个读入的地图为底：游戏侧写进顶层的自定义键原样保留（此前 6 键白名单会蒸发它们）
+	# 以整个读入的地图为底：游戏侧写进顶层的自定义键原样保留（此前 6 键白名单会蒸发它们）
 	var out: Dictionary = cvs.map_data.duplicate(true) if cvs.map_data is Dictionary else {}
 	var meta0: Dictionary = out.get("meta", {}) if out.get("meta", {}) is Dictionary else {}
 	# 以当前地图 meta 为底（保留游戏侧自定义键），只覆盖编辑器管辖的 name/w/h

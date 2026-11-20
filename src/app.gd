@@ -274,7 +274,7 @@ func _shortcut_input(event: InputEvent) -> void:
 		get_viewport().set_input_as_handled()
 		return
 	if ctrl and k == KEY_Z:
- # Ctrl+Shift+Z = 重做别名（与 Ctrl+Y 等效，肌肉记忆兼容）
+		# Ctrl+Shift+Z = 重做别名（与 Ctrl+Y 等效，肌肉记忆兼容）
 		if (event as InputEventKey).shift_pressed:
 			_set_status(" 已重做" if await canvas.redo() else " 没有可重做的操作")
 		else:
@@ -303,7 +303,7 @@ func _shortcut_input(event: InputEvent) -> void:
 		return
 	# 删除选中实体（Del；delete_selection 的键盘入口）
 	if k == KEY_DELETE:
- # P0：没开地图时 delete_selection 会动到未初始化的画布状态，先守卫
+		# P0：没开地图时 delete_selection 会动到未初始化的画布状态，先守卫
 		if not map_loaded:
 			_set_status("无地图：先新建或打开一张地图")
 			get_viewport().set_input_as_handled()
@@ -389,8 +389,8 @@ func _shortcut_input(event: InputEvent) -> void:
 			_open_shortcut_help()
 			get_viewport().set_input_as_handled()
 		KEY_ENTER, KEY_KP_ENTER:
- # Enter 的去处从「打开内容抽屉」改成「去内容编辑器」——
- # 抽屉已删，功能搬到了独立面板。小键盘回车同权。
+			# Enter 的去处从「打开内容抽屉」改成「去内容编辑器」——
+			# 抽屉已删，功能搬到了独立面板。小键盘回车同权。
 			if canvas.selected_entity != null:
 				_set_mode("content")
 				get_viewport().set_input_as_handled()
@@ -518,7 +518,7 @@ func _set_map_loaded(loaded: bool) -> void:
 		tile_list.modulate = Color(1, 1, 1, 1)
 		ent_list.modulate = Color(1, 1, 1, 1)
 		_sync_ui()
- # 地图载入后：清掉引导态，换成「未选中实体」的提示
+		# 地图载入后：清掉引导态，换成「未选中实体」的提示
 		selected_spr = null
 	_refresh_dirty_badge()
 	_refresh_tool_meta()

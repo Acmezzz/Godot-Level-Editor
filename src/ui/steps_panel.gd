@@ -140,7 +140,7 @@ func _steps_data() -> Dictionary:
 	var fns := _current_fns()
 	if _steps_i < 0 or _steps_i >= fns.size() or not (fns[_steps_i] is Dictionary):
 		return {}
- # 身份校验：绑定行的功能已不是开面板时的那个 → 数据源失效（防串内容）
+	# 身份校验：绑定行的功能已不是开面板时的那个 → 数据源失效（防串内容）
 	if str(_resolve_fn(fns[_steps_i]).get("id", "")) != _steps_fn_id:
 		return {}
 	var cid := str((fns[_steps_i] as Dictionary).get("content", ""))
@@ -151,7 +151,7 @@ func _steps_write(data: Dictionary) -> void:
 	var fns := _current_fns()
 	if _steps_i < 0 or _steps_i >= fns.size() or not (fns[_steps_i] is Dictionary):
 		return
- # 身份校验同 _steps_data：绑定行功能对不上就不写（防串内容）
+	# 身份校验同 _steps_data：绑定行功能对不上就不写（防串内容）
 	if str(_resolve_fn(fns[_steps_i]).get("id", "")) != _steps_fn_id:
 		return
 	var cid := str((fns[_steps_i] as Dictionary).get("content", ""))
@@ -234,7 +234,7 @@ func _steps_row(si: int, st: Dictionary, _pool: Dictionary) -> Control:
 	var mark := Kit.text_label("%d. %s" % [si + 1, nm],
 		Th.TEXT if sel else Th.TEXT_DIM, Th.FS_SMALL)
 	mark.size_flags_horizontal = Control.SIZE_EXPAND_FILL
- # 行可点：点步骤名选中该步，右侧表单跟着换（不必先按 ↑↓ 才能选）
+	# 行可点：点步骤名选中该步，右侧表单跟着换（不必先按 ↑↓ 才能选）
 	mark.mouse_filter = Control.MOUSE_FILTER_STOP
 	mark.gui_input.connect(func(ev: InputEvent):
 		if ev is InputEventMouseButton and (ev as InputEventMouseButton).pressed \

@@ -143,7 +143,7 @@ static func write(m: Dictionary, kind: String, id: String, data: Dictionary) -> 
 		return false
 	DirAccess.make_dir_recursive_absolute(path.get_base_dir())
 	if FileAccess.file_exists(path):
- # 内容文件与地图同权——误写可回滚（3 层 .history，最新 .1）
+		# 内容文件与地图同权——误写可回滚（3 层 .history，最新 .1）
 		Store.rotate_history(path)
 	var payload := data.duplicate(true)
 	payload["id"] = id
