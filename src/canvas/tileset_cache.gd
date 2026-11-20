@@ -9,6 +9,8 @@ extends RefCounted
 ## cell 尺寸取每个资产自己的 `cell`（可非正方形、可大于地图格；实测 TileSet 接受任意
 ## texture_region_size）。tile_size 仍是地图格尺寸——两者分工不同。
 
+const MapFormat := preload("res://src/map/map_format.gd")
+
 static var _key := ""
 static var _ts: TileSet = null
 static var _imgs: Array = []       # source_id -> Image
@@ -82,3 +84,17 @@ static func build(tile_assets: Array, grid: Vector2i, proj := "orthogonal") -> D
 	_texs = texs
 	_ids = ids
 	return {"ts": ts, "imgs": imgs, "texs": texs, "ids": ids}
+
+## 带变换落瓦片（v7）：alt ≠ 0 时先在源上补建 alternative（Godot 把翻转/转置编进
+## alternative 位，必须先 create_alternative_tile 才能落格），再 set_cell。
+## alt 传编辑器口径 0-7（map_format 的位），内部转 Godot 位。
+static func set_cell_alt(layer: TileMapLayer, c: Vector2i, src: int, atlas: Vector2i, alt_flags: int) -> void:
+	layer.set_cell(c, src, atlas, 0)
+	if alt_flags == 0:
+		return
+	var ts := layer.tile_set
+	var s := ts.get_source(src) as TileSetAtlasSource if ts != null else null
+	var godot_alt := MapFormat.alt_to_godot(alt_flags)
+	if s != null and s.has_tile(atlas) and not s.get_alternative_tiles(atlas).has(godot_alt):
+		s.create_alternative_tile(atlas, godot_alt)
+	layer.set_cell(c, src, atlas, godot_alt)

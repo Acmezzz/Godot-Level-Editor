@@ -8,6 +8,9 @@ extends RefCounted
 
 var cvs   # 宿主引用
 
+const TilesetCache := preload("res://src/canvas/tileset_cache.gd")
+const MapFormat := preload("res://src/map/map_format.gd")
+
 func _init(host) -> void:
 	cvs = host
 func _apply_tool(pos: Vector2) -> void:
@@ -62,11 +65,12 @@ func _paint(c: Vector2i) -> void:
 		return
 	for bc in _brush_cells(c):
 		if layer.get_cell_source_id(bc) != src \
-				or layer.get_cell_atlas_coords(bc) != cvs.paint_cell:
+				or layer.get_cell_atlas_coords(bc) != cvs.paint_cell \
+				or MapFormat.alt_of_godot(layer.get_cell_alternative_tile(bc)) != cvs.tile_alt:
 			if not cvs._paint_pushed:
 				cvs._push_undo()   # 笔画内首个真实改动前压一次快照（点击不动 = 零副作用）
 				cvs._paint_pushed = true
-			layer.set_cell(bc, src, cvs.paint_cell)
+			TilesetCache.set_cell_alt(layer, bc, src, cvs.paint_cell, cvs.tile_alt)
 			changed = true
 	if changed:
 		cvs._mark(false)   # 只改瓦片层

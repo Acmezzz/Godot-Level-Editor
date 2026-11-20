@@ -144,17 +144,21 @@ func _migrate_maps(dir: String) -> int:
 					continue
 				for k in (cells as Array).size():
 					var c = (cells as Array)[k]
-					if not (c is Array) or (c as Array).size() != 5:
+					if not (c is Array):
 						continue
-					# 已是资产 id 字符串 = 终态，跳过（幂等）
-					if (c as Array)[2] is String:
+					# v6→v7：5 元追加第 6 位 alt=0（幂等）；5 元且第 3 位是数字 = 更老的 v4/v5 索引形态，
+					# 先换资产 id 再补位（order 反查逻辑不变）
+					if (c as Array).size() == 6:
 						continue
-					var idx := int((c as Array)[2])
-					if idx < 0 or idx >= order.size():
-						print("  %s：瓦片索引 %d 无对应资产（保留原值）" % [f, idx])
-						continue
-					(c as Array)[2] = str(order[idx])
-					dirty = true
+					if (c as Array).size() == 5 and not ((c as Array)[2] is String):
+						var idx := int((c as Array)[2])
+						if idx < 0 or idx >= order.size():
+							print("  %s：瓦片索引 %d 无对应资产（保留原值）" % [f, idx])
+							continue
+						(c as Array)[2] = str(order[idx])
+					if (c as Array).size() == 5:
+						(c as Array).append(0)
+						dirty = true
 		# entities[] → objects[]：同结构，只把 scene 键改名 asset（x/y 原样保留，浮点由编辑器再写）
 		var old_ents = md.get("entities", null)
 		if old_ents is Array:

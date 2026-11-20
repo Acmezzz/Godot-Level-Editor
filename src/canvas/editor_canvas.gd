@@ -17,10 +17,31 @@ const ContentIdRef := preload("res://src/content/content_id.gd")   # 分层身�
 const AssetDecl := preload("res://src/assets/asset_decl.gd")   # 清单资产表（assets[]）
 const EntityNodeRef := preload("res://src/canvas/entity_node.gd")   # 摆放物节点（场景/实体共用）
 const GridSpaceScript := preload("res://src/canvas/grid_space.gd")   # 格↔像素转换层（正交/等距）
+const MapFormat := preload("res://src/map/map_format.gd")   # 格式版本/瓦片变换位（v7）
 
 var active_layer := 0          # 0..N-1 = 层栈下标，N = 碰撞元层
 var place_kind := "tiles"      # 放置语义跟资产走："tiles"=涂瓦片 / "object"=摆实例（左栏驱动）
 var paint_cell := Vector2i(0, 0)  # 当前瓦片（纯手动，不自动变形）
+
+## 瓦片笔刷变换（v7）：R 循环旋转 0/90/180/270，X 切水平翻转；只影响后续涂刷
+var tile_rot := 0          # 0/90/180/270
+var tile_flip := false     # 水平翻转
+## 旋转档位 → 变换位（Godot 转置语义：90° = 转置|水平翻转，270° = 转置|垂直翻转）
+const TILE_ROT_FLAGS := [0, MapFormat.TILE_ROT90 | MapFormat.TILE_FLIP_H,
+	MapFormat.TILE_FLIP_H | MapFormat.TILE_FLIP_V, MapFormat.TILE_FLIP_V | MapFormat.TILE_ROT90]
+
+var tile_alt: int:
+	get: return int(TILE_ROT_FLAGS[tile_rot]) | (MapFormat.TILE_FLIP_H if tile_flip else 0)
+
+func cycle_tile_rotation() -> void:
+	tile_rot = (tile_rot + 1) % 4
+	_hint("瓦片笔刷：旋转 %d°%s" % [tile_rot * 90, "，水平翻转开" if tile_flip else ""])
+	queue_redraw()
+
+func toggle_tile_flip() -> void:
+	tile_flip = not tile_flip
+	_hint("瓦片笔刷：水平翻转%s（R 旋转 %d°）" % ["开" if tile_flip else "关", tile_rot * 90])
+	queue_redraw()
 var brush_size := 1               # 笔刷边长（格）
 var stamp_asset := ""             # 待放置的资产 id（entity 或 shape=image 的 scene）
 var stamp_thumb: Texture2D
@@ -263,6 +284,12 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 		if sc is int or sc is float:
 			root.scale = Vector2.ONE * float(sc)
 		root.set_meta("parallax", float(ld.get("parallax", 1.0)))
+		# 层混合模式（v7）：mix 缺省不加材质；add/mul 挂 CanvasItemMaterial
+		var blend := str(ld.get("blend", "mix"))
+		if blend == "add" or blend == "mul":
+			var mat := CanvasItemMaterial.new()
+			mat.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD if blend == "add" else CanvasItemMaterial.BLEND_MODE_MUL
+			root.material = mat
 		map_root.add_child(root)
 		layer_tiles.append(tn)
 		layer_ents.append(root)
@@ -294,7 +321,9 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 			var src: int = source_of_asset(str(arr[2]))
 			if src < 0:
 				continue   # 指向已删资产：跳过，不写坏格子
-			tn2.set_cell(Vector2i(int(arr[0]), int(arr[1])), src, Vector2i(int(arr[3]), int(arr[4])))
+			var alt: int = int(arr[5]) if (arr as Array).size() >= 6 else 0
+			TilesetCache.set_cell_alt(tn2, Vector2i(int(arr[0]), int(arr[1])), src,
+				Vector2i(int(arr[3]), int(arr[4])), alt)
 	# 碰撞条目对象（v6）：{x, y}，type 缺省省略（solid）、shape 缺省省略（矩形）。
 	# 读侧兼容 v5 数组条目（在内存里归一成对象，保存时写对象），写侧只产对象。
 	for c in data.get("collision", []):
@@ -809,6 +838,8 @@ func layer_move(i: int, dir: int) -> void:
 	_layer_ops_ctrl.layer_move(i, dir)
 func layer_set_visible(i: int, v: bool) -> void:
 	_layer_ops_ctrl.layer_set_visible(i, v)
+func layer_set_blend(i: int, blend: String) -> void:
+	_layer_ops_ctrl.layer_set_blend(i, blend)
 func _load_snap_layers(snap: Dictionary, active_id: String) -> void:
 	_layer_ops_ctrl._load_snap_layers(snap, active_id)
 func make_object(aid: String) -> EntityNode:

@@ -81,7 +81,8 @@ func extract() -> Dictionary:
 			var aid: String = cvs.asset_of_source(tn.get_cell_source_id(c))
 			if aid == "":
 				continue   # source 不属于任何声明资产：不写出坏条目
-			cells.append([c.x, c.y, aid, ac.x, ac.y])
+			var alt := MapFormat.alt_of_godot(tn.get_cell_alternative_tile(c))
+			cells.append([c.x, c.y, aid, ac.x, ac.y, alt])
 		tiles[lid] = cells
 	# 碰撞条目对象（v6）：{x, y}，type 缺省省略（solid）、shape 缺省省略（矩形）。
 	var ccells := []

@@ -42,15 +42,17 @@ static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 				for j in (tiles[lid] as Array).size():
 					var cell = (tiles[lid] as Array)[j]
 					var p := "tiles.%s[%d]" % [str(lid), j]
-					# 5 元：[x, y, 资产id, atlas_x, atlas_y]——第 3 位是字符串资产 id，
-					# 不再依赖清单数组序（清单重排不会破坏既有地图）
-					if not (cell is Array) or (cell as Array).size() != 5 \
+					# 6 元（v7）：[x, y, 资产id, atlas_x, atlas_y, alt]——第 3 位是字符串资产 id，
+					# 第 6 位 = 变换位 0-7（bit0 水平翻转 / bit1 垂直翻转 / bit2 转置 90°），0 = 原样
+					if not (cell is Array) or (cell as Array).size() != 6 \
 							or not _is_number_prefix(cell, 2) or not (cell[2] is String) \
 							or not (((cell as Array)[3] is int or (cell as Array)[3] is float) \
-								and ((cell as Array)[4] is int or (cell as Array)[4] is float)):
-						_add(issues, "error", p, "must contain x, y, asset id, atlas_x, atlas_y")
-					elif int((cell as Array)[3]) < 0 or int((cell as Array)[4]) < 0:
-						_add(issues, "error", p, "atlas coords must be >= 0")
+								and ((cell as Array)[4] is int or (cell as Array)[4] is float) \
+								and (cell as Array)[5] is int):
+						_add(issues, "error", p, "must contain x, y, asset id, atlas_x, atlas_y, alt (v6 5-tuple retired: run tools/migrate_project.gd)")
+					elif int((cell as Array)[3]) < 0 or int((cell as Array)[4]) < 0 \
+							or int((cell as Array)[5]) < 0 or int((cell as Array)[5]) > 7:
+						_add(issues, "error", p, "atlas coords must be >= 0 and alt in 0..7")
 					elif not known_assets.is_empty() and not known_assets.has(str((cell as Array)[2])):
 						_add(issues, "warning", p, "asset id is not in the current manifest: " + str((cell as Array)[2]))
 	var spawn = data.get("spawn", [2, 2])
@@ -114,6 +116,9 @@ static func _validate_layers(meta: Dictionary, issues: Array[Dictionary]) -> Dic
 			_add(issues, "error", p + ".offset", "must be [x, y] numbers")
 		if ldef.has("scale") and not (ldef.scale is int or ldef.scale is float):
 			_add(issues, "error", p + ".scale", "must be a number")
+		# 层混合模式（v7）：缺省 mix（省略）；add/mul 写盘
+		if ldef.has("blend") and not (str(ldef.blend) in ["mix", "add", "mul"]):
+			_add(issues, "error", p + ".blend", "must be \"mix\" / \"add\" / \"mul\"")
 	return ids
 
 ## objects[] 校验：场景实例与实体实例同形，差别只在 code（仅 entity 合法）。

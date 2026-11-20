@@ -156,6 +156,18 @@ func _layer_mgr_row(i: int, decl: Dictionary) -> Control:
 		app.canvas.layer_set_visible(i, on)
 		app._sync_ui())
 	row.add_child(vis)
+	var blend_opt := OptionButton.new()
+	blend_opt.add_item("混合")
+	blend_opt.set_item_metadata(0, "mix")
+	blend_opt.add_item("加法")
+	blend_opt.set_item_metadata(1, "add")
+	blend_opt.add_item("相乘")
+	blend_opt.set_item_metadata(2, "mul")
+	blend_opt.select({"mix": 0, "add": 1, "mul": 2}.get(str(decl.get("blend", "mix")), 0))
+	blend_opt.tooltip_text = "层混合模式：混合（缺省）/ 加法（发光类）/ 相乘（遮罩类）"
+	blend_opt.item_selected.connect(func(idx: int):
+		app.canvas.layer_set_blend(i, str(blend_opt.get_item_metadata(idx))))
+	row.add_child(blend_opt)
 	var up = app.UiKitScript.button("↑", func():
 		app.canvas.layer_move(i, -1)
 		_rebuild_layer_mgr()

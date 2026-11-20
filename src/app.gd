@@ -374,6 +374,16 @@ func _shortcut_input(event: InputEvent) -> void:
 		KEY_F:
 			if canvas.flip_selected():
 				get_viewport().set_input_as_handled()
+		KEY_R:
+			# 瓦片笔刷变换（v7）：R 循环旋转档位；实体无旋转键，不冲突
+			if canvas.place_kind == "tile":
+				canvas.cycle_tile_rotation()
+				get_viewport().set_input_as_handled()
+		KEY_X:
+			# 纯 X = 瓦片水平翻转（Ctrl+X 剪切在上面已提前返回，不会到这里）
+			if canvas.place_kind == "tile":
+				canvas.toggle_tile_flip()
+				get_viewport().set_input_as_handled()
 		KEY_EQUAL:
 			canvas.zoom = clampf(canvas.zoom * 1.15, 0.5, 6.0)
 			canvas._update_cam()

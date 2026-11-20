@@ -234,6 +234,34 @@ func layer_rename(i: int, name: String) -> void:
 	snap["meta"] = meta
 	_load_snap_layers(snap, layer_id(active_layer))
 
+## 层混合模式（v7）：mix 缺省省略（erase），add/mul 写盘。快照先行，与 layer_rename 同纪律。
+## 值未变直接返回（幂等）——控件回填不产生幽灵撤销步。
+func layer_set_blend(i: int, blend: String) -> void:
+	if map_root == null or not is_instance_valid(map_root):
+		return
+	if blend != "mix" and blend != "add" and blend != "mul":
+		return
+	var L := layers_decl()
+	if i < 0 or i >= L.size():
+		return
+	if str(blend) == str((L[i] as Dictionary).get("blend", "mix")):
+		return
+	_push_undo()
+	var snap := extract()
+	if snap.is_empty():
+		return
+	var meta: Dictionary = snap.get("meta", {})
+	var SL: Array = (meta.get("layers", []) as Array).duplicate(true)
+	if i < 0 or i >= SL.size():
+		return
+	if blend == "mix":
+		(SL[i] as Dictionary).erase("blend")
+	else:
+		(SL[i] as Dictionary)["blend"] = blend
+	meta["layers"] = SL
+	snap["meta"] = meta
+	_load_snap_layers(snap, layer_id(active_layer))
+
 func layer_move(i: int, dir: int) -> void:
 	if map_root == null or not is_instance_valid(map_root):
 		return

@@ -13,4 +13,33 @@ extends RefCounted
 ## v6：collision[] 条目由定长数组 [x,y,(type,(shape))] 改为**对象** {x, y, type?, shape?}
 ## （缺省省略：type 缺省 solid、shape 缺省矩形）；清单顶层新增 collisionTypes 声明池、
 ## meta.layers 层参数（parallax/ySort/offset/scale）、瓦片 palette 条目 ySortOrigin。
-const VERSION := 6
+## v7：瓦片条目 5 元 → 6 元 [x,y,资产id,ax,ay,alt]（第 6 位 = 变换位 0-7：bit0 水平翻转、
+## bit1 垂直翻转、bit2 转置(90°)，0 缺省不可省）；meta.layers[] 增可选 blend（mix 省略/add/mul）。
+const VERSION := 7
+
+## —— 瓦片变换位（编辑器口径 0-7） ——
+## Godot 的 alternative_tile 把变换编在第 12/13 位（TRANSFORM_FLIP_H/V/TRANSPOSE）；
+## 磁盘数据收敛到 0-7，读写时经这两个函数与 Godot 位互转。
+const TILE_FLIP_H := 1
+const TILE_FLIP_V := 2
+const TILE_ROT90 := 4
+
+static func alt_to_godot(f: int) -> int:
+	var g := 0
+	if f & TILE_FLIP_H:
+		g |= 4096
+	if f & TILE_FLIP_V:
+		g |= 8192
+	if f & TILE_ROT90:
+		g |= 12288
+	return g
+
+static func alt_of_godot(g: int) -> int:
+	var f := 0
+	if g & 4096:
+		f |= TILE_FLIP_H
+	if g & 8192:
+		f |= TILE_FLIP_V
+	if g & 12288:
+		f |= TILE_ROT90
+	return f

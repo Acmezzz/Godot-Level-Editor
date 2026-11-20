@@ -51,13 +51,15 @@ func test_tiles_key_and_tuple() -> void:
 	var box := _box()
 	var d: Dictionary = box.d
 	var lid: String = box.lid
-	(d.tiles as Dictionary)[lid] = [[0, 0, "terrain", 0, 0]]
+	(d.tiles as Dictionary)[lid] = [[0, 0, "terrain", 0, 0, 0]]
 	eq(_errs(d).size(), 0, "合法瓦片零错误")
 	(d.tiles as Dictionary)[lid] = [[0, 0, 0]]
 	ok(_errs(d).size() >= 1, "3 元瓦片报错")
 	(d.tiles as Dictionary)[lid] = [[0, 0, "terrain", 0, 0, 9]]
-	ok(_errs(d).size() >= 1, "6 元瓦片报错")
-	(d.tiles as Dictionary)["幽灵层"] = [[0, 0, "terrain", 0, 0]]
+	ok(_errs(d).size() >= 1, "alt 越界报错")
+	(d.tiles as Dictionary)[lid] = [[0, 0, "terrain", 0, 0]]
+	ok(_errs(d).size() >= 1, "5 元瓦片退役报错")
+	(d.tiles as Dictionary)["幽灵层"] = [[0, 0, "terrain", 0, 0, 0]]
 	ok(_errs(d).size() >= 1, "tiles 键不在层集报错")
 
 func test_objects() -> void:

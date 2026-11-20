@@ -6,6 +6,9 @@ extends RefCounted
 
 var cvs   # editor_canvas 宿主
 
+const MapFormat := preload("res://src/map/map_format.gd")
+const TilesetCache := preload("res://src/canvas/tileset_cache.gd")
+
 func _init(c) -> void:
 	cvs = c
 ## —— 框选区域拖动搬迁（瓦片 / 装饰 / 碰撞三层 + 区域内实体） ——
@@ -55,7 +58,8 @@ func _snapshot_region(sel: Rect2i) -> Dictionary:
 					var aid: String = cvs.asset_of_source((cvs.layer_tiles[li] as TileMapLayer).get_cell_source_id(c))
 					if aid == "":
 						continue
-					cells.append([x, y, aid, tac.x, tac.y])
+					cells.append([x, y, aid, tac.x, tac.y,
+						MapFormat.alt_of_godot((cvs.layer_tiles[li] as TileMapLayer).get_cell_alternative_tile(c))])
 		if not cells.is_empty():
 			snap["tiles"][lid] = cells
 	for y2 in range(sel.position.y, sel.end.y):
@@ -141,9 +145,11 @@ func _finish_region_move() -> void:
 			var src2: int = cvs.source_of_asset(str((t2 as Array)[2]))
 			if src2 < 0:
 				continue
-			(cvs.layer_tiles[li2] as TileMapLayer).set_cell(
-				Vector2i(int((t2 as Array)[0]), int((t2 as Array)[1])) + delta, src2,
-				Vector2i(int((t2 as Array)[3]), int((t2 as Array)[4])))
+			var ta2 := t2 as Array
+			TilesetCache.set_cell_alt(cvs.layer_tiles[li2] as TileMapLayer,
+				Vector2i(int(ta2[0]), int(ta2[1])) + delta, src2,
+				Vector2i(int(ta2[3]), int(ta2[4])),
+				int(ta2[5]) if ta2.size() >= 6 else 0)
 	for t in snap.get("collision", []):
 		var ta := t as Array
 		if ta.size() >= 4:
@@ -225,7 +231,8 @@ func copy_region() -> void:
 					var aid: String = cvs.asset_of_source((cvs.layer_tiles[li] as TileMapLayer).get_cell_source_id(Vector2i(x, y)))
 					if aid == "":
 						continue
-					cells.append([d.x, d.y, aid, tac.x, tac.y])
+					cells.append([d.x, d.y, aid, tac.x, tac.y,
+						MapFormat.alt_of_godot((cvs.layer_tiles[li] as TileMapLayer).get_cell_alternative_tile(Vector2i(x, y)))])
 		if not cells.is_empty():
 			cvs._region_clip["tiles"][lid] = cells
 	for y2 in range(cvs._region_sel.position.y, cvs._region_sel.end.y):
@@ -321,8 +328,10 @@ func _paste_region(origin: Vector2i) -> void:
 			var src: int = cvs.source_of_asset(str(ta[2]))
 			if src < 0:
 				continue   # 目标项目没有这个资产：跳过，不写坏格子
-			(cvs.layer_tiles[li] as TileMapLayer).set_cell(
-				origin + Vector2i(int(ta[0]), int(ta[1])), src, Vector2i(int(ta[3]), int(ta[4])))
+			TilesetCache.set_cell_alt(cvs.layer_tiles[li] as TileMapLayer,
+				origin + Vector2i(int(ta[0]), int(ta[1])), src,
+				Vector2i(int(ta[3]), int(ta[4])),
+				int(ta[5]) if ta.size() >= 6 else 0)
 	for t in cvs._region_clip.get("collision", []):
 		var cc := origin + Vector2i(int(t[0]), int(t[1]))
 		if (t as Array).size() >= 4:
