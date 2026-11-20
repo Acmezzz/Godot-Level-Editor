@@ -77,7 +77,10 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 			sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			var pending := {"v": sp.value}
 			sp.value_changed.connect(func(v: float):
-				pending.v = (int(v) if typ == "int" else v))
+				if typ == "int":
+					pending.v = int(v)
+				else:
+					pending.v = v)
 			var commit := func():
 				on_set.call(pending.v)
 			sp.get_line_edit().text_submitted.connect(func(_t: String): on_set.call(pending.v))
@@ -224,7 +227,7 @@ static func _norm_option(o) -> Dictionary:
 	return {"v": str(o), "t": str(o)}
 
 ## 只读展示：结构可见（JSON 一行），不可写；下面一行黄字说明为什么。
-static func _readonly(decl: Dictionary, value, why: String, hint: String) -> Dictionary:
+static func _readonly(_decl: Dictionary, value, why: String, hint: String) -> Dictionary:
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 2)
 	var le := LineEdit.new()

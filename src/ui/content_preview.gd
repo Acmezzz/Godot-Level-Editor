@@ -141,7 +141,7 @@ func _hit_at(pos: Vector2) -> String:
 	if s <= 0.0:
 		return ""
 	var meta: Dictionary = host.app.canvas.map_data.get("meta", {})
-		var origin := _origin(s)
+	var origin := _origin(s)
 	var world := (pos - origin) / s
 	var ents: Array = host._entities()
 	for i in range(ents.size() - 1, -1, -1):

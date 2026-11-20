@@ -49,7 +49,7 @@ func confirm_discard(action: String) -> bool:
 	return answer[0]
 
 ## 通用确认框：删除/不可撤销动作统一走这里（文本与确定钮文案可定制）
-func confirm_action(title: String, text: String, ok_text := "确定", danger := false) -> bool:
+func confirm_action(title: String, text: String, ok_text := "确定", _danger := false) -> bool:
 	var dlg := ConfirmationDialog.new()
 	dlg.title = title
 	dlg.dialog_text = text

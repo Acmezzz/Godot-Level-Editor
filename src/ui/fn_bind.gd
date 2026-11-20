@@ -71,8 +71,8 @@ func _build_fn_row(i: int, item, total: int) -> Control:
 	var line := Kit.hbox(6)
 	line.add_theme_constant_override("separation", 6)
 
-	var ord := Kit.text_label(ORD[i] if i < ORD.size() else str(i + 1), Th.TEXT_MUTE, Th.FS_SMALL)
-	line.add_child(ord)
+	var ord_lbl := Kit.text_label(ORD[i] if i < ORD.size() else str(i + 1), Th.TEXT_MUTE, Th.FS_SMALL)
+	line.add_child(ord_lbl)
 
 	# 「库」按钮与「并行」勾选都要吞掉点击，否则会连带展开/收起表单
 	# 未知码：清单里查不到 → 红字显形，数据原样保留（不删、不改写）
