@@ -388,39 +388,51 @@ func poll_playtest() -> void:
 	else:
 		app._set_status(" 试玩进程已退出（运行 %d 秒）" % secs)
 
+## 试玩配置弹窗（v7）：清单 playtest.flags/params 声明驱动，替代写死的 dash/glide/hp。
+## flags → 勾选框（启用时启动参数原样追加 flag.arg）；params → SpinBox（追加 arg 以 %d 填数）。
+## 值只存编辑器本地 prefs（键 = flag/param id），不写进地图 JSON；清单未声明 = 空态提示。
 func _open_play_cfg() -> void:
 	if not app.map_loaded:
 		app._set_status("无地图：先新建或打开一张地图")
 		return
-	var shell = app._popup_body("试玩配置 —— %s" % app.cur_map_name, "只存编辑器本地，不写进地图 JSON。")
+	var pt: Dictionary = app.manifest.get("playtest", {}) if app.manifest is Dictionary else {}
+	var flags: Array = pt.get("flags", []) if pt.get("flags", null) is Array else []
+	var params: Array = pt.get("params", []) if pt.get("params", null) is Array else []
+	var shell = app._popup_body("试玩配置 —— %s" % app.cur_map_name,
+		"只存编辑器本地，不写进地图 JSON。声明在清单 playtest.flags / playtest.params。")
 	var pop: PopupPanel = shell.pop
 	var body: VBoxContainer = shell.body
-	var cb_dash := CheckBox.new()
-	cb_dash.text = "初始拥有冲刺（羽毛）"
-	cb_dash.button_pressed = "dash" in app.play_cfg.get("abilities", [])
-	var cb_glide := CheckBox.new()
-	cb_glide.text = "初始拥有滑翔（翅膀）"
-	cb_glide.button_pressed = "glide" in app.play_cfg.get("abilities", [])
-	var sp := SpinBox.new()
-	sp.min_value = 0
-	sp.max_value = 5
-	sp.step = 1
-	sp.value = int(app.play_cfg.get("hp", 0))
-	sp.suffix = " 心"
-	body.add_child(cb_dash)
-	body.add_child(cb_glide)
-	body.add_child(app.UiKitScript.field_row("初始血量", sp, UiKitScript.LABEL_W))
-	body.add_child(app.UiKitScript.hint_label("0 = 用游戏默认（3 心）", app.POPUP_BODY_W))
+	if flags.is_empty() and params.is_empty():
+		body.add_child(app.UiKitScript.hint_label(
+			"清单未声明 playtest 项——在 editor_manifest.json 加 \"playtest\" 后重开清单（示例见 GAME_SIDE_STANDARD §试玩）。",
+			app.POPUP_BODY_W))
+	var states := {}   # {id: Callable} 应用时逐项收集（勾选=布尔，数字=整数）
+	for f in flags:
+		var fd: Dictionary = f
+		var fid := str(fd.get("id", ""))
+		var cb := CheckBox.new()
+		cb.text = str(fd.get("name", fid))
+		cb.button_pressed = bool(app.play_cfg.get(fid, false))
+		body.add_child(cb)
+		states[fid] = func() -> Variant: return cb.button_pressed
+	for p2 in params:
+		var pd: Dictionary = p2
+		var pid := str(pd.get("id", ""))
+		var sp := SpinBox.new()
+		sp.min_value = float(pd.get("min", 0))
+		sp.max_value = float(pd.get("max", 999999))
+		sp.step = 1
+		sp.value = float(int(app.play_cfg.get(pid, int(pd.get("def", 0)))))
+		body.add_child(app.UiKitScript.field_row(str(pd.get("name", pid)), sp, UiKitScript.LABEL_W))
+		states[pid] = func() -> Variant: return int(sp.value)
 	var btn_row = app.UiKitScript.hbox(8)
 	btn_row.alignment = BoxContainer.ALIGNMENT_END
 	btn_row.add_child(app.UiKitScript.button("取消", func(): pop.hide(), "ghost"))
 	var apply_cfg := func():
-		var ab: Array = []
-		if cb_dash.button_pressed:
-			ab.append("dash")
-		if cb_glide.button_pressed:
-			ab.append("glide")
-		app.play_cfg = {"abilities": ab, "hp": int(sp.value)}
+		var cfg := {}
+		for sid in states:
+			cfg[sid] = (states[sid] as Callable).call()
+		app.play_cfg = cfg
 		app._prefs[app.cur_map_name] = app.play_cfg
 		app._save_prefs()
 		pop.hide()
@@ -429,19 +441,48 @@ func _open_play_cfg() -> void:
 	body.add_child(btn_row)
 	app._open_popup(pop)
 
-
 func _play_args(spawn_tiles := Vector2i(-1, -1)) -> PackedStringArray:
 	var out: PackedStringArray = []
-	var ab: Array = app.play_cfg.get("abilities", [])
-	if not ab.is_empty():
-		out.append("--abilities=" + ",".join(ab))
-	if int(app.play_cfg.get("hp", 0)) > 0:
-		out.append("--hp=%d" % int(app.play_cfg.get("hp", 0)))
+	var pt: Dictionary = app.manifest.playtest if (app.manifest is Dictionary and app.manifest.playtest is Dictionary) else {}
+	var flags: Array = pt.get("flags", []) if pt.get("flags", null) is Array else []
+	var params: Array = pt.get("params", []) if pt.get("params", null) is Array else []
+	for f in flags:
+		var fd: Dictionary = f
+		var fid := str(fd.get("id", ""))
+		if bool(app.play_cfg.get(fid, false)) and str(fd.get("arg", "")) != "":
+			out.append(str(fd.get("arg")))
+	for p2 in params:
+		var pd: Dictionary = p2
+		var pid := str(pd.get("id", ""))
+		if app.play_cfg.has(pid):
+			var v := int(app.play_cfg.get(pid, 0))
+			if v != int(pd.get("def", 0)):
+				var arg := str(pd.get("arg", "%d"))
+				out.append(arg % v if arg.contains("%d") else arg)
 	if spawn_tiles.x >= 0 and spawn_tiles.y >= 0:
 		out.append("--spawnx=%d" % spawn_tiles.x)
 		out.append("--spawny=%d" % spawn_tiles.y)
 	return out
 
 
+## 试玩配置（v7）：prefs 由 {abilities:[],hp} 旧形态展平为 {flag_id: bool, param_id: int}。
+## 旧键 abilities[] 展开成对应 flag id 勾选、hp 落到 hp 键——与旧 CLI 参数一一对应。
 func _sync_play_cfg_to_map() -> void:
-	app.play_cfg = app._prefs.get(app.cur_map_name, {"abilities": [], "hp": 0})
+	var raw = app._prefs.get(app.cur_map_name, null)
+	if not (raw is Dictionary):
+		app.play_cfg = {}
+		return
+	var cfg := {}
+	var old_ab = (raw as Dictionary).get("abilities", null)
+	if old_ab is Array:
+		for x in (old_ab as Array):
+			cfg[str(x)] = true
+	var old_hp = (raw as Dictionary).get("hp", null)
+	if old_hp != null:
+		cfg["hp"] = int(old_hp)
+	for k in (raw as Dictionary):
+		if not cfg.has(k):
+			cfg[k] = (raw as Dictionary)[k]
+	app.play_cfg = cfg
+	app._prefs[app.cur_map_name] = cfg
+	app._save_prefs()

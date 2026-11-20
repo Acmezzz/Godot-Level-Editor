@@ -50,6 +50,7 @@
 | `contentDir` | string | 内容根目录（相对工程根），缺省 `content`；不允许 `..` 或绝对路径 |
 | `playCommand` | string | 试玩命令模板；支持 `%mapfile%`、`%projectpath%` |
 | `godotExe` | string | 可选，覆盖 `playCommand` 首个可执行文件路径；支持 `%projectpath%` |
+| `playtest` | object | 可选。试玩面板声明驱动：`flags: [{id, name, arg}]`（勾选后启动参数**原样追加** arg）、`params: [{id, name, arg(含 %d), def, min, max}]`（数字参数，值 ≠ def 才追加）。值只存编辑器本地 prefs，键 = id。未声明 = 面板空态提示 |
 
 清单校验把 `assets` 非 Array、`tileSize` 非正数、资产 id 空或重复、
 **实例码重复**、图集/图片路径含 `..` 或为空、palette 元素缺 `cell`、功能/步骤/音频**条目码池内重复**、

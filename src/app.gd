@@ -180,7 +180,7 @@ func _switch_project() -> void:
 	_show_picker()
 
 # —— 试玩配置（每图独立）：初始能力/血量，存编辑器用户数据不污染地图 JSON ——
-var play_cfg := {}                 # 当前图配置 {abilities:[], hp:int}
+var play_cfg := {}                 # 当前图试玩配置 {flag_id: bool, param_id: int}（清单 playtest 声明驱动）
 var _prefs: Dictionary = {}        # 全部图配置 {mapname: cfg}
 const PREFS_PATH := "user://playtest_prefs.json"
 

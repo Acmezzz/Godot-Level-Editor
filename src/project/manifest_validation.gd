@@ -40,6 +40,7 @@ static func validate(data: Dictionary, project_dir := "") -> Array[Dictionary]:
 		_validate_triggers(data, issues)
 	if data.has("collisionTypes"):
 		_validate_collision_types(data, issues)
+		_validate_playtest(data, issues)
 	var tile_size = data.get("tileSize", 16)
 	if not (tile_size is int or tile_size is float) or float(tile_size) <= 0.0:
 		_add(issues, "error", "tileSize", "must be a positive number")
@@ -259,6 +260,42 @@ static func _validate_collision_types(data: Dictionary, issues: Array[Dictionary
 			_add(issues, "error", "collisionTypes", "invalid shape: " + shape)
 		if body.has("color") and not (body.color is String):
 			_add(issues, "error", "collisionTypes", "color must be a #rrggbb string")
+
+## 试玩声明（v7）：清单 playtest.flags/params 驱动试玩面板（替代写死的 dash/glide/hp）。
+## flags = {id, name, arg}（arg 为启动时原样追加的 CLI 参数）；params = {id, name, arg(含 %d), def, min, max}。
+## 未声明 playtest = 面板空态提示；结构错报 error，不拦载入（试玩是编辑期功能）。
+static func _validate_playtest(data: Dictionary, issues: Array[Dictionary]) -> void:
+	if not data.has("playtest"):
+		return
+	var pt = data.get("playtest", null)
+	if not (pt is Dictionary):
+		_add(issues, "error", "playtest", "must be an object")
+		return
+	var pt2: Dictionary = pt
+	for kind in ["flags", "params"]:
+		var arr = pt2.get(kind, null)
+		if arr == null:
+			continue
+		if not (arr is Array):
+			_add(issues, "error", "playtest." + kind, "must be an array")
+			continue
+		var ids := {}
+		for it in (arr as Array):
+			if not (it is Dictionary):
+				_add(issues, "error", "playtest." + kind, "entries must be objects")
+				continue
+			var d: Dictionary = it
+			var fid := str(d.get("id", ""))
+			if fid == "" or ids.has(fid):
+				_add(issues, "error", "playtest." + kind,
+					"ids must be non-empty and unique (seen: %s)" % fid)
+			ids[fid] = true
+			if str(d.get("name", "")) == "":
+				_add(issues, "error", "playtest." + kind + "." + fid, "must have a name")
+			if kind == "flags" and str(d.get("arg", "")) == "":
+				_add(issues, "error", "playtest.flags." + fid, "must have an arg")
+			if kind == "params" and not str(d.get("arg", "")).contains("%d"):
+				_add(issues, "error", "playtest.params." + fid, "arg must contain %d for the number")
 
 ## 步骤池：id 非空唯一（array 写法查重）、条目码池内唯一、字段 id/kind/type 合法、
 ## 步骤字段码与功能/条件字段同空间查重（跨池同码 = 静默合并，报错）。
