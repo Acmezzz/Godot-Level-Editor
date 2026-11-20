@@ -30,7 +30,7 @@ func test_map_write_read_roundtrip() -> void:
 	ok(MapStore.write(m, "t", d), "写入成功")
 	var data: Dictionary = MapStore.read(m, "t")
 	ok(data.size() > 0, "读回非空")
-	eq(int(data.get("version")), 4, "版本保真")
+	eq(int(data.get("version")), MapStore.FORMAT_VERSION, "版本保真")
 	eq(str((data.get("meta", {}) as Dictionary).get("name")), "t", "图名保真")
 	eq((data.get("meta", {}) as Dictionary).get("layers", []).size(), 2, "层栈保真")
 	_wipe()

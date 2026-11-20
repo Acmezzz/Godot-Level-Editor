@@ -192,8 +192,7 @@ func _draw_map() -> void:
 
 	# 各用户层真实瓦片：预览必须看得出实例压在哪块地上，只画网格等于丢了一半信息。
 	# 数据优先取画布实时 TileMapLayer（刚涂的立刻可见），退回 map_data 的序列化数组；
-	# 两种来源都归一成 [x, y, atlas, ax, ay]；预览不分层配色，统一用地形色。
-	var texs: Array = host.app.canvas.atlas_texs
+	# 两种来源都归一成 [x, y, 资产id, ax, ay]；预览不分层配色，统一用地形色。
 	var layers: Array = meta.get("layers", [])
 	for li in layers.size():
 		var ldef = layers[li]
@@ -206,8 +205,11 @@ func _draw_map() -> void:
 			var cy := int(t[1])
 			if cx < 0 or cy < 0 or cx >= mw or cy >= mh:
 				continue
-			var ai := int(t[2])
-			var src := Rect2(Vector2(float(t[3]), float(t[4])) * tile, Vector2(tile, tile))
+			var aid := str(t[2])
+			var texs: Array = host.app.canvas.atlas_texs
+			var ai: int = host.app.canvas.source_of_asset(aid)
+			var cs := Vector2(host.app.canvas.asset_cell(aid))
+			var src := Rect2(Vector2(float(t[3]), float(t[4])) * cs, cs)
 			var dst := Rect2(origin + Vector2(float(t[0]), float(t[1])) * step, Vector2(step, step))
 			var atex: Texture2D = null
 			if ai >= 0 and ai < texs.size():
@@ -253,7 +255,7 @@ func _draw_map() -> void:
 	if highlight_rect.size.x > 0.0:
 		draw_rect(highlight_rect.grow(3.0), Color(0.2, 1.0, 0.9, 0.95), false, 2.0)
 
-## 预览用的瓦片列表，统一为 [x, y, atlas, ax, ay]（按层栈下标取）。
+## 预览用的瓦片列表，统一为 [x, y, 资产id, ax, ay]（按层栈下标取）。
 ## 首选画布实时 TileMapLayer（编辑中的改动立刻反映），图层不可用时退回 map_data 数组。
 func _tiles(li: int, layer_id: String) -> Array:
 	if not host._map_ready():
@@ -269,14 +271,17 @@ func _tiles(li: int, layer_id: String) -> Array:
 			var ac: Vector2i = layer.get_cell_atlas_coords(c)
 			if ac == Vector2i(-1, -1):
 				continue
-			out.append([c.x, c.y, layer.get_cell_source_id(c), ac.x, ac.y])
+			var aid: String = host.app.canvas.asset_of_source(layer.get_cell_source_id(c))
+			if aid == "":
+				continue
+			out.append([c.x, c.y, aid, ac.x, ac.y])
 	else:
 		var tiles: Dictionary = host.app.canvas.map_data.get("tiles", {})
 		for raw in tiles.get(layer_id, []):
 			if not (raw is Array) or (raw as Array).size() < 5:
 				continue
 			var a: Array = raw
-			out.append([int(a[0]), int(a[1]), int(a[2]), int(a[3]), int(a[4])])
+			out.append([int(a[0]), int(a[1]), str(a[2]), int(a[3]), int(a[4])])
 	_tiles_cache[li] = out
 	_tiles_rev[li] = rev
 	return out

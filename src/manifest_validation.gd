@@ -1,5 +1,5 @@
 extends RefCounted
-## 清单结构与能力校验：tiles/entities/functions/conditions/steps/audio 的类型与
+## 清单结构与能力校验：assets/functions/conditions/steps/audio 的类型与
 ## id/码唯一性（图层已退役为地图 meta.layers，归 map_data_validation 校验）、
 ## 字段 kind 必须显式 input/choice、挂载功能必须已声明、功能引用的条件必须已声明、
 ## 功能/条件/步骤字段码同空间唯一、步骤码与音频码池内唯一。
@@ -9,16 +9,20 @@ const ConditionDecls := preload("res://src/content/condition_decl.gd")
 const StepDecls := preload("res://src/content/step_decl.gd")
 const AudioDecls := preload("res://src/content/audio_decl.gd")
 const ContentStore := preload("res://src/content/content_store.gd")
+const AssetDecl := preload("res://src/assets/asset_decl.gd")
 
+## 资产 id 同时用作地图瓦片条目的第 3 位（磁盘引用）——必须存在且唯一。
 static func validate(data: Dictionary, project_dir := "") -> Array[Dictionary]:
 	var issues: Array[Dictionary] = []
-	for key in ["tiles", "entities"]:
-		if data.has(key) and not (data[key] is Array):
-			_add(issues, "error", key, "must be an array")
-	if data.get("tiles", null) is Array:
-		_validate_tiles(data.tiles, project_dir, issues)
-	if data.get("entities", null) is Array:
-		_validate_entities(data, issues)
+	# 旧键零兼容：tiles[] / entities[] 已并入 assets[]，见到就报错（迁移脚本负责搬家）
+	for old in ["tiles", "entities"]:
+		if data.has(old):
+			_add(issues, "error", old, "retired: declare this in assets[] with kind/shape (run tools/migrate_project.gd)")
+	if data.has("assets"):
+		if not (data["assets"] is Array):
+			_add(issues, "error", "assets", "must be an array")
+		else:
+			_validate_assets(data, project_dir, issues)
 	if data.has("functions"):
 		_validate_functions(data, issues)
 	if data.has("conditions"):
@@ -263,73 +267,113 @@ static func _validate_steps(data: Dictionary, issues: Array[Dictionary]) -> void
 			if fc3 != "":
 				fcodes[fc3] = true
 
-static func _validate_tiles(tiles: Array, project_dir: String, issues: Array[Dictionary]) -> void:
+## 资产表：kind/shape 合法、id 唯一、scene 的图集或图片二选一、entity 的呈现二选一、
+## 挂载功能必须已声明、palette 条目结构。
+static func _validate_assets(data: Dictionary, project_dir: String, issues: Array[Dictionary]) -> void:
+	var assets: Array = data.get("assets", [])
 	var ids := {}
-	for i in tiles.size():
-		var tile = tiles[i]
-		var path := "tiles[%d]" % i
-		if not (tile is Dictionary):
+	var codes := {}
+	for i in assets.size():
+		var a = assets[i]
+		var path := "assets[%d]" % i
+		if not (a is Dictionary):
 			_add(issues, "error", path, "must be an object")
 			continue
-		var id := str(tile.get("id", ""))
+		var ad: Dictionary = a
+		var id := str(ad.get("id", ""))
 		if id == "" or ids.has(id):
 			_add(issues, "error", path + ".id", "must be non-empty and unique")
 		ids[id] = true
-		var atlas := str(tile.get("atlas", ""))
+		var kind := str(ad.get("kind", ""))
+		if kind != "scene" and kind != "entity":
+			_add(issues, "error", path + ".kind", "must be \"scene\" or \"entity\"")
+			continue
+		if kind == "scene":
+			_validate_scene_asset(ad, path, project_dir, issues)
+		else:
+			_validate_entity_asset(data, ad, path, codes, issues)
+
+static func _validate_scene_asset(ad: Dictionary, path: String, project_dir: String, issues: Array[Dictionary]) -> void:
+	var shape := str(ad.get("shape", "tile"))
+	if shape != "tile" and shape != "image":
+		_add(issues, "error", path + ".shape", "scene shape must be \"tile\" or \"image\"")
+		return
+	var atlas := str(ad.get("atlas", ""))
+	var texture := str(ad.get("texture", ""))
+	if shape == "tile":
 		if atlas == "":
-			_add(issues, "error", path + ".atlas", "must name an atlas")
- # 多图集已支持（格式 bump）——tiles[] 每项一个图集，索引即地图格的 atlas 维度
-		if project_dir != "" and atlas.contains(".."):
+			_add(issues, "error", path + ".atlas", "tile shape needs an atlas")
+		elif project_dir != "" and atlas.contains(".."):
 			_add(issues, "error", path + ".atlas", "path cannot traverse outside the project")
-		if tile.has("palette"):
-			if not (tile.palette is Array):
+		if ad.has("palette"):
+			if not (ad.palette is Array):
 				_add(issues, "error", path + ".palette", "must be an array")
 			else:
-				for j in tile.palette.size():
-					var entry = tile.palette[j]
+				for j in (ad.palette as Array).size():
+					var entry = (ad.palette as Array)[j]
 					if not (entry is Dictionary):
 						_add(issues, "error", "%s.palette[%d]" % [path, j], "must be an object")
-					elif not (entry.get("cell", null) is Array) or entry.cell.size() < 2:
+					elif not ((entry as Dictionary).get("cell", null) is Array) \
+							or ((entry as Dictionary).cell as Array).size() < 2:
 						_add(issues, "error", "%s.palette[%d].cell" % [path, j], "must contain atlas x and y")
+	else:
+		if texture == "":
+			_add(issues, "error", path + ".texture", "image shape needs a texture")
+		elif project_dir != "" and texture.contains(".."):
+			_add(issues, "error", path + ".texture", "path cannot traverse outside the project")
+	if atlas != "" and texture != "":
+		_add(issues, "error", path, "scene asset must declare exactly one of atlas / texture")
+	# 网格投影：第 5 批才落地等距，先只做枚举校验（拼错就静默按正交画，属静默错）
+	var gp := str(ad.get("gridProjection", "orthogonal"))
+	if gp != "orthogonal" and gp != "isometric":
+		_add(issues, "error", path + ".gridProjection", "must be \"orthogonal\" or \"isometric\"")
 
-static func _validate_entities(data: Dictionary, issues: Array[Dictionary]) -> void:
-	var entities: Array = data.get("entities", [])
-	var ids := {}
-	for i in entities.size():
-		var entity = entities[i]
-		var path := "entities[%d]" % i
-		if not (entity is Dictionary):
-			_add(issues, "error", path, "must be an object")
+static func _validate_entity_asset(data: Dictionary, ad: Dictionary, path: String,
+		codes: Dictionary, issues: Array[Dictionary]) -> void:
+	if ad.has("shape"):
+		_add(issues, "error", path + ".shape", "only scene assets have a shape")
+	# 呈现二选一：prefab（游戏侧场景）或 visual（编辑器自画）。都没有 = 放上画布是空白，
+	# 这正是「实体声明了却看不见」的老坑。
+	var prefab := str(ad.get("prefab", ""))
+	var visual = ad.get("visual", null)
+	if prefab == "" and not (visual is Dictionary):
+		_add(issues, "error", path, "entity asset needs prefab or visual")
+	if visual != null and not (visual is Dictionary):
+		_add(issues, "error", path + ".visual", "must be an object")
+	if ad.has("editorSize"):
+		var es = ad.editorSize
+		if not (es is Array) or (es as Array).size() < 2:
+			_add(issues, "error", path + ".editorSize", "must be [w, h]")
+	# 码：entity 可以有；同池唯一
+	var code := str(ad.get("code", ""))
+	if code != "":
+		if codes.has(code):
+			_add(issues, "error", path + ".code", "duplicate asset code %s" % code)
+		codes[code] = true
+	if ad.has("fields") and not (ad.fields is Array):
+		_add(issues, "error", path + ".fields", "must be an array")
+	# 自带功能（挂载）：asset.functions = 已声明功能的 id 数组。
+	# 挂载了未声明的功能 = 挂了个空操作，直接报错误（声明池在上层 functions）。
+	if ad.has("functions"):
+		if not (ad.functions is Array):
+			_add(issues, "error", path + ".functions", "must be an array of function ids")
+		else:
+			var pool := FunctionDecls.functions(data)
+			for fid in ad.functions:
+				if not (fid is String) or str(fid) == "":
+					_add(issues, "error", path + ".functions", "mounts must be non-empty function ids")
+				elif not pool.has(str(fid)):
+					_add(issues, "error", path + ".functions",
+						"mounted function is not declared: " + str(fid))
+	var fields := {}
+	for field in ad.get("fields", []) if ad.get("fields", []) is Array else []:
+		if not (field is Dictionary):
+			_add(issues, "error", path + ".fields", "entries must be objects")
 			continue
-		var id := str(entity.get("id", ""))
-		if id == "" or ids.has(id):
-			_add(issues, "error", path + ".id", "must be non-empty and unique")
-		ids[id] = true
-		if entity.has("fields") and not (entity.fields is Array):
-			_add(issues, "error", path + ".fields", "must be an array")
- # 自带功能（挂载）：entities[].functions = 已声明功能的 id 数组。
- # 挂载了未声明的功能 = 挂了个空操作，直接报错误（声明池在上层 functions）。
-		if entity.has("functions"):
-			if not (entity.functions is Array):
-				_add(issues, "error", path + ".functions", "must be an array of function ids")
-			else:
-				var pool := FunctionDecls.functions(data)
-				for fid in entity.functions:
-					if not (fid is String) or str(fid) == "":
-						_add(issues, "error", path + ".functions",
-							"mounts must be non-empty function ids")
-					elif not pool.has(str(fid)):
-						_add(issues, "error", path + ".functions",
-							"mounted function is not declared: " + str(fid))
-		var fields := {}
-		for field in entity.get("fields", []) if entity.get("fields", []) is Array else []:
-			if not (field is Dictionary):
-				_add(issues, "error", path + ".fields", "entries must be objects")
-				continue
-			var fid := str(field.get("id", ""))
-			if fid == "" or fields.has(fid):
-				_add(issues, "error", path + ".fields", "field ids must be non-empty and unique")
-			fields[fid] = true
+		var fid2 := str((field as Dictionary).get("id", ""))
+		if fid2 == "" or fields.has(fid2):
+			_add(issues, "error", path + ".fields", "field ids must be non-empty and unique")
+		fields[fid2] = true
 
 static func _add(issues: Array[Dictionary], severity: String, path: String, message: String) -> void:
 	issues.append({"severity": severity, "path": path, "message": message})

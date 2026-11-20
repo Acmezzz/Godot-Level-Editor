@@ -55,13 +55,18 @@ func _paint(c: Vector2i) -> void:
 	var layer = cvs._layer_node(cvs.active_layer)
 	if layer == null:
 		return
+	# 笔刷记的是资产 id，落笔时映射到 TileSet source_id（磁盘数据同样写 id）
+	var src: int = cvs.source_of_asset(cvs.paint_asset)
+	if src < 0:
+		cvs._hint("当前笔刷的资产不在清单里：左栏重新选一个瓦片")
+		return
 	for bc in _brush_cells(c):
-		if layer.get_cell_source_id(bc) != cvs.paint_atlas \
+		if layer.get_cell_source_id(bc) != src \
 				or layer.get_cell_atlas_coords(bc) != cvs.paint_cell:
 			if not cvs._paint_pushed:
 				cvs._push_undo()   # 笔画内首个真实改动前压一次快照（点击不动 = 零副作用）
 				cvs._paint_pushed = true
-			layer.set_cell(bc, cvs.paint_atlas, cvs.paint_cell)
+			layer.set_cell(bc, src, cvs.paint_cell)
 			changed = true
 	if changed:
 		cvs._mark(false)   # 只改瓦片层

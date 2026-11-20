@@ -41,52 +41,55 @@
 | `projectName` | string | 顶栏品牌名，缺省空 |
 | `tileSize` | number | 必须 > 0（否则清单报错）；缺省 16。瓦片边长像素 |
 | `screenSize` | [w,h] | 游玩视野框尺寸，缺省 `[640,360]`；纯编辑器视觉 |
-| `tiles` | array | 图集 list；清单级 `layers` 键已退役（图层逐图声明，见 2.3），键还在清单里只作未知键忽略 |
-| `entities` | array | 实体类型，见 2.4 |
+| `assets` | array | **统一资产表**，`kind` 区分场景/实体，见 2.2 / 2.4 |
+| `tiles` | — | **已退役**：并入 `assets[]`（`kind: "scene"`, `shape: "tile"`）。清单里出现即报错 |
+| `entities` | — | **已退役**：并入 `assets[]`（`kind: "entity"`）。清单里出现即报错 |
 | `functions` | dict \| array | 功能声明，见 2.5 |
 | `contentDir` | string | 内容根目录（相对工程根），缺省 `content`；不允许 `..` 或绝对路径 |
 | `playCommand` | string | 试玩命令模板；支持 `%mapfile%`、`%projectpath%` |
 | `godotExe` | string | 可选，覆盖 `playCommand` 首个可执行文件路径；支持 `%projectpath%` |
 
-清单校验把 `tiles/entities/functions/conditions/steps/audio` 非 Array（functions/conditions/
-steps/audio 也接受 dict）、`tileSize` 非正数、瓦片/实体 id 空或重复、
-**实例码重复**、图集路径含 `..` 或为空、palette 元素缺 `cell`、功能/步骤/音频**条目码池内重复**、
+清单校验把 `assets` 非 Array、`tileSize` 非正数、资产 id 空或重复、
+**实例码重复**、图集/图片路径含 `..` 或为空、palette 元素缺 `cell`、功能/步骤/音频**条目码池内重复**、
 **字段码跨池/跨功能同码**（三池共用一个码空间，同码 = 静默别名，报错）、步骤**码重复**、音频**码重复**、
-字段缺 `kind` 或 kind/type 非法、挂载引用未声明的功能、功能引用未声明的条件，判为**错误**（编辑器拒绝加载）。
+字段缺 `kind` 或 kind/type 非法、挂载引用未声明的功能、功能引用未声明的条件，
+以及 `assets[]` 里 `kind` 非法、scene 同时给 `atlas` 与 `texture`、entity 既无 `prefab` 也无 `visual`，
+判为**错误**（编辑器拒绝加载）。
 功能 id 与条件 id 重复都是错误
 （数组写法不查会静默后者覆盖前者）。
 
-### 2.2 图集 `tiles[]`
+### 2.2 场景资产（`kind: "scene"`）
+
+场景资产两种形态，用 `shape` 区分：
 
 ```json
-{
-  "id": "rock",
-  "name": "岩块件套",
-  "atlas": "assets/tiles/terrain_atlas.png",
-  "palette": [
-    {"cell": [0, 0], "name": "单块", "cat": "地面"},
-    {"cell": [1, 0], "name": "顶左"}
-  ]
-}
+{"id": "rock", "kind": "scene", "shape": "tile", "name": "岩块件套",
+ "atlas": "assets/tiles/terrain_atlas.png",
+ "cell": {"w": 16, "h": 16},
+ "palette": [{"cell": [0, 0], "name": "单块", "cat": "地面"}, {"cell": [1, 0], "name": "顶左"}]}
+
+{"id": "bg_forest", "kind": "scene", "shape": "image", "name": "森林背景",
+ "texture": "assets/bg/forest.png", "editorSize": [1280, 720], "anchor": "top_left"}
 ```
 
 | 键 | 必填 | 语义 |
 |---|---|---|
-| `id` | 是 | 非空且全清单唯一。**仅编辑器内部标识，不写进地图** |
-| `atlas` | 是 | 相对工程根的 PNG 路径，不能含 `..` |
+| `id` | 是 | 非空且全清单唯一。**地图瓦片条目第 3 位写的就是它** |
+| `kind` | 是 | 恒 `"scene"` |
+| `shape` | 是 | `"tile"`（图集批量）或 `"image"`（单张图片实例） |
+| `atlas` | tile 必填 | 相对工程根的 PNG 路径，不能含 `..` |
+| `cell` | 否 | 图集切片尺寸 `{w, h}`；可非正方形、可大于地图格。缺省用清单 `tileSize` |
+| `texture` | image 必填 | 单张图片路径 |
+| `editorSize` / `anchor` | 否 | image 的编辑器占位尺寸与锚点（同时是 y 排序基准） |
 | `name` | 否 | 左栏「图集列表」显示名；也是 palette 条目无 `cat` 时的兜底类别名 |
 | `palette` | 否 | 精选瓦片清单；**缺省/空 = 整张图集按网格全量铺开** |
-| `palette[].cell` | 是 | `[atlasX, atlasY]`，按 `tileSize` 切分后的格子坐标 |
+| `palette[].cell` | 是 | `[atlasX, atlasY]`，按该资产 `cell` 切分后的格子坐标 |
 | `palette[].name` | 否 | 显示名，缺省 `"x,y"` |
-| `palette[].cat` | 否 | 类别名；缺省用图集 `name` 作类别；再缺「未分类」 |
+| `palette[].cat` | 否 | 类别名；缺省用资产 `name` 作类别；再缺「未分类」 |
 
-**关键契约：`tiles[]` 的顺序就是地图里的 `atlas` 字段值。**
-`tiles` 数组索引 = 地图 terrain/decor 条目第三位 = TileSet `source_id`。
-游戏侧把 `tiles[0]` 视为烘焙 TileSet 的源 0（`assets/tiles/terrain_tiles.tres` 自带），
-`tiles[1..]` 由游戏侧在运行时加载 PNG 挂成 `source_id = 索引`（每张图集一个 TileSetAtlasSource）。
-
-**因此：`tiles[0]` 的位置是硬契约，新图集只能追加在末尾，不能插队或重排。**
-一旦重排，所有既有地图的 atlas 数字全部错位。
+**索引契约已作废**：地图瓦片条目不再写「图集在清单里的下标」，而是写**资产 id 字符串**。
+清单重排、插队、删除资产都不会让既有地图错位（这是 v5 相对 v4 唯一的破坏性变更）。
+游戏侧按资产 id 在启动时建立 `{资产 id → TileSet source_id}` 映射，再按映射落瓦片。
 
 游戏侧烘焙 TileSet 的源 0 里必须有 `(4,0)` 这个格子作为隐形碰撞占位瓦片
 （编辑器侧常量 `constants.gd::INVISIBLE_CELL`，带整格物理多边形）。游戏侧用它做
@@ -119,11 +122,12 @@ solid+矩形碰撞：`col.set_cell(cell, 0, Vector2i(4,0))`。
 游戏侧对应：按 `meta.layers` 栈序建渲染容器（栈序 = z 序），每层一个瓦片容器 + 实体节点，
 同层瓦片先实体后；碰撞读 `collision` 网格（约 30 行，同 CODES.md 映射模式）。
 
-### 2.4 实体类型 `entities[]`
+### 2.4 实体资产 `kind: "entity"`
 
 ```json
 {
   "id": "portal",
+  "kind": "entity",
   "name": "传送门(图内/跨图)",
   "prefab": "scenes/objects/portal.tscn",
   "thumb": "editor/previews/portal.png",
@@ -141,10 +145,13 @@ solid+矩形碰撞：`col.set_cell(cell, 0, Vector2i(4,0))`。
 | 键 | 必填 | 语义 |
 |---|---|---|
 | `id` | 是 | 全清单唯一；**同时是地图 `entities[].scene` 的值** |
+| `kind` | 是 | 恒 `"entity"`；**唯一决定放置是否产码、能否挂功能** |
 | `name` | 否 | 显示名，缺省用 `id` |
-| `prefab` | 是（可运行实体） | 相对工程根的 `.tscn` 路径；**游戏侧按此加载** |
-| `thumb` | 否 | 编辑器材质的缩略图 PNG 路径；缺失则画布上是空白占位 |
+| `prefab` | 二者之一 | 相对工程根的 `.tscn` 路径；**游戏侧按此加载** |
+| `visual` | 二者之一 | 无 prefab 时的编辑器呈现：`{mode: "rect"/"sprite"/"none", color, alpha}`；`prefab` 与 `visual` 都没有 = 校验报错 |
+| `thumb` | 否 | 缩略图 PNG 路径；缺失时编辑器按 `visual` 声明画占位（不再空白） |
 | `editorSize` | 否 | `[w,h]` **像素**，画布占位尺寸。缺省读 prefab 的第一个碰撞形状；再缺用 1 格（tileSize×tileSize） |
+| `sizeFields` | 否 | `["w","h"]`：尺寸写在实例 `props` 的这两个键里（格数），取代「按 id 硬编码矩形」 |
 | `role` | 否 | 连接语义：`portal` / `exit` / `landing` / `trigger`；见 2.6 |
 | `code` | 否 | 4 位实体身份码。缺省由编辑器补发并随清单写回；**不要手工改动** |
 | `functions` | 否 | **自带功能（挂载）**：声明池 functions 里功能 id 的数组，声明顺序 = 默认执行顺序；见 2.4.1 |
@@ -157,7 +164,7 @@ solid+矩形碰撞：`col.set_cell(cell, 0, Vector2i(4,0))`。
   引用下拉（entity_ref 列实例、map_ref 列地图，§2.4.2），复制/粘贴时按声明重映射。
   语义归游戏侧——编辑器只管选谁、存谁、画布上指给你看。
 
-### 2.4.1 自带功能（挂载）`entities[].functions`
+### 2.4.1 自带功能（挂载）`assets[].functions`
 
 ```json
 "functions": ["hp", "attack"]
@@ -408,25 +415,29 @@ BGM 切换、环境音触发、音效播放在哪一步响起，都是功能代�
 （不要指望按 scene 查 prefab 的通用实例化逻辑能处理它，那一步会取不到 prefab 而跳过）。
 ## 3. 地图 JSON `maps/<名>.json`
 
-### 3.1 顶层结构（格式版本 `version: 4`）
+### 3.1 顶层结构（格式版本 `version: 5`）
 
 ```json
 {
-  "version": 4,
+  "version": 5,
   "meta": {"name": "TEST", "w": 95, "h": 56, "code": "K7QM",
            "layers": [{"id": "K2M8", "name": "资产层", "visible": true},
                       {"id": "F9W3", "name": "FL", "visible": true}]},
   "spawn": [28, 28],
-  "tiles": {"K2M8": [[21, 24, 0, 1, 2]], "F9W3": [[5, 9, 0, 3, 0]]},
+  "tiles": {"K2M8": [[21, 24, "terrain", 1, 2]], "F9W3": [[5, 9, "terrain", 3, 0]]},
   "collision": [[21, 24], [30, 12, "one_way"], [33, 4, "solid", "r45"]],
   "entities": [{"scene": "portal", "code": "QK3T", "layer": "K2M8", "x": 31, "y": 28,
                 "flip_h": false, "props": {"target_point": "L8WM"}, "functions": []}]
 }
 ```
 
+> **v5 是开发中间态**：v5 收进了「清单 `assets[]`」与「瓦片条目写资产 id」两件事，
+> 而「地图 `entities[]` → `objects[]`」要等第 2 批。因此在第 2 批完成前，
+> v5 地图里仍然是 `entities` 段。第 2 批完成后 v5 契约才冻结；**中间态期间不要接游戏工程**。
+
 | 键 | 必填 | 语义 |
 |---|---|---|
-| `version` | 是 | 必须为 4（零兼容，旧版本不升级） |
+| `version` | 是 | 当前为 5；高于 5 = 编辑器打不开（报错），低于 5 = 警告并按当前结构读 |
 | `meta` | 否 | 对象。编辑器只读 `name`/`w`/`h`/`code`/`layers`；**其他键原样保留**（游戏侧自定义键安全） |
 | `meta.w` / `meta.h` | 否 | 地图格尺寸，缺省 120×56 |
 | `meta.code` | 否 | 4 位地图身份码，编辑器缺省补发。改名不改变它 |
@@ -441,14 +452,14 @@ BGM 切换、环境音触发、音效播放在哪一步响起，都是功能代�
 瓦片条目 5 元：
 
 ```
-[x, y, atlas, atlasX, atlasY]
+[x, y, <资产 id>, atlasX, atlasY]
 ```
 
 | 位 | 语义 |
 |---|---|
 | 0 | 格坐标 x |
 | 1 | 格坐标 y |
-| 2 | **图集索引** = 清单 `tiles[]` 的下标 = TileSet `source_id` |
+| 2 | **资产 id 字符串**（清单 `assets[]` 里 `kind: "scene"` 的 `id`）；编辑器内部映射成 TileSet `source_id`，磁盘不存整数索引 |
 | 3 | 图集内格坐标 x |
 | 4 | 图集内格坐标 y |
 
@@ -515,7 +526,7 @@ BGM 切换、环境音触发、音效播放在哪一步响起，都是功能代�
 
 | 键 | 必填 | 语义 |
 |---|---|---|
-| `scene` | 是 | 实体类型 id = 清单 `entities[].id`。**编辑器校验：空 → 错误；不在清单 → 仅警告** |
+| `scene` | 是 | 实体资产 id = 清单 `assets[]` 里 `kind: "entity"` 的 `id`。**编辑器校验：空 → 错误；不在清单 → 仅警告** |
 | `code` | 是（老图缺省由编辑器补发） | 图内唯一实例码（4 位身份码）。**唯一身份**：引用（props 里的 entity_ref 值）、复制重映射、画布连线全靠它。码出生即定、永不回收 |
 | `code` | 否 | 4 位实例身份码，内容 ID 的第三段。缺省补发。**不要手工改** |
 | `layer` | 否 | 4 位**层码**（= `meta.layers[].id`），实体摆在哪一层。缺省 = 最底层 |
@@ -574,7 +585,7 @@ BGM 切换、环境音触发、音效播放在哪一步响起，都是功能代�
 | 层 | 长度 | 载体 | 何时发放 |
 |---|---|---|---|
 | 地图码 | 4 | 地图 `meta.code` | 首次打开该图 |
-| 实体码 | 4 | 清单 `entities[].code` | 首次加载清单；随清单写回 |
+| 实体码 | 4 | 清单 `assets[].code` | 首次加载清单；随清单写回 |
 | 实例码 | 4 | 地图 `entities[].code` | 放置实例时 |
 | 功能码 | 4 | 清单 `functions[].code` | 加载清单时缺则补发（`ensure_codes`） |
 | 字段码 | 4 | 清单 `functions[].fields[].code` | 同上 |
@@ -663,13 +674,23 @@ prefab 脚本在 `_ready()` 里读这些 meta，**不要依赖编辑器把值写
 新工程从零接入时，按 §10 的检查清单逐条自己实现；下面是最小可用的读取骨架：
 
 ```gdscript
-const TILE := 16   # 必须与清单 tileSize 一致
-
-static func build(root: Node2D, data: Dictionary) -> Dictionary:
+## TILE 与清单 tileSize 一致；每个资产的 cell 可非正方形（缺省 = TILE）
+static func build(root: Node2D, data: Dictionary, manifest: Dictionary) -> Dictionary:
 	var meta: Dictionary = data.get("meta", {})
 	var mw := int(meta.get("w", 120))
 	var mh := int(meta.get("h", 56))
-	var ts := _build_tileset()          # 源 0 = 烘焙 .tres；源 1..n = 清单 tiles[1..]
+	# 清单 assets[] 里 shape=tile 的条目 → {资产 id: source_id}；磁盘瓦片条目写的是资产 id
+	var ts := TileSet.new()
+	ts.tile_size = Vector2i(int(manifest.get("tileSize", 16)), int(manifest.get("tileSize", 16)))
+	var src_of := {}
+	for a in manifest.get("assets", []):
+		if not (a is Dictionary) or str(a.get("kind", "")) != "scene" or str(a.get("shape", "")) != "tile":
+			continue
+		var src := TileSetAtlasSource.new()
+		src.texture = load("res://" + str(a.get("atlas", "")))
+		var cell: Dictionary = a.get("cell", {})
+		src.texture_region_size = Vector2i(int(cell.get("w", ts.tile_size.x)), int(cell.get("h", ts.tile_size.y)))
+		src_of[str(a.get("id", ""))] = ts.add_source(src, src_of.size())
 	# meta.layers 栈序 = z 序（底→顶）：每层一个瓦片容器（实体节点夹层见 §3.4）
 	var layers: Array = meta.get("layers", [])
 	var tile_nodes := {}
@@ -685,7 +706,10 @@ static func build(root: Node2D, data: Dictionary) -> Dictionary:
 		for c in (data.get("tiles", {})[lid] as Array):
 			var a := c as Array
 			if a.size() >= 5:
-				tn.set_cell(Vector2i(int(a[0]), int(a[1])), int(a[2]), Vector2i(int(a[3]), int(a[4])))
+				# 第 3 位是资产 id → 查 source_id；查不到 = 已删资产，跳过
+				var sid: int = int(src_of.get(str(a[2]), -1))
+				if sid >= 0:
+					tn.set_cell(Vector2i(int(a[0]), int(a[1])), sid, Vector2i(int(a[3]), int(a[4])))
 	# 运行时层开关：meta.layers[].visible 先应用（差分视图/BOSS 换景，§2.3）
 	for li2 in layers.size():
 		var lm: Dictionary = layers[li2]
@@ -790,33 +814,33 @@ func _apply_door(inst: Node, fn: Dictionary) -> void:
 ### 8.3 不要做的事
 
 - **不要手工编 `code`**。4 位实体身份码由编辑器补发并写回清单，手改会让既有内容 ID 前缀失配。
-- **不要重排 `tiles[]`**（见 2.2）——那是地图 atlas 数字的索引。
-- **不要删除已被引用的实体类型**。清单校验不拦，但地图里会留 `scene` 指向不存在类型的实体，
-  游戏侧静默跳过、编辑器只警告。删类型前先扫全项目地图。
+- **不要删除已被引用的实体资产**。清单校验不拦，但地图里会留 `scene` 指向不存在资产的实体，
+  游戏侧静默跳过、编辑器只警告。删资产前先扫全项目地图（资产目录的「实例分布」就是干这个的）。
 
 ## 9. 新增图集
 
-### 9.1 追加到 `tiles[]` 末尾
+### 9.1 追加一条 `assets[]`
 
 ```json
-{"id": "cave", "name": "洞穴件套", "atlas": "assets/tiles/cave_atlas.png", "palette": [...]}
+{"id": "cave", "kind": "scene", "shape": "tile", "name": "洞穴件套",
+ "atlas": "assets/tiles/cave_atlas.png", "palette": [...]}
 ```
 
-加载后它的索引（比如 1）= 地图 terrain 条目的 atlas 数字 = TileSet `source_id` 1。
-游戏侧要把 `tiles[1..]` 全部在运行时加载成 TileSetAtlasSource。
+**没有「只能追加末尾」的约束了**（v5 起瓦片条目写资产 id，不写下标）。
+新条目插在数组任何位置都不影响既有地图。改完保存清单，游戏侧重启即可。
 
 ### 9.2 游戏侧要保证的
 
 1. **源 0 已烘焙**：`assets/tiles/terrain_tiles.tres` 必须存在且源 0 有 `(4,0)` 隐形碰撞格。
-   `tiles[0]` 的 PNG 只是编辑器显示用，游戏侧**不再**加载它（加载清单图集从索引 1 起）。
-2. **`TILE` 一致性**：运行时 `TileSetAtlasSource.texture_region_size` 写死 `Vector2i(TILE, TILE)`，
-   `TILE` 是常量 16。清单 `tileSize` 改成别的值，这里也得同步。
+   游戏侧按 `assets[]` 里的 `id` 建 `{id → source_id}` 映射，映射顺序由游戏侧自定。
+2. **`TILE` 一致性**：运行时 `TileSet` 的 `tile_size` 必须等于清单 `tileSize`；
+   每个 `TileSetAtlasSource.texture_region_size` 取该资产的 `cell`（可非正方形，缺省 = `tileSize`）。
 3. **PNG 必须在 `res://` 下且已导入**。游戏侧加载用 `load("res://" + rel)`，
    路径含 `..` 直接跳过（安全，但静默——查不到图集时只 `push_warning`）。
 
 ### 9.3 palette 可省
 
-`palette` 省略或空数组时，编辑器把整张图集按 `tileSize` 切格全量平铺给用户选。
+`palette` 省略或空数组时，编辑器把整张图集按该资产 `cell` 切格全量平铺给用户选。
 小图集建议不写 palette；大图集（>8 列）建议写 palette + `cat` 分组，否则左栏要翻很久。
 
 ## 10. 游戏工程接入检查清单
@@ -826,9 +850,9 @@ func _apply_door(inst: Node, fn: Dictionary) -> void:
 | # | 项 | 验收方式 |
 |---|---|---|
 | 1 | `editor/editor_manifest.json` 存在且能通过清单校验 | 编辑器打开项目不落错误页 |
-| 2 | `tiles[]` 至少一项，`tiles[0]` 的 PNG 路径存在 | 左栏出现图集列表 |
+| 2 | `assets[]` 里有 `shape: "tile"` 的图集，其 PNG 路径存在 | 左栏出现图集列表 |
 | 3 | 每图 `meta.layers` 至少一层（新建模板自带 资产层+FL） | 无错误 |
-| 4 | `entities[]` 每项有唯一 `id` + `prefab` 指向真实 `.tscn` | 左栏资产列表出图 |
+| 4 | `assets[]` 里每个 `kind: "entity"` 有唯一 `id`，且 `prefab` 指向真实 `.tscn`（或声明了 `visual`） | 左栏资产列表出图 |
 | 5 | `editor/previews/*.png` 与 `thumb` 对应 | 画布上实体有缩略图 |
 | 6 | `maps/` 目录存在（可为空） | 新建地图能保存 |
 | 7 | `playCommand` 能拉起游戏并接收 `--map=` | 试玩按钮工作 |

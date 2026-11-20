@@ -69,16 +69,19 @@ func _on_tile_pick(i: int, _at: Vector2 = Vector2.ZERO, _mb: int = 0) -> void:
 		return
 	# 记录最近使用（会话内，最多 8 格，重复使用时提到最前）
 	var mc: Vector2i = meta.get("cell", Vector2i.ZERO)
-	_record_tile_mru("%d:%d,%d" % [int(meta.get("atlas", 0)), mc.x, mc.y])
-	app.canvas.paint_cell = meta.get("cell", Vector2i.ZERO)
-	# 多图集——调色板 metadata 带 atlas（TileSet source_id），选瓦片时一起落笔
-	app.canvas.paint_atlas = int(meta.get("atlas", 0))
+	var asset := str(meta.get("asset", ""))
+	_record_tile_mru("%s:%d,%d" % [asset, mc.x, mc.y])
+	app.canvas.paint_cell = mc
+	# 笔刷 = 资产 id（落笔时查 source_id）；空 id 说明这一行没有资产，拒绝入笔
+	if asset == "":
+		return
+	app.canvas.paint_asset = asset
 	app.canvas.stamp_thumb = null
 	# 选瓦片 = 进入瓦片放置语义；active_layer 保持不变（层栈混瓦片+实体）
 	app.canvas.place_kind = "tiles"
 	_apply_state("paint")
 
-## 最近使用瓦片记录（键 "atlas:x,y"——多图集瓦片各自记录）
+## 最近使用瓦片记录（键 "资产id:x,y"——多图集瓦片各自记录）
 func _record_tile_mru(key_str: String) -> void:
 	if key_str == "":
 		return

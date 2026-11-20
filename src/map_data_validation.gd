@@ -32,6 +32,7 @@ static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 	if tiles != null and not (tiles is Dictionary):
 		_add(issues, "error", "tiles", "must be an object keyed by layer id")
 	elif tiles is Dictionary and not layer_ids.is_empty():
+		var known_assets := _asset_ids(manifest)
 		for lid in tiles.keys():
 			if not layer_ids.has(str(lid)):
 				_add(issues, "error", "tiles." + str(lid), "unknown layer id")
@@ -40,12 +41,18 @@ static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 			else:
 				for j in (tiles[lid] as Array).size():
 					var cell = (tiles[lid] as Array)[j]
-					if not (cell is Array) or cell.size() != 5 or not _is_number_prefix(cell, 5):
-						_add(issues, "error", "tiles.%s[%d]" % [str(lid), j],
-							"must contain exactly x, y, atlas, atlas_x, atlas_y")
-					elif int(cell[2]) < 0 or int(cell[3]) < 0 or int(cell[4]) < 0:
-						_add(issues, "error", "tiles.%s[%d]" % [str(lid), j],
-							"atlas index and atlas coords must be >= 0")
+					var p := "tiles.%s[%d]" % [str(lid), j]
+					# 5 元：[x, y, 资产id, atlas_x, atlas_y]——第 3 位是字符串资产 id，
+					# 不再依赖清单数组序（清单重排不会破坏既有地图）
+					if not (cell is Array) or (cell as Array).size() != 5 \
+							or not _is_number_prefix(cell, 2) or not (cell[2] is String) \
+							or not (((cell as Array)[3] is int or (cell as Array)[3] is float) \
+								and ((cell as Array)[4] is int or (cell as Array)[4] is float)):
+						_add(issues, "error", p, "must contain x, y, asset id, atlas_x, atlas_y")
+					elif int((cell as Array)[3]) < 0 or int((cell as Array)[4]) < 0:
+						_add(issues, "error", p, "atlas coords must be >= 0")
+					elif not known_assets.is_empty() and not known_assets.has(str((cell as Array)[2])):
+						_add(issues, "warning", p, "asset id is not in the current manifest: " + str((cell as Array)[2]))
 	var spawn = data.get("spawn", [2, 2])
 	if not (spawn is Array) or spawn.size() != 2 or not _is_number_pair(spawn):
 		_add(issues, "error", "spawn", "must contain two numeric coordinates")
@@ -87,9 +94,9 @@ static func _validate_layers(meta: Dictionary, issues: Array[Dictionary]) -> Dic
 
 static func _validate_entities(entities: Array, manifest: Dictionary, layer_ids: Dictionary, issues: Array[Dictionary]) -> void:
 	var known := {}
-	for definition in manifest.get("entities", []):
-		if definition is Dictionary:
-			known[str(definition.get("id", ""))] = definition
+	for definition in manifest.get("assets", []):
+		if definition is Dictionary and str((definition as Dictionary).get("kind", "")) == "entity":
+			known[str((definition as Dictionary).get("id", ""))] = definition
 	var ids := {}
 	for i in entities.size():
 		var entity = entities[i]
@@ -148,6 +155,14 @@ static func _validate_functions(raw, path: String, manifest: Dictionary, issues:
 
 static func _is_number_pair(values: Array) -> bool:
 	return _is_number_prefix(values, 2)
+
+## 清单资产 id 集（瓦片条目第 3 位是它）；清单缺失/畸形时返回空集，跳过关联检查。
+static func _asset_ids(manifest: Dictionary) -> Dictionary:
+	var out := {}
+	for a in manifest.get("assets", []):
+		if a is Dictionary:
+			out[str((a as Dictionary).get("id", ""))] = true
+	return out
 
 static func _is_number_prefix(values: Array, count: int) -> bool:
 	if values.size() < count:

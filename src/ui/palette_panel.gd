@@ -1,7 +1,14 @@
 extends RefCounted
-## _palette_ctrl：左栏调色板控制器。瓦片导航：多图集先选图集，再类别 → 资产（三级）；
-## 单图集只有类别 → 资产（两级）。类别优先取清单 palette 条目的 "cat" 字段；
-## 无 cat 用图集条目名；都没有 → 「未分类」。
+## _palette_ctrl：左栏调色板控制器。
+##
+## 两类资产分两个列表（扫描语义跟 kind 走，见 asset_decl）：
+##   瓦片列表  = assets[] 里 kind=scene / shape=tile 的图集：多图集先选图集 → 类别 → 瓦片
+##   实体列表  = assets[] 里 kind=entity：有 thumb 用缩略图，没 thumb 按 visual 声明画占位
+##
+## 瓦片行的 metadata 一律带 `asset`（资产 id）与 `cell`（图集内切片坐标）；
+## 画布落笔时用 asset id 查 source_id——磁盘数据也写 asset id，不再依赖清单数组序。
+
+const AssetDecl := preload("res://src/assets/asset_decl.gd")
 
 var app   # 宿主
 var _cat := ""          # 当前视图："" = 类别视图；非空 = 资产视图（该类别名）
@@ -27,24 +34,23 @@ func fill_tiles() -> void:
 			old_empty.queue_free()
 		tl.remove_meta("_empty_node")
 	tl.clear()
-	var tiles: Array = app.manifest.get("tiles", [])
-	if tiles.is_empty():
-		_show_empty(tl, "清单未定义瓦片")
+	var sets: Array = AssetDecl.tile_sets(app.manifest)
+	if sets.is_empty():
+		_show_empty(tl, "清单没有瓦片图集", "在 assets[] 里声明 kind=scene / shape=tile 的资产")
 		return
-	var tsz := int(app.manifest.get("tileSize", 16))
 	if (app.canvas.atlas_imgs as Array).is_empty():
 		app.canvas._build_tileset()   # 多图集 images/texs 就位
-	if tiles.size() > 1:
-		_fill_multi(tl, tiles, tsz)
+	if sets.size() > 1:
+		_fill_multi(tl, sets)
 	else:
-		_fill_single(tl, tiles[0], 0, tsz)
+		_fill_single(tl, sets[0], 0)
 
 ## 多图集：顶层（_atlas == -1）= 图集列表；钻入后加返回行再进图集体
-func _fill_multi(tl: ItemList, tiles: Array, tsz: int) -> void:
+func _fill_multi(tl: ItemList, sets: Array) -> void:
 	if _atlas < 0:
 		_set_grid(tl, 1, 0)
-		for i in tiles.size():
-			var t: Dictionary = tiles[i]
+		for i in sets.size():
+			var t: Dictionary = sets[i]
 			var n := str(t.get("name", "图集 %d" % i))
 			var pal: Array = t.get("palette", [])
 			var ii := tl.add_item("→ %s（%d）" % [n, pal.size()])
@@ -52,13 +58,14 @@ func _fill_multi(tl: ItemList, tiles: Array, tsz: int) -> void:
 		return
 	var back := tl.add_item("← 返回图集列表")
 	tl.set_item_metadata(back, {"back": true})
-	_fill_single(tl, tiles[_atlas], _atlas, tsz)
+	_fill_single(tl, sets[_atlas], _atlas)
 
 ## 图集体渲染：单图集与多图集图集内共用（MRU 置顶 → 类别/全图 → 资产行）
-func _fill_single(tl: ItemList, t: Dictionary, ai: int, tsz: int) -> void:
-	var img := _img_for(ai)
+func _fill_single(tl: ItemList, t: Dictionary, ai: int) -> void:
+	var aid := str(t.get("id", ""))
+	var img := _img_for(aid)
 	if img == null:
-		_show_empty(tl, "图集读取失败", "检查清单 tiles[].atlas 路径")
+		_show_empty(tl, "图集读取失败", "检查 assets[].atlas 路径")
 		return
 	var pal: Array = t.get("palette", [])
 	var fb := str(t.get("name", ""))
@@ -71,17 +78,17 @@ func _fill_single(tl: ItemList, t: Dictionary, ai: int, tsz: int) -> void:
 			if _cat_of(p, fb) != _cat:
 				continue
 			var cell := Vector2i(int(p.cell[0]), int(p.cell[1]))
-			var it := tl.add_item(str(p.get("name", "%d,%d" % [cell.x, cell.y])), _tex(ai, cell, tsz))
-			tl.set_item_metadata(it, {"auto": false, "cell": cell, "atlas": ai})
+			var it := tl.add_item(str(p.get("name", "%d,%d" % [cell.x, cell.y])), _tex(aid, cell))
+			tl.set_item_metadata(it, {"auto": false, "cell": cell, "asset": aid})
 		return
 	# 类别视图与 MRU 行是「一行一个名字」，用单列吃满宽度——用 3 列网格会被截成「→ 岩块…」
 	_set_grid(tl, 1, 0)
 	if pal.is_empty():
  # 没配 palette = 全图集平铺，那种视图必须是网格；MRU 行混进网格会被压成豆点，故跳过
 		_set_grid(tl, 3, 56)
-		_fill_full_atlas(tl, img, tsz, ai)
+		_fill_full_atlas(tl, img, aid)
 		return
-	_add_mru_rows(tl, tsz)
+	_add_mru_rows(tl)
 	for c in _cats:
 		var ii2 := tl.add_item("→ %s（%d）" % [str(c.name), int(c.count)])
 		tl.set_item_metadata(ii2, {"cat": str(c.name)})
@@ -104,7 +111,7 @@ func on_tile_click(i: int, at: Vector2, mb: int) -> void:
 		if bool(md.get("back", false)):
 			if _cat != "":
 				_cat = ""
-			elif (app.manifest.get("tiles", []) as Array).size() > 1:
+			elif AssetDecl.tile_sets(app.manifest).size() > 1:
 				_atlas = -1
 			fill_tiles()
 			return
@@ -132,46 +139,49 @@ func _cat_of(p: Dictionary, fb: String) -> String:
 		return fb if fb != "" else "未分类"
 	return cn
 
-## 图集图（按索引取图；未建则兜底构建；超界回落 0）
-func _img_for(ai: int) -> Image:
-	var imgs: Array = app.canvas.atlas_imgs
-	if (imgs as Array).is_empty():
+## 图集图（按资产 id 取图；未建则兜底构建；未知资产返回 null）
+func _img_for(aid: String) -> Image:
+	var sid: int = app.canvas.source_of_asset(aid)
+	if sid < 0:
 		app.canvas._build_tileset()
-		imgs = app.canvas.atlas_imgs
-	if ai < 0 or ai >= (imgs as Array).size():
-		ai = 0
-	return imgs[ai] as Image
+		sid = app.canvas.source_of_asset(aid)
+	var imgs: Array = app.canvas.atlas_imgs
+	if sid < 0 or sid >= (imgs as Array).size():
+		return null
+	return imgs[sid] as Image
 
-## D7：瓦片缩略纹理缓存（图集索引+cell → ImageTexture），类别切换不再逐格重建
+## D7：瓦片缩略纹理缓存（资产 id + cell → ImageTexture），类别切换不再逐格重建
 var _tex_cache := {}
 
-func _tex(ai: int, cell: Vector2i, tsz: int) -> ImageTexture:
-	var key := "%d:%d,%d" % [ai, cell.x, cell.y]
+func _tex(aid: String, cell: Vector2i) -> ImageTexture:
+	var key := "%s:%d,%d" % [aid, cell.x, cell.y]
 	var hit = _tex_cache.get(key, null)
 	if hit != null:
 		return hit as ImageTexture
-	var img := _img_for(ai)
+	var img := _img_for(aid)
 	if img == null:
 		return null
-	var reg := img.get_region(Rect2i(cell.x * tsz, cell.y * tsz, tsz, tsz))
+	var cs: Vector2i = AssetDecl.cell_size(app.manifest, aid)
+	var reg := img.get_region(Rect2i(cell.x * cs.x, cell.y * cs.y, cs.x, cs.y))
 	reg.resize(44, 44, Image.INTERPOLATE_NEAREST)
 	var t := ImageTexture.create_from_image(reg)
 	_tex_cache[key] = t
 	return t
 
-## 全图集模式（清单没配 palette）：每个格子都是瓦片；metadata 带 atlas 供落笔
-func _fill_full_atlas(tl: ItemList, img: Image, tsz: int, ai: int) -> void:
-	var cols := int(img.get_width() / float(tsz))
-	var rows := int(img.get_height() / float(tsz))
+## 全图集模式（清单没配 palette）：每个格子都是瓦片；metadata 带 asset 供落笔
+func _fill_full_atlas(tl: ItemList, img: Image, aid: String) -> void:
+	var cs: Vector2i = AssetDecl.cell_size(app.manifest, aid)
+	var cols := int(img.get_width() / float(cs.x))
+	var rows := int(img.get_height() / float(cs.y))
 	for y in rows:
 		for x in cols:
 			if Vector2i(x, y) == EditorCanvas.INVISIBLE_CELL:
 				continue
-			var i2 := tl.add_item("%d,%d" % [x, y], _tex(ai, Vector2i(x, y), tsz))
-			tl.set_item_metadata(i2, {"auto": false, "cell": Vector2i(x, y), "atlas": ai})
+			var i2 := tl.add_item("%d,%d" % [x, y], _tex(aid, Vector2i(x, y)))
+			tl.set_item_metadata(i2, {"auto": false, "cell": Vector2i(x, y), "asset": aid})
 
-## 最近使用置顶（键 "atlas:x,y"——多图集瓦片原样回放）
-func _add_mru_rows(tl: ItemList, tsz: int) -> void:
+## 最近使用置顶（键 "资产id:x,y"——多图集瓦片原样回放）
+func _add_mru_rows(tl: ItemList) -> void:
 	if app.tile_mru.is_empty():
 		return
 	var hdr := tl.add_item("🕐 最近使用", null)
@@ -183,34 +193,66 @@ func _add_mru_rows(tl: ItemList, tsz: int) -> void:
 		var xy := str(parts[1]).split(",")
 		if (xy as PackedStringArray).size() != 2:
 			continue
+		var aid := str(parts[0])
 		var cellm := Vector2i(int(xy[0]), int(xy[1]))
-		var imgm := _img_for(int(parts[0]))
+		var imgm := _img_for(aid)
 		if imgm == null:
 			continue
-		var itm := tl.add_item("", _tex(int(parts[0]), cellm, tsz))
-		tl.set_item_metadata(itm, {"auto": false, "cell": cellm, "atlas": int(parts[0])})
+		var itm := tl.add_item("", _tex(aid, cellm))
+		tl.set_item_metadata(itm, {"auto": false, "cell": cellm, "asset": aid})
 
-## 实体调色板（无分类，行为与旧版一致）
-## 内置种类（trigger_zone）没有缩略图，也要出现在这里——否则画布上根本放不出来。
+## 实体调色板：全部 kind=entity 的资产。
+## 有 thumb 用缩略图；没有的按 visual 声明画占位（此前无 thumb 直接 continue，
+## 声明了却看不见——等于不能放）。
 func fill_entities() -> void:
 	var el: ItemList = app.ent_list
 	el.clear()
-	var shown := 0
-	var BuiltinKinds := preload("res://src/content/builtin_kinds.gd")
 	var thumbs: Dictionary = app._entity_thumbs()
-	for e in app.manifest.get("entities", []):
-		var eid := str(e.get("id", ""))
+	var shown := 0
+	for a in AssetDecl.of_kind(app.manifest, "entity"):
+		var ad: Dictionary = a
+		var eid := str(ad.get("id", ""))
 		var tex: Texture2D = thumbs.get(eid, null)
-		var builtin := BuiltinKinds.is_builtin(eid)
-		if tex == null and not builtin:
-			continue
-		var ie := el.add_item(str(e.get("name", eid)), tex)
-		if builtin:
-			el.set_item_tooltip(ie, "内置种类：画布上以矩形呈现，尺寸由游戏侧声明提供")
+		if tex == null:
+			tex = _visual_icon(ad)
+		var ie := el.add_item(str(ad.get("name", eid)), tex)
+		if bool(ad.get("builtin", false)):
+			el.set_item_tooltip(ie, "内置种类：画布上按 visual 声明呈现")
 		el.set_item_metadata(ie, eid)
 		shown += 1
 	if shown == 0:
-		_show_empty(el, "清单没有带预览图的实体", "在编辑器清单里给实体配 thumb")
+		_show_empty(el, "清单没有实体资产", "在 assets[] 里声明 kind=entity")
+
+## visual 声明 → 占位图标（rect 画成色块；sprite/none 或缺失时画中性灰框）。
+## 缓存：同一 visual 的图标只画一次。
+var _icon_cache := {}
+
+func _visual_icon(ad: Dictionary) -> Texture2D:
+	var vis = ad.get("visual", null)
+	var key := JSON.stringify(vis)
+	if _icon_cache.has(key):
+		return _icon_cache[key]
+	var col := Color(0.55, 0.6, 0.68, 0.9)
+	var alpha := 0.9
+	if vis is Dictionary:
+		var cs := str((vis as Dictionary).get("color", ""))
+		if cs != "":
+			col = Color(cs)
+		alpha = float((vis as Dictionary).get("alpha", 0.9))
+	col.a = alpha
+	var img := Image.create(44, 44, false, Image.FORMAT_RGBA8)
+	img.fill(Color(0, 0, 0, 0))
+	# 内缩 3px 画实心块 + 描边，即使是半透明也看得清边界
+	img.fill_rect(Rect2i(3, 3, 38, 38), col)
+	var edge := col
+	edge.a = minf(1.0, alpha + 0.35)
+	img.fill_rect(Rect2i(3, 3, 38, 1), edge)
+	img.fill_rect(Rect2i(3, 40, 38, 1), edge)
+	img.fill_rect(Rect2i(3, 3, 1, 38), edge)
+	img.fill_rect(Rect2i(40, 3, 1, 38), edge)
+	var tex := ImageTexture.create_from_image(img)
+	_icon_cache[key] = tex
+	return tex
 
 ## 列表空状态覆盖（遮罩挂在列表上层，连接一次防重复）
 func _show_empty(list: ItemList, title: String, hint := "") -> void:

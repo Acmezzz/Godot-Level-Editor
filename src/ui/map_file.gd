@@ -457,7 +457,7 @@ func open_export_dialog() -> void:
 		if data.is_empty():   # 重建窗口哨兵：空图导出的是白板 PNG
 			app._set_status(" 地图重建中，请稍后再试")
 			return
-		var img := MapExport.render_preview(data, int(px.value), app.canvas.atlas_imgs, int(app.manifest.get("tileSize", 16)))   # 多图集+tileSize
+		var img := MapExport.render_preview(data, int(px.value), app.manifest, int(app.manifest.get("tileSize", 16)))   # 多图集+tileSize
 		var dir := str(app.manifest.get("_dir", "")).path_join("editor/exports")
 		DirAccess.make_dir_recursive_absolute(dir)
 		var path := dir.path_join(app.cur_map_name + ".png")
@@ -500,7 +500,7 @@ func open_export_dialog() -> void:
 			if d.is_empty():
 				fail.append(nm)
 				continue
-			var img := MapExport.render_preview(d, bpx, app.canvas.atlas_imgs, int(app.manifest.get("tileSize", 16)))
+			var img := MapExport.render_preview(d, bpx, app.manifest, int(app.manifest.get("tileSize", 16)))
 			var err := img.save_png(dir.path_join(nm + ".png"))
 			if err == OK:
 				ok_n += 1

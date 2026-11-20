@@ -154,11 +154,11 @@ static func fn_id_of(m: Dictionary, code: String) -> String:
 			return str(fid)
 	return ""
 
-## 实体类型的自带功能（挂载）：清单 entities[].functions = 功能 id 数组，声明顺序即默认执行顺序。
+## 资产类型的自带功能（挂载）：清单 assets[].functions = 功能 id 数组，声明顺序即默认执行顺序。
 ## 返回 [{id, code}]；挂载了未声明功能的 id 被过滤（校验层报错误），保证返回的都可用。
 static func entity_mounts(m: Dictionary, sid: String) -> Array:
 	var out: Array = []
-	for ed in m.get("entities", []):
+	for ed in m.get("assets", []):
 		if not (ed is Dictionary) or str((ed as Dictionary).get("id", "")) != sid:
 			continue
 		var mounts = (ed as Dictionary).get("functions", [])

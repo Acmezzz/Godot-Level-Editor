@@ -7,6 +7,7 @@ const Kit := preload("res://src/ui/ui_kit.gd")
 const Th := preload("res://src/ui/ui_theme.gd")
 const MapStore := preload("res://src/map_store.gd")
 const FunctionDecls := preload("res://src/content/function_decl.gd")
+const AssetDecl := preload("res://src/assets/asset_decl.gd")
 
 var manifest := {}
 var save_manifest: Callable
@@ -135,13 +136,13 @@ func refresh_list(focus_sid := "") -> void:
 	asset_list.clear()
 	var focus_idx := -1
 	var idx := 0
-	for edef in manifest.get("entities", []):
-		if bool(edef.get("builtin", false)):
+	for edef in AssetDecl.of_kind(manifest, "entity"):
+		if bool((edef as Dictionary).get("builtin", false)):
 			continue
-		var sid := str(edef.get("id", ""))
-		asset_list.add_item(str(edef.get("name", sid)), _asset_texture(edef))
+		var sid := str((edef as Dictionary).get("id", ""))
+		asset_list.add_item(str((edef as Dictionary).get("name", sid)), _asset_texture(edef))
  # tooltip 露出 id——地图数据引用的是它，界面上看不到就没法排查
-		asset_list.set_item_tooltip(idx, sid + "  ·  " + str(edef.get("name", sid)))
+		asset_list.set_item_tooltip(idx, sid + "  ·  " + str((edef as Dictionary).get("name", sid)))
 		asset_list.set_item_metadata(idx, sid)
 		if sid == focus_sid:
 			focus_idx = idx
@@ -163,11 +164,8 @@ func _on_asset_pick(idx: int, _at: Vector2 = Vector2.ZERO, mb: int = 0) -> void:
 	_show_detail(str(asset_list.get_item_metadata(idx)))
 
 func _show_detail(sid: String) -> void:
-	_edef = {}
-	for edef in manifest.get("entities", []):
-		if str(edef.get("id", "")) == sid:
-			_edef = edef
-			break
+	# 清单原件（不是归一化副本）：名称/挂载的改动要直接写回 assets[]
+	_edef = AssetDecl.live_by_id(manifest, sid)
 	if _edef.is_empty():
  # 空匹配（例如详情里删掉了当前资产）不能留上一项的陈旧数据
 		name_edit.text = ""
@@ -326,7 +324,7 @@ func _delete_asset_checked(sid: String) -> void:
 		text += "\n\n当前没有地图实例在用它。"
 	if not await host._confirm_action("删除资产", text, "删除"):
 		return
-	manifest.get("entities", []).erase(_edef)
+	manifest.get("assets", []).erase(_edef)
 	save_manifest.call()
 	_edef = {}
 	# 删除后留在图鉴：刷新列表并落到第一项（没有则给空态提示）

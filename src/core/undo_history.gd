@@ -3,7 +3,7 @@ extends RefCounted
 
 var cvs   # 宿主引用
 
-const BuiltinKinds := preload("res://src/content/builtin_kinds.gd")
+const BuiltinKinds := preload("res://src/assets/builtin_kinds.gd")
 const Constants := preload("res://src/core/constants.gd")
 const ContentId := preload("res://src/content/content_id.gd")
 const MapFormat := preload("res://src/map_format.gd")
@@ -67,7 +67,8 @@ func _functions_field(spr: Sprite2D) -> Dictionary:
 func extract() -> Dictionary:
 	if cvs.map_root == null or not is_instance_valid(cvs.map_root):
 		return {}   # 重建窗口期（load_data 的 await 一帧）：不产出快照，防 free 后访问
-	# 层栈瓦片：tiles = {层id: [[x,y,atlas,ax,ay]...]}（替代旧 terrain/decor 双数组）
+	# 层栈瓦片：tiles = {层id: [[x,y,资产id,ax,ay]...]}（第 3 位是字符串资产 id，
+	# 不再写清单数组序——清单重排不会破坏既有地图）
 	var tiles := {}
 	for li in cvs.layer_tiles.size():
 		var tn: TileMapLayer = cvs.layer_tiles[li]
@@ -77,8 +78,10 @@ func extract() -> Dictionary:
 		var cells := []
 		for c in tn.get_used_cells():
 			var ac = tn.get_cell_atlas_coords(c)
-			var sid = tn.get_cell_source_id(c)
-			cells.append([c.x, c.y, sid, ac.x, ac.y])
+			var aid: String = cvs.asset_of_source(tn.get_cell_source_id(c))
+			if aid == "":
+				continue   # source 不属于任何声明资产：不写出坏条目
+			cells.append([c.x, c.y, aid, ac.x, ac.y])
 		tiles[lid] = cells
 	# 碰撞条目带类型/形状（solid+矩形只写 [x,y]——契约缺省值零冗余）
 	var ccells := []

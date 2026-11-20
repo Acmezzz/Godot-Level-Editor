@@ -17,8 +17,8 @@
 src/
 ├── app.gd                  应用外壳：项目列表/切换、快捷键、三个视图的切换与收尾
 ├── editor.tscn             入口场景（只挂 app.gd，界面全部代码构建）
-├── manifest.gd             清单读取：路径、试玩命令、实体 role/占位尺寸、图像裁边
-├── manifest_validation.gd  清单校验：瓦片/实体/功能/条件/步骤/音频声明/挂载，坏清单给出错误列表
+├── manifest.gd             清单读取：路径、试玩命令、资产 role/占位尺寸、图像裁边
+├── manifest_validation.gd  清单校验：资产/功能/条件/步骤/音频声明/挂载，坏清单给出错误列表
 ├── map_store.gd            地图 JSON 读写：原子写、3 层历史备份、缓存、多文件事务
 ├── map_data_validation.gd  地图 JSON 校验：打开地图时的读入防线（含实例功能绑定结构）
 ├── map_export.gd           导出：PNG 俯视预览图 + 文本统计
@@ -35,15 +35,17 @@ src/
 │   ├── tool_ops.gd         左键/右键语义执行：涂刷、放置、擦除、盖章
 │   ├── selection_ops.gd    单选/框选/组拖、剪贴板、区域复制粘贴、引用重映射
 │   ├── collision_view.gd   碰撞格可视化：把隐形碰撞格画成半透明色块（按类型分色）
-│   └── tileset_cache.gd    TileSet 构建缓存：同一图集不重复读 PNG/重建
+│   └── tileset_cache.gd    TileSet 构建缓存：按资产建源（cell 可为非正方形），同一图集不重复读 PNG/重建
+├── assets/                 —— 资产表 assets[] 的声明域 ——
+│   ├── asset_decl.gd       资产归一化：kind/shape 分派、palette 展平、cell 尺寸、编辑期原件入口
+│   └── builtin_kinds.gd    内置资产种类（trigger_zone）：加载清单时注入、保存时剥离
 ├── content/                —— 功能与内容的数据层 ——
 │   ├── function_decl.gd    功能声明域：声明池归一化、执行码补发/查重、码↔名互查、CODES.md
 │   ├── condition_decl.gd   条件声明域：条件池归一化、字段码补发（与功能字段同码空间）、条件码表段
 │   ├── audio_decl.gd       音频声明域：audio 池归一化、执行码补发、音频码表段
 │   ├── step_decl.gd        步骤声明域：steps 池归一化、条目/字段码补发（三池同码空间）、码表段
 │   ├── content_id.gd       五段身份数：地图/实体/实例 4 位 + 内容 6 位的生成与拼装
-│   ├── content_store.gd    内容文件读写：content/<功能id>/<内容ID>.json，原子写
-│   └── builtin_kinds.gd    内置实体种类（trigger_zone）：加载清单时注入、保存时剥离
+│   └── content_store.gd    内容文件读写：content/<功能id>/<内容ID>.json，原子写
 └── ui/                     —— 界面（每个面板一个控制器） ——
 	├── ui_theme.gd         视觉系统：全部颜色/圆角/字号/控件样式只有这一处
 	├── ui_kit.gd           可复用构件：标题、按钮、徽章、字段行、空状态
@@ -107,10 +109,10 @@ src/
 | 移除项目记录 | 选择页每行「移除记录」——只删记录不动磁盘 |
 | 清单校验 | 读 `<项目>/editor/editor_manifest.json`；缺失/解析失败/结构无效都进错误页，附问题路径 |
 | 项目名展示 | 顶栏最左显示 `projectName` |
-| 路径推导 | 读后自动补 `_dir`、`_maps_dir`、每个图集的 `atlas_abs`、`_warnings` |
+| 路径推导 | 读后自动补 `_dir`、`_maps_dir`、每个 `shape=tile` 资产的 `atlas_abs`、`_warnings` |
 | 清单版本 | 缺 `version` 补 1（结构演进时的迁移锚点） |
-| 内置种类合并 | `builtin_kinds.merge_into` 把 `trigger_zone` 补进 `entities`（`builtin=true`），写盘前剥离 |
-| 实体身份码补发 | `entities[].code` 缺失时补发 4 位码，随清单保存写回 |
+| 内置种类合并 | `builtin_kinds.merge_into` 把 `trigger_zone` 补进 `assets`（`kind=entity, builtin=true`），写盘前剥离 |
+| 实体身份码补发 | `assets[].code`（kind=entity）缺失时补发 4 位码，随清单保存写回 |
 
 清单里编辑器实际消费的键：
 
@@ -119,8 +121,8 @@ src/
 | `projectName` | 顶栏品牌 / 窗口标题 |
 | `tileSize` | 瓦片像素尺寸（默认 16） |
 | `screenSize` | 游玩视野预览框尺寸（默认 `[640,360]`） |
-| `tiles[]` | 图集：`id` / `name` / `atlas` / `palette[]`（多图集时索引即 `source_id`） |
-| `entities[]` | 实体类型：`id` / `name` / `thumb` / `prefab` / `editorSize` / `functions[]`（自带功能挂载）/ `fields[]` / `role` / `code` |
+| `assets[]` | **统一资产表**：`kind` 分 `scene`/`entity`；scene 用 `shape` 分 `tile`（`atlas`+`cell`+`palette[]`）与 `image`（`texture`+`editorSize`+`anchor`） |
+| （`assets[]` 里 `kind=entity` 的条目） | 实体类型：`id` / `name` / `thumb` / `prefab` / `editorSize` / `sizeFields` / `functions[]`（自带功能挂载）/ `fields[]` / `role` / `code` / `visual` |
 | `functions` | 功能声明池：`{fnId: {name, code, fields[]}}` 或 `[{id, code, name, fields[]}]`；实体类型从中挂载 |
 | `conditions` | 条件声明池：`{condId: {name, fields[]}}` 或数组；条件无执行码，被功能声明链引用 |
 | `steps` | 步骤池：`{stepId: {name, code, fields[]}}`；演出功能（`"steps": true`）的步骤主体，条目码/字段码三池同空间 |
@@ -137,7 +139,7 @@ src/
 **实体占位尺寸**：`editorSize: [w,h]` 优先；否则读 `prefab` 的第一个碰撞形状
 （Rectangle 用 `size`，Circle 用 `radius*2`，Capsule 用 `radius*2 × height`）；都没有 = 用 1 格（tileSize×tileSize）。
 
-**角色声明**：`entities[].role` = `portal` / `exit` / `landing` / `trigger`（连接语义标签）。
+**角色声明**：`assets[].role` = `portal` / `exit` / `landing` / `trigger`（连接语义标签）。
 **只认清单显式声明**——未声明的实体就是普通实体，画布不猜、不画连接标记（零兼容）。
 
 ---
@@ -162,18 +164,18 @@ src/
 | **外部改动检测** | 打开后磁盘 mtime 变了 → 保存时提示「本次保存覆盖了外部改动」 |
 | 地图名校验 | 拒绝 `/ \ : * ? " < > \|`、`..`、点开头/结尾、`con/prn/aux/nul`；路径必须仍在 maps 目录内 |
 | 读取容错 | 文件打不开 / JSON 非对象 / 结构校验失败 → 状态栏报错并附问题条目，不崩溃 |
-| 格式版本 | 当前 `FORMAT_VERSION = 4`（零兼容，旧版本不升级）；层栈/瓦片按层键存，见 §4.1 |
+| 格式版本 | 当前 `FORMAT_VERSION = 5`（零兼容，旧版本不升级）；层栈/瓦片按层键存，见 §4.1 |
 
 地图 JSON（与游戏侧 `MapLoader` 同构）：
 
 ```json
 {
-  "version": 4,
+  "version": 5,
   "meta": { "name": "level_1", "w": 120, "h": 56, "code": "K7QM",
 			"layers": [{ "id": "L1C3", "name": "资产层", "visible": true },
 					   { "id": "T8N5", "name": "FL", "visible": true }] },
   "spawn": [2, 2],
-  "tiles": { "L1C3": [[x, y, atlas, ax, ay]], "T8N5": [[x, y, atlas, ax, ay]] },
+  "tiles": { "L1C3": [[x, y, "terrain", ax, ay]], "T8N5": [[x, y, "decor", ax, ay]] },
   "collision": [[x, y, "one_way", "r45"], [x, y]],
   "entities": [
 	{ "scene": "crawler", "code": "B3XD", "layer": "L1C3",
@@ -187,8 +189,9 @@ src/
 
 约定：
 
-- 瓦片按层存：`tiles` 键 = 层码，数组条目 [x, y, atlas, ax, ay]，第 3 位是图集索引
-  （= `tiles[]` 下标 = TileSet `source_id`），4/5 位是图集内格坐标。
+- 瓦片按层存：`tiles` 键 = 层码，数组条目 [x, y, 资产id, ax, ay]，第 3 位是**资产 id 字符串**
+  （指向清单 `assets[]` 里 `shape=tile` 的条目），4/5 位是图集内格坐标。切片尺寸取该资产的 `cell`
+  （可为非正方形、可大于地图格），不写在地图里——换图集/重排 `assets[]` 都不会破引用。
 - `collision` 只有类型非 `solid` 或形状非矩形时才追加第 3/4 位，缺省值零冗余。
 - 实体 `props` 保留所有未知键（只有空值被丢弃），不做白名单剥离——手工预留字段不会在保存时蒸发。
 - 实体 `x/y` 用 `floori` 换算，负坐标不会每次保存向 0 漂移；`layer` = 层码，缺省最底层。
@@ -237,8 +240,8 @@ src/
 - 顶层：多图集时先列**图集**，钻入后列该图集的**类别**，再进**资产**；单图集直接进类别层。
 - 类别名优先取 `palette[].cat`，无 `cat` 用图集条目名（一个图集 = 一个默认类别），都没有 → 「未分类」。
   类别行显示「→ 类别名（数量）」，进入后首行是「← 返回」。
-- **最近使用（MRU）**置顶，会话内最多 8 格，键为 `atlas:x,y`。
-- 缩略图 40×40（纹理缓存按图集索引 + 格坐标复用）；左栏宽 200px 时 3 列 × 56px，长名省略号 + tooltip。
+- **最近使用（MRU）**置顶，会话内最多 8 格，键为 `资产id:x,y`。
+- 缩略图 40×40（纹理缓存按资产 id + 格坐标复用）；左栏宽 200px 时 3 列 × 56px，长名省略号 + tooltip。
 - 清单没配 `palette` 时退回「整张图集逐格铺满」，每格都是可选瓦片。
 
 ### 4.4 碰撞元层
@@ -294,7 +297,7 @@ src/
 
 | 功能 | 说明 |
 |---|---|
-| 实体列表 | 清单 `entities`（含内置 `trigger_zone`）；无缩略图的实体不进列表，但内置种类例外（它们必须放得出来） |
+| 实体列表 | 清单 `assets[]` 里 `kind=entity`（含内置 `trigger_zone`）；无缩略图的按 `visual` 声明画占位图标（不再被跳过） |
 | 放置 | 实体放置模式下左键点格 → 落一个 Sprite2D 占位到**当前层**，位置吸附格中心 |
 | 放置即选中 | 放下后立刻发 `entity_selected`，「放置 → 配置」不断档；连放不受影响 |
 | 实例身份 | 每个实例一个 4 位**实例码**（出生即定、永不回收，无需防复用扫描）；唯一身份，引用/重映射/连线全用它 |
@@ -395,7 +398,7 @@ src/
 | 段 | 长度 | 载体 | 发放时机 |
 |---|---|---|---|
 | 地图 | 4 位 | 地图 `meta.code` | 首次载入该图时补发 |
-| 实体类型 | 4 位 | 清单 `entities[].code` | 读清单时补发；内置种类固定（`TZ99`） |
+| 实体类型 | 4 位 | 清单 `assets[].code` | 读清单时补发；内置种类固定（`TZ99`） |
 | 实例 | 4 位 | 实体 meta `code`（随地图保存） | 放置/载入时补发 |
 | 功能 | 4 位 | 清单 `functions[].code`（人类 id 只显示；执行引用写码） | 读清单时缺则补发 |
 | 内容 | 6 位 | 内容 id 末段（第四段仍是功能人类 id，显示壳） | 创建内容时随机发放 |
@@ -457,7 +460,7 @@ field widgets 与 choice source）。步骤引用清单 `steps` 池（值=步骤
 （未填 = 声明 default），不再有第二套 props.stats 编辑面。
 列表为空（含刚删掉最后一个资产）时右栏整体走空态，不留上一项的陈旧控件。
 
-清单写回：剥内部键（`_` 开头、`tiles[].atlas_abs`、内置种类）后 JSON 校验再写盘。
+清单写回：剥内部键（`_` 开头、`assets[].atlas_abs`、内置种类）后 JSON 校验再写盘。
 
 ---
 
@@ -561,10 +564,13 @@ field widgets 与 choice source）。步骤引用清单 `steps` 池（值=步骤
 
 | 检查项 | 级别 |
 |---|---|
-| `tiles` / `entities` / `functions` / `steps` / `audio` 不是数组或对象 | 错误 |
-| `tileSize` 非正数 | 错误 |
-| 图集 `id` 为空或重复 / `atlas` 为空 / 路径含 `..` / 调色板条目缺 `cell` | 错误 |
-| 实体 `id` 空或重复 / `fields` 非数组 / 挂载未声明功能（实体字段**不查 kind**，kind 只约束功能/条件/步骤声明） | 错误 |
+| `assets` 不是数组 / 资产 `id` 空或重复 / `kind` 不在 `scene`/`entity` | 错误 |
+| `functions`·`steps`·`audio` 不是数组或对象 / `tileSize` 非正数 | 错误 |
+| 清单出现 `tiles` / `entities`（已并入 `assets[]`） | 错误（跑 `tools/migrate_project.gd`） |
+| scene: `shape` 不在 `tile`/`image` / `atlas` 与 `texture` 恰好给一个 / `atlas` 为空或含 `..` / 调色板条目缺 `cell` / `gridProjection` 取值非法 | 错误 |
+| entity: 声明了 `shape`（实体无形状）/ `prefab` 与 `visual` 都没有 / `editorSize` 形状非法 / `fields` 非数组 | 错误 |
+| 资产 `code`（`kind=entity`）重复 | 错误 |
+| 实体挂载了未声明的功能（实体字段**不查 kind**，kind 只约束功能/条件/步骤声明） | 错误 |
 | 功能/步骤/音频**条目码**池内重复；**字段码跨池/跨功能同码**（三池一个码空间）报错 | 错误 |
 | 功能/条件/步骤/音频 id 空或重复（数组写法）/ 步骤条目（dict 写法值）不是对象 / 功能 id 含非 `A-Za-z0-9_./-` 字符 | 错误 |
 | 功能引用未声明的条件 | 错误 |
@@ -576,7 +582,7 @@ field widgets 与 choice source）。步骤引用清单 `steps` 池（值=步骤
 | 检查项 | 级别 |
 |---|---|
 | `meta.layers` 缺失/空 / 层 id 空或重复 / name 空 / visible 非布尔 | 错误 |
-| `tiles` 键不在层集 / 瓦片条目不是 5 元数值（x, y, atlas, atlas_x, atlas_y） | 错误 |
+| `tiles` 键不在层集 / 瓦片条目不是 5 元（x, y, 资产id, atlas_x, atlas_y） | 错误 |
 | 实体 `layer` 不在层集 | 错误 |
 | `collision` 条目不是数值（2–4 元）/ `spawn` 不是 2 元数值 | 错误 |
 | 实体不是对象 / `code` 重复 / `x`·`y` 非数值 / `scene` 为空 | 错误 |
@@ -609,19 +615,22 @@ godot --headless --path "<编辑器工程>" --script res://tests/run_tests.gd
 | `test_decl_pools.gd` | 功能/条件池归一化、steps 标记保留、功能码查重、字段码跨功能查重、条件补码避让 |
 | `test_step_audio.gd` | 步骤池归一化与按码查询、步骤补码避让三池占用、音频池归一化与补码 |
 | `test_validators.gd` | 清单校验：合法零错误、kind 缺失、条目码池内重复、字段码**跨池**同码、步骤 dict 值非对象、未声明条件/实体/音频码重、功能 id 字符集 |
-| `test_map_v4.gd` | v4 模板、层栈校验、瓦片 5 元精确校验、实体 code 查重与层归属、spawn、decode_text 门槛 |
-| `test_stores.gd` | MapStore v4 写读回环、ContentStore 写读回环（user:// 临时目录，跑完自清） |
+| `test_map_v4.gd` | v5 模板、层栈校验、瓦片 5 元精确校验（第 3 位资产 id）、实体 code 查重与层归属、spawn、decode_text 门槛 |
+| `test_assets.gd` | `assets[]` 归一化：kind 分派、未知键保留、palette 展平、非正方形 `cell`、`editorSize`/`sizeFields` 尺寸、编辑期原件入口、挂载过滤 |
+| `test_stores.gd` | MapStore v5 写读回环、ContentStore 写读回环（user:// 临时目录，跑完自清） |
 
 约定：套件 `extends "res://tests/_suite_base.gd"`，方法名 `test_` 开头即被发现；
 `ok()` / `eq()` 收集失败；**每个用例至少一条断言**（崩溃中断的用例断言数不增长，
-runner 判 FAIL——防止半路崩掉变成假 PASS）。退出码非 0 = 有失败。当前 6 套件 32 用例。
+runner 判 FAIL——防止半路崩掉变成假 PASS）。退出码非 0 = 有失败。当前 7 套件 42 用例。
 
 截图辅助 `tools/screenshot.gd`（模式清单见文件头注释）与警告扫描 `tools/warn_scan.gd`
-（headless 全量加载 src/ 校验可加载性）：
+（headless 全量加载 src/ 校验可加载性）；`tools/migrate_project.gd` 是一次性迁移脚本
+（清单 `tiles[]`/`entities[]` → `assets[]`、地图瓦片索引 → 资产 id、版本抬到 5，幂等）：
 
 ```
 godot --path "<编辑器工程>" --script res://tools/screenshot.gd -- <模式> <输出.png> [地图名]
 godot --headless --path "<编辑器工程>" --script res://tools/warn_scan.gd
+godot --headless --path "<编辑器工程>" --script res://tools/migrate_project.gd -- <游戏项目目录>
 ```
 
 ---
@@ -637,6 +646,9 @@ godot --headless --path "<编辑器工程>" --script res://tools/warn_scan.gd
 - `trigger_zone` 的尺寸/触发方式/绑定事件目前**没有专用编辑控件**，只能直接改地图 JSON。
 - 不做瓦片自动拼接（autotile）；碰撞自动生成是辅助功能，生成后仍可手改。
 - 无图集编辑器入口；新增瓦片组需要直接改清单。
+- **v5 是开发中间态**：`assets[]` 已落地、地图瓦片第 3 位已是资产 id，但地图里实体仍走
+  `entities[]`（第 2 批才改 `objects[]`）；`shape=image` 的场景资产可以声明、可以在资产面板看到，
+  但**还不能放到地图上**（放置要等 `objects[]`）。中间态期间不要接游戏工程。
 - 编辑器写盘只有一条路径：`editor_canvas.extract()`；游戏侧 `MapLoader` 只读，不反向写回，避免格式分叉。
 - 内容系统只做「绑定 + 内容字段编辑」，功能行为完全在项目侧；编辑器不校验内容语义。
 

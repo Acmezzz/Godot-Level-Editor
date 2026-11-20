@@ -1,7 +1,7 @@
 extends RefCounted
 ## SelectionOps：从 src/canvas/editor_canvas.gd 拆出的控制器。宿主状态经 cvs 引用。
 
-const BuiltinKinds := preload("res://src/content/builtin_kinds.gd")
+const BuiltinKinds := preload("res://src/assets/builtin_kinds.gd")
 
 var cvs   # 宿主引用
 
@@ -290,15 +290,14 @@ func paste_at(pos: Vector2) -> void:
 	for b in built:
 		var spr2: Sprite2D = b.spr
 		var props2: Dictionary = b.props
-		for edef in cvs.manifest.get("entities", []):
-			if str(edef.get("id", "")) != str(b.scene):
+		var edef: Dictionary = preload("res://src/assets/asset_decl.gd").by_id(cvs.manifest, str(b.scene))
+		for field in edef.get("fields", []):
+			if not (field is Dictionary):
 				continue
-			for field in edef.get("fields", []):
-				var field_id := str(field.get("id", ""))
-				var target_id := str(props2.get(field_id, ""))
-				if str(field.get("type", "")) == "entity_ref" and copied.has(target_id):
-					props2[field_id] = copied[target_id]
-			break
+			var field_id := str((field as Dictionary).get("id", ""))
+			var target_id := str(props2.get(field_id, ""))
+			if str((field as Dictionary).get("type", "")) == "entity_ref" and copied.has(target_id):
+				props2[field_id] = copied[target_id]
 		var functions2: Array = b.functions
 		_remap_refs_in(functions2, copied)
 		spr2.set_meta("props", props2)
@@ -402,7 +401,7 @@ func _live_selection() -> Array:
 
 
 func _snapshot_region(sel: Rect2i) -> Dictionary:
-	# 层栈快照：tiles = {层id: [[x,y,atlas,ax,ay]...]}，碰撞/实体照旧（实体带 layer）
+	# 层栈快照：tiles = {层id: [[x,y,资产id,ax,ay]...]}，碰撞/实体照旧（实体带 layer）
 	var snap := {"tiles": {}, "collision": [], "ents": [], "size": sel.size}
 	for li in cvs.layer_tiles.size():
 		var lid: String = cvs.layer_id(li)
@@ -414,7 +413,10 @@ func _snapshot_region(sel: Rect2i) -> Dictionary:
 				var c := Vector2i(x, y)
 				var tac: Vector2i = (cvs.layer_tiles[li] as TileMapLayer).get_cell_atlas_coords(c)
 				if tac != Vector2i(-1, -1):
-					cells.append([x, y, (cvs.layer_tiles[li] as TileMapLayer).get_cell_source_id(c), tac.x, tac.y])
+					var aid: String = cvs.asset_of_source((cvs.layer_tiles[li] as TileMapLayer).get_cell_source_id(c))
+					if aid == "":
+						continue
+					cells.append([x, y, aid, tac.x, tac.y])
 		if not cells.is_empty():
 			snap["tiles"][lid] = cells
 	for y2 in range(sel.position.y, sel.end.y):
@@ -479,8 +481,12 @@ func _finish_region_move() -> void:
 		if li2 < 0:
 			continue
 		for t2 in (snap.get("tiles", {})[lid2] as Array):
+			var src2: int = cvs.source_of_asset(str((t2 as Array)[2]))
+			if src2 < 0:
+				continue
 			(cvs.layer_tiles[li2] as TileMapLayer).set_cell(
-				Vector2i(int(t2[0]), int(t2[1])) + delta, int(t2[2]), Vector2i(int(t2[3]), int(t2[4])))
+				Vector2i(int((t2 as Array)[0]), int((t2 as Array)[1])) + delta, src2,
+				Vector2i(int((t2 as Array)[3]), int((t2 as Array)[4])))
 	for t in snap.get("collision", []):
 		var ta := t as Array
 		if ta.size() >= 4:
@@ -506,7 +512,7 @@ func copy_region() -> void:
 	if cvs._region_sel.size.x <= 0:
 		cvs._hint("先框选一块区域再复制")
 		return
-	# 层栈剪贴板：tiles = {层id: [[dx,dy,atlas,ax,ay]...]}，碰撞/实体照旧（实体带 layer）
+	# 层栈剪贴板：tiles = {层id: [[dx,dy,资产id,ax,ay]...]}，碰撞/实体照旧（实体带 layer）
 	cvs._region_clip = {"tiles": {}, "collision": [], "size": cvs._region_sel.size}
 	# 层名凭据：粘贴时同图按 id 直配，跨图按层名重映射（谁的名字谁带走）
 	var lnames := {}
@@ -521,11 +527,13 @@ func copy_region() -> void:
 		for y in range(cvs._region_sel.position.y, cvs._region_sel.end.y):
 			for x in range(cvs._region_sel.position.x, cvs._region_sel.end.x):
 				var d: Vector2i = Vector2i(x, y) - cvs._region_sel.position
-	 # 区域剪贴板带 atlas（source_id）——多图集瓦片整块搬运
+				# 区域剪贴板带资产 id——多图集瓦片整块搬运，且清单重排不破坏剪贴板
 				var tac: Vector2i = (cvs.layer_tiles[li] as TileMapLayer).get_cell_atlas_coords(Vector2i(x, y))
 				if tac != Vector2i(-1, -1):
-					var tsid: int = (cvs.layer_tiles[li] as TileMapLayer).get_cell_source_id(Vector2i(x, y))
-					cells.append([d.x, d.y, tsid, tac.x, tac.y])
+					var aid: String = cvs.asset_of_source((cvs.layer_tiles[li] as TileMapLayer).get_cell_source_id(Vector2i(x, y)))
+					if aid == "":
+						continue
+					cells.append([d.x, d.y, aid, tac.x, tac.y])
 		if not cells.is_empty():
 			cvs._region_clip["tiles"][lid] = cells
 	for y2 in range(cvs._region_sel.position.y, cvs._region_sel.end.y):
@@ -620,7 +628,7 @@ func _paste_region(origin: Vector2i) -> void:
 		cvs._hint("有图层处于锁定状态：解锁后再粘贴区域")
 		return
 	cvs._push_undo()
-	# 粘贴按 层id×atlas 维度重建（tiles = {层id: [[dx,dy,atlas,ax,ay]...]}）
+	# 粘贴按 层id 维度重建（tiles = {层id: [[dx,dy,资产id,ax,ay]...]}）
 	# 层重映射：同图按 id 直配，跨图按层名，都不匹配则落最底层（末尾黄字提示）
 	var lnames: Dictionary = cvs._region_clip.get("layer_names", {})
 	var missed: Array = []
@@ -628,8 +636,11 @@ func _paste_region(origin: Vector2i) -> void:
 		var li: int = _paste_layer_index(str(lid), lnames, missed)
 		for t in (cvs._region_clip.get("tiles", {})[lid] as Array):
 			var ta := t as Array
+			var src: int = cvs.source_of_asset(str(ta[2]))
+			if src < 0:
+				continue   # 目标项目没有这个资产：跳过，不写坏格子
 			(cvs.layer_tiles[li] as TileMapLayer).set_cell(
-				origin + Vector2i(int(ta[0]), int(ta[1])), int(ta[2]), Vector2i(int(ta[3]), int(ta[4])))
+				origin + Vector2i(int(ta[0]), int(ta[1])), src, Vector2i(int(ta[3]), int(ta[4])))
 	for t in cvs._region_clip.get("collision", []):
 		var cc := origin + Vector2i(int(t[0]), int(t[1]))
 		if (t as Array).size() >= 4:

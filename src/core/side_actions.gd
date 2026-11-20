@@ -33,10 +33,7 @@ func _duplicate_map_by_name(old_name: String, new_name: String) -> void:
 
 
 func _scene_name(sid: String) -> String:
-	for e in app.manifest.get("entities", []):
-		if str(e.get("id", "")) == sid:
-			return str(e.get("name", sid))
-	return sid
+	return preload("res://src/assets/asset_decl.gd").name_of(app.manifest, sid)
 
 
 func _open_map_by_name(map_name: String) -> void:

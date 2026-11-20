@@ -10,6 +10,7 @@ const FunctionDecls := preload("res://src/content/function_decl.gd")
 const ConditionDecls := preload("res://src/content/condition_decl.gd")
 const StepDecls := preload("res://src/content/step_decl.gd")
 const AudioDecls := preload("res://src/content/audio_decl.gd")
+const AssetDecl := preload("res://src/assets/asset_decl.gd")
 
 ## 变量替换：%mapfile% 当前地图文件；%projectpath% 游戏项目根目录
 ## 路径含空格且模板未自行加引号时自动补引号，避免经 cmd /c 后被拆成多个参数。
@@ -83,19 +84,16 @@ static func load_from(project_dir: String) -> Dictionary:
 			warnings.append(msg)
 	if not errors.is_empty():
 		return {"_error": "清单结构无效: " + "; ".join(errors), "_warnings": warnings}
-	# 相对路径 → 绝对路径
-	var base: String = project_dir
-	for t in data.get("tiles", []):
-		if str(t.get("atlas", "")) != "":
-			t["atlas_abs"] = base.path_join(str(t.atlas))
-	data["_maps_dir"] = base.path_join("maps")
+	# 相对路径 → 绝对路径（assets[] 的图集绝对路径在图鉴归一化里算）
+	data["_maps_dir"] = project_dir.path_join("maps")
 	data["_warnings"] = warnings
 	# 内置种类（如 trigger_zone）由编辑器提供，不需要游戏工程声明
-	preload("res://src/content/builtin_kinds.gd").merge_into(data)
-	# 分层身份码：实体段。老清单实体没有就补发（保存清单时随 entities 写回）
-	for e in data.get("entities", []):
-		if e is Dictionary and str(e.get("code", "")) == "":
-			e["code"] = preload("res://src/content/content_id.gd").new_entity_code()
+	preload("res://src/assets/builtin_kinds.gd").merge_into(data)
+	# 分层身份码：资产段。老清单资产没有就补发（保存清单时随 assets 写回）
+	for a in data.get("assets", []):
+		if a is Dictionary and str((a as Dictionary).get("kind", "")) == "entity" \
+				and str((a as Dictionary).get("code", "")) == "":
+			(a as Dictionary)["code"] = preload("res://src/content/content_id.gd").new_entity_code()
 	# 功能段 / 字段段：同样补发（保存清单时随 functions 写回）。
 	# 磁盘上的执行引用一律用码，人类名零兼容、无回退——查不到就是数据漂移。
 	var issued := false
@@ -150,21 +148,18 @@ static func map_path(m: Dictionary, name: String) -> String:
 	return path
 
 ## ---- 角色声明 ----
-## role = 编辑器连接语义标签（画布标记用）；清单实体条目声明 role: portal/exit/landing/trigger。
-## 零兼容：只认清单声明，不按实体 id 猜——没声明 role 的实体就是普通实体，画布不画连接标记。
+## role = 编辑器连接语义标签（画布标记用）；清单资产条目声明 role: portal/exit/landing/trigger。
+## 零兼容：只认清单声明，不按资产 id 猜——没声明 role 的资产就是普通资产。
 
-## 实体类型的连接语义；未声明返回空串（普通实体）
+## 实体类型的连接语义；未声明返回空串（普通资产）
 static func role_of(m: Dictionary, sid: String) -> String:
-	for ed in m.get("entities", []):
-		if ed is Dictionary and str(ed.get("id", "")) == sid:
-			return str(ed.get("role", ""))
-	return ""
+	return AssetDecl.role_of(m, sid)
 
-## 该实体类型是否具有给定连接语义（普通实体恒 false）
+## 该资产类型是否具有给定连接语义（普通资产恒 false）
 static func has_role(m: Dictionary, sid: String, role: String) -> bool:
-	return role_of(m, sid) == role
+	return AssetDecl.has_role(m, sid, role)
 
-## 某个实体类型在编辑器画布上的占位尺寸（像素）。
+## 某个资产在编辑器画布上的占位尺寸（像素）。
 ## 优先级：清单 editorSize → prefab 碰撞形状 → 0（消费方按 1 格兜底）
 static func entity_editor_size(m: Dictionary, edef: Dictionary) -> Vector2:
 	var es = edef.get("editorSize", null)

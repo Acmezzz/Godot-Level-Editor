@@ -6,7 +6,7 @@ const MV := preload("res://src/map_data_validation.gd")
 
 func test_new_map_template() -> void:
 	var d := Store.new_map("测试图", 60, 40)
-	eq(int(d.get("version")), 4, "版本 4")
+	eq(int(d.get("version")), Store.FORMAT_VERSION, "版本 = 当前格式")
 	var meta: Dictionary = d.get("meta", {})
 	eq((meta.get("layers", []) as Array).size(), 2, "模板两层（资产层+FL）")
 	eq(str(meta.get("name")), "测试图", "图名")
@@ -43,13 +43,13 @@ func test_tiles_key_and_tuple() -> void:
 	var box := _v4()
 	var d: Dictionary = box.d
 	var lid: String = box.lid
-	(d.tiles as Dictionary)[lid] = [[0, 0, 0, 0, 0]]
+	(d.tiles as Dictionary)[lid] = [[0, 0, "terrain", 0, 0]]
 	eq(_errs(d).size(), 0, "合法瓦片零错误")
 	(d.tiles as Dictionary)[lid] = [[0, 0, 0]]
 	ok(_errs(d).size() >= 1, "3 元瓦片报错")
-	(d.tiles as Dictionary)[lid] = [[0, 0, 0, 0, 0, 9]]
+	(d.tiles as Dictionary)[lid] = [[0, 0, "terrain", 0, 0, 9]]
 	ok(_errs(d).size() >= 1, "6 元瓦片报错")
-	(d.tiles as Dictionary)["幽灵层"] = [[0, 0, 0, 0, 0]]
+	(d.tiles as Dictionary)["幽灵层"] = [[0, 0, "terrain", 0, 0]]
 	ok(_errs(d).size() >= 1, "tiles 键不在层集报错")
 
 func test_entities_and_spawn() -> void:

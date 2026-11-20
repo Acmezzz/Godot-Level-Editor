@@ -15,6 +15,7 @@ const ConditionDecls := preload("res://src/content/condition_decl.gd")
 const AudioDecls := preload("res://src/content/audio_decl.gd")
 const StepDecls := preload("res://src/content/step_decl.gd")
 const MapStore := preload("res://src/map_store.gd")
+const AssetDecl := preload("res://src/assets/asset_decl.gd")
 const FieldWidgets := preload("res://src/ui/field_widgets.gd")
 const FunctionDecls := preload("res://src/content/function_decl.gd")
 const Preview := preload("res://src/ui/content_preview.gd")
@@ -267,14 +268,11 @@ func _current_fns() -> Array:
 	return fns if fns is Array else []
 
 ## 分层内容 ID 的候选：地图码-实体码-实例码-功能id-内容码。
-## 三段身份码来自各层载体（地图 meta / 清单 entities / 实体 meta），缺段返回空串。
+## 三段身份码来自各层载体（地图 meta / 清单 assets / 实体 meta），缺段返回空串。
 func _content_id_for(spr: Sprite2D, fn_id: String) -> String:
 	var map_code := str((app.canvas.map_data.get("meta", {}) as Dictionary).get("code", ""))
 	var ent_code := ""
-	for e in manifest.get("entities", []):
-		if e is Dictionary and str((e as Dictionary).get("id", "")) == str(spr.get_meta("scene", "")):
-			ent_code = str((e as Dictionary).get("code", ""))
-			break
+	ent_code = str(AssetDecl.by_id(manifest, str(spr.get_meta("scene", ""))).get("code", ""))
 	var inst_code := str(spr.get_meta("code", ""))
 	return ContentId.content_id(map_code, ent_code, inst_code, fn_id)
 
@@ -507,11 +505,7 @@ func _build_refs_block() -> Control:
 	if spr == null or not is_instance_valid(spr):
 		return null
 	var sid := str(spr.get_meta("scene", ""))
-	var edef: Dictionary = {}
-	for e0 in manifest.get("entities", []):
-		if e0 is Dictionary and str(e0.get("id", "")) == sid:
-			edef = e0
-			break
+	var edef: Dictionary = AssetDecl.by_id(manifest, sid)
 	var fdecls: Array = edef.get("fields", []) if edef.get("fields", []) is Array else []
 	var rows: Array = []
 	for fd in fdecls:
@@ -924,9 +918,7 @@ func _resolve_options(decl: Dictionary) -> Array:
 	if src.begins_with("entity:"):
 		var want := src.substr(7).split(",", false)
 		var out2: Array = []
-		for e in manifest.get("entities", []):
-			if not (e is Dictionary):
-				continue
+		for e in AssetDecl.of_kind(manifest, "entity"):
 			var sid := str((e as Dictionary).get("id", ""))
 			if not want.is_empty() and not want.has(sid):
 				continue

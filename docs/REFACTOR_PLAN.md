@@ -640,6 +640,9 @@ Godot 4.3+ 的 `TileMapLayer` + `TileSet` 逐瓦片 `y_sort_origin` 支持让瓦
 4. **遮挡模型（3.7，本批重点）**，按此顺序做：
    1. **前置验证**（第一步，半天）：搭 30 行场景验 `TileMapLayer` 逐瓦片 `y_sort_origin`
       能否与兄弟 `Sprite2D` 一起排序。结论决定第 4.3 步走哪条路。
+      > **已验证（第 1 批顺带探测）**：`TileData.y_sort_origin` 是**逐瓦片**属性且可写，`TileData.z_index` 也在；
+      > `TileSet` 的 `texture_region_size` 接受任意尺寸（非正方形、大于/小于 `tile_size` 都不报错）。
+      > 所以 `asset.cell` 不需要整除约束，`palette[].ySortOrigin` 可实现。剩下只需验"与兄弟节点真的一起排"。
    2. **三段容器**：层容器下建 `below` / `auto` / `above` 三个子容器，`auto` 开
       `y_sort_enabled`；对象按 `zPolicy` 入组（缺省 `auto`）；**全程不写 `z_index`**。
    3. **排序点**：`anchor`（资产）+ `sortAnchor`（实例覆盖）算排序点；选中时画小十字。
@@ -758,7 +761,7 @@ Godot 4.3+ 的 `TileMapLayer` + `TileSet` 逐瓦片 `y_sort_origin` 支持让瓦
 | `EntityNode` 替换 `Sprite2D` | `selection_ops` 29 处类型标注全改，回归面大 | 分两步：先加 `EntityNode` 但内部仍包一个 `Sprite2D`（行为不变），再逐处替换引用 |
 | 等距/投影 | 坐标换算散布在落点、命中、区域、撤销、导出 | 先把所有换算收敛到 `grid_space.gd` 单点（第 5 批前置），再开投影 |
 | 时间轴与列表双视图 | 两套编辑路径易写出不一致 | 数据单向：两个视图都只调 `step_timeline` 的读写函数，不各自拼数组 |
-| **逐瓦片 y 排序未验证**（3.7 ④） | 若 Godot 4.7 的 `y_sort_origin` 不能与兄弟节点一起排，"高草盖脚"做不了 | 第 5 批第一步先做 30 行验证；不成立退回"palette 分 tier + 每层多个 TileMapLayer"，代价是多一个数据维度 |
+| **逐瓦片 y 排序未验证**（3.7 ④） | 若 Godot 4.7 的 `y_sort_origin` 不能与兄弟节点一起排，"高草盖脚"做不了 | 第 1 批已实测「逐瓦片 `y_sort_origin` 存在且可写、`cell` 任意尺寸可建源」，见 3.7 ④ 的验证注；第 5 批仍需验兄弟节点一起排，不成立退回"palette 分 tier + 每层多个 TileMapLayer"，代价是多一个数据维度 |
 | 三段容器改变现有节点树 | 现有一层一 `TileMapLayer` + 一实体容器的假设散布在画布/区域复制/跨图粘贴/撤销恢复 | 容器结构收敛在 `editor_canvas` 一处（建树 + 层内节点查询），其余代码只经 `_layer_display_node()` 之类接口取节点，不直接认树形 |
 | 本方案改动面大 | 中途停在第 2 批会半新半旧 | 每批都可独立停在"测试全绿 + 文档同步"的状态；第 1、2 批之间有临时共存期（`assets[]` 与 `objects[]` 已上、`version: 5` 已抬，但场景图片实例还不能放到画布上——它要等第 2 批的 `EntityNode`）。这个中间态的标签与开关策略必须显式写下，不能靠记忆 |
 

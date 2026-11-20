@@ -335,29 +335,33 @@ func _save_prefs() -> void:
 var _ent_thumbs_cache := {}
 
 func _entity_thumbs() -> Dictionary:
-	# 键带项目数据版本号——清单新增实体/换 thumb 后保存会让版本号 +1，
+	# 键带项目数据版本号——清单新增资产/换 thumb 后保存会让版本号 +1，
 	# 缓存自动失效，不必重启编辑器。
 	var dk := str(manifest.get("_dir", "")) + "#" + str(MapStore.project_rev)
 	if _ent_thumbs_cache.has(dk):
 		return _ent_thumbs_cache[dk]
 	var out := {}
-	for e in manifest.get("entities", []):
-		var tpath: String = manifest["_dir"].path_join(str(e.get("thumb", "")))
+	for a in manifest.get("assets", []):
+		if not (a is Dictionary):
+			continue
+		var tpath: String = manifest["_dir"].path_join(str((a as Dictionary).get("thumb", "")))
 		if FileAccess.file_exists(tpath):
 			var img := Image.load_from_file(tpath)
 			if img != null:
-				out[str(e.get("id", ""))] = ImageTexture.create_from_image(
+				out[str((a as Dictionary).get("id", ""))] = ImageTexture.create_from_image(
 					EditorManifest.trim_alpha(img))
 	_ent_thumbs_cache[dk] = out
 	return out
 
-## 实体占位尺寸：清单 editorSize 优先，其次从 prefab 的碰撞形状读取
+## 资产占位尺寸：清单 editorSize 优先，其次从 prefab 的碰撞形状读取
 func _entity_sizes() -> Dictionary:
 	var out := {}
-	for e in manifest.get("entities", []):
-		var sz := EditorManifest.entity_editor_size(manifest, e)
+	for a in manifest.get("assets", []):
+		if not (a is Dictionary):
+			continue
+		var sz := EditorManifest.entity_editor_size(manifest, a)
 		if sz != Vector2.ZERO:
-			out[str(e.get("id", ""))] = sz
+			out[str((a as Dictionary).get("id", ""))] = sz
 	return out
 
 # —— 快捷键（app 级唯一键盘通道：画布在 SubViewport 里收不到键盘） ——
@@ -681,14 +685,14 @@ func _save_manifest_file() -> void:
 	for k in manifest.keys():
 		if not str(k).begins_with("_"):
 			out[k] = manifest[k]
-	var tiles: Array = out.get("tiles", [])
-	# tiles 与 live manifest 共享同一数组/字典引用——必须深拷贝后再擦运行时键，
-	# 否则 Ctrl+S 会把 atlas_abs 从活体清单里抹掉，之后载图 _build_tileset 全灭（直到重开项目）
-	out["tiles"] = (tiles as Array).duplicate(true)
-	for t in (out.get("tiles", []) as Array):
-		(t as Dictionary).erase("atlas_abs")
+	# assets 与 live manifest 共享同一批字典引用——必须深拷贝后再擦运行时键
+	# （atlas_abs 每次加载重算，写盘会污染游戏工程清单，且重载后丢掉）
+	out["assets"] = (out.get("assets", []) as Array).duplicate(true)
+	for a in (out.get("assets", []) as Array):
+		if a is Dictionary:
+			(a as Dictionary).erase("atlas_abs")
 	# 内置种类由编辑器提供，不写进游戏工程清单
-	out = preload("res://src/content/builtin_kinds.gd").strip_from(out)
+	out = preload("res://src/assets/builtin_kinds.gd").strip_from(out)
 	var txt := JSON.stringify(out, "\t")
 	if not (JSON.parse_string(txt) is Dictionary):
 		_set_status(" 清单写回校验失败，未保存")

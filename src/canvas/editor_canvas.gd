@@ -12,9 +12,10 @@ signal cursor_info(text: String)
 const K := preload("res://src/core/constants.gd")   # 共享常量统一在 core/constants.gd
 const TilesetCache := preload("res://src/canvas/tileset_cache.gd")   # PF-02：TileSet 构建缓存
 const INVISIBLE_CELL := K.INVISIBLE_CELL
-const BuiltinKinds := preload("res://src/content/builtin_kinds.gd")   # 内置种类（trigger_zone 等）
+const BuiltinKinds := preload("res://src/assets/builtin_kinds.gd")   # 内置种类（trigger_zone 等）
 const MapStoreRef := preload("res://src/map_store.gd")   # 地图数据层（读全工程/写盘）
 const ContentIdRef := preload("res://src/content/content_id.gd")   # 分层身份码
+const AssetDecl := preload("res://src/assets/asset_decl.gd")   # 清单资产表（assets[]）
 
 var active_layer := 0          # 0..N-1 = 层栈下标，N = 碰撞元层
 var place_kind := "tiles"      # 放置语义跟资产走："tiles"=涂瓦片 / "entity"=摆实体（左栏驱动）
@@ -45,8 +46,11 @@ var atlas_imgs: Array = []
 var _ent_by_id := {}
 var _ent_by_id_dirty := true
 var atlas_texs: Array = []
-# 当前笔刷的图集索引与碰撞类型/形状（碰撞层涂刷用）
-var paint_atlas := 0
+# 清单里 shape=tile 的资产（顺序 = TileSet source_id）与 id→source_id 映射
+var _tile_assets: Array = []
+var _src_of_asset := {}
+# 当前笔刷：资产 id + 图集内 cell（source_id 落笔时查）
+var paint_asset := ""
 var collision_type := "solid"
 var collision_shape := ""
 # 碰撞类型元数据 {Vector2i: {type, shape}}——solid+矩形不记（缺省值，零冗余）
@@ -152,27 +156,44 @@ func set_layer_locked(i: int, locked: bool) -> void:
 func is_layer_locked(i: int) -> bool:
 	return bool(layer_locked.get(i, false))
 
-# —— 运行时 TileSet：从清单图集 PNG 构建（按路径缓存，见 tileset_cache.gd） ——
+# —— 运行时 TileSet：从清单 assets[] 的 shape=tile 资产构建（按资产缓存，见 tileset_cache.gd） ——
 func _build_tileset() -> bool:
-	var tiles: Array = manifest.get("tiles", [])
-	if tiles.is_empty():
+	_tile_assets = AssetDecl.tile_sets(manifest)
+	if _tile_assets.is_empty():
 		return false
-	# 多图集：manifest tiles[] 每项一个图集，source_id = 索引
-	var paths := []
-	for t in tiles:
-		var p := str((t as Dictionary).get("atlas_abs", ""))
-		if p == "" or not FileAccess.file_exists(p):
-			return false
-		paths.append(p)
-	var got := TilesetCache.get_or_build_multi(paths, int(manifest.get("tileSize", 16)))
+	var lst: Array = []
+	for a in _tile_assets:
+		var d: Dictionary = a
+		lst.append({"id": str(d.get("id", "")),
+			"atlas_abs": str(d.get("atlas_abs", "")),
+			"cell": AssetDecl.cell_size(manifest, str(d.get("id", "")))})
+	var got := TilesetCache.build(lst, Vector2i(tile_px, tile_px))
 	if got.is_empty():
 		return false
 	atlas_imgs = got.imgs
 	atlas_texs = got.texs
-	atlas_img = got.imgs[0]
-	atlas_tex = got.texs[0]
 	tile_set = got.ts
+	# 资产 id ↔ source_id 双向映射（磁盘写资产 id，TileMapLayer 要整数）
+	_src_of_asset.clear()
+	for i in (got.ids as Array).size():
+		_src_of_asset[str((got.ids as Array)[i])] = i
+	atlas_img = got.imgs[0] if not (got.imgs as Array).is_empty() else null
+	atlas_tex = got.texs[0] if not (got.texs as Array).is_empty() else null
 	return true
+
+## 资产 id → TileSet source_id；未知返回 -1（地图里指向已删资产）
+func source_of_asset(aid: String) -> int:
+	return int(_src_of_asset.get(aid, -1))
+
+## source_id → 资产 id；未知返回空串
+func asset_of_source(sid: int) -> String:
+	if sid < 0 or sid >= _tile_assets.size():
+		return ""
+	return str((_tile_assets[sid] as Dictionary).get("id", ""))
+
+## 资产在图集里的切片尺寸（像素）；非 tile 资产退回地图格。
+func asset_cell(aid: String) -> Vector2i:
+	return AssetDecl.cell_size(manifest, aid)
 
 # —— 装载地图数据 ——
 func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty := false) -> void:
@@ -291,7 +312,7 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	map_root.add_child(coll_view)
 	coll_view.setup(collision, tile_px)
 	coll_view.canvas_ref = self   # 读 _collision_meta 做类型化分色分形
-	# 涂瓦片：tiles = {层id: [[x,y,atlas,ax,ay]...]}（5 元，atlas=图集索引）
+	# 涂瓦片：tiles = {层id: [[x,y,资产id,ax,ay]...]}（5 元，第 3 位是资产 id 字符串）
 	var tiles_data = data.get("tiles", {})
 	if not (tiles_data is Dictionary):
 		tiles_data = {}
@@ -300,7 +321,10 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 		var tn2: TileMapLayer = layer_tiles[li2]
 		for c in (tiles_data.get(lid, []) as Array):
 			var arr := c as Array
-			tn2.set_cell(Vector2i(int(arr[0]), int(arr[1])), int(arr[2]), Vector2i(int(arr[3]), int(arr[4])))
+			var src: int = source_of_asset(str(arr[2]))
+			if src < 0:
+				continue   # 指向已删资产：跳过，不写坏格子
+			tn2.set_cell(Vector2i(int(arr[0]), int(arr[1])), src, Vector2i(int(arr[3]), int(arr[4])))
 	# 碰撞：[x,y] = solid 缺省（契约零冗余）；[x,y,type,shape] 记入类型元数据（solid+矩形不记）
 	for c in data.get("collision", []):
 		var ccell := Vector2i(int(c[0]), int(c[1]))
@@ -529,7 +553,8 @@ func _pick_tile(pos: Vector2) -> void:
 		if ac == Vector2i(-1, -1):
 			continue
 		paint_cell = ac
-		paint_atlas = tn.get_cell_source_id(c)   # 吸管连 atlas 一起吸（多图集瓦片吸取后原样落笔）
+		# 吸管连资产一起吸（多图集瓦片吸取后原样落笔）
+		paint_asset = asset_of_source(tn.get_cell_source_id(c))
 		# 不直写 active_layer——直写会短路 editor_state 的切层分支（状态文案不出）；
 		# 经 tool_requested 走 _apply_state 单一写入口
 		_hint("已吸取 %s（切到该层涂刷）" % str(ac))

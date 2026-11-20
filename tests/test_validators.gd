@@ -6,8 +6,9 @@ const V := preload("res://src/manifest_validation.gd")
 func _good() -> Dictionary:
 	return {
 		"tileSize": 16,
-		"tiles": [{"id": "t0", "atlas": "assets/t0.png"}],
-		"entities": [{"id": "door", "prefab": "res://x/door.tscn"}],
+		"assets": [
+			{"id": "terrain", "kind": "scene", "shape": "tile", "atlas": "assets/t0.png"},
+			{"id": "door", "kind": "entity", "prefab": "res://x/door.tscn"}],
 		"functions": {"f1": {"name": "F", "code": "F111", "fields": [
 			{"id": "a", "code": "A111", "kind": "input", "type": "string", "default": ""}]}},
 	}
@@ -49,10 +50,27 @@ func test_undeclared_condition_ref() -> void:
 	f["conditions"] = ["nope"]
 	ok(_errs_of(m).size() >= 1, "功能引用未声明条件报错")
 
-func test_entity_id_dup() -> void:
+func test_asset_id_dup() -> void:
 	var m := _good()
-	m["entities"] = [{"id": "door", "prefab": "p"}, {"id": "door", "prefab": "p"}]
-	ok(_errs_of(m).size() >= 1, "实体 id 重复报错")
+	m["assets"] = [
+		{"id": "door", "kind": "entity", "prefab": "p"},
+		{"id": "door", "kind": "entity", "prefab": "p"}]
+	ok(_errs_of(m).size() >= 1, "资产 id 重复报错")
+
+func test_legacy_keys_retired() -> void:
+	var m := _good()
+	m["tiles"] = [{"id": "t0", "atlas": "a.png"}]
+	ok(_errs_of(m).size() >= 1, "旧 tiles[] 键报错（零兼容，走迁移脚本）")
+
+func test_entity_needs_prefab_or_visual() -> void:
+	var m := _good()
+	m["assets"] = [{"id": "ghost", "kind": "entity"}]
+	ok(_errs_of(m).size() >= 1, "实体既无 prefab 也无 visual 报错")
+
+func test_scene_needs_one_of_atlas_texture() -> void:
+	var m := _good()
+	m["assets"] = [{"id": "bg", "kind": "scene", "shape": "image"}]
+	ok(_errs_of(m).size() >= 1, "image 场景缺 texture 报错")
 
 func test_audio_code_dup() -> void:
 	var m := _good()
