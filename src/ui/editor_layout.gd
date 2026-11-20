@@ -3,6 +3,8 @@ extends RefCounted
 
 const TopBarNavScript := preload("res://src/ui/top_bar_nav.gd")
 const CollisionTypes := preload("res://src/core/collision_types.gd")
+const ProjectAudit := preload("res://src/core/project_audit.gd")
+const EntityNodeScript := preload("res://src/canvas/entity_node.gd")
 
 var app   # 宿主引用
 # 状态栏的常驻指示（与左侧消息分离，避免互相覆盖）
@@ -26,6 +28,13 @@ var _layer_mgr_input: LineEdit
 var _sel_bar: PanelContainer
 var _sel_name: Label
 var _sel_state: Label
+var _sel_eye: Button
+## 问题抽屉（REFACTOR_PLAN 4.6-3）：审计条目缓存 + 折叠面板 + 状态栏徽标
+var _issues_btn: Button
+var _issues_drawer: PanelContainer
+var _issues_list: VBoxContainer
+var _issues_scroll: ScrollContainer
+var _issues_items: Array = []
 
 func _init(host) -> void:
 	app = host
@@ -90,6 +99,7 @@ func _build_editor_ui() -> void:
 	# 不做属性表单——参数属内容，归内容编辑器与资产目录。
 	canvas_wrap.add_child(_build_sel_bar())
 
+	root.add_child(_build_issues_drawer())
 	root.add_child(_build_status_bar())
 
 	app.canvas.cursor_info.connect(_on_cursor)
@@ -138,6 +148,8 @@ func _build_global_bar() -> PanelContainer:
 	map_menu.add_item("导出当前地图", 4)
 	map_menu.add_item("调整地图尺寸", 5)
 	map_menu.add_separator()
+	map_menu.add_separator()
+	map_menu.add_item("检查项目完整性", 30)
 	map_menu.add_item("切换项目…", 20)
 	map_menu.id_pressed.connect(_on_map_menu_id)
 	app._map_btn.pressed.connect(func(): _popup_below(map_menu, app._map_btn))
@@ -177,6 +189,8 @@ func _on_map_menu_id(id: int) -> void:
 			app._on_rename()
 		20:
 			app._switch_project()
+		30:
+			_run_audit(true)
 
 ## 在锚点控件正下方弹菜单（宽高交给引擎按内容测算）
 func _popup_below(pm: PopupMenu, anchor: Control) -> void:
@@ -405,6 +419,42 @@ func _refresh_dirty_badge() -> void:
 	if _dirty_badge:
 		_dirty_badge.visible = app.map_loaded and app.canvas != null and app.canvas.modified_flag
 
+
+## —— 问题抽屉（REFACTOR_PLAN 4.6-3）：project_audit 的呈现层 ——
+
+func _build_issues_drawer() -> PanelContainer:
+	var wrap := PanelContainer.new()
+	var sb = app.UiThemeScript.box(app.UiThemeScript.BG_PANEL, app.UiThemeScript.BORDER, 0, 10, 6)
+	sb.set_border_width_all(0)
+	sb.border_width_top = 1
+	wrap.add_theme_stylebox_override("panel", sb)
+	var head = app.UiKitScript.hbox(8)
+	# 标题即开关：点一下折叠/展开条目列表
+	var head_btn: Button = app.UiKitScript.button("问题 0", func(): _toggle_issues_drawer(), "plain")
+	head_btn.tooltip_text = "展开 / 收起问题列表（自检入口：地图菜单「检查项目完整性」）"
+	_issues_btn = head_btn
+	head.add_child(head_btn)
+	head.add_child(app.UiKitScript.spacer())
+	var rerun: Button = app.UiKitScript.button("重扫", func(): _run_audit(false), "ghost")
+	rerun.tooltip_text = "重新扫描全项目"  # 读回校验锚
+	head.add_child(rerun)
+	# 条目列表（展开时显示；行点击跳转；ScrollContainer 封顶防吞屏）
+	_issues_drawer = wrap
+	var scroll := ScrollContainer.new()
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_issues_scroll = scroll
+	var body := VBoxContainer.new()
+	body.add_theme_constant_override("separation", 2)
+	_issues_list = body
+	var col := VBoxContainer.new()
+	col.add_child(head)
+	col.add_child(scroll)
+	scroll.add_child(body)
+	wrap.add_child(col)
+	body.visible = false
+	wrap.visible = false
+	return wrap
+
 ## 状态栏右侧的层指示（工具概念已废除，这里只说「在哪一层、笔刷多大」）
 func _refresh_tool_meta() -> void:
 	if _meta_tool == null:
@@ -605,6 +655,12 @@ func _build_sel_bar() -> PanelContainer:
 	h.add_child(_sel_name)
 	_sel_state = app.UiKitScript.text_label("", app.UiThemeScript.TEXT_MUTE, app.UiThemeScript.FS_META)
 	h.add_child(_sel_state)
+	# 眼睛开关：隐藏的是「编辑器显示替身」（objects[].visible，缺省 true），游戏侧忽略
+	_sel_eye = app.UiKitScript.button("👁", Callable(), "toggle")
+	_sel_eye.toggled.connect(func(v: bool): _toggle_sel_visible(v))
+	_sel_eye.add_theme_font_size_override("font_size", app.UiThemeScript.FS_META)
+	_sel_eye.tooltip_text = "隐藏 / 显示此实例（仅编辑器显示状态，游戏侧忽略；隐藏后点不中，再点一次恢复）"
+	h.add_child(_sel_eye)
 	var go: Button = app.UiKitScript.button("在工作台编辑 →", func(): app._set_mode("content"), "ghost")
 	go.tooltip_text = "去内容编辑器给这个实例挂功能（Enter 同效）"
 	go.add_theme_font_size_override("font_size", app.UiThemeScript.FS_META)
@@ -631,7 +687,18 @@ func _refresh_sel_bar() -> void:
 	else:
 		_sel_state.text = "%d 个附加功能" % count
 		_sel_state.add_theme_color_override("font_color", app.UiThemeScript.ACCENT_HI)
+	if _sel_eye:
+		_sel_eye.button_pressed = n.visible_flag
 	_sel_bar.visible = true
+
+## 眼睛开关：切换选中实例的编辑器可见性（objects[].visible，游戏侧忽略）。
+func _toggle_sel_visible(v: bool) -> void:
+	var n = app.selected_spr
+	if n == null or not is_instance_valid(n):
+		return
+	app.canvas._push_undo()
+	n.visible_flag = v
+	app.canvas._mark()
 
 ## 图层面板已收进层下拉，保留下钻点供既有调用方（editor_state._sync_ui）使用。
 func _sync_layer_buttons() -> void:
@@ -723,3 +790,86 @@ func _build_project_view() -> void:
 	app.project_shell.build()
 	# 别名：视图面板的既有调用点（app.asset_panel）保持不变
 	app.asset_panel = app.project_shell.asset_panel
+
+
+## —— 全项目自检（REFACTOR_PLAN 4.6-3）：project_audit 的呈现层 ——
+
+## 展开/收起条目列表
+func _toggle_issues_drawer() -> void:
+	if _issues_list:
+		_issues_list.visible = not _issues_list.visible
+
+## 跑全项目审计并刷新抽屉。open_after=自检菜单入口（跑完自动展开列表）。
+func _run_audit(open_after := true) -> void:
+	var items: Array = ProjectAudit.audit(app.manifest)
+	_issues_items = items
+	if _issues_btn:
+		_issues_btn.text = "问题 %d" % items.size()
+	_populate_issues()
+	if _issues_scroll:
+		_issues_scroll.custom_minimum_size.y = minf(items.size() * 26.0 + 6.0, 160.0)
+	if open_after and _issues_list:
+		_issues_list.visible = true
+	if _issues_drawer:
+		_issues_drawer.visible = true
+	if items.is_empty():
+		app._set_status("自检通过：未发现问题")
+	else:
+		app._set_status("自检完成：发现 %d 个问题" % items.size())
+
+## 条目列表：一行一条，点击跳转
+func _populate_issues() -> void:
+	for c in _issues_list.get_children():
+		_issues_list.remove_child(c)
+		c.queue_free()
+	if _issues_items.is_empty():
+		var lb = app.UiKitScript.text_label("扫描完成：未发现问题",
+			app.UiThemeScript.OK, app.UiThemeScript.FS_SMALL)
+		_issues_list.add_child(lb)
+		return
+	for it in _issues_items:
+		_issues_list.add_child(_issue_row(it))
+
+func _issue_row(it: Dictionary) -> Control:
+	var sev := str(it.get("severity", "warning"))
+	var icon := "⛔" if sev == "error" else "⚠"
+	var txt := "%s %s — %s" % [icon, str(it.get("path", "")), str(it.get("message", ""))]
+	var b: Button = app.UiKitScript.button(txt, func(): _jump_to(it), "ghost")
+	b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	b.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	b.tooltip_text = txt
+	return b
+
+## 行点击跳转：地图问题开图；实例问题开图后选中；清单问题不可跳转
+func _jump_to(it: Dictionary) -> void:
+	var j := it.get("jump", {}) as Dictionary
+	var typ := str(j.get("type", ""))
+	if typ == "" or app.canvas == null:
+		return
+	var map := str(j.get("map", ""))
+	if typ == "entity":
+		if map != "" and (map != app.cur_map_name or not app.map_loaded):
+			await app._open_map_by_name(map)
+		if app.map_loaded and map == app.cur_map_name:
+			_select_by_code(str(j.get("code", "")))
+	elif map != "" and (map != app.cur_map_name or not app.map_loaded):
+		app._open_map_by_name(map)
+
+## 选中本图指定实例码的节点（找不到给状态提示）
+func _select_by_code(code: String) -> void:
+	if code == "" or app.canvas == null:
+		return
+	var n: Node = null
+	for e in app.canvas.ents_all():
+		var en := e as EntityNodeScript
+		if en != null and en.code == code:
+			n = en
+			break
+	if n == null:
+		app._set_status("未找到实例 %s" % code)
+		return
+	app.canvas.selected_entity = n
+	app.canvas.selected_multi.clear()
+	app.canvas.entity_selected.emit(n)
+	app.canvas.queue_redraw()

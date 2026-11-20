@@ -565,11 +565,11 @@ func _build_fn_block() -> Control:
 	if fns.is_empty():
 		box.add_child(Kit.hint_label("这个实例还没有功能。", RIGHT_W - 40))
 	for i in fns.size():
-		box.add_child(_build_fn_row(i, fns[i]))
+		box.add_child(_build_fn_row(i, fns[i], fns.size()))
 	box.add_child(_build_add_row())
 	return box
 
-func _build_fn_row(i: int, item) -> Control:
+func _build_fn_row(i: int, item, total: int) -> Control:
 	var f: Dictionary = item if item is Dictionary else {}
 	var ref := _resolve_fn(f)
 	var fn_id := str(ref.get("id", ""))
@@ -640,6 +640,11 @@ func _build_fn_row(i: int, item) -> Control:
 	en.toggled.connect(func(v: bool): _set_enabled(i, v))
 	line.add_child(en)
 
+	# 执行顺序 = 数组序：↑↓ 交换相邻绑定，order 随交换统一重排
+	if i > 0:
+		line.add_child(Kit.button("↑", func(): _move_fn(i, -1), "ghost"))
+	if total > 1 and i < total - 1:
+		line.add_child(Kit.button("↓", func(): _move_fn(i, 1), "ghost"))
 	# 「库」始终在行内：复用是追加一条新绑定，与原行是否已填无关
 	var lib := Kit.button("库", func(): _open_lib(i), "ghost")
 	lib.tooltip_text = "从已有内容复制一条进来（生成新 ID，追加到列表末尾）"
@@ -800,6 +805,28 @@ func _delete_fn(i: int) -> void:
 		if fns[k] is Dictionary:
 			(fns[k] as Dictionary)["order"] = k + 1
 	_selected_fn = -1
+	_write_fns(spr, fns)
+	_refresh_all()
+
+## 绑定行 ↑/↓：交换相邻两条并重排 order（执行顺序 = 数组序）。
+func _move_fn(i: int, dir: int) -> void:
+	var spr := _current_spr()
+	var fns := _current_fns()
+	var j := i + dir
+	if spr == null or j < 0 or j >= fns.size():
+		return
+	commit()   # 待提交值先落到旧绑定上，随后才交换
+	fns = _current_fns().duplicate(true)
+	var t = fns[i]
+	fns[i] = fns[j]
+	fns[j] = t
+	for k in fns.size():
+		if fns[k] is Dictionary:
+			(fns[k] as Dictionary)["order"] = k + 1
+	if _selected_fn == i:
+		_selected_fn = j
+	elif _selected_fn == j:
+		_selected_fn = i
 	_write_fns(spr, fns)
 	_refresh_all()
 
