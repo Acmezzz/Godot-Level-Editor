@@ -7,6 +7,7 @@ extends RefCounted
 const ManifestScript := preload("res://src/project/manifest.gd")
 const MapValidator := preload("res://src/map/map_data_validation.gd")
 const MapFormat := preload("res://src/map/map_format.gd")
+const ContentId := preload("res://src/content/content_id.gd")
 
 ## 当前地图数据格式版本（常量在 map_format.gd：校验器也要读，反向 preload 会成环）。
 const FORMAT_VERSION := MapFormat.VERSION
@@ -81,10 +82,10 @@ static func upgrade(data: Dictionary) -> bool:
 ## 新建地图模板：两层用户层栈（「资产层」+「FL」，底→顶，层码用 ContentId 发放），
 ## tiles/collision/objects 均空。新建地图入口用它组装，保证 meta.layers 从出生就是当前契约。
 static func new_map(name: String, w: int, h: int) -> Dictionary:
-	var ContentId := preload("res://src/content/content_id.gd")
 	return {
 		"version": FORMAT_VERSION,
 		"meta": {
+			"code": ContentId.new_inst_code(),
 			"name": name,
 			"w": w,
 			"h": h,
@@ -98,6 +99,54 @@ static func new_map(name: String, w: int, h: int) -> Dictionary:
 		"collision": [],
 		"objects": [],
 	}
+
+## —— 地图码（v7）：meta.code 4 位码，项目内唯一。跨图引用（target_map / map_ref 字段）写码，
+## 改名（文件名/显示名）不再破坏引用——与实例码/功能码同一身份原则，地图不再是「以名为身份」的例外。
+
+## 全项目地图码表 {code: 图名}；老图缺码不进表（由保存/迁移补发）。
+## 带缓存：签名 = 各图「文件长度@mtime」+ maps 目录——任一图写盘即失效（mtime 秒级粒度
+## 用长度兜同秒写，见缓存粒度教训）。
+static var _cm_cache := {}
+static var _cm_key := "__never__"
+
+static func code_map(m: Dictionary) -> Dictionary:
+	var names := list_maps(m)
+	var parts: Array = []
+	for mn in names:
+		var p := path_for(m, str(mn))
+		var sig := str(mn) + ":0"
+		if FileAccess.file_exists(p):
+			var f := FileAccess.open(p, FileAccess.READ)
+			if f != null:
+				sig = str(mn) + ":" + str(f.get_length()) + "@" + str(FileAccess.get_modified_time(p))
+				f.close()
+		parts.append(sig)
+	var key := "|".join(PackedStringArray(parts)) + "@" + str(m.get("_maps_dir", ""))
+	if _cm_key == key:
+		return _cm_cache
+	var out := {}
+	for mn in names:
+		var md := read(m, str(mn))
+		var c := str((md.get("meta", {}) as Dictionary).get("code", ""))
+		if c != "":
+			out[c] = str(mn)
+	_cm_cache = out
+	_cm_key = key
+	return out
+
+## 确保这张图有 meta.code：缺就发一个不与全项目冲突的新码并写回 data。
+## 返回是否有改动（调用方据此置脏）。就地修改。
+static func ensure_code(m: Dictionary, data: Dictionary) -> bool:
+	var meta: Dictionary = data.get("meta", {}) if data.get("meta", {}) is Dictionary else {}
+	if str(meta.get("code", "")) != "":
+		return false
+	var taken := code_map(m)
+	var code := ContentId.new_inst_code()
+	while taken.has(code):
+		code = ContentId.new_inst_code()
+	meta["code"] = code
+	data["meta"] = meta
+	return true
 
 ## 地图文件路径；名称非法时返回 ""（调用方必须检查）
 static func path_for(m: Dictionary, name: String) -> String:

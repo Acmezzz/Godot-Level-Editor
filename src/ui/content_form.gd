@@ -281,7 +281,10 @@ func _resolve_options(decl: Dictionary) -> Array:
 	if src == "map":
 		var out3: Array = []
 		for mn in MapStore.list_maps(manifest):
-			out3.append({"v": str(mn), "t": str(mn)})
+			var md := MapStore.read(manifest, str(mn))
+			var mc := str((md.get("meta", {}) as Dictionary).get("code", ""))
+			# 值 = 地图码（v7）：改名不破坏引用；老图缺码时退回图名（保存一次即补码）
+			out3.append({"v": mc if mc != "" else str(mn), "t": str(mn)})
 		return out3
 	return []
 

@@ -299,6 +299,7 @@ func on_save() -> bool:
 		app._set_status(" 地图重建中，保存已跳过：请稍后再试")
 		return false
 	data.meta.name = n
+	MapStore.ensure_code(app.manifest, data)   # 地图码（v7）：保存时补发，跨图引用写码的前提
 	var path := EditorManifest.map_path(app.manifest, n)
 	if path == "":
 		app._set_status(" 地图名不合法: " + n)

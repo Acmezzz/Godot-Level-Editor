@@ -5,6 +5,7 @@ var cvs   # 宿主引用
 
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
 const ManifestScript := preload("res://src/project/manifest.gd")   # 出口 role 判定
+const MapStoreRef := preload("res://src/map/map_store.gd")   # 地图码→名解析（出口角标）
 const K := preload("res://src/core/constants.gd")
 
 func _init(host) -> void:
@@ -154,8 +155,13 @@ func _draw() -> void:
 	if not exits.is_empty():
 		var fnt: Font = ThemeDB.fallback_font   # Node2D 无 Control 主题接口，用引擎兜底字体
 		if fnt != null:
+			# 值 = 地图码（v7）：显示时码→名解析一次（code_map 带缓存）；老数据存名兜底原样显示
+			var cm: Dictionary = MapStoreRef.code_map(cvs.manifest)
 			for it in exits:
-				cvs.draw_string(fnt, it[0] + Vector2(-10, -12), "↗" + str(it[1]),
+				var shown := str(it[1])
+				if cm.has(shown):
+					shown = str(cm[shown])
+				cvs.draw_string(fnt, it[0] + Vector2(-10, -12), "↗" + shown,
 					HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(0.35, 0.9, 1.0, 0.9))
 	for lp in landings:
 		cvs.draw_rect((lp as EntityNode).rect(), Color(0.35, 0.9, 1.0, 0.45), false, 1.5)

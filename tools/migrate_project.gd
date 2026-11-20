@@ -34,6 +34,8 @@ func _initialize() -> void:
 				failed += 1
 			if _migrate_maps(d) < 0:
 				failed += 1
+			if _migrate_map_codes(d) < 0:
+				failed += 1
 	quit(1 if failed > 0 else 0)
 
 ## 返回 0 = 有改动或本来就不用改；-1 = 出错（跳过继续下一个项目）
@@ -205,7 +207,121 @@ func _migrate_maps(dir: String) -> int:
 				print("  写盘失败：%s" % f)
 				continue
 			changed += 1
-	print("  地图 → v6（改动 %d 个文件）" % changed)
+	print("  地图 → v7（改动 %d 个文件）" % changed)
+	return 0
+
+## v7 地图码：全图补发 meta.code（保存时也会补，迁移一次到位）；
+## objects[].props.target_map 与内容 map_ref 字段值按「图名 → 码」重映射（跨图引用全码化）。
+func _is_map_json(f) -> bool:
+	return str(f).ends_with(".json") and not str(f).ends_with(".autosave.json")
+
+func _migrate_map_codes(dir: String) -> int:
+	var maps_dir := dir.path_join("maps")
+	if not DirAccess.dir_exists_absolute(maps_dir):
+		return 0
+	var ContentId := preload("res://src/content/content_id.gd")
+	var d := DirAccess.open(maps_dir)
+	if d == null:
+		return -1
+	# pass 1：补码（顺序处理，后图防撞已写盘的前图码）
+	var codes := {}   # 图名（文件名）→ 码
+	for f in d.get_files():
+		if not _is_map_json(f):
+			continue
+		var p := maps_dir.path_join(str(f))
+		var md = _read_json(p)
+		if not (md is Dictionary):
+			continue
+		var meta: Dictionary = (md as Dictionary).get("meta", {}) if (md as Dictionary).get("meta", {}) is Dictionary else {}
+		if str(meta.get("code", "")) == "":
+			var c := ContentId.new_inst_code()
+			while codes.values().has(c):
+				c = ContentId.new_inst_code()
+			meta["code"] = c
+			(md as Dictionary)["meta"] = meta
+			if _write_json(p, md) < 0:
+				print("  补码写盘失败：%s" % str(f))
+		codes[str(f).get_basename()] = str(meta.get("code", ""))
+	# 名→码表：旧值（图名）→ 码
+	var name_to_code := {}
+	for nm in codes:
+		name_to_code[nm] = codes[nm]
+	# map_ref 字段码集（三池声明里 type=map_ref 的字段码）
+	var mapref_codes := {}
+	var manifest = _read_json(dir.path_join("editor/editor_manifest.json"))
+	if manifest is Dictionary:
+		for pool in ["functions", "conditions", "steps"]:
+			var decl = (manifest as Dictionary).get(pool, null)
+			if not (decl is Array or decl is Dictionary):
+				continue
+			var items: Array = []
+			if decl is Array:
+				items = decl
+			else:
+				for k in (decl as Dictionary):
+					items.append((decl as Dictionary)[k])
+			for it in items:
+				if not (it is Dictionary):
+					continue
+				for fd in ((it as Dictionary).get("fields", []) if (it as Dictionary).get("fields", []) is Array else []):
+					if fd is Dictionary and str((fd as Dictionary).get("type", "")) == "map_ref":
+						mapref_codes[str((fd as Dictionary).get("code", ""))] = true
+	var remapped := 0
+	# pass 2a：地图 props.target_map
+	for f in d.get_files():
+		if not _is_map_json(f):
+			continue
+		var p := maps_dir.path_join(str(f))
+		var md = _read_json(p)
+		if not (md is Dictionary):
+			continue
+		var dirty2 := false
+		for ob in ((md as Dictionary).get("objects", []) if (md as Dictionary).get("objects", []) is Array else []):
+			if not (ob is Dictionary):
+				continue
+			var props: Dictionary = (ob as Dictionary).get("props", {}) if (ob as Dictionary).get("props", {}) is Dictionary else {}
+			var tv := str(props.get("target_map", ""))
+			if tv != "" and name_to_code.has(tv):
+				props["target_map"] = name_to_code[tv]
+				(ob as Dictionary)["props"] = props
+				dirty2 = true
+		if dirty2:
+			remapped += 1
+			if _write_json(p, md) < 0:
+				print("  重映射写盘失败：%s" % str(f))
+	# pass 2b：内容 map_ref 字段值
+	var cdir := str((manifest as Dictionary).get("contentDir", "content") if manifest is Dictionary else "content")
+	var content_dir := dir.path_join(cdir)
+	if DirAccess.dir_exists_absolute(content_dir):
+		var dc := DirAccess.open(content_dir)
+		if dc != null:
+			for kind in dc.get_directories():
+				var dk := content_dir.path_join(str(kind))
+				var dc2 := DirAccess.open(dk)
+				if dc2 == null:
+					continue
+				for cf in dc2.get_files():
+					if not str(cf).ends_with(".json"):
+						continue
+					var cp := dk.path_join(str(cf))
+					var cd = _read_json(cp)
+					if not (cd is Dictionary):
+						continue
+					var fields: Dictionary = (cd as Dictionary).get("fields", {}) if (cd as Dictionary).get("fields", {}) is Dictionary else {}
+					var cdirty := false
+					for fk in fields:
+						if mapref_codes.has(str(fk)):
+							var fv = fields[fk]
+							if fv is String and name_to_code.has(str(fv)):
+								fields[fk] = name_to_code[str(fv)]
+								cdirty = true
+					if cdirty:
+						(cd as Dictionary)["fields"] = fields
+						if _write_json(cp, cd) < 0:
+							print("  内容重映射写盘失败：%s" % str(cf))
+						else:
+							remapped += 1
+	print("  地图码：补发 %d 图 + 重映射 %d 处" % [codes.size(), remapped])
 	return 0
 
 func _read_json(path: String):
