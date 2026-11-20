@@ -618,7 +618,7 @@ TEST-FY9F-QK3T-dialogue-7M2XK9
 main.gd
  ├── 决定地图路径（--map= 参数 > 默认图）
  ├── MapLoader.load_json(path)            # 纯 JSON 读，不校验
- ├── build(root, data)                     # 建地形/装饰/碰撞/实体/出生点
+ ├── build(root, data)                     # 建各层瓦片/碰撞/实体/出生点
  ├── load_content(fn, id)                  # 功能内容按需读（可自行封装）
  └── 按绑定读 content/<功能id>/<内容ID>.json（§7.2 模式；缺键用声明 default 兜底）
 ```

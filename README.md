@@ -52,8 +52,14 @@ docs/                      EDITOR_FEATURES + GAME_SIDE_STANDARD
 godot --headless --path . --check-only --script res://src/app.gd
 ```
 
-完整清单与测试说明见 `docs/EDITOR_FEATURES.md` §11。**测试套件处于待重写状态**，
-门禁脚本（`tests/run_gates.ps1`）不再是验收口径。
+完整清单与测试说明见 `docs/EDITOR_FEATURES.md` §11。测试套件已重建（32 用例，含崩溃即判失败的
+断言计数守卫），一条命令跑完：
+
+```
+godot --headless --path . --script res://tests/run_tests.gd
+```
+
+旧门禁脚本（`tests/run_gates.ps1`）已随旧测试一并删除。
 
 ## 约定（改代码前必读）
 
