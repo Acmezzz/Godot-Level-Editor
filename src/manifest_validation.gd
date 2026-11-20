@@ -8,8 +8,12 @@ const FunctionDecls := preload("res://src/content/function_decl.gd")
 const ConditionDecls := preload("res://src/content/condition_decl.gd")
 const StepDecls := preload("res://src/content/step_decl.gd")
 const AudioDecls := preload("res://src/content/audio_decl.gd")
+const TriggerDecls := preload("res://src/content/trigger_decl.gd")
 const ContentStore := preload("res://src/content/content_store.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
+
+## input 字段类型白名单（与 field_widgets 一一对应）：新增类型必须同时有控件分支。
+const INPUT_TYPES := ["string", "int", "float", "bool", "color", "vector2", "range", "asset_ref"]
 
 ## 资产 id 同时用作地图瓦片条目的第 3 位（磁盘引用）——必须存在且唯一。
 static func validate(data: Dictionary, project_dir := "") -> Array[Dictionary]:
@@ -31,6 +35,8 @@ static func validate(data: Dictionary, project_dir := "") -> Array[Dictionary]:
 		_validate_steps(data, issues)
 	if data.has("audio"):
 		_validate_audio(data, issues)
+	if data.has("triggers"):
+		_validate_triggers(data, issues)
 	var tile_size = data.get("tileSize", 16)
 	if not (tile_size is int or tile_size is float) or float(tile_size) <= 0.0:
 		_add(issues, "error", "tileSize", "must be a positive number")
@@ -91,9 +97,9 @@ static func _validate_functions(data: Dictionary, issues: Array[Dictionary]) -> 
 					"field kind must be \"input\" or \"choice\"")
 			elif kind == "input":
 				var typ := str((fd as Dictionary).get("type", ""))
-				if not ["string", "int", "float", "bool"].has(typ):
+				if not INPUT_TYPES.has(typ):
 					_add(issues, "error", "functions.%s.fields.%s" % [str(fid), field_id],
-						"input type must be string / int / float / bool")
+						"input type must be one of: " + ", ".join(INPUT_TYPES))
 		# 功能引用的条件：同清单内按 id 引用（同挂载模型），引用未声明的条件 = 错误
 		var conds = d.get("conditions", [])
 		if not (conds is Array):
@@ -104,6 +110,24 @@ static func _validate_functions(data: Dictionary, issues: Array[Dictionary]) -> 
 				if c0s == "" or not ConditionDecls.conditions(data).has(c0s):
 					_add(issues, "error", "functions.%s.conditions" % str(fid),
 						"condition \"%s\" is not declared" % c0s)
+		# 功能声明的 triggers 是时机 id 白名单；按 id 引用时机池，未声明 = 错误。
+		var trs = d.get("triggers", [])
+		if not (trs is Array):
+			_add(issues, "error", "functions.%s.triggers" % str(fid), "must be an array of trigger ids")
+		else:
+			for t0 in trs:
+				var t0s := str(t0)
+				if t0s == "" or not TriggerDecls.triggers(data).has(t0s):
+					_add(issues, "error", "functions.%s.triggers" % str(fid),
+						"trigger \"%s\" is not declared" % t0s)
+		var timing = d.get("timing", null)
+		if timing != null:
+			if not (timing is Dictionary):
+				_add(issues, "error", "functions.%s.timing" % str(fid), "must be an object")
+			elif str((timing as Dictionary).get("mode", "")) != "" \
+					and not ["instant", "duration", "continuous"].has(str((timing as Dictionary).get("mode"))):
+				_add(issues, "error", "functions.%s.timing.mode" % str(fid),
+					"must be instant / duration / continuous")
 
 ## 条件声明：结构 + id 唯一性 + 字段种类合法性（与功能声明同一套规则）。
 ## 条件按 id 被功能声明引用（清单内人类名，条件无执行码）；字段码与功能字段同空间。
@@ -147,9 +171,9 @@ static func _validate_conditions(data: Dictionary, issues: Array[Dictionary]) ->
 					"field kind must be \"input\" or \"choice\"")
 			elif kind == "input":
 				var typ := str((fd as Dictionary).get("type", ""))
-				if not ["string", "int", "float", "bool"].has(typ):
+				if not INPUT_TYPES.has(typ):
 					_add(issues, "error", "conditions.%s.fields.%s" % [cid, field_id],
-						"input type must be string / int / float / bool")
+						"input type must be one of: " + ", ".join(INPUT_TYPES))
 	# 字段码跨池查重：条件字段与功能字段共存于同一份内容 fields，同码 = 静默合并。
 	# 功能池内部的字段码重复由 duplicate_codes（本文件上方）已报过——这里只收集不重报
 	var fcodes := {}
@@ -191,6 +215,27 @@ static func _validate_audio(data: Dictionary, issues: Array[Dictionary]) -> void
 		codes[c] = true
 		if str(body.get("path", "")) == "":
 			_add(issues, "warning", "audio.%s" % aid, "audio path is empty")
+
+## 时机池：id 非空唯一（array 写法查重）、码池内唯一（重复 = 静默别名，报错）。
+## 时机不含字段，字段码空间完全不碰它。
+static func _validate_triggers(data: Dictionary, issues: Array[Dictionary]) -> void:
+	var decl = data.get("triggers", null)
+	if not (decl is Dictionary or decl is Array):
+		_add(issues, "error", "triggers", "must be an object or an array")
+		return
+	var ids := {}
+	var codes := {}
+	for pair in TriggerDecls._decl_items(decl):
+		var tid := str(pair.id)
+		if tid == "" or ids.has(tid):
+			_add(issues, "error", "triggers",
+				"trigger ids must be non-empty and unique (seen: %s)" % tid)
+		ids[tid] = true
+		var body: Dictionary = pair.body
+		var c := str(body.get("code", ""))
+		if c != "" and codes.has(c):
+			_add(issues, "error", "triggers", "duplicate code %s (%s)" % [c, tid])
+		codes[c] = true
 
 ## 步骤池：id 非空唯一（array 写法查重）、条目码池内唯一、字段 id/kind/type 合法、
 ## 步骤字段码与功能/条件字段同空间查重（跨池同码 = 静默合并，报错）。
@@ -243,9 +288,9 @@ static func _validate_steps(data: Dictionary, issues: Array[Dictionary]) -> void
 					"field kind must be \"input\" or \"choice\"")
 			elif kind == "input":
 				var typ := str((fd as Dictionary).get("type", ""))
-				if not ["string", "int", "float", "bool"].has(typ):
+				if not INPUT_TYPES.has(typ):
 					_add(issues, "error", "steps.%s.fields.%s" % [sid, field_id],
-						"input type must be string / int / float / bool")
+						"input type must be one of: " + ", ".join(INPUT_TYPES))
 	# 步骤字段码跨池查重：避开功能 + 条件已占用的码
 	var fcodes := {}
 	for fid in FunctionDecls.functions(data):

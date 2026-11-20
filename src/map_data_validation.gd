@@ -173,6 +173,10 @@ static func _validate_functions(raw, path: String, manifest: Dictionary, issues:
 			_add(issues, "error", p + ".order", "must be numeric")
 		if (item as Dictionary).has("parallel") and not ((item as Dictionary).parallel is bool):
 			_add(issues, "error", p + ".parallel", "must be a boolean")
+		if (item as Dictionary).has("trigger") and not ((item as Dictionary).trigger is String):
+			_add(issues, "error", p + ".trigger", "must be a trigger code string")
+		if (item as Dictionary).has("enabled") and not ((item as Dictionary).enabled is bool):
+			_add(issues, "error", p + ".enabled", "must be a boolean")
 
 static func _is_number_pair(values: Array) -> bool:
 	return _is_number_prefix(values, 2)

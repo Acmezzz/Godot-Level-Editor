@@ -2,9 +2,11 @@ extends RefCounted
 ## 声明式字段控件工厂：清单字段声明 → 控件。
 ##
 ## 只有两个可写 kind：
-## input —— type: string / int / float / bool（multiline 则多行；int/float 读 min/max）
+## input —— type: string / int / float / bool / color / vector2 / range / asset_ref
 ## choice —— options[] 直给，或 source 从内容库 / 清单实体 / 地图列表动态取
 ##
+## string 可加 multiline: true 切 TextEdit；range 读 min/max/step（无 min/max 时退到 HSlider 默认）；
+## asset_ref 读 kind（按 kind 过滤资产）与可选 of（逗号分隔 id 白名单）。
 ## 认不出的声明一律只读展示 + 黄色提示，绝不提供可写控件。
 ## 旧实现把未知类型落进 LineEdit：数组 [1,2,3] 被 str() 成 "[1, 2, 3]"，用户一碰
 ## 就把数组写成它的打印形式，是静默数据损坏。这里改成结构可见、不可写。
@@ -13,6 +15,7 @@ const Kit := preload("res://src/ui/ui_kit.gd")
 const Th := preload("res://src/ui/ui_theme.gd")
 const ContentStore := preload("res://src/content/content_store.gd")
 const MapStore := preload("res://src/map_store.gd")
+const AssetDecl := preload("res://src/assets/asset_decl.gd")
 
 const KIND_INPUT := "input"
 const KIND_CHOICE := "choice"
@@ -29,8 +32,10 @@ static func type_of(decl: Dictionary) -> String:
 static func default_for(decl: Dictionary) -> Variant:
 	match type_of(decl):
 		"bool": return false
-		"int": return 0
-		"float": return 0.0
+		"int": return int(decl.get("min", 0))
+		"float", "range": return float(decl.get("min", 0.0))
+		"vector2": return [float(decl.get("min", 0.0)), float(decl.get("min", 0.0))]
+		"color": return "#ffffff"
 		_: return ""
 
 ## 构建控件。返回 {ctl: Control, commit: Callable}。
@@ -44,14 +49,15 @@ static func build(decl: Dictionary, value, on_set: Callable,
 	if kind == KIND_CHOICE:
 		return _build_choice(decl, value, on_set, option_resolver)
 	if kind == KIND_INPUT:
-		return _build_input(decl, value, on_set)
+		return _build_input(decl, value, on_set, option_resolver)
 	var why := "声明缺 kind（应写 \"input\" 或 \"choice\"）" if kind == "" \
 		else "未声明的字段种类「%s」" % kind
 	return _readonly(decl, value, why, "补全声明后重新加载清单即可恢复编辑")
 
-## input：string（可 multiline）/ int / float / bool。
-## 连续控件（SpinBox、多行 TextEdit）拖动/输入期间只记内存，失焦或 commit() 才写盘。
-static func _build_input(decl: Dictionary, value, on_set: Callable) -> Dictionary:
+## input：string（可 multiline）/ int / float / bool / color / vector2 / range / asset_ref。
+## 连续控件（SpinBox、HScale、多行 TextEdit）拖动/输入期间只记内存，失焦或 commit() 才写盘。
+static func _build_input(decl: Dictionary, value, on_set: Callable,
+		option_resolver: Callable) -> Dictionary:
 	var typ := type_of(decl)
 	match typ:
 		"bool":
@@ -95,8 +101,86 @@ static func _build_input(decl: Dictionary, value, on_set: Callable) -> Dictionar
 			le.text_submitted.connect(func(t: String): on_set.call(t.strip_edges()))
 			le.focus_exited.connect(func(): on_set.call(le.text.strip_edges()))
 			return {"ctl": le, "commit": Callable()}
+		"color":
+			var cp := ColorPickerButton.new()
+			cp.color = Color(str(value) if str(value).begins_with("#") else "#ffffff")
+			cp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			cp.color_changed.connect(func(c: Color): on_set.call("#%s" % c.to_html(false)))
+			return {"ctl": cp, "commit": Callable()}
+		"vector2":
+			# 值形态不符（声明 [x,y]，实际是别的）只读展示——commit() 冲刷不能把坏值悄悄写成 [0,0]
+			if not (value is Array) or (value as Array).size() < 2:
+				if value != null and value != "":
+					return _readonly(decl, value, "值类型不符：声明 vector2（[x,y]），实际是 %s" % type_name(value),
+						"编辑器不会改写它，请游戏侧或手工修正")
+				value = default_for(decl)   # 未填：按声明 default（[min, min]）起步，与 int/float 的空串口径一致
+			var vv: Array = value
+			var h := HBoxContainer.new()
+			h.add_theme_constant_override("separation", 4)
+			var pending := {"v": [float(vv[0]), float(vv[1])]}
+			for axis in 2:
+				var sp := SpinBox.new()
+				sp.step = 0.1
+				sp.min_value = float(decl.get("min", -999999))
+				sp.max_value = float(decl.get("max", 999999))
+				sp.value = pending.v[axis]
+				sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+				sp.prefix = ("x" if axis == 0 else "y") + ": "
+				var ai := axis
+				sp.value_changed.connect(func(n: float):
+					pending.v[ai] = n)
+				sp.get_line_edit().focus_exited.connect(func(): on_set.call(pending.v.duplicate()))
+				h.add_child(sp)
+			return {"ctl": h, "commit": func(): on_set.call(pending.v.duplicate())}
+		"range":
+			# 数字之外的值（空串占位除外）只读展示——commit() 不能把它悄悄写成 min
+			if not (value is int or value is float):
+				if value != null and value != "":
+					return _readonly(decl, value, "值类型不符：声明 range，实际是 %s" % type_name(value),
+						"编辑器不会改写它，请游戏侧或手工修正")
+				value = float(decl.get("min", 0.0))   # 未填：从 min 起步，落盘走声明 default 同一形态
+			var lo := float(decl.get("min", 0.0))
+			var hi := float(decl.get("max", 1.0))
+			if hi <= lo:
+				hi = lo + 1.0
+			var step := float(decl.get("step", 0.01))
+			var box := HBoxContainer.new()
+			box.add_theme_constant_override("separation", 6)
+			var sl := HSlider.new()
+			sl.min_value = lo
+			sl.max_value = hi
+			sl.step = step
+			sl.value = float(value) if (value is int or value is float) else lo
+			sl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			var num := SpinBox.new()
+			num.min_value = lo
+			num.max_value = hi
+			num.step = step
+			num.value = sl.value
+			var pending2 := {"v": sl.value}
+			sl.value_changed.connect(func(n: float):
+				pending2.v = n
+				num.value = n)
+			num.value_changed.connect(func(n: float):
+				pending2.v = n
+				sl.value = n)
+			# 拖完滑杆/输入框失焦即提交，与 int/float 同一口径
+			sl.drag_ended.connect(func(_c: bool): on_set.call(pending2.v))
+			num.get_line_edit().focus_exited.connect(func(): on_set.call(pending2.v))
+			num.get_line_edit().text_submitted.connect(func(_t: String): on_set.call(pending2.v))
+			box.add_child(sl)
+			box.add_child(num)
+			return {"ctl": box, "commit": func(): on_set.call(pending2.v)}
+		"asset_ref":
+			# 资产引用走 choice 的同一套控件，只是选项来源由 asset: 解析器提供。
+			var d2: Dictionary = decl.duplicate(true)
+			d2["kind"] = KIND_CHOICE
+			var ak := str(decl.get("assetKind", ""))
+			var only := str(decl.get("of", ""))
+			d2["source"] = "asset:" + ak + (":" + only if only != "" else "")
+			return _build_choice(d2, value, on_set, option_resolver)
 		_:
-			var why := "声明缺 type（应写 string / int / float / bool）" if typ == "" \
+			var why := "声明缺 type（应写 string / int / float / bool / color / vector2 / range / asset_ref）" if typ == "" \
 				else "未声明的输入类型「%s」" % typ
 			return _readonly(decl, value, why, "补全声明后重新加载清单即可恢复编辑")
 

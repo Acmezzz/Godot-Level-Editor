@@ -89,3 +89,29 @@ func test_fn_id_charset() -> void:
 	var m := _good()
 	m["functions"] = {"中文功能": {"name": "N", "code": "F111"}}
 	ok(_errs_of(m).size() >= 1, "功能 id 含非 ASCII 字符报错（内容目录/ID 段不可用）")
+
+func test_trigger_pool_and_refs() -> void:
+	var m := _good()
+	m["triggers"] = [{"id": "on_enter", "code": "T111"}, {"id": "on_enter", "code": "T222"}]
+	ok(_errs_of(m).size() >= 1, "时机 id 重复报错")
+	var m2 := _good()
+	m2["triggers"] = [{"id": "on_enter", "code": "T111"}, {"id": "on_enter", "code": "T111"}]
+	ok(_errs_of(m2).size() >= 1, "时机码重复报错")
+	var m3 := _good()
+	m3["triggers"] = [{"id": "on_enter", "code": "T111"}]
+	(m3.functions.f1 as Dictionary)["triggers"] = ["nope"]
+	ok(_errs_of(m3).size() >= 1, "功能引用未声明时机报错")
+	var m4 := _good()
+	m4["triggers"] = [{"id": "on_enter", "code": "T111"}]
+	(m4.functions.f1 as Dictionary)["triggers"] = ["on_enter"]
+	(m4.functions.f1 as Dictionary)["timing"] = {"mode": "bogus"}
+	ok(_errs_of(m4).size() >= 1, "timing.mode 非法报错")
+
+func test_new_input_types_accepted() -> void:
+	var m := _good()
+	var fields: Array = (m.functions.f1 as Dictionary).get("fields", [])
+	fields.append({"id": "tint", "code": "A222", "kind": "input", "type": "color", "default": "#ffffff"})
+	fields.append({"id": "off", "code": "A333", "kind": "input", "type": "vector2", "default": [0, 0]})
+	fields.append({"id": "curve", "code": "A444", "kind": "input", "type": "range", "default": 0.5, "min": 0.0, "max": 1.0})
+	fields.append({"id": "asset", "code": "A555", "kind": "input", "type": "asset_ref", "default": ""})
+	eq(_errs_of(m).size(), 0, "新字段类型全部合法：%s" % str(_errs_of(m)))

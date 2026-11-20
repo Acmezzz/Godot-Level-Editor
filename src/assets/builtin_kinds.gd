@@ -14,30 +14,17 @@ const KINDS := [
 	{
 		"id": "trigger_zone",
 		"kind": "entity",
-		"name": "事件区",
+		"name": "事件",
 		"builtin": true,
 		"role": "trigger",
 		"code": "TZ99",
 		# 旧数据的 x/y 是矩形左上格——用 top_left 锚点原样还原，不需要迁移
 		"anchor": "top_left",
 		"visual": {"mode": "rect", "color": "#4fc3f7", "alpha": 0.35},
+		"sizeFields": ["w", "h"],
 		"fields": [],
 	},
 ]
-
-## 内置种类 id 列表
-static func ids() -> Array:
-	var out: Array = []
-	for kind in KINDS:
-		out.append(str((kind as Dictionary).get("id", "")))
-	return out
-
-## 内置种类声明；非内置返回空字典。
-static func decl_of(id: String) -> Dictionary:
-	for kind in KINDS:
-		if str((kind as Dictionary).get("id", "")) == id:
-			return (kind as Dictionary).duplicate(true)
-	return {}
 
 ## 把缺失的内置种类补进清单 assets[]；已存在（游戏工程自己声明过）则不覆盖。
 ## 局部变量不能标 Array——清单里 assets 坏了（非 Array）时，类型化赋值会直接报错
@@ -66,6 +53,3 @@ static func strip_from(manifest: Dictionary) -> Dictionary:
 		kept.append(a)
 	out["assets"] = kept
 	return out
-
-static func is_builtin(asset_id: String) -> bool:
-	return ids().has(asset_id)

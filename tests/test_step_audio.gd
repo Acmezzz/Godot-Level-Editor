@@ -1,8 +1,9 @@
 extends "res://tests/_suite_base.gd"
-## 步骤池/音频池：归一化、码查询、补码避让三池占用。
+## 步骤池/音频池/时机池：归一化、码查询、补码避让三池占用。
 
 const StepDecls := preload("res://src/content/step_decl.gd")
 const AudioDecls := preload("res://src/content/audio_decl.gd")
+const TriggerDecls := preload("res://src/content/trigger_decl.gd")
 const ContentId := preload("res://src/content/content_id.gd")
 
 func test_steps_normalization() -> void:
@@ -48,4 +49,19 @@ func test_audio_pool_and_codes() -> void:
 	eq(codes.size(), 2, "两条码")
 	ok(codes[0] != codes[1], "两条码不同")
 	eq(str(all["bgm_a"].get("path")), "assets/audio/bgm_a.ogg", "path 保留")
+
+func test_trigger_pool_and_codes() -> void:
+	var m := {"triggers": [
+		{"id": "on_enter", "name": "进入地图"},
+		{"id": "on_touch", "name": "触碰", "code": "T222"},
+	]}
+	ok(TriggerDecls.ensure_codes(m), "缺码补发")
+	var all := TriggerDecls.triggers(m)
+	eq(all.size(), 2, "时机池归一化")
+	eq(str(all["on_enter"].get("name")), "进入地图", "名称")
+	eq(str(all["on_touch"].get("code")), "T222", "已有码不变")
+	ok(str(all["on_enter"].get("code")).length() == 4, "补发 4 位码")
+	eq(TriggerDecls.trigger_id_of(m, "T222"), "on_touch", "按码反查 id")
+	eq(TriggerDecls.trigger_id_of(m, "NOPE"), "", "未知码返回空")
+	ok(not ContentId.field_codes(m).has(str(all["on_touch"].get("code"))), "时机码不进字段码空间")
 

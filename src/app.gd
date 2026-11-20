@@ -13,6 +13,7 @@ const FunctionDecls := preload("res://src/content/function_decl.gd")
 const ConditionDecls := preload("res://src/content/condition_decl.gd")
 const StepDecls := preload("res://src/content/step_decl.gd")
 const AudioDecls := preload("res://src/content/audio_decl.gd")
+const TriggerDecls := preload("res://src/content/trigger_decl.gd")
 
 var manifest := {}
 var canvas: EditorCanvas
@@ -726,6 +727,9 @@ func _save_manifest_file() -> void:
 	var sdoc := StepDecls.codes_doc(manifest)
 	if sdoc != "":
 		doc += "\n" + sdoc
+	var tdoc := TriggerDecls.codes_doc(manifest)
+	if tdoc != "":
+		doc += "\n" + tdoc
 	if not MapStore.write_text(cp, doc):
 		_set_status(" 清单已保存，但码表写入失败: " + cp)
 ## —— 拆到 src/core/editor_state.gd 的委托（调用点保持不变） ——

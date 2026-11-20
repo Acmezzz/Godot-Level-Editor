@@ -152,10 +152,10 @@ func _stamp(pos: Vector2) -> void:
 		return
 	cvs._push_undo()
 	var n: EntityNode = cvs.make_object(cvs.stamp_asset)
-	# 事件区这类带 sizeFields 的资产：落下去要带默认尺寸与触发方式，
-	# 否则就是个看不见的空实例（默认值来自资产声明的缺省，而非硬编码 id）
+	# 带 sizeFields 的资产（事件区这类实例各自定尺寸）落下去要带默认尺寸，
+	# 否则就是个看不见的空实例；mode/event/once 已作废，语义归 functions[]。
 	if n.decl.get("sizeFields", null) is Array:
-		n.props = {"w": 2, "h": 2, "mode": "enter", "event": "", "once": true}
+		n.props = {"w": 2, "h": 2}
 	n.refresh_visual()   # props 就位后按 sizeFields 定尺寸
 	n.layer_id = cvs.layer_id(cvs.active_layer)
 	n.position = cvs.snap_point(pos, n)

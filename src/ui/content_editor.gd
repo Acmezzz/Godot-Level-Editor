@@ -14,6 +14,7 @@ const ContentId := preload("res://src/content/content_id.gd")
 const ConditionDecls := preload("res://src/content/condition_decl.gd")
 const AudioDecls := preload("res://src/content/audio_decl.gd")
 const StepDecls := preload("res://src/content/step_decl.gd")
+const TriggerDecls := preload("res://src/content/trigger_decl.gd")
 const MapStore := preload("res://src/map_store.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
 const FieldWidgets := preload("res://src/ui/field_widgets.gd")
@@ -606,6 +607,38 @@ func _build_fn_row(i: int, item) -> Control:
 	par.toggled.connect(func(v: bool): _set_parallel(i, v))
 	line.add_child(par)
 
+	# 时机：声明 triggers 是白名单，这里只能挑（空 = 用声明默认）；磁盘写时机码。
+	var trg := OptionButton.new()
+	trg.custom_minimum_size = Vector2(72, 0)
+	trg.add_theme_font_size_override("font_size", Th.FS_META)
+	trg.tooltip_text = "本条绑定的时机；空 = 使用功能声明的默认时机"
+	trg.add_item("默认时机")
+	trg.set_item_metadata(0, "")
+	var cur_trigger := str(f.get("trigger", ""))
+	var tidx := 0
+	for to in _trigger_options(fn_id):
+		trg.add_item(str((to as Dictionary).get("t", "")))
+		var at := trg.get_item_count() - 1
+		var tv := str((to as Dictionary).get("v", ""))
+		trg.set_item_metadata(at, tv)
+		if tv != "" and tv == cur_trigger:
+			tidx = at
+	if cur_trigger != "" and tidx == 0:
+		trg.add_item("(当前值) " + cur_trigger)
+		trg.set_item_metadata(trg.get_item_count() - 1, cur_trigger)
+		tidx = trg.get_item_count() - 1
+	trg.select(tidx)
+	trg.item_selected.connect(func(k: int): _set_trigger(i, str(trg.get_item_metadata(k))))
+	line.add_child(trg)
+
+	var en := CheckBox.new()
+	en.text = "启用"
+	en.button_pressed = bool(f.get("enabled", true))
+	en.add_theme_font_size_override("font_size", Th.FS_META)
+	en.tooltip_text = "缺省为启用；关掉时写 enabled: false"
+	en.toggled.connect(func(v: bool): _set_enabled(i, v))
+	line.add_child(en)
+
 	# 「库」始终在行内：复用是追加一条新绑定，与原行是否已填无关
 	var lib := Kit.button("库", func(): _open_lib(i), "ghost")
 	lib.tooltip_text = "从已有内容复制一条进来（生成新 ID，追加到列表末尾）"
@@ -701,6 +734,18 @@ func _pick_fn(i: int) -> void:
 	_selected_fn = -1 if _selected_fn == i else i
 	_rebuild_right()
 
+## 功能声明的 trigger id 白名单 → [{v: 时机码, t: 显示名}]。
+## 声明按 id 引用时机池；绑定存码，UI 显示名。
+func _trigger_options(fn_id: String) -> Array:
+	var out: Array = []
+	for tid in FunctionDecls.fn_triggers(manifest, fn_id):
+		var tdef := TriggerDecls.trigger_decl(manifest, str(tid))
+		var code := str(tdef.get("code", ""))
+		if code == "":
+			continue
+		out.append({"v": code, "t": str(tdef.get("name", str(tid)))})
+	return out
+
 func _set_parallel(i: int, v: bool) -> void:
 	var spr := _current_spr()
 	var fns := _current_fns()
@@ -708,6 +753,35 @@ func _set_parallel(i: int, v: bool) -> void:
 		return
 	var f: Dictionary = (fns[i] if fns[i] is Dictionary else {}).duplicate(true)
 	f["parallel"] = v
+	fns = fns.duplicate(true)
+	fns[i] = f
+	_write_fns(spr, fns)
+
+func _set_trigger(i: int, code: String) -> void:
+	var spr := _current_spr()
+	var fns := _current_fns()
+	if spr == null or i < 0 or i >= fns.size():
+		return
+	var f: Dictionary = (fns[i] if fns[i] is Dictionary else {}).duplicate(true)
+	if code == "":
+		f.erase("trigger")
+	else:
+		f["trigger"] = code
+	fns = fns.duplicate(true)
+	fns[i] = f
+	_write_fns(spr, fns)
+
+func _set_enabled(i: int, v: bool) -> void:
+	var spr := _current_spr()
+	var fns := _current_fns()
+	if spr == null or i < 0 or i >= fns.size():
+		return
+	var f: Dictionary = (fns[i] if fns[i] is Dictionary else {}).duplicate(true)
+	# 缺省 true 省略，不写冗余键
+	if v:
+		f.erase("enabled")
+	else:
+		f["enabled"] = false
 	fns = fns.duplicate(true)
 	fns[i] = f
 	_write_fns(spr, fns)
@@ -897,7 +971,8 @@ func _build_field_row(i: int, fn_id: String, fd: Dictionary, cur: Dictionary) ->
 ## choice.source 的选项来源解析（由游戏侧声明，编辑器只查不解释）。
 ## 支持：content:<功能id>（内容库）、entity:<id,id>（清单实体类型）、
 ## entity_inst:<id,id>（当前图实例，值=实例码）、map（地图文件）、audio:（音频池）、
-## layer:（当前图用户层栈，值=层码，显示「序号.层名」）。
+## layer:（当前图用户层栈，值=层码，显示「序号.层名」）、
+## asset:<kind>:<id,id>（资产引用，kind 空 = 全部；asset_ref 类型的 input 字段也走这里）。
 func _resolve_options(decl: Dictionary) -> Array:
 	var src := str(decl.get("source", ""))
 	if src.begins_with("content:"):
@@ -949,6 +1024,22 @@ func _resolve_options(decl: Dictionary) -> Array:
 			var ad: Dictionary = (AudioDecls.audio(manifest) as Dictionary)[aid]
 			out5.append({"v": str(ad.get("code", "")), "t": str(ad.get("name", aid))})
 		return out5
+	if src.begins_with("asset:"):
+		# asset:<kind>[:<id,id>] —— 资产引用（asset_ref）的选项来源；值 = 资产 id。
+		var parts := src.substr(6).split(":", false)
+		var want_kind := str(parts[0]) if parts.size() > 0 else ""
+		var want_ids: Array = str(parts[1]).split(",", false) if parts.size() > 1 and str(parts[1]) != "" else []
+		var assets := AssetDecl.all(manifest)
+		var out6: Array = []
+		for a in assets:
+			var ad: Dictionary = assets[a]
+			var aid := str(ad.get("id", ""))
+			if want_kind != "" and str(ad.get("kind", "")) != want_kind:
+				continue
+			if not want_ids.is_empty() and not want_ids.has(aid):
+				continue
+			out6.append({"v": aid, "t": str(ad.get("name", aid))})
+		return out6
 	if src == "map":
 		var out3: Array = []
 		for mn in MapStore.list_maps(manifest):

@@ -10,6 +10,7 @@ const FunctionDecls := preload("res://src/content/function_decl.gd")
 const ConditionDecls := preload("res://src/content/condition_decl.gd")
 const StepDecls := preload("res://src/content/step_decl.gd")
 const AudioDecls := preload("res://src/content/audio_decl.gd")
+const TriggerDecls := preload("res://src/content/trigger_decl.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
 
 ## 变量替换：%mapfile% 当前地图文件；%projectpath% 游戏项目根目录
@@ -104,6 +105,8 @@ static func load_from(project_dir: String) -> Dictionary:
 	issued = StepDecls.ensure_codes(data) or issued
 	# 音频码：音频池条目补发执行码（保存清单时随 audio 写回）。
 	issued = AudioDecls.ensure_codes(data) or issued
+	# 时机码：triggers 池条目补发执行码（时机不带字段，不进字段码空间）。
+	issued = TriggerDecls.ensure_codes(data) or issued
 	# 补码只改内存：内容文件马上就会带着新码落盘，清单却要等下一次显式保存。
 	# 留标记让「内容视图 Ctrl+S」顺手把清单也写回（D6），否则新码在磁盘上无对应对照。
 	if issued:

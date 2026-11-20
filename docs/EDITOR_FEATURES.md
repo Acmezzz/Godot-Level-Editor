@@ -31,7 +31,7 @@ src/
 ├── canvas/                 —— 画布（关卡编辑器主体） ——
 │   ├── editor_canvas.gd    画布宿主：装载地图、混合层栈节点（meta.layers 逐图声明）、相机、序列化
 │   ├── entity_node.gd      一个摆放物的唯一运行时表示（场景图片实例与实体实例共用，anchors/transform/尺寸）
-│   ├── canvas_draw.gd      画布上画什么：网格、幽灵预览、连线、占位框、事件区、选区
+│   ├── canvas_draw.gd      画布上画什么：网格、幽灵预览、连线、占位框、visual:rect 实体、选区
 │   ├── canvas_input.gd     鼠标事件分派：缩放平移、涂/擦、框选、拖拽
 │   ├── tool_ops.gd         左键/右键语义执行：涂刷、放置、擦除、盖章
 │   ├── selection_ops.gd    单选/框选/组拖、剪贴板、区域复制粘贴、引用重映射
@@ -44,6 +44,7 @@ src/
 │   ├── function_decl.gd    功能声明域：声明池归一化、执行码补发/查重、码↔名互查、CODES.md
 │   ├── condition_decl.gd   条件声明域：条件池归一化、字段码补发（与功能字段同码空间）、条件码表段
 │   ├── audio_decl.gd       音频声明域：audio 池归一化、执行码补发、音频码表段
+│   ├── trigger_decl.gd     时机声明域：triggers 池归一化、执行码补发、时机码表段（无字段）
 │   ├── step_decl.gd        步骤声明域：steps 池归一化、条目/字段码补发（三池同码空间）、码表段
 │   ├── content_id.gd       五段身份数：地图/实体/实例 4 位 + 内容 6 位的生成与拼装
 │   └── content_store.gd    内容文件读写：content/<功能id>/<内容ID>.json，原子写
@@ -58,7 +59,7 @@ src/
 	├── props_panel.gd      只剩「从地形生成碰撞」弹窗
 	├── content_editor.gd   内容编辑器：左实例列表 / 右功能列表与内容表单
 	├── content_preview.gd  内容编辑器的中列只读地图预览（自绘缩放/平移/点选）
-	├── field_widgets.gd    声明式字段控件工厂：input/choice 两分支，认不出的只读展示
+	├── field_widgets.gd    声明式字段控件工厂：input（string/int/float/bool/color/vector2/range/asset_ref）/ choice，认不出的只读展示
 	└── asset_panel.gd      资产目录：图鉴详情、自带功能挂载、实例分布清点、删除检查
 ```
 
@@ -112,7 +113,7 @@ src/
 | 项目名展示 | 顶栏最左显示 `projectName` |
 | 路径推导 | 读后自动补 `_dir`、`_maps_dir`、每个 `shape=tile` 资产的 `atlas_abs`、`_warnings` |
 | 清单版本 | 缺 `version` 补 1（结构演进时的迁移锚点） |
-| 内置种类合并 | `builtin_kinds.merge_into` 把 `trigger_zone` 补进 `assets`（`kind=entity, builtin=true`），写盘前剥离 |
+| 内置种类合并 | `builtin_kinds.merge_into` 把 `trigger_zone` 补进 `assets`（`kind=entity, builtin=true, visual:rect, sizeFields:[w,h]`），写盘前剥离 |
 | 实体身份码补发 | `assets[].code`（kind=entity）缺失时补发 4 位码，随清单保存写回 |
 
 清单里编辑器实际消费的键：
@@ -124,10 +125,11 @@ src/
 | `screenSize` | 游玩视野预览框尺寸（默认 `[640,360]`） |
 | `assets[]` | **统一资产表**：`kind` 分 `scene`/`entity`；scene 用 `shape` 分 `tile`（`atlas`+`cell`+`palette[]`）与 `image`（`texture`+`editorSize`+`anchor`）；`anchor` 对两类都成立（缺省 `center`） |
 | （`assets[]` 里 `kind=entity` 的条目） | 实体类型：`id` / `name` / `thumb` / `prefab` / `editorSize` / `sizeFields` / `functions[]`（自带功能挂载）/ `fields[]` / `role` / `code` / `visual` |
-| `functions` | 功能声明池：`{fnId: {name, code, fields[]}}` 或 `[{id, code, name, fields[]}]`；实体类型从中挂载 |
+| `functions` | 功能声明池：`{fnId: {name, code, fields[], triggers[], timing, view}}` 或数组；实体类型从中挂载 |
 | `conditions` | 条件声明池：`{condId: {name, fields[]}}` 或数组；条件无执行码，被功能声明链引用 |
 | `steps` | 步骤池：`{stepId: {name, code, fields[]}}`；演出功能（`"steps": true`）的步骤主体，条目码/字段码三池同空间 |
 | `audio` | 音频池：`{audioId: {name, code, path}}`；choice 字段 `audio:` source 的选项来源 |
+| `triggers` | 时机池：`{triggerId: {name, code}}` 或数组；**无字段**，功能声明 `triggers` 白名单引用，绑定写时机码 |
 | `playCommand` | 试玩命令模板，支持 `%mapfile%` / `%projectpath%` |
 | `godotExe` | 可选：覆盖 `playCommand` 里的可执行文件（支持 `%projectpath%`） |
 | `contentDir` | 可选：内容根目录，默认 `content` |
@@ -277,7 +279,8 @@ src/
 - 画布绘制内容：网格、地图边界、幽灵预览（瓦片范围框 / 实体缩略图 + 占位框 / 内置种类 2×2 矩形）、
   出生点十字（实体放置模式实色、其余淡色）、游玩视野框（鼠标处 + 出生点各一个 `screenSize` 框）、
   实体引用连线（同图黄线 / 跨图蓝紫线）、出口 ↗ 角标、传送落点描边、选中高亮、框选矩形、
-  多选外接框（含「N 个实体 · 拖动可整体移动」提示）、实体实际占位框、事件区矩形、区域选区轮廓、
+  多选外接框（含「N 个实体 · 拖动可整体移动」提示）、实体实际占位框、
+  `visual: rect` 实体的半透明矩形（颜色/透明度读资产声明）、区域选区轮廓、
   区域拖动/粘贴幽灵预览。
 - 没打开地图时禁用全部编辑交互，画布中央给引导。
 
@@ -341,29 +344,32 @@ src/
 | 区域剪切 | `Ctrl+X` 复制 + 擦源，一个撤销步；任一图层锁定即整体拒绝（部分跳过会让剪贴板与实际删除不一致） |
 | 区域拖动 | 在选区内按下拖动整块；**松手才**「推撤销 → 擦源 → 写目标」，中途取消不留半截状态 |
 
-区域内实体的「所在格」判定与 `extract()` 同语义：普通实体取**中心格**，内置事件区取**矩形左上格**
-（它的 `props.w/h` 是格数，位置是矩形中心）。复制、剪切、框入、粘贴四处共用这一口径，
-所以事件区不会因判定差异漏删或漂半格。
+区域内实体的「所在格」判定统一走 `EntityNode.cell()`：视觉矩形（`rect()`）的**左上格**。
+锚点由资产声明的 `anchor` 决定（缺省 `center`，内置事件是 `top_left`），因此中心锚点的普通实体
+与左上锚点的事件不会出现判定差异。复制、剪切、框入、粘贴四处共用这一口径。
 
 ### 6.4 出生点
 
 - 出生点画成绿框 + 十字；实体放置模式下可拖（其余淡色，避免在瓦片笔刷下误导成可点），拖动前推撤销快照。
 - 出生点位置存 `spawn: [x,y]`（格坐标）。
 
-### 6.5 事件区（内置种类）
+### 6.5 事件（内置种类 `trigger_zone`）
 
 `trigger_zone` 由编辑器提供，游戏工程清单不需要声明：
 
 - 并入清单（`builtin=true`，固定实体码 `TZ99`），保存清单时剥离，不污染游戏工程。
-- 显示名「事件区」——摆哪层都行（可专门建一层摆事件区）；触碰触发 vs 条件触发都是
-  时机问题，归游戏侧解释（条件触发 = 绑定的功能声明引用条件库，达成即触发、无需碰撞）。
-- 没有 `thumb` 也出现在实体列表里；放置时画 2×2 矩形幽灵，落下带默认
-  `props { w:2, h:2, mode:"enter", event:"", once:true }` 并把位置推到矩形中心。
-- 无父属性表单后，`w/h/mode/event/once` 没有专用编辑控件；值在地图 JSON 的 `props` 里
-  手改（或游戏侧运行时写）。保存时 `props` 只丢「值为 null/空串」的键——未绑定事件的
-  `event` 存盘表现为键消失，游戏侧按「键缺失 = 未绑定」处理；其余键原样保留。
-- 画布绘制：半透明矩形 + 左上角标签 `事件id · 触发方式 · 一次`；未绑定时橙色并显示「(未绑定事件)」，
-  绑定时蓝色。
+- 显示名「事件」——摆在哪层都行（可专门建一层摆事件）。**它没有任何特殊语义**：
+  就是一个 `visual: {"mode":"rect", ...}` 的实体资产，尺寸走通用 `sizeFields: ["w","h"]`
+  （格数，`props.w/h`）。"什么时候触发、触发做什么"全在绑定的 `functions[]` 里
+  （功能的 `timing` 声明 + 绑定的 `trigger` 时机码）。
+- 没有 `thumb` 也出现在实体列表里；放置时画 2×2 矩形幽灵，落下带默认 `props {w:2, h:2}`，
+  位置按 `anchor: "top_left"` 落在矩形左上格。
+- `w/h` **没有专用编辑控件**（Q8 未开）；值在地图 JSON 的 `props` 里手改。保存时 `props`
+  只丢「值为 null/空串」的键，其余键原样保留。
+- 画布绘制：半透明矩形，颜色/透明度读资产的 `visual` 声明——**不再有事件 id / 触发方式标签**，
+  旧的三键 `props.mode/event/once` 已作废（编辑器不读不写）。
+- 绑定行（内容编辑器右侧功能列表）提供**时机下拉**（写 `functions[].trigger`，时机码）与
+  **启用勾选**（写 `functions[].enabled`，仅 `false` 落盘）。
 
 ---
 
@@ -373,14 +379,16 @@ src/
 ### 7.1 模型
 
 - **功能由项目侧实现**，编辑器只暴露「可编辑内容」接口。
-- 功能在清单顶层 `functions` 声明：`{fnId: {name, code, fields:[...]}}`。字段按 `kind` 两分支：
-  `input`（string/int/float/bool 输入控件）与 `choice`（`options[]` 或 `source` 动态选项）；
-  认不出的声明只读展示，绝不提供可写控件。
+- 功能在清单顶层 `functions` 声明：`{fnId: {name, code, fields:[...], triggers:[...], timing:{mode}, view:{}}}`。
+  字段按 `kind` 两分支：`input`（string/int/float/bool/color/vector2/range/asset_ref 输入控件）
+  与 `choice`（`options[]` 或 `source` 动态选项）；认不出的声明只读展示，绝不提供可写控件。
+  `triggers` 是引用 `triggers` 池的可选时机白名单，`timing`/`view` 编辑器只存取。
 - **实例绑定**存在实体 meta / 地图 JSON 的 `functions` 数组里：
 
 ```json
 "functions": [
-  { "fn": "X7K2", "content": "<内容ID>", "name": "初遇", "order": 1, "parallel": false }
+  { "fn": "X7K2", "content": "<内容ID>", "name": "初遇", "order": 1, "parallel": false,
+	"trigger": "T111", "enabled": false }
 ]
 ```
 
@@ -391,6 +399,8 @@ src/
 | `name` | 内容显示名（列表读这个） |
 | `order` | 组内顺序；**顺序即执行顺序** |
 | `parallel` | 编辑器只存取不解释（游戏侧常用语义：与前一项同时触发） |
+| `trigger` | 可选时机**执行码**（取自功能声明白名单）；缺省省略 = 默认时机 |
+| `enabled` | 可选布尔；缺省省略 = 启用，只有 `false` 落盘 |
 
 - **内容文件**：`<项目>/content/<功能id>/<内容id>.json`，结构
   `{id, function: 执行码, name, fields:{字段码: 值}}`。
@@ -424,13 +434,15 @@ src/
 | 中列 | 只读画布预览：重绘网格 + 各层真实瓦片 + 实例缩略图/色块 + 选中框；滚轮缩放（鼠标锚点）、中键平移、左键点选/悬停；引用字段选中目标 → 亮青粗框指向预览 |
 | 右列 | 选中实例：类型名 + `地图名.实例码` + **引用区**（类型声明了 entity_ref/map_ref 就出下拉，值写 props、进撤销栈）+ **功能列表**（挂载自动补齐 + 手动添加；🔒 = 类型自带不可删）+ 选中项的内容表单 |
 
-**附加功能行**：`① 功能名 [内容名] ⟳并行 [库] ✕`
+**附加功能行**：`① 功能名 [内容名] 时机▾ ☑启用 ⟳并行 [库] ✕`
 
 | 操作 | 说明 |
 |---|---|
 | 点行 | 展开该功能的内容表单 |
 | 「+ 添加功能 …」 | 列出清单 `functions` 声明中**未绑定**的功能（声明 = 开发契约，编辑器只读；已绑定的不再出现在菜单里） |
 | 「库」 | 列同功能的全部内容条目，选中一条 → **复制成新 ID** 追加到实例末尾并选中；跨功能不列（字段声明不同，复用没意义） |
+| 「时机 ▾」 | 该功能声明的 `triggers` 白名单 → 写绑定 `trigger`（时机码）；首项「默认时机」= 删掉该键 |
+| 「启用」勾选 | 写绑定 `enabled`：勾上 = 删键（缺省即启用），取消 = 写 `false` |
 | 「⟳并行」 | 切换该条的 `parallel` |
 | 「✕」 | 只解除绑定，**内容条目留在库里**（删绑定 ≠ 删内容） |
 
@@ -572,15 +584,17 @@ field widgets 与 choice source）。步骤引用清单 `steps` 池（值=步骤
 | 检查项 | 级别 |
 |---|---|
 | `assets` 不是数组 / 资产 `id` 空或重复 / `kind` 不在 `scene`/`entity` | 错误 |
-| `functions`·`steps`·`audio` 不是数组或对象 / `tileSize` 非正数 | 错误 |
+| `functions`·`conditions`·`steps`·`audio`·`triggers` 不是数组或对象 / `tileSize` 非正数 | 错误 |
 | 清单出现 `tiles` / `entities`（已并入 `assets[]`） | 错误（跑 `tools/migrate_project.gd`） |
 | scene: `shape` 不在 `tile`/`image` / `atlas` 与 `texture` 恰好给一个 / `atlas` 为空或含 `..` / 调色板条目缺 `cell` / `gridProjection` 取值非法 | 错误 |
 | entity: 声明了 `shape`（实体无形状）/ `prefab` 与 `visual` 都没有 / `editorSize` 形状非法 / `fields` 非数组 | 错误 |
 | 资产 `code`（`kind=entity`）重复 | 错误 |
 | 实体挂载了未声明的功能（实体字段**不查 kind**，kind 只约束功能/条件/步骤声明） | 错误 |
-| 功能/步骤/音频**条目码**池内重复；**字段码跨池/跨功能同码**（三池一个码空间）报错 | 错误 |
-| 功能/条件/步骤/音频 id 空或重复（数组写法）/ 步骤条目（dict 写法值）不是对象 / 功能 id 含非 `A-Za-z0-9_./-` 字符 | 错误 |
+| 功能/步骤/音频/时机**条目码**池内重复；**字段码跨池/跨功能同码**（三池一个码空间）报错 | 错误 |
+| 字段 `type` 不在 `string`/`int`/`float`/`bool`/`color`/`vector2`/`range`/`asset_ref` | 错误 |
+| 功能/条件/步骤/音频/时机 id 空或重复（数组写法）/ 步骤条目（dict 写法值）不是对象 / 功能 id 含非 `A-Za-z0-9_./-` 字符 | 错误 |
 | 功能引用未声明的条件 | 错误 |
+| 功能 `triggers` 不是数组或引用未声明的时机 / `timing` 不是对象或 `timing.mode` 不在 `instant`/`duration`/`continuous` | 错误 |
 
 有错误时清单整体作废，进项目错误页；只有警告时正常进入，警告挂在清单 `_warnings`。
 
@@ -592,12 +606,12 @@ field widgets 与 choice source）。步骤引用清单 `steps` 池（值=步骤
 | `tiles` 键不在层集 / 瓦片条目不是 5 元（x, y, 资产id, atlas_x, atlas_y） | 错误 |
 | 实体 `layer` 不在层集 | 错误 |
 | `collision` 条目不是数值（2–4 元）/ `spawn` 不是 2 元数值 | 错误 |
-| 实体不是对象 / `code` 重复 / `x`·`y` 非数值 / `scene` 为空 | 错误 |
-| 实体 `scene` 不在当前清单 | 警告 |
+| 实体不是对象 / `code` 重复 / `x`·`y` 非数值 / `asset` 为空 | 错误 |
+| 实体 `asset` 不在当前清单 | 警告 |
 | 实体 `props` 不是对象 | 错误 |
 | `functions` 不是数组 / 条目不是对象 / `fn` 为空 | 错误 |
 | `functions[].fn` 未在清单声明 | 警告（允许先放数据后补实现） |
-| `functions[].content`·`name` 非字符串 / `order` 非数值 / `parallel` 非布尔 | 错误 |
+| `functions[].content`·`name`·`trigger` 非字符串 / `order` 非数值 / `parallel`·`enabled` 非布尔 | 错误 |
 
 有错误则该图拒收（`decode_text` 返回空数据 + 问题列表），不把坏数据交给画布。
 
@@ -620,8 +634,8 @@ godot --headless --path "<编辑器工程>" --script res://tests/run_tests.gd
 |---|---|
 | `test_content_id.gd` | 三池字段码收集器（dict/array 写法、空码过滤）、五段身份码拼装与缺段拒发、码形状 |
 | `test_decl_pools.gd` | 功能/条件池归一化、steps 标记保留、功能码查重、字段码跨功能查重、条件补码避让 |
-| `test_step_audio.gd` | 步骤池归一化与按码查询、步骤补码避让三池占用、音频池归一化与补码 |
-| `test_validators.gd` | 清单校验：合法零错误、kind 缺失、条目码池内重复、字段码**跨池**同码、步骤 dict 值非对象、未声明条件/实体/音频码重、功能 id 字符集 |
+| `test_step_audio.gd` | 步骤池归一化与按码查询、步骤补码避让三池占用、音频池归一化与补码、时机池归一化/补码/按码反查（时机码不进字段码空间） |
+| `test_validators.gd` | 清单校验：合法零错误、kind 缺失、条目码池内重复、字段码**跨池**同码、步骤 dict 值非对象、未声明条件/实体/音频码重、功能 id 字符集、时机池 id/码重复与引用校验、`timing.mode` 非法、新字段类型全合法 |
 | `test_map_v4.gd` | v5 模板、层栈校验、瓦片 5 元精确校验（第 3 位资产 id）、`objects[]` 各道防线（code 查重、场景实例不得发码、图集场景不可摆放、层归属、transform/visible/zPolicy 类型、退役 entities 段）、spawn、decode_text 门槛 |
 | `test_assets.gd` | `assets[]` 归一化：kind 分派、未知键保留、palette 展平、非正方形 `cell`、`editorSize`/`sizeFields` 尺寸、编辑期原件入口、挂载过滤 |
 | `test_entity_node.gd` | `EntityNode` 锚点↔格坐标换算（center/top_left/bottom_center 正反算）、浮点坐标与所在格、`sizeFields` 尺寸覆盖、`transform` 缺省判定（1/0/false 算缺省、翻转 toggle 后键被删掉） |
@@ -629,7 +643,7 @@ godot --headless --path "<编辑器工程>" --script res://tests/run_tests.gd
 
 约定：套件 `extends "res://tests/_suite_base.gd"`，方法名 `test_` 开头即被发现；
 `ok()` / `eq()` 收集失败；**每个用例至少一条断言**（崩溃中断的用例断言数不增长，
-runner 判 FAIL——防止半路崩掉变成假 PASS）。退出码非 0 = 有失败。当前 8 套件 50 用例。
+runner 判 FAIL——防止半路崩掉变成假 PASS）。退出码非 0 = 有失败。当前 8 套件 53 用例。
 
 截图辅助 `tools/screenshot.gd`（模式清单见文件头注释）与警告扫描 `tools/warn_scan.gd`
 （headless 全量加载 src/ 校验可加载性）；`tools/migrate_project.gd` 是一次性迁移脚本
@@ -651,7 +665,8 @@ godot --headless --path "<编辑器工程>" --script res://tools/migrate_project
 - 撤销快照是整图快照，大图（数千格 + 数百实体）连续操作仍有内存与耗时成本。
 - 校验只做静态数据检查，不验证运行时可达性（例如落点是否在实心碰撞里）。
 - 试玩进程跟踪基于 Windows `tasklist` 轮询；其它平台视为一直在运行。
-- `trigger_zone` 的尺寸/触发方式/绑定事件目前**没有专用编辑控件**，只能直接改地图 JSON。
+- `trigger_zone`（事件）的 `w/h` 尺寸**没有专用编辑控件**，只能直接改地图 JSON（Q8 未开）；
+  时机/启用已有绑定行控件，语义（`mode/event/once` 三键）已退役。
 - 不做瓦片自动拼接（autotile）；碰撞自动生成是辅助功能，生成后仍可手改。
 - 无图集编辑器入口；新增瓦片组需要直接改清单。
 - 只在格对齐意义上吸附（吸附默认开）：关掉后可放在任意像素位置，存浮点格坐标。

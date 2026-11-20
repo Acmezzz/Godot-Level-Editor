@@ -45,28 +45,32 @@ func _draw() -> void:
  # 摆放模式：手上拿着资产就画它的幽灵，否则画「点这里会选中」的提示框
 			if cvs.stamp_asset != "":
 				var ad := AssetDecl.by_id(cvs.manifest, cvs.stamp_asset)
-				var dsz: Vector2 = cvs.entity_display_size(cvs.stamp_asset)
-				var center: Vector2 = cvs.snap_point(pos)
+				var unit: Vector2 = EntityNode.anchor_unit_of(ad)
+				var gsz: Vector2 = cvs.entity_display_size(cvs.stamp_asset)
+				# 带 sizeFields 的资产落下时带 2×2 默认尺寸（tool_ops._stamp），幽灵按同一尺寸画
+				if ad.get("sizeFields", null) is Array:
+					gsz = Vector2(2, 2) * float(cvs.tile_px)
+				var anchor: Vector2 = pos
+				if cvs.snap_to_grid:
+					var g: Vector2 = pos / float(cvs.tile_px) - unit
+					anchor = (Vector2(roundf(g.x), roundf(g.y)) + unit) * float(cvs.tile_px)
+				# 幽灵按落点的真实占位画（锚点由资产声明决定），和落下去之后完全一致
+				var grect := Rect2(anchor - EntityNode.anchor_off_of(unit, gsz), gsz)
 				var gtex: Texture2D = cvs.stamp_thumb
 				if gtex == null and str(ad.get("shape", "")) == "image":
 					gtex = EntityNode.texture_of(cvs.manifest, str(ad.get("texture", "")))
- # 幽灵按实例的真实占位尺寸画，和落下去之后一样大，便于对位
 				if gtex != null:
-					var gts = gtex.get_size()
-					var gh := Vector2(dsz.x, dsz.y)
-					cvs.draw_texture_rect(gtex, Rect2(center - gh * 0.5, gh), false, Color(1, 1, 1, 0.5))
- # 占位框：告诉用户这个实例在游戏里占多大
-					cvs.draw_rect(Rect2(center - dsz * 0.5, dsz), Color(0.35, 0.95, 0.95, 0.6), false, 1.0)
+					cvs.draw_texture_rect(gtex, grect, false, Color(1, 1, 1, 0.5))
+					cvs.draw_rect(grect, Color(0.35, 0.95, 0.95, 0.6), false, 1.0)
 				else:
- # 无贴图的资产（事件区等）：按 visual 声明画矩形幽灵
-					var gsz := dsz
+					# 无贴图的资产（visual: rect）：按声明画彩色矩形幽灵
 					var vis = ad.get("visual", null)
 					var col := Color(0.55, 0.85, 1.0, 0.35)
 					if vis is Dictionary and str((vis as Dictionary).get("color", "")) != "":
 						col = Color(str((vis as Dictionary).get("color")))
 						col.a = 0.35
-					cvs.draw_rect(Rect2(center - gsz * 0.5, gsz), col, true)
-					cvs.draw_rect(Rect2(center - gsz * 0.5, gsz), Color(col, 0.85), false, 1.5)
+					cvs.draw_rect(grect, col, true)
+					cvs.draw_rect(grect, Color(col, 0.85), false, 1.5)
 			else:
 				cvs.draw_rect(Rect2(Vector2(c) * cvs.tile_px, Vector2(cvs.tile_px, cvs.tile_px)),
 					Color(0.55, 0.85, 1.0, 0.5), false, 1.0)
@@ -143,8 +147,9 @@ func _draw() -> void:
 			landings.append(n)
  # 实例实际占位（清单 editorSize 或 prefab 碰撞尺寸）：青色实框
 		boxes.append(n.rect())
- # 事件区类资产（带 sizeFields、无贴图）：半透明矩形 + 事件名标签
-		if n.texture == null and not AssetDecl.size_fields(cvs.manifest, sid).is_empty():
+		# 无贴图的 visual:rect 资产（内置事件区等）：按声明画彩色矩形，不再认 props.event/mode/once。
+		var vis = AssetDecl.by_id(cvs.manifest, sid).get("visual", null)
+		if n.texture == null and vis is Dictionary and str((vis as Dictionary).get("mode", "")) == "rect":
 			zones.append(n)
 	if not exits.is_empty():
 		var fnt: Font = ThemeDB.fallback_font   # Node2D 无 Control 主题接口，用引擎兜底字体
@@ -196,8 +201,8 @@ func _draw() -> void:
 		var c4 := r4.get_center()
 		cvs.draw_line(Vector2(r4.position.x, c4.y), Vector2(r4.end.x, c4.y), Color(0.35, 0.95, 0.95, 0.25), 1.0)
 		cvs.draw_line(Vector2(c4.x, r4.position.y), Vector2(c4.x, r4.end.y), Color(0.35, 0.95, 0.95, 0.25), 1.0)
-	# 触发区：没有贴图，用半透明矩形 + 事件名标签表示；绑定事件的用实色，未绑定的用警示色
-	_draw_trigger_zones(zones)
+	# 无贴图的 visual:rect 资产：按声明画占位矩形，不再读 props.event/mode/once。
+	_draw_visual_rects(zones)
 	# 区域选区轮廓（框选的结果——开关或 Ctrl+拖动，可跨层）
 	if cvs._region_sel.size.x > 0:
 		var rr := Rect2(Vector2(cvs._region_sel.position) * cvs.tile_px, Vector2(cvs._region_sel.size) * cvs.tile_px)
@@ -280,27 +285,19 @@ func _draw() -> void:
 				cvs.draw_rect(er, Color(0.6, 1.0, 0.6, 0.4), true)
 		var gr := Rect2(Vector2(org) * cvs.tile_px, Vector2(cvs._region_clip.get("size", Vector2i.ONE)) * cvs.tile_px)
 		cvs.draw_rect(gr, Color(1.0, 0.85, 0.3, 0.9), false, 2.0)
-## 事件区矩形：半透明填充 + 边框 + 左上角事件名标签。
-## 未绑定事件时用警示色——它在地图里是"死"的，必须在画布上一眼能看出来。
-## zones 由 _draw 的单次实例遍历收集，这里不再自己扫实例集。
-func _draw_trigger_zones(zones: Array) -> void:
-	for node in zones:
+## visual:rect 资产的画布呈现：颜色/alpha 读资产声明，尺寸走实例 rect()。
+## 不含 props.event/mode/once 分支——事件就是绑定了功能的实体，语义只在 functions[] 里。
+func _draw_visual_rects(nodes: Array) -> void:
+	for node in nodes:
 		var n := node as EntityNode
 		if n == null or not is_instance_valid(n):
 			continue
-		var props: Dictionary = n.props
+		var vis: Dictionary = AssetDecl.by_id(cvs.manifest, n.asset).get("visual", {})
+		var col := Color(str(vis.get("color", "#4fc3f7")))
+		var alpha := float(vis.get("alpha", 0.35))
 		var rect := n.rect()
-		var event_id := str(props.get("event", ""))
-		var col := Color(0.55, 0.85, 1.0, 0.95) if event_id != "" else Color(1.0, 0.55, 0.35, 0.95)
-		cvs.draw_rect(rect, Color(col, 0.16), true)
-		cvs.draw_rect(rect, col, false, 1.5)
- # 左上角标签：事件 id + 触发方式，太长时截断
-		var label := event_id if event_id != "" else "(未绑定事件)"
-		label += " · " + str(props.get("mode", "enter"))
-		if bool(props.get("once", false)):
-			label += " · 一次"
-		cvs.draw_string(ThemeDB.fallback_font, rect.position + Vector2(3, -3),
-			label, HORIZONTAL_ALIGNMENT_LEFT, rect.size.x * cvs.zoom, 10, col)
+		cvs.draw_rect(rect, Color(col, alpha), true)
+		cvs.draw_rect(rect, Color(col, minf(1.0, alpha + 0.5)), false, 1.5)
 
 # 笔刷覆盖矩形（世界坐标）
 

@@ -45,6 +45,7 @@
 | `tiles` | — | **已退役**：并入 `assets[]`（`kind: "scene"`, `shape: "tile"`）。清单里出现即报错 |
 | `entities` | — | **已退役**：并入 `assets[]`（`kind: "entity"`）。清单里出现即报错 |
 | `functions` | dict \| array | 功能声明，见 2.5 |
+| `triggers` | dict \| array | 时机池，见 2.5.4。只有 `{id, name}`，是功能/绑定引用的标签 |
 | `contentDir` | string | 内容根目录（相对工程根），缺省 `content`；不允许 `..` 或绝对路径 |
 | `playCommand` | string | 试玩命令模板；支持 `%mapfile%`、`%projectpath%` |
 | `godotExe` | string | 可选，覆盖 `playCommand` 首个可执行文件路径；支持 `%projectpath%` |
@@ -52,7 +53,8 @@
 清单校验把 `assets` 非 Array、`tileSize` 非正数、资产 id 空或重复、
 **实例码重复**、图集/图片路径含 `..` 或为空、palette 元素缺 `cell`、功能/步骤/音频**条目码池内重复**、
 **字段码跨池/跨功能同码**（三池共用一个码空间，同码 = 静默别名，报错）、步骤**码重复**、音频**码重复**、
-字段缺 `kind` 或 kind/type 非法、挂载引用未声明的功能、功能引用未声明的条件，
+时机**id/码池内重复**、字段缺 `kind` 或 kind/type 非法、挂载引用未声明的功能、功能引用未声明的条件、
+功能引用未声明的时机、`timing.mode` 非法，
 以及 `assets[]` 里 `kind` 非法、scene 同时给 `atlas` 与 `texture`、entity 既无 `prefab` 也无 `visual`，
 判为**错误**（编辑器拒绝加载）。
 功能 id 与条件 id 重复都是错误
@@ -233,6 +235,7 @@ solid+矩形碰撞：`col.set_cell(cell, 0, Vector2i(4,0))`。
 | 磁盘引用 | 写什么 |
 |---|---|
 | 地图 `objects[].functions[].fn` | 功能执行码 |
+| 地图 `objects[].functions[].trigger` | 时机执行码（可选） |
 | 内容文件 `"function"` 键 | 功能执行码 |
 | 内容文件 `fields` 的键 | 字段执行码 |
 
@@ -246,21 +249,27 @@ solid+矩形碰撞：`col.set_cell(cell, 0, Vector2i(4,0))`。
 | input | `string` | LineEdit，回车/失焦提交并 strip_edges；`multiline: true` 则 TextEdit（失焦提交） |
 | input | `int` / `float` | SpinBox（步进 1.0 / 0.1，`min`/`max` 可声明），失焦/回车提交 |
 | input | `bool` | CheckBox，即时写盘 |
+| input | `color` | ColorPickerButton，值存 `"#rrggbb"` 字符串 |
+| input | `vector2` | 两个 SpinBox（x / y），值存 `[x, y]` 数组，失焦提交 |
+| input | `range` | HSlider + SpinBox，`min`/`max`/`step` 可声明，值存数字 |
+| input | `asset_ref` | 资产下拉：`assetKind`（scene/entity）+ 可选 `of: "id,id"` 过滤，值存资产 id |
 | choice | — | OptionButton：`options: ["a","b"]` 直给，或 `source` 动态取 |
 | input | 其他任意字符串 | 只读展示 + 黄字提示（编辑器不会把数组/对象塞进可写控件） |
 
 choice 的 `source` 取值：`content:<kind>`（列该目录内容条目）、`entity:<id,id>`（清单实体类型，
 空 = 不过滤）、`entity_inst:<id,id>`（当前图实例，显示"类型 · (x,y)"，值=实例码，空 = 全部）、
-`map`（地图列表）、`audio:`（音频池，值=音频码）。值的 JSON 形态与声明不符时只读展示，
+`map`（地图列表）、`audio:`（音频池，值=音频码）、`asset:<kind>[:id,id]`（资产表，值=资产 id）。
+值的 JSON 形态与声明不符时只读展示（vector2/range/int/float/choice 一律如此），
 **绝不自动改写**。
 
-`default` 决定新建内容时的初值：`bool`→false、`int`→0、`float`→0.0、其他→`""`。
+`default` 决定新建内容时的初值：`bool`→false、`int`→`min`（缺省 0）、`float`/`range`→`min`（缺省 0.0）、
+`vector2`→`[min, min]`、`color`→`"#ffffff"`、其他→`""`。
 
-**功能声明里编辑器不支持的键**（别指望它们生效）：`trigger`、`scope`、`icon`、`params`、
-`category`、`group` 等一律被忽略——`functions()` 归一化保留 `id` / `code` / `name` /
-`fields` / `conditions` / `steps`（演出标记），其余键不进归一化视图。功能的触发时机不在
-清单里声明，由游戏侧实现决定；**条件依赖**声明在清单里（见下），触发时机与条件是两回事：
-条件 = 满足才执行，时机 = 什么时候来问这个条件。
+**功能声明里编辑器支持的键**：`id` / `code` / `name` / `fields` / `conditions` / `steps` /
+`triggers`（白名单，见 2.5.4）/ `timing` / `view`。其余键（`scope`、`icon`、`params`、
+`category`、`group` 等）一律被忽略——归一化保留已知键，未知键不剥离但不参与编辑。
+`timing` 是 `{mode: "instant"|"duration"|"continuous"}`，`view` 是呈现提示对象（编辑器只存取）。
+**条件依赖与触发时机是两回事**：条件 = 满足才执行，时机 = 什么时候来问这个条件。
 
 **实例上挂多个功能**：`functions` 是有序数组，每项：
 
@@ -275,6 +284,11 @@ choice 的 `source` 取值：`content:<kind>`（列该目录内容条目）、`e
 | `name` | 显示名，缺省用 `fn` |
 | `order` | 顺序，编辑器在增删时重排为 1..n |
 | `parallel` | 布尔，编辑器只存取，**不解释语义** |
+| `trigger` | 可选，时机**执行码**；缺省省略 = 走功能的默认时机。必须是功能声明 `triggers` 白名单里的时机（校验只查形态，白名单由下拉保证） |
+| `enabled` | 可选布尔；缺省省略 = 启用。`false` 是唯一的写盘形态 |
+
+`trigger` 与 `enabled` 都遵守「缺省即省略」：写成默认值不会落盘，手改 JSON 也可直接删掉这两个键。
+游戏侧在同一实例上按 `trigger` 决定该绑定挂到哪个判定入口；不读这两个键就相当于"默认时机 + 启用"。
 
 游戏侧若要「顺序执行 vs 并行」，读 `order` 与 `parallel` 自行实现；编辑器不校验语义。
 
@@ -325,8 +339,8 @@ choice 的 `source` 取值：`content:<kind>`（列该目录内容条目）、`e
 
 功能/条件字段声明 `{"kind": "choice", "source": "audio:"}` 即得音频下拉，值存**音频码**。
 BGM 切换、环境音触发、音效播放在哪一步响起，都是功能代码（游戏侧）的事——例如
-「环境音触发区」= trigger_zone 绑定一个带 `audio:` 字段的功能，进区播放、离区停止由
-功能实现决定。编辑器全程不解释音频语义。
+「环境音触发区」= 一个 `visual: rect` 实体（内置的 `trigger_zone` 就是）挂上带 `audio:`
+字段的功能，进区播放、离区停止由功能实现决定。编辑器全程不解释音频语义。
 
 ### 2.5.3 步骤池 `steps`（顶层声明池）+ 演出
 
@@ -368,6 +382,26 @@ BGM 切换、环境音触发、音效播放在哪一步响起，都是功能代�
 **编辑器写法**：子面板改动 = 读全文、改 steps 数组、整文件写回——顶层未知键与
 声明缺失的步骤条目都不剥离（表单给 ⚠ 只读提示）。
 
+### 2.5.4 时机池 `triggers`（顶层声明池）
+
+时机是**游戏侧的判定入口**（进入地图、触碰、计时、信号……），编辑器只认识它们的名字与码。
+条目 = `{id, name}`，执行码由 `ensure_codes` 补发（池内重复 = 校验错误）：
+
+```json
+"triggers": {
+  "on_enter": {"name": "进入地图"},
+  "on_touch": {"name": "触碰"}
+}
+```
+
+**时机没有字段**——它只是一个被引用的标签，"进区后判什么"写在功能代码里。
+因此时机码**不进字段码空间**（`content_id.field_codes()` 不覆盖 triggers），三池的字段码查重
+与补码避让都不受它影响。
+
+功能声明用 `triggers: [时机 id, ...]` 声明**可选时机白名单**，实例绑定再用 `trigger`
+写其中一个时机的**执行码**。白名单只限制编辑器下拉给什么，不影响游戏侧解释；
+引用未声明的时机 id = 校验错误。
+
 ### 2.6 `role` —— 连接语义标签
 
 | role | 含义 | 编辑器用在哪 |
@@ -375,46 +409,45 @@ BGM 切换、环境音触发、音效播放在哪一步响起，都是功能代�
 | `portal` | 图内/跨图传送门 | 无专属标记（引用连线只看 `props.target_point`，与 role 无关） |
 | `exit` | 跨图出口（单向） | 画布画 `↗` + 目标图名角标 |
 | `landing` | 传送落点 | 画布画落点描边 |
-| `trigger` | 事件区 | 画布画半透明矩形 + 事件名 |
+| `trigger` | 事件（可触发区域） | 无专属标记（矩形由 `visual` 声明画，与 role 无关） |
 
 实体条目必须**显式声明** `role` 才有画布连接标记；不声明就是普通实体，编辑器不按实体 id 猜语义。
-`trigger_zone` 由编辑器内置声明（`role: trigger`）。
+`trigger_zone` 由编辑器内置声明（`role: trigger`）。`role` 只在 `exit`/`landing` 两处真正落成画布标记；
+`trigger` 的矩形来自资产 `visual` 声明，不靠 role。
 
 **role 只影响画布呈现，不影响数据。**地图里不写 role，游戏侧也不该读 role 决定行为——
 按 `scene`（实体 id）或 `prefab` 分发。role 存在的意义是让编辑器在换实体 id 时仍能识别连接语义。
 
-### 2.7 内置实体种类 `trigger_zone`（显示名「事件区」）
+### 2.7 内置实体种类 `trigger_zone`（显示名「事件」）
 
 由编辑器提供，**不需要游戏工程在清单里声明**；加载清单时自动并入（`builtin=true`），
 写盘前再剥掉，所以游戏工程的 `editor_manifest.json` 里看不到它。
-显示名是「事件区」（不一定要触碰触发：绑定功能可含条件，达成条件即触发），
-数据 id、`role: trigger`、props 契约都没变。
+
+它**没有任何特殊语义**：就是一个 `visual: rect` 的实体资产，画布按 `visual.mode/color/alpha`
+画半透明矩形，尺寸走通用的 `sizeFields`。"这是事件"这件事只落在实例上挂的 `functions[]` 里
+（语义全在功能里），资产本身不认识"事件"。
 
 ```json
-{"id": "trigger_zone", "name": "事件区", "builtin": true, "role": "trigger", "code": "TZ99",
- "anchor": "top_left", "fields": []}
+{"id": "trigger_zone", "kind": "entity", "name": "事件", "builtin": true, "role": "trigger",
+ "code": "TZ99", "anchor": "top_left", "visual": {"mode": "rect", "color": "#4fc3f7", "alpha": 0.35},
+ "sizeFields": ["w", "h"], "fields": []}
 ```
 
-它**没有 prefab、没有缩略图、没有自带功能**，靠 `sizeFields` 声明从实例 `props` 读尺寸。
-地图里它的 `props` 是编辑器硬编码的：
+它**没有 prefab、没有缩略图**，靠 `sizeFields: ["w", "h"]` 从实例 `props` 读尺寸（单位是**格**）。
+放置时编辑器写 `props: {"w": 2, "h": 2}`；`w/h` **没有编辑控件**（见 Q8，未开），
+要改只能直接改地图 JSON 或靠游戏工程声明自己的同名实体覆盖内置定义。
 
-| `props` 键 | 编辑器含义 | 编辑器是否会写 |
-|---|---|---|
-| `w` / `h` | 矩形尺寸（**格**，不是像素），缺省 1 | 放置时写 2/2 |
-| `mode` | 触发方式，缺省 `"enter"` | 放置时写 `"enter"` |
-| `event` | 绑定事件 id，缺省空 | 放置时写 `""` |
-| `once` | 是否只触发一次 | 放置时写 `true` |
-| `require_flag` | 前置标记 | **编辑器从不写，也不会显示** |
-
-这些键**没有任何编辑控件**——`props` 由 `undo_history.extract` 原样保留（只要非空），要改只能直接改地图 JSON 或
-靠游戏工程在清单 `assets[]` 里自己声明同名实体类型覆盖内置定义。
+旧的 `props.mode` / `props.event` / `props.once` **已作废**：触发方式归功能代码，
+绑定哪个时机写 `functions[].trigger`（时机码），"只触发一次"由功能实现决定。
+这三键留着不影响地图加载，但编辑器既不读也不写，校验也不认它们。
 
 **位置语义**：`trigger_zone` 声明 `anchor: "top_left"`，所以它的 `x/y` 是矩形**左上角格坐标**
 （旧数据的语义因此原样保留，不需要迁移）；其他资产缺省 `anchor: "center"`，`x/y` 是锚点所在格的中心。
 换算公式见 §3.4。游戏侧若把 `trigger_zone` 按格中心放置，会偏半个矩形。
 
-`trigger_zone` **没有 prefab**，游戏侧必须自己按 `props.w/h/mode/event/once` 建 Area2D
+`trigger_zone` **没有 prefab**，游戏侧必须自己按 `props.w/h` 建 Area2D
 （不要指望按 scene 查 prefab 的通用实例化逻辑能处理它，那一步会取不到 prefab 而跳过）。
+
 ## 3. 地图 JSON `maps/<名>.json`
 
 ### 3.1 顶层结构（格式版本 `version: 5`）
@@ -521,7 +554,7 @@ BGM 切换、环境音触发、音效播放在哪一步响起，都是功能代�
  "props": {"target_point": "L8WM"},
  "functions": [
    {"fn": "X7K2", "content": "TEST-FY9F-QK3T-dialogue-7M2XK9",
-    "name": "打招呼", "order": 1, "parallel": false}
+    "name": "打招呼", "order": 1, "parallel": false, "trigger": "T111"}
  ]}
 
 {"asset": "bg_forest", "layer": "K2M8", "x": 0, "y": 0}
@@ -534,7 +567,7 @@ BGM 切换、环境音触发、音效播放在哪一步响起，都是功能代�
 | `layer` | 否 | 4 位**层码**（= `meta.layers[].id`），摆在哪一层。缺省 = 最底层 |
 | `x` / `y` | 否 | **浮点格坐标**，不是像素。锚点换算见下 |
 | `transform` | 否 | `{scale: [sx, sy], rotation: 弧度, flip_h: bool, flip_v: bool}`。**缺省整键省略**——读不到就等于 `scale 1/1、rotation 0、不翻转` |
-| `props` | 否 | 对象。类型参数 + 自定义键。**编辑器原样保留非空值，不剥离未知键**。带 `sizeFields` 声明的资产（事件区）尺寸也写在这里（格数） |
+| `props` | 否 | 对象。类型参数 + 自定义键。**编辑器原样保留非空值，不剥离未知键**。带 `sizeFields` 声明的资产（如事件）尺寸也写在这里（格数） |
 | `functions` | 否 | 数组，见 2.5；缺省视为空数组，编辑器写出时**总是写这个键**（含 `[]`） |
 | `visible` | 否 | 布尔，**编辑器专用显示开关**。缺省 `true`（缺省省略）。游戏侧应忽略 |
 | `zPolicy` | 否 | `"auto"`（缺省）/ `"below"` / `"above"`——**同层内分组**，不是全局 z。缺省省略 |
@@ -688,6 +721,12 @@ for o in data.get("objects", []):
 `asset`（资产 id，查清单用）、`functions`（本实例绑定的功能）。
 prefab 脚本在 `_ready()` 里读这些 meta，**不要依赖编辑器把值写进场景属性**。
 
+绑定的 `trigger`（时机码）与 `enabled` 就装在 `functions` 数组的条目里，游戏侧自己挑：
+`trigger` 缺省 = 默认时机，`enabled` 缺省 = 启用。编辑器只保证这两个键「缺省即省略」。
+
+**`visible` 是编辑器专用**：它只控制编辑画布上是否显示，游戏侧应忽略（别因此隐藏实例）。
+**`zPolicy` / `sortAnchor`** 是编辑器内排序分组与排序点，游戏侧若实现自己的 y-sort 才需要读。
+
 **`transform` 缺省整键省略**，读不到就按 `scale 1/1、rotation 0、不翻转` 处理：
 
 ```gdscript
@@ -713,9 +752,6 @@ func _apply_transform(inst: Node2D, t: Dictionary) -> void:
 
 **未知 `asset` 的处理**：清单里查不到该 id 就跳过并 `push_warning`。
 编辑器校验已经会警告「asset is not in the current manifest」，所以运行期跳过是可接受的降级。
-
-**`visible` 是编辑器专用**：它只控制编辑画布上是否显示，游戏侧应忽略（别因此隐藏实例）。
-**`zPolicy` / `sortAnchor`** 是编辑器内排序分组与排序点，游戏侧若实现自己的 y-sort 才需要读。
 
 ### 6.4 参考实现
 
@@ -829,7 +865,7 @@ func _apply_door(inst: Node, fn: Dictionary) -> void:
 1. **`content` 为空不是错误**。用户可能先挂功能后填内容，也可能清空内容绑定。
    静默跳过，不要报错。
 2. **字段值以内容文件为准，不要读 `props`**。数值类参数一律在内容文件（§2.4.1）；
-   `props` 只剩几何/引用（触发区 w/h、target_map/target_point）。
+   `props` 只剩几何/引用（事件尺寸 w/h、target_map/target_point）。
 3. **`order` / `parallel` 由你解释**。编辑器只保证它们是数字/布尔并保持顺序，
    不保证游戏该怎么并发。一个可行的做法是「按 order 排序，同一实体只取最近的一条」。
 
@@ -919,7 +955,7 @@ godot --path "<你的游戏工程>" -- --map=maps/<地图名>.json
 
 ## 11. 已知边界（照抄编辑器实现，不是待办）
 
-- **`trigger_zone`（事件区）的 props 没有编辑 UI**。见 2.7。
+- **`trigger_zone`（事件）只有尺寸没有编辑 UI**。`props.w/h` 只能手改 JSON。见 2.7。
 - **图层即遮挡层**。`meta.layers` 是纯 z 槽混合层栈，每层可摆瓦片+实体；碰撞是栈外元层。
 - **一个实体实例一个功能只挂一条绑定**。同一功能重复绑定只有「添加功能」菜单会过滤（校验不去重；手改 JSON 可造成重复绑定）。
 - **数值参数不走 props**。props 只剩几何/引用（§2.4.1）；值一律内容文件。
