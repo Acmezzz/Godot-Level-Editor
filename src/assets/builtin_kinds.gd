@@ -18,6 +18,8 @@ const KINDS := [
 		"builtin": true,
 		"role": "trigger",
 		"code": "TZ99",
+		# 旧数据的 x/y 是矩形左上格——用 top_left 锚点原样还原，不需要迁移
+		"anchor": "top_left",
 		"visual": {"mode": "rect", "color": "#4fc3f7", "alpha": 0.35},
 		"fields": [],
 	},

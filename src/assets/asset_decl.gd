@@ -149,7 +149,6 @@ static func instance_size(m: Dictionary, aid: String, props: Dictionary, tile_px
 ## 资产类型的连接语义（role: portal/exit/landing/trigger）；未声明返回空串。
 static func role_of(m: Dictionary, aid: String) -> String:
 	return str(by_id(m, aid).get("role", ""))
-
 static func has_role(m: Dictionary, aid: String, role: String) -> bool:
 	return role_of(m, aid) == role
 
@@ -189,6 +188,8 @@ static func _normalize(m: Dictionary, aid: String, src: Dictionary) -> Dictionar
 	d["id"] = aid
 	d["kind"] = str(src.get("kind", ""))
 	d["name"] = str(src.get("name", aid)) if str(src.get("name", "")) != "" else aid
+	# 锚点对两类资产都成立（entity 也可声明，事件区就用 top_left 保持旧数据语义）
+	d["anchor"] = str(src.get("anchor", "center"))
 	if d["kind"] == "scene":
 		d["shape"] = str(src.get("shape", "tile"))
 		# 图集路径 → 绝对路径（清单里的相对路径按项目根解释；运行时键不回写盘）
@@ -198,7 +199,6 @@ static func _normalize(m: Dictionary, aid: String, src: Dictionary) -> Dictionar
 			d["atlas_abs"] = base.path_join(atlas) if base != "" else atlas
 		d["palette"] = src.get("palette", []) if src.get("palette", []) is Array else []
 		d["gridProjection"] = str(src.get("gridProjection", "orthogonal"))
-		d["anchor"] = str(src.get("anchor", "center"))
 	else:
 		d["code"] = str(src.get("code", ""))
 		d["functions"] = src.get("functions", []) if src.get("functions", []) is Array else []

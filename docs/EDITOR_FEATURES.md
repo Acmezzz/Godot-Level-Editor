@@ -30,6 +30,7 @@ src/
 │   └── side_actions.gd     地图改名/复制、按名开图、按 id 删实体
 ├── canvas/                 —— 画布（关卡编辑器主体） ——
 │   ├── editor_canvas.gd    画布宿主：装载地图、混合层栈节点（meta.layers 逐图声明）、相机、序列化
+│   ├── entity_node.gd      一个摆放物的唯一运行时表示（场景图片实例与实体实例共用，anchors/transform/尺寸）
 │   ├── canvas_draw.gd      画布上画什么：网格、幽灵预览、连线、占位框、事件区、选区
 │   ├── canvas_input.gd     鼠标事件分派：缩放平移、涂/擦、框选、拖拽
 │   ├── tool_ops.gd         左键/右键语义执行：涂刷、放置、擦除、盖章
@@ -121,7 +122,7 @@ src/
 | `projectName` | 顶栏品牌 / 窗口标题 |
 | `tileSize` | 瓦片像素尺寸（默认 16） |
 | `screenSize` | 游玩视野预览框尺寸（默认 `[640,360]`） |
-| `assets[]` | **统一资产表**：`kind` 分 `scene`/`entity`；scene 用 `shape` 分 `tile`（`atlas`+`cell`+`palette[]`）与 `image`（`texture`+`editorSize`+`anchor`） |
+| `assets[]` | **统一资产表**：`kind` 分 `scene`/`entity`；scene 用 `shape` 分 `tile`（`atlas`+`cell`+`palette[]`）与 `image`（`texture`+`editorSize`+`anchor`）；`anchor` 对两类都成立（缺省 `center`） |
 | （`assets[]` 里 `kind=entity` 的条目） | 实体类型：`id` / `name` / `thumb` / `prefab` / `editorSize` / `sizeFields` / `functions[]`（自带功能挂载）/ `fields[]` / `role` / `code` / `visual` |
 | `functions` | 功能声明池：`{fnId: {name, code, fields[]}}` 或 `[{id, code, name, fields[]}]`；实体类型从中挂载 |
 | `conditions` | 条件声明池：`{condId: {name, fields[]}}` 或数组；条件无执行码，被功能声明链引用 |
@@ -177,12 +178,13 @@ src/
   "spawn": [2, 2],
   "tiles": { "L1C3": [[x, y, "terrain", ax, ay]], "T8N5": [[x, y, "decor", ax, ay]] },
   "collision": [[x, y, "one_way", "r45"], [x, y]],
-  "entities": [
-	{ "scene": "crawler", "code": "B3XD", "layer": "L1C3",
-	  "x": 10, "y": 8, "flip_h": false,
+  "objects": [
+	{ "asset": "crawler", "code": "B3XD", "layer": "L1C3",
+	  "x": 10.5, "y": 8,
 	  "props": {},
 	  "functions": [{ "fn": "X7K2", "content": "K7QM-D4L3-B3XD-dialogue-A9FK2P",
-					  "name": "初遇", "order": 1, "parallel": false }] }
+					  "name": "初遇", "order": 1, "parallel": false }] },
+	{ "asset": "bg_forest", "layer": "L1C3", "x": 0, "y": 0 }
   ]
 }
 ```
@@ -193,8 +195,13 @@ src/
   （指向清单 `assets[]` 里 `shape=tile` 的条目），4/5 位是图集内格坐标。切片尺寸取该资产的 `cell`
   （可为非正方形、可大于地图格），不写在地图里——换图集/重排 `assets[]` 都不会破引用。
 - `collision` 只有类型非 `solid` 或形状非矩形时才追加第 3/4 位，缺省值零冗余。
+- `objects[]` 统一收**场景图片实例**（`kind=scene`、`shape=image`）与**实体实例**（`kind=entity`）：
+  同形，差别只有 `code`——只有实体才产实例码。`scene` 键已作废（改为 `asset`）。
+  `transform` 缺省整键省略；`visible`/`zPolicy`/`sortAnchor` 同样缺省省略。
+- `x/y` 是**浮点格坐标**（可半格、可超出格），锚点换算见 `GAME_SIDE_STANDARD` §3.4。
+  关掉吸附后拖到半格处，保存重开仍在原位（吸附默认开）。
 - 实体 `props` 保留所有未知键（只有空值被丢弃），不做白名单剥离——手工预留字段不会在保存时蒸发。
-- 实体 `x/y` 用 `floori` 换算，负坐标不会每次保存向 0 漂移；`layer` = 层码，缺省最底层。
+- `layer` = 层码，缺省最底层。
 
 ---
 
@@ -298,7 +305,7 @@ src/
 | 功能 | 说明 |
 |---|---|
 | 实体列表 | 清单 `assets[]` 里 `kind=entity`（含内置 `trigger_zone`）；无缩略图的按 `visual` 声明画占位图标（不再被跳过） |
-| 放置 | 实体放置模式下左键点格 → 落一个 Sprite2D 占位到**当前层**，位置吸附格中心 |
+| 放置 | 实体放置模式下左键点格 → 落一个 `EntityNode` 到**当前层**，位置吸附到锚点所在格；关掉状态栏「吸附」后按像素落位（存浮点格坐标） |
 | 放置即选中 | 放下后立刻发 `entity_selected`，「放置 → 配置」不断档；连放不受影响 |
 | 实例身份 | 每个实例一个 4 位**实例码**（出生即定、永不回收，无需防复用扫描）；唯一身份，引用/重映射/连线全用它 |
 | **引用编辑** | 内容编辑器右栏「引用」区：实体类型声明了 entity_ref/map_ref 字段就出下拉——entity_ref 列当前图实例（`of` 限定类型，未声明列全部，显示"类型 · (x,y)"），map_ref 列地图；值写实例 props，进撤销栈；选中即**指向预览**（画布/预览高亮被指实例） |
@@ -310,10 +317,10 @@ src/
 | 命中判定 | 按实体**占位尺寸**做外接框命中（不是写死 16/20 px），命中多个取中心最近者 |
 | 拖拽移动 | 按住实体拖动，松手吸附格点；一次拖拽一个撤销步 |
 | 删除 | `Del`，或右键点实体（右键只擦当前层：命中本层实体删实体，否则擦瓦片） |
-| 朝向翻转 | `F` toggle 单选或框选集合的 `flip_h`，一个撤销步；写入地图 `entities[].flip_h` |
+| 朝向翻转 | `F` toggle 单选或框选集合的 `transform.flip_h`，一个撤销步；写入地图 `objects[].transform` |
 | 方向键微调 | 有选中时整格移动（`Shift` = 4 格）；1 秒内的连续按键合并成一个撤销步 |
-| 复制粘贴 | `Ctrl+C` / `Ctrl+V` 保持相对布局，粘到光标处吸附格点（事件区按左上格语义吸附）；`props` 与 `functions` **深拷贝**，副本互不影响；内部引用重映射到新实例码 |
-| 原位复制 | `Ctrl+D` 偏移 1 格复制，带 `props` / `functions` / `flip_h`，新号照发 |
+| 复制粘贴 | `Ctrl+C` / `Ctrl+V` 保持相对布局，粘到光标处吸附到锚点所在格；`props` / `functions` / `transform` **深拷贝**，副本互不影响；内部引用重映射到新实例码 |
+| 原位复制 | `Ctrl+D` 偏移 1 格复制，带 `props` / `functions` / `transform`，新号照发 |
 | 剪切 | `Ctrl+X` 复制进剪贴板并删除选区，整件事**一个**撤销步 |
 | 实体大纲 | **已删除**（右侧五页签面板整体删除）；找实体靠画布与内容编辑器左列 |
 | 属性面板 | **已删除**；参数编辑在内容编辑器「固定功能」块与资产目录里 |
@@ -615,17 +622,18 @@ godot --headless --path "<编辑器工程>" --script res://tests/run_tests.gd
 | `test_decl_pools.gd` | 功能/条件池归一化、steps 标记保留、功能码查重、字段码跨功能查重、条件补码避让 |
 | `test_step_audio.gd` | 步骤池归一化与按码查询、步骤补码避让三池占用、音频池归一化与补码 |
 | `test_validators.gd` | 清单校验：合法零错误、kind 缺失、条目码池内重复、字段码**跨池**同码、步骤 dict 值非对象、未声明条件/实体/音频码重、功能 id 字符集 |
-| `test_map_v4.gd` | v5 模板、层栈校验、瓦片 5 元精确校验（第 3 位资产 id）、实体 code 查重与层归属、spawn、decode_text 门槛 |
+| `test_map_v4.gd` | v5 模板、层栈校验、瓦片 5 元精确校验（第 3 位资产 id）、`objects[]` 各道防线（code 查重、场景实例不得发码、图集场景不可摆放、层归属、transform/visible/zPolicy 类型、退役 entities 段）、spawn、decode_text 门槛 |
 | `test_assets.gd` | `assets[]` 归一化：kind 分派、未知键保留、palette 展平、非正方形 `cell`、`editorSize`/`sizeFields` 尺寸、编辑期原件入口、挂载过滤 |
+| `test_entity_node.gd` | `EntityNode` 锚点↔格坐标换算（center/top_left/bottom_center 正反算）、浮点坐标与所在格、`sizeFields` 尺寸覆盖、`transform` 缺省判定（1/0/false 算缺省、翻转 toggle 后键被删掉） |
 | `test_stores.gd` | MapStore v5 写读回环、ContentStore 写读回环（user:// 临时目录，跑完自清） |
 
 约定：套件 `extends "res://tests/_suite_base.gd"`，方法名 `test_` 开头即被发现；
 `ok()` / `eq()` 收集失败；**每个用例至少一条断言**（崩溃中断的用例断言数不增长，
-runner 判 FAIL——防止半路崩掉变成假 PASS）。退出码非 0 = 有失败。当前 7 套件 42 用例。
+runner 判 FAIL——防止半路崩掉变成假 PASS）。退出码非 0 = 有失败。当前 8 套件 50 用例。
 
 截图辅助 `tools/screenshot.gd`（模式清单见文件头注释）与警告扫描 `tools/warn_scan.gd`
 （headless 全量加载 src/ 校验可加载性）；`tools/migrate_project.gd` 是一次性迁移脚本
-（清单 `tiles[]`/`entities[]` → `assets[]`、地图瓦片索引 → 资产 id、版本抬到 5，幂等）：
+（清单 `tiles[]`/`entities[]` → `assets[]`、地图瓦片索引 → 资产 id、地图 `entities[]` → `objects[]`、版本抬到 5，幂等）：
 
 ```
 godot --path "<编辑器工程>" --script res://tools/screenshot.gd -- <模式> <输出.png> [地图名]
@@ -646,9 +654,8 @@ godot --headless --path "<编辑器工程>" --script res://tools/migrate_project
 - `trigger_zone` 的尺寸/触发方式/绑定事件目前**没有专用编辑控件**，只能直接改地图 JSON。
 - 不做瓦片自动拼接（autotile）；碰撞自动生成是辅助功能，生成后仍可手改。
 - 无图集编辑器入口；新增瓦片组需要直接改清单。
-- **v5 是开发中间态**：`assets[]` 已落地、地图瓦片第 3 位已是资产 id，但地图里实体仍走
-  `entities[]`（第 2 批才改 `objects[]`）；`shape=image` 的场景资产可以声明、可以在资产面板看到，
-  但**还不能放到地图上**（放置要等 `objects[]`）。中间态期间不要接游戏工程。
+- 只在格对齐意义上吸附（吸附默认开）：关掉后可放在任意像素位置，存浮点格坐标。
+  没有旋转/缩放的编辑控件——`transform` 目前由数据侧读写，`F` 只 toggle 水平翻转。
 - 编辑器写盘只有一条路径：`editor_canvas.extract()`；游戏侧 `MapLoader` 只读，不反向写回，避免格式分叉。
 - 内容系统只做「绑定 + 内容字段编辑」，功能行为完全在项目侧；编辑器不校验内容语义。
 

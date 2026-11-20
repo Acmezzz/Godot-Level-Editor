@@ -16,7 +16,7 @@ static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 				"map format %d is newer than this editor supports (%d)" % [ver, MapFormat.VERSION])
 		elif ver < MapFormat.VERSION:
 			_add(issues, "warning", "version", "older map format %d (upgraded in memory)" % ver)
-	for key in ["collision", "entities"]:
+	for key in ["collision", "objects"]:
 		if data.has(key) and not (data[key] is Array):
 			_add(issues, "error", key, "must be an array")
 	var meta = data.get("meta", {})
@@ -57,7 +57,9 @@ static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 	if not (spawn is Array) or spawn.size() != 2 or not _is_number_pair(spawn):
 		_add(issues, "error", "spawn", "must contain two numeric coordinates")
 	if data.get("entities", null) is Array:
-		_validate_entities(data.entities, manifest, layer_ids, issues)
+		_add(issues, "error", "entities", "retired: use objects[] with asset/transform (run tools/migrate_project.gd)")
+	if data.get("objects", null) is Array:
+		_validate_objects(data.objects, manifest, layer_ids, issues)
 	if data.get("collision", null) is Array:
 		for i in data.collision.size():
 			var cell = data.collision[i]
@@ -92,36 +94,55 @@ static func _validate_layers(meta: Dictionary, issues: Array[Dictionary]) -> Dic
 			_add(issues, "error", p + ".visible", "must be a boolean")
 	return ids
 
-static func _validate_entities(entities: Array, manifest: Dictionary, layer_ids: Dictionary, issues: Array[Dictionary]) -> void:
+## objects[] 校验：场景实例与实体实例同形，差别只在 code（仅 entity 合法）。
+## scene 实例带 code = 错误——直接拦住「给背景发码」这种误用。
+static func _validate_objects(objects: Array, manifest: Dictionary, layer_ids: Dictionary, issues: Array[Dictionary]) -> void:
 	var known := {}
 	for definition in manifest.get("assets", []):
-		if definition is Dictionary and str((definition as Dictionary).get("kind", "")) == "entity":
+		if definition is Dictionary:
 			known[str((definition as Dictionary).get("id", ""))] = definition
-	var ids := {}
-	for i in entities.size():
-		var entity = entities[i]
-		var path := "entities[%d]" % i
-		if not (entity is Dictionary):
+	var codes := {}
+	for i in objects.size():
+		var obj = objects[i]
+		var path := "objects[%d]" % i
+		if not (obj is Dictionary):
 			_add(issues, "error", path, "must be an object")
 			continue
-		var code := str(entity.get("code", ""))
-		if code != "" and ids.has(code):
-			_add(issues, "error", path + ".code", "duplicate entity code: " + code)
+		var o: Dictionary = obj
+		var aid := str(o.get("asset", ""))
+		if aid == "":
+			_add(issues, "error", path + ".asset", "must name an asset")
+		elif not known.is_empty():
+			if not known.has(aid):
+				_add(issues, "warning", path + ".asset", "asset is not in the current manifest: " + aid)
+			elif str((known[aid] as Dictionary).get("kind", "")) == "scene" \
+					and str((known[aid] as Dictionary).get("shape", "")) != "image":
+				_add(issues, "error", path + ".asset", "tile-set scenes cannot be placed as objects: " + aid)
+		var code := str(o.get("code", ""))
 		if code != "":
-			ids[code] = true
+			if codes.has(code):
+				_add(issues, "error", path + ".code", "duplicate instance code: " + code)
+			codes[code] = true
+			# code 只属于实体；场景实例发码 = 数据模型用错
+			if not known.is_empty() and known.has(aid) \
+					and str((known[aid] as Dictionary).get("kind", "")) != "entity":
+				_add(issues, "error", path + ".code", "only kind=entity assets may carry an instance code")
 		for key in ["x", "y"]:
-			if entity.has(key) and not (entity[key] is int or entity[key] is float):
+			if o.has(key) and not (o[key] is int or o[key] is float):
 				_add(issues, "error", path + "." + key, "must be numeric")
-		if not entity.has("scene") or str(entity.get("scene", "")) == "":
-			_add(issues, "error", path + ".scene", "must name an entity type")
-		elif not known.is_empty() and not known.has(str(entity.scene)):
-			_add(issues, "warning", path + ".scene", "entity type is not in the current manifest")
-		if entity.has("props") and not (entity.props is Dictionary):
+		if o.has("props") and not (o.props is Dictionary):
 			_add(issues, "error", path + ".props", "must be an object")
-		if entity.has("layer") and not layer_ids.is_empty() and not layer_ids.has(str(entity.layer)):
-			_add(issues, "error", path + ".layer", "unknown layer id: " + str(entity.layer))
-		if entity.has("functions"):
-			_validate_functions(entity.get("functions"), path + ".functions", manifest, issues)
+		if o.has("layer") and not layer_ids.is_empty() and not layer_ids.has(str(o.layer)):
+			_add(issues, "error", path + ".layer", "unknown layer id: " + str(o.layer))
+		if o.has("transform") and not (o.transform is Dictionary):
+			_add(issues, "error", path + ".transform", "must be an object")
+		if o.has("visible") and not (o.visible is bool):
+			_add(issues, "error", path + ".visible", "must be a boolean")
+		var zp := str(o.get("zPolicy", "auto"))
+		if zp != "" and not ["auto", "below", "above"].has(zp):
+			_add(issues, "error", path + ".zPolicy", "must be auto / below / above")
+		if o.has("functions"):
+			_validate_functions(o.get("functions"), path + ".functions", manifest, issues)
 
 ## 实例 functions 数组结构校验——[{fn, content, name, order, parallel}]。
 ## 空 content = 还没绑定内容（内容编辑器里会按需生成），不是错误；未知码只警告，

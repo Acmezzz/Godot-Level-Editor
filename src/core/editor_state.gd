@@ -15,7 +15,7 @@ func _apply_state(_tool := "", layer := -1) -> void:
 func _gesture_hint(i: int) -> String:
 	if i >= 0 and i == app.canvas.collision_index():
 		return "左键拖动涂，右键擦除，开「框选」后拖动框选"
-	if app.canvas.place_kind == "entity":
+	if app.canvas.place_kind == "object":
 		return "左键放置 / 选中拖动，右键删除，开「框选」后拖动框选"
 	return "左键拖动涂，右键擦除，开「框选」后拖动框选"
 
@@ -28,7 +28,7 @@ func _sync_ui() -> void:
 		app._sync_layer_buttons()
 		app._refresh_view_toggles()
 		return
-	# 调色板跟随 place_kind（左栏选了瓦片还是实体）；碰撞元层例外——没有资产，显示类型/形状控件。
+	# 调色板跟随 place_kind（左栏选了瓦片还是可摆放资产）；碰撞元层例外——没有资产，显示类型/形状控件。
 	if app.canvas.active_layer == app.canvas.collision_index():
 		app._set_palette_page("")
 		_sync_collision_controls()
@@ -91,13 +91,14 @@ func _record_tile_mru(key_str: String) -> void:
 	if mru.size() > 8:
 		mru.resize(8)
 
-## 左栏点实体：设好待放置实体，切到实体放置模式（place_kind 驱动画布手势）
+## 左栏点资产：设好待放置资产，切到摆放模式（place_kind 驱动画布手势）。
+## 实体与图片场景都能摆；图集瓦片走 _on_tile_pick。
 func _on_ent_pick(i: int, _at: Vector2 = Vector2.ZERO, _mb: int = 0) -> void:
 	if not app.map_loaded:
 		app._set_status(" 无地图：先新建或打开一张地图")
 		return
-	app.canvas.stamp_scene = str(app.ent_list.get_item_metadata(i))
+	app.canvas.stamp_asset = str(app.ent_list.get_item_metadata(i))
 	app.canvas.stamp_thumb = app.ent_list.get_item_icon(i)
-	# active_layer 保持不变：实体可摆任何栈层
-	app.canvas.place_kind = "entity"
+	# active_layer 保持不变：实例可摆任何栈层
+	app.canvas.place_kind = "object"
 	_apply_state("stamp")

@@ -259,9 +259,9 @@ func load_map_file(p: String) -> void:
 	var tcount := 0
 	for lid in (data.get("tiles", {}) as Dictionary):
 		tcount += ((data.get("tiles", {}) as Dictionary)[lid] as Array).size()
-	var ents: Array = data.get("entities", [])
-	app._set_status(" 已打开 %s%s（%d 瓦片 / %d 实体）" % [
-		base, "（草稿归位，保存写回正式文件）" if was_draft else "", tcount, ents.size()])
+	var objs: Array = data.get("objects", [])
+	app._set_status(" 已打开 %s%s（%d 瓦片 / %d 摆放物）" % [
+		base, "（草稿归位，保存写回正式文件）" if was_draft else "", tcount, objs.size()])
 
 func _format_issues(issues: Array) -> String:
 	var lines: Array[String] = []
@@ -322,7 +322,7 @@ func on_save() -> bool:
 	var tcount2 := 0
 	for lid2 in (data.get("tiles", {}) as Dictionary):
 		tcount2 += ((data.get("tiles", {}) as Dictionary)[lid2] as Array).size()
-	var msg := " 已保存 %s（%d 瓦片 / %d 实体）" % [n, tcount2, (data.get("entities", []) as Array).size()]
+	var msg := " 已保存 %s（%d 瓦片 / %d 摆放物）" % [n, tcount2, (data.get("objects", []) as Array).size()]
 	if ext_changed:
 		msg += "；注意：磁盘文件在打开后被外部修改过，本次保存覆盖了外部改动"
 	app._set_status(msg)

@@ -6,11 +6,11 @@ extends SceneTree
 ## 做三件事：
 ##   1. 清单 tiles[] + entities[] → assets[]（kind=scene/entity；tile 场景带 shape=tile）
 ##   2. 地图 version → 5；瓦片条目第 3 位「图集索引」→「资产 id 字符串」
-##   3. 幂等：已是终态的数据再跑一遍不产生改动；缺失目录/空清单/半截数据一律跳过并打印
+##   3. 地图 entities[] → objects[]（scene→asset 键；x/y 保持整数，浮点由编辑器按需写）
+##   4. 幂等：已是终态的数据再跑一遍不产生改动；缺失目录/空清单/半截数据一律跳过并打印
 ##
 ## 明确不搬运的东西（结构不同，交人工处理，脚本只报告）：
 ##   - 清单 entities[] 里同时带 role/functions/fields 的条目会被原样保留这些键
-##   - 地图 entities[] 段（第 2 批才改成 objects[]）
 
 const MapStore := preload("res://src/map_store.gd")
 
@@ -155,6 +155,21 @@ func _migrate_maps(dir: String) -> int:
 						continue
 					(c as Array)[2] = str(order[idx])
 					dirty = true
+		# entities[] → objects[]：同结构，只把 scene 键改名 asset（x/y 原样保留，浮点由编辑器再写）
+		var old_ents = md.get("entities", null)
+		if old_ents is Array:
+			var objs: Array = md.get("objects", []) if md.get("objects", []) is Array else []
+			for ent in (old_ents as Array):
+				if not (ent is Dictionary):
+					continue
+				var od: Dictionary = (ent as Dictionary).duplicate(true)
+				if od.has("scene"):
+					od["asset"] = str(od["scene"])
+					od.erase("scene")
+				objs.append(od)
+			md["objects"] = objs
+			md.erase("entities")
+			dirty = true
 		if int(md.get("version", 0)) != MapStore.FORMAT_VERSION:
 			md["version"] = MapStore.FORMAT_VERSION
 			dirty = true

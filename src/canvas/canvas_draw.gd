@@ -3,7 +3,7 @@ extends RefCounted
 
 var cvs   # 宿主引用
 
-const BuiltinKinds := preload("res://src/assets/builtin_kinds.gd")
+const AssetDecl := preload("res://src/assets/asset_decl.gd")
 const ManifestScript := preload("res://src/manifest.gd")   # 出口 role 判定
 const K := preload("res://src/core/constants.gd")
 
@@ -39,25 +39,34 @@ func _draw() -> void:
 			cvs.draw_line(Vector2(maxf(x0, origin.x), gy), Vector2(minf(x1, endv.x), gy), Color(1, 1, 1, 0.07), 1.0, true)
 			gy += cvs.tile_px
 	# 幽灵预览：只看「手上拿着什么」，没有工具要判断
-	var on_ent: bool = cvs.place_kind == "entity"
+	var on_ent: bool = cvs.place_kind == "object"
 	if Rect2(Vector2(map_rect.position) * cvs.tile_px, Vector2(map_rect.size) * cvs.tile_px).has_point(pos):
 		if on_ent:
- # 实体层：手上拿着资产就画它的幽灵，否则画「点这里会选中」的提示框
-			if cvs.stamp_thumb:
- # 幽灵按实体的真实占位尺寸画，和落下去之后一样大，便于对位
-				var dsz = cvs.entity_display_size(cvs.stamp_scene)
-				var gts = cvs.stamp_thumb.get_size()
-				var k := minf(dsz.x / maxf(gts.x, 1.0), dsz.y / maxf(gts.y, 1.0))
-				var center = Vector2(c) * cvs.tile_px + Vector2(cvs.tile_px, cvs.tile_px) * 0.5
-				cvs.draw_texture_rect(cvs.stamp_thumb, Rect2(center - gts * k * 0.5, gts * k),
-					false, Color(1, 1, 1, 0.5))
- # 占位框：告诉用户这个实体在游戏里占多大
-				cvs.draw_rect(Rect2(center - dsz * 0.5, dsz), Color(0.35, 0.95, 0.95, 0.6), false, 1.0)
-			elif cvs.BuiltinKinds.is_builtin(cvs.stamp_scene):
- # 内置种类没有贴图：按落下后的默认 2×2 画矩形幽灵，否则光标处什么都看不到
-				var gsz := Vector2(cvs.tile_px * 2, cvs.tile_px * 2)
-				cvs.draw_rect(Rect2(Vector2(c) * cvs.tile_px, gsz), Color(0.55, 0.85, 1.0, 0.35), true)
-				cvs.draw_rect(Rect2(Vector2(c) * cvs.tile_px, gsz), Color(0.55, 0.85, 1.0, 0.8), false, 1.5)
+ # 摆放模式：手上拿着资产就画它的幽灵，否则画「点这里会选中」的提示框
+			if cvs.stamp_asset != "":
+				var ad := AssetDecl.by_id(cvs.manifest, cvs.stamp_asset)
+				var dsz: Vector2 = cvs.entity_display_size(cvs.stamp_asset)
+				var center: Vector2 = cvs.snap_point(pos)
+				var gtex: Texture2D = cvs.stamp_thumb
+				if gtex == null and str(ad.get("shape", "")) == "image":
+					gtex = EntityNode.texture_of(cvs.manifest, str(ad.get("texture", "")))
+ # 幽灵按实例的真实占位尺寸画，和落下去之后一样大，便于对位
+				if gtex != null:
+					var gts = gtex.get_size()
+					var gh := Vector2(dsz.x, dsz.y)
+					cvs.draw_texture_rect(gtex, Rect2(center - gh * 0.5, gh), false, Color(1, 1, 1, 0.5))
+ # 占位框：告诉用户这个实例在游戏里占多大
+					cvs.draw_rect(Rect2(center - dsz * 0.5, dsz), Color(0.35, 0.95, 0.95, 0.6), false, 1.0)
+				else:
+ # 无贴图的资产（事件区等）：按 visual 声明画矩形幽灵
+					var gsz := dsz
+					var vis = ad.get("visual", null)
+					var col := Color(0.55, 0.85, 1.0, 0.35)
+					if vis is Dictionary and str((vis as Dictionary).get("color", "")) != "":
+						col = Color(str((vis as Dictionary).get("color")))
+						col.a = 0.35
+					cvs.draw_rect(Rect2(center - gsz * 0.5, gsz), col, true)
+					cvs.draw_rect(Rect2(center - gsz * 0.5, gsz), Color(col, 0.85), false, 1.5)
 			else:
 				cvs.draw_rect(Rect2(Vector2(c) * cvs.tile_px, Vector2(cvs.tile_px, cvs.tile_px)),
 					Color(0.55, 0.85, 1.0, 0.5), false, 1.0)
@@ -93,8 +102,8 @@ func _draw() -> void:
 	var spos = cvs.spawn.position
 	var screen_rect := Rect2(spos - Vector2(ss[0], ss[1]) * 0.5, Vector2(ss[0], ss[1]))
 	cvs.draw_rect(screen_rect, Color(0.35, 0.65, 1.0, 0.40), false, 1.0)
-	# 出生点标记：实体放置模式下画成「可拖」的样子，其余画淡一些——避免误导成可点
-	var spawn_draggable: bool = cvs.place_kind == "entity"
+	# 出生点标记：摆放模式下画成「可拖」的样子，其余画淡一些——避免误导成可点
+	var spawn_draggable: bool = cvs.place_kind == "object"
 	var half = cvs.tile_px * 0.5
 	var srect := Rect2(spos - Vector2(half, half), Vector2(cvs.tile_px, cvs.tile_px))
 	var spawn_col := Color(0.3, 1.0, 0.5, 0.9) if spawn_draggable else Color(0.3, 1.0, 0.5, 0.35)
@@ -102,43 +111,41 @@ func _draw() -> void:
 	cvs.draw_line(Vector2(spos.x - 6, spos.y), Vector2(spos.x + 6, spos.y), spawn_col, 2.0)
 	cvs.draw_line(Vector2(spos.x, spos.y - 6), Vector2(spos.x, spos.y + 6), spawn_col, 2.0)
 	# 引用连线：props.target_point 指向同图另一实例（跨图蓝线 / 同图黄线）
-	# 先建 {code: spr} 索引——O(n²) 双重遍历改为 O(n)
+	# 先建 {code: node} 索引——O(n²) 双重遍历改为 O(n)
 	var by_code = cvs._ent_by_code_index()   # 脏标记缓存
-	# 出口角标 / 落点描边 / 占位框 / 触发区（各层都画）——原先各扫一遍 entities，
+	# 出口角标 / 落点描边 / 占位框 / 事件区（各层都画）——原先各扫一遍实例集，
 	# 鼠标每动一像素就付 5 次 O(n)。现在一次遍历按类别收集，再分段绘制。
 	var exits: Array = []
 	var landings: Array = []
 	var boxes: Array = []
 	var zones: Array = []
 	for e in cvs.ents_all():
-		var spr := e as Sprite2D
-		if spr == null or not spr.has_meta("scene"):
+		var n := e as EntityNode
+		if n == null or n.asset == "":
 			continue
-		var sid := str(spr.get_meta("scene", ""))
-		var props: Dictionary = spr.get_meta("props", {}) if spr.get_meta("props", {}) is Dictionary else {}
+		var sid := n.asset
+		var props: Dictionary = n.props
  # 同图引用连线
 		var tid := str(props.get("target_point", ""))
 		if tid != "":
-			var spr2 = by_code.get(tid, null)
-			if spr2 and spr2 != spr:
+			var n2 = by_code.get(tid, null)
+			if n2 and n2 != n:
 				var wobble := str(props.get("target_map", "")) != ""
 				var col := Color(0.4, 0.4, 1.0, 0.6) if wobble else Color(1.0, 0.85, 0.3, 0.6)
-				cvs.draw_line(spr.position, spr2.position, col, 1.5)
+				cvs.draw_line(n.position, n2.position, col, 1.5)
  # 跨图出口「已接好」角标——有 target_map 的 exit 画 ↗+目标图名
 		if ManifestScript.has_role(cvs.manifest, sid, "exit"):
 			var tmap := str(props.get("target_map", ""))
 			if tmap != "":
-				exits.append([spr.position, tmap])
+				exits.append([n.position, tmap])
  # 传送落点（青色描边）与出生 marker（绿十字）拉开色系
 		if ManifestScript.has_role(cvs.manifest, sid, "landing"):
-			landings.append(spr)
- # 实体实际占位（清单 editorSize 或 prefab 碰撞尺寸）：青色实框
-		var sz = cvs._size_of(sid)
-		if sz != Vector2.ZERO:
-			boxes.append([spr.position, sz])
- # 触发区：没有贴图，用半透明矩形 + 事件名标签表示
-		if BuiltinKinds.is_builtin(sid):
-			zones.append(spr)
+			landings.append(n)
+ # 实例实际占位（清单 editorSize 或 prefab 碰撞尺寸）：青色实框
+		boxes.append(n.rect())
+ # 事件区类资产（带 sizeFields、无贴图）：半透明矩形 + 事件名标签
+		if n.texture == null and not AssetDecl.size_fields(cvs.manifest, sid).is_empty():
+			zones.append(n)
 	if not exits.is_empty():
 		var fnt: Font = ThemeDB.fallback_font   # Node2D 无 Control 主题接口，用引擎兜底字体
 		if fnt != null:
@@ -146,19 +153,17 @@ func _draw() -> void:
 				cvs.draw_string(fnt, it[0] + Vector2(-10, -12), "↗" + str(it[1]),
 					HORIZONTAL_ALIGNMENT_LEFT, -1, 10, Color(0.35, 0.9, 1.0, 0.9))
 	for lp in landings:
-		var lsz: Vector2 = cvs.entity_display_size_of(lp)
-		cvs.draw_rect(Rect2(lp.position - lsz * 0.5, lsz), Color(0.35, 0.9, 1.0, 0.45), false, 1.5)
-	# 选中实体高亮
+		cvs.draw_rect((lp as EntityNode).rect(), Color(0.35, 0.9, 1.0, 0.45), false, 1.5)
+	# 选中实例高亮（按实例自己的矩形，不是固定 1.5 格）
 	if cvs.selected_entity and is_instance_valid(cvs.selected_entity):
-		var sr := Rect2(cvs.selected_entity.position - Vector2(cvs.tile_px, cvs.tile_px) * 0.75, Vector2(cvs.tile_px, cvs.tile_px) * 1.5)
-		cvs.draw_rect(sr, Color(1.0, 0.85, 0.3, 0.9), false, 2.0)
+		var sn: EntityNode = cvs.selected_entity
+		cvs.draw_rect(sn.rect().grow(2.0), Color(1.0, 0.85, 0.3, 0.9), false, 2.0)
 	# 引用指向预览：编辑引用字段时高亮被指实例（青色粗框）
 	if cvs.ref_highlight != "":
 		var hs = cvs._ent_by_code_index().get(cvs.ref_highlight, null)
 		if hs and is_instance_valid(hs):
-			var hsz: Vector2 = cvs.entity_display_size_of(hs)
-			cvs.draw_rect(Rect2((hs as Sprite2D).position - hsz * 0.5, hsz).grow(4.0), Color(0.2, 1.0, 0.9, 0.95), false, 2.5)
-	# 框选拖拽矩形（框选开关或 Ctrl+拖动，实体层或瓦片层都画同一个框）
+			cvs.draw_rect((hs as EntityNode).rect().grow(4.0), Color(0.2, 1.0, 0.9, 0.95), false, 2.5)
+	# 框选拖拽矩形（框选开关或 Ctrl+拖动，摆放模式或瓦片模式都画同一个框）
 	if cvs._drag_box:
 		var br := Rect2(cvs._drag_start.min(pos), (cvs._drag_start - pos).abs())
 		cvs.draw_rect(br, Color(1.0, 0.85, 0.3, 0.15), true)
@@ -166,8 +171,7 @@ func _draw() -> void:
 	# 框选集合高亮（小黄框）
 	for s in cvs.selected_multi:
 		if is_instance_valid(s):
-			var sz = cvs.entity_display_size_of(s)
-			var mr: Rect2 = Rect2((s as Sprite2D).position - sz * 0.5, sz).grow(maxf(cvs.tile_px * 0.25, 2.0))
+			var mr: Rect2 = (s as EntityNode).rect().grow(maxf(cvs.tile_px * 0.25, 2.0))
 			cvs.draw_rect(mr, Color(1.0, 0.85, 0.3, 0.85), false, 1.5)
 	# 多选集合的外接框：明确标出「这一块可以整体拖动」。
 	# 框内空白处按下就能拖，鼠标悬停在框内时加亮，给出可操作性暗示。
@@ -181,18 +185,17 @@ func _draw() -> void:
 		if cvs._drag_entity == null:
  # 角标提示：拖动整组
 			cvs.draw_string(ThemeDB.fallback_font, mb.position + Vector2(4, -4),
-				"%d 个实体 · 拖动可整体移动" % multi.size(),
+				"%d 个实例 · 拖动可整体移动" % multi.size(),
 				HORIZONTAL_ALIGNMENT_LEFT, -1, 11,
 				Color(1.0, 0.85, 0.3, 0.9 if hot else 0.55))
 	# 实体实际占位（清单 editorSize 或 prefab 碰撞尺寸）：青色实框，已在上面的单次遍历里收集
 	for it in boxes:
-		var s4: Vector2 = it[0]
-		var sz: Vector2 = it[1]
-		var r4 := Rect2(s4 - sz * 0.5, sz)
+		var r4: Rect2 = it
 		cvs.draw_rect(r4, Color(0.35, 0.95, 0.95, 0.85), false, 1.0)
  # 十字标中心，便于对格
-		cvs.draw_line(Vector2(r4.position.x, s4.y), Vector2(r4.end.x, s4.y), Color(0.35, 0.95, 0.95, 0.25), 1.0)
-		cvs.draw_line(Vector2(s4.x, r4.position.y), Vector2(s4.x, r4.end.y), Color(0.35, 0.95, 0.95, 0.25), 1.0)
+		var c4 := r4.get_center()
+		cvs.draw_line(Vector2(r4.position.x, c4.y), Vector2(r4.end.x, c4.y), Color(0.35, 0.95, 0.95, 0.25), 1.0)
+		cvs.draw_line(Vector2(c4.x, r4.position.y), Vector2(c4.x, r4.end.y), Color(0.35, 0.95, 0.95, 0.25), 1.0)
 	# 触发区：没有贴图，用半透明矩形 + 事件名标签表示；绑定事件的用实色，未绑定的用警示色
 	_draw_trigger_zones(zones)
 	# 区域选区轮廓（框选的结果——开关或 Ctrl+拖动，可跨层）
@@ -220,22 +223,20 @@ func _draw() -> void:
 			var mc: Vector2i = Vector2i(int(t[0]), int(t[1])) + md
 			cvs.draw_rect(Rect2(Vector2(mc) * cvs.tile_px, Vector2(cvs.tile_px, cvs.tile_px)), Color(1.0, 0.25, 0.25, 0.45), true)
 		for e0 in cvs._move_snap.get("ents", []):
-			if e0 is Dictionary:
-	 # 快照式条目 {dx,dy,scene,...}：按区域原点 + 偏移画
-				var d0: Dictionary = e0
-				var ep: Vector2 = Vector2(cvs._region_sel.position + md) \
-					+ Vector2(float(d0.get("dx", 0)), float(d0.get("dy", 0)))
-				var tex0: Texture2D = cvs.thumbs.get(str(d0.get("scene", "")))
-				if tex0 != null:
-					cvs.draw_texture_rect(tex0, Rect2(ep * cvs.tile_px,
-						Vector2(cvs.tile_px, cvs.tile_px)), false, Color(1, 1, 1, 0.6))
-			elif e0 is Node2D and is_instance_valid(e0):
-	 # 活体精灵条目：按原位 + 拖动增量画
-				var tex1: Texture2D = cvs.thumbs.get(str((e0 as Sprite2D).get_meta("scene", "")))
-				if tex1 != null:
-					cvs.draw_texture_rect(tex1, Rect2((e0 as Sprite2D).position
-						+ Vector2(md) * cvs.tile_px - Vector2(cvs.tile_px, cvs.tile_px) * 0.5,
-						Vector2(cvs.tile_px, cvs.tile_px)), false, Color(1, 1, 1, 0.6))
+			# 快照条目 {dx,dy,asset,...}：按区域原点 + 偏移画（快照只存数据，不存节点）
+			var d0: Dictionary = e0
+			var gaid := str(d0.get("asset", ""))
+			var gprops0: Dictionary = d0.get("props", {}) if d0.get("props", {}) is Dictionary else {}
+			var gsz0: Vector2 = AssetDecl.instance_size(cvs.manifest, gaid, gprops0, cvs.tile_px)
+			var ep: Vector2 = Vector2(cvs._region_sel.position + md) \
+				+ Vector2(float(d0.get("dx", 0.0)), float(d0.get("dy", 0.0)))
+			var gu := EntityNode.anchor_unit_of(AssetDecl.by_id(cvs.manifest, gaid))
+			var gr := Rect2((ep + gu) * cvs.tile_px - EntityNode.anchor_off_of(gu, gsz0), gsz0)
+			var gtex0: Texture2D = cvs.thumbs.get(gaid)
+			if gtex0 != null:
+				cvs.draw_texture_rect(gtex0, gr, false, Color(1, 1, 1, 0.6))
+			else:
+				cvs.draw_rect(gr, Color(0.6, 1.0, 0.6, 0.35), true)
 		var gr0 := Rect2(Vector2(cvs._region_sel.position + md) * cvs.tile_px, Vector2(cvs._region_sel.size) * cvs.tile_px)
 		cvs.draw_rect(gr0, Color(0.45, 1.0, 0.75, 0.9), false, 2.0)
 	# 区域粘贴预览：各层幽灵跟随鼠标，左键落位
@@ -259,33 +260,36 @@ func _draw() -> void:
 		for t in cvs._region_clip.get("collision", []):
 			var cc = org + Vector2i(t[0], t[1])
 			cvs.draw_rect(Rect2(Vector2(cc) * cvs.tile_px, Vector2(cvs.tile_px, cvs.tile_px)), Color(1.0, 0.25, 0.25, 0.35), true)
-	# 实体幽灵：区域碎片里的实体也预览
+	# 实例幽灵：区域碎片里的实例也预览（按资产声明的实例尺寸，不只是 1 格）
 		for t in cvs._region_clip.get("ents", []):
-			var ec2 = org + Vector2i(int(t.get("dx", 0)), int(t.get("dy", 0)))
+			var gaid2 := str(t.get("asset", ""))
 			var gprops: Dictionary = t.get("props", {}) if t.get("props", {}) is Dictionary else {}
-			# 内置体 dx = 左上角格：幽灵按触发区矩形画（尺寸跟 props），否则一格占位框
-			var gsz := Vector2(cvs.tile_px, cvs.tile_px)
-			if cvs.BuiltinKinds.is_builtin(str(t.get("scene", ""))):
-				gsz = cvs.trigger_zone_size(gprops)
-			var er := Rect2(Vector2(ec2) * cvs.tile_px, gsz)
-			var tex: Texture2D = cvs.thumbs.get(str(t.get("scene", "")))
+			var gsz: Vector2 = AssetDecl.instance_size(cvs.manifest, gaid2, gprops, cvs.tile_px)
+			# dx/dy 是格坐标（浮点）：与落位后的 apply_grid 同一口径
+			var eg: Vector2 = Vector2(org) + Vector2(float(t.get("dx", 0.0)), float(t.get("dy", 0.0)))
+			var gu2 := EntityNode.anchor_unit_of(AssetDecl.by_id(cvs.manifest, gaid2))
+			var er := Rect2((eg + gu2) * cvs.tile_px - EntityNode.anchor_off_of(gu2, gsz), gsz)
+			var tex: Texture2D = cvs.thumbs.get(gaid2)
+			if tex == null:
+				var ad2 := AssetDecl.by_id(cvs.manifest, gaid2)
+				if str(ad2.get("shape", "")) == "image":
+					tex = EntityNode.texture_of(cvs.manifest, str(ad2.get("texture", "")))
 			if tex != null:
 				cvs.draw_texture_rect(tex, er, false, Color(1, 1, 1, 0.55))
 			else:
 				cvs.draw_rect(er, Color(0.6, 1.0, 0.6, 0.4), true)
 		var gr := Rect2(Vector2(org) * cvs.tile_px, Vector2(cvs._region_clip.get("size", Vector2i.ONE)) * cvs.tile_px)
 		cvs.draw_rect(gr, Color(1.0, 0.85, 0.3, 0.9), false, 2.0)
-## 触发区矩形：半透明填充 + 边框 + 左上角事件名标签。
+## 事件区矩形：半透明填充 + 边框 + 左上角事件名标签。
 ## 未绑定事件时用警示色——它在地图里是"死"的，必须在画布上一眼能看出来。
-## zones 由 _draw 的单次实体遍历收集，这里不再自己扫 entities。
+## zones 由 _draw 的单次实例遍历收集，这里不再自己扫实例集。
 func _draw_trigger_zones(zones: Array) -> void:
 	for node in zones:
-		var spr := node as Sprite2D
-		if spr == null or not is_instance_valid(spr):
+		var n := node as EntityNode
+		if n == null or not is_instance_valid(n):
 			continue
-		var props: Dictionary = spr.get_meta("props", {}) if spr.get_meta("props", {}) is Dictionary else {}
-		var size_rect: Vector2 = cvs.entity_display_size_of(spr)
-		var rect := Rect2(spr.position - size_rect * 0.5, size_rect)
+		var props: Dictionary = n.props
+		var rect := n.rect()
 		var event_id := str(props.get("event", ""))
 		var col := Color(0.55, 0.85, 1.0, 0.95) if event_id != "" else Color(1.0, 0.55, 0.35, 0.95)
 		cvs.draw_rect(rect, Color(col, 0.16), true)

@@ -253,12 +253,12 @@ func _instance_distribution(sid: String) -> Dictionary:
 	var canvas_ok: bool = host != null and host.canvas != null and is_instance_valid(host.canvas)
 	if canvas_ok:
 		for e in host.canvas.ents_all():
-			var spr := e as Sprite2D
-			if spr == null or not spr.has_meta("scene") or str(spr.get_meta("scene", "")) != sid:
+			var n := e as EntityNode
+			if n == null or n.asset != sid:
 				continue
-			var c: Vector2i = host.canvas._cell_of(spr.position)
+			var c: Vector2i = n.cell()
 			live_rows.append({
-				"id": str(spr.get_meta("code", "")),
+				"id": n.code,
 				"x": c.x,
 				"y": c.y,
 			})
@@ -271,13 +271,13 @@ func _instance_distribution(sid: String) -> Dictionary:
 			continue
 		var data: Dictionary = maps[map_name]
 		var rows: Array = []
-		for ent in data.get("entities", []):
-			if not (ent is Dictionary) or str(ent.get("scene", "")) != sid:
+		for obj in data.get("objects", []):
+			if not (obj is Dictionary) or str((obj as Dictionary).get("asset", "")) != sid:
 				continue
 			rows.append({
-				"id": str(ent.get("code", "")),   # v4 实例身份 = code（id 键在实例条目里不存在）
-				"x": int(ent.get("x", 0)),
-				"y": int(ent.get("y", 0)),
+				"id": str((obj as Dictionary).get("code", "")),
+				"x": floori(float((obj as Dictionary).get("x", 0))),
+				"y": floori(float((obj as Dictionary).get("y", 0))),
 			})
 		if not rows.is_empty():
 			out[map_name] = rows

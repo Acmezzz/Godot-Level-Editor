@@ -78,8 +78,8 @@ static func upgrade(data: Dictionary) -> bool:
 	data["version"] = FORMAT_VERSION
 	return true
 
-## v4 空地图模板：两层用户层栈（「资产层」+「FL」，底→顶，层码用 ContentId 发放），
-## tiles/collision/entities 均空。新建地图入口用它组装，保证 meta.layers 从出生就是 v4 契约。
+## 新建地图模板：两层用户层栈（「资产层」+「FL」，底→顶，层码用 ContentId 发放），
+## tiles/collision/objects 均空。新建地图入口用它组装，保证 meta.layers 从出生就是当前契约。
 static func new_map(name: String, w: int, h: int) -> Dictionary:
 	var ContentId := preload("res://src/content/content_id.gd")
 	return {
@@ -96,7 +96,7 @@ static func new_map(name: String, w: int, h: int) -> Dictionary:
 		"spawn": [2, 2],
 		"tiles": {},
 		"collision": [],
-		"entities": [],
+		"objects": [],
 	}
 
 ## 地图文件路径；名称非法时返回 ""（调用方必须检查）
@@ -183,9 +183,9 @@ static func _write_bytes(path: String, bytes: PackedByteArray) -> bool:
 
 ## 在地图数据里按实例码查找；返回空字典表示没有
 static func find_entity(data: Dictionary, ent_id: String) -> Dictionary:
-	for ent in data.get("entities", []):
-		if ent is Dictionary and str(ent.get("code", "")) == ent_id:
-			return ent
+	for obj in data.get("objects", []):
+		if obj is Dictionary and str((obj as Dictionary).get("code", "")) == ent_id:
+			return obj
 	return {}
 
 ## 已有地图名列表（不含扩展名，排序）

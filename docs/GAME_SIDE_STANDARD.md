@@ -144,7 +144,7 @@ solid+矩形碰撞：`col.set_cell(cell, 0, Vector2i(4,0))`。
 
 | 键 | 必填 | 语义 |
 |---|---|---|
-| `id` | 是 | 全清单唯一；**同时是地图 `entities[].scene` 的值** |
+| `id` | 是 | 全清单唯一；**同时是地图 `objects[].asset` 的值** |
 | `kind` | 是 | 恒 `"entity"`；**唯一决定放置是否产码、能否挂功能** |
 | `name` | 否 | 显示名，缺省用 `id` |
 | `prefab` | 二者之一 | 相对工程根的 `.tscn` 路径；**游戏侧按此加载** |
@@ -232,7 +232,7 @@ solid+矩形碰撞：`col.set_cell(cell, 0, Vector2i(4,0))`。
 
 | 磁盘引用 | 写什么 |
 |---|---|
-| 地图 `entities[].functions[].fn` | 功能执行码 |
+| 地图 `objects[].functions[].fn` | 功能执行码 |
 | 内容文件 `"function"` 键 | 功能执行码 |
 | 内容文件 `fields` 的键 | 字段执行码 |
 
@@ -391,10 +391,12 @@ BGM 切换、环境音触发、音效播放在哪一步响起，都是功能代�
 数据 id、`role: trigger`、props 契约都没变。
 
 ```json
-{"id": "trigger_zone", "name": "事件区", "builtin": true, "role": "trigger", "code": "TZ99", "fields": []}
+{"id": "trigger_zone", "name": "事件区", "builtin": true, "role": "trigger", "code": "TZ99",
+ "anchor": "top_left", "fields": []}
 ```
 
-它**没有 prefab、没有缩略图、没有自带功能**。地图里它的 `props` 是编辑器硬编码的：
+它**没有 prefab、没有缩略图、没有自带功能**，靠 `sizeFields` 声明从实例 `props` 读尺寸。
+地图里它的 `props` 是编辑器硬编码的：
 
 | `props` 键 | 编辑器含义 | 编辑器是否会写 |
 |---|---|---|
@@ -405,11 +407,11 @@ BGM 切换、环境音触发、音效播放在哪一步响起，都是功能代�
 | `require_flag` | 前置标记 | **编辑器从不写，也不会显示** |
 
 这些键**没有任何编辑控件**——`props` 由 `undo_history.extract` 原样保留（只要非空），要改只能直接改地图 JSON 或
-靠游戏工程在 `entities` 里自己声明同名实体类型覆盖内置定义。
+靠游戏工程在清单 `assets[]` 里自己声明同名实体类型覆盖内置定义。
 
-**位置语义（重要）**：`trigger_zone` 的 `x/y` 是矩形**左上角格坐标**，
-编辑器中它按矩形中心摆放，保存时再换算回左上角；其他实体 `x/y` 是**格中心**的格子。
-游戏侧若把 `trigger_zone` 当作普通实体按格中心放置，会偏半个矩形。
+**位置语义**：`trigger_zone` 声明 `anchor: "top_left"`，所以它的 `x/y` 是矩形**左上角格坐标**
+（旧数据的语义因此原样保留，不需要迁移）；其他资产缺省 `anchor: "center"`，`x/y` 是锚点所在格的中心。
+换算公式见 §3.4。游戏侧若把 `trigger_zone` 按格中心放置，会偏半个矩形。
 
 `trigger_zone` **没有 prefab**，游戏侧必须自己按 `props.w/h/mode/event/once` 建 Area2D
 （不要指望按 scene 查 prefab 的通用实例化逻辑能处理它，那一步会取不到 prefab 而跳过）。
@@ -426,14 +428,17 @@ BGM 切换、环境音触发、音效播放在哪一步响起，都是功能代�
   "spawn": [28, 28],
   "tiles": {"K2M8": [[21, 24, "terrain", 1, 2]], "F9W3": [[5, 9, "terrain", 3, 0]]},
   "collision": [[21, 24], [30, 12, "one_way"], [33, 4, "solid", "r45"]],
-  "entities": [{"scene": "portal", "code": "QK3T", "layer": "K2M8", "x": 31, "y": 28,
-                "flip_h": false, "props": {"target_point": "L8WM"}, "functions": []}]
+  "objects": [
+    {"asset": "portal", "code": "QK3T", "layer": "K2M8", "x": 31.5, "y": 28,
+     "props": {"target_point": "L8WM"}, "functions": []},
+    {"asset": "bg_forest", "layer": "K2M8", "x": 0, "y": 0}
+  ]
 }
 ```
 
-> **v5 是开发中间态**：v5 收进了「清单 `assets[]`」与「瓦片条目写资产 id」两件事，
-> 而「地图 `entities[]` → `objects[]`」要等第 2 批。因此在第 2 批完成前，
-> v5 地图里仍然是 `entities` 段。第 2 批完成后 v5 契约才冻结；**中间态期间不要接游戏工程**。
+> **`objects[]` 是唯一入口**：场景图片实例与实体实例同形（`asset` 指资产），
+> 差别只有 `code`——只有 `kind: "entity"` 的资产才有实例码。旧 `entities[]` 段
+> 已被校验拒绝，用 `tools/migrate_project.gd` 转换（`scene` 键改名 `asset`）。
 
 | 键 | 必填 | 语义 |
 |---|---|---|
@@ -445,7 +450,7 @@ BGM 切换、环境音触发、音效播放在哪一步响起，都是功能代�
 | `spawn` | 否 | `[x, y]` 格坐标，缺省 `[2, 2]`；**给了就必须是两个数字**（否则校验报错） |
 | `tiles` | 否 | 对象 `{层id: [瓦片条目...]}`，见 3.2；**键缺失与 `{}` 等价** |
 | `collision[]` | 否 | 数组，见 3.3；**键缺失与 `[]` 等价**——编辑器没有任何由地形兜底生成碰撞的逻辑 |
-| `entities[]` | 否 | 数组，见 3.4 |
+| `objects[]` | 否 | 数组，见 3.4 |
 
 ### 3.2 瓦片条目（`tiles` 的值）
 
@@ -507,33 +512,44 @@ BGM 切换、环境音触发、音效播放在哪一步响起，都是功能代�
 **`collision` 键缺失与 `[]` 等价**——两侧都是「无碰撞」。编辑器没有任何由地形生成碰撞的兜底
 （「从地形生成碰撞」是编辑器里的手动辅助功能，只在你点弹窗时执行）。
 
-### 3.4 实体条目 `entities[]`
+### 3.4 摆放物条目 `objects[]`
+
+场景图片实例与实体实例**同形**，差别只有 `code`：
 
 ```json
-{
-  "scene": "portal",
-  "code": "QK3T",
-  "x": 31,
-  "y": 28,
-  "flip_h": false,
-  "props": {"target_point": "L8WM"},
-  "functions": [
-    {"fn": "X7K2", "content": "TEST-FY9F-QK3T-dialogue-7M2XK9",
-     "name": "打招呼", "order": 1, "parallel": false}
-  ]
-}
+{"asset": "portal", "code": "QK3T", "layer": "K2M8", "x": 31.5, "y": 28,
+ "props": {"target_point": "L8WM"},
+ "functions": [
+   {"fn": "X7K2", "content": "TEST-FY9F-QK3T-dialogue-7M2XK9",
+    "name": "打招呼", "order": 1, "parallel": false}
+ ]}
+
+{"asset": "bg_forest", "layer": "K2M8", "x": 0, "y": 0}
 ```
 
 | 键 | 必填 | 语义 |
 |---|---|---|
-| `scene` | 是 | 实体资产 id = 清单 `assets[]` 里 `kind: "entity"` 的 `id`。**编辑器校验：空 → 错误；不在清单 → 仅警告** |
-| `code` | 是（老图缺省由编辑器补发） | 图内唯一实例码（4 位身份码）。**唯一身份**：引用（props 里的 entity_ref 值）、复制重映射、画布连线全靠它。码出生即定、永不回收 |
-| `code` | 否 | 4 位实例身份码，内容 ID 的第三段。缺省补发。**不要手工改** |
-| `layer` | 否 | 4 位**层码**（= `meta.layers[].id`），实体摆在哪一层。缺省 = 最底层 |
-| `x` / `y` | 否 | **格坐标，格中心语义**：像素 = `(x + 0.5) * tileSize`。`trigger_zone` 例外，见 2.7 |
-| `flip_h` | 否 | 布尔，水平翻转 |
-| `props` | 否 | 对象。类型参数 + 自定义键。**编辑器原样保留非空值，不剥离未知键** |
+| `asset` | 是 | 资产 id。`kind: "entity"` → 实体实例；`kind: "scene"` + `shape: "image"` → 场景图片实例。**编辑器校验：空 → 错误；不在清单 → 仅警告；图集场景（`shape: "tile"`）不能当摆放物 → 错误** |
+| `code` | 仅 entity | 图内唯一实例码（4 位身份码）。**唯一身份**：引用（props 里的 entity_ref 值）、复制重映射、画布连线全靠它。码出生即定、永不回收。**场景实例写 `code` = 校验错误**（`scene` 键本身已作废） |
+| `layer` | 否 | 4 位**层码**（= `meta.layers[].id`），摆在哪一层。缺省 = 最底层 |
+| `x` / `y` | 否 | **浮点格坐标**，不是像素。锚点换算见下 |
+| `transform` | 否 | `{scale: [sx, sy], rotation: 弧度, flip_h: bool, flip_v: bool}`。**缺省整键省略**——读不到就等于 `scale 1/1、rotation 0、不翻转` |
+| `props` | 否 | 对象。类型参数 + 自定义键。**编辑器原样保留非空值，不剥离未知键**。带 `sizeFields` 声明的资产（事件区）尺寸也写在这里（格数） |
 | `functions` | 否 | 数组，见 2.5；缺省视为空数组，编辑器写出时**总是写这个键**（含 `[]`） |
+| `visible` | 否 | 布尔，**编辑器专用显示开关**。缺省 `true`（缺省省略）。游戏侧应忽略 |
+| `zPolicy` | 否 | `"auto"`（缺省）/ `"below"` / `"above"`——**同层内分组**，不是全局 z。缺省省略 |
+| `sortAnchor` | 否 | `[dx, dy]` 像素，覆盖资产排序点偏移（悬空招牌、挂墙火把）。缺省省略 |
+
+**x/y 与像素的换算**（由资产的 `anchor` 决定，缺省 `center`）：
+
+| `anchor` | 像素位置（节点锚点世界坐标） |
+|---|---|
+| `center`（缺省） | `((x + 0.5) * tileSize, (y + 0.5) * tileSize)` |
+| `top_left` | `(x * tileSize, y * tileSize)` |
+| `bottom_center` | `((x + 0.5) * tileSize, (y + 1) * tileSize)` |
+
+锚点决定的是「数据坐标落在格的哪个位置」，**与贴图尺寸无关**：同一格的树不管画多高，
+脚底都在该格底边。视觉矩形的左上角 = 锚点像素 − 锚点偏移（偏移由 `anchor` 和实例显示尺寸算出）。
 
 **`props` 的保留策略是「只丢空值」**：`value == null` 或 `str(value) == ""` 的键在保存时消失，
 其余（包括编辑器完全不认识的键、嵌套字典、数组）原样保留。
@@ -586,7 +602,7 @@ BGM 切换、环境音触发、音效播放在哪一步响起，都是功能代�
 |---|---|---|---|
 | 地图码 | 4 | 地图 `meta.code` | 首次打开该图 |
 | 实体码 | 4 | 清单 `assets[].code` | 首次加载清单；随清单写回 |
-| 实例码 | 4 | 地图 `entities[].code` | 放置实例时 |
+| 实例码 | 4 | 地图 `objects[].code`（仅 entity） | 放置实例时 |
 | 功能码 | 4 | 清单 `functions[].code` | 加载清单时缺则补发（`ensure_codes`） |
 | 字段码 | 4 | 清单 `functions[].fields[].code` | 同上 |
 | 步骤码 | 4 | 清单 `steps[].code` | 加载清单时缺则补发（ensure_codes） |
@@ -645,28 +661,61 @@ main.gd
 
 其他编辑器会传的参数：`--abilities=dash,glide`、`--hp=N`、`--spawnx/--spawny`（格坐标）。
 
-### 6.3 实体实例化：`scene` → prefab
+### 6.3 实例化 `objects[]`
 
 ```gdscript
-# 游戏侧推荐模型（按 `scene` 查清单拿 prefab，不要扫目录）
-var edef := manifest_entity_def(scene_id)      # 从清单按 id 查
-var inst := (load(edef.prefab) as PackedScene).instantiate()
-inst.position = Vector2((x + 0.5) * tile_size, (y + 0.5) * tile_size)
-inst.set_meta("code", code)
-inst.set_meta("props", props)
-inst.set_meta("functions", functions)          # 游戏侧需要时自己注入
+# 游戏侧推荐模型：按 asset 查清单拿 prefab + 锚点，不要扫目录
+for o in data.get("objects", []):
+	var adef := manifest_asset_def(str(o.get("asset", "")))   # 从清单按 id 查
+	if adef.is_empty():
+		push_warning("unknown asset: " + str(o.get("asset", "")))
+		continue
+	if adef.kind != "entity":
+		continue          # 场景图片实例：游戏侧按自己的美术需求处理（或忽略）
+	var inst := (load(adef.prefab) as PackedScene).instantiate()
+	# 锚点换算：center → (x+0.5, y+0.5)；top_left → (x, y)；bottom_center → (x+0.5, y+1)
+	var unit := _anchor_unit(adef.get("anchor", "center"))
+	inst.position = (Vector2(float(o.get("x", 0)), float(o.get("y", 0))) + unit) * tile_size
+	inst.set_meta("code", str(o.get("code", "")))
+	inst.set_meta("props", o.get("props", {}))
+	inst.set_meta("functions", o.get("functions", []))   # 游戏侧需要时自己注入
+	inst.set_meta("asset", str(o.get("asset", "")))
+	_apply_transform(inst, o.get("transform", {}))
 ```
 
-**注入给 prefab 的 metadata 是唯一约定通道**。推荐注入三件：
+**注入给 prefab 的 metadata 是唯一约定通道**。推荐注入四件：
 `code`（实例码，唯一身份，引用靠它）、`props`（几何/引用参数，见 §2.4.1）、
-`scene_id`（= `scene`，类型 id，查清单用）。
+`asset`（资产 id，查清单用）、`functions`（本实例绑定的功能）。
 prefab 脚本在 `_ready()` 里读这些 meta，**不要依赖编辑器把值写进场景属性**。
 
-`flip_h`：编辑器存布尔。推荐处理是「根节点有 `flip_h` 属性就 set，否则遍历子 `Sprite2D` 全部 set」。
-新 prefab 建议根节点直接是 `Sprite2D` 或暴露 `flip_h`，省掉遍历。
+**`transform` 缺省整键省略**，读不到就按 `scale 1/1、rotation 0、不翻转` 处理：
 
-**未知 `scene` 的处理**：清单里查不到该 id 就跳过并 `push_warning`。
-编辑器校验已经会警告「entity type is not in the current manifest」，所以运行期跳过是可接受的降级。
+```gdscript
+func _apply_transform(inst: Node2D, t: Dictionary) -> void:
+	if t.is_empty():
+		return
+	var sc = t.get("scale", null)
+	if sc is Array and (sc as Array).size() >= 2:
+		inst.scale = Vector2(float(sc[0]), float(sc[1]))
+	inst.rotation = float(t.get("rotation", 0.0))
+	var fh := bool(t.get("flip_h", false))
+	var fv := bool(t.get("flip_v", false))
+	if fh or fv:
+		# 根节点有 flip_h/flip_v 属性就直接 set，否则遍历子 Sprite2D
+		if "flip_h" in inst:
+			inst.flip_h = fh
+			inst.flip_v = fv
+		else:
+			for s in inst.find_children("*", "Sprite2D", true, false):
+				(s as Sprite2D).flip_h = fh
+				(s as Sprite2D).flip_v = fv
+```
+
+**未知 `asset` 的处理**：清单里查不到该 id 就跳过并 `push_warning`。
+编辑器校验已经会警告「asset is not in the current manifest」，所以运行期跳过是可接受的降级。
+
+**`visible` 是编辑器专用**：它只控制编辑画布上是否显示，游戏侧应忽略（别因此隐藏实例）。
+**`zPolicy` / `sortAnchor`** 是编辑器内排序分组与排序点，游戏侧若实现自己的 y-sort 才需要读。
 
 ### 6.4 参考实现
 
@@ -717,7 +766,7 @@ static func build(root: Node2D, data: Dictionary, manifest: Dictionary) -> Dicti
 		if tn2 == null:
 			continue
 		tn2.visible = bool(lm.get("visible", true))
-	# collision / entities / spawn 见 §3.3 / §3.4 / 6.3
+	# collision / objects / spawn 见 §3.3 / §3.4 / 6.3
 	return {"tiles": tile_nodes, "rect": Rect2(Vector2.ZERO, Vector2(mw * TILE, mh * TILE))}
 ```
 
@@ -856,7 +905,7 @@ func _apply_door(inst: Node, fn: Dictionary) -> void:
 | 5 | `editor/previews/*.png` 与 `thumb` 对应 | 画布上实体有缩略图 |
 | 6 | `maps/` 目录存在（可为空） | 新建地图能保存 |
 | 7 | `playCommand` 能拉起游戏并接收 `--map=` | 试玩按钮工作 |
-| 8 | 游戏侧 `MapLoader` 读 `meta.w/h`、`meta.layers`、`spawn`、`tiles`、`collision`、`entities` | 试玩画面与编辑画布一致 |
+| 8 | 游戏侧 `MapLoader` 读 `meta.w/h`、`meta.layers`、`spawn`、`tiles`、`collision`、`objects` | 试玩画面与编辑画布一致 |
 | 9 | 游戏侧按 `scene` 实例化并注入 `code`/`props` | 传送门等按 props 行为正确 |
 | 10 | 若用功能系统：`functions` 已声明 + 游戏侧有对应消费代码 | 挂上功能后行为生效 |
 

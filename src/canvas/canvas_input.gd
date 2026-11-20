@@ -1,11 +1,11 @@
 extends RefCounted
 ## _canvas_input_ctrl：从 src/canvas/editor_canvas.gd 拆出的控制器。宿主状态经 cvs 引用。
 ##
-## 没有工具概念——**place_kind（瓦片/实体）决定左键语义**；实体选择/拖动与层无关。
+## 没有工具概念——**place_kind（瓦片/摆放物）决定左键语义**；实例选择/拖动与层无关。
 ## 全局手势：中键拖动 = 平移（任意层）；滚轮 = 以鼠标为锚缩放。
 ## 瓦片 / 碰撞：左键按住拖动连续涂，右键拖动擦除。
-## 实体放置（place_kind="entity"）：左键点空处 = 放置当前选中资产，
-## 点实体 = 选中并拖动（任何层都可以选）；右键 = 删除该实体。
+## 摆放（place_kind="object"）：左键点空处 = 放置当前选中资产，
+## 点实例 = 选中并拖动（任何层都可以选）；右键 = 删除该实例。
 ## 框选由 cvs.select_mode（左栏「框选」开关）决定：打开时任意层普通左键拖动即框选；
 ## 关闭时保留 Ctrl+拖动框选作为兼容入口。两条路径都不依赖工具。
 ##
@@ -98,7 +98,7 @@ func _on_left_press(pos: Vector2, b: InputEventMouseButton) -> void:
 		return
 	# 出生点标记可在实体放置模式下直接拖动——瓦片/碰撞笔刷优先，
 	# 框选模式下让位给框选。当前图层锁定时也不拖。
-		if not cvs.select_mode and cvs.place_kind == "entity" and cvs._on_spawn(pos):
+		if not cvs.select_mode and cvs.place_kind == "object" and cvs._on_spawn(pos):
 			if cvs.is_layer_locked(cvs.active_layer):
 				cvs._hint("当前图层已锁定：解锁后再移动出生点")
 				return
@@ -106,14 +106,14 @@ func _on_left_press(pos: Vector2, b: InputEventMouseButton) -> void:
 			cvs.begin_gesture(cvs.Gesture.SPAWN_DRAG, MOUSE_BUTTON_LEFT)
 			cvs._drag_start = pos
 			return
-	if cvs.place_kind == "entity":
-		_on_entity_layer_press(pos, b)
+	if cvs.place_kind == "object":
+		_on_object_layer_press(pos, b)
 	else:
 		_on_tile_layer_press(pos, b)
 
 
-## 实体放置模式（任何层都行）：框选模式下优先框选/整组拖动；否则点实体 = 选中并拖动，点空白 = 放置
-func _on_entity_layer_press(pos: Vector2, b: InputEventMouseButton) -> void:
+## 摆放模式（任何层都行）：框选模式下优先框选/整组拖动；否则点实体 = 选中并拖动，点空白 = 放置
+func _on_object_layer_press(pos: Vector2, b: InputEventMouseButton) -> void:
 	var hit = cvs._entity_at(pos)
 	if cvs.select_mode:
  # 框选开关打开：
@@ -146,9 +146,9 @@ func _on_entity_layer_press(pos: Vector2, b: InputEventMouseButton) -> void:
  # 空白处 Ctrl+拖动 = 框选（框选开关关闭时的兼容入口）
 		cvs.begin_gesture(cvs.Gesture.BOX, MOUSE_BUTTON_LEFT)
 		cvs._drag_start = pos
-	elif cvs.stamp_scene == "":
+	elif cvs.stamp_asset == "":
  # 没选资产就点到空白：把「先选资产」这条前置条件说出来，而不是静默无反应
-		cvs._hint("先在左栏资产列表选一个实体，再左键放置")
+		cvs._hint("先在左栏资产列表选一个资产，再左键放置")
 	else:
 		cvs._apply_tool(pos)
 
@@ -225,7 +225,7 @@ func _on_left_release(pos: Vector2) -> void:
 			cvs.end_gesture()
 		cvs.Gesture.BOX:
 			cvs.end_gesture()
-			if cvs.place_kind == "entity":
+			if cvs.place_kind == "object":
 				cvs._box_select(cvs._drag_start, pos)
 			else:
 				cvs._region_sel = cvs._cell_rect(cvs._drag_start, pos)

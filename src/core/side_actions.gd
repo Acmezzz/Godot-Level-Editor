@@ -32,8 +32,9 @@ func _duplicate_map_by_name(old_name: String, new_name: String) -> void:
 	app._set_status("已创建副本：%s → %s" % [old_name, new_name])
 
 
-func _scene_name(sid: String) -> String:
-	return preload("res://src/assets/asset_decl.gd").name_of(app.manifest, sid)
+## 资产 id → 显示名（未声明时原样返回 id，便于发现清单缺失）
+func _scene_name(aid: String) -> String:
+	return preload("res://src/assets/asset_decl.gd").name_of(app.manifest, aid)
 
 
 func _open_map_by_name(map_name: String) -> void:

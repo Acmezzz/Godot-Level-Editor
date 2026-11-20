@@ -32,13 +32,14 @@ static func render_preview(data: Dictionary, px_per_tile := 4, manifest: Diction
 	for c in data.get("collision", []):
 		img.fill_rect(_cell_rect(c, px_per_tile), Color(1.0, 0.25, 0.25, 0.55))
 
-	for e in data.get("entities", []):
-		var ex := int(e.get("x", 0))
-		var ey := int(e.get("y", 0))
+	# 摆放物：按资产稳定取色画一格色块（浮点坐标向下取整，出界跳过）
+	for e in data.get("objects", []):
+		var ex := floori(float(e.get("x", 0)))
+		var ey := floori(float(e.get("y", 0)))
 		if ex < 0 or ey < 0 or ex >= w or ey >= h:
 			continue
- # 颜色按资产 id 稳定 hash 从调色板取色（编辑器中立，不硬编码游戏实体名）
-		var col := _scene_color(str(e.get("scene", "")))
+ # 颜色按资产 id 稳定 hash 从调色板取色（编辑器中立，不硬编码游戏资产名）
+		var col := _asset_color(str(e.get("asset", "")))
 		var p := Vector2i(ex * px_per_tile, ey * px_per_tile)
 		img.fill_rect(Rect2i(p, Vector2i(maxi(px_per_tile, 2), maxi(px_per_tile, 2))), col)
 	# 出生点画白框
@@ -47,13 +48,13 @@ static func render_preview(data: Dictionary, px_per_tile := 4, manifest: Diction
 	img.fill_rect(sr, Color(1, 1, 1, 1))
 	return img
 
-## scene id → 稳定调色板色（hash 取色，编辑器不认识具体游戏实体）
-static func _scene_color(scene_id: String) -> Color:
+## 资产 id → 稳定调色板色（hash 取色，编辑器不认识具体游戏资产）
+static func _asset_color(asset_id: String) -> Color:
 	var pal := [Color(0.35, 0.85, 1.0), Color(1.0, 0.62, 0.25), Color(0.3, 1.0, 0.5), Color(1.0, 0.35, 0.35), Color(0.75, 0.5, 1.0), Color(0.5, 0.6, 1.0), Color(1.0, 0.9, 0.3), Color(0.95, 0.6, 0.7), Color(0.6, 0.95, 0.8), Color(0.9, 0.9, 0.6)]
-	if scene_id == "":
+	if asset_id == "":
 		return Color(1, 1, 1, 0.95)
 	var hsh := 0
-	for ch in scene_id:
+	for ch in asset_id:
 		hsh = (hsh * 31 + ch.unicode_at(0)) % 100000
 	return pal[hsh % (pal as Array).size()]
 
@@ -98,15 +99,15 @@ static func _blit_tile(img: Image, dst: Rect2i, c: Array, manifest: Dictionary,
 ## 统计文本（给策划/评审看）
 static func stats_text(name: String, data: Dictionary) -> String:
 	var meta: Dictionary = data.get("meta", {})
-	var ents: Array = data.get("entities", [])
-	var by_scene := {}
+	var objs: Array = data.get("objects", [])
+	var by_asset := {}
 	var ids := {}
 	var dup_ids := []
-	for e in ents:
-		var sc := str(e.get("scene", "?"))
-		by_scene[sc] = int(by_scene.get(sc, 0)) + 1
-		# v4 实例身份 = code（id 键在 v4 实体条目里不存在，旧写法查重恒为空）
-		var eid := str(e.get("code", ""))
+	for e in objs:
+		var aid := str((e as Dictionary).get("asset", "?"))
+		by_asset[aid] = int(by_asset.get(aid, 0)) + 1
+		# 实例身份 = code（场景实例没有码，不参与查重）
+		var eid := str((e as Dictionary).get("code", ""))
 		if eid != "":
 			if ids.has(eid):
 				dup_ids.append(eid)
@@ -119,11 +120,11 @@ static func stats_text(name: String, data: Dictionary) -> String:
 		tile_total += ((data.get("tiles", {}) as Dictionary)[lid] as Array).size()
 	lines.append("瓦片总数: %d" % tile_total)
 	lines.append("碰撞格: %d" % (data.get("collision", []) as Array).size())
-	lines.append("实体总数: %d" % ents.size())
-	var keys := by_scene.keys()
+	lines.append("摆放物总数: %d" % objs.size())
+	var keys := by_asset.keys()
 	keys.sort()
 	for k in keys:
-		lines.append("  - %s: %d" % [str(k), int(by_scene[k])])
+		lines.append("  - %s: %d" % [str(k), int(by_asset[k])])
 	if not dup_ids.is_empty():
 		lines.append("警告: 重复实例码: " + ", ".join(dup_ids))
 	return "\n".join(lines)

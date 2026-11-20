@@ -3,7 +3,6 @@ extends RefCounted
 
 var cvs   # 宿主引用
 
-const BuiltinKinds := preload("res://src/assets/builtin_kinds.gd")
 const Constants := preload("res://src/core/constants.gd")
 const ContentId := preload("res://src/content/content_id.gd")
 const MapFormat := preload("res://src/map_format.gd")
@@ -58,11 +57,12 @@ func redo() -> bool:
 	return true
 
 
-## 实例功能绑定：整段深拷贝写入 functions；缺省写空数组，让"清空绑定"也能落盘。
-func _functions_field(spr: Sprite2D) -> Dictionary:
-	var raw = spr.get_meta("functions", [])
-	var arr: Array = raw if raw is Array else []
-	return {"functions": arr.duplicate(true)}
+## 实例功能绑定：整段深拷贝写入 functions；实体缺省写空数组，让"清空绑定"也能落盘。
+## 场景实例没有功能语义，非空才写（不产冗余键）。
+func _functions_field(n: EntityNode) -> Dictionary:
+	if not n.is_entity() and n.functions.is_empty():
+		return {}
+	return {"functions": n.functions.duplicate(true)}
 
 func extract() -> Dictionary:
 	if cvs.map_root == null or not is_instance_valid(cvs.map_root):
@@ -96,43 +96,55 @@ func extract() -> Dictionary:
 				ccells.append([c.x, c.y, ct])
 		else:
 			ccells.append([c.x, c.y])
-	# 实体：以加载时保存的原条目为底（保留游戏侧自定义键），只覆盖编辑器管辖的键。
+	# 摆放物：以加载时保存的原条目为底（保留游戏侧自定义键），只覆盖编辑器管辖的键。
 	# 白名单重建会让未知键在保存时蒸发——这是最早发现、影响最大的一处丢数据。
-	var elist := []
+	var olist := []
 	for e in cvs.ents_all():
-		var spr := e as Sprite2D
-		if spr and spr.has_meta("scene"):
- # props 原样保留（契约是"未知字段忽略"而非"剥离"——白名单会把手工
- # 预留/未来字段在保存时蒸发）。只丢弃空值；字段单值由 UI 控件天然保证。
-			var sid := str(spr.get_meta("scene"))
-			var props: Dictionary = spr.get_meta("props", {})
-			var clean := {}
-			for k in props.keys():
-				if props[k] != null and str(props[k]) != "":
-					clean[k] = props[k]
- # 无码的老实体 → 补发实例码（身份丢失会让内容 ID 前缀漂移，不能留空）
-			var code := str(spr.get_meta("code", ""))
-			if code == "":
-				code = ContentId.new_inst_code()
-				spr.set_meta("code", code)
- # 触发区的位置是矩形中心：还原成左上角格坐标，与数据格式（x/y = 左上角）一致
-			var cell_pos := Vector2(spr.position.x, spr.position.y)
-			if BuiltinKinds.is_builtin(sid):
-				cell_pos -= cvs.entity_display_size_of(spr) * 0.5 - Vector2(cvs.tile_px, cvs.tile_px) * 0.5
- # 以原条目为底：未知键（游戏侧自定义）与编辑器不认识的键都留在原处
-			var raw = spr.get_meta("_raw", {})
-			var row: Dictionary = (raw as Dictionary).duplicate(true) if raw is Dictionary else {}
-			row["scene"] = sid
- # 分层身份码：实例段 = 唯一身份（丢失会让内容 ID 前缀漂移，必须随快照走）
+		var n := e as EntityNode
+		if n == null or n.asset == "":
+			continue
+		var nid := n.asset
+		var props: Dictionary = n.props
+		var clean := {}
+		for k in props.keys():
+			if props[k] != null and str(props[k]) != "":
+				clean[k] = props[k]
+		# 无码的实体实例 → 补发实例码（身份丢失会让内容 ID 前缀漂移，不能留空）；
+		# 场景实例永不产码（code 键整个不写）
+		var code := n.code
+		if n.is_entity() and code == "":
+			code = ContentId.new_inst_code()
+			n.code = code
+		# 以原条目为底：未知键（游戏侧自定义）与编辑器不认识的键都留在原处
+		var row: Dictionary = n.raw.duplicate(true)
+		row.erase("scene")   # 旧键作废：同一字段两种语义容易混
+		row["asset"] = nid
+		if n.is_entity():
 			row["code"] = code
-			row["layer"] = str(spr.get_meta("layer", ""))
- # 与 _cell_of 一致用 floori——int() 向零截断会让负坐标实体每次保存向 0 漂移
-			row["x"] = floori((cell_pos.x - cvs.tile_px / 2.0) / cvs.tile_px)
-			row["y"] = floori((cell_pos.y - cvs.tile_px / 2.0) / cvs.tile_px)
-			row["flip_h"] = bool(spr.flip_h)
-			row["props"] = clean
-			row.merge(_functions_field(spr), true)
-			elist.append(row)
+		else:
+			row.erase("code")
+		row["layer"] = n.layer_id
+		# 浮点格坐标：关掉吸附时可存半格/任意像素位置；保留 3 位小数避免浮点噪声
+		var g := n.grid_of_world(n.position)
+		row["x"] = snappedf(g.x, 0.001)
+		row["y"] = snappedf(g.y, 0.001)
+		# transform 缺省整键省略（旧数据没有它就等于缺省形态，读回后行为不变）
+		if n.transform_is_default():
+			row.erase("transform")
+		else:
+			row["transform"] = n.data_transform.duplicate(true)
+		# 编辑器专用显示开关：缺省 true 不写冗余键
+		if n.visible_flag:
+			row.erase("visible")
+		else:
+			row["visible"] = false
+		if n.z_policy != "auto" and n.z_policy != "":
+			row["zPolicy"] = n.z_policy
+		else:
+			row.erase("zPolicy")
+		row["props"] = clean
+		row.merge(_functions_field(n), true)
+		olist.append(row)
 	var used = Rect2i()
 	for tn in cvs.layer_tiles:
 		used = used.merge((tn as TileMapLayer).get_used_rect())
@@ -154,5 +166,6 @@ func extract() -> Dictionary:
 	out["spawn"] = [sp.x, sp.y]
 	out["tiles"] = tiles
 	out["collision"] = ccells
-	out["entities"] = elist
+	out.erase("entities")   # v5：entities 段已并入 objects[]
+	out["objects"] = olist
 	return out

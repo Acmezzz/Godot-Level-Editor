@@ -100,7 +100,7 @@ func _run() -> void:
 		"props":
 			var first = null
 			for e in app.canvas.entities.get_children():
-				if e.has_meta("scene"):
+				if e is EntityNode and (e as EntityNode).asset != "":
 					first = e
 					break
 			if first != null:
@@ -124,7 +124,7 @@ func _run() -> void:
 			# 框选多个实体：应画出外接框 + 「拖动可整体移动」提示
 			var pick := []
 			for e in app.canvas.entities.get_children():
-				if e.has_meta("scene"):
+				if e is EntityNode and (e as EntityNode).asset != "":
 					pick.append(e)
 			if pick.size() > 1:
 				app._apply_state("select", app.canvas._ent_layer_index())
@@ -174,7 +174,7 @@ func _run() -> void:
 		"props_multi":
 			var pick2 := []
 			for e in app.canvas.entities.get_children():
-				if e.has_meta("scene"):
+				if e is EntityNode and (e as EntityNode).asset != "":
 					pick2.append(e)
 			if pick2.size() > 1:
 				app._apply_state("", app.canvas._ent_layer_index())
@@ -188,7 +188,7 @@ func _run() -> void:
 			# P1 多选置灰：字段区应整体压暗并出现提示行
 			var pickx := []
 			for e in app.canvas.entities.get_children():
-				if e.has_meta("scene"):
+				if e is EntityNode and (e as EntityNode).asset != "":
 					pickx.append(e)
 			if pickx.size() > 1:
 				app._apply_state("select", app.canvas._ent_layer_index())

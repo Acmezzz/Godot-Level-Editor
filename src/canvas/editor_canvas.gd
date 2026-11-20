@@ -1,10 +1,10 @@
 class_name EditorCanvas
 extends Node2D
 ## 清单驱动的关卡画布（数据化编辑器）：
-## 图层 = 地图 meta.layers 声明的混合层栈（层=纯 z 槽，一层可混瓦片+实体，
+## 图层 = 地图 meta.layers 声明的混合层栈（层=纯 z 槽，一层可混瓦片+摆放物，
 ## 栈序即绘制序；碰撞是栈外元层）；瓦片层 = 运行时构建的 TileMapLayer
-## （图集 PNG → TileSet，不依赖游戏工程资源）；实体 = 缩略图 Sprite2D
-## （数据占位，不实例化游戏 prefab）；出生点 = Marker2D。保存/装载纯 JSON。
+## （图集 PNG → TileSet，不依赖游戏工程资源）；摆放物 = EntityNode
+## （场景图片与实体共用同一数据形状，不实例化游戏 prefab）；出生点 = Marker2D。保存/装载纯 JSON。
 
 signal modified
 signal cursor_info(text: String)
@@ -16,14 +16,17 @@ const BuiltinKinds := preload("res://src/assets/builtin_kinds.gd")   # 内置种
 const MapStoreRef := preload("res://src/map_store.gd")   # 地图数据层（读全工程/写盘）
 const ContentIdRef := preload("res://src/content/content_id.gd")   # 分层身份码
 const AssetDecl := preload("res://src/assets/asset_decl.gd")   # 清单资产表（assets[]）
+const EntityNodeRef := preload("res://src/canvas/entity_node.gd")   # 摆放物节点（场景/实体共用）
 
 var active_layer := 0          # 0..N-1 = 层栈下标，N = 碰撞元层
-var place_kind := "tiles"      # 放置语义跟资产走："tiles"=涂瓦片 / "entity"=摆实体（左栏驱动）
+var place_kind := "tiles"      # 放置语义跟资产走："tiles"=涂瓦片 / "object"=摆实例（左栏驱动）
 var paint_cell := Vector2i(0, 0)  # 当前瓦片（纯手动，不自动变形）
 var brush_size := 1               # 笔刷边长（格）
-var stamp_scene := ""
+var stamp_asset := ""             # 待放置的资产 id（entity 或 shape=image 的 scene）
 var stamp_thumb: Texture2D
 var show_grid := true
+## 吸附开关：开（默认）= 落点吸附格；关 = 保留浮点位置（亚格摆放）
+var snap_to_grid := true
 ## 框选开关（左栏「框选」按钮）：打开后任意层普通左键拖动都进入框选；
 ## 关闭时保留 Ctrl+拖动作为兼容入口。输入分派见 canvas_input.gd。
 var select_mode := false
@@ -114,7 +117,7 @@ func _layer_node(i: int) -> TileMapLayer:
 		return layer_tiles[i]
 	return null
 
-## 全层实体合集（层栈化后实体分散在各层容器）
+## 全层摆放物合集（层栈化后实例分散在各层容器）
 func ents_all() -> Array:
 	var out := []
 	for n in layer_ents:
@@ -333,43 +336,37 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 		var sname := str(c[3]) if (c as Array).size() >= 4 else ""
 		if tname != "solid" or sname != "":
 			_collision_meta[ccell] = {"type": tname if tname != "" else "solid", "shape": sname}
-	# 实体：数据化占位（缩略图 Sprite2D，带 metadata scene=id），按 meta "layer" 入对应层容器
-	var tile := int(manifest.get("tileSize", 16))
+	# 摆放物：objects[] 统一收场景图片与实体（数据形状一致，仅 entity 带 code）。
+	# 位置 = 浮点格坐标 + anchor 换算；transform/visible/zPolicy 缺省整键省略。
 	var bottom := layer_id(0)
-	for e in data.get("entities", []):
-		var sid := str(e.get("scene", ""))
-		var spr := Sprite2D.new()
-		spr.texture = thumbs.get(sid)
-		spr.position = Vector2(int(e.get("x", 0)) * tile + tile / 2.0, int(e.get("y", 0)) * tile + tile / 2.0)
-		spr.set_meta("scene", sid)
-		spr.set_meta("props", e.get("props", {}))
- # 原条目留档：extract() 以它为底再覆盖编辑器管辖的键，游戏侧自定义键才不会在保存时蒸发
-		spr.set_meta("_raw", (e as Dictionary).duplicate(true))
- # 分层身份码：实例段。老实体没有就由 _ensure_code 统一补发
-		spr.set_meta("code", str(e.get("code", "")))
- # 实例功能绑定：只做存取，UI 由内容编辑器负责；缺失/类型不对时置空数组，
- # 让 extract 始终能写出 functions 键（含空数组），不清空就残留旧图绑定。
-		var fns = e.get("functions", [])
-		spr.set_meta("functions", fns if fns is Array else [])
- # 触发区没有缩略图，靠尺寸矩形呈现；位置按矩形中心对齐
-		if BuiltinKinds.is_builtin(sid):
-			spr.texture = null
-			var tprops: Dictionary = e.get("props", {}) if e.get("props", {}) is Dictionary else {}
-			spr.position += trigger_zone_size(tprops) * 0.5 - Vector2(tile, tile) * 0.5
-		spr.flip_h = bool(e.get("flip_h", false))
-		var lid := str(e.get("layer", bottom))
+	for e in data.get("objects", []):
+		if not (e is Dictionary):
+			continue
+		var aid := str((e as Dictionary).get("asset", ""))
+		if aid == "":
+			continue
+		var n := make_object(aid)
+		n.code = str((e as Dictionary).get("code", ""))
+		n.props = (e as Dictionary).get("props", {}) if (e as Dictionary).get("props", {}) is Dictionary else {}
+		n.functions = (e as Dictionary).get("functions", []) if (e as Dictionary).get("functions", []) is Array else []
+		n.data_transform = (e as Dictionary).get("transform", {}) if (e as Dictionary).get("transform", {}) is Dictionary else {}
+		n.raw = (e as Dictionary).duplicate(true)
+		n.z_policy = str((e as Dictionary).get("zPolicy", "auto"))
+		n.visible_flag = bool((e as Dictionary).get("visible", true))
+		var lid := str((e as Dictionary).get("layer", bottom))
 		var ei := _layer_index_of(lid)
 		if ei < 0:
 			ei = 0
-		spr.set_meta("layer", layer_id(ei))
-		(layer_ents[ei] as Node2D).add_child(spr)
-		_fit_sprite(spr, sid)
-		_ensure_code(spr)
-	# 出生点
+		n.layer_id = layer_id(ei)
+		n.refresh_visual()   # props 就位后再算一次尺寸（sizeFields 资产按 props 定大小）
+		n.apply_grid(float((e as Dictionary).get("x", 0)), float((e as Dictionary).get("y", 0)))
+		(layer_ents[ei] as Node2D).add_child(n)
+		_ensure_code(n)
+	# 出生点（数据是格坐标，画布上落在格中心）
 	spawn = Marker2D.new()
 	spawn.name = "Spawn"
 	var sp: Array = data.get("spawn", [2, 2])
-	spawn.position = Vector2(int(sp[0]) * tile + tile / 2.0, int(sp[1]) * tile + tile / 2.0)
+	spawn.position = Vector2(int(sp[0]) * tile_px + tile_px / 2.0, int(sp[1]) * tile_px + tile_px / 2.0)
 	map_root.add_child(spawn)
 	# 地图装载后同步碰撞可视节点与图层可见性（按图层索引恢复，不只是节点 flag）
 	coll_view.refresh()
@@ -418,65 +415,40 @@ func set_thumbs(t: Dictionary) -> void:
 func set_entity_sizes(sizes: Dictionary) -> void:
 	ent_sizes = sizes
 
-## 某个 scene 的编辑器占位尺寸；0 表示未知（退回缩略图原始尺寸）
-func _size_of(scene_id: String) -> Vector2:
-	var v = ent_sizes.get(scene_id, null)
+## 某个资产的编辑器占位尺寸（像素）；0 表示未知（退回 1 格）
+func _size_of(aid: String) -> Vector2:
+	var v = ent_sizes.get(aid, null)
 	if v is Vector2 and (v as Vector2) != Vector2.ZERO:
 		return v
 	return Vector2.ZERO
 
-## 实体在世界里的显示尺寸（像素）。
-## 唯一来源：清单 editorSize / prefab 碰撞尺寸；没有就用 1 格。
-## 缩略图只作为贴图内容，尺寸一律由这里定——不同大小的实体因此能正确呈现，
-## 而不是「96×96 画布按原尺寸画，看着都一样大」。
-func entity_display_size(scene_id: String) -> Vector2:
-	var sz := _size_of(scene_id)
+## 资产声明的显示尺寸（像素）。唯一来源：清单 editorSize / prefab 碰撞尺寸；没有就用 1 格。
+## 缩略图只作为贴图内容，尺寸一律由这里定——不同大小的资产因此能正确呈现。
+func entity_display_size(aid: String) -> Vector2:
+	var sz := _size_of(aid)
 	if sz == Vector2.ZERO:
 		sz = Vector2(tile_px, tile_px)
 	return sz
 
-## 实例级显示尺寸：触发区这类「尺寸存在实例 props 里」的实体不能用种类尺寸。
-## 其它实体等价于 entity_display_size。
-func entity_display_size_of(spr: Node) -> Vector2:
-	if spr != null and is_instance_valid(spr):
-		var sid := str(spr.get_meta("scene", ""))
-		if BuiltinKinds.is_builtin(sid):
-			return trigger_zone_size(spr.get_meta("props", {}))
-		return entity_display_size(sid)
-	return Vector2(tile_px, tile_px)
+## 实例级显示尺寸：带 sizeFields 的资产（事件区）尺寸写在实例 props 里，
+## 其余等价于资产声明尺寸。旧调用点传节点，直接取节点自己的口径。
+func entity_display_size_of(node: Node) -> Vector2:
+	if node is EntityNode:
+		return (node as EntityNode).display_size()
+	return entity_display_size("")
 
-## 触发区矩形尺寸：props.w/h 是格数，转成像素。缺省或非法时退回 1 格。
-func trigger_zone_size(props: Dictionary) -> Vector2:
-	var w := int(props.get("w", 1))
-	var h := int(props.get("h", 1))
-	if w <= 0:
-		w = 1
-	if h <= 0:
-		h = 1
-	return Vector2(w * tile_px, h * tile_px)
+## 建一个摆放物节点：尺寸按资产声明算，视觉（缩略图/图片/无）由 EntityNode 自己装配。
+## 落层、props、code 由调用方填——这里只管「一个形状正确的空实例」。
+func make_object(aid: String) -> EntityNode:
+	return EntityNodeRef.create(manifest, aid, entity_display_size(aid), tile_px, thumbs)
 
-## 触发区左上角格坐标：实例位置是矩形左上角，不是中心。
-func trigger_zone_origin(spr: Node) -> Vector2:
-	if spr == null:
-		return Vector2.ZERO
-	return (spr as Node2D).position - entity_display_size_of(spr) * 0.5
-
-## 把缩略图缩放成适合该实体的显示尺度。
-## 贴图原始分辨率可能远大于占位尺寸（96px 图 ↔ 14px 实体），
-## 这里按「内容填满占位框」放缩，保证形状清晰且大小与占位一致。
-func _fit_sprite(spr: Sprite2D, scene_id: String) -> void:
-	var tex := spr.texture
-	if tex == null:
-		return
-	var target := entity_display_size(scene_id)
-	var tsize := tex.get_size()
-	if tsize.x <= 0.0 or tsize.y <= 0.0:
-		return
-	# 保持比例塞进占位框（不拉伸变形）；放大时取整数倍避免像素糊（实现与注释对齐）
-	var k := minf(target.x / tsize.x, target.y / tsize.y)
-	if k > 1.0:
-		k = maxf(1.0, floorf(k))
-	spr.scale = Vector2(k, k)
+## 该资产是否可以摆到画布上：实体（kind=entity）与图片场景（shape=image）。
+## 图集型场景（shape=tile）走瓦片通道，不是摆放物。
+func is_placeable(aid: String) -> bool:
+	var d := AssetDecl.by_id(manifest, aid)
+	if d.is_empty():
+		return false
+	return str(d.get("kind", "")) == "entity" or str(d.get("shape", "")) == "image"
 
 ## 出生点：画布上的可拖对象。
 ## 命中容差 0.6 格——它只有一个绿十字那么大，严格点中几乎不可能。
@@ -495,17 +467,26 @@ func _drag_spawn_to(pos: Vector2) -> void:
 
 # —— 坐标换算 ——
 ## 转发：选区命中跨层（顶层向下取第一个）；tool_ops 擦除用单层版
-func _entity_hit(pos: Vector2) -> Sprite2D:
+func _entity_hit(pos: Vector2) -> EntityNode:
 	return _selection_ops_ctrl._entity_hit(pos)
 
 ## 指定层的实体命中（擦除只认当前层）
-func _entity_hit_on(li: int, pos: Vector2) -> Sprite2D:
+func _entity_hit_on(li: int, pos: Vector2) -> EntityNode:
 	if li < 0 or li >= layer_ents.size():
 		return null
 	return _selection_ops_ctrl._entity_hit_in((layer_ents[li] as Node2D).get_children(), pos)
 
 func _cell_of(pos: Vector2) -> Vector2i:
 	return Vector2i(int(floor(pos.x / tile_px)), int(floor(pos.y / tile_px)))
+
+## 放置/拖动落点：吸附开启时把「数据格坐标」四舍五入到整格（对齐锚点在格内的位置，
+## 与实例尺寸无关）。关闭时原样保留。
+func snap_point(p: Vector2, n: EntityNode = null) -> Vector2:
+	if not snap_to_grid:
+		return p
+	var unit: Vector2 = n.anchor_unit() if n != null else Vector2(0.5, 0.5)
+	var g := p / float(tile_px) - unit
+	return (Vector2(roundf(g.x), roundf(g.y)) + unit) * float(tile_px)
 
 # —— 涂刷/擦除（图层硬规则：瓦片/碰撞层禁盖章，实体层禁涂刷；笔刷 = 以 c 为基准的 brush_size×brush_size 格，偶数尺寸时 c 偏右下） ——
 func _hint(t: String) -> void:
@@ -516,14 +497,18 @@ func _hint(t: String) -> void:
 # 重建代数——load_data 是协程，期间再进一次 load_data 时，先进者按代数退出防孤儿 map_root
 var _rebuild_gen := 0
 
-## 老实体/新建实体没有码就补发；已有（载图恢复）保留
-func _ensure_code(spr: Sprite2D) -> void:
-	if str(spr.get_meta("code", "")) == "":
+## 老实体/新建实体没有码就补发；已有（载图恢复）保留。
+## 只有 kind=entity 的资产需要实例码——场景实例（图片）永不产码。
+func _ensure_code(n: EntityNode) -> void:
+	if n == null or not n.is_entity():
+		n.code = ""
+		return
+	if n.code == "":
 		var c := _fresh_inst_code()
-		spr.set_meta("code", c)
+		n.code = c
 		# 新码即时入索引（索引已建时）：防止同批次后续补码查不到它而撞码
 		if not _ent_by_id_dirty:
-			_ent_by_id[c] = spr
+			_ent_by_id[c] = n
 
 ## 生成一个本图未占用的实例码（码空间 100 万+，撞码重摇即可）
 func _fresh_inst_code() -> String:
@@ -585,14 +570,14 @@ func _fit_view() -> void:
 	_update_cam()
 
 # —— 选择实体 ——
-signal entity_selected(spr: Sprite2D)
+signal entity_selected(node: EntityNode)
 
-var selected_entity: Sprite2D = null
+var selected_entity: EntityNode = null
 var selected_multi: Array = []   # 框选集合（Del / 复制粘贴用）
 ## 引用指向预览：内容编辑器里编辑引用字段时，画布高亮被指实例（存实例码）
 var ref_highlight := ""
 @warning_ignore("unused_private_class_variable")
-var _clipboard: Array = []       # 实体复制模板 [{scene, code, dx, dy, flip_h, functions, props}]
+var _clipboard: Array = []       # 实例复制模板 [{asset, code, dx, dy, transform, functions, props}]
 var _region_sel := Rect2i(-1, 0, 0, 0)  # 区域框选结果（瓦片层 Ctrl+C 用）
 var _region_clip := {}           # 区域快照 {tiles:{层id:[...]}, collision[], entities[], size}
 var _paste_mode := false         # 区域粘贴预览态（幽灵跟随鼠标）
@@ -714,14 +699,15 @@ func _mark(ents_changed := true) -> void:
 		coll_view.refresh()
 	modified.emit()
 
-## 实体 {code: Sprite2D} 索引——绘制连线 O(n) 复用；置脏后首次取用重建
+## 实例 {code: EntityNode} 索引——绘制连线 O(n) 复用；置脏后首次取用重建。
+## 场景实例没有 code，不进索引（引用/连线只认实体）。
 func _ent_by_code_index() -> Dictionary:
 	if _ent_by_id_dirty:
 		var out := {}
 		for e0 in ents_all():
-			var spr0 = e0 as Sprite2D
-			if spr0:
-				out[str(spr0.get_meta("code", ""))] = spr0
+			var n := e0 as EntityNode
+			if n != null and n.code != "":
+				out[n.code] = n
 		_ent_by_id = out
 		_ent_by_id_dirty = false
 	return _ent_by_id
@@ -761,8 +747,8 @@ var _move_active: bool:
 
 @warning_ignore("unused_private_class_variable")
 var _drag_start := Vector2.ZERO
-# 实体拖拽移动
-var _drag_entity: Sprite2D = null
+# 实例拖拽移动
+var _drag_entity: EntityNode = null
 var _drag_entities: Array = []
 var _drag_origins: Array = []
 @warning_ignore("unused_private_class_variable")
@@ -902,7 +888,7 @@ func _load_snap_layers(snap: Dictionary, active_id: String) -> void:
 func _select_entity_at(pos: Vector2) -> void:
 	_selection_ops_ctrl._select_entity_at(pos)
 
-func _entity_at(pos: Vector2) -> Sprite2D:
+func _entity_at(pos: Vector2) -> EntityNode:
 	return _selection_ops_ctrl._entity_at(pos)
 
 func _box_select(a: Vector2, b: Vector2) -> void:
@@ -918,8 +904,8 @@ func _inside_multi_box(pos: Vector2) -> bool:
 func _multi_hot() -> float:
 	return _selection_ops_ctrl._multi_hot()
 
-func _begin_entity_drag(spr: Sprite2D, pos: Vector2) -> void:
-	_selection_ops_ctrl._begin_entity_drag(spr, pos)
+func _begin_entity_drag(n: EntityNode, pos: Vector2) -> void:
+	_selection_ops_ctrl._begin_entity_drag(n, pos)
 
 func _begin_group_drag(pos: Vector2) -> void:
 	_selection_ops_ctrl._begin_group_drag(pos)

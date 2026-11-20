@@ -46,7 +46,7 @@ var _editor_state_ctrl   # core/editor_state.gd 控制器（状态流）
 var _layout_ctrl   # ui/editor_layout.gd 控制器（界面搭建）
 var _side_actions_ctrl   # core/side_actions.gd 控制器（侧栏动作）
 var _palette_ctrl   # ui/palette_panel.gd 控制器（调色板导航：多图集三级/单图集两级）
-var selected_spr: Sprite2D = null
+var selected_spr: EntityNode = null
 var map_loaded := false          # 防呆：是否已载入地图
 ## 顶栏左侧「设置 ▾」锚点（「地图 ▾」按钮是固定文案，不显示当前地图名）
 # 同上：赋值在 editor_layout.gd，连接也在那边（app._map_btn.pressed），本类不直接使用。
@@ -453,9 +453,9 @@ func _shortcut_input(event: InputEvent) -> void:
 				canvas._push_undo()
 			_nudge_undo_msec = now
 			for s in sel:
-				var spr := s as Sprite2D
-				if spr and is_instance_valid(spr):
-					spr.position += Vector2(delta) * canvas.tile_px
+				var n := s as EntityNode
+				if n and is_instance_valid(n):
+					n.position += Vector2(delta) * canvas.tile_px
 			canvas._mark()
 			get_viewport().set_input_as_handled()
 			return
@@ -465,24 +465,23 @@ func _shortcut_input(event: InputEvent) -> void:
 		if not srcs.is_empty():
 			canvas._push_undo()
 			for s in srcs:
-				var orig := s as Sprite2D
+				var orig := s as EntityNode
 				if orig == null or not is_instance_valid(orig):
 					continue
-				var sid := str(orig.get_meta("scene", ""))
-				var dup := Sprite2D.new()
-				dup.texture = orig.texture
-				dup.flip_h = orig.flip_h
+				var dup := canvas.make_object(orig.asset)
+				dup.props = orig.props.duplicate(true)
+				dup.functions = orig.functions.duplicate(true)
+				dup.data_transform = orig.data_transform.duplicate(true)
+				dup.z_policy = orig.z_policy
+				dup.visible_flag = orig.visible_flag
+				dup.refresh_visual()
 				dup.position = orig.position + Vector2(canvas.tile_px, 0)
-				dup.set_meta("scene", sid)
-				dup.set_meta("props", (orig.get_meta("props", {}) as Dictionary).duplicate(true))
-				dup.set_meta("functions", (orig.get_meta("functions", []) as Array).duplicate(true))
-				# 副本跟随原件所在层（层栈化后实体散在各层容器）
-				var oi: int = canvas._layer_index_of(str(orig.get_meta("layer", "")))
+				# 副本跟随原件所在层（层栈化后实例散在各层容器）
+				var oi: int = canvas._layer_index_of(orig.layer_id)
 				if oi < 0:
 					oi = 0
-				dup.set_meta("layer", canvas.layer_id(oi))
+				dup.layer_id = canvas.layer_id(oi)
 				(canvas.layer_ents[oi] as Node2D).add_child(dup)
-				canvas._fit_sprite(dup, sid)
 				canvas._ensure_code(dup)
 			canvas._mark()
 			get_viewport().set_input_as_handled()
@@ -562,12 +561,22 @@ func _toggle_select_mode() -> void:
 	_set_status("框选已%s —— 左键拖动框选，选中后可整组拖动" % ("打开" if canvas.select_mode else "关闭"))
 	_refresh_view_toggles()
 
+## 吸附开关：关掉后摆放/拖动落在任意像素位置（数据存浮点格坐标，亚格摆放）
+func _toggle_snap() -> void:
+	if canvas == null:
+		return
+	canvas.snap_to_grid = not canvas.snap_to_grid
+	_set_status("吸附已%s —— %s" % [
+		"打开" if canvas.snap_to_grid else "关闭",
+		"摆放/拖动对齐到格" if canvas.snap_to_grid else "可放在任意像素位置（坐标存浮点）"])
+	_refresh_view_toggles()
+
 ## 视图开关按钮的按下态与画布状态保持同步
 func _cut() -> void:
 	if not map_loaded:
 		_set_status("无地图：先新建或打开一张地图")
 		return
-	if canvas.place_kind == "entity":
+	if canvas.place_kind == "object":
 		canvas.cut_selection()
 	else:
 		canvas.cut_region()
@@ -576,7 +585,7 @@ func _copy() -> void:
 	if not map_loaded:
 		_set_status("无地图：先新建或打开一张地图")
 		return
-	if canvas.place_kind == "entity":
+	if canvas.place_kind == "object":
 		canvas.copy_selection()
 	else:
 		canvas.copy_region()
@@ -606,27 +615,27 @@ func _process(_delta: float) -> void:
 	_maybe_autosave()
 	_poll_playtest()
 
-# 按实例码找实体精灵（层栈化后跨全部层容器查）
-func _ent_by_id(id: String) -> Sprite2D:
+# 按实例码找实例节点（层栈化后跨全部层容器查）
+func _ent_by_id(id: String) -> EntityNode:
 	for e in canvas.ents_all():
-		if str(e.get_meta("code", "")) == id:
-			return e as Sprite2D
+		var n := e as EntityNode
+		if n != null and n.code == id:
+			return n
 	return null
 
 # —— 实体属性（面板已删，只剩碰撞生成弹窗与选中状态维护） ——
 func _open_collision_gen() -> void:
 	_props_panel_ctrl.open_collision_gen()
 
-func _on_entity_selected(spr: Sprite2D) -> void:
+func _on_entity_selected(n: EntityNode) -> void:
 	# 用户看到的是画布下沿那条极简信息条；参数编辑走内容编辑器与资产目录。
-	selected_spr = spr
+	selected_spr = n
 	_refresh_sel_bar()
 	# 双向同步的另一半：画布选中的实例，切到内容编辑器时左列要定位到它。
 	# 载入地图会以 null 清选，先挡掉。
-	if spr != null and project_shell != null and project_shell.content_editor != null:
-		var eid := str(spr.get_meta("code", ""))
-		if eid != "":
-			project_shell.content_editor.select_inst(eid)
+	if n != null and project_shell != null and project_shell.content_editor != null:
+		if n.code != "":
+			project_shell.content_editor.select_inst(n.code)
 
 func _set_map_loaded(loaded: bool) -> void:
 	map_loaded = loaded

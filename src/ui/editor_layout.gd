@@ -11,6 +11,7 @@ var _dirty_badge: PanelContainer
 # 画布视图开关（网格 / 框选）
 var _grid_btn: Button
 var _select_btn: Button
+var _snap_btn: Button
 ## 层下拉（决定画在哪）。按钮显示当前层名，弹层里每层一行 + 👁/🔒。
 var _layer_btn: Button
 var _layer_menu: PopupPanel
@@ -347,6 +348,11 @@ func _build_status_bar() -> PanelContainer:
 	_select_btn = app.UiKitScript.button("框选", app._toggle_select_mode, "toggle")
 	_select_btn.tooltip_text = "打开后左键拖动框选；关闭则正常涂刷 / 放置"
 	h.add_child(_select_btn)
+	# 吸附开关：关掉后摆放物可落在任意像素位置（存浮点格坐标），默认开
+	_snap_btn = app.UiKitScript.button("吸附", app._toggle_snap, "toggle")
+	_snap_btn.tooltip_text = "摆放/拖动吸附到格（关掉后可按像素摆放，坐标存浮点）"
+	_snap_btn.button_pressed = true
+	h.add_child(_snap_btn)
 	# 视图开关：常驻在状态栏右侧，看一眼就知道网格/碰撞显示开着没
 	_grid_btn = app.UiKitScript.button("网格", app._toggle_grid, "toggle")
 	_grid_btn.tooltip_text = "显示 / 隐藏网格"
@@ -406,7 +412,7 @@ func _refresh_tool_meta() -> void:
  # 碰撞层没有涂抹尺寸的说法，真正要知道的是「这一笔画的是什么」
 		suffix = " · %s %s" % [_collision_type_label(app.canvas.collision_type),
 			_diagonal_shape_label(app.canvas.collision_shape)]
-	elif app.canvas.place_kind == "entity":
+	elif app.canvas.place_kind == "object":
 		suffix = " · 单击放置"
 	else:
 		suffix = " · %d×%d 拖动涂" % [app.canvas.brush_size, app.canvas.brush_size]
@@ -431,6 +437,8 @@ func _refresh_view_toggles() -> void:
 		_grid_btn.button_pressed = app.canvas.show_grid
 	if _select_btn:
 		_select_btn.button_pressed = app.canvas != null and app.canvas.select_mode
+	if _snap_btn:
+		_snap_btn.button_pressed = app.canvas == null or app.canvas.snap_to_grid
 	_refresh_layer_panel()
 	_refresh_sel_bar()
 
@@ -604,24 +612,24 @@ func _build_sel_bar() -> PanelContainer:
 	_sel_bar.visible = false
 	return _sel_bar
 
-## 信息条内容：随选中实体刷新；没选中就整条隐藏（不占画布视线）
+## 信息条内容：随选中实例刷新；没选中就整条隐藏（不占画布视线）
 func _refresh_sel_bar() -> void:
 	if _sel_bar == null:
 		return
-	var spr = app.selected_spr
-	if spr == null or not is_instance_valid(spr):
+	var n = app.selected_spr
+	if n == null or not is_instance_valid(n):
 		_sel_bar.visible = false
 		return
-	var sid := str(spr.get_meta("scene", ""))
-	var eid := str(spr.get_meta("code", ""))
-	var fns: Array = spr.get_meta("functions", [])
-	var n := fns.size()
-	_sel_name.text = "%s  %s" % [app._scene_name(sid), eid]
-	if n == 0:
-		_sel_state.text = "无附加功能"
+	var sid: String = n.asset
+	var eid: String = n.code
+	var count: int = n.functions.size()
+	# 场景实例没有实例码：只显示资产名（它不参与内容/引用体系）
+	_sel_name.text = "%s  %s" % [app._scene_name(sid), eid] if eid != "" else app._scene_name(sid)
+	if count == 0:
+		_sel_state.text = "无附加功能" if n.is_entity() else "场景实例（不挂功能）"
 		_sel_state.add_theme_color_override("font_color", app.UiThemeScript.TEXT_MUTE)
 	else:
-		_sel_state.text = "%d 个附加功能" % n
+		_sel_state.text = "%d 个附加功能" % count
 		_sel_state.add_theme_color_override("font_color", app.UiThemeScript.ACCENT_HI)
 	_sel_bar.visible = true
 

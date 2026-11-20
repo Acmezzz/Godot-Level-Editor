@@ -148,12 +148,11 @@ func _hit_at(pos: Vector2) -> String:
 	var ents: Array = host._entities()
 	for i in range(ents.size() - 1, -1, -1):
 		var row: Dictionary = ents[i]
-		var spr: Sprite2D = row.spr
-		if spr == null or not is_instance_valid(spr):
+		var n: EntityNode = row.node
+		if n == null or not is_instance_valid(n):
 			continue
-		var half: Vector2 = host.app.canvas.entity_display_size_of(spr) * 0.5
-		if absf(world.x - spr.position.x) <= maxf(half.x, 4.0) \
-				and absf(world.y - spr.position.y) <= maxf(half.y, 4.0):
+		var r: Rect2 = n.rect()
+		if r.grow(4.0).has_point(world):
 			return str(row.code)
 	return ""
 
@@ -223,13 +222,12 @@ func _draw_map() -> void:
 	var highlight_rect := Rect2()
 	var sel: String = str(host._selected_ent)
 	for row in host._entities():
-		var spr: Sprite2D = row.spr
-		if spr == null or not is_instance_valid(spr):
+		var n: EntityNode = row.node
+		if n == null or not is_instance_valid(n):
 			continue
-		var dsz: Vector2 = host.app.canvas.entity_display_size_of(spr) * s
-		var center := origin + spr.position * s
-		var rect := Rect2(center - dsz * 0.5, dsz)
-		var tex: Texture2D = host.app.canvas.thumbs.get(str(row.scene))
+		var dsz: Vector2 = n.display_size() * s
+		var rect := Rect2(origin + (n.position - n.anchor_off()) * s, dsz)
+		var tex: Texture2D = host.app.canvas.thumbs.get(str(row.asset))
 		if tex != null:
 			draw_texture_rect(tex, rect, false)
 		else:

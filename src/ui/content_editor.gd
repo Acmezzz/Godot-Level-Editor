@@ -2,7 +2,7 @@ extends RefCounted
 ## 内容编辑器：左列本图实例列表 / 中列只读画布预览 / 右列实例引用 + 功能绑定与内容表单。
 ##
 ## 与其它控制器同形：RefCounted + _init(host)，样式统一走 Kit/Th。
-## 数据真相：实例绑定在画布 Sprite2D 的 meta（functions），功能内容在
+## 数据真相：实例绑定在画布 EntityNode 上（functions），功能内容在
 ## content/<功能id>/<内容id>.json。离散控件改动即时写盘；SpinBox/多行等
 ## 连续控件在失焦或 commit() 时统一落盘（见 _pending_commits）。
 ## 中列是重绘式预览——同一节点不能两处上屏，不挂 app.canvas，按坐标重画。
@@ -183,8 +183,8 @@ func refresh_list(focus := "") -> void:
  # 没有显式 focus 时落在画布当前选中实体上——关卡编辑器「在工作台编辑 →」
  # 不带参数过来，用户期望看到的就是刚才选中的那个实例。
 		var sel = app.canvas.selected_entity if app.canvas != null else null
-		if sel != null and is_instance_valid(sel) and sel.has_meta("scene"):
-			_selected_ent = str(sel.get_meta("code", ""))
+		if sel is EntityNode and is_instance_valid(sel) and (sel as EntityNode).code != "":
+			_selected_ent = (sel as EntityNode).code
 		if _find_ent(_selected_ent) == null:
 			_selected_ent = str((ents[0] as Dictionary).get("id", "")) if not ents.is_empty() else ""
 	_selected_fn = -1
@@ -211,7 +211,8 @@ var _pending_commits: Array = []
 func _map_ready() -> bool:
 	return app.map_loaded and app.canvas != null and is_instance_valid(app.canvas)
 
-## 本图实例快照（保持画布放置顺序）：[{spr, code, scene, name, fns}]
+## 本图实例快照（保持画布放置顺序）：[{node, code, asset, name, fns}]
+## 只收实体（kind=entity）——场景实例不参与内容绑定，也不该出现在实例列表里。
 ## 按 canvas.ents_rev 缓存——预览每次鼠标移动都调 _hit_at，原实现每个事件
 ## 都重扫子树 + 重新排序（95×56 满图时每秒上万次临时数组分配）。绑定变更走 _mark() 抬 rev。
 var _ents_cache: Array = []
@@ -229,18 +230,15 @@ func _entities() -> Array:
 		return _ents_cache
 	var out: Array = []
 	for e in app.canvas.ents_all():
-		var spr := e as Sprite2D
-		if spr == null or not spr.has_meta("scene"):
+		var n := e as EntityNode
+		if n == null or not n.is_entity():
 			continue
-		var sid := str(spr.get_meta("scene", ""))
-		var fns = spr.get_meta("functions", [])
-		var list: Array = fns if fns is Array else []
 		out.append({
-			"spr": spr,
-			"code": str(spr.get_meta("code", "")),
-			"scene": sid,
-			"name": str(app._scene_name(sid)),
-			"fns": list,
+			"node": n,
+			"code": n.code,
+			"asset": n.asset,
+			"name": str(app._scene_name(n.asset)),
+			"fns": n.functions,
 		})
 	# 保持画布放置顺序（撤销恢复也稳定），不做字符串排序
 	_ents_cache = out
@@ -248,41 +246,36 @@ func _entities() -> Array:
 	_ents_map = map_name
 	return out
 
-func _find_ent(code: String) -> Sprite2D:
+func _find_ent(code: String) -> EntityNode:
 	if code == "" or not _map_ready():
 		return null
 	for e in app.canvas.ents_all():
-		var spr := e as Sprite2D
-		if spr != null and str(spr.get_meta("code", "")) == code:
-			return spr
+		var n := e as EntityNode
+		if n != null and n.code == code:
+			return n
 	return null
 
-func _current_spr() -> Sprite2D:
+func _current_spr() -> EntityNode:
 	return _find_ent(_selected_ent)
 
 func _current_fns() -> Array:
-	var spr := _current_spr()
-	if spr == null:
-		return []
-	var fns = spr.get_meta("functions", [])
-	return fns if fns is Array else []
+	var n := _current_spr()
+	return n.functions if n != null else []
 
 ## 分层内容 ID 的候选：地图码-实体码-实例码-功能id-内容码。
 ## 三段身份码来自各层载体（地图 meta / 清单 assets / 实体 meta），缺段返回空串。
-func _content_id_for(spr: Sprite2D, fn_id: String) -> String:
+func _content_id_for(n: EntityNode, fn_id: String) -> String:
 	var map_code := str((app.canvas.map_data.get("meta", {}) as Dictionary).get("code", ""))
-	var ent_code := ""
-	ent_code = str(AssetDecl.by_id(manifest, str(spr.get_meta("scene", ""))).get("code", ""))
-	var inst_code := str(spr.get_meta("code", ""))
-	return ContentId.content_id(map_code, ent_code, inst_code, fn_id)
+	var ent_code := str(AssetDecl.by_id(manifest, n.asset).get("code", ""))
+	return ContentId.content_id(map_code, ent_code, n.code, fn_id)
 
 ## 写回附加功能：先撤销快照（改动前），再改 meta 并标脏。
 ## 内容条目留在库里，删绑定不等于删内容。
-func _write_fns(spr: Sprite2D, fns: Array) -> void:
-	if spr == null:
+func _write_fns(n: EntityNode, fns: Array) -> void:
+	if n == null:
 		return
 	app.canvas._push_undo()
-	spr.set_meta("functions", fns.duplicate(true))
+	n.functions = fns.duplicate(true)
 	app.canvas._mark()
 
 # ──────────── 左列渲染 ────────────
@@ -435,8 +428,8 @@ func _rebuild_right() -> void:
 		_r_badge.visible = false
 		_r_body.add_child(Kit.empty_state("◇", "选一个实例", "左侧列表或中间预览点击实例"))
 		return
-	var sid := str(spr.get_meta("scene", ""))
-	var code := str(spr.get_meta("code", ""))
+	var sid := spr.asset
+	var code := spr.code
 	_r_name.text = str(app._scene_name(sid))
 	_r_id.text = "%s.%s" % [str(app.cur_map_name), code]
 	_r_badge.visible = false
@@ -459,7 +452,7 @@ func _mount_codes() -> Dictionary:
 	var sid := ""
 	var spr := _current_spr()
 	if spr != null and is_instance_valid(spr):
-		sid = str(spr.get_meta("scene", ""))
+		sid = spr.asset
 	var out := {}
 	for m in FunctionDecls.entity_mounts(manifest, sid):
 		out[str((m as Dictionary).get("code", ""))] = true
@@ -467,12 +460,12 @@ func _mount_codes() -> Dictionary:
 
 ## 给当前实例补齐缺失的挂载绑定：缺的按声明顺序追加到末尾并重排 order。
 ## 只在真的补了东西时写盘/标脏——常规路径（绑定齐全）零副作用。
-func _sync_mounted(spr: Sprite2D) -> void:
-	var sid := str(spr.get_meta("scene", ""))
+func _sync_mounted(spr: EntityNode) -> void:
+	var sid := spr.asset
 	var mounts: Array = FunctionDecls.entity_mounts(manifest, sid)
 	if mounts.is_empty():
 		return
-	var fns: Array = spr.get_meta("functions", [])
+	var fns: Array = spr.functions
 	if not (fns is Array):
 		fns = []
 	var have := {}
@@ -493,7 +486,7 @@ func _sync_mounted(spr: Sprite2D) -> void:
 	for k in fns.size():
 		if fns[k] is Dictionary:
 			(fns[k] as Dictionary)["order"] = k + 1
-	spr.set_meta("functions", fns)
+	spr.functions = fns
 	app.canvas._mark()
 
 # ──────────── 实例引用编辑（实体类型 fields 声明的 entity_ref/map_ref） ────────────
@@ -504,7 +497,7 @@ func _build_refs_block() -> Control:
 	var spr := _current_spr()
 	if spr == null or not is_instance_valid(spr):
 		return null
-	var sid := str(spr.get_meta("scene", ""))
+	var sid := spr.asset
 	var edef: Dictionary = AssetDecl.by_id(manifest, sid)
 	var fdecls: Array = edef.get("fields", []) if edef.get("fields", []) is Array else []
 	var rows: Array = []
@@ -517,7 +510,7 @@ func _build_refs_block() -> Control:
 		return null
 	var box := Kit.vbox(6)
 	box.add_child(Kit.section_header("引用"))
-	var props: Dictionary = spr.get_meta("props", {}) if spr.get_meta("props", {}) is Dictionary else {}
+	var props: Dictionary = spr.props
 	for fd in rows:
 		box.add_child(_build_ref_row(fd, props))
 	return box
@@ -544,7 +537,7 @@ func _set_prop_ref(fd: Dictionary, value: String) -> void:
 	var spr := _current_spr()
 	if spr == null or not is_instance_valid(spr) or not app.map_loaded:
 		return
-	var props: Dictionary = (spr.get_meta("props", {}) as Dictionary).duplicate(true)
+	var props: Dictionary = spr.props.duplicate(true)
 	if props.get(fd.id, null) == value:
 		return
 	app.canvas._push_undo()
@@ -552,7 +545,7 @@ func _set_prop_ref(fd: Dictionary, value: String) -> void:
 		props.erase(fd.id)
 	else:
 		props[fd.id] = value
-	spr.set_meta("props", props)
+	spr.props = props
 	app.canvas._mark()
 	# 指向预览：高亮被指实例（仅 entity_ref；map_ref 指向别的图，不高亮）
 	var target := value if str(fd.type) == "entity_ref" else ""
@@ -930,16 +923,16 @@ func _resolve_options(decl: Dictionary) -> Array:
 		var out4: Array = []
 		if _map_ready():
 			for e0 in app.canvas.ents_all():
-				var spr := e0 as Sprite2D
-				if spr == null or not spr.has_meta("scene"):
+				var spr := e0 as EntityNode
+				if spr == null or not spr.is_entity():
 					continue
-				var sid0 := str(spr.get_meta("scene", ""))
+				var sid0 := spr.asset
 				if not want.is_empty() and not want.has(sid0):
 					continue
-				var c0 := str(spr.get_meta("code", ""))
+				var c0 := spr.code
 				if c0 == "":
 					continue
-				var cell: Vector2i = app.canvas._cell_of(spr.position)
+				var cell: Vector2i = spr.cell()
 				out4.append({"v": c0, "t": "%s · (%d,%d)" % [str(app._scene_name(sid0)), cell.x, cell.y]})
 		return out4
 	if src == "layer:":
@@ -1079,7 +1072,7 @@ func _ensure_failed() -> void:
 	var cur := _current_spr()
 	if cur == null:
 		app._set_status(" 内容写入失败：当前没有选中实例")
-	elif str(cur.get_meta("code", "")) == "":
+	elif cur.code == "":
 		app._set_status("  内容写入失败：这个实例还没有身份码（重新放置一次再试）")
 	else:
 		app._set_status("  内容写入失败：检查 content 目录是否存在且可写")
