@@ -2,11 +2,12 @@ extends RefCounted
 ## 声明式字段控件工厂：清单字段声明 → 控件。
 ##
 ## 只有两个可写 kind：
-## input —— type: string / int / float / bool / color / vector2 / range / asset_ref
-## choice —— options[] 直给，或 source 从内容库 / 清单实体 / 地图列表动态取
+## input —— type: string / int / float / bool / color / vector2 / range / asset_ref / array
+## choice —— options[] 直给，或 source 从内容库 / 清单实体 / 地图列表动态取；multiple: true 切勾选组
 ##
 ## string 可加 multiline: true 切 TextEdit；range 读 min/max/step（无 min/max 时退到 HSlider 默认）；
 ## asset_ref 读 kind（按 kind 过滤资产）与可选 of（逗号分隔 id 白名单）。
+## array 读 of（基础类型或 choice，不嵌套 array）与可选 min/max（数字元素界限，透传给行控件）。
 ## 认不出的声明一律只读展示 + 黄色提示，绝不提供可写控件。
 ## 旧实现把未知类型落进 LineEdit：数组 [1,2,3] 被 str() 成 "[1, 2, 3]"，用户一碰
 ## 就把数组写成它的打印形式，是静默数据损坏。这里改成结构可见、不可写。
@@ -36,6 +37,8 @@ static func default_for(decl: Dictionary) -> Variant:
 		"float", "range": return float(decl.get("min", 0.0))
 		"vector2": return [float(decl.get("min", 0.0)), float(decl.get("min", 0.0))]
 		"color": return "#ffffff"
+		"choice": return [] if bool(decl.get("multiple", false)) else ""
+		"array": return []
 		_: return ""
 
 ## 构建控件。返回 {ctl: Control, commit: Callable}。
@@ -174,6 +177,18 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 			box.add_child(sl)
 			box.add_child(num)
 			return {"ctl": box, "commit": func(): on_set.call(pending2.v)}
+		"array":
+			# array.of ∈ 基础类型/choice（不嵌套 array）；非数组值只读展示——commit() 不能把坏值悄悄写成 []
+			var of := str(decl.get("of", ""))
+			var ok_of: Array = ["string", "int", "float", "bool", "color", "vector2", "range", "asset_ref", "choice"]
+			if not ok_of.has(of):
+				return _readonly(decl, value, "array.of 未声明（应写基础类型或 choice）",
+					"补全声明后重新加载清单即可恢复编辑")
+			if value != null and value != "" and not (value is Array):
+				return _readonly(decl, value, "值类型不符：声明 array，实际是 %s" % type_name(value),
+					"编辑器不会改写它，请游戏侧或手工修正")
+			var items: Array = value if value is Array else []
+			return _build_array(decl, items, on_set, option_resolver)
 		"asset_ref":
 			# 资产引用走 choice 的同一套控件，只是选项来源由 asset: 解析器提供。
 			var d2: Dictionary = decl.duplicate(true)
@@ -183,14 +198,75 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 			d2["source"] = "asset:" + ak + (":" + only if only != "" else "")
 			return _build_choice(d2, value, on_set, option_resolver)
 		_:
-			var why := "声明缺 type（应写 string / int / float / bool / color / vector2 / range / asset_ref）" if typ == "" \
+			var why := "声明缺 type（应写 string / int / float / bool / color / vector2 / range / asset_ref / array）" if typ == "" \
 				else "未声明的输入类型「%s」" % typ
 			return _readonly(decl, value, why, "补全声明后重新加载清单即可恢复编辑")
 
-## choice：options[] 直给，或按 source 动态取。
+## array 元素声明：of 指基础类型或 choice；choice 元素继承 options/source。
+static func _elem_decl(decl: Dictionary) -> Dictionary:
+	var of := str(decl.get("of", "string"))
+	if of == "choice":
+		var d: Dictionary = {"kind": KIND_CHOICE}
+		for k in ["options", "source"]:
+			if decl.get(k, null) != null:
+				d[k] = decl.get(k)
+		return d
+	return {"kind": KIND_INPUT, "type": of}
+
+## array：可增删行容器，每行一个元素控件；值 = 各行 state.v 按顺序收集。
+## 行删除前先冲刷该行连续控件的待写值（commit），行序变动靠行字典引用而非闭包下标。
+static func _build_array(decl: Dictionary, items: Array, on_set: Callable,
+		option_resolver: Callable) -> Dictionary:
+	var elem := _elem_decl(decl)
+	var wrap := VBoxContainer.new()
+	wrap.add_theme_constant_override("separation", 4)
+	var rows: Array = []
+	var collect := func() -> Array:
+		var out: Array = []
+		for r in rows:
+			var c: Callable = r.get("commit", Callable())
+			if c.is_valid():
+				c.call()
+			out.append((r.state as Dictionary).get("v"))
+		return out
+	var add_row := func(v) -> void:
+		var r := {"state": {"v": v}, "commit": Callable()}
+		var line := HBoxContainer.new()
+		line.add_theme_constant_override("separation", 4)
+		var built := build(elem, v, func(v2): (r.state as Dictionary)["v"] = v2, option_resolver)
+		r["commit"] = built.commit
+		line.add_child(built.ctl)
+		var del := Button.new()
+		del.text = "×"
+		del.focus_mode = Control.FOCUS_NONE
+		del.pressed.connect(func():
+			var c: Callable = r.commit
+			if c.is_valid():
+				c.call()
+			rows.erase(r)
+			line.queue_free()
+			on_set.call(collect.call()))
+		line.add_child(del)
+		wrap.add_child(line)
+		rows.append(r)
+	for v in items:
+		add_row.call(v)
+	var add := Button.new()
+	add.text = "+ 添加"
+	add.focus_mode = Control.FOCUS_NONE
+	add.pressed.connect(func():
+		add_row.call(default_for(elem))
+		on_set.call(collect.call()))
+	wrap.add_child(add)
+	return {"ctl": wrap, "commit": func():
+		on_set.call(collect.call())}
+
+## choice：options[] 声明（或 source 动态解析）→ 单选 OptionButton / multiple 勾选组。
 ## 值不在选项里时保留原值并额外插一条「(当前值)」——绝不静默改成第一项。
 static func _build_choice(decl: Dictionary, value, on_set: Callable,
 		option_resolver: Callable) -> Dictionary:
+	if bool(decl.get("multiple", false)):
+		return _build_choice_multi(decl, value, on_set, option_resolver)
 	var opts: Array = []
 	if decl.get("options", null) is Array:
 		for o in decl.get("options", []):
@@ -218,6 +294,55 @@ static func _build_choice(decl: Dictionary, value, on_set: Callable,
 	opt.item_selected.connect(func(i: int):
 		on_set.call(str(opt.get_item_metadata(i))))
 	return {"ctl": opt, "commit": Callable()}
+
+## choice multiple：每选项一个勾选框；值 = 按选项顺序收集的已勾 v 列表（存字符串数组）。
+## 值不在选项集里的残留项照单选口径保留——显示为「(当前值)」行，取消勾选 = 明确移除。
+static func _build_choice_multi(decl: Dictionary, value, on_set: Callable,
+		option_resolver: Callable) -> Dictionary:
+	var opts: Array = []
+	if decl.get("options", null) is Array:
+		for o in decl.get("options", []):
+			opts.append(_norm_option(o))
+	elif option_resolver.is_valid():
+		for o in option_resolver.call(decl):
+			opts.append(_norm_option(o))
+	var chosen: Array = []
+	if value is Array:
+		for x in value:
+			chosen.append(str(x))
+	elif value != null and str(value) != "":
+		chosen.append(str(value))
+	var known := {}
+	for o in opts:
+		known[str((o as Dictionary).get("v", ""))] = true
+	var pend := {"v": chosen.duplicate()}
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 2)
+	for o in opts:
+		var ov := str((o as Dictionary).get("v", ""))
+		var cb := CheckBox.new()
+		cb.text = str((o as Dictionary).get("t", ""))
+		cb.button_pressed = chosen.has(ov)
+		cb.toggled.connect(func(on: bool):
+			if on and not pend.v.has(ov):
+				pend.v.append(ov)
+			elif not on:
+				pend.v.erase(ov)
+			on_set.call(pend.v.duplicate()))
+		box.add_child(cb)
+	for extra in chosen:
+		var ev := str(extra)
+		if known.has(ev):
+			continue
+		var cb2 := CheckBox.new()
+		cb2.text = "(当前值) " + ev
+		cb2.button_pressed = true
+		cb2.toggled.connect(func(on: bool):
+			if not on:
+				pend.v.erase(ev)
+			on_set.call(pend.v.duplicate()))
+		box.add_child(cb2)
+	return {"ctl": box, "commit": Callable()}
 
 static func _norm_option(o) -> Dictionary:
 	if o is Dictionary:

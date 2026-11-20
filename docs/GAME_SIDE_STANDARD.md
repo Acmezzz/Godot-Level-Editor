@@ -278,7 +278,8 @@ solid+矩形碰撞：`col.set_cell(cell, 0, Vector2i(4,0))`。
 | input | `vector2` | 两个 SpinBox（x / y），值存 `[x, y]` 数组，失焦提交 |
 | input | `range` | HSlider + SpinBox，`min`/`max`/`step` 可声明，值存数字 |
 | input | `asset_ref` | 资产下拉：`assetKind`（scene/entity）+ 可选 `of: "id,id"` 过滤，值存资产 id |
-| choice | — | OptionButton：`options: ["a","b"]` 直给，或 `source` 动态取 |
+| input | `array` | 可增删行容器，每行一个元素控件（`of` 指基础类型或 choice，不嵌套 array）；值存元素数组 |
+| choice | — | OptionButton：`options: ["a","b"]` 直给，或 `source` 动态取；`multiple: true` 切勾选组，值存字符串数组 |
 | input | 其他任意字符串 | 只读展示 + 黄字提示（编辑器不会把数组/对象塞进可写控件） |
 
 choice 的 `source` 取值：`content:<kind>`（列该目录内容条目）、`entity:<id,id>`（清单实体类型，

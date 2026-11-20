@@ -114,6 +114,8 @@ func test_new_input_types_accepted() -> void:
 	fields.append({"id": "off", "code": "A333", "kind": "input", "type": "vector2", "default": [0, 0]})
 	fields.append({"id": "curve", "code": "A444", "kind": "input", "type": "range", "default": 0.5, "min": 0.0, "max": 1.0})
 	fields.append({"id": "asset", "code": "A555", "kind": "input", "type": "asset_ref", "default": ""})
+	fields.append({"id": "arr", "code": "A666", "kind": "input", "type": "array", "of": "int", "default": []})
+	fields.append({"id": "multi", "code": "A777", "kind": "choice", "options": ["a", "b"], "multiple": true, "default": []})
 	eq(_errs_of(m).size(), 0, "新字段类型全部合法：%s" % str(_errs_of(m)))
 
 func test_collision_types_decl() -> void:

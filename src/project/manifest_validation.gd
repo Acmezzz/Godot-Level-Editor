@@ -14,7 +14,7 @@ const ContentStore := preload("res://src/content/content_store.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
 
 ## input 字段类型白名单（与 field_widgets 一一对应）：新增类型必须同时有控件分支。
-const INPUT_TYPES := ["string", "int", "float", "bool", "color", "vector2", "range", "asset_ref"]
+const INPUT_TYPES := ["string", "int", "float", "bool", "color", "vector2", "range", "asset_ref", "array"]
 
 ## 资产 id 同时用作地图瓦片条目的第 3 位（磁盘引用）——必须存在且唯一。
 static func validate(data: Dictionary, project_dir := "") -> Array[Dictionary]:
