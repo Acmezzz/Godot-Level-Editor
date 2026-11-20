@@ -6,12 +6,10 @@ extends RefCounted
 
 const ManifestScript := preload("res://src/manifest.gd")
 const MapValidator := preload("res://src/map_data_validation.gd")
+const MapFormat := preload("res://src/map_format.gd")
 
-## 当前地图数据格式版本。老图（无 version 键）视为 1。
-## v4：用户层栈 meta.layers=[{id,name,visible}]（栈序底→顶，id=4 位层码）；瓦片改
-## tiles={层id:[[x,y,atlas,ax,ay]...]}；实体 entities[] 加 layer=层码；collision 不变；
-## terrain/decor 顶层键删除——零兼容，旧图不迁移，由校验拒绝。
-const FORMAT_VERSION := 4
+## 当前地图数据格式版本（常量在 map_format.gd：校验器也要读，反向 preload 会成环）。
+const FORMAT_VERSION := MapFormat.VERSION
 ## 项目数据写盘版本号：每次 write_text 成功 +1。派生缓存（实体引用集等）据此判断是否重扫。
 static var project_rev := 0
 

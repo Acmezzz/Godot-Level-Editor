@@ -319,6 +319,8 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 		spr.position = Vector2(int(e.get("x", 0)) * tile + tile / 2.0, int(e.get("y", 0)) * tile + tile / 2.0)
 		spr.set_meta("scene", sid)
 		spr.set_meta("props", e.get("props", {}))
+ # 原条目留档：extract() 以它为底再覆盖编辑器管辖的键，游戏侧自定义键才不会在保存时蒸发
+		spr.set_meta("_raw", (e as Dictionary).duplicate(true))
  # 分层身份码：实例段。老实体没有就由 _ensure_code 统一补发
 		spr.set_meta("code", str(e.get("code", "")))
  # 实例功能绑定：只做存取，UI 由内容编辑器负责；缺失/类型不对时置空数组，

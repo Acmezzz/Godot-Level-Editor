@@ -30,6 +30,7 @@ static func _decl_items(decl) -> Array:
 	return out
 
 ## 音频池归一化视图 {id: {id, name, path, code}}。
+## **以声明原件为底**（未知键原样保留），只规范化编辑器认识的键。
 static func audio(m: Dictionary) -> Dictionary:
 	var key := _key(m)
 	if _cache_key == key:
@@ -40,12 +41,12 @@ static func audio(m: Dictionary) -> Dictionary:
 		if aid == "":
 			continue
 		var src: Dictionary = pair.body
-		out[aid] = {
-			"id": aid,
-			"name": str(src.get("name", aid)) if str(src.get("name", "")) != "" else aid,
-			"path": str(src.get("path", "")),
-			"code": str(src.get("code", "")),
-		}
+		var d: Dictionary = src.duplicate(true)
+		d["id"] = aid
+		d["name"] = str(src.get("name", aid)) if str(src.get("name", "")) != "" else aid
+		d["path"] = str(src.get("path", ""))
+		d["code"] = str(src.get("code", ""))
+		out[aid] = d
 	_cache = out
 	_cache_key = key
 	return out

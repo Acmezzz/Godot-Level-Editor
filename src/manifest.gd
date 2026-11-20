@@ -66,9 +66,12 @@ static func load_from(project_dir: String) -> Dictionary:
 	if not (data is Dictionary):
 		return {"_error": "清单 JSON 解析失败: " + p}
 	data["_dir"] = project_dir
-	# 清单 version——缺省补 1，结构演进时有迁移锚点
-	if not data.has("version") or not (data["version"] is int):
+	# 清单 version——缺省补 1，结构演进时有迁移锚点。
+	# JSON 把数字解析成 float，不能按 `is int` 判断：那样每次加载都会把版本重置成 1。
+	if not data.has("version") or not (data["version"] is int or data["version"] is float):
 		data["version"] = 1
+	else:
+		data["version"] = int(data["version"])
 	var issues := validate(data)
 	var errors: Array[String] = []
 	var warnings: Array[String] = []
@@ -95,13 +98,18 @@ static func load_from(project_dir: String) -> Dictionary:
 			e["code"] = preload("res://src/content/content_id.gd").new_entity_code()
 	# 功能段 / 字段段：同样补发（保存清单时随 functions 写回）。
 	# 磁盘上的执行引用一律用码，人类名零兼容、无回退——查不到就是数据漂移。
-	FunctionDecls.ensure_codes(data)
+	var issued := false
+	issued = FunctionDecls.ensure_codes(data) or issued
 	# 条件字段码：与功能字段共用一个码空间，避开功能字段已占用的码补发。
-	ConditionDecls.ensure_codes(data)
+	issued = ConditionDecls.ensure_codes(data) or issued
 	# 步骤池：条目码 + 步骤字段码补发（字段码避开功能/条件已占用）。
-	StepDecls.ensure_codes(data)
+	issued = StepDecls.ensure_codes(data) or issued
 	# 音频码：音频池条目补发执行码（保存清单时随 audio 写回）。
-	AudioDecls.ensure_codes(data)
+	issued = AudioDecls.ensure_codes(data) or issued
+	# 补码只改内存：内容文件马上就会带着新码落盘，清单却要等下一次显式保存。
+	# 留标记让「内容视图 Ctrl+S」顺手把清单也写回（D6），否则新码在磁盘上无对应对照。
+	if issued:
+		data["_codes_issued"] = true
 	return data
 
 ## 试玩命令 = 模板 + 变量替换；清单可选 godotExe（支持 %projectpath%）覆盖可执行文件，

@@ -30,6 +30,7 @@ static func _decl_items(decl) -> Array:
 	return out
 
 ## 条件池归一化视图 {id: {id, name, fields}}。
+## **以声明原件为底**（未知键原样保留），只规范化编辑器认识的键。
 static func conditions(m: Dictionary) -> Dictionary:
 	var key := _key(m)
 	if _cache_key == key:
@@ -40,11 +41,11 @@ static func conditions(m: Dictionary) -> Dictionary:
 		if cid == "":
 			continue
 		var src: Dictionary = pair.body
-		out[cid] = {
-			"id": cid,
-			"name": str(src.get("name", cid)) if str(src.get("name", "")) != "" else cid,
-			"fields": src.get("fields", []) if src.get("fields", []) is Array else [],
-		}
+		var d: Dictionary = src.duplicate(true)
+		d["id"] = cid
+		d["name"] = str(src.get("name", cid)) if str(src.get("name", "")) != "" else cid
+		d["fields"] = src.get("fields", []) if src.get("fields", []) is Array else []
+		out[cid] = d
 	_cache = out
 	_cache_key = key
 	return out

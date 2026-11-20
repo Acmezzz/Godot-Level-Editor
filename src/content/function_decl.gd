@@ -97,14 +97,7 @@ static func functions(m: Dictionary) -> Dictionary:
 				continue
 			var body = (decl as Dictionary)[fid_key]
 			var src: Dictionary = body if body is Dictionary else {}
-			out[fid] = {
-				"id": fid,
-				"code": str(src.get("code", "")),
-				"name": str(src.get("name", fid)) if str(src.get("name", "")) != "" else fid,
-				"fields": src.get("fields", []) if src.get("fields", []) is Array else [],
-				"conditions": src.get("conditions", []) if src.get("conditions", []) is Array else [],
-				"steps": bool(src.get("steps", false)),
-			}
+			out[fid] = _normalize_fn(fid, src)
 	elif decl is Array:
 		for item in (decl as Array):
 			if not (item is Dictionary):
@@ -113,17 +106,23 @@ static func functions(m: Dictionary) -> Dictionary:
 			var fid2 := str(src2.get("id", ""))
 			if fid2 == "":
 				continue
-			out[fid2] = {
-				"id": fid2,
-				"code": str(src2.get("code", "")),
-				"name": str(src2.get("name", fid2)) if str(src2.get("name", "")) != "" else fid2,
-				"fields": src2.get("fields", []) if src2.get("fields", []) is Array else [],
-				"conditions": src2.get("conditions", []) if src2.get("conditions", []) is Array else [],
-				"steps": bool(src2.get("steps", false)),
-			}
+			out[fid2] = _normalize_fn(fid2, src2)
 	_cache = out
 	_cache_key = key
 	return out
+
+## 归一化单个功能声明：**以声明原件为底**（未知键原样保留，游戏侧写什么编辑器都不丢），
+## 只规范化编辑器认识的键。此前是白名单重建，`triggers`/`timing`/`view` 等键进不了视图，
+## UI 连"看得见"都做不到。
+static func _normalize_fn(fid: String, src: Dictionary) -> Dictionary:
+	var d: Dictionary = src.duplicate(true)
+	d["id"] = fid
+	d["code"] = str(src.get("code", ""))
+	d["name"] = str(src.get("name", fid)) if str(src.get("name", "")) != "" else fid
+	d["fields"] = src.get("fields", []) if src.get("fields", []) is Array else []
+	d["conditions"] = src.get("conditions", []) if src.get("conditions", []) is Array else []
+	d["steps"] = bool(src.get("steps", false))
+	return d
 
 ## 单个功能声明；缺失时返回空字典。
 static func function_decl(m: Dictionary, fn_id: String) -> Dictionary:

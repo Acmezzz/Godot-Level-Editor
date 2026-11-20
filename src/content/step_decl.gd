@@ -30,6 +30,7 @@ static func _decl_items(decl) -> Array:
 	return out
 
 ## 步骤池归一化视图 {id: {id, code, name, fields}}。
+## **以声明原件为底**（未知键原样保留），只规范化编辑器认识的键。
 static func steps(m: Dictionary) -> Dictionary:
 	var key := _key(m)
 	if _cache_key == key:
@@ -40,12 +41,12 @@ static func steps(m: Dictionary) -> Dictionary:
 		if sid == "":
 			continue
 		var src: Dictionary = pair.body
-		out[sid] = {
-			"id": sid,
-			"code": str(src.get("code", "")),
-			"name": str(src.get("name", sid)) if str(src.get("name", "")) != "" else sid,
-			"fields": src.get("fields", []) if src.get("fields", []) is Array else [],
-		}
+		var d: Dictionary = src.duplicate(true)
+		d["id"] = sid
+		d["code"] = str(src.get("code", ""))
+		d["name"] = str(src.get("name", sid)) if str(src.get("name", "")) != "" else sid
+		d["fields"] = src.get("fields", []) if src.get("fields", []) is Array else []
+		out[sid] = d
 	_cache = out
 	_cache_key = key
 	return out

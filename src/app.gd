@@ -698,6 +698,8 @@ func _save_manifest_file() -> void:
 	if not MapStore.write_text(p, txt):
 		_set_status(" 清单写入失败: " + p)
 		return
+	# 新补发的执行码已经随清单落盘，标记清掉（D6：避免每次内容视图 Ctrl+S 都重写清单）
+	manifest.erase("_codes_issued")
 	# 人类名 ↔ 执行码对照表随清单一起刷新（游戏侧重建映射、人工 diff 均用）；
 	# 只在清单落盘成功后写，码表写失败不影响清单本身，状态栏单独报。
 	var cp: String = str(manifest.get("_dir", "")).path_join("editor/CODES.md")

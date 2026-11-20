@@ -1,8 +1,21 @@
 extends RefCounted
 ## 地图 JSON 结构校验，与场景树状态无关（纯字典操作，读图必经之路）。
 
+const MapFormat := preload("res://src/map_format.gd")
+
 static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 	var issues: Array[Dictionary] = []
+	# version：缺失/非数字 = 错误（结构契约没有锚点）；高于当前格式 = 错误（打不开新图）；
+	# 低于当前 = 警告（upgrade() 只抬版本号不迁移，结构问题由下面各项各自报出）
+	if not data.has("version") or not (data["version"] is int or data["version"] is float):
+		_add(issues, "error", "version", "must be a number")
+	else:
+		var ver := int(data["version"])
+		if ver > MapFormat.VERSION:
+			_add(issues, "error", "version",
+				"map format %d is newer than this editor supports (%d)" % [ver, MapFormat.VERSION])
+		elif ver < MapFormat.VERSION:
+			_add(issues, "warning", "version", "older map format %d (upgraded in memory)" % ver)
 	for key in ["collision", "entities"]:
 		if data.has(key) and not (data[key] is Array):
 			_add(issues, "error", key, "must be an array")

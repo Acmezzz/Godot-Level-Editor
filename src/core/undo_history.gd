@@ -6,6 +6,7 @@ var cvs   # 宿主引用
 const BuiltinKinds := preload("res://src/content/builtin_kinds.gd")
 const Constants := preload("res://src/core/constants.gd")
 const ContentId := preload("res://src/content/content_id.gd")
+const MapFormat := preload("res://src/map_format.gd")
 
 func _init(host) -> void:
 	cvs = host
@@ -92,6 +93,8 @@ func extract() -> Dictionary:
 				ccells.append([c.x, c.y, ct])
 		else:
 			ccells.append([c.x, c.y])
+	# 实体：以加载时保存的原条目为底（保留游戏侧自定义键），只覆盖编辑器管辖的键。
+	# 白名单重建会让未知键在保存时蒸发——这是最早发现、影响最大的一处丢数据。
 	var elist := []
 	for e in cvs.ents_all():
 		var spr := e as Sprite2D
@@ -113,23 +116,28 @@ func extract() -> Dictionary:
 			var cell_pos := Vector2(spr.position.x, spr.position.y)
 			if BuiltinKinds.is_builtin(sid):
 				cell_pos -= cvs.entity_display_size_of(spr) * 0.5 - Vector2(cvs.tile_px, cvs.tile_px) * 0.5
-			elist.append({
-				"scene": sid,
+ # 以原条目为底：未知键（游戏侧自定义）与编辑器不认识的键都留在原处
+			var raw = spr.get_meta("_raw", {})
+			var row: Dictionary = (raw as Dictionary).duplicate(true) if raw is Dictionary else {}
+			row["scene"] = sid
  # 分层身份码：实例段 = 唯一身份（丢失会让内容 ID 前缀漂移，必须随快照走）
-				"code": code,
-				"layer": str(spr.get_meta("layer", "")),
+			row["code"] = code
+			row["layer"] = str(spr.get_meta("layer", ""))
  # 与 _cell_of 一致用 floori——int() 向零截断会让负坐标实体每次保存向 0 漂移
-				"x": floori((cell_pos.x - cvs.tile_px / 2.0) / cvs.tile_px),
-				"y": floori((cell_pos.y - cvs.tile_px / 2.0) / cvs.tile_px),
-				"flip_h": bool(spr.flip_h),
-				"props": clean,
-			}.merged(_functions_field(spr), true))
+			row["x"] = floori((cell_pos.x - cvs.tile_px / 2.0) / cvs.tile_px)
+			row["y"] = floori((cell_pos.y - cvs.tile_px / 2.0) / cvs.tile_px)
+			row["flip_h"] = bool(spr.flip_h)
+			row["props"] = clean
+			row.merge(_functions_field(spr), true)
+			elist.append(row)
 	var used = Rect2i()
 	for tn in cvs.layer_tiles:
 		used = used.merge((tn as TileMapLayer).get_used_rect())
 	if used.size == Vector2i.ZERO:
 		used = Rect2i(Vector2i.ZERO, Vector2i(Constants.DEFAULT_MAP_W, Constants.DEFAULT_MAP_H))
-	var meta0: Dictionary = cvs.map_data.get("meta", {})
+ # 以整个读入的地图为底：游戏侧写进顶层的自定义键原样保留（此前 6 键白名单会蒸发它们）
+	var out: Dictionary = cvs.map_data.duplicate(true) if cvs.map_data is Dictionary else {}
+	var meta0: Dictionary = out.get("meta", {}) if out.get("meta", {}) is Dictionary else {}
 	# 以当前地图 meta 为底（保留游戏侧自定义键），只覆盖编辑器管辖的 name/w/h
 	var meta: Dictionary = meta0.duplicate(true)
 	if not meta.has("w"):
@@ -138,11 +146,10 @@ func extract() -> Dictionary:
 		meta["h"] = int(used.end.y + 2)
 	meta["name"] = cvs.cur_map_name
 	var sp = cvs._cell_of(cvs.spawn.position)
-	return {
-		"version": 4,   # 须与 map_store.FORMAT_VERSION 一致（此处是字面量；零兼容不升级老图）
-		"meta": meta,
-		"spawn": [sp.x, sp.y],
-		"tiles": tiles,
-		"collision": ccells,
-		"entities": elist,
-	}
+	out["version"] = MapFormat.VERSION
+	out["meta"] = meta
+	out["spawn"] = [sp.x, sp.y]
+	out["tiles"] = tiles
+	out["collision"] = ccells
+	out["entities"] = elist
+	return out

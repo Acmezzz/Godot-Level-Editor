@@ -785,6 +785,12 @@ func _build_form_block() -> Control:
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(title)
 	box.add_child(head)
+	# 码漂移：内容文件的 "function" 键与当前功能执行码不一致（清单改码后旧文件仍带旧码）。
+	# 只提示不阻断——写盘时会以当前码重写，用户改一次值即自愈。
+	var drift := _function_code_drift(data, fn_id)
+	if drift != "":
+		box.add_child(Kit.text_label("⚠ 内容记录的功能码 %s 与清单当前码 %s 不一致（改动任一字段即按当前码重写）"
+			% [drift, FunctionDecls.fn_code(manifest, fn_id)], Th.WARN, Th.FS_META))
 
 	# 只读层级 ID：创建后显示完整 id，未创建时明确写「未创建」而不是伪造一个随机码
 	var id_text := content_id
@@ -1033,6 +1039,17 @@ func _blank_content(fn_id: String, cid: String) -> Dictionary:
 	return {"id": cid, "function": FunctionDecls.fn_code(manifest, fn_id),
 		"name": fn_id, "fields": {}}
 
+## 内容文件的 "function" 键与清单当前执行码不一致时返回文件里的旧码（一致或未记录返回空串）。
+## 只用于提示：清单改码后旧内容不会自动重写，等用户下次改动该内容时才以当前码落盘。
+func _function_code_drift(data: Dictionary, fn_id: String) -> String:
+	if data.is_empty() or fn_id == "":
+		return ""
+	var stored := str(data.get("function", ""))
+	var current := FunctionDecls.fn_code(manifest, fn_id)
+	if stored == "" or current == "" or stored == current:
+		return ""
+	return stored
+
 ## 保证该附加功能有 content id：没有就生成并写一条空内容 + 回写绑定。
 ## 返回空串 = 生成/写盘失败（调用方给出可见反馈，不静默吞掉）。
 func _ensure_content(i: int) -> String:
@@ -1158,15 +1175,15 @@ func _duplicate_from_lib(fn_id: String, old_id: String, new_name: String) -> voi
 	var nm := new_name.strip_edges()
 	if nm == "":
 		nm = str(src.get("name", "")) if str(src.get("name", "")) != "" else fn_id
-	var src_fields = src.get("fields", {})
-	var src_steps = src.get("steps", [])
-	var data := {
-		"id": new_id,
-		"function": FunctionDecls.fn_code(manifest, fn_id),
-		"name": nm,
-		"fields": (src_fields as Dictionary).duplicate(true) if src_fields is Dictionary else {},
-		"steps": (src_steps as Array).duplicate(true) if src_steps is Array else [],
-	}
+	# 以整份源内容为底（顶层未知键原样带走），只覆盖身份三键
+	var data: Dictionary = src.duplicate(true)
+	data["id"] = new_id
+	data["function"] = FunctionDecls.fn_code(manifest, fn_id)
+	data["name"] = nm
+	if not (data.get("fields", null) is Dictionary):
+		data["fields"] = {}
+	if not (data.get("steps", null) is Array):
+		data["steps"] = []
 	if not ContentStore.write(manifest, fn_id, new_id, data):
 		app._set_status(" 写盘失败: content/%s/%s.json" % [fn_id, new_id])
 		return
