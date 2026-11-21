@@ -581,6 +581,11 @@ func _toggle_sel_visible(v: bool) -> void:
 	var n = app.selected_spr
 	if n == null or not is_instance_valid(n):
 		return
+	# 锁层不许改实例数据（E04）：眼睛写的是 objects[].visible，属于可落盘字段
+	if app.canvas.is_layer_code_locked((n as EntityNode).layer_id):
+		app._set_status(" 实例所在图层已锁定：解锁后再切换显隐")
+		_sel_eye.set_pressed_no_signal((n as EntityNode).visible_flag)   # 静默回填，别连发信号
+		return
 	app.canvas._push_undo()
 	n.visible_flag = v
 	n.refresh_visual()

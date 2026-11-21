@@ -64,8 +64,10 @@ func _paint(c: Vector2i) -> void:
 		for bc in _brush_cells(c):
 			var had: bool = cvs.collision.get_cell_source_id(bc) != -1
 			var cm = cvs._collision_meta.get(bc, null)
-			var same: bool = had and cm != null and str(cm.get("type", "solid")) == cvs.collision_type \
-				and str(cm.get("shape", "")) == cvs.collision_shape
+			# 缺省值归一后比较（E13）：无 meta = solid+矩形；重复画同一缺省不在撤销栈里留空步
+			var ct := str(cm.get("type", "solid")) if cm != null else "solid"
+			var cs := str(cm.get("shape", "")) if cm != null else ""
+			var same: bool = had and ct == cvs.collision_type and cs == cvs.collision_shape
 			if not same:
 				_ensure_stroke_undo()
 				cvs.set_collision_cell(bc, true, cvs.collision_type, cvs.collision_shape)

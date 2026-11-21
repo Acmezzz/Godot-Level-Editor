@@ -753,6 +753,11 @@ func commit_multi(multi: Array) -> void:
 	entity_selected.emit(selected_entity)
 	queue_redraw()
 
+## 选区是否触碰锁定/隐藏层（E04）：app 级快捷键（方向键微调、Ctrl+D）也要走同一检查，
+## 不能只靠画布内命令自检——否则锁定层内容会被键盘改掉。
+func selection_touches_locked(sel: Array) -> bool:
+	return _selection_ops_ctrl._selection_touches_locked(sel)
+
 # —— 框选集合有效性过滤 ——
 func _valid_multi() -> Array:
 	var out := []
@@ -1035,6 +1040,9 @@ func redo() -> bool:
 	return await _undo_history_ctrl.redo()
 
 func extract() -> Dictionary:
+	# 只读提交状态（E05）：拖动/尺寸/顶点/出生点/区域搬迁在手势期间把候选值写在活体上，
+	# 保存、草稿与撤销快照直接读取会拿到半途坐标。提取前先取消未完成的预览手势归位。
+	cancel_preview_gesture()
 	return _undo_history_ctrl.extract()
 ## —— 拆到 src/canvas/canvas_draw.gd 的委托（调用点保持不变） ——
 func _draw() -> void:

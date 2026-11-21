@@ -365,6 +365,11 @@ func _shortcut_input(event: InputEvent) -> void:
 	if k in [KEY_LEFT, KEY_RIGHT, KEY_UP, KEY_DOWN]:
 		var sel: Array = canvas.selected_multi if not canvas.selected_multi.is_empty() else ([] if canvas.selected_entity == null else [canvas.selected_entity])
 		if not sel.is_empty():
+			# 锁层/隐藏层不可写（E04）：键盘微调走与拖动同一个选区级检查
+			if canvas.selection_touches_locked(sel):
+				_set_status(" 选中实例所在图层已锁定：解锁后再微调")
+				get_viewport().set_input_as_handled()
+				return
 			var step := 4 if (event as InputEventKey).shift_pressed else 1
 			var delta := Vector2i(-step, 0) if k == KEY_LEFT else (Vector2i(step, 0) if k == KEY_RIGHT else (Vector2i(0, -step) if k == KEY_UP else Vector2i(0, step)))
 			var now := Time.get_ticks_msec()
@@ -382,6 +387,11 @@ func _shortcut_input(event: InputEvent) -> void:
 	if ctrl and k == KEY_D:
 		var srcs: Array = canvas.selected_multi if not canvas.selected_multi.is_empty() else ([] if canvas.selected_entity == null else [canvas.selected_entity])
 		if not srcs.is_empty():
+			# 源在锁层 = 不许复制（副本会落回同层）；先查再压撤销，别留空快照
+			if canvas.selection_touches_locked(srcs):
+				_set_status(" 选中实例所在图层已锁定：解锁后再复制")
+				get_viewport().set_input_as_handled()
+				return
 			canvas._push_undo()
 			for s in srcs:
 				var orig := s as EntityNode

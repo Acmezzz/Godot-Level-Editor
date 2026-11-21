@@ -78,7 +78,10 @@ func _unhandled_input(event: InputEvent) -> void:
 				var c0: Vector2i = cvs.grid.pick_cell((cvs.spawn as Node2D).position)
 				var c1: Vector2i = cvs.root_cell(pos)
 				if c1 != c0 and not _spawn_moved:
+					# 压快照会取消预览手势并把出生点归位到起手快照（E05：撤销基线 = 原位）。
+					# 取消同时结束了手势，这里按同一颗键重新起手，拖动继续、松手才会置脏。
 					cvs._push_undo()
+					cvs.begin_gesture(cvs.Gesture.SPAWN_DRAG, MOUSE_BUTTON_LEFT)
 					_spawn_moved = true
 				cvs._drag_spawn_to(pos)
 			cvs.Gesture.ERASE:

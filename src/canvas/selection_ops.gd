@@ -417,6 +417,10 @@ func _add_vertex_at(pos: Vector2) -> bool:
 	var en := n as EntityNode
 	if en.visual_type() == "rect":
 		return false
+	# 加点也是写操作（E04）：锁层/隐藏层实例不许改几何
+	if cvs.is_layer_locked(cvs._layer_index_of(en.layer_id)):
+		cvs._hint("实例所在图层已锁定：解锁后再加顶点")
+		return true
 	var pts: Array = en.points_local()
 	if pts.size() < 2:
 		return false
@@ -453,6 +457,10 @@ func _delete_vertex_at(pos: Vector2) -> bool:
 	var en := n as EntityNode
 	if en.visual_type() == "rect":
 		return false
+	# 删点同属写操作（E04）
+	if cvs.is_layer_locked(cvs._layer_index_of(en.layer_id)):
+		cvs._hint("实例所在图层已锁定：解锁后再删顶点")
+		return true
 	var idx := _vertex_handle_hit(pos)
 	if idx < 0:
 		return false
@@ -546,6 +554,10 @@ func cut_selection() -> void:
 	var sel := _live_selection()
 	if sel.is_empty():
 		cvs._hint("先选中实例再剪切（Ctrl+X）")
+		return
+	# 锁检查覆盖整条选区所在层（E04）：剪切会删掉全部成员，只查活动层会连带删掉锁定层内容
+	if _selection_touches_locked(sel):
+		cvs._hint("选中实例所在图层已锁定：解锁后再剪切")
 		return
 	# 复用复制逻辑生成剪贴板（它负责算中心与相对偏移）
 	copy_selection()
