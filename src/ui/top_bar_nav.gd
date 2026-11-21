@@ -58,15 +58,70 @@ func _refresh_map_menu() -> void:
 	if names.is_empty():
 		_switch_menu.add_item("（还没有地图）")
 		_switch_menu.set_item_disabled(0, true)
+	else:
+		for i in names.size():
+			var nm := str(names[i])
+			_switch_menu.add_item(nm, i)
+			if nm == app.cur_map_name:
+				_switch_menu.set_item_as_checkable(i, true)
+				_switch_menu.set_item_checked(i, true)
+	# 草稿恢复入口（A3）：只列真正有草稿的地图码，避免菜单变成大杂烩
+	var draft_keys: Array = preload("res://src/map/recovery.gd").list_drafts(app.manifest)
+	if draft_keys.is_empty():
 		return
-	for i in names.size():
-		var nm := str(names[i])
-		_switch_menu.add_item(nm, i)
-		if nm == app.cur_map_name:
-			_switch_menu.set_item_as_checkable(i, true)
-			_switch_menu.set_item_checked(i, true)
+	_switch_menu.add_separator()
+	_switch_menu.add_item("恢复草稿…", _MENU_DRAFTS)
+
+const _MENU_DRAFTS := 100000
+
+## 草稿列表弹窗：每份草稿给「恢复 / 查看正式图 / 丢弃」三个选择。
+func _open_draft_picker() -> void:
+	var rec := preload("res://src/map/recovery.gd")
+	var keys: Array = rec.list_drafts(app.manifest)
+	if keys.is_empty():
+		app._set_status("没有可恢复的草稿")
+		return
+	var shell: Dictionary = app._popup_body("恢复草稿", "草稿在 editor/drafts/：恢复只改画布，Ctrl+S 才写回正式图。")
+	var pop: PopupPanel = shell.pop
+	var body: VBoxContainer = shell.body
+	for k in keys:
+		var d: Dictionary = rec.read_draft(app.manifest, "", str(k))
+		var row: HBoxContainer = app.UiKitScript.hbox(6)
+		var label: Label = app.UiKitScript.text_label("%s  ·  %s" % [str(d.get("mapName", k)), str(k)], app.UiThemeScript.TEXT, app.UiThemeScript.FS_SMALL)
+		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(label)
+		row.add_child(app.UiKitScript.button("恢复", func():
+			pop.hide()
+			draft_pick(str(d.get("mapName", k)), "restore"), "primary"))
+		row.add_child(app.UiKitScript.button("查看正式图", func():
+			pop.hide()
+			draft_pick(str(d.get("mapName", k)), "open"), "ghost"))
+		row.add_child(app.UiKitScript.button("丢弃", func():
+			pop.hide()
+			draft_pick(str(d.get("mapName", k)), "discard"), "ghost"))
+		body.add_child(row)
+	app._open_popup(pop)
+
+## 由弹窗按钮调用的实际动作入口（地图控制器负责载入/丢弃）
+func draft_pick(map_name: String, action: String) -> void:
+	if app._map_file_ctrl == null:
+		return
+	match action:
+		"restore":
+			await app._map_file_ctrl.restore_draft(map_name)
+		"open":
+			await app._open_map_by_name(map_name)
+		"discard":
+			var rec := preload("res://src/map/recovery.gd")
+			rec.remove_draft(app.manifest, "", map_name)
+			app._set_status("已丢弃草稿：" + map_name)
+	if after_switch.is_valid():
+		after_switch.call()
 
 func _on_map_selected(id: int) -> void:
+	if id == _MENU_DRAFTS:
+		_open_draft_picker()
+		return
 	var names: Array = app.MapStore.list_maps(app.manifest)
 	if id < 0 or id >= names.size():
 		return

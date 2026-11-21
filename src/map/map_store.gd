@@ -194,8 +194,10 @@ static func read(m: Dictionary, name: String) -> Dictionary:
 	return data
 
 ## 写地图 JSON；名称非法、写入前校验失败或写盘失败均返回 false。
-## 正式保存轮转备份——写前把当前文件拷进 <maps_dir>/.history/<名>.json.1..3（.1 最新）。
+## 历史（A3）：原文件快照先暂存到 <项目>/editor/history/maps/<地图码>/，
+## 新文件原子替换成功后才把快照纳入历史——替换失败时快照丢弃，旧历史条目不减少。
 ## 无 git 环境的最后保险；autosave/levels/事务写盘不进历史（各有机制）。
+const Recovery := preload("res://src/map/recovery.gd")
 const HISTORY_DEPTH := 3
 
 static func write(m: Dictionary, name: String, data: Dictionary) -> bool:
@@ -205,8 +207,17 @@ static func write(m: Dictionary, name: String, data: Dictionary) -> bool:
 	# 写前校验序列化结果（D11）：坏图（层栈空/瓦片元组错/退役键）不落盘覆盖好文件。
 	if not validate_for_write(data, m):
 		return false
-	_rotate_history(path)
-	return write_json(path, data)
+	var code := str((data.get("meta", {}) as Dictionary).get("code", ""))
+	# maps 目录可能还不存在（新项目/测试临时目录）：写入口负责建，不依赖历史目录副作用
+	DirAccess.make_dir_recursive_absolute(path.get_base_dir())
+	var staged := Recovery.stage_snapshot(m, code, name, path)
+	if not write_json(path, data):
+		Recovery.discard_snapshot(staged)   # 替换失败：不把快照计入历史（旧历史不减）
+		return false
+	if staged != "" and not Recovery.commit_snapshot(m, code, name, staged):
+		# 历史落盘失败单独报告，但不影响「保存成功」这个事实
+		push_warning("地图历史落盘失败: " + staged)
+	return true
 
 ## 校验待写文档；返回首个错误文本，"" = 通过。
 static func write_error(m: Dictionary, data: Dictionary) -> String:
@@ -315,9 +326,15 @@ static func rename_map(m: Dictionary, old_name: String, new_name: String) -> Str
 	var dst := path_for(m, new_name)
 	if DirAccess.rename_absolute(src, dst) != OK:
 		return "文件系统重命名失败"
+	# 文件内 meta.name 同步改名（A3）：只改文件名会让重开/历史查询拿到旧名
+	var renamed := read(m, new_name)
+	if not renamed.is_empty() and str((renamed.get("meta", {}) as Dictionary).get("name", "")) != new_name:
+		renamed.meta.name = new_name
+		write_json(dst, renamed)
 	_cache.erase(src)
 	_cache.erase(dst)
-	# 旧名的历史备份按新名永远查不到——一并清掉，不留孤儿
+	# 旧位置历史（maps/.history/<旧名>.json.N）清掉不留孤儿；
+	# 新的按码历史（editor/history/maps/<码>/）不动——码不变，改名后可继续查
 	var hist_dir := str(m.get("_maps_dir", "")).path_join(".history")
 	for i in HISTORY_DEPTH:
 		var hp := hist_dir.path_join("%s.json.%d" % [old_name, i + 1])

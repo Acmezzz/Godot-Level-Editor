@@ -105,7 +105,9 @@ func _notification(what: int) -> void:
 
 func _handle_close_request() -> void:
 	if map_loaded and canvas and canvas.modified_flag:
-		_maybe_autosave()
+		# 退出前先强制写草稿（绕过节流）：用户可能选「保留草稿」，
+		# 那份草稿必须是最新内容，不能因为距上次自动保存太近而缺失（A3）。
+		_map_file_ctrl.write_draft_now()
 		if not await _confirm_discard("退出编辑器"):
 			return
 	get_tree().auto_accept_quit = true
@@ -182,6 +184,26 @@ func _enter_project(dir: String, loaded_manifest: Dictionary) -> void:
 	_ent_thumbs_cache.clear()
 	_picker_ctrl.remember_project(dir, str(manifest.get("projectName", "")))
 	_build_editor_ui()
+	_report_recovery_items()
+
+## 进入项目后报告未完成草稿与提交日志（A3）：草稿可恢复、提交日志提示哪些文件已写。
+func _report_recovery_items() -> void:
+	if _map_file_ctrl == null:
+		return
+	var parts: Array[String] = []
+	var drafts: Array = preload("res://src/map/recovery.gd").list_drafts(manifest)
+	if not drafts.is_empty():
+		parts.append("%d 份草稿（地图菜单可恢复）" % drafts.size())
+	var pending: Array = preload("res://src/map/recovery.gd").scan_pending(manifest)
+	var partial := 0
+	for p in pending:
+		if str((p as Dictionary).get("status", "")) != "done":
+			partial += 1
+	if partial > 0:
+		parts.append("%d 次未完成提交（已写文件保留，可同 ID 重试）" % partial)
+	if parts.is_empty():
+		return
+	_set_status(" 上次会话有 %s" % "；".join(PackedStringArray(parts)))
 
 ## 释放当前项目会话。控制器随界面一起失效，必须全部清空。
 func _clear_project_session() -> void:

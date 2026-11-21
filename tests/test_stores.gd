@@ -4,6 +4,7 @@ extends "res://tests/_suite_base.gd"
 const MapStore := preload("res://src/map/map_store.gd")
 const ContentStore := preload("res://src/content/content_store.gd")
 const ProjectAudit := preload("res://src/project/project_audit.gd")
+const Recovery := preload("res://src/map/recovery.gd")
 
 const TMP := "user://test_stores_tmp"
 
@@ -160,4 +161,75 @@ func test_map_code_conflict_lists_all_paths() -> void:
 				and str(e.get("message", "")).contains("b.json"):
 			found += 1
 	eq(found, 1, "审计报告给出两条路径")
+	_wipe()
+
+## A3：草稿写到 editor/drafts/<地图码>.json，记录目标/基线/快照，可读回、可删。
+func test_draft_roundtrip_by_map_code() -> void:
+	_wipe()
+	var m := _fake_manifest()
+	var snap := MapStore.new_map("d", 8, 8)
+	var target := str(m._maps_dir).path_join("d.json")
+	var p := Recovery.write_draft(m, "AB23", "d", target, "digest-1", snap, [{"id": "X1"}], ["X1"])
+	ok(p != "", "草稿写入成功")
+	ok(p.contains("editor/drafts") and p.ends_with("AB23.json"), "路径按地图码")
+	var d := Recovery.read_draft(m, "AB23", "d")
+	eq(str(d.get("targetPath")), target, "记录目标路径")
+	eq(str(d.get("baseline")), "digest-1", "记录正式图基线")
+	eq((d.get("snapshot", {}) as Dictionary).size() > 0, true, "记录地图快照")
+	eq((d.get("pendingIds", []) as Array).size(), 1, "记录待写 ID")
+	ok(Recovery.list_drafts(m).has("AB23"), "可列出草稿")
+	ok(Recovery.remove_draft(m, "AB23", "d"), "可删除草稿")
+	ok(Recovery.list_drafts(m).is_empty(), "删除后不再列出")
+	_wipe()
+
+## A3：旧式 .autosave.json 只认带 _autosave_of 的作为草稿来源
+func test_legacy_draft_requires_marker() -> void:
+	_wipe()
+	var m := _fake_manifest()
+	DirAccess.make_dir_recursive_absolute(str(m._maps_dir))
+	var marked := str(m._maps_dir).path_join("a.autosave.json")
+	MapStore.write_json(marked, {"_autosave_of": "a", "version": 7})
+	eq(Recovery.legacy_draft_owner(m, marked), "a", "带标记的识别为草稿")
+	var plain := str(m._maps_dir).path_join("foo.autosave.json")
+	MapStore.write_json(plain, {"version": 7})
+	eq(Recovery.legacy_draft_owner(m, plain), "", "无标记的按普通地图处理")
+	_wipe()
+
+## A3：地图历史按码分目录；替换失败时快照不入历史（旧条目不减少）
+func test_map_history_by_code_and_write_failure() -> void:
+	_wipe()
+	var m := _fake_manifest()
+	var d := MapStore.new_map("h", 8, 8)
+	d.meta["code"] = "HHHH"
+	ok(MapStore.write(m, "h", d), "首次写入")
+	ok(MapStore.write(m, "h", d), "二次写入 → 产生一份历史")
+	eq(Recovery.list_history(m, "HHHH", "h").size(), 1, "历史按地图码分目录")
+	# 注入替换失败：目标变成目录 → 写入必失败
+	var path := str(m._maps_dir).path_join("h.json")
+	var before_hist := Recovery.list_history(m, "HHHH", "h").size()
+	DirAccess.make_dir_recursive_absolute(path + ".tmp")
+	ok(not MapStore.write(m, "h", d), "替换失败被报告")
+	eq(Recovery.list_history(m, "HHHH", "h").size(), before_hist, "失败不增加历史")
+	_nuke(path + ".tmp")
+	_wipe()
+
+## A3：提交日志登记 → 部分写入的判定 → 清除
+func test_pending_log_partial_detection() -> void:
+	_wipe()
+	var m := _fake_manifest()
+	DirAccess.make_dir_recursive_absolute(str(m._maps_dir))
+	var a := str(m._maps_dir).path_join("a.json")
+	var b := str(m._maps_dir).path_join("b.json")
+	MapStore.write_json(a, {"v": 1})
+	MapStore.write_json(b, {"v": 1})
+	var log := Recovery.begin_pending(m, "test", [
+		{"path": a, "baseline": "", "expect": Recovery.digest(a), "kind": "map"},
+		{"path": b, "baseline": "", "expect": "not-yet", "kind": "content"},
+	])
+	ok(log != "", "登记成功")
+	var scan := Recovery.scan_pending(m)
+	eq(scan.size(), 1, "扫到一条日志")
+	eq(str((scan[0] as Dictionary).get("status")), "partial", "判定为部分写入")
+	ok(Recovery.clear_pending(m, log), "清除日志")
+	ok(Recovery.scan_pending(m).is_empty(), "清除后扫不到")
 	_wipe()

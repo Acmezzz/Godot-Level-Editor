@@ -455,6 +455,10 @@ func flush_staged() -> bool:
 func has_staged() -> bool:
 	return not _staged.is_empty()
 
+## 暂存内容快照（草稿记录用）：{cid: {fn_id, data}}，深拷贝避免外部改动。
+func staged_snapshot() -> Dictionary:
+	return _staged.duplicate(true)
+
 ## 写盘失败：状态栏 + 徽章双重提示（红色徽章在右栏顶部，不依赖状态栏可见性）
 ## 不再一律甩「目录权限」——真实失败原因多半是身份码没生成或 kind 不合法。
 func _ensure_failed() -> void:

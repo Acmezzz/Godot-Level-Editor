@@ -624,6 +624,18 @@ func has_staged_content() -> bool:
 func flush_staged_content() -> bool:
 	return _form.flush_staged()
 
+## 暂存快照（A3 草稿记录待提交文件用）：{content_id: {fn_id, data}}
+func staged_snapshot() -> Dictionary:
+	return _form.staged_snapshot()
+
+## 暂存内容的目标文件绝对路径（A3 提交日志登记用）
+func pending_paths() -> Array:
+	var out: Array = []
+	var snap: Dictionary = _form.staged_snapshot()
+	for cid in snap:
+		out.append(ContentStore.path_for(manifest, str((snap[cid] as Dictionary).get("fn_id", "")), str(cid)))
+	return out
+
 ## 暂存感知的内容读写（steps_panel 用）：刚 staged 的新内容还没落盘，
 ## 直接 ContentStore.read 会读到空，编辑步骤就会丢掉。
 func read_content_staged(fn_id: String, cid: String) -> Dictionary:
