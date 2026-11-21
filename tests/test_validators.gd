@@ -118,6 +118,29 @@ func test_new_input_types_accepted() -> void:
 	fields.append({"id": "multi", "code": "A777", "kind": "choice", "options": ["a", "b"], "multiple": true, "default": []})
 	eq(_errs_of(m).size(), 0, "新字段类型全部合法：%s" % str(_errs_of(m)))
 
+func test_top_level_shapes_and_projection() -> void:
+	var m0 := _good()
+	eq(_errs_of(m0).size(), 0, "无顶层可选键 = 通过")
+	var m1 := _good()
+	m1["playCommand"] = 3
+	ok(_errs_of(m1).size() >= 1, "playCommand 非字符串报错")
+	var m2 := _good()
+	m2["contentDir"] = "../evil"
+	ok(_errs_of(m2).size() >= 1, "contentDir 含 .. 报错")
+	var m3 := _good()
+	m3["screenSize"] = [640]
+	ok(_errs_of(m3).size() >= 1, "screenSize 不是 [w,h] 报错")
+	var m4 := _good()
+	m4["screenSize"] = [640, 360]
+	eq(_errs_of(m4).size(), 0, "screenSize [640,360] 合法")
+	var m5 := _good()
+	(m5.assets as Array).append({"id": "t2", "kind": "scene", "shape": "tile", "atlas": "assets/t1.png", "gridProjection": "isometric"})
+	var sevs := []
+	for e in V.validate(m5):
+		sevs.append(str(e.get("severity")))
+	ok(sevs.has("warning"), "混投影给警告")
+	ok(_errs_of(m5).size() == 0, "混投影是警告不是错误")
+
 func test_collision_types_decl() -> void:
 	var m := _good()
 	m["collisionTypes"] = {"ice": {"name": "冰面", "shape": "rect", "gameplay": "slide"}}

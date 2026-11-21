@@ -41,7 +41,7 @@ src/
 ├── canvas/                画布宿主与控制器（绘制 / 输入 / 左右键语义执行 / 选区）
 ├── content/               功能/条件/步骤/音频/时机声明池、五段身份数、内容文件读写
 └── ui/                    设计系统、布局骨架、三面板、各种弹窗
-tests/                     数据层回归测试（10 套件 69 用例，run_tests.gd 一条命令跑完）
+tests/                     数据层回归测试（10 套件 71 用例，run_tests.gd 一条命令跑完）
 tools/                     开发期脚本：截图 / 迁移(migrate_project.gd) / 警告扫描(warn_scan.gd)
 mcp/                       bird-editor MCP server（AI 协作验证链，见 mcp/README.md）
 docs/                      EDITOR_FEATURES + GAME_SIDE_STANDARD
@@ -55,7 +55,7 @@ docs/                      EDITOR_FEATURES + GAME_SIDE_STANDARD
 godot --headless --path . --check-only --script res://src/app.gd
 ```
 
-完整清单与测试说明见 `docs/EDITOR_FEATURES.md` §11。覆盖数据层纯逻辑（10 套件 69 用例，
+完整清单与测试说明见 `docs/EDITOR_FEATURES.md` §11。覆盖数据层纯逻辑（10 套件 71 用例，
 崩溃即判失败——断言计数守卫），一条命令跑完：
 
 ```

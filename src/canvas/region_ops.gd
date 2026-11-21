@@ -366,11 +366,12 @@ func _paste_region(origin: Vector2i) -> void:
 			(n2 as EntityNode).props = props2
 		(n2 as EntityNode).functions = functions2
 		(n2 as EntityNode).refresh_visual()
-	if not missed.is_empty():   # 跨图粘贴按名匹配失败的层：黄字提示哪几层落了底层
-		cvs._hint("有 %d 个层按名匹配失败，其内容落在最底层：%s" % [missed.size(), ", ".join(missed)])
 	cvs._mark()   # 区域粘贴含实体，保持索引置脏
 	cvs._paste_mode = false
-	cvs._hint("区域已粘贴")
+	if missed.is_empty():
+		cvs._hint("区域已粘贴")
+	else:   # 层匹配失败提示合并进同一条（状态栏单条消息，分开发会被覆盖）
+		cvs._hint("区域已粘贴；有 %d 个层按名匹配失败，其内容落在最底层：%s" % [missed.size(), ", ".join(missed)])
 
 ## 区域粘贴的层重映射：源层 id 在目标图存在则直配；否则按层名匹配；
 ## 都不匹配则落最底层（index 0），层名记入 missed（调用方末尾黄字提示）。

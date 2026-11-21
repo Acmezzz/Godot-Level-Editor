@@ -197,6 +197,9 @@ func _load_prefs() -> void:
 
 func _save_prefs() -> void:
 	var f := FileAccess.open(PREFS_PATH, FileAccess.WRITE)
+	if f == null:
+		push_warning("偏好写盘失败: " + PREFS_PATH)
+		return
 	f.store_string(JSON.stringify(_prefs, "\t"))
 	f.close()
 

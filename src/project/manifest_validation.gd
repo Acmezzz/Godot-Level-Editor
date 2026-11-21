@@ -44,7 +44,36 @@ static func validate(data: Dictionary, project_dir := "") -> Array[Dictionary]:
 	var tile_size = data.get("tileSize", 16)
 	if not (tile_size is int or tile_size is float) or float(tile_size) <= 0.0:
 		_add(issues, "error", "tileSize", "must be a positive number")
+	# C-15 混投影：画布口径是「任一 tile 资产声明 isometric 即整图等距」，混用会静默错位——警告
+	var projs := {}
+	var assets_arr = data.get("assets", null)
+	if assets_arr is Array:
+		for a in (assets_arr as Array):
+			if not (a is Dictionary) or str((a as Dictionary).get("kind", "")) != "scene" \
+					or str((a as Dictionary).get("shape", "")) != "tile":
+				continue
+			projs[str((a as Dictionary).get("gridProjection", "orthogonal"))] = true
+	if projs.size() > 1:
+		_add(issues, "warning", "assets",
+			"mixed gridProjection: canvas renders isometric if ANY tile asset declares it; orthogonal assets will misalign")
+	_validate_top_level(data, issues)
 	return issues
+
+## 顶层可选键结构校验（缺键走缺省，存在即校验形态）。
+static func _validate_top_level(data: Dictionary, issues: Array[Dictionary]) -> void:
+	for k in ["playCommand", "godotExe", "contentDir"]:
+		if data.has(k) and not (data[k] is String):
+			_add(issues, "error", k, "must be a string")
+	if data.has("contentDir"):
+		var cd := str(data["contentDir"])
+		if cd != "" and (cd.begins_with("/") or cd.begins_with("\\") or cd.contains("..")):
+			_add(issues, "error", "contentDir", "must be a relative path without '..'")
+	if data.has("screenSize"):
+		var ss = data["screenSize"]
+		if not (ss is Array) or (ss as Array).size() != 2 \
+				or not ((ss as Array)[0] is int or (ss as Array)[0] is float) \
+				or not ((ss as Array)[1] is int or (ss as Array)[1] is float):
+			_add(issues, "error", "screenSize", "must be [w, h] numbers")
 
 ## 功能/字段声明：结构 + 身份码唯一性 + 字段种类合法性。
 ## 码重复是**错误**：两个声明同码等于静默别名，磁盘上的引用会指向不确定的那个。
@@ -428,7 +457,7 @@ static func _validate_scene_asset(ad: Dictionary, path: String, project_dir: Str
 			_add(issues, "error", path + ".texture", "path cannot traverse outside the project")
 	if atlas != "" and texture != "":
 		_add(issues, "error", path, "scene asset must declare exactly one of atlas / texture")
-	# 网格投影：第 5 批才落地等距，先只做枚举校验（拼错就静默按正交画，属静默错）
+	# 网格投影枚举校验；混投影（正交+等距混用）在 validate() 尾部统一给警告
 	var gp := str(ad.get("gridProjection", "orthogonal"))
 	if gp != "orthogonal" and gp != "isometric":
 		_add(issues, "error", path + ".gridProjection", "must be \"orthogonal\" or \"isometric\"")

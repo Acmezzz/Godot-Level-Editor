@@ -1,10 +1,13 @@
 extends RefCounted
-## 全项目一致性审计：清单校验 + 地图校验 + 引用悬空，统一产出 {kind, severity, path, message, map, jump} 条目。
+## 全项目一致性审计：清单校验 + 地图校验 + 引用悬空 + 内容文件（码漂移/损坏 JSON/孤立内容），
+## 统一产出 {kind, severity, path, message, map, jump} 条目。
 ## 纯字典/文件扫描，不碰场景树——UI（问题抽屉/自检入口）只是它的呈现层。
 
 const ManifestValidation := preload("res://src/project/manifest_validation.gd")
 const MapStore := preload("res://src/map/map_store.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
+const ContentStore := preload("res://src/content/content_store.gd")
+const FunctionDecls := preload("res://src/content/function_decl.gd")
 
 ## 审计全项目。manifest = 编辑器清单（含 _dir/_maps_dir）。
 ## 返回 [{kind, severity, path, message, map, jump}]；
@@ -14,7 +17,8 @@ static func audit(manifest: Dictionary) -> Array:
 	# 1. 清单校验
 	for e in ManifestValidation.validate(manifest, str(manifest.get("_dir", ""))):
 		out.append(_wrap("manifest", e))
-	# 2. 地图校验（读盘全图）
+	# 2. 地图校验（读盘全图）+ 顺带收集被实例引用的内容 ID（孤立内容判定用）
+	var used_content := {}
 	var maps_dir := str(manifest.get("_maps_dir", ""))
 	if maps_dir != "":
 		for name in MapStore.list_maps(manifest):
@@ -24,7 +28,60 @@ static func audit(manifest: Dictionary) -> Array:
 			for e in (r.get("errors", []) as Array):
 				out.append(_wrap_map_issue("map", e, str(name)))
 			if bool(r.get("ok", false)):
-				out.append_array(_ref_checks(r.get("data", {}) as Dictionary, manifest, str(name)))
+				var d: Dictionary = r.get("data", {}) as Dictionary
+				out.append_array(_ref_checks(d, manifest, str(name)))
+				_collect_used_content(d, used_content)
+	# 3. 内容文件：损坏 JSON / function 码漂移 / 孤立内容
+	out.append_array(_content_checks(manifest, used_content))
+	return out
+
+## 收集全项目被实例绑定引用的内容 ID（objects[].functions[].content）。
+static func _collect_used_content(data: Dictionary, used: Dictionary) -> void:
+	for o in (data.get("objects", []) as Array):
+		if not (o is Dictionary):
+			continue
+		for f in ((o as Dictionary).get("functions", []) as Array):
+			if not (f is Dictionary):
+				continue
+			var cid := str((f as Dictionary).get("content", ""))
+			if cid != "":
+				used[cid] = true
+
+## 内容文件检查（全部警告级）：损坏 JSON；function 码漂移（清单改码后旧文件仍带旧码，
+## 写盘时按当前码重写自愈）；孤立内容（无任何实例引用，可能是复用库，只提醒）。
+static func _content_checks(manifest: Dictionary, used: Dictionary) -> Array:
+	var out: Array = []
+	var root := ContentStore.root_dir(manifest)
+	if root == "" or not DirAccess.dir_exists_absolute(root):
+		return out
+	for kind in ContentStore.declared_kinds(manifest):
+		var bad: Array = []
+		var items := ContentStore.read_all(manifest, kind, bad)
+		for b in bad:
+			out.append({
+				"kind": "content", "severity": "warning",
+				"path": "%s/%s" % [kind, str(b.get("name", ""))],
+				"message": "内容文件损坏（JSON 解析失败或非对象）",
+				"map": "", "jump": {},
+			})
+		var cur_code := str(FunctionDecls.fn_code(manifest, kind))
+		for cid in items:
+			var data: Dictionary = items[cid]
+			var fc := str(data.get("function", ""))
+			if cur_code != "" and fc != "" and fc != cur_code:
+				out.append({
+					"kind": "content", "severity": "warning",
+					"path": "%s/%s" % [kind, cid],
+					"message": "码漂移：内容记录的功能码 %s 与清单当前码 %s 不一致（改动任一字段即按当前码重写）" % [fc, cur_code],
+					"map": "", "jump": {},
+				})
+			if not used.has(cid):
+				out.append({
+					"kind": "content", "severity": "warning",
+					"path": "%s/%s" % [kind, cid],
+					"message": "孤立内容：没有任何实例引用（可能是复用库，确认后可删）",
+					"map": "", "jump": {},
+				})
 	return out
 
 ## 引用悬空检查：objects[].props 里 entity_ref/map_ref 声明字段的值指向不存在对象 = 警告。

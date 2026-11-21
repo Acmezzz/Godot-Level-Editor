@@ -636,6 +636,7 @@ src/
 | 功能引用未声明的条件 | 错误 |
 | 功能 `triggers` 不是数组或引用未声明的时机 / `timing` 不是对象或 `timing.mode` 不在 `instant`/`duration`/`continuous` | 错误 |
 | `playtest.flags/params` 结构错：id 空或重复 / name 空 / flags 缺 `arg` / params 的 `arg` 不含 `%d` | 错误 |
+| 顶层键形态错：`playCommand`/`godotExe`/`contentDir` 非 string、`contentDir` 含 `..` 或绝对路径、`screenSize` 不是 [w, h] 数值 | 错误 |
 
 有错误时清单整体作废，进项目错误页；只有警告时正常进入，警告挂在清单 `_warnings`。
 
@@ -663,7 +664,8 @@ src/
 - **入口**：地图菜单「检查项目完整性」（跑完自动展开列表）；抽屉标题「问题 N」常驻状态栏上方，
   点标题折叠 / 展开，「重扫」随时再跑。
 - **收集范围**：清单校验（10.1）+ 全部地图读盘校验（10.2）+ 引用悬空——`props` 里 `entity_ref`
-  指向本图不存在的实例码、`map_ref` 指向不存在的地图码 = **警告**（未填 = 合法状态不报）。
+  指向本图不存在的实例码、`map_ref` 指向不存在的地图码 = **警告**（未填 = 合法状态不报）
+  + 内容文件检查：损坏 JSON / function 码漂移 / 孤立内容 = **警告**。
 - **条目**：`{kind, severity, path, message, map, jump}`——地图问题点击**开图**；实例问题
   开图后**选中该实例**；清单问题只列出（纯数据收集器，抽屉只是呈现层）。
 - **已知边界**：不做「一键清除悬空引用」（只有跳转）；编辑器改动后**不自动重扫**（点「重扫」）。
@@ -693,7 +695,7 @@ godot --headless --path "<编辑器工程>" --script res://tests/run_tests.gd
 
 约定：套件 `extends "res://tests/_suite_base.gd"`，方法名 `test_` 开头即被发现；
 `ok()` / `eq()` 收集失败；**每个用例至少一条断言**（崩溃中断的用例断言数不增长，
-runner 判 FAIL——防止半路崩掉变成假 PASS）。退出码非 0 = 有失败。当前 10 套件 69 用例。
+runner 判 FAIL——防止半路崩掉变成假 PASS）。退出码非 0 = 有失败。当前 10 套件 71 用例。
 
 截图辅助 `tools/screenshot.gd`（模式清单见文件头注释）与警告扫描 `tools/warn_scan.gd`
 （headless 全量加载 src/ 校验可加载性）；`tools/migrate_project.gd` 是一次性迁移脚本
@@ -714,7 +716,7 @@ godot --headless --path "<编辑器工程>" --script res://tools/migrate_project
   正式保存另有 `maps/.history/*.1..3` 三轮备份。
 - 撤销快照是整图快照，大图（数千格 + 数百实体）连续操作仍有内存与耗时成本。
 - 校验只做静态数据检查，不验证运行时可达性（例如落点是否在实心碰撞里）。
-- 试玩**启动与进程跟踪**均基于 Windows（`cmd /c` 启动 + `tasklist` 轮询）；其它平台启动不可用，跟踪视为一直在运行。
+- 试玩**启动**按平台分支（Windows 走 `cmd /c`，其它平台走 `sh -c`）；**进程跟踪**仅 Windows（`tasklist` 轮询），其它平台视为一直在运行。
 - `trigger_zone`（事件）的 `w/h` 尺寸没有专用编辑控件，只能直接改地图 JSON；触发语义在绑定的 `functions[]`（timing + 时机码）。
 - 不做瓦片自动拼接（autotile）；碰撞自动生成是辅助功能，生成后仍可手改。
 - 无图集编辑器入口；新增瓦片组需要直接改清单。

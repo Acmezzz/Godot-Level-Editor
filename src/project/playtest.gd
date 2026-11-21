@@ -14,8 +14,12 @@ static func launch_tracked(m: Dictionary, map_path: String, extra_args: PackedSt
 		return {"ok": false, "error": "找不到游戏可执行文件: " + exe}
 	if not extra_args.is_empty():
 		cmd += " " + " ".join(extra_args)
-	# 经 cmd /c 执行整条命令（启动仅 Windows 可用；平台分支见 is_alive），模板里可以直接带引号与参数
-	var pid := OS.create_process("cmd", ["/c", cmd])
+	# Windows 经 cmd /c 执行整条命令（模板里可以直接带引号与参数）；其它平台经 sh -c
+	var pid := -1
+	if OS.get_name().begins_with("Windows"):
+		pid = OS.create_process("cmd", ["/c", cmd])
+	else:
+		pid = OS.create_process("/bin/sh", ["-c", cmd])
 	if pid == -1:
 		return {"ok": false, "error": "进程启动失败: " + cmd}
 	return {"ok": true, "error": "", "pid": pid}

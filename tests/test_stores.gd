@@ -3,6 +3,7 @@ extends "res://tests/_suite_base.gd"
 
 const MapStore := preload("res://src/map/map_store.gd")
 const ContentStore := preload("res://src/content/content_store.gd")
+const ProjectAudit := preload("res://src/project/project_audit.gd")
 
 const TMP := "user://test_stores_tmp"
 
@@ -10,18 +11,19 @@ func _fake_manifest() -> Dictionary:
 	return {"_dir": TMP, "_maps_dir": TMP.path_join("maps"), "contentDir": "content"}
 
 func _wipe() -> void:
-	if DirAccess.dir_exists_absolute(TMP):
-		DirAccess.remove_absolute(TMP)   # 递归删？remove_absolute 不递归——先清文件再删目录
-	for f in ["maps/t.json", "maps/t2.json", "content/f1/x.json", "content/f1/y.json", "maps/t.history.1.json"]:
-		var p := TMP.path_join(f)
+	_nuke(TMP)
+
+## 递归清临时目录（remove_absolute 不递归；写死文件清单每加一个测试就要补一次，改为一劳永逸）
+func _nuke(p: String) -> void:
+	if not DirAccess.dir_exists_absolute(p):
 		if FileAccess.file_exists(p):
 			DirAccess.remove_absolute(p)
-	if DirAccess.dir_exists_absolute(TMP.path_join("maps")):
-		DirAccess.remove_absolute(TMP.path_join("maps"))
-	if DirAccess.dir_exists_absolute(TMP.path_join("content")):
-		DirAccess.remove_absolute(TMP.path_join("content"))
-	if DirAccess.dir_exists_absolute(TMP):
-		DirAccess.remove_absolute(TMP)
+		return
+	for f in DirAccess.get_files_at(p):
+		DirAccess.remove_absolute(p.path_join(str(f)))
+	for d in DirAccess.get_directories_at(p):
+		_nuke(p.path_join(str(d)))
+	DirAccess.remove_absolute(p)
 
 func test_map_write_read_roundtrip() -> void:
 	_wipe()
@@ -47,6 +49,26 @@ func test_duplicate_map_reissue_code() -> void:
 	var c2 := str((d2.get("meta", {}) as Dictionary).get("code", ""))
 	ok(c2 != "", "复制图有码")
 	ok(c2 != c1, "复制图重发码（项目内唯一）")
+	_wipe()
+
+func test_content_drift_audit() -> void:
+	_wipe()
+	var m := _fake_manifest()
+	m["functions"] = [{"id": "f1", "name": "F", "code": "CURCOD", "fields": []}]
+	ok(ContentStore.write(m, "f1", "A1B2", {"name": "ok", "function": "CURCOD", "fields": {}}), "一致内容写入")
+	ok(ContentStore.write(m, "f1", "C3D4", {"name": "drift", "function": "OLDCODE", "fields": {}}), "漂移内容写入")
+	var all := ProjectAudit._content_checks(m, {"A1B2": true})
+	var drift := 0
+	var orphan := 0
+	for e in all:
+		var msg := str(e.get("message", ""))
+		if str(e.get("path", "")) == "f1/C3D4" and msg.contains("码漂移"):
+			drift += 1
+		if str(e.get("path", "")) == "f1/C3D4" and msg.contains("孤立"):
+			orphan += 1
+	eq(drift, 1, "码漂移警告")
+	eq(orphan, 1, "孤立内容警告")
+	eq(all.size(), 2, "一致且被引用的 A1B2 零警告（全部警告只来自 C3D4）")
 	_wipe()
 
 func test_content_write_read_roundtrip() -> void:
