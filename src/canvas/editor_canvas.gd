@@ -89,6 +89,8 @@ var tile_w := 16   # 格宽（像素）；tileSize 标量时 tile_h = tile_w
 var tile_h := 16   # 格高（像素）；矩形格 [w,h]（R-01 批 1c）
 var grid   # GridSpaceScript：格↔像素转换层（正交/等距），_cell_of 与落点换算走它
 var modified_flag := false
+## 文档操作互斥（A2）：保存确认/写入期间暂停撤销与重做，避免快照在写盘中途被恢复。
+var doc_busy := false
 var cam_pos := Vector2.ZERO      # 相机中心（世界坐标）
 var collision: TileMapLayer      # 碰撞图层（grid 型：只有隐形块）
 var coll_view: CollisionView     # 碰撞的可视节点（红色叠加），显隐由图层接口控制

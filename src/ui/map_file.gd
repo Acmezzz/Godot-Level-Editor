@@ -19,13 +19,60 @@ var _opened_mtime := 0   # A4.3：打开地图时记录的磁盘 mtime（保存�
 var _last_alive_poll := 0   # PF-04：存活轮询节流
 var _play_pid := 0
 var _play_started_msec: int = 0
+## 文档身份（A2）：切图/退出/保存都用它判断“当前请求是否仍是同一个文档”。
+## generation 每次切图自增；await 回来后代次不符 = 请求已过期，绝不发布图名/路径/基线。
+var _doc_generation := 0
+var _doc_project_root := ""
+## 打开/上次保存时目标文件的文本摘要（A2）：同秒同长度的外部改动靠它识别——
+## mtime 是秒级粒度，长度也可能撞巧，摘要才是可靠基线。
+var _opened_digest := ""
 ## 最近一次在新建/重命名弹窗里确认的名字（顶栏常驻名字框已移除，这里记住值供预填）
 var _name_memo := ""
+
+## 进入一次会影响当前文档的操作（新建/切图）：抬代数并返回本次代次。
+func _begin_doc_op() -> int:
+	_doc_generation += 1
+	return _doc_generation
+
+## 本次请求是否已过期（期间又切了图/退出了项目）。过期请求不得发布图名/路径。
+func _doc_stale(gen: int) -> bool:
+	return gen != _doc_generation
+
+## 文件内容摘要；不存在/打不开返回 ""。
+func _file_digest(path: String) -> String:
+	if path == "" or not FileAccess.file_exists(path):
+		return ""
+	var f := FileAccess.open(path, FileAccess.READ)
+	if f == null:
+		return ""
+	var d := f.get_as_text().sha256_text()
+	f.close()
+	return d
+
+## 项目 maps 目录内的未占用名字（D03）：外部地图导入绝不覆盖同名项目图。
+func _unique_map_name(base: String) -> String:
+	if not FileAccess.file_exists(EditorManifest.map_path(app.manifest, base)):
+		return base
+	var i := 2
+	while i < 1000:
+		var cand := "%s_%d" % [base, i]
+		if not FileAccess.file_exists(EditorManifest.map_path(app.manifest, cand)):
+			return cand
+		i += 1
+	return base + "_imported"
 
 ## 地图文件生命周期——新建/打开/保存/改名（纯改名，引用不迁移）/自动保存/试玩/尺寸/导出
 func confirm_discard(action: String) -> bool:
 	if not app.map_loaded or not app.canvas.modified_flag:
 		return true
+	# 确认框开着时冻结撤销/重做（A2）：期间 Ctrl+Z 把画布换掉，用户确认的就不是同一份内容
+	if app.canvas != null:
+		app.canvas.doc_busy = true
+	var answer := await _ask_discard(action)
+	_release_busy()
+	return answer
+
+func _ask_discard(action: String) -> bool:
 	var dlg := ConfirmationDialog.new()
 	dlg.title = "未保存的修改"
 	dlg.dialog_text = "地图 %s 有未保存修改。\n继续%s将丢失这些修改。" % [app.cur_map_name, action]
@@ -108,11 +155,16 @@ func create_map_from_dialog(name_edit: LineEdit, err_label: Label, pop: PopupPan
 	pop.hide()
 	if not await confirm_discard("新建"):
 		return
+	var gen := _begin_doc_op()
 	app.canvas.set_thumbs(app._entity_thumbs())
 	await app.canvas.load_data(MapStore.new_map(n, K.DEFAULT_MAP_W, K.DEFAULT_MAP_H), n)
+	if _doc_stale(gen):
+		return   # 期间又切了别的图：本次载入结果已被更新的一次重建取代
 	app.cur_map_name = n
 	app.cur_map_path = EditorManifest.map_path(app.manifest, n)
+	_doc_project_root = str(app.manifest.get("_dir", ""))
 	_opened_mtime = 0
+	_opened_digest = ""
 	app._sync_play_cfg_to_map()
 	app._set_map_loaded(true)
 	app.canvas.undo_stack.clear()
@@ -209,6 +261,7 @@ func rename_map_now(old_name: String, new_name: String, allow_write_unsaved := f
 		if app.canvas.map_data.has("meta"):
 			app.canvas.map_data["meta"]["name"] = nn
 		_opened_mtime = FileAccess.get_modified_time(new_path)
+		_opened_digest = _file_digest(new_path)
 		# 刚才已把内容写进新文件：脏标记与自动保存计时归零，
 		# 否则状态栏还挂着「未保存」、两分钟后又多写一份 .autosave.json。
 		if not on_disk:
@@ -232,6 +285,9 @@ func on_open() -> void:
 func load_map_file(p: String) -> void:
 	# load_data 是协程（节点重建中间 await 一帧）：必须等它完成，否则切图刚返回时
 	# 实体还在重建中——内容页 after_switch 刷新会拿到半重建的画布（列表/点选全乱）。
+	# 文档代次（A2）：双击/连续切图时只有最后一次请求可以发布图名与路径。
+	# 未保存确认在上层入口（打开/侧栏）做；这里只做真实载入。
+	var gen := _begin_doc_op()
 	var result: Dictionary = app.MapStore.read_path(p, app.manifest)
 	if not result.ok:
 		app._set_status(" 打开失败: " + _format_issues(result.errors))
@@ -256,15 +312,26 @@ func load_map_file(p: String) -> void:
 			"这张图不在当前项目的 maps 目录内：\n%s\n\n导入会把它复制为项目内的 %s.json。" % [canon, base],
 			"导入并打开"):
 			return
+		# D03：导入目标不能是已存在的项目图——同名不同内容时覆盖等于删掉别人的图
+		var target := _unique_map_name(base)
+		if target != base:
+			app._set_status(" 项目内已有同名地图，导入为 " + target + ".json")
+		base = target
 		if not app.MapStore.write(app.manifest, base, data):
 			app._set_status("导入失败：无法写入 " + EditorManifest.map_path(app.manifest, base))
 			return
 		p = EditorManifest.map_path(app.manifest, base)
 		canon = str(p).simplify_path()
-		app._set_status("已导入外部地图 → " + p)
+		if target == base:
+			app._set_status("已导入外部地图 → " + p)
+	if _doc_stale(gen):
+		return   # 读取/确认期间又发起了更新的切图请求：本次不再改画布
 	_opened_mtime = FileAccess.get_modified_time(p)
+	_opened_digest = _file_digest(p)
 	app.canvas.set_thumbs(app._entity_thumbs())
 	await app.canvas.load_data(data, base)
+	if _doc_stale(gen):
+		return
 	app.cur_map_name = base
 	app._sync_play_cfg_to_map()
 	app.cur_map_path = p
@@ -272,6 +339,8 @@ func load_map_file(p: String) -> void:
 	app._set_map_loaded(true)
 	app.canvas.undo_stack.clear()
 	app.canvas.redo_stack.clear()
+	# 画布重建成功后才发布项目根（A2）：外部导入/切项目期间路径已变，旧根不得残留
+	_doc_project_root = str(app.manifest.get("_dir", ""))
 	var tcount := 0
 	for lid in (data.get("tiles", {}) as Dictionary):
 		tcount += ((data.get("tiles", {}) as Dictionary)[lid] as Array).size()
@@ -295,6 +364,7 @@ func _effective_map_name() -> String:
 			app.cur_map_name = cname
 			app.cur_map_path = cpath
 			_opened_mtime = FileAccess.get_modified_time(cpath)
+			_opened_digest = _file_digest(cpath)
 			return cname
 	return n
 
@@ -304,29 +374,55 @@ func _effective_map_name() -> String:
 func commit_document(reason := "") -> Dictionary:
 	if app.canvas != null and app.canvas.has_method("end_gesture"):
 		app.canvas.end_gesture()
+	if app.canvas != null:
+		app.canvas.doc_busy = true   # 确认/写入期间冻结撤销与重做
 	var written: Array = []
-	# 1) 内容页正在编辑的连续控件值
-	if app.project_shell != null and app.project_shell.content_editor != null:
-		app.project_shell.content_editor.commit()
-	# 2) 清单补发的身份码（地图/内容引用它们之前必须落盘）
+	# 1) 清单补发的身份码（内容/地图引用它们之前必须落盘）：顺序不能和内容对调——
+	# 内容文件里带的是执行码，清单没写成功就写内容会留下查无对应的码。
 	if bool(app.manifest.get("_codes_issued", false)):
 		if not await app._save_manifest_file_async():
+			_release_busy()
 			return {"status": "cancelled", "written": written, "error": "清单补码保存被取消或失败"}
 		written.append("manifest")
+	# 2) 内容页正在编辑的连续控件值 + 暂存内容（新 ID/新绑定）
+	if app.project_shell != null and app.project_shell.content_editor != null:
+		var staged_before: bool = app.project_shell.content_editor.has_staged_content()
+		if not app.project_shell.content_editor.commit():
+			_release_busy()
+			return {"status": "failed", "written": written, "error": "暂存内容写盘失败"}
+		if staged_before:
+			written.append("content")
 	# 3) 地图
 	if app.map_loaded and app.canvas != null and app.canvas.modified_flag:
 		if not await on_save():
+			_release_busy()
 			return {"status": "failed", "written": written, "error": "地图保存失败"}
 		written.append("map")
+	_release_busy()
 	if reason != "":
 		app._set_status(" 已提交（%s）%s" % [reason, ("：" + ", ".join(PackedStringArray(written))) if not written.is_empty() else "：无待写改动"])
 	return {"status": "ok", "written": written, "error": ""}
 
+## 解除文档忙状态（保存失败/取消路径也必须走到，否则撤销永久失效）
+func _release_busy() -> void:
+	if app.canvas != null:
+		app.canvas.doc_busy = false
+
 ## 保存当前地图；返回是否成功（试玩前依赖它决定是否继续）
+## 直接入口（Ctrl+S）也冻结撤销/重做；已在 commit_document 内嵌套调用时沿用外层标记。
 func on_save() -> bool:
+	if app.canvas == null or app.canvas.doc_busy:
+		return await _save_now()
+	app.canvas.doc_busy = true
+	var ok := await _save_now()
+	_release_busy()
+	return ok
+
+func _save_now() -> bool:
 	if not app.map_loaded:
 		app._set_status(" 无地图：先新建或打开一张地图")
 		return false
+	var gen := _doc_generation   # 保存属于发起时的那个文档（A2）：等待后必须仍指向同一份
 	var n: String = _effective_map_name()
 	if n == "":
 		app._set_status(" 当前地图没有名字：先「新建地图」并填名字")
@@ -350,9 +446,21 @@ func on_save() -> bool:
 	if path == "":
 		app._set_status(" 地图名不合法: " + n)
 		return false
-	# 外部变更检测——打开后磁盘 mtime 变了 = 别处改过这份文件（本次保存会覆盖外部改动）
-	var ext_changed := _opened_mtime > 0 and FileAccess.file_exists(path) \
-		and FileAccess.get_modified_time(path) != _opened_mtime
+	# 保存期间项目/文档被换掉（确认框还开着时切了项目）：此时代次不同，写盘会落到别的项目
+	if _doc_stale(gen) or (_doc_project_root != "" and _doc_project_root != str(app.manifest.get("_dir", ""))):
+		app._set_status(" 保存中止：文档已切换，本次改动未写入")
+		return false
+	# 外部变更检测——打开后磁盘内容变了 = 别处改过这份文件（本次保存会覆盖外部改动）。
+	# 摘要优先（A2）：mtime 是秒级粒度，同秒同长度的外部编辑 mtime/长度都撞得上，只有内容摘要能识别。
+	var ext_changed := false
+	if FileAccess.file_exists(path):
+		var cur_digest := _file_digest(path)
+		if _opened_digest != "" and cur_digest != "":
+			ext_changed = cur_digest != _opened_digest
+		elif _opened_mtime > 0:
+			ext_changed = FileAccess.get_modified_time(path) != _opened_mtime
+	# 基线随确认更新：用户确认覆盖的就是「此刻这份内容」，之后若再被改才中止
+	var baseline := _opened_digest
 	if ext_changed:
 		# C-20：保存前确认而不是覆盖后提示——外部改动是别人的工作，覆盖是破坏性动作
 		if not await app._confirm_action("外部改动",
@@ -360,6 +468,11 @@ func on_save() -> bool:
 			"覆盖保存"):
 			app._set_status(" 已取消保存（保留磁盘上的外部改动）")
 			return false
+		baseline = _file_digest(path)
+	# 确认等待期间内容又被外部改过：避免「确认的是 A、覆盖的是 B」
+	if baseline != "" and FileAccess.file_exists(path) and _file_digest(path) != baseline:
+		app._set_status(" 保存中止：确认期间文件又被外部改写，请重新检查后再保存")
+		return false
 	# 写盘收敛到 MapStore 单入口（.tmp 原子替换，中途崩溃不留半截 JSON）；
 	# 写前校验不过时把首个错误带回状态栏，避免只看到「保存失败」无从下手。
 	if not app.MapStore.write(app.manifest, n, data):
@@ -367,7 +480,7 @@ func on_save() -> bool:
 		app._set_status(" 保存失败: %s%s" % [path, ("（%s）" % why) if why != "" else ""])
 		return false
 	_opened_mtime = FileAccess.get_modified_time(path)
-	# 画布与 app 的地图名必须同步：跨图配对/撤销等都以 app.canvas.cur_map_name 为来源
+	_opened_digest = _file_digest(path)
 	app.canvas.cur_map_name = n
 	app.canvas.map_data["meta"] = data.meta
 	app.cur_map_name = n
@@ -408,16 +521,29 @@ func on_play(spawn_tiles: Vector2i = Vector2i(-1, -1)) -> void:
 	if _effective_map_name() == "":
 		app._set_status(" 试玩前先「新建地图」并填名字")
 		return
-	if not await on_save():
-		app._set_status(" 试玩中止：地图未保存成功")
+	# 试玩只拿「成功提交后的项目内路径」（A2）：先走统一提交（清单码 → 内容 → 地图），
+	# 失败就停，避免游戏侧读到半套内容。
+	var res: Dictionary = await commit_document("试玩前提交")
+	if str(res.get("status", "")) != "ok":
+		app._set_status(" 试玩中止：" + str(res.get("error", "提交未完成")))
 		return
-	var res := Playtest.launch_tracked(app.manifest, app.cur_map_path, app._play_args(spawn_tiles))
-	if not res.get("ok", false):
-		app._set_status(" 试玩失败: " + str(res.get("error", "")))
+	# 新建后未标脏的图提交不会写盘：这里补一次正式保存，否则游戏侧收到不存在的路径
+	if not FileAccess.file_exists(str(app.cur_map_path)):
+		if not await on_save():
+			app._set_status(" 试玩中止：地图未保存成功")
+			return
+	var maps_root := str(app.manifest.get("_maps_dir", "")).simplify_path()
+	var play_path := str(app.cur_map_path).simplify_path()
+	if maps_root == "" or play_path == "" or not play_path.begins_with(maps_root.path_join("")):
+		app._set_status(" 试玩中止：地图不在当前项目 maps 目录内，拒绝启动")
 		return
-	_play_pid = int(res.get("pid", 0))
+	var play_res := Playtest.launch_tracked(app.manifest, play_path, app._play_args(spawn_tiles))
+	if not play_res.get("ok", false):
+		app._set_status(" 试玩失败: " + str(play_res.get("error", "")))
+		return
+	_play_pid = int(play_res.get("pid", 0))
 	_play_started_msec = Time.get_ticks_msec()
-	app._set_status(" 试玩启动: " + app.cur_map_path.get_file() + "（游戏退出后此处会提示）")
+	app._set_status(" 试玩启动: " + play_path.get_file() + "（游戏退出后此处会提示）")
 
 ## 试玩进程跟踪：退出后回报一次（Windows tasklist 轮询）
 

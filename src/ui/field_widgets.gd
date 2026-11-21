@@ -84,10 +84,17 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 					pending.v = int(v)
 				else:
 					pending.v = v)
+			# 未改动就提交时什么都不做（A2）：否则「空表单按 Ctrl+S」会先建出内容 ID
+			var initial := sp.value
 			var commit := func():
-				on_set.call(pending.v)
-			sp.get_line_edit().text_submitted.connect(func(_t: String): on_set.call(pending.v))
-			sp.get_line_edit().focus_exited.connect(func(): on_set.call(pending.v))
+				if float(pending.v) != initial:
+					on_set.call(pending.v)
+			sp.get_line_edit().text_submitted.connect(func(_t: String):
+				if float(pending.v) != initial:
+					on_set.call(pending.v))
+			sp.get_line_edit().focus_exited.connect(func():
+				if float(pending.v) != initial:
+					on_set.call(pending.v))
 			return {"ctl": sp, "commit": commit}
 		"string":
 			if not (value is String) and value != null:
@@ -100,13 +107,20 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 				te.custom_minimum_size = Vector2(0, 72)
 				te.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 				te.focus_exited.connect(func(): on_set.call(te.text))
-				return {"ctl": te, "commit": func(): on_set.call(te.text)}
+				var te0 := te.text
+				return {"ctl": te, "commit": func():
+					if te.text != te0:
+						on_set.call(te.text)}
 			var le := LineEdit.new()
 			le.text = str(value)
 			le.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 			le.text_submitted.connect(func(t: String): on_set.call(t.strip_edges()))
 			le.focus_exited.connect(func(): on_set.call(le.text.strip_edges()))
-			return {"ctl": le, "commit": Callable()}
+			# 单行文本也登记提交器：Ctrl+S 时即使焦点还在框里，也按当前文本落盘（A2）
+			var le0 := le.text
+			return {"ctl": le, "commit": func():
+				if le.text.strip_edges() != le0.strip_edges():
+					on_set.call(le.text.strip_edges())}
 		"color":
 			var cp := ColorPickerButton.new()
 			cp.color = Color(str(value) if str(value).begins_with("#") else "#ffffff")
@@ -137,7 +151,12 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 					pending.v[ai] = n)
 				sp.get_line_edit().focus_exited.connect(func(): on_set.call(pending.v.duplicate()))
 				h.add_child(sp)
-			return {"ctl": h, "commit": func(): on_set.call(pending.v.duplicate())}
+			var init_vv: Array = pending.v.duplicate()
+			# 没动过就提交 = 无操作（避免空表单保存时凭空创建内容，A2）
+			var commit_v := func():
+				if pending.v != init_vv:
+					on_set.call(pending.v.duplicate())
+			return {"ctl": h, "commit": commit_v}
 		"range":
 			# 数字之外的值（空串占位除外）只读展示——commit() 不能把它悄悄写成 min
 			if not (value is int or value is float):
@@ -170,13 +189,17 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 			num.value_changed.connect(func(n: float):
 				pending2.v = n
 				sl.value = n)
-			# 拖完滑杆/输入框失焦即提交，与 int/float 同一口径
-			sl.drag_ended.connect(func(_c: bool): on_set.call(pending2.v))
-			num.get_line_edit().focus_exited.connect(func(): on_set.call(pending2.v))
-			num.get_line_edit().text_submitted.connect(func(_t: String): on_set.call(pending2.v))
+			# 拖完滑杆/输入框失焦即提交，与 int/float 同一口径；未改动不提交（A2）
+			var init2 := sl.value
+			var commit2 := func():
+				if pending2.v != init2:
+					on_set.call(pending2.v)
+			sl.drag_ended.connect(func(_c: bool): commit2.call())
+			num.get_line_edit().focus_exited.connect(func(): commit2.call())
+			num.get_line_edit().text_submitted.connect(func(_t: String): commit2.call())
 			box.add_child(sl)
 			box.add_child(num)
-			return {"ctl": box, "commit": func(): on_set.call(pending2.v)}
+			return {"ctl": box, "commit": commit2}
 		"array":
 			# array.of ∈ 基础类型/choice（不嵌套 array）；非数组值只读展示——commit() 不能把坏值悄悄写成 []
 			var of := str(decl.get("of", ""))

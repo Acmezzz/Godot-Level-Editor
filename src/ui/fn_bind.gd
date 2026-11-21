@@ -28,8 +28,11 @@ var _add_menu: PopupMenu:
 	set(v): host._add_menu = v
 
 ## 同名包装方法（真实实现经 host 转发）
+## 这里所有调用点都是「改绑定前先冲刷控件值」，不能走完整 commit——
+## 那会把 staged 新内容提前写盘（只有正式保存/试玩才该落盘，A2）。
 func commit() -> bool:
-	return host.commit()
+	host.commit_fields()
+	return true
 func _current_fns() -> Array:
 	return host._current_fns()
 func _current_spr() -> EntityNode:

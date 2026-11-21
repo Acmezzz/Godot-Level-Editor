@@ -40,8 +40,10 @@ var _r_badge: PanelContainer:
 	get: return host._r_badge
 
 ## 同名包装方法（真实实现经 host 转发）
+## 表单内部调用点都是「换选择前先冲刷控件值」，不落 staged（A2）。
 func commit() -> bool:
-	return host.commit()
+	host.commit_fields()
+	return true
 func _current_fns() -> Array:
 	return host._current_fns()
 func _current_spr() -> EntityNode:
@@ -78,8 +80,11 @@ func _build_form_block() -> Control:
 	var content_id := str(f.get("content", ""))
 	var fn_label := str(FunctionDecls.function_name(manifest, fn_id)) if bool(ref.get("known", false)) \
 		else "(未声明的功能) " + str(f.get("fn", ""))
-	var cres := ContentStore.read_ex(manifest, fn_id, content_id) if content_id != "" and fn_id != "" \
-		else {"status": "missing", "data": {}, "error": ""}
+	var st0 = _staged.get(content_id, null)
+	var cres: Dictionary = {"status": "ok", "data": (st0.data as Dictionary).duplicate(true), "error": ""} \
+		if st0 is Dictionary and content_id != "" \
+		else (ContentStore.read_ex(manifest, fn_id, content_id) if content_id != "" and fn_id != "" \
+		else {"status": "missing", "data": {}, "error": ""})
 	var data: Dictionary = cres.data if str(cres.status) == "ok" else {}
 	var cname := str(data.get("name", "")) if not data.is_empty() else str(f.get("name", ""))
 
@@ -303,7 +308,22 @@ func _resolve_options(decl: Dictionary) -> Array:
 	return []
 
 
-## 字段改动：写内容文件。content 为空时首次改动即创建条目（ID 生成 + 绑定回写）。
+## 读内容：暂存中的条目优先（还没落盘），否则读盘。
+func _content_read(fn_id: String, cid: String) -> Dictionary:
+	var st = _staged.get(cid, null)
+	if st is Dictionary:
+		return (st.data as Dictionary).duplicate(true)
+	return ContentStore.read(manifest, fn_id, cid)
+
+## 写内容：暂存中的条目只更新内存（staged），已落盘的条目照旧即时写盘（field_edit 允许）。
+func _content_write(fn_id: String, cid: String, data: Dictionary) -> bool:
+	var st = _staged.get(cid, null)
+	if st is Dictionary:
+		(st as Dictionary)["data"] = data.duplicate(true)
+		return true
+	return ContentStore.write(manifest, fn_id, cid, data)
+
+## 字段改动：写内容文件。content 为空时生成 ID 并暂存（A2 staged）。
 ## 约定：字段值落在 content/<kind>/<id>.json，属「内容资产」而非地图快照——
 ## 不进画布撤销栈（撤销恢复的是地图，内容文件不回滚）；改绑定的路径（_set_parallel 等）
 ## 走 _write_fns 各自进撤销。连续控件只在失焦/回车提交。
@@ -316,7 +336,7 @@ func _set_field(i: int, fn_id: String, key: String, value) -> void:
 	if cid == "":
 		_ensure_failed()
 		return
-	var data: Dictionary = ContentStore.read(manifest, fn_id, cid)
+	var data: Dictionary = _content_read(fn_id, cid)
 	if data.is_empty():
 		data = _blank_content(fn_id, cid)
 	var fields: Dictionary = data.get("fields", {}) if data.get("fields", {}) is Dictionary else {}
@@ -324,7 +344,7 @@ func _set_field(i: int, fn_id: String, key: String, value) -> void:
 		return
 	fields[key] = value
 	data["fields"] = fields
-	if not ContentStore.write(manifest, fn_id, cid, data):
+	if not _content_write(fn_id, cid, data):
 		_ensure_failed()
 		return
 	_refresh_status_only()
@@ -350,13 +370,13 @@ func _commit_name(i: int, text: String) -> void:
 		_write_fns(spr0, fns)
 		_refresh_status_only()
 		return
-	var data: Dictionary = ContentStore.read(manifest, fn_id, cid)
+	var data: Dictionary = _content_read(fn_id, cid)
 	if data.is_empty():
 		return
 	if str(data.get("name", "")) == nm:
 		return
 	data["name"] = nm
-	if not ContentStore.write(manifest, fn_id, cid, data):
+	if not _content_write(fn_id, cid, data):
 		_ensure_failed()
 		return
 	var spr := _current_spr()
@@ -381,8 +401,10 @@ func _function_code_drift(data: Dictionary, fn_id: String) -> String:
 		return ""
 	return stored
 
-## 保证该附加功能有 content id：没有就生成并写一条空内容 + 回写绑定。
-## 返回空串 = 生成/写盘失败（调用方给出可见反馈，不静默吞掉）。
+## 保证该附加功能有 content id：已有绑定直接返回；没有就生成新 ID 但**不写盘**（A2 staged）——
+## 新内容要等正式保存/试玩走 commit_document 才落地，避免「打开表单看一眼」就凭空生成文件。
+## 暂存信息记在 _staged[fn_code] 里，由 flush_staged() 在正式提交时写入。
+## 返回空串 = 生成失败（调用方给出可见反馈，不静默吞掉）。
 func _ensure_content(i: int) -> String:
 	var fns := _current_fns()
 	if i < 0 or i >= fns.size():
@@ -402,15 +424,36 @@ func _ensure_content(i: int) -> String:
 	var nm := str(f.get("name", "")) if str(f.get("name", "")) != "" else fn_id
 	var data := _blank_content(fn_id, new_id)
 	data["name"] = nm
-	if not ContentStore.write(manifest, fn_id, new_id, data):
-		return ""
+	# 暂存：只在内存登记，等正式提交再写（staged）
+	_staged[new_id] = {"fn_id": fn_id, "data": data, "ent": spr.code, "bind_index": i}
+	app._set_status(" 新内容 %s 已暂存：Ctrl+S 或试玩时落盘" % new_id)
 	fns = fns.duplicate(true)
 	(fns[i] as Dictionary)["content"] = new_id
 	(fns[i] as Dictionary)["name"] = nm
-	_write_fns(spr, fns)
+	# 新绑定也先写进画布（内存），它同样属于 staged 范围；正式提交时随地图一起落盘
+	host._write_fns(spr, fns)
 	if _form_id_edit != null:
 		_form_id_edit.text = new_id
 	return new_id
+
+## 暂存内容：{content_id: {fn_id, data, ent, bind_index}}。正式提交时 flush_staged 写入。
+var _staged := {}
+
+## 把暂存内容写盘（A2 正式提交调用）。全部成功返回 true；任一失败停下并保留剩余暂存。
+func flush_staged() -> bool:
+	if _staged.is_empty():
+		return true
+	var ids: Array = _staged.keys()
+	for cid in ids:
+		var st: Dictionary = _staged[cid]
+		if not ContentStore.write(manifest, str(st.fn_id), str(cid), st.data):
+			_ensure_failed()
+			return false
+		_staged.erase(cid)
+	return true
+
+func has_staged() -> bool:
+	return not _staged.is_empty()
 
 ## 写盘失败：状态栏 + 徽章双重提示（红色徽章在右栏顶部，不依赖状态栏可见性）
 ## 不再一律甩「目录权限」——真实失败原因多半是身份码没生成或 kind 不合法。
@@ -450,6 +493,10 @@ func _open_lib(i: int) -> void:
 	var pop: PopupPanel = shell.pop
 	var body: VBoxContainer = shell.body
 	var ids := ContentStore.list_ids(manifest, fn_id)
+	# 暂存中的新内容也列进来（还没落盘，但用户可以复用）
+	for sid in _staged:
+		if str((_staged[sid] as Dictionary).get("fn_id", "")) == fn_id and not ids.has(sid):
+			ids.append(sid)
 	if ids.is_empty():
 		body.add_child(Kit.empty_state("◌", "这个功能还没有已有内容",
 			"先在别的实例里填一条，或直接在新实例里新建"))
@@ -491,7 +538,7 @@ func _open_lib(i: int) -> void:
 
 ## 复制成新 ID：深拷贝 fields，name 用弹窗里填的；追加到实例附加功能末尾并选中。
 func _duplicate_from_lib(fn_id: String, old_id: String, new_name: String) -> void:
-	var src := ContentStore.read(manifest, fn_id, old_id)
+	var src := _content_read(fn_id, old_id)
 	if src.is_empty():
 		app._set_status(" 读不到内容 %s（文件缺失或损坏）" % old_id)
 		return
@@ -515,9 +562,8 @@ func _duplicate_from_lib(fn_id: String, old_id: String, new_name: String) -> voi
 		data["fields"] = {}
 	if not (data.get("steps", null) is Array):
 		data["steps"] = []
-	if not ContentStore.write(manifest, fn_id, new_id, data):
-		app._set_status(" 写盘失败: content/%s/%s.json" % [fn_id, new_id])
-		return
+	# 新内容 + 新绑定都属于 staged 范围（A2）：先暂存，等正式保存/试玩再落盘
+	_staged[new_id] = {"fn_id": fn_id, "data": data, "ent": spr.code, "bind_index": -1}
 	commit()   # 复制库内容前先落盘当前表单待提交值（下标保持有效）
 	var fns := _current_fns().duplicate(true)
 	# 绑定里写执行码；码由 ensure_codes 保证非空

@@ -127,13 +127,15 @@ func _label_of(view: String) -> String:
 func save_current() -> void:
 	match _view:
 		"content":
-			# 新内容编辑器改动即时写盘，commit 只回报成功与否
-			content_editor.commit()
+			# 先冲刷连续控件值，再把 staged 的新内容/新绑定写盘（A2 正式提交点）
+			var ok: bool = content_editor.commit()
 			# 加载清单时补发过执行码（D6）：内容文件此刻已带新码，清单也必须落盘，
 			# 否则磁盘上「内容里的码」在清单里查无对应，游戏侧重建映射直接断链。
 			if bool(manifest.get("_codes_issued", false)):
 				save_manifest.call()
 				_set_status("内容已保存；清单补发的新码已一并写回")
+			elif not ok:
+				_set_status("内容保存失败：暂存内容仍在，修好后重试")
 			else:
 				_set_status("内容已保存（改动即时写盘）")
 		_:

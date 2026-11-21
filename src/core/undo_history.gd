@@ -40,8 +40,9 @@ var _restoring := false
 
 ## 返回是否真的撤销了（空栈时调用方要给「没有可撤销的操作」而不是假反馈）。
 ## 脏标记与 modified.emit 由 load_data(keep_dirty=true) 统一处理，不再自己置脏。
+## 文档保存/切图期间（doc_busy）一律拒绝：写盘中途恢复快照会让落盘内容与画布不一致。
 func undo() -> bool:
-	if _restoring or cvs.map_root == null or not is_instance_valid(cvs.map_root) or cvs.undo_stack.is_empty():
+	if cvs.doc_busy or _restoring or cvs.map_root == null or not is_instance_valid(cvs.map_root) or cvs.undo_stack.is_empty():
 		return false
 	_restoring = true
 	cvs.redo_stack.append(_snapshot())
@@ -51,7 +52,7 @@ func undo() -> bool:
 
 
 func redo() -> bool:
-	if _restoring or cvs.map_root == null or not is_instance_valid(cvs.map_root) or cvs.redo_stack.is_empty():
+	if cvs.doc_busy or _restoring or cvs.map_root == null or not is_instance_valid(cvs.map_root) or cvs.redo_stack.is_empty():
 		return false
 	_restoring = true
 	cvs.undo_stack.append(_snapshot())

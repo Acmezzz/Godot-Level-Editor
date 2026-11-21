@@ -152,7 +152,7 @@ func _steps_data() -> Dictionary:
 	if str(_resolve_fn(fns[_steps_i]).get("id", "")) != _steps_fn_id:
 		return {}
 	var cid := str((fns[_steps_i] as Dictionary).get("content", ""))
-	return ContentStore.read(manifest, _steps_fn_id, cid) if cid != "" else {}
+	return host.read_content_staged(_steps_fn_id, cid) if cid != "" else {}
 
 ## 写回演出内容；失败给可见反馈，不静默吞掉。
 func _steps_write(data: Dictionary) -> void:
@@ -165,7 +165,7 @@ func _steps_write(data: Dictionary) -> void:
 	var cid := str((fns[_steps_i] as Dictionary).get("content", ""))
 	if cid == "":
 		return
-	if not ContentStore.write(manifest, _steps_fn_id, cid, data):
+	if not host.write_content_staged(_steps_fn_id, cid, data):
 		_ensure_failed()
 
 ## 重建子面板：页签同步 + 列表/时间轴互斥重建 + 当前步骤表单。

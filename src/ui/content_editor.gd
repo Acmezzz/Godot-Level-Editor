@@ -207,14 +207,23 @@ func refresh_list(focus := "") -> void:
 	if _preview != null:
 		_preview.refresh()
 
-## Ctrl+S / 切视图：把还没失焦提交的连续控件改动统一写盘，避免 Esc 或直接切走时丢改动。
-func commit() -> bool:
+## 只冲刷连续控件值（切视图/离开内容页）：不落 staged 新内容——新 ID/新绑定
+## 必须等正式保存或试玩（A2），否则来回切视图就凭空生成内容文件。
+func commit_fields() -> void:
 	var pend := _pending_commits.duplicate()
 	_pending_commits.clear()
 	for cb in pend:
 		if cb is Callable and (cb as Callable).is_valid():
 			(cb as Callable).call()
-	return true
+
+## Ctrl+S / 正式提交：冲刷控件值后再把 staged 内容写盘（A2 正式提交点）。
+func commit() -> bool:
+	commit_fields()
+	return _form.flush_staged()
+
+## 是否有尚未落盘的暂存内容（新 ID / 新绑定）；正式提交/试玩据此判定。
+func has_staged() -> bool:
+	return _form.has_staged()
 
 ## 待提交的连续控件提交器（SpinBox / 多行文本）：拖值/输入期间只记内存，
 ## 失焦或 commit() 才写内容文件。由 field_widgets.build() 产出，值未变时下游会幂等跳过。
@@ -606,6 +615,22 @@ func _open_lib(i: int) -> void:
 	_form._open_lib(i)
 func _ensure_content(i: int) -> String:
 	return _form._ensure_content(i)
+
+## 暂存内容是否还有未落盘的（project_shell 的 Ctrl+S 用它给 staged 反馈）
+func has_staged_content() -> bool:
+	return _form.has_staged()
+
+## 正式提交：把暂存内容写盘（A2）。失败时返回 false 并保留暂存。
+func flush_staged_content() -> bool:
+	return _form.flush_staged()
+
+## 暂存感知的内容读写（steps_panel 用）：刚 staged 的新内容还没落盘，
+## 直接 ContentStore.read 会读到空，编辑步骤就会丢掉。
+func read_content_staged(fn_id: String, cid: String) -> Dictionary:
+	return _form._content_read(fn_id, cid)
+
+func write_content_staged(fn_id: String, cid: String, data: Dictionary) -> bool:
+	return _form._content_write(fn_id, cid, data)
 func _ensure_failed() -> void:
 	_form._ensure_failed()
 func _refresh_status_only() -> void:

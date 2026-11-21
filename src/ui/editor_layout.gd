@@ -506,11 +506,11 @@ func _diagonal_shape_label(s: String) -> String:
 
 func _refresh_view_toggles() -> void:
 	if _grid_btn:
-		_grid_btn.button_pressed = app.canvas.show_grid
+		_grid_btn.set_pressed_no_signal(app.canvas.show_grid)
 	if _select_btn:
-		_select_btn.button_pressed = app.canvas != null and app.canvas.select_mode
+		_select_btn.set_pressed_no_signal(app.canvas != null and app.canvas.select_mode)
 	if _snap_btn:
-		_snap_btn.button_pressed = app.canvas == null or app.canvas.snap_to_grid
+		_snap_btn.set_pressed_no_signal(app.canvas == null or app.canvas.snap_to_grid)
 	_refresh_layer_panel()
 	_refresh_sel_bar()
 
@@ -569,7 +569,9 @@ func _refresh_sel_bar() -> void:
 		_sel_state.text = "%d 个附加功能" % count
 		_sel_state.add_theme_color_override("font_color", app.UiThemeScript.ACCENT_HI)
 	if _sel_eye:
-		_sel_eye.button_pressed = n.visible_flag
+		# 静默回填（A2）：普通赋值会发 toggled → _toggle_sel_visible 再压撤销步 + 置脏，
+		# 结果是「一选中实体地图就变脏」。
+		_sel_eye.set_pressed_no_signal(n.visible_flag)
 	_sel_bar.visible = true
 
 ## 眼睛开关：切换选中实例的编辑器可见性（objects[].visible，游戏侧忽略）。

@@ -102,3 +102,40 @@ func test_v7_tile_alt_float_rejected() -> void:
 	ok(bool((mk.call(5.0) as Dictionary).ok), "整数值 5.0 接受")
 	ok(not bool((mk.call(5.5) as Dictionary).ok), "5.5 拒绝")
 	ok(not bool((mk.call(8) as Dictionary).ok), "8 拒绝")
+
+## A2 写失败注入：地图写不过时文件保持原内容，修好目标后同 ID 可重试成功。
+func test_map_write_failure_keeps_old_and_retries() -> void:
+	_wipe()
+	var m := _fake_manifest()
+	DirAccess.make_dir_recursive_absolute(str(m._maps_dir))
+	var d := MapStore.new_map("w", 8, 8)
+	ok(MapStore.write(m, "w", d), "首次写入成功")
+	var path := str(m._maps_dir).path_join("w.json")
+	var before := FileAccess.get_file_as_string(path)
+	# 注入失败：目标路径变成目录 → .tmp 换名必失败
+	var blocked := str(m._maps_dir).path_join("w.json.tmp")
+	DirAccess.make_dir_recursive_absolute(blocked)
+	d.meta.name = "w2"
+	ok(not MapStore.write(m, "w", d), "写失败被报告（不是静默成功）")
+	eq(FileAccess.get_file_as_string(path), before, "失败后原文件内容不变")
+	# 解除阻塞后同 ID 重试
+	_nuke(blocked)
+	d.meta.name = "w"
+	ok(MapStore.write(m, "w", d), "解除阻塞后同 ID 重试成功")
+	_wipe()
+
+## A2：写前校验失败以错误码拒绝，且不产生/不覆盖目标文件。
+func test_map_write_rejects_bad_data() -> void:
+	_wipe()
+	var m := _fake_manifest()
+	DirAccess.make_dir_recursive_absolute(str(m._maps_dir))
+	var d := MapStore.new_map("v", 8, 8)
+	# 重复层 id = 结构性错误（校验器必拒）
+	var layers: Array = d.meta.layers
+	d.meta.layers = [layers[0], (layers[1] as Dictionary).duplicate(true)]
+	(d.meta.layers[1] as Dictionary)["id"] = str((layers[0] as Dictionary).get("id"))
+	var path := str(m._maps_dir).path_join("v.json")
+	ok(not MapStore.write(m, "v", d), "非法数据拒绝写入")
+	ok(not FileAccess.file_exists(path), "拒绝时不生成目标文件")
+	ok(MapStore.write_error(m, d) != "", "给出首个错误原因")
+	_wipe()

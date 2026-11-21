@@ -579,9 +579,10 @@ var asset_panel = null
 ## 模式切换：mode = map（关卡编辑器）/ content（内容编辑器）/ asset（资产目录）。
 ## 三个面板是平级关系，顶栏三个入口直接切，Esc 回关卡编辑器。
 func _set_mode(mode: String, focus_sid := "") -> void:
-	# 离开内容页前提交待提交的 SpinBox 值（连续控件失焦才写盘，直接 Esc 切走会丢）
+	# 离开内容页前提交待提交的 SpinBox 值（连续控件失焦才写盘，直接 Esc 切走会丢）；
+	# 只冲刷控件值，暂存的新内容留到正式保存/试玩（A2）。
 	if mode != "content" and project_shell != null and project_shell.content_editor != null:
-		project_shell.content_editor.commit()
+		project_shell.content_editor.commit_fields()
 	var on_map := mode == "map"
 	if _map_view:
 		_map_view.visible = on_map
