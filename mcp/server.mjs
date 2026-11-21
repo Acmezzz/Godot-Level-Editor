@@ -43,7 +43,7 @@ const TOOLS = [
   },
   {
     name: 'run_tests',
-    description: '跑 tests/run_tests.gd 全套（当前 73 用例）。返回 {passed, failed, failures[], output_tail}',
+    description: '跑 tests/run_tests.gd 全套（当前 74 用例）。返回 {passed, failed, failures[], output_tail}',
     inputSchema: { type: 'object', properties: {} },
   },
   {

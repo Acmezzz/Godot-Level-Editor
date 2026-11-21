@@ -63,3 +63,21 @@ func test_grid_primitives_iso() -> void:
 		ok(floori(back.x) == c.x and floori(back.y) == c.y, "等距中心命中格 %s" % str(c))
 		var poly: PackedVector2Array = g.cell_polygon(c)
 		ok(poly.size() == 4 and Geometry2D.is_point_in_polygon(ctr, poly), "等距菱形含中心 %s" % str(c))
+
+func test_grid_hex() -> void:
+	var g = GridSpaceScript.new(Vector2i(16, 16), "hexagonal")
+	eq(g.cell_center_px(Vector2i(0, 0)), Vector2(8, 8), "六边 (0,0) 中心（探针实测）")
+	eq(g.cell_center_px(Vector2i(0, 1)), Vector2(16, 20), "六边 (0,1) 中心 = 奇行错 +w/2")
+	eq(g.cell_center_px(Vector2i(2, 0)), Vector2(40, 8), "六边 (2,0) 中心")
+	eq(g.cell_center_px(Vector2i(1, 1)), Vector2(32, 20), "六边 (1,1) 中心")
+	eq(g.to_grid(Vector2(16, 18)), Vector2(0, 1), "六边非中心点 = 最近中心命中")
+	for c in [Vector2i(0, 0), Vector2i(3, 1), Vector2i(-1, 2), Vector2i(5, 4)]:
+		var ctr = g.cell_center_px(c)
+		eq(g.to_grid(ctr), Vector2(c), "六边中心往返 %s" % str(c))
+		var poly: PackedVector2Array = g.cell_polygon(c)
+		ok(poly.size() == 6 and Geometry2D.is_point_in_polygon(ctr, poly), "六边六角含中心 %s" % str(c))
+	eq(g.cell_tex_rect(Vector2i(0, 0), Vector2i(16, 16)), Rect2(Vector2(0, 0), Vector2(16, 16)), "六边纹理中心居中")
+	var gp: PackedVector2Array = g.grid_polygon(Vector2i(0, 0), Vector2i(2, 1))
+	eq(gp, PackedVector2Array([Vector2(0, 0), Vector2(32, 0), Vector2(32, 16), Vector2(0, 16)]), "六边格矩形 = 四角 cell 包围盒")
+	var segs: PackedVector2Array = g.grid_lines(Rect2(0, 0, 48, 48), Rect2i(0, 0, 3, 3))
+	ok(segs.size() == 80, "六边格线 40 段 = 80 点")

@@ -44,7 +44,7 @@ static func validate(data: Dictionary, project_dir := "") -> Array[Dictionary]:
 	var tile_size = data.get("tileSize", 16)
 	if not (tile_size is int or tile_size is float) or float(tile_size) <= 0.0:
 		_add(issues, "error", "tileSize", "must be a positive number")
-	# C-15 混投影：画布口径是「任一 tile 资产声明 isometric 即整图等距」，混用会静默错位——警告
+	# C-15 混投影：画布口径是「任一 tile 资产声明非正交投影即整图按它」，混用会静默错位——警告
 	var projs := {}
 	var assets_arr = data.get("assets", null)
 	if assets_arr is Array:
@@ -457,10 +457,10 @@ static func _validate_scene_asset(ad: Dictionary, path: String, project_dir: Str
 			_add(issues, "error", path + ".texture", "path cannot traverse outside the project")
 	if atlas != "" and texture != "":
 		_add(issues, "error", path, "scene asset must declare exactly one of atlas / texture")
-	# 网格投影枚举校验；混投影（正交+等距混用）在 validate() 尾部统一给警告
+	# 网格投影枚举校验；混投影（不同投影混用）在 validate() 尾部统一给警告
 	var gp := str(ad.get("gridProjection", "orthogonal"))
-	if gp != "orthogonal" and gp != "isometric":
-		_add(issues, "error", path + ".gridProjection", "must be \"orthogonal\" or \"isometric\"")
+	if gp != "orthogonal" and gp != "isometric" and gp != "hexagonal":
+		_add(issues, "error", path + ".gridProjection", "must be \"orthogonal\" or \"isometric\" or \"hexagonal\"")
 
 static func _validate_entity_asset(data: Dictionary, ad: Dictionary, path: String,
 		codes: Dictionary, issues: Array[Dictionary]) -> void:

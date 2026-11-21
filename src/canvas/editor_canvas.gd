@@ -452,14 +452,15 @@ func _cell_of(pos: Vector2) -> Vector2i:
 	var g: Vector2 = grid.to_grid(pos)
 	return Vector2i(floori(g.x), floori(g.y))
 
-## 地图投影：任一瓦片资产声明 isometric 即整图等距（混投影由清单校验给警告）。
+## 地图投影：任一瓦片资产声明 isometric/hexagonal 即整图按该投影（混投影由清单校验给警告）。
 func _map_projection() -> String:
 	for a in _tile_assets:
-		if str((a as Dictionary).get("gridProjection", "orthogonal")) == "isometric":
-			return "isometric"
+		var gp := str((a as Dictionary).get("gridProjection", "orthogonal"))
+		if gp == "isometric" or gp == "hexagonal":
+			return gp
 	return "orthogonal"
 
-## 格空间方向向量 → 像素位移（方向键微调/原位复制的格对齐移动；正交 = 轴对齐，等距沿菱形方向）
+## 格空间方向向量 → 像素位移（方向键微调/原位复制的格对齐移动；正交 = 轴对齐，等距沿菱形方向，六边沿格中心连线）
 func grid_dir_px(dx: int, dy: int) -> Vector2:
 	return grid.to_px(Vector2(dx, dy)) - grid.to_px(Vector2.ZERO)
 
