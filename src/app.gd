@@ -69,16 +69,24 @@ func _ready() -> void:
 	_map_dialogs_ctrl = MapDialogs.new(self)
 	_load_prefs()
 	_load_projects()
-	_layout_ctrl = preload("res://src/ui/editor_layout.gd").new(self)
-	_side_actions_ctrl = preload("res://src/map/side_actions.gd").new(self)
-	_palette_ctrl = preload("res://src/ui/palette_panel.gd").new(self)
-	_build_theme()
+	_ensure_editor_controllers()
 	manifest = _load_last_project()
 	get_tree().auto_accept_quit = false
 	if manifest.is_empty() or manifest.has("_error"):
 		_show_picker(manifest.get("_error", ""))
 	else:
-		_build_editor_ui()
+		_enter_project(cur_project_dir, manifest)
+
+## 首次进入或项目切换后重建编辑器控制器；选择页阶段不提前创建，
+## 避免布局控制器在宿主没有项目上下文时被误用（A1/E00）。
+func _ensure_editor_controllers() -> void:
+	if _layout_ctrl == null:
+		_layout_ctrl = preload("res://src/ui/editor_layout.gd").new(self)
+	if _side_actions_ctrl == null:
+		_side_actions_ctrl = preload("res://src/map/side_actions.gd").new(self)
+	if _palette_ctrl == null:
+		_palette_ctrl = preload("res://src/ui/palette_panel.gd").new(self)
+	_build_theme()
 
 ## 启动时尝试打开上次的项目；失败返回 {} 或带 _error 的字典（选择页据此显示原因）。
 func _load_last_project() -> Dictionary:
@@ -153,12 +161,26 @@ func _open_export_dialog() -> void:
 	_map_dialogs_ctrl.open_export_dialog()
 
 ## 切换项目：有未保存修改先确认，然后回选择页。
-## 回选择页会 free 掉整个编辑器界面（画布/三面板），切项目后由 _build_editor_ui 全量重建，
+## 回选择页会 free 掉整个编辑器界面（画布/三面板）；再进项目统一走 _enter_project，
 ## 不残留上一个项目的清单、缩略图、地图路径与撤销栈。
 func _switch_project() -> void:
 	if map_loaded and canvas != null and canvas.modified_flag:
 		if not await _confirm_discard("切换项目"):
 			return
+	_clear_project_session()
+	_picker_ctrl.show_picker()
+
+## 项目进入唯一入口：启动恢复、选择页手选都走这里。
+## 控制器必须先建好，_build_editor_ui 才不会打到空宿主（E00/D05）。
+func _enter_project(dir: String, loaded_manifest: Dictionary) -> void:
+	_clear_project_session()
+	manifest = loaded_manifest
+	_ent_thumbs_cache.clear()
+	_picker_ctrl.remember_project(dir, str(manifest.get("projectName", "")))
+	_build_editor_ui()
+
+## 释放当前项目会话。控制器随界面一起失效，必须全部清空。
+func _clear_project_session() -> void:
 	manifest = {}
 	cur_map_path = ""
 	_cur_map_name = ""
@@ -177,7 +199,6 @@ func _switch_project() -> void:
 	_palette_ctrl = null
 	_nav_bars.clear()
 	_ent_thumbs_cache.clear()
-	_show_picker()
 
 # —— 试玩配置（每图独立）：初始能力/血量，存编辑器用户数据不污染地图 JSON ——
 var play_cfg := {}                 # 当前图试玩配置 {flag_id: bool, param_id: int}（清单 playtest 声明驱动）
@@ -379,7 +400,7 @@ func _shortcut_input(event: InputEvent) -> void:
 				get_viewport().set_input_as_handled()
 		KEY_R:
 			# 瓦片笔刷变换（v7）：R 循环旋转档位；摆放模式 = 选中实例旋转 90°（互不冲突）
-			if canvas.place_kind == "tile":
+			if canvas.place_kind == "tiles":
 				canvas.cycle_tile_rotation()
 				get_viewport().set_input_as_handled()
 			elif canvas.rotate_selected_90():
@@ -392,7 +413,7 @@ func _shortcut_input(event: InputEvent) -> void:
 				get_viewport().set_input_as_handled()
 		KEY_X:
 			# 纯 X = 瓦片水平翻转（Ctrl+X 剪切在上面已提前返回，不会到这里）
-			if canvas.place_kind == "tile":
+			if canvas.place_kind == "tiles":
 				canvas.toggle_tile_flip()
 				get_viewport().set_input_as_handled()
 		KEY_EQUAL:
@@ -646,6 +667,7 @@ func _on_ent_pick(i: int, _at: Vector2 = Vector2.ZERO, _mb: int = 0) -> void:
 	_editor_state_ctrl._on_ent_pick(i, _at, _mb)
 ## —— 拆到 src/ui/editor_layout.gd 的委托（调用点保持不变） ——
 func _build_editor_ui() -> void:
+	_ensure_editor_controllers()
 	_layout_ctrl._build_editor_ui()
 
 func _set_palette_page(which: String) -> void:

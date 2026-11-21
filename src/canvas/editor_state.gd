@@ -35,18 +35,25 @@ func _sync_ui() -> void:
 	elif app.canvas.place_kind == "tiles":
 		app._set_palette_page("tiles")
 	else:
-		app._set_palette_page("entities")
+		app._set_palette_page(app._palette_ctrl.current_category())
 	app._refresh_tool_meta()
 	app._sync_layer_buttons()
 	app._refresh_view_toggles()
 
-## 碰撞类型/形状下拉与画布笔刷状态对齐（画布是唯一真相）
+## 碰撞类型/形状下拉与画布笔刷状态对齐（画布是唯一真相）。
+## 笔刷类型不在合法池里（缺省 solid、切项目换池）时，下行回落到首个合法类型，
+## 避免「下拉显示首项、实际涂的却是池里没有的 solid」。
 func _sync_collision_controls() -> void:
-	if app._coll_type_opt != null:
+	if app._coll_type_opt != null and app._coll_type_opt.item_count > 0:
+		var found := false
 		for i in app._coll_type_opt.item_count:
 			if str(app._coll_type_opt.get_item_metadata(i)) == app.canvas.collision_type:
 				app._coll_type_opt.select(i)
+				found = true
 				break
+		if not found:
+			app._coll_type_opt.select(0)
+			app.canvas.collision_type = str(app._coll_type_opt.get_item_metadata(0))
 	if app._coll_shape_opt != null:
 		for i in app._coll_shape_opt.item_count:
 			if str(app._coll_shape_opt.get_item_metadata(i)) == app.canvas.collision_shape:

@@ -9,22 +9,39 @@ extends RefCounted
 ## 画布落笔时用 asset id 查 source_id——磁盘数据也写 asset id，不再依赖清单数组序。
 
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
+const EntityNodeRef := preload("res://src/canvas/entity_node.gd")
 
 var app   # 宿主
 var _cat := ""          # 当前视图："" = 类别视图；非空 = 资产视图（该类别名）
 var _cats := []         # [{name, count}]，按首次出现顺序
 var _atlas := 0         # 当前图集上下文；多图集时 -1 = 顶层图集列表
+var _place_category := "tiles"  # tiles / images / entities
 
 func _init(host) -> void:
 	app = host
 
+func set_category(cat: String) -> void:
+	_place_category = cat
+	if cat == "tiles":
+		fill_tiles()
+	else:
+		fill_placeables(cat)
+
+func current_category() -> String:
+	return _place_category
+
 func fill_all() -> void:
 	_cat = ""
 	_atlas = 0
-	fill_tiles()
-	fill_entities()
+	if _place_category == "tiles":
+		fill_tiles()
+	else:
+		fill_placeables(_place_category)
 
-## 瓦片调色板：多图集 → 图集级导航；单图集行为不变。
+## 刷新当前类别（切层/切分类/新建资产后都走这里，避免两条列表各自带旧 UI 状态）
+func refresh_current() -> void:
+	set_category(_place_category)
+
 func fill_tiles() -> void:
 	var tl: ItemList = app.tile_list
 	# 重填前先清掉上一次的空状态覆盖，别让它盖住瓦片
@@ -202,26 +219,45 @@ func _add_mru_rows(tl: ItemList) -> void:
 		tl.set_item_metadata(itm, {"auto": false, "cell": cellm, "asset": aid})
 
 ## 实体调色板：全部 kind=entity 的资产。
-## 有 thumb 用缩略图；没有的按 visual 声明画占位（此前无 thumb 直接 continue，
-## 声明了却看不见——等于不能放）。
-func fill_entities() -> void:
+## 图片列表：kind=scene / shape=image 的摆放物；缩略图取 texture 声明。
+func fill_placeables(cat: String) -> void:
 	var el: ItemList = app.ent_list
 	el.clear()
 	var thumbs: Dictionary = app._entity_thumbs()
 	var shown := 0
-	for a in AssetDecl.of_kind(app.manifest, "entity"):
-		var ad: Dictionary = a
-		var eid := str(ad.get("id", ""))
-		var tex: Texture2D = thumbs.get(eid, null)
-		if tex == null:
-			tex = _visual_icon(ad)
-		var ie := el.add_item(str(ad.get("name", eid)), tex)
-		if bool(ad.get("builtin", false)):
-			el.set_item_tooltip(ie, "内置种类：画布上按 visual 声明呈现")
-		el.set_item_metadata(ie, eid)
-		shown += 1
+	if cat == "images":
+		for a in AssetDecl.of_kind(app.manifest, "scene"):
+			var d: Dictionary = a
+			if str(d.get("shape", "")) != "image":
+				continue
+			var eid := str(d.get("id", ""))
+			var tex: Texture2D = EntityNodeRef.texture_of(app.manifest, str(d.get("texture", "")))
+			if tex == null:
+				tex = thumbs.get(eid, null)
+			if tex == null:
+				tex = _visual_icon(d)
+			var ie := el.add_item(str(d.get("name", eid)), tex)
+			el.set_item_metadata(ie, eid)
+			shown += 1
+	else:
+		for a in AssetDecl.of_kind(app.manifest, "entity"):
+			var ad: Dictionary = a
+			var eid := str(ad.get("id", ""))
+			var tex: Texture2D = thumbs.get(eid, null)
+			if tex == null:
+				tex = _visual_icon(ad)
+			var ie := el.add_item(str(ad.get("name", eid)), tex)
+			if bool(ad.get("builtin", false)):
+				el.set_item_tooltip(ie, "内置种类：画布上按 visual 声明呈现")
+			el.set_item_metadata(ie, eid)
+			shown += 1
 	if shown == 0:
-		_show_empty(el, "清单没有实体资产", "在 assets[] 里声明 kind=entity")
+		_show_empty(el,
+			"清单没有图片资产" if cat == "images" else "清单没有实体资产",
+			"在 assets[] 里声明 kind=scene / shape=image" if cat == "images" else "在 assets[] 里声明 kind=entity")
+
+func fill_entities() -> void:
+	fill_placeables("entities")
 
 ## visual 声明 → 占位图标（rect 画成色块；sprite/none 或缺失时画中性灰框）。
 ## 缓存：同一 visual 的图标只画一次。

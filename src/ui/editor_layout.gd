@@ -61,6 +61,7 @@ func _init(host) -> void:
 	_popups_ctrl = Popups.new(self)
 func _build_editor_ui() -> void:
 	app._nav_bars.clear()  # 重建时丢弃旧顶栏导航条引用（控件已 queue_free）
+	app._ensure_editor_controllers()
 	for c in app.get_children():
 		app.remove_child(c)
 		c.queue_free()
@@ -246,6 +247,14 @@ func _build_palette_column() -> PanelContainer:
 	layer_row.add_child(mgr_btn)
 	v.add_child(layer_row)
 
+	# 摆放资产类别常驻：瓦片 / 图片 / 实体。旧版实体模式藏在隐藏列表里，导致图片资产无入口。
+	var asset_row: HBoxContainer = app.UiKitScript.hbox(4)
+	for spec in [["tiles", "瓦片"], ["images", "图片"], ["entities", "实体"]]:
+		var btn: Button = app.UiKitScript.button(str(spec[1]), func(): app._layout_ctrl.set_asset_category(str(spec[0])), "ghost")
+		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		asset_row.add_child(btn)
+	v.add_child(asset_row)
+
 	# 弹层内容按清单重建：每层一行 = 层名 + 👁 + 🔒，显隐/锁定内联在项里（不占额外高度）。
 	# 本控制器是 RefCounted（没有 add_child），弹层挂到窗口根——和所有其他弹窗一致。
 	_layer_menu = PopupPanel.new()
@@ -298,12 +307,20 @@ func _build_palette_column() -> PanelContainer:
 	type_row.add_child(app.UiKitScript.text_label("类型", app.UiThemeScript.TEXT_DIM, app.UiThemeScript.FS_SMALL))
 	var type_opt := OptionButton.new()
 	type_opt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	for row in CollisionTypes.pool(app.manifest):
+	var pool: Array = CollisionTypes.pool(app.manifest)
+	for row in pool:
 		var d: Dictionary = row
 		var tid := str(d.get("id", ""))
+		if tid == "":
+			continue
 		var nm := str(d.get("name", tid))
 		type_opt.add_item("%s（%s）" % [nm, tid] if nm != tid else tid)
 		type_opt.set_item_metadata(type_opt.item_count - 1, tid)
+	if type_opt.item_count > 0:
+		type_opt.select(0)
+		var default_type := str(type_opt.get_item_metadata(0))
+		if app.canvas != null:
+			app.canvas.collision_type = default_type
 	type_opt.tooltip_text = "这一笔画下去的碰撞类型；类型池与形状/颜色由清单 collisionTypes 声明"
 	type_opt.item_selected.connect(func(i: int):
 		app.canvas.collision_type = str(type_opt.get_item_metadata(i))
@@ -352,12 +369,30 @@ func _build_palette_column() -> PanelContainer:
 
 ## 资产列表跟随层类型：地形/装饰 → 瓦片，碰撞（grid）无资产 → 空，实体层 → 实体。
 func _set_palette_page(which: String) -> void:
+	var show_tiles := which == "tiles"
+	var show_objects := which == "entities" or which == "images"
 	if app.tile_list:
-		app.tile_list.visible = which == "tiles"
+		app.tile_list.visible = show_tiles
 	if app.ent_list:
-		app.ent_list.visible = which == "entities"
+		app.ent_list.visible = show_objects
 	if app.grid_hint:
 		app.grid_hint.visible = which == ""
+	# 空态遮罩跟随当前列表生命周期：列表隐藏时不能盖住碰撞类型/形状面板
+	_palette_empty_visible(app.tile_list, show_tiles)
+	_palette_empty_visible(app.ent_list, show_objects)
+
+func _palette_empty_visible(list: ItemList, visible_now: bool) -> void:
+	if list == null or not list.has_meta("_empty_node"):
+		return
+	var es = list.get_meta("_empty_node")
+	if is_instance_valid(es):
+		es.visible = visible_now
+
+## 瓦片图集 + 图片/实体统一摆放列表。切换不重建整个左栏，只替换列表内容。
+func set_asset_category(cat: String) -> void:
+	app.canvas.place_kind = "object" if cat != "tiles" else "tiles"
+	app._palette_ctrl.set_category(cat)
+	app._apply_state("")
 
 ## 图层类型小工具（editor_layout 自用）：栈层都是瓦片层，只有碰撞是栈外元层
 func _layer_type_of(i: int) -> String:

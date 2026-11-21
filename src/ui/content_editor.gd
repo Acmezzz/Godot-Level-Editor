@@ -189,7 +189,7 @@ func refresh_list(focus := "") -> void:
 	var ents := _entities()
 	# 悬停 id 随切图/删实体失效：留着会指向不存在的实例，清干净
 	if _preview.hover_ent != "" and _find_ent(_preview.hover_ent) == null:
-		_preview.clear_hover()
+		_preview.set_hover("")
 	# 选中项失效（切图/删实体）时回到第一行：右栏不该对着已不存在的实例
 	if focus != "" and _find_ent(focus) != null:
 		_selected_ent = focus
@@ -200,7 +200,7 @@ func refresh_list(focus := "") -> void:
 		if sel is EntityNode and is_instance_valid(sel) and (sel as EntityNode).code != "":
 			_selected_ent = (sel as EntityNode).code
 		if _find_ent(_selected_ent) == null:
-			_selected_ent = str((ents[0] as Dictionary).get("id", "")) if not ents.is_empty() else ""
+			_selected_ent = str((ents[0] as Dictionary).get("code", "")) if not ents.is_empty() else ""
 	_selected_fn = -1
 	_rebuild_rows()
 	_rebuild_right()
@@ -404,7 +404,7 @@ func select_inst(code: String) -> void:
 func _clear_all_for_empty() -> void:
 	_selected_ent = ""
 	_selected_fn = -1
-	_preview.clear_hover()
+	_preview.set_hover("")
 	_left_title.text = "实例"
 	if _rows_box != null:
 		for c in _rows_box.get_children():

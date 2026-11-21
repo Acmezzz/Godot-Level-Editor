@@ -768,7 +768,7 @@ func copy_region() -> void:
 
 ## 区域拖动搬迁（框选后按住区内拖动）
 func _in_region_sel(pos: Vector2) -> bool:
-	return _selection_ops_ctrl._in_region_sel(pos)
+	return _region_ops_ctrl._in_region_sel(pos)
 
 func _begin_region_move(pos: Vector2) -> void:
 	_region_ops_ctrl._begin_region_move(pos)
@@ -834,9 +834,34 @@ func _erase_hits(pos: Vector2) -> bool:
 func _stamp(c: Vector2i) -> void:
 	_tool_ops_ctrl._stamp(c)
 
+## 自动碰撞委托（碰撞弹窗调用；源层缺省由画布回退到第一个普通层）
+func count_auto_collision(strategy := "full", replace := false, src_override := -1) -> int:
+	return _tool_ops_ctrl.count_auto_collision(strategy, replace, src_override)
+
+func generate_collision(strategy := "full", replace := false, one_way_top := false, src_override := -1) -> int:
+	return _tool_ops_ctrl.generate_collision(strategy, replace, one_way_top, src_override)
+
 ## 「当前层自审」：active_layer 的瓦片格判定（自动碰撞/边缘类逻辑共用）
 func _has_terrain_at(c: Vector2i) -> bool:
 	var tn := _layer_node(active_layer)
+	return tn != null and tn.get_cell_source_id(c) != -1
+
+## 碰撞生成从当前 active_layer 读取，若停在碰撞元层，自动退到第一个有瓦片的普通层。
+## 返回选中的源层下标；没有可用层返回 -1。
+func _collision_source_layer() -> int:
+	if active_layer >= 0 and active_layer != collision_index() and _layer_node(active_layer) != null:
+		return active_layer
+	for i in layer_count():
+		if i == collision_index():
+			continue
+		if _layer_node(i) != null:
+			return i
+	return -1
+
+func _has_terrain_in(c: Vector2i, li: int) -> bool:
+	if li < 0:
+		return false
+	var tn := _layer_node(li)
 	return tn != null and tn.get_cell_source_id(c) != -1
 
 ## —— 拆到 src/canvas/layer_ops.gd / entity_factory.gd / tool_ops.gd（调用点保持不变） ——
@@ -893,6 +918,10 @@ func _load_snap_layers(snap: Dictionary, active_id: String) -> void:
 	await _layer_ops_ctrl._load_snap_layers(snap, active_id)
 func make_object(aid: String) -> EntityNode:
 	return _entity_factory_ctrl.make_object(aid)
+func set_entity_sizes(sizes: Dictionary) -> void:
+	_entity_factory_ctrl.set_entity_sizes(sizes)
+func entity_display_size(aid: String) -> Vector2:
+	return _entity_factory_ctrl.entity_display_size(aid)
 func is_placeable(aid: String) -> bool:
 	return _entity_factory_ctrl.is_placeable(aid)
 func _ensure_code(n: EntityNode) -> void:

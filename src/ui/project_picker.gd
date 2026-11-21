@@ -28,8 +28,14 @@ var _ent_thumbs_cache:
 	set(v): host._ent_thumbs_cache = v
 
 ## 同名包装方法（真实实现经 host 转发）
+func show_picker(err := "") -> void:
+	host._show_picker(err)
 func _build_editor_ui() -> void:
 	host._build_editor_ui()
+func enter_project(dir: String, loaded_manifest: Dictionary) -> void:
+	host._enter_project(dir, loaded_manifest)
+func remember_project(dir: String, pname: String) -> void:
+	_remember_project(dir, pname)
 func add_child(c: Node) -> void:
 	host.add_child(c)
 func get_children():
@@ -161,9 +167,7 @@ func _open_project(dir: String) -> void:
 		_show_picker(m["_error"])
 		return
 	manifest = m
-	_ent_thumbs_cache.clear()   # D1：换项目清缩略图缓存
-	_remember_project(dir, str(m.get("projectName", "")))
-	_build_editor_ui()
+	enter_project(dir, m)
 
 func _pick_project() -> void:
 	var fd := FileDialog.new()
