@@ -486,6 +486,8 @@ static func _validate_entity_asset(data: Dictionary, ad: Dictionary, path: Strin
 		_add(issues, "error", path, "entity asset needs prefab or visual")
 	if visual != null and not (visual is Dictionary):
 		_add(issues, "error", path + ".visual", "must be an object")
+	elif visual is Dictionary and str((visual as Dictionary).get("type", "rect")) not in ["rect", "poly", "path"]:
+		_add(issues, "error", path + ".visual.type", "must be rect / poly / path")
 	if ad.has("editorSize"):
 		var es = ad.editorSize
 		if not (es is Array) or (es as Array).size() < 2:

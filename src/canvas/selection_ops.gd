@@ -259,6 +259,186 @@ func _finish_entity_resize() -> void:
 	cvs.queue_redraw()
 
 
+## —— 顶点编辑（R-02 几何段）：选中 poly/path 实例的顶点把手 ——
+## 预览期直写 props.points，收尾恢复原值压撤销再写终值（与尺寸把手同一纪律）。
+
+## 顶点世界坐标（把手命中/绘制共用）：局部点经 to_global（吃 rotation/scale；
+## flip 由点集镜像还原，存取层不掺入）
+func _vertex_worlds(n: EntityNode) -> Array:
+	var out := []
+	for p: Vector2 in (n as EntityNode).points_local():
+		out.append((n as EntityNode).to_global(p))
+	return out
+
+## 顶点把手命中：返回顶点下标（-1 = 未命中）；半径 = 0.45 格
+func _vertex_handle_hit(pos: Vector2) -> int:
+	var n = cvs.selected_entity
+	if n == null or not is_instance_valid(n) or cvs.place_kind != "object":
+		return -1
+	var en := n as EntityNode
+	if en.visual_type() == "rect":
+		return -1
+	var r: float = cvs.grid.cell_max() * 0.45
+	var best := -1
+	var best_d := r
+	var i := 0
+	for p: Vector2 in en.points_local():
+		var d := en.to_global(p).distance_to(pos)
+		if d <= best_d:
+			best = i
+			best_d = d
+		i += 1
+	return best
+
+## 起手：冻结原点集
+func _begin_vertex_drag(n: EntityNode, idx: int) -> void:
+	if cvs.is_layer_locked(cvs._layer_index_of(n.layer_id)):
+		cvs._hint("实例所在图层已锁定：解锁后再调顶点")
+		return
+	cvs._vertex_node = n
+	cvs._vertex_idx = idx
+	cvs._vertex_orig = (n as EntityNode).points_local().duplicate()
+	cvs._vertex_moved = false
+	cvs.begin_gesture(cvs.Gesture.ENTITY_VERTEX, MOUSE_BUTTON_LEFT)
+
+## 拖动预览：顶点 = 鼠标转局部（吃逆变换），flip 镜像回未翻转局部系再写
+func _move_vertex_preview(pos: Vector2) -> void:
+	if cvs._vertex_node == null or not is_instance_valid(cvs._vertex_node):
+		cvs._vertex_node = null
+		return
+	var n := cvs._vertex_node as EntityNode
+	var pts: Array = n.points_local()
+	if cvs._vertex_idx >= pts.size():
+		return
+	var lp := n.to_local(pos)
+	if n.flipped_h():
+		lp.x = -lp.x
+	if n.flipped_v():
+		lp.y = -lp.y
+	var orig: Array = cvs._vertex_orig
+	if cvs._vertex_idx < orig.size() and lp.is_equal_approx(orig[cvs._vertex_idx]):
+		return
+	pts[cvs._vertex_idx] = lp
+	n.points_write(pts)
+	cvs._vertex_moved = true
+	cvs.queue_redraw()
+
+## 收尾：动过才压撤销+置脏（恢复原值→压撤销→写终值 = 一个撤销步）
+func _finish_vertex_drag() -> void:
+	var n = cvs._vertex_node
+	cvs._vertex_node = null
+	if n == null or not is_instance_valid(n):
+		return
+	if not cvs._vertex_moved:
+		return
+	var idx := int(cvs._vertex_idx)
+	var orig: Array = cvs._vertex_orig
+	var fin: Array = (n as EntityNode).points_local()
+	var fp: Vector2 = fin[idx] if idx < fin.size() else Vector2.ZERO
+	(n as EntityNode).points_write(orig)
+	(n as EntityNode).refresh_visual()
+	cvs._push_undo()
+	(n as EntityNode).points_write(fin)
+	(n as EntityNode).refresh_visual()
+	cvs._mark()
+	cvs._hint("顶点已移动（Ctrl+Z 撤销）")
+	cvs.queue_redraw()
+
+## 双击边加点：最近线段的最近点（超出 0.6 格 = 不算加点意图，返回 false 让位其它交互）。
+## 最近点落在既有顶点 0.35 格内 = 复制点，拒绝（让位顶点拖拽）。
+func _add_vertex_at(pos: Vector2) -> bool:
+	var n = cvs.selected_entity
+	if n == null or not is_instance_valid(n):
+		return false
+	var en := n as EntityNode
+	if en.visual_type() == "rect":
+		return false
+	var pts: Array = en.points_local()
+	if pts.size() < 2:
+		return false
+	var closed: bool = bool(en.decl.get("visual", {}).get("closed", false))
+	var best_seg := -1
+	var best_lp := Vector2.ZERO
+	var best_d := INF
+	var segs := pts.size() if closed else pts.size() - 1
+	for i in segs:
+		var a: Vector2 = en.to_global(pts[i])
+		var b: Vector2 = en.to_global(pts[(i + 1) % pts.size()])
+		var cp: Vector2 = _closest_on_segment(pos, a, b)
+		var d := cp.distance_to(pos)
+		if d < best_d:
+			best_d = d
+			best_seg = i
+			best_lp = en.to_local(cp)
+	if best_seg < 0 or best_d > cvs.grid.cell_max() * 0.6:
+		return false
+	if en.flipped_h():
+		best_lp.x = -best_lp.x
+	if en.flipped_v():
+		best_lp.y = -best_lp.y
+	for p: Vector2 in pts:
+		if (p as Vector2).distance_to(best_lp) < cvs.grid.cell_max() * 0.35:
+			return false
+	return _vertex_commit(pts, best_seg + 1, best_lp, "已加顶点")
+
+## 右键顶点删点：poly 保底 3 点（closed 时 <3 不成多边形）、path 保底 2 点。
+func _delete_vertex_at(pos: Vector2) -> bool:
+	var n = cvs.selected_entity
+	if n == null or not is_instance_valid(n):
+		return false
+	var en := n as EntityNode
+	if en.visual_type() == "rect":
+		return false
+	var idx := _vertex_handle_hit(pos)
+	if idx < 0:
+		return false
+	var pts: Array = en.points_local()
+	var closed: bool = bool(en.decl.get("visual", {}).get("closed", false))
+	var floor_n := 3 if closed else 2
+	if pts.size() <= floor_n:
+		cvs._hint("%s 至少保留 %d 个顶点" % ["多边形" if closed else "折线", floor_n])
+		return true
+	# 撤销一步：恢复原值→压快照→写新值（点击类改动同一纪律）
+	var orig: Array = pts.duplicate()
+	var npts: Array = pts.duplicate()
+	npts.remove_at(idx)
+	(n as EntityNode).points_write(orig)
+	(n as EntityNode).refresh_visual()
+	cvs._push_undo()
+	(n as EntityNode).points_write(npts)
+	(n as EntityNode).refresh_visual()
+	cvs._mark()
+	cvs._hint("已删顶点（Ctrl+Z 撤销）")
+	cvs.queue_redraw()
+	return true
+
+## 点击类顶点改动共用：恢复原值→压撤销→按 (idx, lp) 写回新点集
+func _vertex_commit(orig: Array, idx: int, lp: Vector2, hint: String) -> bool:
+	var n = cvs.selected_entity
+	if n == null or not is_instance_valid(n):
+		return false
+	var en := n as EntityNode
+	en.points_write(orig)
+	en.refresh_visual()
+	cvs._push_undo()
+	var npts: Array = orig.duplicate()
+	npts.insert(idx, lp)
+	en.points_write(npts)
+	en.refresh_visual()
+	cvs._mark()
+	cvs._hint(hint + "（Ctrl+Z 撤销）")
+	cvs.queue_redraw()
+	return true
+
+## 线段最近点
+func _closest_on_segment(p: Vector2, a: Vector2, b: Vector2) -> Vector2:
+	var ab := b - a
+	var t := 0.0
+	if ab.length_squared() > 0.0001:
+		t = clampf((p - a).dot(ab) / ab.length_squared(), 0.0, 1.0)
+	return a + ab * t
+
+
 func copy_selection() -> void:
 	if cvs.map_root == null:
 		return

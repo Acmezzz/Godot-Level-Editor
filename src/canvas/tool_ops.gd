@@ -160,6 +160,18 @@ func _stamp(pos: Vector2) -> void:
 	# 否则就是个看不见的空实例；mode/event/once 已作废，语义归 functions[]。
 	if n.decl.get("sizeFields", null) is Array:
 		n.props = {"w": 2, "h": 2}
+	# poly/path 资产（R-02 几何段）：落下带缺省点集——优先声明 visual.points，
+	# 没声明按类型给最小形状（poly 一格三角形 / path 两点横线），否则是看不见的空实例
+	if n.visual_type() != "rect" and not (n.props.get("points", null) is Array):
+		var pts: Array = n.points_local()
+		if pts.is_empty():
+			var cw := float(cvs.grid.tile.x)
+			var ch := float(cvs.grid.tile.y)
+			if n.visual_type() == "path":
+				pts = [Vector2(0, 0), Vector2(cw, 0)]
+			else:
+				pts = [Vector2(0, 0), Vector2(cw, 0), Vector2(0, ch)]
+		n.points_write(pts)
 	n.refresh_visual()   # props 就位后按 sizeFields 定尺寸
 	n.layer_id = cvs.layer_id(cvs.active_layer)
 	n.position = cvs.snap_point(pos, n)

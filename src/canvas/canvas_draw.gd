@@ -63,6 +63,22 @@ func _draw() -> void:
 						col.a = 0.35
 					cvs.draw_rect(grect, col, true)
 					cvs.draw_rect(grect, Color(col, 0.85), false, 1.5)
+					# poly/path 幽灵（R-02）：按声明缺省点集跟手画形状轮廓
+					var gvt := str((vis as Dictionary).get("type", "rect")) if vis is Dictionary else "rect"
+					if gvt != "rect":
+						var gpts := PackedVector2Array()
+						var dpts = (vis as Dictionary).get("points", null)
+						if not (dpts is Array) or (dpts as Array).size() < 2:
+							dpts = [[0, 0], [cvs.grid.tile.x, 0], [0, cvs.grid.tile.y]] if gvt == "poly" \
+								else [[0, 0], [cvs.grid.tile.x, 0]]
+						for gp2: Vector2 in _gpts_vec(dpts as Array):
+							gpts.append(anchor + gp2)
+						var gcol := Color(col.r, col.g, col.b, 0.8)
+						if gvt == "path":
+							cvs.draw_polyline(gpts, gcol, 3.0, true)
+						elif gpts.size() >= 3:
+							gpts.append(gpts[0])
+							cvs.draw_polyline(gpts, gcol, 1.5, true)
 			else:
 				var gp = cvs.grid.cell_polygon(c)
 				cvs.draw_polyline(gp + PackedVector2Array([gp[0]]), Color(0.55, 0.85, 1.0, 0.5), 1.0, true)
@@ -176,6 +192,11 @@ func _draw() -> void:
 			var cr: Vector2 = sn.rect().end
 			var side = maxf(cvs.grid.cell_max() * 0.3, 6.0)
 			cvs.draw_rect(Rect2(cr - Vector2.ONE * side * 0.5, Vector2.ONE * side), Color(0.85, 0.4, 1.0, 0.9), true)
+		# 顶点把手（R-02）：选中 poly/path 实例画顶点方块（拖动/双击加点/右键删点）
+		if (sn as EntityNode).visual_type() != "rect":
+			var vside := maxf(cvs.grid.cell_max() * 0.3, 6.0)
+			for wp: Vector2 in cvs._vertex_worlds(sn as EntityNode):
+				cvs.draw_rect(Rect2(wp - Vector2.ONE * vside * 0.5, Vector2.ONE * vside), Color(0.85, 0.4, 1.0, 0.9), true)
 	# 引用指向预览：编辑引用字段时高亮被指实例（青色粗框）
 	if cvs.ref_highlight != "":
 		var hs = cvs._ent_by_code_index().get(cvs.ref_highlight, null)
@@ -298,6 +319,14 @@ func _draw() -> void:
 				cvs.draw_rect(er, Color(0.6, 1.0, 0.6, 0.4), true)
 		var ppoly = cvs.grid.grid_polygon(org, org + Vector2i(cvs._region_clip.get("size", Vector2i.ONE)))
 		cvs.draw_polyline(ppoly + PackedVector2Array([ppoly[0]]), Color(1.0, 0.85, 0.3, 0.9), 2.0, true)
+## 幽灵点集归一化：[[x,y],...] → Vector2 数组（R-02）
+func _gpts_vec(raw: Array) -> Array:
+	var out := []
+	for pt in raw:
+		if pt is Array and (pt as Array).size() >= 2:
+			out.append(Vector2(float((pt as Array)[0]), float((pt as Array)[1])))
+	return out
+
 ## visual:rect 资产的画布呈现：颜色/alpha 读资产声明，尺寸走实例 rect()。
 ## 不含 props.event/mode/once 分支——事件就是绑定了功能的实体，语义只在 functions[] 里。
 func _draw_visual_rects(nodes: Array) -> void:

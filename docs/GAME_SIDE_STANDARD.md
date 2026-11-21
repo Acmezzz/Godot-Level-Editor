@@ -562,6 +562,10 @@ BGM 切换、环境音触发、音效播放在哪一步响起，都是功能代�
 > 差别只有 `code`——只有 `kind: "entity"` 的资产才有实例码。`entities[]` 键校验报错，
 > 用 `tools/migrate_project.gd` 转换（`scene` 键改名 `asset`）；`collision[]` 条目是对象
 > `{x, y, type?, shape?}`（缺省省略），旧数组形态校验报错，跑迁移脚本转换。
+>
+> **几何实体（R-02）**：资产声明 `visual: {type: "poly"/"path", color/alpha/closed/width, points}` 的实体，
+> 编辑器在实例 `props.points` 写 `[[x,y],…]`（像素、相对实例锚点）——曲线赛道/区域/路径用它表达，
+> 游戏侧读 props 透传（如建 Line2D/Polygon2D，点序即编辑器画布顺序）。
 
 | 键 | 必填 | 语义 |
 |---|---|---|

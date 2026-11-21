@@ -60,6 +60,8 @@ func _unhandled_input(event: InputEvent) -> void:
 				cvs._update_cam()
 			cvs.Gesture.ENTITY_DRAG:
 				cvs._move_drag_preview(pos)
+			cvs.Gesture.ENTITY_VERTEX:
+				cvs._move_vertex_preview(pos)
 			cvs.Gesture.ENTITY_RESIZE:
 				cvs._move_resize_preview(pos)
 			cvs.Gesture.REGION_MOVE:
@@ -116,6 +118,14 @@ func _on_left_press(pos: Vector2, b: InputEventMouseButton) -> void:
 
 ## 摆放模式（任何层都行）：框选模式下优先框选/整组拖动；否则点实体 = 选中并拖动，点空白 = 放置
 func _on_object_layer_press(pos: Vector2, b: InputEventMouseButton) -> void:
+	# 双击边加点（R-02）：命中线段就近插点；顶点附近 = 让位常规交互（拖拽顶点/选中）
+	if b.double_click and cvs._add_vertex_at(pos):
+		return
+	# 顶点把手（R-02）：选中 poly/path 实例顶点优先于尺寸把手/移动/框选/放置
+	var vi: int = cvs._vertex_handle_hit(pos)
+	if vi >= 0:
+		cvs._begin_vertex_drag(cvs.selected_entity, vi)
+		return
 	# 尺寸把手（R-04）：选中 sizeFields 实例的右下角把手优先于移动/框选/放置
 	if cvs._resize_handle_hit(pos):
 		cvs._begin_entity_resize(cvs.selected_entity, pos)
@@ -201,12 +211,17 @@ func _on_right_press(pos: Vector2) -> void:
 					cvs._finish_entity_drag()
 			cvs.Gesture.ENTITY_RESIZE:
 				cvs._finish_entity_resize()
+			cvs.Gesture.ENTITY_VERTEX:
+				cvs._finish_vertex_drag()
 			cvs.Gesture.REGION_MOVE:
 				cvs._finish_region_move()
 			cvs.Gesture.SPAWN_DRAG:
 				if _spawn_moved:
 					cvs._mark()   # 与左键松手同语义：动过才置脏
 		cvs.end_gesture()
+	# 顶点删点（R-02）：右键顶点 = 删点，优先于擦除（poly≥3/path≥2 保底在实现里）
+	if cvs._delete_vertex_at(pos):
+		return
 	if not cvs._erase_hits(pos):
 		return
 	cvs._push_undo()
@@ -233,6 +248,9 @@ func _on_left_release(pos: Vector2) -> void:
 			cvs.end_gesture()
 		cvs.Gesture.ENTITY_RESIZE:
 			cvs._finish_entity_resize()
+			cvs.end_gesture()
+		cvs.Gesture.ENTITY_VERTEX:
+			cvs._finish_vertex_drag()
 			cvs.end_gesture()
 		cvs.Gesture.BOX:
 			cvs.end_gesture()

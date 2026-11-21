@@ -17,6 +17,7 @@ extends Sprite2D
 ## 旧数据（x/y 格坐标、位置格中心、事件区左上格）由 anchor 声明原样还原，不需迁移。
 
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
+const PolyViewScript := preload("res://src/canvas/entity_poly_view.gd")
 
 ## 资产 id（旧的 scene 键已作废）
 var asset: String:
@@ -138,6 +139,7 @@ static func create(m: Dictionary, aid: String, size: Vector2, tile: int,
 				tex = n._frames[0]
 	n.texture = tex
 	n.refresh_visual()
+	n._sync_poly_view()
 	return n
 
 ## 图片资产的贴图按绝对路径缓存（同一张图被多个实例复用，不重复读盘）
@@ -286,6 +288,61 @@ func transform_is_default() -> bool:
 func is_entity() -> bool:
 	return str(decl.get("kind", "")) == "entity"
 
+## —— R-02 几何段：poly/path 呈现与点集存取 ——
+
+## 声明 visual.type：rect（缺省占位矩形）/ poly / path
+func visual_type() -> String:
+	var v = (decl as Dictionary).get("visual", null)
+	if not (v is Dictionary):
+		return "rect"
+	return str((v as Dictionary).get("type", "rect"))
+
+## 点集（Array of Vector2，局部像素、相对锚点、未翻转）：props.points 为真源，
+## 缺省退回声明 visual.points（声明的缺省形状），都没有 = 空集。
+func points_local() -> Array:
+	var raw = props.get("points", null)
+	if raw is Array:
+		return _vec2s(raw)
+	var v = (decl as Dictionary).get("visual", null)
+	if v is Dictionary:
+		var dv = (v as Dictionary).get("points", null)
+		if dv is Array:
+			return _vec2s(dv)
+	return []
+
+func _vec2s(raw: Array) -> Array:
+	var out := []
+	for pt in raw:
+		var a := pt as Array
+		if a != null and a.size() >= 2 \
+				and (a[0] is float or a[0] is int) and (a[1] is float or a[1] is int):
+			out.append(Vector2(float(a[0]), float(a[1])))
+	return out
+
+## 写回点集（JSON 友好：[[x, y], ...]，数值两位小数）。
+## props 必须走 setter 回写：meta 缺失时 getter 返回临时字典，直接下标写会丢。
+func points_write(pts: Array) -> void:
+	var out := []
+	for p: Vector2 in pts:
+		out.append([roundf(p.x * 100.0) / 100.0, roundf(p.y * 100.0) / 100.0])
+	var p: Dictionary = props
+	p["points"] = out
+	props = p
+
+## poly/path 呈现子节点随声明装配（rect 资产无子节点）；已挂则重绘
+func _sync_poly_view() -> void:
+	var want := visual_type() != "rect"
+	var pv := get_node_or_null("PolyView")
+	if want and pv == null:
+		var pv2 = PolyViewScript.new()
+		pv2.name = "PolyView"
+		pv2.node = self
+		add_child(pv2)
+	elif not want and pv != null:
+		pv.queue_free()
+	elif pv != null:
+		pv.queue_redraw()
+
 ## 视觉就位：贴图按显示框等比塞入（放大取整数倍避免糊），数据 scale/rotation/flip 叠加。
 func refresh_visual() -> void:
 	var sz := display_size()
@@ -314,6 +371,8 @@ func refresh_visual() -> void:
 		(display_size().x * 0.5 - anchor_off().x) / sc.x if sc.x != 0.0 else 0.0,
 		(display_size().y * 0.5 - anchor_off().y) / sc.y if sc.y != 0.0 else 0.0)
 	visible = visible_flag
+	# R-02：poly/path 呈现子节点随声明装配；点集/变换/翻转变化都经 refresh_visual → _sync_poly_view 重绘
+	_sync_poly_view()
 
 ## 帧动画预览：frames[] 多于 1 帧时按 8fps 循环换帧；换帧后 refresh_visual 重算
 ## fit/offset（帧尺寸不一致时也对）。游戏侧播放节奏自定，编辑器预览仅为确认帧序。

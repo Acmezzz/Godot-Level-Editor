@@ -36,6 +36,7 @@ src/
 │   ├── editor_canvas.gd    画布宿主：装载地图、三段遮挡容器层栈（meta.layers 逐图声明）、相机、序列化
 │   ├── grid_space.gd       格↔像素转换层：正交/等距/六边形三套 + 格对齐绘制原语（等距/六边 = Godot 原生 tile_shape）
 │   ├── entity_node.gd      一个摆放物的唯一运行时表示（场景图片实例与实体实例共用，anchors/transform/尺寸）
+│   ├── entity_poly_view.gd poly/path 几何呈现子节点（R-02）：props.points 点集自绘，随实例 transform
 │   ├── canvas_draw.gd      画布上画什么：网格、幽灵预览、连线、占位框、visual:rect 实体、选区
 │   ├── canvas_input.gd     鼠标事件分派：缩放平移、涂/擦、框选、拖拽
 │   ├── tool_ops.gd         左键/右键语义执行：涂刷、放置、擦除、盖章 + 碰撞自动生成
@@ -362,6 +363,7 @@ src/
 | 朝向翻转 | `F` toggle 单选或框选集合的 `transform.flip_h`，一个撤销步；写入地图 `objects[].transform` |
 | 旋转/缩放 | `R` 旋转选中实例 90°（`transform.rotation` 弧度，归一 [0,2π)；瓦片笔刷模式下 R 让位给笔刷旋转）；`[` / `]` 等比缩放步进 ±0.1（下限 0.1，回到 1.0 整键省略）。单个或框选集合，一个撤销步 |
 | 尺寸把手 | 带 `sizeFields` 的选中实例（事件区等自定尺寸）右下角紫把手：拖动改 `props` w/h（格数 ≥1）；center 锚点下原点取起手快照，防预览漂移 |
+| 顶点编辑（几何段） | `visual.type = poly/path` 的实体：选中画顶点紫把手——拖动改 `props.points`（局部像素、相对锚点）；双击边就近插点；右键顶点删点（poly ≥3 / path ≥2 保底）；全部一个撤销步 |
 | 方向键微调 | 有选中时整格移动（`Shift` = 4 格）；1 秒内的连续按键合并成一个撤销步 |
 | 复制粘贴 | `Ctrl+C` / `Ctrl+V` 保持相对布局，粘到光标处吸附到锚点所在格；`props` / `functions` / `transform` **深拷贝**，副本互不影响；内部引用重映射到新实例码 |
 | 原位复制 | `Ctrl+D` 偏移 1 格复制，带 `props` / `functions` / `transform`，新号照发 |
@@ -698,7 +700,7 @@ godot --headless --path "<编辑器工程>" --script res://tests/run_tests.gd
 
 约定：套件 `extends "res://tests/_suite_base.gd"`，方法名 `test_` 开头即被发现；
 `ok()` / `eq()` 收集失败；**每个用例至少一条断言**（崩溃中断的用例断言数不增长，
-runner 判 FAIL——防止半路崩掉变成假 PASS）。退出码非 0 = 有失败。当前 11 套件 79 用例。
+runner 判 FAIL——防止半路崩掉变成假 PASS）。退出码非 0 = 有失败。当前 12 套件 82 用例。
 
 截图辅助 `tools/screenshot.gd`（模式清单见文件头注释）与警告扫描 `tools/warn_scan.gd`
 （headless 全量加载 src/ 校验可加载性）；`tools/migrate_project.gd` 是一次性迁移脚本
@@ -744,6 +746,10 @@ godot --headless --path "<编辑器工程>" --script res://tools/migrate_project
   实体 .tscn）即资产，打开项目扫描自动补条目 + 发 4 位资产码（id=码、name=文件名 stem，出生定永不回收）；
   改名同 md5 重链原条目，消失标缺失不删条目，约定外手写条目不碰；
   细配置（palette/cell/锚点/挂载）仍走清单条目覆盖，扫描只补骨架不改写已有条目。
+- 几何段（R-02）：实体声明 `visual: {type: "poly"|"path", color, alpha, closed, width, points}` 即几何对象——
+  画布按声明画填充多边形/折线，顶点拖拽/双击加点/右键删点写 `props.points`
+  （[[x,y],…] 像素相对锚点，翻转后存取仍走未翻转局部系）；游戏侧读 `objects[].props.points` 透传。
+  离格自由摆放本就支持（吸附关 = 浮点像素位置）。
 - 问题抽屉：展开即自动重扫（条目永远新鲜）；悬空引用条目带「清除悬空」一键擦掉悬空字段值
   （字段留空=未填；当前图有未保存修改时跳过该图；写回走 .history 备份）。
 - 保存前外部改动预警（C-20）：地图与清单在编辑器打开后被外部改过时，保存先弹确认框

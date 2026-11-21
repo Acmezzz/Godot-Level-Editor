@@ -633,7 +633,7 @@ var redo_stack := []
 ## 拖出生点时按右键会拖动+擦除并行。现在只留一个枚举：起手即接管，松手即清零，
 ## 任何新起手都会顶掉上一个手势（物理上不可能叠加）。
 ## _paste_mode 是「模式」不是手势（跨点击存活），不在枚举里。
-enum Gesture { NONE, PAN, PAINT, BOX, SPAWN_DRAG, ERASE, ENTITY_DRAG, ENTITY_RESIZE, REGION_MOVE }
+enum Gesture { NONE, PAN, ENTITY_VERTEX, PAINT, BOX, SPAWN_DRAG, ERASE, ENTITY_DRAG, ENTITY_RESIZE, REGION_MOVE }
 var gesture: int = Gesture.NONE
 ## 起手按键：中键松手只清中键起的平移，不会误杀 Space+左键的平移（反之亦然）。
 var gesture_button := 0
@@ -670,6 +670,10 @@ var _resize_node: EntityNode = null   # R-04 尺寸把手拖拽的目标实例�
 var _resize_orig: Dictionary = {}     # 起手时的 {wf, hf, w, h}
 var _resize_origin := Vector2.ZERO    # 起手时 rect 左上角快照（center 锚点下 rect 原点随尺寸漂移，必须冻结）
 var _resize_moved := false
+var _vertex_node: EntityNode = null   # R-02 顶点把手拖拽的目标实例（poly/path）
+var _vertex_idx := -1                 # 拖拽中的顶点下标
+var _vertex_orig: Array = []          # 起手点集快照（Vector2 数组）
+var _vertex_moved := false
 ## 涂刷笔画的撤销快照推迟到首个真实改动前才压（点击不动 = 零副作用，与出生点拖动同模式）
 ## 涂刷撤销快照推迟标记：tool_ops 经 cvs._paint_pushed 读写
 @warning_ignore("unused_private_class_variable")
@@ -742,6 +746,22 @@ func _move_resize_preview(pos: Vector2) -> void:
 	_selection_ops_ctrl._move_resize_preview(pos)
 func _finish_entity_resize() -> void:
 	_selection_ops_ctrl._finish_entity_resize()
+
+## —— R-02 顶点编辑转发 ——
+func _vertex_worlds(n: EntityNode) -> Array:
+	return _selection_ops_ctrl._vertex_worlds(n)
+func _vertex_handle_hit(pos: Vector2) -> int:
+	return _selection_ops_ctrl._vertex_handle_hit(pos)
+func _begin_vertex_drag(n: EntityNode, idx: int) -> void:
+	_selection_ops_ctrl._begin_vertex_drag(n, idx)
+func _move_vertex_preview(pos: Vector2) -> void:
+	_selection_ops_ctrl._move_vertex_preview(pos)
+func _finish_vertex_drag() -> void:
+	_selection_ops_ctrl._finish_vertex_drag()
+func _add_vertex_at(pos: Vector2) -> bool:
+	return _selection_ops_ctrl._add_vertex_at(pos)
+func _delete_vertex_at(pos: Vector2) -> bool:
+	return _selection_ops_ctrl._delete_vertex_at(pos)
 
 func copy_region() -> void:
 	_region_ops_ctrl.copy_region()
