@@ -125,6 +125,8 @@ static func _content_checks(manifest: Dictionary, used: Dictionary) -> Array:
 	return out
 
 ## 引用悬空检查：objects[].props 里 entity_ref/map_ref 声明字段的值指向不存在对象 = 警告。
+## C1：声明了 mapField 的 entity_ref 目标是**配对地图**里的实例（(地图码, 实例码)），
+## 本图码集不参与判定；配对地图未填 = 取所属图。
 static func _ref_checks(data: Dictionary, manifest: Dictionary, map_name: String) -> Array:
 	var out: Array = []
 	var map_codes := MapStore.code_map(manifest)
@@ -138,14 +140,20 @@ static func _ref_checks(data: Dictionary, manifest: Dictionary, map_name: String
 			codes[oc] = true
 	# 实体类型声明的 entity_ref/map_ref 字段（值存 props，键 = 字段名）
 	var refs := {}
+	var all_fields := {}
 	for a in AssetDecl.of_kind(manifest, "entity"):
 		var ad: Dictionary = a
 		var flds := []
+		var fld_all := []
 		for fd in (ad.get("fields", []) as Array):
-			if fd is Dictionary and str((fd as Dictionary).get("type", "")) in ["entity_ref", "map_ref"]:
+			if not (fd is Dictionary):
+				continue
+			fld_all.append(fd)
+			if str((fd as Dictionary).get("type", "")) in ["entity_ref", "map_ref"]:
 				flds.append(fd)
 		if not flds.is_empty():
 			refs[str(ad.get("id", ""))] = flds
+			all_fields[str(ad.get("id", ""))] = fld_all
 	var maps_dir := str(manifest.get("_maps_dir", ""))
 	for e in (data.get("objects", []) as Array):
 		if not (e is Dictionary):
@@ -163,17 +171,34 @@ static func _ref_checks(data: Dictionary, manifest: Dictionary, map_name: String
 				continue   # 未填 = 合法状态
 			var typ := str(f.get("type", ""))
 			# map_ref 值 = 地图码（v7）：码表判定为主；图名兜底（老图兼容值）/ maps_dir 未配放行
-			var ok_target: bool = map_codes.has(str(val)) \
-				or (maps_dir == "" or FileAccess.file_exists(maps_dir.path_join(str(val) + ".json")))
-			if typ == "entity_ref" and not codes.has(str(val)):
-				out.append({
-					"kind": "ref", "severity": "warning",
-					"path": "%s · %s(%s).%s" % [map_name, aid, str(o.get("code", "?")), key],
-					"message": "引用的实例码不存在: %s" % str(val),
-					"map": map_name,
-					"jump": {"type": "entity", "map": map_name, "code": str(o.get("code", ""))},
-					"fix": {"op": "clear_prop", "map": map_name, "code": str(o.get("code", "")), "prop": key},
-				})
+			var map_key := str(val)
+			var ok_target: bool = map_codes.has(map_key) \
+				or (maps_dir == "" or FileAccess.file_exists(maps_dir.path_join(map_key + ".json")))
+			if typ == "entity_ref":
+				# 配对地图（C1）：目标码必须在目标图的 objects 里；未配对 = 本图
+				var target_codes := codes
+				var target_map := ""
+				var pair := str(f.get("mapField", ""))
+				if pair != "":
+					var paired: Dictionary = {}
+					for pf in (all_fields.get(aid, []) as Array):
+						if pf is Dictionary and str((pf as Dictionary).get("id", "")) == pair:
+							paired = pf
+							break
+					target_map = str(props.get(pair, "")) if not paired.is_empty() else ""
+					# 配对地图未填 = 取所属图（C1）：本图码集就是目标域，不去猜磁盘上的图码
+					if target_map != "":
+						target_codes = _codes_of_map(manifest, target_map)
+				if not target_codes.has(str(val)):
+					var where := ("目标图 %s" % target_map) if target_map != "" else "本图"
+					out.append({
+						"kind": "ref", "severity": "warning",
+						"path": "%s · %s(%s).%s" % [map_name, aid, str(o.get("code", "?")), key],
+						"message": "引用的实例码在%s不存在: %s" % [where, str(val)],
+						"map": map_name,
+						"jump": {"type": "entity", "map": map_name, "code": str(o.get("code", ""))},
+						"fix": {"op": "clear_prop", "map": map_name, "code": str(o.get("code", "")), "prop": key},
+					})
 			elif typ == "map_ref" and not ok_target:
 				out.append({
 					"kind": "ref", "severity": "warning",
@@ -183,6 +208,24 @@ static func _ref_checks(data: Dictionary, manifest: Dictionary, map_name: String
 					"jump": {"type": "entity", "map": map_name, "code": str(o.get("code", ""))},
 					"fix": {"op": "clear_prop", "map": map_name, "code": str(o.get("code", "")), "prop": key},
 				})
+	return out
+
+## 目标地图键（地图码或图名）→ 该图实例码集合。读不到/未知键返回空集合（引用因此报悬空）。
+static func _codes_of_map(manifest: Dictionary, map_key: String) -> Dictionary:
+	var out := {}
+	if map_key == "":
+		return out
+	var name := map_key
+	if not MapStore.list_maps(manifest).has(map_key):
+		name = str(MapStore.code_map(manifest).get(map_key, ""))
+	if name == "":
+		return out
+	var d: Dictionary = MapStore.read(manifest, name)
+	for o in (d.get("objects", []) as Array):
+		if o is Dictionary:
+			var c := str((o as Dictionary).get("code", ""))
+			if c != "":
+				out[c] = true
 	return out
 ## 清单校验条目包装（带 kind 标记；清单级问题不可跳转）。
 static func _wrap(kind: String, e: Dictionary) -> Dictionary:

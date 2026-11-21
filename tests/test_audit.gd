@@ -59,6 +59,39 @@ func test_ref_checks_map_ref() -> void:
 	eq(out.size(), 1, "目标图不存在 → 1 条警告")
 	_wipe()
 
+## C1：配对地图引用按目标图码集判定（同码在本图不存在但目标图存在 = 不报）
+func test_ref_checks_paired_map() -> void:
+	_wipe()
+	var m := _fake_manifest()
+	m["assets"] = [{"id": "switch", "kind": "entity", "fields": [
+		{"id": "target_map", "type": "map_ref"},
+		{"id": "target", "type": "entity_ref", "mapField": "target_map"},
+	]}]
+	# 目标图 b 有实例 T1，本图 m1 没有 T1
+	var bmap := MapStore.new_map("b", 8, 8)
+	(bmap.meta as Dictionary)["code"] = "BBBB"
+	(bmap.objects as Array).append({"asset": "switch", "code": "T1", "layer": str(bmap.meta.layers[0].id), "x": 0, "y": 0})
+	MapStore.write(m, "b", bmap)
+	var data := {"meta": {"code": "AAAA"}, "objects": [
+		{"code": "S1", "asset": "switch", "props": {"target_map": "BBBB", "target": "T1"}},
+	]}
+	var out := ProjectAudit._ref_checks(data, m, "m1")
+	eq(out.size(), 0, "目标图里存在的实例码不报悬空：%s" % str(out))
+	# 目标码在目标图里也不存在 → 报，且消息指名目标图
+	var data2 := {"meta": {"code": "AAAA"}, "objects": [
+		{"code": "S1", "asset": "switch", "props": {"target_map": "BBBB", "target": "ZZZZ"}},
+	]}
+	var out2 := ProjectAudit._ref_checks(data2, m, "m1")
+	eq(out2.size(), 1, "目标图里的悬空引用报一条")
+	if out2.size() == 1:
+		ok(str((out2[0] as Dictionary).get("message")).contains("BBBB"), "消息指明目标图")
+	# 配对地图未填 = 本图域：本图有码即可
+	var data3 := {"meta": {"code": "AAAA"}, "objects": [
+		{"code": "S1", "asset": "switch", "props": {"target": "S1"}},
+	]}
+	eq(ProjectAudit._ref_checks(data3, m, "m1").size(), 0, "未填地图 = 本图域，本图码合法")
+	_wipe()
+
 func test_audit_map_issues() -> void:
 	# 地图校验条目：kind=map，map=图名，jump 可跳转开图
 	_wipe()
