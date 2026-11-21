@@ -41,29 +41,38 @@ static func validate(data: Dictionary, project_dir := "") -> Array[Dictionary]:
 	if data.has("collisionTypes"):
 		_validate_collision_types(data, issues)
 	_validate_playtest(data, issues)
-	# tileSize：正数（正方形格）或 [w,h] 两正数（矩形格，R-01 批 1c）
+	# tileSize：正整数像素（正方形格）或 [w,h] 两正整数（矩形格，B1：拒绝零/负/非整数）
 	var tile_size = data.get("tileSize", 16)
 	if tile_size is Array:
 		var bad := (tile_size as Array).size() != 2
 		for v in (tile_size as Array):
-			if not (v is int or v is float) or float(v) <= 0.0:
+			if not _is_positive_integer(v):
 				bad = true
 		if bad:
-			_add(issues, "error", "tileSize", "must be a positive number or [w, h] of two positive numbers")
-	elif not (tile_size is int or tile_size is float) or float(tile_size) <= 0.0:
-		_add(issues, "error", "tileSize", "must be a positive number or [w, h] of two positive numbers")
-	# C-15 混投影：画布口径是「任一 tile 资产声明非正交投影即整图按它」，混用会静默错位——警告
+			_add(issues, "error", "tileSize", "must be a positive integer or [w, h] of two positive integers")
+	elif not _is_positive_integer(tile_size):
+		_add(issues, "error", "tileSize", "must be a positive integer or [w, h] of two positive integers")
+	# C-15 混投影：画布口径是「任一 tile 资产声明非正交投影即整图按它」，混用会静默错位——警告。
+	# B1：指名具体资产与投影，否则「混了」这句话无从下手。
 	var projs := {}
+	var proj_assets := {}
 	var assets_arr = data.get("assets", null)
 	if assets_arr is Array:
 		for a in (assets_arr as Array):
 			if not (a is Dictionary) or str((a as Dictionary).get("kind", "")) != "scene" \
 					or str((a as Dictionary).get("shape", "")) != "tile":
 				continue
-			projs[str((a as Dictionary).get("gridProjection", "orthogonal"))] = true
+			var p := str((a as Dictionary).get("gridProjection", "orthogonal"))
+			projs[p] = true
+			if not proj_assets.has(p):
+				proj_assets[p] = []
+			(proj_assets[p] as Array).append(str((a as Dictionary).get("id", "")))
 	if projs.size() > 1:
+		var detail: Array[String] = []
+		for p in proj_assets:
+			detail.append("%s: %s" % [str(p), ", ".join(PackedStringArray(proj_assets[p]))])
 		_add(issues, "warning", "assets",
-			"mixed gridProjection: canvas renders isometric if ANY tile asset declares it; orthogonal assets will misalign")
+			"mixed gridProjection: canvas renders isometric if ANY tile asset declares it; orthogonal assets will misalign (" + "; ".join(detail) + ")")
 	_validate_top_level(data, issues)
 	return issues
 
@@ -543,6 +552,15 @@ static func _validate_entity_asset(data: Dictionary, ad: Dictionary, path: Strin
 		if fid2 == "" or fields.has(fid2):
 			_add(issues, "error", path + ".fields", "field ids must be non-empty and unique")
 		fields[fid2] = true
+
+## 正整数像素尺寸（B1）：int 直接判，float 必须有限且恰为整数（JSON 20.0 合法、20.5 拒绝）。
+static func _is_positive_integer(v) -> bool:
+	if v is int:
+		return v > 0
+	if not (v is float):
+		return false
+	var f: float = v
+	return is_finite(f) and f > 0.0 and f == floorf(f)
 
 static func _add(issues: Array[Dictionary], severity: String, path: String, message: String) -> void:
 	issues.append({"severity": severity, "path": path, "message": message})

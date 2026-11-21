@@ -141,6 +141,34 @@ func test_top_level_shapes_and_projection() -> void:
 	ok(sevs.has("warning"), "混投影给警告")
 	ok(_errs_of(m5).size() == 0, "混投影是警告不是错误")
 
+## B1：tileSize 必须是正整数像素（拒绝零/负/小数），[w,h] 两正整数
+func test_tile_size_integer_gate() -> void:
+	var m := _good()
+	m["tileSize"] = [32, 16]
+	eq(_errs_of(m).size(), 0, "[32,16] 合法")
+	var m2 := _good()
+	m2["tileSize"] = 16
+	eq(_errs_of(m2).size(), 0, "标量 16 合法")
+	var m3 := _good()
+	m3["tileSize"] = 16.0
+	eq(_errs_of(m3).size(), 0, "JSON float 整数合法")
+	for bad in [0, -16, 16.5, 0.0, [0, 16], [32, -1], [32, 16.5], "16", [32]]:
+		var mb := _good()
+		mb["tileSize"] = bad
+		ok(_errs_of(mb).size() >= 1, "非法 tileSize 报错: %s" % str(bad))
+
+## B1：混投影警告指名具体资产与投影（否则无从下手）
+func test_mixed_projection_detail() -> void:
+	var m := _good()
+	m["assets"] = [
+		{"id": "iso_tiles", "kind": "scene", "shape": "tile", "atlas": "a.png", "gridProjection": "isometric"},
+		{"id": "ortho_tiles", "kind": "scene", "shape": "tile", "atlas": "b.png"}]
+	var w := ""
+	for e in V.validate(m):
+		if str(e.get("severity")) == "warning":
+			w = str(e.get("message"))
+	ok(w.contains("iso_tiles") and w.contains("ortho_tiles"), "警告列出两类资产 id：%s" % w)
+
 func test_collision_types_decl() -> void:
 	var m := _good()
 	m["collisionTypes"] = {"ice": {"name": "冰面", "shape": "rect", "gameplay": "slide"}}

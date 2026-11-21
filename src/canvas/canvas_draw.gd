@@ -11,7 +11,7 @@ const K := preload("res://src/core/constants.gd")
 func _init(host) -> void:
 	cvs = host
 func _draw() -> void:
-	if cvs.map_root == null or not is_instance_valid(cvs.map_root):
+	if not cvs.is_map_ready():
 		return
 	var pos = cvs.get_global_mouse_position()
 	var c = cvs._cell_of(pos)
@@ -44,8 +44,7 @@ func _draw() -> void:
 					gsz = Vector2(2, 2) * Vector2(cvs.grid.tile)
 				var anchor: Vector2 = pos
 				if cvs.snap_to_grid:
-					var g: Vector2 = cvs.grid.to_grid(pos) - unit
-					anchor = cvs.grid.to_px(Vector2(roundf(g.x), roundf(g.y)) + unit)
+					anchor = cvs.snap_anchor_px(unit, pos)
 				# 幽灵按落点的真实占位画（锚点由资产声明决定），和落下去之后完全一致
 				var grect := Rect2(anchor - EntityNode.anchor_off_of(unit, gsz), gsz)
 				var gtex: Texture2D = cvs.stamp_thumb
@@ -117,8 +116,8 @@ func _draw() -> void:
 	# 出生点标记：摆放模式下画成「可拖」的样子，其余画淡一些——避免误导成可点
 	var spawn_draggable: bool = cvs.place_kind == "object"
 	var spawn_col := Color(0.3, 1.0, 0.5, 0.9) if spawn_draggable else Color(0.3, 1.0, 0.5, 0.35)
-	var sg = cvs.grid.to_grid(spos)
-	var spoly = cvs.grid.cell_polygon(Vector2i(floori(sg.x), floori(sg.y)))
+	var sg = cvs.grid.pick_cell(spos)
+	var spoly = cvs.grid.cell_polygon(sg)
 	cvs.draw_polyline(spoly + PackedVector2Array([spoly[0]]), spawn_col, 2.0, true)
 	cvs.draw_line(Vector2(spos.x - 6, spos.y), Vector2(spos.x + 6, spos.y), spawn_col, 2.0)
 	cvs.draw_line(Vector2(spos.x, spos.y - 6), Vector2(spos.x, spos.y + 6), spawn_col, 2.0)

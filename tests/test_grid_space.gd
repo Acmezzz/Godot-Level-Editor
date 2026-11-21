@@ -71,6 +71,8 @@ func test_grid_hex() -> void:
 	eq(g.cell_center_px(Vector2i(2, 0)), Vector2(40, 8), "六边 (2,0) 中心")
 	eq(g.cell_center_px(Vector2i(1, 1)), Vector2(32, 20), "六边 (1,1) 中心")
 	eq(g.to_grid(Vector2(16, 18)), Vector2(0, 1), "六边非中心点 = 最近中心命中")
+	# B1：拾取按实际六角轮廓（与绘制形状一致）
+	eq(g.pick_cell(Vector2(16, 18)), Vector2i(0, 1), "六边拾取与 to_grid 同结果")
 	for c in [Vector2i(0, 0), Vector2i(3, 1), Vector2i(-1, 2), Vector2i(5, 4)]:
 		var ctr = g.cell_center_px(c)
 		eq(g.to_grid(ctr), Vector2(c), "六边中心往返 %s" % str(c))
@@ -95,3 +97,43 @@ func test_grid_rect_cells() -> void:
 	eq(gh.cell_center_px(Vector2i(0, 1)), Vector2(32, 20), "矩形格六边 (0,1) 中心")
 	eq(gh.to_px(Vector2(1, 0)), Vector2(48, 8), "矩形格六边 to_px (1,0) 中心")
 	eq(gh.to_grid(Vector2(48, 8)), Vector2(1, 0), "矩形格六边往返")
+
+## B1：清单 tileSize 解析（16 / [32,16] / 畸形回退）
+func test_tile_size_of() -> void:
+	eq(GridSpaceScript.tile_size_of({"tileSize": 16}), Vector2i(16, 16), "标量 tileSize")
+	eq(GridSpaceScript.tile_size_of({"tileSize": [32, 16]}), Vector2i(32, 16), "矩形 tileSize")
+	eq(GridSpaceScript.tile_size_of({"tileSize": 16.0}), Vector2i(16, 16), "JSON float 整数接受")
+	eq(GridSpaceScript.tile_size_of({"tileSize": [32.0, 16.0]}), Vector2i(32, 16), "JSON 数组 float 接受")
+	eq(GridSpaceScript.tile_size_of({"tileSize": 0}), Vector2i(16, 16), "零回退")
+	eq(GridSpaceScript.tile_size_of({"tileSize": -4}), Vector2i(16, 16), "负数回退")
+	eq(GridSpaceScript.tile_size_of({"tileSize": [32, 0]}), Vector2i(16, 16), "半零数组回退")
+	eq(GridSpaceScript.tile_size_of({"tileSize": 16.5}), Vector2i(16, 16), "非整数回退")
+	eq(GridSpaceScript.tile_size_of({}), Vector2i(16, 16), "缺键缺省 16")
+
+## B1：拾取与连续格坐标（正交/等距/l六边）
+func test_pick_cell_and_continuous() -> void:
+	var g = GridSpaceScript.new(Vector2i(16, 16), "orthogonal")
+	eq(g.pick_cell(Vector2(48 + 8, 64 + 8)), Vector2i(3, 4), "正交中心拾取")
+	eq(g.pick_cell(Vector2(47, 63)), Vector2i(2, 3), "正交边前一像素拾取")
+	eq(g.to_continuous_grid(Vector2(56, 72)), Vector2(3.5, 4.5), "正交连续坐标")
+	var gi = GridSpaceScript.new(Vector2i(16, 16), "isometric")
+	var ctr = gi.cell_center_px(Vector2i(2, 1))
+	eq(gi.pick_cell(ctr), Vector2i(2, 1), "等距中心拾取")
+	eq(gi.to_continuous_grid(gi.to_px(Vector2(2.2, 2.2))), Vector2(2.2, 2.2), "等距亚格往返")
+	var gh = GridSpaceScript.new(Vector2i(16, 16), "hexagonal")
+	for c in [Vector2i(0, 0), Vector2i(3, 1), Vector2i(-1, 2), Vector2i(5, 4)]:
+		eq(gh.pick_cell(gh.cell_center_px(c)), c, "六边中心拾取 %s" % str(c))
+	# 六边连续坐标是 to_px 的严格反解：任意亚格往返
+	eq(gh.to_continuous_grid(gh.to_px(Vector2(2.2, 2.2))), Vector2(2.2, 2.2), "六边亚格往返")
+	ok(gh.to_continuous_grid(gh.to_px(Vector2(3.7, 1.4))).distance_to(Vector2(3.7, 1.4)) < 0.001,
+		"六边奇行亚格往返（浮点容差）")
+	# 偶行拖到奇行再拖回：gx 差半格是坐标定义，像素位置必须一致
+	var even_px = gh.to_px(Vector2(2.0, 0.0))
+	var odd_px = gh.to_px(Vector2(2.0, 1.0))
+	eq(gh.to_continuous_grid(even_px), Vector2(2.0, 0.0), "偶行连续坐标")
+	eq(gh.to_continuous_grid(odd_px), Vector2(2.0, 1.0), "奇行连续坐标（to_px 口径）")
+	eq(gh.to_px(gh.to_continuous_grid(odd_px)), odd_px, "奇行连续往返像素一致")
+	# 矩形格 [32,16] + 亚格
+	var gr = GridSpaceScript.new(Vector2i(32, 16), "hexagonal")
+	ok(gr.to_continuous_grid(gr.to_px(Vector2(2.2, 2.2))).distance_to(Vector2(2.2, 2.2)) < 0.001,
+		"矩形六边亚格往返")

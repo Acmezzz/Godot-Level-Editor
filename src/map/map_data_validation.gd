@@ -46,6 +46,9 @@ static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 		for key in ["w", "h"]:
 			if meta.has(key) and not (meta[key] is int or meta[key] is float):
 				_add(issues, "error", "meta." + key, "must be a number")
+		# 逐图投影（B1）：可选键，三种枚举；缺键 = 沿用项目解析
+		if meta.has("gridProjection") and not (str(meta.gridProjection) in ["orthogonal", "isometric", "hexagonal"]):
+			_add(issues, "error", "meta.gridProjection", "must be \"orthogonal\" / \"isometric\" / \"hexagonal\"")
 		layer_ids = _validate_layers(meta, issues)
 	var tiles = data.get("tiles", null)
 	if tiles != null and not (tiles is Dictionary):

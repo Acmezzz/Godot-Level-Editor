@@ -8,6 +8,7 @@ const UiThemeScript := preload("res://src/ui/ui_theme.gd")
 const K := preload("res://src/core/constants.gd")
 const MapStore := preload("res://src/map/map_store.gd")
 const Recovery := preload("res://src/map/recovery.gd")
+const GridSpaceScript := preload("res://src/canvas/grid_space.gd")
 
 var app   # 宿主引用
 
@@ -116,9 +117,9 @@ func confirm_action(title: String, text: String, ok_text := "确定", _danger :=
 	dlg.queue_free()
 	return answer[0]
 
-## 新建地图：名字在弹窗里输入（顶栏已无常驻名字框）
+## 新建地图：名字在弹窗里输入（顶栏已无常驻名字框）。高级设置可选格投影（B1）。
 func on_new() -> void:
-	var shell: Dictionary = app._popup_body("新建地图", "名字同时作文件名与显示名。")
+	var shell: Dictionary = app._popup_body("新建地图", "名字同时作文件名与显示名。投影进 meta.gridProjection，之后由这张图自己带着走。")
 	var pop: PopupPanel = shell.pop
 	var body: VBoxContainer = shell.body
 	var name_edit := LineEdit.new()
@@ -127,6 +128,16 @@ func on_new() -> void:
 		name_edit.text = _name_memo
 	name_edit.placeholder_text = "地图名"
 	body.add_child(UiKitScript.field_row("地图名", name_edit))
+	# 高级设置：格投影。缺省 = 沿用项目解析（清单里瓦片资产的声明）。
+	var proj_sel := OptionButton.new()
+	var proj_keys: Array = ["", "orthogonal", "isometric", "hexagonal"]
+	var proj_labels: Array = ["沿用项目（%s）" % _proj_label(GridSpaceScript.project_projection(app.manifest)),
+		"正交", "等距", "六边形"]
+	for i in proj_keys.size():
+		proj_sel.add_item(str(proj_labels[i]))
+		proj_sel.set_item_metadata(i, str(proj_keys[i]))
+	proj_sel.select(0)
+	body.add_child(UiKitScript.field_row("格投影", proj_sel, UiKitScript.LABEL_W_LONG))
 	var err_label := UiKitScript.text_label("", UiThemeScript.WARN, UiThemeScript.FS_SMALL)
 	err_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	err_label.custom_minimum_size = Vector2(app.POPUP_BODY_W, 0)
@@ -135,13 +146,22 @@ func on_new() -> void:
 	btn_row.alignment = BoxContainer.ALIGNMENT_END
 	btn_row.add_child(UiKitScript.button("取消", func(): pop.hide(), "ghost"))
 	btn_row.add_child(UiKitScript.button("确定",
-		func(): create_map_from_dialog(name_edit, err_label, pop), "primary"))
-	name_edit.text_submitted.connect(func(_t: String): create_map_from_dialog(name_edit, err_label, pop))
+		func(): create_map_from_dialog(name_edit, err_label, pop, str(proj_sel.get_item_metadata(proj_sel.selected))), "primary"))
+	name_edit.text_submitted.connect(func(_t: String):
+		create_map_from_dialog(name_edit, err_label, pop, str(proj_sel.get_item_metadata(proj_sel.selected))))
 	body.add_child(btn_row)
 	app._open_popup(pop)
 
+func _proj_label(p: String) -> String:
+	match p:
+		"isometric":
+			return "等距"
+		"hexagonal":
+			return "六边形"
+	return "正交"
+
 ## 新建弹窗确定：校验 → 未保存确认 → 载入空图
-func create_map_from_dialog(name_edit: LineEdit, err_label: Label, pop: PopupPanel) -> void:
+func create_map_from_dialog(name_edit: LineEdit, err_label: Label, pop: PopupPanel, proj := "") -> void:
 	var n: String = name_edit.text.strip_edges()
 	if n == "":
 		err_label.text = "先填地图名"
@@ -161,7 +181,7 @@ func create_map_from_dialog(name_edit: LineEdit, err_label: Label, pop: PopupPan
 		return
 	var gen := _begin_doc_op()
 	app.canvas.set_thumbs(app._entity_thumbs())
-	await app.canvas.load_data(MapStore.new_map(n, K.DEFAULT_MAP_W, K.DEFAULT_MAP_H), n)
+	await app.canvas.load_data(MapStore.new_map(n, K.DEFAULT_MAP_W, K.DEFAULT_MAP_H, proj), n)
 	if _doc_stale(gen):
 		return   # 期间又切了别的图：本次载入结果已被更新的一次重建取代
 	app.cur_map_name = n

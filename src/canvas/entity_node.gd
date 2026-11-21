@@ -203,24 +203,35 @@ func anchor_off() -> Vector2:
 static func anchor_off_of(unit: Vector2, size: Vector2) -> Vector2:
 	return Vector2(unit.x * size.x, unit.y * size.y)
 
-## 数据 x/y → 世界锚点位置
+## 数据 x/y → 世界锚点位置。
+## 六边（B1）：to_px(整数格) 已经是格中心，不能再把正交的 +anchor_unit 方格偏量塞进去；
+## 锚点偏移改为相对格中心的包围盒偏移（center = 0，top_left = 左上，bottom_center = 底中）。
 func world_of_grid(gx: float, gy: float) -> Vector2:
 	if grid_ref != null:
+		if grid_ref.is_hex():
+			return grid_ref.to_px(Vector2(gx, gy)) + _hex_anchor_off()
 		return grid_ref.to_px(Vector2(gx, gy) + anchor_unit())
 	return (Vector2(gx, gy) + anchor_unit()) * float(tile_px)
 
-## 世界位置 → 数据 x/y（保留浮点，吸附由调用方决定）
+## 世界位置 → 数据 x/y（保留浮点，吸附由调用方决定）。六边走连续反算，保留亚格。
 func grid_of_world(p: Vector2) -> Vector2:
 	if grid_ref != null:
+		if grid_ref.is_hex():
+			return grid_ref.to_continuous_grid(p - _hex_anchor_off())
 		return grid_ref.to_grid(p) - anchor_unit()
 	return p / float(tile_px) - anchor_unit()
+
+## 六边锚点像素偏移（相对格中心）：把「格内单位坐标」映射为包围盒内的像素偏移。
+func _hex_anchor_off() -> Vector2:
+	return (anchor_unit() - Vector2(0.5, 0.5)) * Vector2(grid_ref.tile)
 
 ## 实例「所在格」（区域框选/复制/剪切判定用）：视觉矩形左上角所在格，浮点向下取整。
 ## 不走锚点格——bottom_center 这类锚点的格号不是矩形起始格。
 func cell() -> Vector2i:
 	var r := rect()
 	if grid_ref != null:
-		return Vector2i(floori(grid_ref.to_grid(r.position).x), floori(grid_ref.to_grid(r.position).y))
+		var gg := grid_ref.to_continuous_grid(r.position)
+		return Vector2i(floori(gg.x), floori(gg.y))
 	return Vector2i(floori(r.position.x / tile_px), floori(r.position.y / tile_px))
 
 func apply_grid(gx: float, gy: float) -> void:

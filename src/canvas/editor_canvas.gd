@@ -184,14 +184,10 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	map_data = data
 	cur_map_name = map_name
 	# 清单 tileSize 是「一格 = 多少像素」的唯一真相：网格/边界/实体对齐/碰撞视图全用它。
-	# 标量 = 正方形格；[w,h] = 矩形格（R-01 批 1c）。grid.tile 是画布侧唯一真相。
-	var ts = manifest.get("tileSize", 16)
-	if ts is Array and (ts as Array).size() == 2:
-		tile_w = int((ts as Array)[0])
-		tile_h = int((ts as Array)[1])
-	else:
-		tile_w = int(ts)
-		tile_h = tile_w
+	# 标量 = 正方形格；[w,h] = 矩形格（B1：正整数像素，畸形值回退 16×16）。
+	var gsize: Vector2i = GridSpaceScript.tile_size_of(manifest)
+	tile_w = gsize.x
+	tile_h = gsize.y
 	# 节点全部重建：选区/剪贴板引用失效，清空（剪贴板只存模板数据可保留，但引用选区必须清）
 	selected_entity = null
 	selected_multi.clear()
@@ -235,6 +231,8 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	_build_tileset()
 	# 格↔像素转换层（正交/等距）：瓦片资产清单就位后才能判投影
 	grid = GridSpaceScript.new(Vector2i(tile_w, tile_h), _map_projection())
+	# 旧图冻结生效投影（B1）：此后清单资产增删不再改变这张图的空间口径
+	_freeze_projection()
 	# 背景：整块铺满视口（比地图尺寸大得多），作为地图之外区域的底色
 	var meta: Dictionary = data.get("meta", {})
 	# 分层身份码：地图段。老图没有就补发（保存在 meta.code，地图改名不影响它）。
@@ -482,16 +480,45 @@ func _entity_hit_on(li: int, pos: Vector2) -> EntityNode:
 	return _selection_ops_ctrl._entity_hit_in(_layer_entities(li), pos)
 
 func _cell_of(pos: Vector2) -> Vector2i:
-	var g: Vector2 = grid.to_grid(pos)
-	return Vector2i(floori(g.x), floori(g.y))
+	return grid.pick_cell(pos)
 
-## 地图投影：任一瓦片资产声明 isometric/hexagonal 即整图按该投影（混投影由清单校验给警告）。
+## 地图投影：地图自己的 meta.gridProjection 优先（B1 逐图投影），缺键沿用项目解析
+## （任一瓦片资产声明 isometric/hexagonal 即整项目按该投影）。旧图首次保存时把生效投影
+## 冻结进 meta（见 _freeze_projection），此后与清单资产增删解耦。
 func _map_projection() -> String:
-	for a in _tile_assets:
-		var gp := str((a as Dictionary).get("gridProjection", "orthogonal"))
-		if gp == "isometric" or gp == "hexagonal":
-			return gp
-	return "orthogonal"
+	var meta: Dictionary = map_data.get("meta", {}) if map_data is Dictionary else {}
+	var own := str(meta.get("gridProjection", ""))
+	if own == "isometric" or own == "hexagonal" or own == "orthogonal":
+		return own
+	return GridSpaceScript.project_projection(manifest)
+
+## 旧图冻结投影（B1）：地图缺 meta.gridProjection 时，把当前生效投影写进内存 meta。
+## 只改内存（随首次保存落盘），不标脏——打开旧图不应该因为读一眼就变脏。
+func _freeze_projection() -> void:
+	if not (map_data is Dictionary):
+		return
+	var meta: Dictionary = map_data.get("meta", {}) if map_data.get("meta", {}) is Dictionary else {}
+	if meta.has("gridProjection"):
+		return
+	var proj := _map_projection()
+	if proj == "orthogonal":
+		return   # 正交是缺省，不写冗余键
+	meta["gridProjection"] = proj
+	map_data["meta"] = meta
+
+## 地图已装载且 root 有效（E14：无图时输入/绘制提前返回，不碰坐标换算）
+func is_map_ready() -> bool:
+	return map_root != null and is_instance_valid(map_root)
+
+## 是否有内容（B1）：瓦片/碰撞/实例任一非空——投影切换守卫的依据。
+## 普通设置只允许在空图上切投影；带内容的切换必须先做显式转换并保存副本。
+func has_content() -> bool:
+	for tn in layer_tiles:
+		if not (tn as TileMapLayer).get_used_cells().is_empty():
+			return true
+	if collision != null and not collision.get_used_cells().is_empty():
+		return true
+	return not ents_all().is_empty()
 
 ## 格空间方向向量 → 像素位移（方向键微调/原位复制的格对齐移动；正交 = 轴对齐，等距沿菱形方向，六边沿格中心连线）
 func grid_dir_px(dx: int, dy: int) -> Vector2:
@@ -499,11 +526,20 @@ func grid_dir_px(dx: int, dy: int) -> Vector2:
 
 ## 放置/拖动落点：吸附开启时把「数据格坐标」四舍五入到整格（对齐锚点在格内的位置，
 ## 与实例尺寸无关）。关闭时原样保留。
+## 六边形（B1）：格坐标 = 连续反算（不取最近中心），锚点偏移按包围盒内单位算，
+## 不再把正交的 +0.5 格偏量塞进六边中心坐标。
 func snap_point(p: Vector2, n: EntityNode = null) -> Vector2:
+	var unit: Vector2 = n.anchor_unit() if n != null else Vector2(0.5, 0.5)
+	return snap_anchor_px(unit, p)
+
+## 按「格内锚点单位坐标」吸附像素点（幽灵预览与实例落点共用同一口径）。
+func snap_anchor_px(unit: Vector2, p: Vector2) -> Vector2:
 	if not snap_to_grid:
 		return p
-	var unit: Vector2 = n.anchor_unit() if n != null else Vector2(0.5, 0.5)
-	# 格空间里吸附后映回像素：正交时逐位等于旧口径；等距沿菱形网格吸附
+	if grid.is_hex():
+		var off: Vector2 = (unit - Vector2(0.5, 0.5)) * Vector2(grid.tile)
+		var gh: Vector2 = grid.to_continuous_grid(p - off)
+		return grid.to_px(Vector2(roundf(gh.x), roundf(gh.y))) + off
 	var g = grid.to_grid(p) - unit
 	return grid.to_px(Vector2(roundf(g.x), roundf(g.y)) + unit)
 
@@ -541,20 +577,33 @@ func _pick_tile(pos: Vector2) -> void:
 		return
 	_hint("该格没有可吸取的瓦片（碰撞层不参与吸管）")
 
-## 整图入视野（Home）——相机对中 + 缩放夹回 0.5~6.0
+## 整图入视野（Home）——相机对中 + 缩放夹回 0.5~6.0。
+## 取可见对象、瓦片与碰撞的并集（E14）：只有瓦片时背景图/纯实体图会拟合到默认空范围。
 func _fit_view() -> void:
-	if map_root == null or not is_instance_valid(map_root) or layer_tiles.is_empty():
+	if not is_map_ready() or layer_tiles.is_empty():
 		_hint("无地图：先新建或打开一张地图")
 		return
 	# 用第一个非空矩形做种子再合并——Rect2i() 以 (0,0) 为种子会让 union 恒含原点，
 	# 内容不贴原点时 Home 的中心与缩放全错
 	var used := Rect2i()
-	for tn in layer_tiles:
-		var r: Rect2i = (tn as TileMapLayer).get_used_rect()
+	var seed_set := {"has": false}
+	var take := func(r: Rect2i):
 		if r.size == Vector2i.ZERO:
+			return
+		used = r if not (seed_set.has as bool) else used.merge(r)
+		seed_set["has"] = true
+	for tn in layer_tiles:
+		take.call((tn as TileMapLayer).get_used_rect())
+	if collision != null:
+		take.call(collision.get_used_rect())
+	for e in ents_all():
+		var n := e as EntityNode
+		if n == null or n.asset == "" or not n.visible_flag:
 			continue
-		used = r if used.size == Vector2i.ZERO else used.merge(r)
-	if used.size == Vector2i.ZERO:
+		var r := n.rect()
+		take.call(Rect2i(floori(r.position.x / float(maxi(tile_w, 1))), floori(r.position.y / float(maxi(tile_h, 1))),
+			maxi(1, ceili(r.size.x / float(maxi(tile_w, 1)))), maxi(1, ceili(r.size.y / float(maxi(tile_h, 1))))))
+	if not seed_set.has:
 		used = Rect2i(0, 0, 10, 10)
 	cam_pos = grid.cell_center_px(Vector2i(used.get_center()))
 	var vp := get_viewport_rect().size

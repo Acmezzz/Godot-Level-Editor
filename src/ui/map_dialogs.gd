@@ -35,22 +35,49 @@ func open_size_dialog() -> void:
 	h_edit.step = 1
 	h_edit.value = int(meta.get("h", K.DEFAULT_MAP_H))
 	row.add_child(UiKitScript.field_row("高", h_edit))
+	# 逐图投影（B1）：空图才允许在普通设置里改；带内容的地图必须先做显式转换
+	# （转换另作操作：先展示目标并保存副本），否则已摆内容的空间口径会被静默改写。
+	var proj_sel := OptionButton.new()
+	var proj_keys: Array = ["orthogonal", "isometric", "hexagonal"]
+	var proj_labels: Array = ["正交", "等距", "六边形"]
+	var cur_proj: String = app.canvas.grid.projection
+	for i in proj_keys.size():
+		proj_sel.add_item(str(proj_labels[i]))
+		proj_sel.set_item_metadata(i, str(proj_keys[i]))
+		if str(proj_keys[i]) == cur_proj:
+			proj_sel.select(i)
+	var has_content: bool = app.canvas.has_content()
+	proj_sel.disabled = has_content
+	if has_content:
+		proj_sel.tooltip_text = "地图已有内容：投影切换需要显式转换（先保存副本），普通设置不允许直接改"
+	body.add_child(UiKitScript.field_row("格投影", proj_sel, UiKitScript.LABEL_W_LONG))
+	if has_content:
+		body.add_child(UiKitScript.hint_label(
+			"已有内容的投影已冻结。要换投影请复制这张图，在副本上转换并核对游戏加载器。", 460))
 	var btn_row := UiKitScript.hbox(8)
 	btn_row.alignment = BoxContainer.ALIGNMENT_END
 	# apply 回调改走方法：lambda 里不能 await，而 load_data 是协程——
 	# 不 await 就 _mark()，置脏会被 load_data 收尾覆盖（撤销恢复路径的脏标记）
 	btn_row.add_child(UiKitScript.button("取消", func(): pop.hide(), "ghost"))
-	btn_row.add_child(UiKitScript.button("应用", func(): apply_map_size(int(w_edit.value), int(h_edit.value), pop), "primary"))
+	btn_row.add_child(UiKitScript.button("应用", func(): apply_map_size(int(w_edit.value), int(h_edit.value), pop,
+		str(proj_sel.get_item_metadata(proj_sel.selected))), "primary"))
 	body.add_child(btn_row)
 	app._open_popup(pop)
 
-func apply_map_size(nw: int, nh: int, pop: PopupPanel) -> void:
+func apply_map_size(nw: int, nh: int, pop: PopupPanel, proj := "") -> void:
 	var d: Dictionary = app.canvas.extract()
 	if d.is_empty():   # 重建窗口哨兵：空快照过 load_data = 清空整图
 		app._set_status(" 地图重建中，请稍后再试")
 		return
 	d["meta"]["w"] = nw
 	d["meta"]["h"] = nh
+	# 逐图投影（B1）：空图可直接选；带内容的地图投影已冻结（弹窗里也禁用），
+	# 这里再加一道守卫——数据路径不允许绕过内容检查。
+	if proj != "" and not app.canvas.has_content():
+		if proj == "orthogonal":
+			d["meta"].erase("gridProjection")
+		else:
+			d["meta"]["gridProjection"] = proj
 	await app.canvas.load_data(d, app.cur_map_name, true)
 	app.canvas.undo_stack.clear()
 	app.canvas.redo_stack.clear()
@@ -81,7 +108,7 @@ func open_export_dialog() -> void:
 		if data.is_empty():   # 重建窗口哨兵：空图导出的是白板 PNG
 			app._set_status(" 地图重建中，请稍后再试")
 			return
-		var img := MapExport.render_preview(data, int(px.value), app.manifest, int(app.manifest.get("tileSize", 16)))   # 多图集+tileSize
+		var img := MapExport.render_preview(data, int(px.value), app.manifest)   # 多图集；切片缺省读清单 tileSize
 		var dir := str(app.manifest.get("_dir", "")).path_join("editor/exports")
 		DirAccess.make_dir_recursive_absolute(dir)
 		var path := dir.path_join(app.cur_map_name + ".png")
@@ -124,7 +151,7 @@ func open_export_dialog() -> void:
 			if d.is_empty():
 				fail.append(nm)
 				continue
-			var img := MapExport.render_preview(d, bpx, app.manifest, int(app.manifest.get("tileSize", 16)))
+			var img := MapExport.render_preview(d, bpx, app.manifest)
 			var err := img.save_png(dir.path_join(nm + ".png"))
 			if err == OK:
 				ok_n += 1

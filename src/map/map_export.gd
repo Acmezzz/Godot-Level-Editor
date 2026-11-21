@@ -5,10 +5,12 @@ extends RefCounted
 const K := preload("res://src/core/constants.gd")
 const INVISIBLE_CELL := K.INVISIBLE_CELL
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
+const GridSpaceScript := preload("res://src/canvas/grid_space.gd")
 
 ## 生成预览图。px_per_tile 为每格像素（默认 4，120x56 地图得 480x224）。
 ## `assets` = 清单字典（取图集路径与切片尺寸）；为空时地形用纯色块占位。
-static func render_preview(data: Dictionary, px_per_tile := 4, manifest: Dictionary = {}, grid := 16) -> Image:
+## `grid` = 清单 tileSize（标量或 [w,h]），只作切片尺寸缺省兜底（B1 矩形格）。
+static func render_preview(data: Dictionary, px_per_tile := 4, manifest: Dictionary = {}, grid = 16) -> Image:
 	var meta: Dictionary = data.get("meta", {})
 	var w := maxi(int(meta.get("w", 1)), 1)
 	var h := maxi(int(meta.get("h", 1)), 1)
@@ -86,7 +88,7 @@ static func _blit_tile(img: Image, dst: Rect2i, c: Array, manifest: Dictionary,
 		return false
 	var cs := AssetDecl.cell_size(manifest, aid)
 	if cs == Vector2i.ZERO:
-		cs = Vector2i(grid, grid)
+		cs = GridSpaceScript.tile_size_of({"tileSize": grid})
 	var asz := Vector2i(img0.get_size())
 	var src_rect := Rect2i(acx * cs.x, acy * cs.y, cs.x, cs.y)
 	if src_rect.position.x < 0 or src_rect.position.y < 0 \

@@ -126,7 +126,7 @@ static func palette_of(m: Dictionary, aid: String) -> Array:
 	return out
 
 ## 瓦片切片尺寸：cell = {w, h}（可非正方形；实测 TileSet 接受任意 region 尺寸）。
-## 缺省退回清单 tileSize（地图格），保证旧声明仍可用。
+## 缺省退回清单 tileSize（地图格，标量或 [w,h]），保证旧声明仍可用。
 static func cell_size(m: Dictionary, aid: String) -> Vector2i:
 	var c = by_id(m, aid).get("cell", null)
 	if c is Dictionary:
@@ -139,8 +139,7 @@ static func cell_size(m: Dictionary, aid: String) -> Vector2i:
 		var h2 := int((c as Array)[1])
 		if w2 > 0 and h2 > 0:
 			return Vector2i(w2, h2)
-	var t := int(m.get("tileSize", 16))
-	return Vector2i(t, t)
+	return preload("res://src/canvas/grid_space.gd").tile_size_of(m)
 
 ## 编辑器占位尺寸（像素），只看声明：editorSize → ZERO（prefab 碰撞形状的兜底在
 ## manifest.entity_editor_size 里——那需要读文件，不属于纯声明归一化）。

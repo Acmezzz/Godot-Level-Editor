@@ -151,3 +151,19 @@ func test_decode_text_gate() -> void:
 	eq(bool(r3.get("ok")), false, "坏图拒收")
 	eq((r3.get("data", {}) as Dictionary).size(), 0, "拒收时数据为空")
 	ok((r3.get("errors", []) as Array).size() >= 1, "给出错误列表")
+
+## B1：逐图投影键 meta.gridProjection——三种枚举；缺键沿用项目解析
+func test_grid_projection_key() -> void:
+	var d := Store.new_map("t", 40, 30)
+	ok(not d.meta.has("gridProjection"), "正交新图不写冗余键")
+	var di := Store.new_map("t", 40, 30, "isometric")
+	eq(str(di.meta.get("gridProjection", "")), "isometric", "新建等距图写 meta.gridProjection")
+	var dh := Store.new_map("t", 40, 30, "hexagonal")
+	eq(str(dh.meta.get("gridProjection", "")), "hexagonal", "新建六边图写 meta.gridProjection")
+	var d2 := Store.new_map("t", 40, 30)
+	d2.meta["gridProjection"] = "bogus"
+	ok(_errs(d2).size() >= 1, "非法投影枚举报错")
+	var d3 := Store.new_map("t", 40, 30)
+	d3.meta["gridProjection"] = "isometric"
+	eq(_errs(d3).size(), 0, "等距投影合法")
+	ok(_errs(d3).size() == 0, "缺键不报错（沿用项目解析）")

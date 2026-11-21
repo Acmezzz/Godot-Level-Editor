@@ -30,6 +30,38 @@ func is_iso() -> bool:
 func is_hex() -> bool:
 	return projection == "hexagonal"
 
+## 清单 tileSize → 格尺寸（内部一律 Vector2i）：16 或 [32,16]；零/负/非整数/畸形回退 16×16。
+static func tile_size_of(m: Dictionary) -> Vector2i:
+	var ts = m.get("tileSize", 16)
+	if ts is Array and (ts as Array).size() == 2:
+		var wv = (ts as Array)[0]
+		var hv = (ts as Array)[1]
+		if _is_pos_int(wv) and _is_pos_int(hv):
+			return Vector2i(int(wv), int(hv))
+	elif _is_pos_int(ts):
+		var s := int(ts)
+		return Vector2i(s, s)
+	return Vector2i(16, 16)
+
+static func _is_pos_int(v) -> bool:
+	if v is int:
+		return v > 0
+	if not (v is float):
+		return false
+	var f: float = v
+	return is_finite(f) and f > 0.0 and f == floorf(f)
+
+## 项目级缺省投影：任一瓦片资产声明非正交即整项目按它（地图无 meta.gridProjection 时的解析）。
+static func project_projection(m: Dictionary) -> String:
+	for a in (m.get("assets", []) as Array):
+		if not (a is Dictionary) or str((a as Dictionary).get("kind", "")) != "scene" \
+				or str((a as Dictionary).get("shape", "")) != "tile":
+			continue
+		var gp := str((a as Dictionary).get("gridProjection", "orthogonal"))
+		if gp == "isometric" or gp == "hexagonal":
+			return gp
+	return "orthogonal"
+
 ## 格坐标（浮点，含格内分数）→ 像素。正交 = 左上角系；等距 = 菱形顶点系；六边 = 格中心系（仅整数格有格中心语义）。
 func to_px(g: Vector2) -> Vector2:
 	if is_hex():
@@ -77,6 +109,41 @@ func to_grid(p: Vector2) -> Vector2:
 	return p / Vector2(tile)
 
 # —— 格对齐原语（R-01：所有格对齐的绘制/命中/描边统一走这组，不再自己 ×tile_px）——
+
+## 拾取（B1）：像素 → 格号。正交/等距 = floor(连续格坐标)；六边 = 附近 3×3 格里
+## 按实际六角轮廓判定（最近中心只是 Voronoi 近似，与绘制形状在边界上不一致），
+## 轮廓内优先、再取中心更近者；遍历序固定 → 边界结果稳定。
+func pick_cell(px: Vector2) -> Vector2i:
+	var g := to_grid(px)
+	if not is_hex():
+		return Vector2i(floori(g.x), floori(g.y))
+	var ctr := Vector2i(int(g.x), int(g.y))
+	var best := ctr
+	var best_score := INF
+	for dj in range(-1, 2):
+		for di in range(-1, 2):
+			var c := Vector2i(ctr.x + di, ctr.y + dj)
+			var score := px.distance_squared_to(cell_center_px(c))
+			if Geometry2D.is_point_in_polygon(px, cell_polygon(c)):
+				score -= 1.0e12
+			if score < best_score:
+				best_score = score
+				best = c
+	return best
+
+## 连续格坐标（含亚格，B1）：正交/等距 = to_grid（线性互逆）；六边 = 行连续换算，
+## 不取最近中心——离格拖动逐帧反算时要连续，过奇偶行边界 gx 可变半格但像素位置不断。
+## 公式是 to_px 的严格反解：gy=(py-h/2)/(0.75h)，gx=(px-w/2)/w-odd_offset(floor(gy))。
+func to_continuous_grid(px: Vector2) -> Vector2:
+	if not is_hex():
+		return to_grid(px)
+	var w := float(tile.x)
+	var h := float(tile.y)
+	if w <= 0.0 or h <= 0.0:
+		return Vector2.ZERO
+	var gy := (px.y - h * 0.5) / (h * 0.75)
+	var off := 0.5 if posmod(floori(gy), 2) == 1 else 0.0
+	return Vector2((px.x - w * 0.5) / w - off, gy)
 
 ## cell 的中心像素（正交 = 方形中心；等距 = 菱形中心；六边 = 格中心，与 TileMapLayer.map_to_local 口径一致）
 func cell_center_px(c: Vector2i) -> Vector2:
@@ -128,10 +195,16 @@ func cell_tex_rect(c: Vector2i, cs: Vector2i) -> Rect2:
 ## vis = 可视像素矩形（调用方已用画布变换反算）；map_rect = 地图格范围。
 func grid_lines(vis: Rect2, map_rect: Rect2i) -> PackedVector2Array:
 	var out := PackedVector2Array()
+	# 可视格范围按四角反算（E14）：等距/六边下对角两角不足以覆盖可视区，
+	# 只取 position/end 会漏掉另外两个角所覆盖的格线，平移时网格边缘缺段。
 	var g0 := to_grid(vis.position)
-	var g1 := to_grid(vis.end)
-	var lo := Vector2i(floori(minf(g0.x, g1.x)), floori(minf(g0.y, g1.y))) - Vector2i(1, 1)
-	var hi := Vector2i(ceilf(maxf(g0.x, g1.x)), ceilf(maxf(g0.y, g1.y))) + Vector2i(1, 1)
+	var g1 := to_grid(Vector2(vis.end.x, vis.position.y))
+	var g2 := to_grid(vis.end)
+	var g3 := to_grid(Vector2(vis.position.x, vis.end.y))
+	var gmin := Vector2(minf(minf(g0.x, g1.x), minf(g2.x, g3.x)), minf(minf(g0.y, g1.y), minf(g2.y, g3.y)))
+	var gmax := Vector2(maxf(maxf(g0.x, g1.x), maxf(g2.x, g3.x)), maxf(maxf(g0.y, g1.y), maxf(g2.y, g3.y)))
+	var lo := Vector2i(floori(gmin.x), floori(gmin.y)) - Vector2i(1, 1)
+	var hi := Vector2i(ceilf(gmax.x), ceilf(gmax.y)) + Vector2i(1, 1)
 	if is_hex():
 		var hw := float(tile.x)
 		var hh := float(tile.y)

@@ -83,19 +83,23 @@ static func upgrade(data: Dictionary) -> bool:
 
 ## 新建地图模板：两层用户层栈（「资产层」+「FL」，底→顶，层码用 ContentId 发放），
 ## tiles/collision/objects 均空。新建地图入口用它组装，保证 meta.layers 从出生就是当前契约。
-static func new_map(name: String, w: int, h: int) -> Dictionary:
+## `proj` = 逐图格投影（B1）：正交缺省不写键；等距/六边写 meta.gridProjection。
+static func new_map(name: String, w: int, h: int, proj := "orthogonal") -> Dictionary:
+	var meta := {
+		"code": ContentId.new_inst_code(),
+		"name": name,
+		"w": w,
+		"h": h,
+		"layers": [
+			{"id": ContentId.new_inst_code(), "name": "资产层", "visible": true},
+			{"id": ContentId.new_inst_code(), "name": "FL", "visible": true},
+		],
+	}
+	if proj == "isometric" or proj == "hexagonal":
+		meta["gridProjection"] = proj
 	return {
 		"version": FORMAT_VERSION,
-		"meta": {
-			"code": ContentId.new_inst_code(),
-			"name": name,
-			"w": w,
-			"h": h,
-			"layers": [
-				{"id": ContentId.new_inst_code(), "name": "资产层", "visible": true},
-				{"id": ContentId.new_inst_code(), "name": "FL", "visible": true},
-			],
-		},
+		"meta": meta,
 		"spawn": [2, 2],
 		"tiles": {},
 		"collision": [],

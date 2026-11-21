@@ -22,6 +22,9 @@ func _unhandled_input(event: InputEvent) -> void:
 	# 重建窗口期拦截输入：cvs.map_root 已 queue_free 但变量还指向它
 	if cvs.map_root != null and not is_instance_valid(cvs.map_root):
 		return
+	# 未装载地图：坐标换算依赖 grid/tile 尺寸，提前返回（E14：无图时鼠标不动画布）
+	if not cvs.is_map_ready():
+		return
 	var pos = cvs.get_global_mouse_position()
 	if event is InputEventMouseButton:
 		var b := event as InputEventMouseButton
