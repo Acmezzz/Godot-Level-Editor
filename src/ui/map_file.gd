@@ -2,7 +2,6 @@ extends RefCounted
 ## 地图文件生命周期控制器：新建/打开/保存/改名（纯改名，引用不迁移）/
 ## 自动保存/试玩/尺寸/导出。状态经宿主访问；写盘统一走 MapStore
 ## （.tmp 原子替换，正式保存带 .history 轮转备份）。
-const MapExport := preload("res://src/map/map_export.gd")
 const ClonePlan := preload("res://src/content/clone_plan.gd")
 const UiKitScript := preload("res://src/ui/ui_kit.gd")
 const UiThemeScript := preload("res://src/ui/ui_theme.gd")
