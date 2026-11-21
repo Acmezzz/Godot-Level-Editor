@@ -246,6 +246,31 @@ func apply_flip_h(v: bool) -> void:
 func toggle_flip_h() -> void:
 	apply_flip_h(not flipped_h())
 
+## R 键：旋转 90°（data_transform.rotation 弧度；fposmod 归一，回到 0 时整键省略）
+func rotate_90() -> void:
+	var r := fposmod(float(data_transform.get("rotation", 0.0)) + PI * 0.5, TAU)
+	if is_zero_approx(r):
+		data_transform.erase("rotation")
+	else:
+		data_transform["rotation"] = r
+	refresh_visual()
+
+## [ ] 键：等比缩放步进（scale [sx,sy] 各加 delta，下限 0.1；回到 1.0 时整键省略）
+func scale_step(d: float) -> void:
+	var s = data_transform.get("scale", null)
+	var sx := 1.0
+	var sy := 1.0
+	if s is Array and (s as Array).size() >= 2:
+		sx = float((s as Array)[0])
+		sy = float((s as Array)[1])
+	sx = maxf(0.1, sx + d)
+	sy = maxf(0.1, sy + d)
+	if is_zero_approx(sx - 1.0) and is_zero_approx(sy - 1.0):
+		data_transform.erase("scale")
+	else:
+		data_transform["scale"] = [sx, sy]
+	refresh_visual()
+
 ## transform 是否等于缺省形态（写盘时整键省略）
 func transform_is_default() -> bool:
 	var s = data_transform.get("scale", null)

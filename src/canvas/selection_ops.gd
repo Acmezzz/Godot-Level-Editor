@@ -184,6 +184,81 @@ func _finish_entity_drag() -> void:
 	cvs._hint("已移动 %d 个实例（Ctrl+Z 撤销）" % targets.size())
 
 
+## —— 实例尺寸把手（R-04）：选中 sizeFields 实例右下角把手，拖动 = 改 props w/h（格数） ——
+## 预览期直接写 props（display_size 实时反映），收尾恢复原值压一个撤销步再写终值。
+
+## 把手命中：仅带 sizeFields 的选中实例有把手（触发区/事件区这类自定尺寸实例）
+func _resize_handle_hit(pos: Vector2) -> bool:
+	var n = cvs.selected_entity
+	if n == null or not is_instance_valid(n) or cvs.place_kind != "object":
+		return false
+	var sf = (n.decl as Dictionary).get("sizeFields", null)
+	if not (sf is Array) or (sf as Array).size() < 2:
+		return false
+	var r: Rect2 = (n as EntityNode).rect()
+	var side = cvs.grid.cell_max() * 0.6
+	return Rect2(r.end - Vector2.ONE * side * 0.5, Vector2.ONE * side).has_point(pos)
+
+## 起手：记录目标与原始 w/h（键名从 decl.sizeFields 取）
+func _begin_entity_resize(n: EntityNode, pos: Vector2) -> void:
+	var sf: Array = (n.decl as Dictionary).get("sizeFields", [])
+	if sf.size() < 2:
+		return
+	if cvs.is_layer_locked(cvs._layer_index_of(n.layer_id)):
+		cvs._hint("实例所在图层已锁定：解锁后再调整尺寸")
+		return
+	cvs._resize_node = n
+	cvs._resize_orig = {
+		"wf": str(sf[0]), "hf": str(sf[1]),
+		"w": int(n.props.get(str(sf[0]), 1)), "h": int(n.props.get(str(sf[1]), 1)),
+	}
+	cvs._resize_origin = (n as EntityNode).rect().position
+	cvs._resize_moved = false
+	cvs.begin_gesture(cvs.Gesture.ENTITY_RESIZE, MOUSE_BUTTON_LEFT)
+
+## 拖动预览：props w/h = 鼠标相对 rect 左上角的格数（≥1）；变化才写，回到原值 = 零副作用
+func _move_resize_preview(pos: Vector2) -> void:
+	if cvs._resize_node == null or not is_instance_valid(cvs._resize_node):
+		cvs._resize_node = null
+		return
+	var n := cvs._resize_node as EntityNode
+	var cell := Vector2(cvs.grid.tile)
+	var o: Vector2 = cvs._resize_origin
+	var nw := maxi(1, roundi(maxf((pos.x - o.x) / maxf(cell.x, 1.0), 0.5)))
+	var nh := maxi(1, roundi(maxf((pos.y - o.y) / maxf(cell.y, 1.0), 0.5)))
+	var orig: Dictionary = cvs._resize_orig
+	if nw == int(orig.w) and nh == int(orig.h):
+		return
+	n.props[str(orig.wf)] = nw
+	n.props[str(orig.hf)] = nh
+	cvs._resize_moved = true
+	n.refresh_visual()
+	cvs.queue_redraw()
+
+## 收尾：动过才压撤销+置脏（恢复原值→压撤销→写回终值 = 一个撤销步）
+func _finish_entity_resize() -> void:
+	var n = cvs._resize_node
+	cvs._resize_node = null
+	if n == null or not is_instance_valid(n):
+		return
+	if not cvs._resize_moved:
+		return  # 未动：props 仍是原值，零副作用
+	var orig: Dictionary = cvs._resize_orig
+	var fw := int(n.props.get(str(orig.wf), 1))
+	var fh := int(n.props.get(str(orig.hf), 1))
+	# 恢复原值 → 压撤销 → 重写终值（与 _finish_entity_drag 同一纪律）
+	n.props[str(orig.wf)] = int(orig.w)
+	n.props[str(orig.hf)] = int(orig.h)
+	n.refresh_visual()
+	cvs._push_undo()
+	n.props[str(orig.wf)] = fw
+	n.props[str(orig.hf)] = fh
+	n.refresh_visual()
+	cvs._mark()
+	cvs._hint("实例尺寸 %dx%d（Ctrl+Z 撤销）" % [fw, fh])
+	cvs.queue_redraw()
+
+
 func copy_selection() -> void:
 	if cvs.map_root == null:
 		return
@@ -359,6 +434,45 @@ func flip_selected() -> bool:
 	cvs._push_undo()
 	for s in targets:
 		(s as EntityNode).toggle_flip_h()
+	cvs._mark()
+	cvs.queue_redraw()
+	return true
+
+
+## R 键：旋转选中实例 90°（单个或框选集合）；一个撤销步。返回是否吞键。
+func rotate_selected_90() -> bool:
+	var targets := []
+	if cvs.selected_multi.size() > 0:
+		targets = cvs._valid_multi()
+	elif is_instance_valid(cvs.selected_entity):
+		targets.append(cvs.selected_entity)
+	if targets.is_empty():
+		return false
+	if _selection_touches_locked(targets):
+		cvs._hint("实例所在图层已锁定：解锁后再旋转")
+		return false
+	cvs._push_undo()
+	for s in targets:
+		(s as EntityNode).rotate_90()
+	cvs._mark()
+	cvs.queue_redraw()
+	return true
+
+## [ ] 键：等比缩放选中实例（单个或框选集合）；一个撤销步。返回是否吞键。
+func scale_selected(d: float) -> bool:
+	var targets := []
+	if cvs.selected_multi.size() > 0:
+		targets = cvs._valid_multi()
+	elif is_instance_valid(cvs.selected_entity):
+		targets.append(cvs.selected_entity)
+	if targets.is_empty():
+		return false
+	if _selection_touches_locked(targets):
+		cvs._hint("实例所在图层已锁定：解锁后再缩放")
+		return false
+	cvs._push_undo()
+	for s in targets:
+		(s as EntityNode).scale_step(d)
 	cvs._mark()
 	cvs.queue_redraw()
 	return true

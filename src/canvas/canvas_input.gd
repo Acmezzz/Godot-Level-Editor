@@ -60,6 +60,8 @@ func _unhandled_input(event: InputEvent) -> void:
 				cvs._update_cam()
 			cvs.Gesture.ENTITY_DRAG:
 				cvs._move_drag_preview(pos)
+			cvs.Gesture.ENTITY_RESIZE:
+				cvs._move_resize_preview(pos)
 			cvs.Gesture.REGION_MOVE:
 				cvs._move_region_preview(pos)
 			cvs.Gesture.SPAWN_DRAG:
@@ -114,6 +116,10 @@ func _on_left_press(pos: Vector2, b: InputEventMouseButton) -> void:
 
 ## 摆放模式（任何层都行）：框选模式下优先框选/整组拖动；否则点实体 = 选中并拖动，点空白 = 放置
 func _on_object_layer_press(pos: Vector2, b: InputEventMouseButton) -> void:
+	# 尺寸把手（R-04）：选中 sizeFields 实例的右下角把手优先于移动/框选/放置
+	if cvs._resize_handle_hit(pos):
+		cvs._begin_entity_resize(cvs.selected_entity, pos)
+		return
 	var hit = cvs._entity_at(pos)
 	if cvs.select_mode:
 	# 框选开关打开：
@@ -193,6 +199,8 @@ func _on_right_press(pos: Vector2) -> void:
 			cvs.Gesture.ENTITY_DRAG:
 				if cvs._drag_entity != null and is_instance_valid(cvs._drag_entity):
 					cvs._finish_entity_drag()
+			cvs.Gesture.ENTITY_RESIZE:
+				cvs._finish_entity_resize()
 			cvs.Gesture.REGION_MOVE:
 				cvs._finish_region_move()
 			cvs.Gesture.SPAWN_DRAG:
@@ -222,6 +230,9 @@ func _on_left_release(pos: Vector2) -> void:
 		cvs.Gesture.ENTITY_DRAG:
 			if cvs._drag_entity != null and is_instance_valid(cvs._drag_entity):
 				cvs._finish_entity_drag()
+			cvs.end_gesture()
+		cvs.Gesture.ENTITY_RESIZE:
+			cvs._finish_entity_resize()
 			cvs.end_gesture()
 		cvs.Gesture.BOX:
 			cvs.end_gesture()

@@ -170,6 +170,12 @@ func _draw() -> void:
 			cvs.draw_line(sp + Vector2(0, -5), sp + Vector2(0, 5), scol, 1.5)
 			if sp.distance_to(sn.position) > 2.0:
 				cvs.draw_line(sn.position, sp, Color(0.85, 0.4, 1.0, 0.45), 1.0)
+		# 尺寸把手（R-04）：带 sizeFields 的选中实例右下角画把手方块（拖动调 props w/h）
+		var sfh = (sn.decl as Dictionary).get("sizeFields", null)
+		if sfh is Array and (sfh as Array).size() >= 2:
+			var cr: Vector2 = sn.rect().end
+			var side = maxf(cvs.grid.cell_max() * 0.3, 6.0)
+			cvs.draw_rect(Rect2(cr - Vector2.ONE * side * 0.5, Vector2.ONE * side), Color(0.85, 0.4, 1.0, 0.9), true)
 	# 引用指向预览：编辑引用字段时高亮被指实例（青色粗框）
 	if cvs.ref_highlight != "":
 		var hs = cvs._ent_by_code_index().get(cvs.ref_highlight, null)

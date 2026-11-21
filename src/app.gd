@@ -378,9 +378,17 @@ func _shortcut_input(event: InputEvent) -> void:
 			if canvas.flip_selected():
 				get_viewport().set_input_as_handled()
 		KEY_R:
-			# 瓦片笔刷变换（v7）：R 循环旋转档位；实体无旋转键，不冲突
+			# 瓦片笔刷变换（v7）：R 循环旋转档位；摆放模式 = 选中实例旋转 90°（互不冲突）
 			if canvas.place_kind == "tile":
 				canvas.cycle_tile_rotation()
+				get_viewport().set_input_as_handled()
+			elif canvas.rotate_selected_90():
+				get_viewport().set_input_as_handled()
+		KEY_BRACKETLEFT:
+			if canvas.scale_selected(-0.1):
+				get_viewport().set_input_as_handled()
+		KEY_BRACKETRIGHT:
+			if canvas.scale_selected(0.1):
 				get_viewport().set_input_as_handled()
 		KEY_X:
 			# 纯 X = 瓦片水平翻转（Ctrl+X 剪切在上面已提前返回，不会到这里）

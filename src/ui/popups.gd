@@ -63,7 +63,7 @@ func _open_shortcut_help() -> void:
 	var rows := [
 		["撤销", "Ctrl+Z 撤销 · Ctrl+Y / Ctrl+Shift+Z 重做"],
 		["剪贴板", "Ctrl+C 复制 · Ctrl+V 粘贴 · Ctrl+X 剪切 · Ctrl+D 原位复制"],
-		["编辑", "Del 删除选中 · F 水平翻转 · 方向键 微调 1 格（Shift = 4 格）"],
+		["编辑", "Del 删除选中 · F 水平翻转 · R 旋转90° · [ ] 缩放步进 · 方向键 微调 1 格（Shift = 4 格）"],
 		["框选", "点状态栏「框选」开关后左键拖动框选；选中后可直接整组拖动"],
 		["文件", "Ctrl+S 保存 · Ctrl+N 新建 · Ctrl+O 打开"],
 		["返回", "Esc 回到关卡编辑器 / 取消区域粘贴预览"],
