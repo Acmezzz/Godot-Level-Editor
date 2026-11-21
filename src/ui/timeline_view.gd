@@ -14,6 +14,8 @@ const StepTimeline := preload("res://src/content/step_timeline.gd")
 signal step_change_requested(index: int, revision: int, patch: Dictionary)
 ## 点中条块（含拖动起始）后发；-1 = 点到空白处取消选中。
 signal picked(index: int)
+## 播放头移动（原始单位）：首版只做定位与对齐，不触发游戏判定（D2）。
+signal playhead_changed(value: float)
 
 ## 引擎给的数据（只读）：宿主传工作副本；视图不再直接改它——
 ## 拖动期间只画预览偏移，松手交补丁给宿主统一合并/净化/写盘。
@@ -30,6 +32,8 @@ const EDGE := 7.0      # 右缘拖拽热区宽
 
 var timebase := "seconds"   # R-10：seconds（缺省）/ frames / beats——刻度/吸附单位随声明
 var _pps := 64.0              # 像素/单位（set_timebase 按基设）
+var clock = null              # TimelineClock（D2）：秒换算/吸附粒度；null = 按时间基缺省
+var playhead := 0.0           # 播放头（原始单位）；首版只定位，不调用游戏判定
 var _drag := ""               # "" / "move" / "resize"
 var _drag_idx := -1
 var _drag_off_x := 0.0
@@ -81,8 +85,16 @@ func set_timebase(tb: String) -> void:
 	_pps = {"seconds": 64.0, "frames": 12.0, "beats": 48.0}.get(timebase, 64.0)
 	queue_redraw()
 
+## D2：绑定换算时钟；吸附粒度改由时钟的声明细分决定（拍按 subdivisionsPerBeat）。
+func set_clock(c) -> void:
+	clock = c
+	queue_redraw()
+
 func _snap(v: float) -> float:
-	return snappedf(maxf(v, 0.0), float(SNAP.get(timebase, 0.1)))
+	var step := float(SNAP.get(timebase, 0.1))
+	if clock != null and (clock as Object).has_method("snap_step"):
+		step = float(clock.snap_step())
+	return snappedf(maxf(v, 0.0), step)
 
 ## 条块矩形（含选中/命中判定用）。拖动中的步骤用预览值（数据不动）。
 func _block_rect(i: int) -> Rect2:
@@ -130,6 +142,15 @@ func _gui_input(ev: InputEvent) -> void:
 		accept_event()
 
 func _press(p: Vector2) -> void:
+	# 标尺区（顶部 RULER_H 内）= 播放头定位：首版只读时间，不调用游戏判定（D2）
+	if p.y < RULER_H:
+		playhead = _snap((p.x - MARGIN_L) / _pps)
+		_drag = "scrub"
+		_drag_idx = -1
+		_moved = false
+		playhead_changed.emit(playhead)
+		queue_redraw()
+		return
 	var i := _hit(p)
 	if i < 0:
 		if sel != -1:
@@ -156,6 +177,11 @@ func _step(i: int) -> Dictionary:
 	return steps[i] if i >= 0 and i < steps.size() and steps[i] is Dictionary else {}
 
 func _motion(p: Vector2) -> void:
+	if _drag == "scrub":
+		playhead = _snap((p.x - MARGIN_L) / _pps)
+		playhead_changed.emit(playhead)
+		queue_redraw()
+		return
 	if _drag_idx < 0 or _drag_idx >= steps.size():
 		return
 	var orig := _drag_orig
@@ -199,9 +225,20 @@ func _draw() -> void:
 	# 滚动容器按内容宽撑开：视图自身尺寸 = max(容器给宽, 内容宽)
 	var w := maxf(size.x, fit_width())
 	var tracks := _track_count()
-	# 顶标尺：每单位一格 + 单位标签（frames 每 5 帧一档防挤）
+	# 主刻度：每单位一格 + 单位标签（frames 每 5 帧一档防挤）
 	var tstep := 5 if timebase == "frames" else 1
 	var suffix: String = {"seconds": "s", "frames": "f", "beats": "拍"}.get(timebase, "s")
+	# 拍基细分（subdivisionsPerBeat）：每拍内画 n−1 条浅线，主刻度仍是「拍」
+	if timebase == "beats" and clock != null and (clock as Object).has_method("snap_step"):
+		var sub := float(clock.snap_step())
+		var per := int(roundf(1.0 / sub)) if sub > 0.0 else 1
+		if per > 1:
+			var k := 1
+			while float(k) * sub <= _time_max():
+				if k % per != 0:   # 整拍处由主刻度画
+					var xs := MARGIN_L + float(k) * sub * _pps
+					draw_line(Vector2(xs, RULER_H * 0.55), Vector2(xs, fit_height()), Th.BORDER, 1.0)
+				k += 1
 	for t in range(0, int(_time_max()) + 1, tstep):
 		var x := MARGIN_L + float(t) * _pps
 		draw_line(Vector2(x, 0), Vector2(x, fit_height()), Th.BORDER, 1.0)
@@ -211,6 +248,9 @@ func _draw() -> void:
 	for k in tracks + 1:
 		var y := RULER_H + TRACK_H * float(k)
 		draw_line(Vector2(0, y), Vector2(w, y), Th.BORDER, 1.0)
+	# 播放头（D2）：标尺上点/拖定位；只画线+读数，不做游戏判定
+	var phx := MARGIN_L + playhead * _pps
+	# 先记下位置，条块画完再叠播放头（否则会被条块盖住）
 	# 条块：选中高亮、冲突描红、瞬发画细条
 	var cf := StepTimeline.conflicts(steps)
 	var hot := {}
@@ -238,3 +278,9 @@ func _draw() -> void:
 		if r.size.x > 26.0:
 			draw_string(fnt, r.position + Vector2(pad, r.size.y - pad),
 				lbl, HORIZONTAL_ALIGNMENT_LEFT, r.size.x - pad * 2.0, Th.FS_META, Th.TEXT)
+	# 播放头叠在条块之上（否则会被填充盖住）：竖线 + 秒读数（D2）
+	draw_line(Vector2(phx, 0), Vector2(phx, fit_height()), Th.ERR, 1.5)
+	if clock != null and (clock as Object).has_method("seconds_at"):
+		var sec := float(clock.seconds_at(playhead))
+		draw_string(fnt, Vector2(phx + 3, RULER_H + 12), "%.2fs" % sec,
+			HORIZONTAL_ALIGNMENT_LEFT, -1, Th.FS_META, Th.ERR)

@@ -10,6 +10,10 @@ const FieldWidgets := preload("res://src/ui/field_widgets.gd")
 const StepDecls := preload("res://src/content/step_decl.gd")
 const StepTimeline := preload("res://src/content/step_timeline.gd")
 const FunctionDecls := preload("res://src/content/function_decl.gd")
+const TimelineClock := preload("res://src/content/timeline_clock.gd")
+const AudioDecls := preload("res://src/content/audio_decl.gd")
+const AssetDecl := preload("res://src/assets/asset_decl.gd")
+const EntityNodeRef := preload("res://src/canvas/entity_node.gd")
 
 var host   # content_editor 宿主
 var app    # 根应用（= host.app）
@@ -58,6 +62,14 @@ var _steps_tl_box: VBoxContainer = null
 var _steps_scroll: ScrollContainer = null
 var _steps_tl: TimelineView = null
 var _steps_tl_rev := -1       # 时间轴视图绑定的结构版本
+var _steps_clock = null       # TimelineClock（D2）：秒换算/吸附粒度
+var _steps_clock_missing: Array = []   # 声明了但解析不到的参考项（表单显示，不阻断编辑）
+var _steps_preview_asset := ""         # frameAssetField 解析出的资产码（帧基预览用）
+var _steps_preview_frames: Array = []   # 该资产的帧序列（相对路径）
+var _steps_preview_idx := -1            # 当前预览帧（播放头所在帧）
+var _steps_audio := ""                  # audioField 解析出的音频码（只显示，不播放）
+var _steps_frame_holder: Control = null  # 参考帧预览行（播放头移动时只刷这一行）
+var _steps_playhead_label: Label = null  # 播放头读数（原始单位 → 秒；负秒 = 音频起点前）
 
 ## 打开演出子面板：绑定已有内容就地编辑；空绑定**首次实际改动才预留内容 ID**（D1/A2）。
 func _open_steps_editor(i: int) -> void:
@@ -73,6 +85,12 @@ func _open_steps_editor(i: int) -> void:
 	_steps_rev = 0
 	_steps_sel = -1
 	_steps_view = "list"
+	_steps_clock = null
+	_steps_clock_missing = []
+	_steps_preview_asset = ""
+	_steps_preview_frames = []
+	_steps_preview_idx = -1
+	_steps_audio = ""
 	var shell: Dictionary = app._popup_body("演出编辑：%s" % FunctionDecls.function_name(manifest, fn_id),
 		"步骤按 at/duration/track 排布；列表保序、时间轴可拖")
 	var pop: PopupPanel = shell.pop
@@ -93,6 +111,7 @@ func _open_steps_editor(i: int) -> void:
 	# 视图按起手时的结构版本发请求：宿主据此丢弃过期拖拽（D1）
 	_steps_tl.step_change_requested.connect(func(idx: int, revision: int, patch: Dictionary):
 		_on_step_change_requested(idx, revision, patch))
+	_steps_tl.playhead_changed.connect(func(v: float): _on_playhead_changed(v))
 	_steps_scroll = ScrollContainer.new()
 	_steps_scroll.custom_minimum_size = Vector2(0, 120)
 	_steps_scroll.add_child(_steps_tl)
@@ -201,6 +220,7 @@ func _rebuild_steps_all() -> void:
 	_sync_steps_tabs()
 	var data := _steps_data()
 	var arr: Array = data.get("steps", []) if data.get("steps", []) is Array else []
+	_sync_steps_clock(data)
 	if _steps_view == "timeline":
 		_steps_list.visible = false
 		_steps_tl_box.visible = true
@@ -226,6 +246,53 @@ func _rebuild_steps_list(arr: Array) -> void:
 		if not (st is Dictionary):
 			continue
 		_steps_list.add_child(_steps_row(si, st, pool))
+
+## D2：按 timePreview 声明建换算时钟，并把参考素材（帧序列 / 音频）解析成界面可用的值。
+## 缺项只记录在 _steps_clock_missing 里（表单显示），不阻断原单位编辑。
+func _sync_steps_clock(data: Dictionary) -> void:
+	if data.is_empty():
+		# 数据源已失效（绑定换了）：不拿空内容解析缺项，免得报假警告
+		_steps_clock = null
+		_steps_clock_missing = []
+		_steps_preview_asset = ""
+		_steps_preview_frames = []
+		_steps_audio = ""
+		return
+	var r: Dictionary = TimelineClock.from_decl(manifest, _steps_fn_id, data)
+	_steps_clock = TimelineClock.new(str(r.get("timebase", "seconds")), r.get("cfg", {}))
+	_steps_clock_missing = r.get("missing", [])
+	var refs: Dictionary = r.get("refs", {})
+	var fields: Dictionary = data.get("fields", {}) if data.get("fields", null) is Dictionary else {}
+	# 参考帧序列：资产码 → 声明 frames[]（相对路径）；只在帧基下用得到
+	_steps_preview_asset = str(fields.get(str(refs.get("frameAssetField", "")), ""))
+	_steps_preview_frames = []
+	if _steps_preview_asset != "":
+		var ad: Dictionary = AssetDecl.by_id(manifest, _steps_preview_asset)
+		var fr = ad.get("frames", null)
+		if fr is Array:
+			_steps_preview_frames = fr
+	# 音频：只显示已选音频名，不加载不播放（D2 只做对齐参考）
+	_steps_audio = str(fields.get(str(refs.get("audioField", "")), ""))
+	if _steps_tl != null and is_instance_valid(_steps_tl):
+		_steps_tl.set_clock(_steps_clock)
+
+## 播放头移动：帧基下换算成整数帧号给表单预览；秒/拍基只显示时间换算。
+## 只刷参考帧行与读数——整表重建会清掉用户正在输入的控件。
+func _on_playhead_changed(v: float) -> void:
+	_steps_preview_idx = int(floorf(v)) if _steps_clock != null and _steps_clock.timebase == "frames" else -1
+	_fill_frame_preview()
+	_fill_playhead_label(v)
+
+## 播放头读数：原始单位 + 换算秒数。负秒（拍基首拍偏移前）标「音频起点前」。
+func _fill_playhead_label(v: float) -> void:
+	if _steps_playhead_label == null:
+		return
+	var tb: String = str(_steps_clock.timebase) if _steps_clock != null else "seconds"
+	var unit: String = {"seconds": "s", "frames": "帧", "beats": "拍"}.get(tb, "s")
+	var sec: float = float(_steps_clock.seconds_at(v)) if _steps_clock != null else v
+	var tail := "（音频起点前，静音）" if sec < 0.0 else ""
+	_steps_playhead_label.text = "播放头 %s %s → %.3f s%s" % [
+		_num_text(v), unit, sec, tail]
 
 ## 时间轴视图：换数据源 + 选中态 + 滚动容器高度。
 ## 结构版本变了才 set_steps（换数据源并清拖拽）；版本没变只同步选中，不打断进行中的拖拽。
@@ -265,6 +332,7 @@ func _rebuild_steps_form_from_data() -> void:
 		return
 	var data := _steps_data()
 	var arr: Array = data.get("steps", []) if data.get("steps", []) is Array else []
+	_sync_steps_clock(data)   # fps/偏移等参考值可能刚在别处改过，读数跟着更新
 	_rebuild_steps_form(arr)
 
 ## 子面板里的一个步骤行：序号+名称（选中高亮）+ 上移/下移/复制/删除。
@@ -309,6 +377,8 @@ func _rebuild_steps_form(arr: Array) -> void:
 		return
 	# 表单整片重建：待提交项绑定的是旧控件（旧步骤下标），重建后一律失效
 	_pending_commits.clear()
+	_steps_frame_holder = null   # 参考帧行随旧表单一起释放
+	_steps_playhead_label = null
 	for c in box.get_children():
 		box.remove_child(c)
 		c.queue_free()
@@ -329,6 +399,8 @@ func _rebuild_steps_form(arr: Array) -> void:
 	# 时间轴警告（负 at/duration、同轨重叠）：只提示不阻断
 	for wtext in StepTimeline.warnings(arr):
 		box.add_child(Kit.hint_label("⚠ " + str(wtext), 320))
+	# D2：参考时钟（缺项 / 小数帧待修 / 参考帧与音频）
+	box.add_child(_steps_clock_box(arr))
 	if _steps_sel < 0 or _steps_sel >= arr.size() or not (arr[_steps_sel] is Dictionary):
 		if not arr.is_empty():
 			box.add_child(Kit.hint_label("点上方一个步骤进行编辑", 320))
@@ -384,6 +456,17 @@ func _step_field_row(fd: Dictionary, sfd: Dictionary) -> Control:
 		_pending_commits.append(built.commit)
 	return Kit.field_row(label, built.ctl, 96)
 
+## 时间换算读数（D2）：非秒基下显示「= 起 .. 止 s」，秒基返回空串。
+## 只做对齐参考；缺项（时钟不可用）时不显示，避免给出假秒数。
+func _step_seconds_hint(eff: Dictionary) -> String:
+	if _steps_clock == null or str(_steps_clock.timebase) == "seconds":
+		return ""
+	if not _steps_clock.is_ready():
+		return ""
+	var at := float(_steps_clock.seconds_at(float(eff.get("at", 0.0))))
+	var end := float(_steps_clock.seconds_at(float(eff.get("at", 0.0)) + float(eff.get("duration", 0.0))))
+	return "  = %ss → %ss" % [String.num(at, 3), String.num(end, 3)]
+
 ## 时间与轨道行（D1）：默认收起，展开后可输入起点 / 时长 / 轨号 / 阻塞。
 ## 起点留空 = 「随前序」（缺 at）；显式 0 = 从零开始。时长接受 0。
 func _steps_time_row(arr: Array, si: int) -> Control:
@@ -393,9 +476,9 @@ func _steps_time_row(arr: Array, si: int) -> Control:
 	var has_at := st.has("at")
 	var body := Kit.vbox(2)
 	body.visible = false
-	var head := Kit.button("▸ 时间与轨道（%s 起，时长 %s，轨 %d）" % [
+	var head := Kit.button("▸ 时间与轨道（%s 起，时长 %s，轨 %d）%s" % [
 		_num_text(eff.get("at", 0.0)), _num_text(eff.get("duration", 0.0)),
-		int(eff.get("track", 0))], Callable(), "ghost")
+		int(eff.get("track", 0)), _step_seconds_hint(eff)], Callable(), "ghost")
 	head.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	head.pressed.connect(func():
 		body.visible = not body.visible
@@ -464,8 +547,120 @@ func _steps_time_row(arr: Array, si: int) -> Control:
 			_apply_time_patch(si, {"track": _next_track()}, []), "ghost")
 	new_trk.tooltip_text = "轨号取当前最大值 + 1（新轨在时间轴底部）"
 	row.add_child(new_trk)
+	# 拍基：显式对齐到声明细分格（既有拍数精度不自动改，D2）
+	if _steps_clock != null and str(_steps_clock.timebase) == "beats" and _steps_clock.is_ready():
+		var grid := float(_steps_clock.snap_step())
+		var rev_align := _steps_rev
+		var align := Kit.button("对齐 1/%d 拍" % int(roundf(1.0 / grid)), func():
+			if rev_align == _steps_rev:
+				_quantize_step(si, grid), "ghost")
+		align.tooltip_text = "把这一步的 at/duration 对齐到声明的每拍格数"
+		row.add_child(align)
 	body.add_child(row)
 	return box
+
+## D2 参考时钟块：声明缺项提示、小数帧待修（含一键量化）、参考帧缩略与音频名。
+## 只服务于「按秒对齐」，不做游戏判定；缺项时时间仍按原单位编辑。
+func _steps_clock_box(arr: Array) -> Control:
+	var box := Kit.vbox(2)
+	if _steps_clock == null:
+		return box
+	var tb := str(_steps_clock.timebase)
+	var unit: String = {"seconds": "秒", "frames": "帧", "beats": "拍"}.get(tb, "秒")
+	# 播放头读数：原始单位 → 秒（负秒 = 音频起点前，保持静音；这里只标注）
+	_steps_playhead_label = Kit.text_label("", Th.TEXT_MUTE, Th.FS_META)
+	var ph: float = _steps_tl.playhead if _steps_tl != null and is_instance_valid(_steps_tl) else 0.0
+	_fill_playhead_label(ph)
+	box.add_child(_steps_playhead_label)
+	for m in _steps_clock_missing:
+		box.add_child(Kit.hint_label("⚠ 参考参数缺项：%s（时间仍按%s编辑）" % [str(m), unit], 320))
+	# 小数帧待修：已存值不求整，只标记；逐条提供显式量化（新输入由吸附取整）
+	if tb == "frames":
+		var frac: Array = TimelineClock.fractional_frames(arr)
+		if not frac.is_empty():
+			box.add_child(Kit.hint_label("⚠ %d 处小数帧待修（at/duration 应为整数帧）" % frac.size(), 320))
+			for f in frac:
+				var fi := int(f.index)
+				var nm := _step_name_of(str((arr[fi] as Dictionary).get("step", ""))) \
+					if fi >= 0 and fi < arr.size() and arr[fi] is Dictionary else ""
+				var frow := Kit.hbox(6)
+				var flabel := Kit.hint_label("  · 第 %d 步%s %s = %s 帧" % [
+					fi + 1, ("（%s）" % nm) if nm != "" else "",
+					str(f.key), _num_text(f.value)], 320)
+				flabel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+				frow.add_child(flabel)
+				var fix := Kit.button("取整", func(): _quantize_step(fi, 1.0), "ghost")
+				fix.tooltip_text = "只把这一步的 at/duration 四舍五入到整帧"
+				frow.add_child(fix)
+				box.add_child(frow)
+	# 拍基：既有拍数精度不动（底层保留），只有显式「对齐格」才量化选中步骤——
+	# 见时间与轨道行里的对齐按钮，这里不逐条列「不在格上」免得老内容满屏提示
+	# 参考帧预览（帧基专有）：播放头帧号取整，越界显式提示（从第 0 帧计数）
+	if tb == "frames" and not _steps_preview_frames.is_empty():
+		box.add_child(_steps_frame_preview())
+	if _steps_audio != "":
+		var an := AudioDecls.audio_decl(manifest, _steps_audio)
+		var sec0: float = float(_steps_clock.seconds_at(0.0))
+		box.add_child(Kit.hint_label("♪ 参考音频：%s（只对齐，不播放；0 %s 对应 %.3f s）" % [
+			str(an.get("name", _steps_audio)), "秒" if tb == "seconds" else ("帧" if tb == "frames" else "拍"), sec0], 320))
+	return box
+
+## 参考帧预览：帧基下按播放头帧索引显示该资产声明的一帧；无播放头时显示第 0 帧。
+## 播放头拖动期间只重建这一行（不动整张表单，免得清掉正在输入的焦点）。
+func _steps_frame_preview() -> Control:
+	_steps_frame_holder = Kit.hbox(6)
+	_fill_frame_preview()
+	return _steps_frame_holder
+
+func _fill_frame_preview() -> void:
+	if _steps_frame_holder == null:
+		return
+	for c in _steps_frame_holder.get_children():
+		_steps_frame_holder.remove_child(c)
+		c.queue_free()
+	var n := _steps_preview_frames.size()
+	if n <= 0:
+		return
+	var idx := _steps_preview_idx
+	var label := "参考帧："
+	if idx < 0:
+		idx = 0
+		label = "参考帧（第 0 帧）："
+	elif idx >= n:
+		_steps_frame_holder.add_child(Kit.hint_label("⚠ 播放头帧 %d 超出帧序列（0..%d）" % [idx, n - 1], 320))
+		idx = n - 1
+	_steps_frame_holder.add_child(Kit.text_label(label, Th.TEXT_DIM, Th.FS_META))
+	var rel := str(_steps_preview_frames[idx])
+	var tex: Texture2D = EntityNodeRef.texture_of(manifest, rel)
+	if tex != null:
+		var tr := TextureRect.new()
+		tr.texture = tex
+		tr.custom_minimum_size = Vector2(48, 48)
+		tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		_steps_frame_holder.add_child(tr)
+	_steps_frame_holder.add_child(Kit.text_label("%d / %d  %s" % [idx, n - 1, rel], Th.TEXT_MUTE, Th.FS_META))
+
+## 显式量化单步（D2：吸附只作用于新输入或显式量化选中项）：
+## 只把该步 at/duration 按粒度四舍五入（帧 = 1 帧；拍 = 1/subdivisions），
+## 经同一补丁入口写回，已有精度不被自动改写。
+func _quantize_step(si: int, grid: float) -> void:
+	if grid <= 0.0:
+		return
+	var data := _steps_data()
+	if data.is_empty():
+		return
+	var arr: Array = data.get("steps", []) if data.get("steps", []) is Array else []
+	if si < 0 or si >= arr.size() or not (arr[si] is Dictionary):
+		return
+	var step: Dictionary = arr[si]
+	var patch := {}
+	for key in ["at", "duration"]:
+		if step.has(key):
+			patch[key] = snappedf(maxf(float(step.get(key, 0.0)), 0.0), grid)
+	if patch.is_empty():
+		return
+	_apply_time_patch(si, patch, [])
 
 ## 新轨号 = 当前所有步骤的最大轨号 + 1。
 func _next_track() -> int:
@@ -490,6 +685,14 @@ func _apply_time_patch(si: int, patch: Dictionary, erase_keys: Array) -> void:
 	var data := _steps_data()
 	if data.is_empty():
 		return
+	# D2：新输入的 at/duration 按声明粒度吸附（帧取整、拍按 subdivisionsPerBeat）；
+	# 秒基不吸附——手输的秒精度就是用户意图，不该被改
+	if _steps_clock != null and str(_steps_clock.timebase) != "seconds":
+		var snapv := float(_steps_clock.snap_step())
+		patch = patch.duplicate()
+		for k in ["at", "duration"]:
+			if patch.has(k):
+				patch[k] = snappedf(maxf(float(patch[k]), 0.0), snapv)
 	var arr: Array = data.get("steps", []) if data.get("steps", []) is Array else []
 	var res: Dictionary = StepTimeline.apply_patch(arr, si, patch, erase_keys)
 	if not bool(res.get("ok", false)):

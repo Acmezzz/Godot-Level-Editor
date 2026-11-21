@@ -185,6 +185,55 @@ static func _validate_functions(data: Dictionary, issues: Array[Dictionary]) -> 
 				and not ["seconds", "frames", "beats"].has(tb):
 			_add(issues, "error", "functions.%s.timebase" % str(fid),
 				"must be seconds / frames / beats")
+		_validate_time_preview(data, d, str(fid), issues)
+## timePreview 声明校验（D2）：引用必须指向本功能已声明的字段 ID / 已声明的步骤 ID；
+## subdivisionsPerBeat 必须是正整数。缺声明项不算错误（预览退化为原单位编辑），
+## 但**写错引用**（引用了不存在的字段/步骤）必须报出来——那是配置错误不是缺省。
+static func _validate_time_preview(data: Dictionary, fn_decl: Dictionary, fid: String,
+		issues: Array[Dictionary]) -> void:
+	var tp = fn_decl.get("timePreview", null)
+	if tp == null:
+		return
+	if not (tp is Dictionary):
+		_add(issues, "error", "functions.%s.timePreview" % fid, "must be an object")
+		return
+	var tpd: Dictionary = tp
+	var fids := {}
+	for fd in (fn_decl.get("fields", []) as Array) if fn_decl.get("fields", []) is Array else []:
+		if fd is Dictionary:
+			fids[str((fd as Dictionary).get("id", ""))] = true
+	for key in ["fpsField", "audioField", "offsetField", "frameAssetField"]:
+		if not tpd.has(key):
+			continue
+		var val := str(tpd.get(key, ""))
+		if val == "":
+			continue
+		if not fids.has(val):
+			_add(issues, "error", "functions.%s.timePreview.%s" % [fid, key],
+				"field \"%s\" is not declared on this function" % val)
+	var tempo_step := str(tpd.get("tempoStep", ""))
+	if tempo_step != "":
+		var StepDecls := preload("res://src/content/step_decl.gd")
+		var sd: Dictionary = StepDecls.step_decl(data, tempo_step)
+		if sd.is_empty():
+			_add(issues, "error", "functions.%s.timePreview.tempoStep" % fid,
+				"step \"%s\" is not declared" % tempo_step)
+		else:
+			var bpm_field := str(tpd.get("bpmField", ""))
+			if bpm_field != "":
+				var sids := {}
+				for fd2 in (sd.get("fields", []) as Array) if sd.get("fields", []) is Array else []:
+					if fd2 is Dictionary:
+						sids[str((fd2 as Dictionary).get("id", ""))] = true
+				if not sids.has(bpm_field):
+					_add(issues, "error", "functions.%s.timePreview.bpmField" % fid,
+						"field \"%s\" is not declared on step \"%s\"" % [bpm_field, tempo_step])
+	if tpd.has("subdivisionsPerBeat"):
+		var spb = tpd.get("subdivisionsPerBeat")
+		if not _is_positive_integer(spb):
+			_add(issues, "error", "functions.%s.timePreview.subdivisionsPerBeat" % fid,
+				"must be a positive integer")
+
 ## 条件声明：结构 + id 唯一性 + 字段种类合法性（与功能声明同一套规则）。
 ## 条件按 id 被功能声明引用（清单内人类名，条件无执行码）；字段码与功能字段同空间。
 static func _validate_conditions(data: Dictionary, issues: Array[Dictionary]) -> void:
