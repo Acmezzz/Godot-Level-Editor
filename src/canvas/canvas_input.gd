@@ -41,6 +41,10 @@ func _unhandled_input(event: InputEvent) -> void:
 						cvs.cam_pos += (lm - cvs.cam_pos) * (1.0 - zw0 / cvs.zoom)
 					cvs._update_cam()
 				MOUSE_BUTTON_MIDDLE:
+					# 起手前先取消未完成的编辑手势（E05）：否则 PAN 直接顶掉手势，
+					# 预览留在活体上、提取/保存会读到未提交坐标。
+					if cvs.cancel_preview_gesture():
+						cvs._hint("已取消未完成的编辑")
 					cvs.begin_gesture(cvs.Gesture.PAN, MOUSE_BUTTON_MIDDLE)
 				MOUSE_BUTTON_LEFT:
 					_on_left_press(pos, b)
@@ -71,20 +75,53 @@ func _unhandled_input(event: InputEvent) -> void:
 				cvs._move_region_preview(pos)
 			cvs.Gesture.SPAWN_DRAG:
 				# 点击不动 = 不压撤销、不置脏：首次格间移动前才压快照，松手动过才 _mark
-				var c0: Vector2i = cvs._cell_of((cvs.spawn as Node2D).position)
-				var c1: Vector2i = cvs._cell_of(pos)
+				var c0: Vector2i = cvs.grid.pick_cell((cvs.spawn as Node2D).position)
+				var c1: Vector2i = cvs.root_cell(pos)
 				if c1 != c0 and not _spawn_moved:
 					cvs._push_undo()
 					_spawn_moved = true
 				cvs._drag_spawn_to(pos)
 			cvs.Gesture.ERASE:
-				cvs._erase_at(pos)
+				# 路径补格（E13）：两次鼠标事件之间经过的格全部擦，快速拖动不漏格
+				_erase_path(pos)
 			cvs.Gesture.PAINT:
-	# 连续涂：PAINT 手势只从瓦片/碰撞按下起手，与层无关
-				cvs._apply_tool(pos)
-		var c = cvs._cell_of(pos)
+		# 连续涂：PAINT 手势只从瓦片/碰撞按下起手，与层无关；同样补格路径
+				_paint_path(pos)
+		var c = cvs._active_cell(pos)
 		cvs.cursor_info.emit("%d,%d" % [c.x, c.y])
 		cvs.queue_redraw()
+
+## 笔画当前格（活动层局部）：涂/擦与坐标栏共用
+func _stroke_cell(pos: Vector2) -> Vector2i:
+	return cvs.grid.pick_cell(cvs._active_local(pos))
+
+## 涂刷补格：从上一格到当前格逐格执行 _apply_tool（同一笔只压一次撤销）
+func _paint_path(pos: Vector2) -> void:
+	var c := _stroke_cell(pos)
+	var cells: Array = [c] if not cvs._stroke_has_last \
+		else cvs.grid.cells_between(cvs._stroke_last_cell, c)
+	cvs._stroke_last_cell = c
+	cvs._stroke_has_last = true
+	for bc: Vector2i in cells:
+		if cvs.place_kind == "object":
+			cvs._apply_tool(pos)
+			return   # 摆放不补格：一次鼠标事件只落一个实例
+		cvs._paint(bc)
+	if cells.size() > 1 and cvs._paint_pushed:
+		cvs.queue_redraw()
+
+## 擦除补格：经过的格全擦；实例命中只对当前点判（擦实例不做路径插值）
+func _erase_path(pos: Vector2) -> void:
+	if cvs._entity_hit_on(cvs.active_layer, pos) != null:
+		cvs._erase_at(pos)
+		cvs._stroke_has_last = false
+		return
+	var c := _stroke_cell(pos)
+	var cells: Array = [c] if not cvs._stroke_has_last \
+		else cvs.grid.cells_between(cvs._stroke_last_cell, c)
+	cvs._stroke_last_cell = c
+	cvs._stroke_has_last = true
+	cvs._tool_ops_ctrl.erase_cells(cvs._tool_ops_ctrl._brush_cells_multi(cells))
 
 
 ## 左键按下：按「当前层类型 + 修饰键」分派
@@ -96,8 +133,10 @@ func _on_left_press(pos: Vector2, b: InputEventMouseButton) -> void:
 	if b.alt_pressed:
 		cvs._pick_tile(pos)
 		return
-	# Space+左键拖拽平移
+	# Space+左键拖拽平移（同样先取消未完成编辑：平移不提交候选值）
 	if Input.is_key_pressed(KEY_SPACE):
+		if cvs.cancel_preview_gesture():
+			cvs._hint("已取消未完成的编辑")
 		cvs.begin_gesture(cvs.Gesture.PAN, MOUSE_BUTTON_LEFT)
 		return
 	if cvs._paste_mode:
@@ -110,6 +149,7 @@ func _on_left_press(pos: Vector2, b: InputEventMouseButton) -> void:
 			cvs._hint("当前图层已锁定：解锁后再移动出生点")
 			return
 		_spawn_moved = false   # 撤销快照推迟到首次真移动前才压（点击不动 = 零副作用）
+		cvs._spawn_origin = (cvs.spawn as Node2D).position
 		cvs.begin_gesture(cvs.Gesture.SPAWN_DRAG, MOUSE_BUTTON_LEFT)
 		cvs._drag_start = pos
 		return
@@ -189,7 +229,10 @@ func _on_tile_layer_press(pos: Vector2, b: InputEventMouseButton) -> void:
 	# 撤销快照不在这里压：涂刷是笔画制——首个真实改动前由 _paint 压一次
 	# （点击不动 = 零副作用，空点不再挤掉一条真实历史）
 	cvs._paint_pushed = false
+	cvs._stroke_has_last = false
 	cvs._apply_tool(pos)
+	cvs._stroke_last_cell = cvs.grid.pick_cell(cvs._active_local(pos))
+	cvs._stroke_has_last = true
 	cvs.begin_gesture(cvs.Gesture.PAINT, MOUSE_BUTTON_LEFT)
 
 
@@ -225,9 +268,18 @@ func _on_right_press(pos: Vector2) -> void:
 	# 顶点删点（R-02）：右键顶点 = 删点，优先于擦除（poly≥3/path≥2 保底在实现里）
 	if cvs._delete_vertex_at(pos):
 		return
+	# 空白处起手也进入追踪（E13）：从此处按住划过瓦片，沿途补擦。
+	# 撤销快照推迟到首个真实改动前压（空起手 = 零副作用）。
 	if not cvs._erase_hits(pos):
+		cvs._paint_pushed = false
+		cvs._stroke_has_last = true
+		cvs._stroke_last_cell = _stroke_cell(pos)
+		cvs.begin_gesture(cvs.Gesture.ERASE, MOUSE_BUTTON_RIGHT)
 		return
 	cvs._push_undo()
+	cvs._paint_pushed = true
+	cvs._stroke_has_last = true
+	cvs._stroke_last_cell = _stroke_cell(pos)
 	cvs._erase_at(pos)
 	cvs.begin_gesture(cvs.Gesture.ERASE, MOUSE_BUTTON_RIGHT)
 

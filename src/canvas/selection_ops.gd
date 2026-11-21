@@ -12,23 +12,29 @@ func _init(host) -> void:
 	cvs = host
 ## 按实例占位矩形做命中（大资产边缘也能点中）。
 ## 跨层命中：从顶层向下取第一个命中的层，层内取中心距最近者；无命中返回 null。
+## 隐藏层整层跳过（E06）：隐藏内容不能点中，否则「看不见的东西被选中/删掉」。
 func _entity_hit(pos: Vector2) -> EntityNode:
 	for li in range(cvs.layer_count() - 1, -1, -1):
-		var hit := _entity_hit_in(cvs._layer_entities(li), pos)
+		if not cvs.is_layer_visible(li):
+			continue
+		var hit := _entity_hit_in(cvs._layer_entities(li), pos, li)
 		if hit != null:
 			return hit
 	return null
 
-## 单层命中核心：遍历给定容器子节点（tool_ops 擦除与跨层选区共用同一规则）
-func _entity_hit_in(children: Array, pos: Vector2) -> EntityNode:
+## 单层命中核心：遍历给定容器子节点（tool_ops 擦除与跨层选区共用同一规则）。
+## 层局部坐标（E02）：pos 是世界坐标，先逆变换到该层容器空间，再与实例 rect() 比。
+## 实例 rect()/position 都在层局部空间（层容器承担 offset/scale/parallax）。
+func _entity_hit_in(children: Array, pos: Vector2, layer_i := -1) -> EntityNode:
+	var lp: Vector2 = pos if layer_i < 0 else cvs.to_layer_local(layer_i, pos)
 	var best: EntityNode = null
 	var best_d = INF
 	for e in children:
 		var n := e as EntityNode
-		if n == null or n.asset == "" or not n.visible_flag:
+		if n == null or n.asset == "" or not cvs.is_entity_shown(n):
 			continue
-		if n.rect().has_point(pos):
-			var d = n.position.distance_squared_to(pos)
+		if n.contains_point(lp):
+			var d = n.position.distance_squared_to(lp)
 			if d < best_d:
 				best = n
 				best_d = d
@@ -40,10 +46,8 @@ func _select_entity_at(pos: Vector2) -> void:
 		cvs._hint("无地图：先新建或打开一张地图")
 		return
 	var best: EntityNode = _entity_hit(pos)
-	cvs.selected_entity = best
-	cvs.selected_multi.clear()
-	cvs.entity_selected.emit(best)   # 空点也发 null：右侧检查器要同步清空（擦除路径同语义）
-	cvs.queue_redraw()
+	# 空点也发 null：右侧检查器要同步清空（擦除路径同语义）。走统一提交入口（E09）。
+	cvs.commit_selection(best)
 
 
 func _entity_at(pos: Vector2) -> EntityNode:
@@ -59,26 +63,36 @@ func _box_select(a: Vector2, b: Vector2) -> void:
 		return
 	cvs.selected_multi.clear()
 	var r := Rect2(a.min(b), (a - b).abs())
-	for e in cvs.ents_all():
-		var n := e as EntityNode
-		# 用视觉矩形相交判定：大贴图（背景板）锚点可能在框外，却明显盖住了框
-		if n != null and n.asset != "" and r.intersects(n.rect()):
-			cvs.selected_multi.append(n)
-	cvs.selected_entity = null
-	if not cvs.selected_multi.is_empty():
-		cvs.selected_entity = cvs.selected_multi[0]
-		cvs.entity_selected.emit(cvs.selected_entity)
+	# 逐层判定（E02/E06）：世界框逆变换到层局部再与实例 rect 相交；
+	# 隐藏层整层跳过——框选不能把看不见的实例带进来。
+	for li in cvs.layer_count():
+		if not cvs.is_layer_visible(li):
+			continue
+		var inv: Transform2D = cvs.layer_xform(li).affine_inverse()
+		var rl: Rect2 = inv * r
+		for e in cvs._layer_entities(li):
+			var n := e as EntityNode
+			if n != null and n.asset != "" and cvs.is_entity_shown(n) and rl.intersects(n.aabb()):
+				cvs.selected_multi.append(n)
+	# 统一走选择提交入口（E09）：单选=首成员、多选=整组、信息条同步
+	cvs.commit_multi(cvs.selected_multi)
 	cvs._hint("%d 个实例被框选" % cvs.selected_multi.size())
-	cvs.queue_redraw()
 
 
 ## 多选集合的外接矩形（按各实例的视觉矩形，不是锚点单点——
-## 锚点碰巧落在一起的两个大实例并不相邻）
+## 锚点碰巧落在一起的两个大实例并不相邻）。
+## 跨层成员先在各自层局部算 rect，再变换到世界坐标合并。
 func _multi_bounds(targets: Array) -> Rect2:
 	var r := Rect2()
 	var first := true
 	for s in targets:
-		var nr: Rect2 = (s as EntityNode).rect()
+		var n := s as EntityNode
+		if n == null or not is_instance_valid(n):
+			continue
+		var li: int = cvs._layer_index_of(n.layer_id)
+		var nr: Rect2 = n.aabb()
+		if li >= 0:
+			nr = cvs.layer_xform(li) * nr
 		r = nr if first else r.merge(nr)
 		first = false
 	return r
@@ -97,7 +111,8 @@ func _inside_multi_box(pos: Vector2) -> bool:
 	return _multi_bounds(targets).grow(_multi_hot()).has_point(pos)
 
 ## —— 实例拖拽移动：按下记录起点，移动只改预览，松手吸附并标脏 ——
-## 锁检查跟着实例所在层走（实例可属任何栈层）。
+## 锁检查跟着实例所在层走（实例可属任何栈层）。整组拖动时**所有成员**的层都要查
+## （E04：先选锁定与未锁定对象再从其中拖动，锁定成员不得跟随）。
 func _begin_entity_drag(n: EntityNode, pos: Vector2) -> void:
 	if cvs.is_layer_locked(cvs._layer_index_of(n.layer_id)):
 		cvs._hint("实例所在图层已锁定：解锁后再移动")
@@ -107,7 +122,11 @@ func _begin_entity_drag(n: EntityNode, pos: Vector2) -> void:
 	cvs._drag_origins = [n.position]
 	# 框选集合一起拖动（按住的是集合成员时）
 	if cvs.selected_multi.size() > 1 and cvs.selected_multi.has(n):
-		cvs._drag_entities = cvs.selected_multi.duplicate()
+		var group: Array = cvs._valid_multi()
+		if _selection_touches_locked(group):
+			cvs._hint("组内有成员所在图层已锁定：解锁后再移动")
+			return
+		cvs._drag_entities = group
 		cvs._drag_origins.clear()
 		for s in cvs._drag_entities:
 			cvs._drag_origins.append((s as EntityNode).position)
@@ -141,13 +160,17 @@ func _move_drag_preview(pos: Vector2) -> void:
 	if cvs._drag_entity == null or not is_instance_valid(cvs._drag_entity):
 		cvs._drag_entity = null
 		return
+	# 世界位移 → 逐成员所在层的局部位移（E02）：层有偏移/缩放/旋转时，
+	# 直接加世界位移会让成员漂离光标。起始位置在起手时已冻结（相机后来移动不影响落点）。
 	var delta: Vector2 = pos - cvs._drag_grab
 	if delta.length() > 1.0:
 		cvs._drag_moved = true
 	for i in cvs._drag_entities.size():
 		var s := cvs._drag_entities[i] as EntityNode
 		if is_instance_valid(s):
-			s.position = (cvs._drag_origins[i] as Vector2) + delta
+			var li: int = cvs._layer_index_of(s.layer_id)
+			var dl: Vector2 = delta if li < 0 else cvs.world_delta_local(li, delta)
+			s.position = (cvs._drag_origins[i] as Vector2) + dl
 	cvs.queue_redraw()
 
 
@@ -178,7 +201,10 @@ func _finish_entity_drag() -> void:
 		var n := targets[i] as EntityNode
 		if not is_instance_valid(n):
 			continue
-		n.position = cvs.snap_point(preview[i], n)
+		# 吸附在成员自己的层局部空间（E02）：跨层组里不同层的局部口径可以不同
+		var li: int = cvs._layer_index_of(n.layer_id)
+		n.position = cvs.snap_point(preview[i], n) if li < 0 \
+			else cvs.snap_point_local(li, preview[i], n)
 	cvs._mark()
 	cvs.queue_redraw()
 	cvs._hint("已移动 %d 个实例（Ctrl+Z 撤销）" % targets.size())
@@ -187,7 +213,8 @@ func _finish_entity_drag() -> void:
 ## —— 实例尺寸把手（R-04）：选中 sizeFields 实例右下角把手，拖动 = 改 props w/h（格数） ——
 ## 预览期直接写 props（display_size 实时反映），收尾恢复原值压一个撤销步再写终值。
 
-## 把手命中：仅带 sizeFields 的选中实例有把手（触发区/事件区这类自定尺寸实例）
+## 把手命中：仅带 sizeFields 的选中实例有把手（触发区/事件区这类自定尺寸实例）。
+## 把手画在世界空间（层变换已作用），命中也在世界空间比（E02）。
 func _resize_handle_hit(pos: Vector2) -> bool:
 	var n = cvs.selected_entity
 	if n == null or not is_instance_valid(n) or cvs.place_kind != "object":
@@ -195,7 +222,10 @@ func _resize_handle_hit(pos: Vector2) -> bool:
 	var sf = (n.decl as Dictionary).get("sizeFields", null)
 	if not (sf is Array) or (sf as Array).size() < 2:
 		return false
+	var li: int = cvs._layer_index_of((n as EntityNode).layer_id)
 	var r: Rect2 = (n as EntityNode).rect()
+	if li >= 0:
+		r = cvs.layer_xform(li) * r
 	var side = cvs.grid.cell_max() * 0.6
 	return Rect2(r.end - Vector2.ONE * side * 0.5, Vector2.ONE * side).has_point(pos)
 
@@ -216,18 +246,28 @@ func _begin_entity_resize(n: EntityNode, pos: Vector2) -> void:
 	cvs._resize_moved = false
 	cvs.begin_gesture(cvs.Gesture.ENTITY_RESIZE, MOUSE_BUTTON_LEFT)
 
-## 拖动预览：props w/h = 鼠标相对 rect 左上角的格数（≥1）；变化才写，回到原值 = 零副作用
+## 拖动预览：props w/h = 鼠标相对 rect 左上角的格数（≥1）；变化才写，回到原值 = 零副作用。
+## 世界鼠标 → 实例所在层局部（E02），与起手快照同一空间。
 func _move_resize_preview(pos: Vector2) -> void:
 	if cvs._resize_node == null or not is_instance_valid(cvs._resize_node):
 		cvs._resize_node = null
 		return
 	var n := cvs._resize_node as EntityNode
+	var li: int = cvs._layer_index_of(n.layer_id)
+	var lp: Vector2 = pos if li < 0 else cvs.to_layer_local(li, pos)
 	var cell := Vector2(cvs.grid.tile)
 	var o: Vector2 = cvs._resize_origin
-	var nw := maxi(1, roundi(maxf((pos.x - o.x) / maxf(cell.x, 1.0), 0.5)))
-	var nh := maxi(1, roundi(maxf((pos.y - o.y) / maxf(cell.y, 1.0), 0.5)))
+	var nw := maxi(1, roundi(maxf((lp.x - o.x) / maxf(cell.x, 1.0), 0.5)))
+	var nh := maxi(1, roundi(maxf((lp.y - o.y) / maxf(cell.y, 1.0), 0.5)))
 	var orig: Dictionary = cvs._resize_orig
 	if nw == int(orig.w) and nh == int(orig.h):
+		# 拖回起点（E10）：必须把 props 写回原值，否则停留时显示的是上一次预览尺寸，
+		# 收尾也会把那个旧预览值当终值提交。
+		n.props[str(orig.wf)] = int(orig.w)
+		n.props[str(orig.hf)] = int(orig.h)
+		cvs._resize_moved = false
+		n.refresh_visual()
+		cvs.queue_redraw()
 		return
 	n.props[str(orig.wf)] = nw
 	n.props[str(orig.hf)] = nh
@@ -262,15 +302,19 @@ func _finish_entity_resize() -> void:
 ## —— 顶点编辑（R-02 几何段）：选中 poly/path 实例的顶点把手 ——
 ## 预览期直写 props.points，收尾恢复原值压撤销再写终值（与尺寸把手同一纪律）。
 
-## 顶点世界坐标（把手命中/绘制共用）：局部点经 to_global（吃 rotation/scale；
-## flip 由点集镜像还原，存取层不掺入）
+## 顶点世界坐标（把手命中/绘制共用）：局部点先按 flip 镜像（与 PolyView 呈现一致，E10），
+## 再经完整节点链变换（实例 rotation/scale + 所在层 offset/scale/parallax）到世界。
 func _vertex_worlds(n: EntityNode) -> Array:
 	var out := []
+	var mh := (n as EntityNode).flipped_h()
+	var mv := (n as EntityNode).flipped_v()
 	for p: Vector2 in (n as EntityNode).points_local():
-		out.append((n as EntityNode).to_global(p))
+		var q := Vector2(-p.x if mh else p.x, -p.y if mv else p.y)
+		out.append((n as EntityNode).to_global(q))
 	return out
 
-## 顶点把手命中：返回顶点下标（-1 = 未命中）；半径 = 0.45 格
+## 顶点把手命中：返回顶点下标（-1 = 未命中）；半径 = 0.45 格。
+## 与绘制共用 _vertex_worlds（含 flip 镜像，E10：翻转过的手把必须点得中）。
 func _vertex_handle_hit(pos: Vector2) -> int:
 	var n = cvs.selected_entity
 	if n == null or not is_instance_valid(n) or cvs.place_kind != "object":
@@ -281,13 +325,12 @@ func _vertex_handle_hit(pos: Vector2) -> int:
 	var r: float = cvs.grid.cell_max() * 0.45
 	var best := -1
 	var best_d := r
-	var i := 0
-	for p: Vector2 in en.points_local():
-		var d := en.to_global(p).distance_to(pos)
+	var worlds: Array = _vertex_worlds(en)
+	for i in worlds.size():
+		var d := (worlds[i] as Vector2).distance_to(pos)
 		if d <= best_d:
 			best = i
 			best_d = d
-		i += 1
 	return best
 
 ## 起手：冻结原点集
@@ -301,6 +344,26 @@ func _begin_vertex_drag(n: EntityNode, idx: int) -> void:
 	cvs._vertex_moved = false
 	cvs.begin_gesture(cvs.Gesture.ENTITY_VERTEX, MOUSE_BUTTON_LEFT)
 
+## 点集近似相等（拖回起点判定；Array 无 is_equal_approx）
+func _pts_equal(a: Array, b: Array) -> bool:
+	if a.size() != b.size():
+		return false
+	for i in a.size():
+		if not (a[i] as Vector2).is_equal_approx(b[i]):
+			return false
+	return true
+
+## 未翻转局部系 → 节点空间：flip 是镜像（先把输入点镜像回去，写回原值再镜像回）
+func _vertex_to_node_space(n: EntityNode, lp: Vector2) -> Vector2:
+	return Vector2(-lp.x if n.flipped_h() else lp.x, -lp.y if n.flipped_v() else lp.y)
+
+func _vertex_to_data_space(n: EntityNode, node_lp: Vector2) -> Vector2:
+	return Vector2(-node_lp.x if n.flipped_h() else node_lp.x, -node_lp.y if n.flipped_v() else node_lp.y)
+
+## 鼠标世界坐标 → 实例的未翻转局部系（呈现、命中、拖动共用的几何逆变换，E10）
+func _local_of_world(n: EntityNode, world: Vector2) -> Vector2:
+	return _vertex_to_data_space(n, n.to_local(world))
+
 ## 拖动预览：顶点 = 鼠标转局部（吃逆变换），flip 镜像回未翻转局部系再写
 func _move_vertex_preview(pos: Vector2) -> void:
 	if cvs._vertex_node == null or not is_instance_valid(cvs._vertex_node):
@@ -310,13 +373,14 @@ func _move_vertex_preview(pos: Vector2) -> void:
 	var pts: Array = n.points_local()
 	if cvs._vertex_idx >= pts.size():
 		return
-	var lp := n.to_local(pos)
-	if n.flipped_h():
-		lp.x = -lp.x
-	if n.flipped_v():
-		lp.y = -lp.y
+	var lp := _local_of_world(n, pos)
 	var orig: Array = cvs._vertex_orig
 	if cvs._vertex_idx < orig.size() and lp.is_equal_approx(orig[cvs._vertex_idx]):
+		# 拖回起点（E10）：把点集写回起手快照，别停在上一次预览位置。
+		if not _pts_equal(n.points_local(), orig):
+			n.points_write(orig)
+			cvs._vertex_moved = false
+			cvs.queue_redraw()
 		return
 	pts[cvs._vertex_idx] = lp
 	n.points_write(pts)
@@ -356,32 +420,32 @@ func _add_vertex_at(pos: Vector2) -> bool:
 	var pts: Array = en.points_local()
 	if pts.size() < 2:
 		return false
-	var closed: bool = bool(en.decl.get("visual", {}).get("closed", false))
+	# 闭合语义按 visual.type（E16 同口径）：poly 缺省闭合，与呈现一致
+	var closed := en.visual_type() == "poly"
 	var best_seg := -1
 	var best_lp := Vector2.ZERO
 	var best_d := INF
 	var segs := pts.size() if closed else pts.size() - 1
+	var worlds: Array = _vertex_worlds(en)
 	for i in segs:
-		var a: Vector2 = en.to_global(pts[i])
-		var b: Vector2 = en.to_global(pts[(i + 1) % pts.size()])
+		var a: Vector2 = worlds[i]
+		var b: Vector2 = worlds[(i + 1) % pts.size()]
 		var cp: Vector2 = _closest_on_segment(pos, a, b)
 		var d := cp.distance_to(pos)
 		if d < best_d:
 			best_d = d
 			best_seg = i
-			best_lp = en.to_local(cp)
+			best_lp = _local_of_world(en, cp)
 	if best_seg < 0 or best_d > cvs.grid.cell_max() * 0.6:
 		return false
-	if en.flipped_h():
-		best_lp.x = -best_lp.x
-	if en.flipped_v():
-		best_lp.y = -best_lp.y
 	for p: Vector2 in pts:
 		if (p as Vector2).distance_to(best_lp) < cvs.grid.cell_max() * 0.35:
 			return false
 	return _vertex_commit(pts, best_seg + 1, best_lp, "已加顶点")
 
-## 右键顶点删点：poly 保底 3 点（closed 时 <3 不成多边形）、path 保底 2 点。
+## 右键顶点删点：poly 保底 3 点、path 保底 2 点。
+## E16：poly 未显式声明 closed 时缺省视为闭合（visual.type=poly 的语义就是多边形），
+## 与 PolyView 呈现一致——否则「未声明 closed 的多边形」能被删到只剩两点。
 func _delete_vertex_at(pos: Vector2) -> bool:
 	var n = cvs.selected_entity
 	if n == null or not is_instance_valid(n):
@@ -393,8 +457,8 @@ func _delete_vertex_at(pos: Vector2) -> bool:
 	if idx < 0:
 		return false
 	var pts: Array = en.points_local()
-	var closed: bool = bool(en.decl.get("visual", {}).get("closed", false))
-	var floor_n := 3 if closed else 2
+	var floor_n := 3 if en.visual_type() == "poly" else 2
+	var closed := en.visual_type() == "poly"
 	if pts.size() <= floor_n:
 		cvs._hint("%s 至少保留 %d 个顶点" % ["多边形" if closed else "折线", floor_n])
 		return true
@@ -565,12 +629,14 @@ func paste_at(pos: Vector2) -> void:
 	cvs._hint("已粘贴 %d 个实例（Ctrl+Z 撤销）" % cvs._clipboard.size())
 
 
-## 选区成员是否踩到锁定层：锁定阻止一切写入（与涂刷/擦除/区域操作同语义）
+## 选区是否触碰锁定层（按**层码**判定，E04：重排后下标变了也挡得住）；
+## 隐藏层同样算不可触碰（看不见的内容不该被批量改写）。
 func _selection_touches_locked(sel: Array) -> bool:
 	for s in sel:
 		var n := s as EntityNode
 		if n != null and is_instance_valid(n):
-			if cvs.is_layer_locked(cvs._layer_index_of(n.layer_id)):
+			var li: int = cvs._layer_index_of(n.layer_id)
+			if li >= 0 and (cvs.is_layer_locked(li) or not cvs.is_layer_visible(li)):
 				return true
 	return false
 

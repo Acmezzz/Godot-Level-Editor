@@ -23,25 +23,23 @@ var active_layer := 0          # 0..N-1 = 层栈下标，N = 碰撞元层
 var place_kind := "tiles"      # 放置语义跟资产走："tiles"=涂瓦片 / "object"=摆实例（左栏驱动）
 var paint_cell := Vector2i(0, 0)  # 当前瓦片（纯手动，不自动变形）
 
-## 瓦片笔刷变换（v7）：R 循环旋转 0/90/180/270，X 切水平翻转；只影响后续涂刷
-var tile_rot := 0          # 0/90/180/270
-var tile_flip := false     # 水平翻转
-## 旋转档位 → 变换位（Godot 转置语义：90° = 转置|水平翻转，270° = 转置|垂直翻转）
-const TILE_ROT_FLAGS := [0, MapFormat.TILE_ROT90 | MapFormat.TILE_FLIP_H,
-	MapFormat.TILE_FLIP_H | MapFormat.TILE_FLIP_V, MapFormat.TILE_FLIP_V | MapFormat.TILE_ROT90]
-
-var tile_alt: int:
-	get: return int(TILE_ROT_FLAGS[tile_rot]) | (MapFormat.TILE_FLIP_H if tile_flip else 0)
+## 瓦片笔刷变换（v7/E08）：alt = 0-7 的 D4 组合编号（map_format 组合表）。
+## R 在群上左乘 90°，X 左乘水平翻转——八个档位全可达，翻转在任何旋转档都有效。
+var tile_alt := 0
 
 func cycle_tile_rotation() -> void:
-	tile_rot = (tile_rot + 1) % 4
-	_hint("瓦片笔刷：旋转 %d°%s" % [tile_rot * 90, "，水平翻转开" if tile_flip else ""])
+	tile_alt = MapFormat.alt_rotate90(tile_alt)
+	_hint("瓦片笔刷：%s（R 再转 90°，X 翻转）" % MapFormat.alt_label(tile_alt))
 	queue_redraw()
 
 func toggle_tile_flip() -> void:
-	tile_flip = not tile_flip
-	_hint("瓦片笔刷：水平翻转%s（R 旋转 %d°）" % ["开" if tile_flip else "关", tile_rot * 90])
+	tile_alt = MapFormat.alt_flip_h(tile_alt)
+	_hint("瓦片笔刷：%s（X 再翻，R 旋转）" % MapFormat.alt_label(tile_alt))
 	queue_redraw()
+
+## 吸管回填笔刷变换（E08）：吸取掉的瓦片带着它的 alt 回来，下一笔与原瓦片同向
+func set_tile_alt(alt: int) -> void:
+	tile_alt = alt & 7
 var brush_size := 1               # 笔刷边长（格）
 var stamp_asset := ""             # 待放置的资产 id（entity 或 shape=image 的 scene）
 var stamp_thumb: Texture2D
@@ -304,12 +302,15 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 		if sc is int or sc is float:
 			root.scale = Vector2.ONE * float(sc)
 		root.set_meta("parallax", float(ld.get("parallax", 1.0)))
-		# 层混合模式（v7）：mix 缺省不加材质；add/mul 挂 CanvasItemMaterial
+		# 层混合模式（v7/E11）：材质挂到**实际绘制内容的子节点**（Below/YSort/Above/瓦片层），
+		# 根节点只是容器不画东西——挂根上子节点不继承，混合模式等于没生效。
 		var blend := str(ld.get("blend", "mix"))
 		if blend == "add" or blend == "mul":
-			var mat := CanvasItemMaterial.new()
-			mat.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD if blend == "add" else CanvasItemMaterial.BLEND_MODE_MUL
-			root.material = mat
+			for dn in [below, ysp, tn, above]:
+				var mat := CanvasItemMaterial.new()
+				mat.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD if blend == "add" \
+					else CanvasItemMaterial.BLEND_MODE_MUL
+				(dn as CanvasItem).material = mat
 		map_root.add_child(root)
 		layer_tiles.append(tn)
 		layer_ents.append(root)
@@ -411,11 +412,7 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	# 地图装载后同步碰撞可视节点与图层可见性（按图层索引恢复，不只是节点 flag）
 	coll_view.refresh()
 	for i in layer_count() + 1:
-		var dn := _layer_display_node(i)
-		if dn:
-			dn.visible = is_layer_visible(i)
-		if i < layer_tiles.size():
-			(layer_tiles[i] as TileMapLayer).visible = is_layer_visible(i)
+		_layer_ops_ctrl._apply_layer_shown(i)
 
 	# 相机：撤销时保持视角，否则对准出生点
 	if keep_cam:
@@ -460,13 +457,15 @@ func set_thumbs(t: Dictionary) -> void:
 func _on_spawn(pos: Vector2) -> bool:
 	if spawn == null or not is_instance_valid(spawn):
 		return false
-	return pos.distance_to(spawn.position) <= grid.cell_max() * 0.6
+	var lp := root_cell(pos)
+	return pos.distance_to(to_layer_world(collision_index(), grid.cell_center_px(lp))) <= grid.cell_max() * 0.6 \
+		or pos.distance_to(spawn.get_global_position()) <= grid.cell_max() * 0.6
 
 ## 拖动出生点：位置对齐到格中心（数据只存格坐标，浮点位置保存会被取整回去）
 func _drag_spawn_to(pos: Vector2) -> void:
 	if spawn == null or not is_instance_valid(spawn):
 		return
-	var c := _cell_of(pos)
+	var c := root_cell(pos)
 	spawn.position = grid.cell_center_px(c)
 	queue_redraw()
 
@@ -475,12 +474,64 @@ func _drag_spawn_to(pos: Vector2) -> void:
 func _entity_hit(pos: Vector2) -> EntityNode:
 	return _selection_ops_ctrl._entity_hit(pos)
 
-## 指定层的实体命中（擦除只认当前层）
+## 指定层的实体命中（擦除只认当前层；层隐藏时直接无命中）
 func _entity_hit_on(li: int, pos: Vector2) -> EntityNode:
-	return _selection_ops_ctrl._entity_hit_in(_layer_entities(li), pos)
+	if li < 0 or li >= layer_count() or not is_layer_visible(li):
+		return null
+	return _selection_ops_ctrl._entity_hit_in(_layer_entities(li), pos, li)
 
 func _cell_of(pos: Vector2) -> Vector2i:
-	return grid.pick_cell(pos)
+	return grid.pick_cell(_active_local(pos))
+
+## —— 层局部坐标（E02）——
+## 层参数 offset/scale/parallax 作用在层容器上：瓦片格号、实例 position、poly 点集
+## 全在**层局部**空间。拾取先世界→候选层局部再取格；拖拽先算世界位移、逐层逆变换。
+## 活动层容器（碰撞元层取 map_root——碰撞格与出生点都在根空间）。
+func active_layer_root() -> Node2D:
+	if active_layer < layer_ents.size() and active_layer >= 0:
+		return layer_ents[active_layer] as Node2D
+	if map_root != null and is_instance_valid(map_root):
+		return map_root
+	return null
+
+## 第 i 层的世界变换（无层节点时 = 原点，画布自身无变换）
+func layer_xform(i: int) -> Transform2D:
+	var root := _layer_ents_or_collision(i)
+	if root == null:
+		return Transform2D.IDENTITY
+	return root.get_global_transform()
+
+func _layer_ents_or_collision(i: int) -> Node2D:
+	if i >= 0 and i < layer_ents.size():
+		return layer_ents[i] as Node2D
+	if _is_grid_layer(i) and map_root != null and is_instance_valid(map_root):
+		return map_root
+	return null
+
+## 世界 → 层局部
+func to_layer_local(i: int, world: Vector2) -> Vector2:
+	return layer_xform(i).affine_inverse() * world
+
+## 层局部 → 世界
+func to_layer_world(i: int, local: Vector2) -> Vector2:
+	return layer_xform(i) * local
+
+## 活动层局部（鼠标输入换算入口）。碰撞元层住在 map_root 空间（与出生点同系）。
+func _active_local(world: Vector2) -> Vector2:
+	if active_layer == collision_index():
+		return map_root.get_global_transform().affine_inverse() * world if is_map_ready() else world
+	return to_layer_local(clampi(active_layer, 0, maxi(layer_count() - 1, 0)), world)
+
+## 根空间格号（出生点/区域原点这类层栈外的格用；map_root 无变换时 = 世界）
+func root_cell(world: Vector2) -> Vector2i:
+	var lp := world
+	if is_map_ready():
+		lp = map_root.get_global_transform().affine_inverse() * world
+	return grid.pick_cell(lp)
+
+## 世界位移 → 层局部位移（拖拽/微调共用；只取线性部分，不带平移）
+func world_delta_local(i: int, delta: Vector2) -> Vector2:
+	return layer_xform(i).affine_inverse().basis_xform(delta)
 
 ## 地图投影：地图自己的 meta.gridProjection 优先（B1 逐图投影），缺键沿用项目解析
 ## （任一瓦片资产声明 isometric/hexagonal 即整项目按该投影）。旧图首次保存时把生效投影
@@ -506,6 +557,10 @@ func _freeze_projection() -> void:
 	meta["gridProjection"] = proj
 	map_data["meta"] = meta
 
+## 活动层局部格号（坐标栏/涂刷路径共用）
+func _active_cell(pos: Vector2) -> Vector2i:
+	return grid.pick_cell(_active_local(pos))
+
 ## 地图已装载且 root 有效（E14：无图时输入/绘制提前返回，不碰坐标换算）
 func is_map_ready() -> bool:
 	return map_root != null and is_instance_valid(map_root)
@@ -524,6 +579,31 @@ func has_content() -> bool:
 func grid_dir_px(dx: int, dy: int) -> Vector2:
 	return grid.to_px(Vector2(dx, dy)) - grid.to_px(Vector2.ZERO)
 
+## —— 最终可见性（E06） ——
+## 实例眼睛 + 所属层显隐。命中/框选/连线/出口角标/预览全走这里，
+## 不能只看节点 visible（层隐藏时节点旗标仍是 true）。
+func is_entity_shown(n: EntityNode) -> bool:
+	if n == null or not is_instance_valid(n):
+		return false
+	if not n.visible_flag:
+		return false
+	var li := _layer_index_of(n.layer_id)
+	return li < 0 or is_layer_visible(li)
+
+## 可见实例合集（绘制连线/出口/框选候选的公共入口）
+func ents_shown() -> Array:
+	var out := []
+	for e in ents_all():
+		var n := e as EntityNode
+		if n != null and is_entity_shown(n):
+			out.append(n)
+	return out
+
+## 层码是否可编辑（锁定）：未知层码不阻止（数据兜底落在 0 层）
+func is_layer_code_locked(lid: String) -> bool:
+	var li := _layer_index_of(lid)
+	return li >= 0 and is_layer_locked(li)
+
 ## 放置/拖动落点：吸附开启时把「数据格坐标」四舍五入到整格（对齐锚点在格内的位置，
 ## 与实例尺寸无关）。关闭时原样保留。
 ## 六边形（B1）：格坐标 = 连续反算（不取最近中心），锚点偏移按包围盒内单位算，
@@ -532,7 +612,13 @@ func snap_point(p: Vector2, n: EntityNode = null) -> Vector2:
 	var unit: Vector2 = n.anchor_unit() if n != null else Vector2(0.5, 0.5)
 	return snap_anchor_px(unit, p)
 
+## 指定层的层局部吸附（实例拖拽收尾/粘贴共用）：入参已是该层局部像素。
+func snap_point_local(li: int, p: Vector2, n: EntityNode = null) -> Vector2:
+	var unit: Vector2 = n.anchor_unit() if n != null else Vector2(0.5, 0.5)
+	return snap_anchor_px(unit, p)
+
 ## 按「格内锚点单位坐标」吸附像素点（幽灵预览与实例落点共用同一口径）。
+## 入参是**层局部空间**的像素点（E02）；世界坐标调用方先 to_layer_local。
 func snap_anchor_px(unit: Vector2, p: Vector2) -> Vector2:
 	if not snap_to_grid:
 		return p
@@ -568,11 +654,12 @@ func _pick_tile(pos: Vector2) -> void:
 		if ac == Vector2i(-1, -1):
 			continue
 		paint_cell = ac
-		# 吸管连资产一起吸（多图集瓦片吸取后原样落笔）
+		# 吸管连资产一起吸（多图集瓦片吸取后原样落笔），变换位也一并吸回（E08）
 		paint_asset = asset_of_source(tn.get_cell_source_id(c))
+		set_tile_alt(MapFormat.alt_of_godot(tn.get_cell_alternative_tile(c)))
 		# 不直写 active_layer——直写会短路 editor_state 的切层分支（状态文案不出）；
 		# 经 tool_requested 走 _apply_state 单一写入口
-		_hint("已吸取 %s（切到该层涂刷）" % str(ac))
+		_hint("已吸取 %s %s（切到该层涂刷）" % [str(ac), MapFormat.alt_label(tile_alt)])
 		tool_requested.emit("paint", li)
 		return
 	_hint("该格没有可吸取的瓦片（碰撞层不参与吸管）")
@@ -592,15 +679,19 @@ func _fit_view() -> void:
 			return
 		used = r if not (seed_set.has as bool) else used.merge(r)
 		seed_set["has"] = true
-	for tn in layer_tiles:
-		take.call((tn as TileMapLayer).get_used_rect())
-	if collision != null:
+	for li in layer_tiles.size():
+		if is_layer_visible(li):
+			take.call((layer_tiles[li] as TileMapLayer).get_used_rect())
+	if collision != null and is_layer_visible(collision_index()):
 		take.call(collision.get_used_rect())
 	for e in ents_all():
 		var n := e as EntityNode
-		if n == null or n.asset == "" or not n.visible_flag:
+		if n == null or n.asset == "" or not is_entity_shown(n):
 			continue
 		var r := n.rect()
+		var li: int = _layer_index_of(n.layer_id)
+		if li >= 0:
+			r = layer_xform(li) * r
 		take.call(Rect2i(floori(r.position.x / float(maxi(tile_w, 1))), floori(r.position.y / float(maxi(tile_h, 1))),
 			maxi(1, ceili(r.size.x / float(maxi(tile_w, 1)))), maxi(1, ceili(r.size.y / float(maxi(tile_h, 1))))))
 	if not seed_set.has:
@@ -641,6 +732,26 @@ var _canvas_draw_ctrl   # CanvasDraw：绘制控制器
 var _canvas_input_ctrl   # CanvasInput：鼠标输入路由控制器
 var _tool_ops_ctrl   # ToolOps：左键/右键语义执行控制器
 var _last_copy_region := false   # 最近一次复制是区域还是实体（Ctrl+V 分发）
+
+# —— 选择提交入口（E09）——
+## 放置/工作台选中/删除统一走这里：画布单选+多选+信息条必须一起更新。
+## 只发信号不写 selected_entity 会让「信息条显示新件、Del 删旧组」。
+func commit_selection(n: EntityNode, multi: Array = []) -> void:
+	selected_entity = n
+	selected_multi = multi.filter(func(x): return is_instance_valid(x))
+	entity_selected.emit(n)
+	queue_redraw()
+
+## 框选集合提交：首成员作单选，整组进多选，一次 emit
+func commit_multi(multi: Array) -> void:
+	var valid: Array = []
+	for s in multi:
+		if is_instance_valid(s):
+			valid.append(s)
+	selected_multi = valid
+	selected_entity = valid[0] if not valid.is_empty() else null
+	entity_selected.emit(selected_entity)
+	queue_redraw()
 
 # —— 框选集合有效性过滤 ——
 func _valid_multi() -> Array:
@@ -721,6 +832,46 @@ func end_gesture() -> void:
 	gesture = Gesture.NONE
 	gesture_button = 0
 
+## 取消未完成的**预览型**手势并恢复原值（E05）：拖动/尺寸/顶点/出生点/区域搬迁
+## 在活体上写的是候选值，相机平移或保存读取前必须先归位，否则落点/草稿带着半途状态。
+## 涂刷/擦除是已提交的笔画，不在此列（它们各自在首个真实改动前压过撤销）。
+## 返回是否取消了某手势（调用方据此给状态栏反馈）。
+func cancel_preview_gesture() -> bool:
+	match gesture:
+		Gesture.ENTITY_DRAG:
+			for i in _drag_entities.size():
+				if is_instance_valid(_drag_entities[i]):
+					(_drag_entities[i] as EntityNode).position = _drag_origins[i]
+			_drag_entity = null
+			_drag_entities.clear()
+			_drag_origins.clear()
+			_drag_moved = false
+		Gesture.ENTITY_RESIZE:
+			if _resize_node != null and is_instance_valid(_resize_node):
+				var orig: Dictionary = _resize_orig
+				_resize_node.props[str(orig.get("wf", "w"))] = int(orig.get("w", 1))
+				_resize_node.props[str(orig.get("hf", "h"))] = int(orig.get("h", 1))
+				_resize_node.refresh_visual()
+			_resize_node = null
+			_resize_moved = false
+		Gesture.ENTITY_VERTEX:
+			if _vertex_node != null and is_instance_valid(_vertex_node):
+				_vertex_node.points_write(_vertex_orig)
+				_vertex_node.refresh_visual()
+			_vertex_node = null
+			_vertex_moved = false
+		Gesture.SPAWN_DRAG:
+			if spawn != null and is_instance_valid(spawn):
+				spawn.position = _spawn_origin
+		Gesture.REGION_MOVE:
+			_move_snap = {}
+			_move_cell_delta = Vector2i.ZERO
+		_:
+			return false
+	end_gesture()
+	queue_redraw()
+	return true
+
 ## 派生只读位（绘制块与松手分派仍按这两个语义判断）
 ## 手势派生只读位：canvas_draw/canvas_input 经 cvs._drag_box 读取
 @warning_ignore("unused_private_class_variable")
@@ -749,6 +900,11 @@ var _vertex_node: EntityNode = null   # R-02 顶点把手拖拽的目标实例�
 var _vertex_idx := -1                 # 拖拽中的顶点下标
 var _vertex_orig: Array = []          # 起手点集快照（Vector2 数组）
 var _vertex_moved := false
+## 出生点拖动起手位置（E05：起手中断要能归位，不能留在半途格）
+var _spawn_origin := Vector2.ZERO
+## 笔画上一格（E13）：快速涂/擦时鼠标事件会跳格，逐帧按格路径补涂中间格
+var _stroke_last_cell := Vector2i.ZERO
+var _stroke_has_last := false
 ## 涂刷笔画的撤销快照推迟到首个真实改动前才压（点击不动 = 零副作用，与出生点拖动同模式）
 ## 涂刷撤销快照推迟标记：tool_ops 经 cvs._paint_pushed 读写
 @warning_ignore("unused_private_class_variable")

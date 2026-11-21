@@ -24,6 +24,38 @@ const TILE_FLIP_H := 1
 const TILE_FLIP_V := 2
 const TILE_ROT90 := 4
 
+## —— 八种 alt 作为 D4 组合表（E08）——
+## 旧实现把「旋转档位位集」与水平翻转直接 OR——rot90(T|H) 加翻转又变回 T，
+## 部分档位翻转无效。改为群作用表：旋转 90° = 左乘 Rcw = H∘T，水平翻转 = 左乘 H。
+## 两张表满足 R^4 = X^2 = 恒等，八个元素全可达；按键、吸管、存档共用同一编号。
+const ALT_ROT90 := [5, 7, 4, 6, 1, 3, 0, 2]
+const ALT_FLIP_H := [1, 0, 3, 2, 5, 4, 7, 6]
+
+static func alt_rotate90(f: int) -> int:
+	return int(ALT_ROT90[f & 7])
+
+static func alt_flip_h(f: int) -> int:
+	return int(ALT_FLIP_H[f & 7])
+
+## alt → 旋转档位（0/90/180/270），供状态栏描述
+static func alt_rot_deg(f: int) -> int:
+	match f & 7:
+		5, 4:
+			return 90
+		3, 2:
+			return 180
+		6, 7:
+			return 270
+		_:
+			return 0
+
+## alt 是否含水平翻转（相对未翻转基准：1/4/2/7 是 0/5/3/6 的翻转对）
+static func alt_flipped(f: int) -> bool:
+	return (f & 7) in [1, 4, 2, 7]
+
+static func alt_label(f: int) -> String:
+	return "%d°%s" % [alt_rot_deg(f), "·翻转" if alt_flipped(f) else ""]
+
 static func alt_to_godot(f: int) -> int:
 	var g := 0
 	if f & TILE_FLIP_H:

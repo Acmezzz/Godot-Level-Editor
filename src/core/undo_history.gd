@@ -177,7 +177,9 @@ func extract() -> Dictionary:
 	if not meta.has("h"):
 		meta["h"] = int(used.end.y + 2)
 	meta["name"] = cvs.cur_map_name
-	var sp = cvs._cell_of(cvs.spawn.position)
+	# 出生点数据是根空间格号（不随活动层变）：直接由 spawn.position 反算，
+	# 不能走 _cell_of——活动层有 offset/scale 时会把出生点写成别的格（E02）。
+	var sp: Vector2i = cvs.grid.pick_cell(cvs.spawn.position)
 	out["version"] = MapFormat.VERSION
 	out["meta"] = meta
 	out["spawn"] = [sp.x, sp.y]

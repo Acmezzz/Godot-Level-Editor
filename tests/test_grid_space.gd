@@ -137,3 +137,38 @@ func test_pick_cell_and_continuous() -> void:
 	var gr = GridSpaceScript.new(Vector2i(32, 16), "hexagonal")
 	ok(gr.to_continuous_grid(gr.to_px(Vector2(2.2, 2.2))).distance_to(Vector2(2.2, 2.2)) < 0.001,
 		"矩形六边亚格往返")
+
+## B2：格邻接按格型（正交/等距四邻，六边六邻、上方两格）
+func test_grid_neighbors() -> void:
+	var g = GridSpaceScript.new(Vector2i(16, 16), "orthogonal")
+	var n4: Array = g.neighbors(Vector2i(3, 4))
+	eq(n4.size(), 4, "正交四邻")
+	ok(n4.has(Vector2i(4, 4)) and n4.has(Vector2i(2, 4)) and n4.has(Vector2i(3, 3)) and n4.has(Vector2i(3, 5)),
+		"正交四邻就是上下左右")
+	eq(g.up_neighbors(Vector2i(3, 4)), [Vector2i(3, 3)], "正交上邻单格")
+	var h = GridSpaceScript.new(Vector2i(16, 16), "hexagonal")
+	var n6: Array = h.neighbors(Vector2i(3, 4))
+	eq(n6.size(), 6, "六边六邻")
+	for nb: Vector2i in n6:
+		ok(nb != Vector2i(3, 4), "邻格不含自身")
+	eq(h.up_neighbors(Vector2i(3, 4)).size(), 2, "六边上邻两格（奇偶行各一）")
+	# 奇偶行错位：偶行的 (0,-1)/(1,-1) 才是上方两格
+	var up_even: Array = h.up_neighbors(Vector2i(2, 0))
+	ok(up_even.has(Vector2i(1, -1)) and up_even.has(Vector2i(2, -1)), "偶行上邻 = (1,-1)/(2,-1)")
+
+## B2：格路径补格（快速拖动不漏格，首尾含端点、无重复）
+func test_cells_between() -> void:
+	var g = GridSpaceScript.new(Vector2i(16, 16), "orthogonal")
+	var path: Array = g.cells_between(Vector2i(0, 0), Vector2i(5, 0))
+	eq(path[0], Vector2i(0, 0), "路径首格")
+	eq(path[path.size() - 1], Vector2i(5, 0), "路径尾格")
+	eq(path.size(), 6, "直线路径 = 连续六格（无跳格）")
+	for i in range(1, path.size()):
+		ok((path[i] as Vector2i).x == (path[i - 1] as Vector2i).x + 1, "路径逐格递增")
+	eq(g.cells_between(Vector2i(2, 2), Vector2i(2, 2)), [Vector2i(2, 2)], "同格路径 = 自身")
+	var diag: Array = g.cells_between(Vector2i(0, 0), Vector2i(3, 3))
+	ok(diag.size() >= 4 and diag.has(Vector2i(3, 3)), "对角路径覆盖终点")
+	var h = GridSpaceScript.new(Vector2i(16, 16), "hexagonal")
+	var hp: Array = h.cells_between(Vector2i(0, 0), Vector2i(4, 0))
+	eq(hp[0], Vector2i(0, 0), "六边路径首格")
+	eq(hp[hp.size() - 1], Vector2i(4, 0), "六边路径尾格")

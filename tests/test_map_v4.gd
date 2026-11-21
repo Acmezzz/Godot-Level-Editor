@@ -31,6 +31,26 @@ func test_alt_roundtrip() -> void:
 	eq(MapFormat.alt_to_godot(MapFormat.TILE_ROT90), 16384, "转置 = Godot bit14 (16384)")
 	eq(MapFormat.alt_to_godot(MapFormat.TILE_FLIP_H | MapFormat.TILE_FLIP_V | MapFormat.TILE_ROT90), 28672, "H+V+转置全置位")
 
+## B2/E08：八种 alt 作为 D4 组合表——转四次回原值、翻两次回原值、翻转在任何旋转档都生效
+func test_alt_group_table() -> void:
+	for f in range(8):
+		var r: int = f
+		for _i in 4:
+			r = MapFormat.alt_rotate90(r)
+		eq(r, f, "alt %d 转四次回原值" % f)
+		eq(MapFormat.alt_flip_h(MapFormat.alt_flip_h(f)), f, "alt %d 翻两次回原值" % f)
+		ok(MapFormat.alt_flip_h(f) != f, "alt %d 翻转改变档位" % f)
+	# 旋转 90° 的档位描述：0→90→180→270→0
+	var a := 0
+	for deg in [90, 180, 270, 0]:
+		a = MapFormat.alt_rotate90(a)
+		eq(MapFormat.alt_rot_deg(a), deg, "旋转档位 %d" % deg)
+	# 旧实现 OR 组合的翻转失效样例：90°档(5) 再翻必须变成 4，而不是回到 5
+	eq(MapFormat.alt_flip_h(5), 4, "90° 档翻转 = 4（旧 OR 组合会抵消成 5）")
+	eq(MapFormat.alt_flip_h(4), 5, "4 再翻回 5")
+	ok(MapFormat.alt_flipped(1) and not MapFormat.alt_flipped(0), "翻转位描述")
+	ok(MapFormat.alt_label(0) == "0°" and MapFormat.alt_label(3).contains("180"), "档位标签")
+
 func _box() -> Dictionary:
 	var d := Store.new_map("t", 40, 30)
 	var lid: String = str((d.meta.layers[0] as Dictionary).get("id"))

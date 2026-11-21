@@ -30,7 +30,9 @@ func _draw() -> void:
 	if str(vis.get("type", "rect")) == "path":
 		draw_polyline(arr, Color(col, alpha), w, true)
 	else:
-		_draw_poly(arr, Color(col, alpha), bool(vis.get("closed", false)))
+		# poly 缺省闭合（E16）：未显式声明 closed 时按闭合呈现，
+		# 否则「多边形」会画成一条折线、删点下限也随之错位。
+		_draw_poly(arr, Color(col, alpha), bool(vis.get("closed", true)))
 
 func _draw_poly(arr: PackedVector2Array, col: Color, closed: bool) -> void:
 	if closed and arr.size() >= 3:

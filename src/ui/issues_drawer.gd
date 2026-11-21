@@ -156,10 +156,7 @@ func _select_by_code(code: String) -> void:
 	if n == null:
 		app._set_status("未找到实例 %s" % code)
 		return
-	app.canvas.selected_entity = n
-	app.canvas.selected_multi.clear()
-	app.canvas.entity_selected.emit(n)
-	app.canvas.queue_redraw()
+	app.canvas.commit_selection(n as EntityNode)
 
 ## 一键清除悬空引用：把 audit 报出的 fix 项落地——按地图分组，逐图读文件、
 ## 按 code 找实例、擦掉悬空 props 键（字段留空=未填）、写回（.history 自动备份）。

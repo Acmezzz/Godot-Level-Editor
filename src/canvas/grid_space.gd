@@ -261,6 +261,50 @@ func grid_lines(vis: Rect2, map_rect: Rect2i) -> PackedVector2Array:
 func cell_max() -> float:
 	return maxf(float(tile.x), float(tile.y))
 
+## 格 c 的共边邻格（B2/E16）：正交/等距 = 四邻；六边 = 六个共边邻格（奇偶行错位）。
+## 自动碰撞轮廓/顶面策略按真实邻接枚举，不能对六边硬套四邻。
+func neighbors(c: Vector2i) -> Array:
+	if not is_hex():
+		return [c + Vector2i(1, 0), c + Vector2i(-1, 0), c + Vector2i(0, 1), c + Vector2i(0, -1)]
+	var odd := posmod(c.y, 2) == 1
+	# odd-r：奇行整体右移半格，两行之间的邻格对随奇偶切换
+	return [
+		c + Vector2i(1, 0), c + Vector2i(-1, 0),
+		c + Vector2i(0, -1), c + Vector2i(0, 1),
+		c + Vector2i(1 if odd else 0, -1), c + Vector2i(1 if odd else 0, 1),
+	]
+
+## 「上邻」（顶面策略用）：正交/等距 = (0,-1)；六边 = 视觉上方两格（奇偶各一）
+func up_neighbors(c: Vector2i) -> Array:
+	if not is_hex():
+		return [c + Vector2i(0, -1)]
+	var odd := posmod(c.y, 2) == 1
+	return [c + Vector2i(1 if odd else 0, -1), c + Vector2i(0 if odd else -1, -1)]
+
+## 两格之间经过的格序列（E13：快速拖动时鼠标事件会跳格，涂/擦要补上中间格）。
+## 像素线段按 1/4 格采样再 pick_cell——投影无关（正交/等距/六边都按真实轮廓命中），
+## 去重后保持先后顺序，首尾含 a/b。
+func cells_between(a: Vector2i, b: Vector2i) -> Array:
+	var out: Array = [a]
+	if a == b:
+		return out
+	var pa := cell_center_px(a)
+	var pb := cell_center_px(b)
+	var dist := pa.distance_to(pb)
+	var steps := maxi(1, ceili(dist / maxf(cell_max() * 0.25, 1.0)))
+	var seen := {a: true}
+	var last := a
+	for i in range(1, steps + 1):
+		var c := pick_cell(pa.lerp(pb, float(i) / float(steps)))
+		if c != last:
+			if not seen.has(c):
+				seen[c] = true
+				out.append(c)
+			last = c
+	if out[out.size() - 1] != b:
+		out.append(b)
+	return out
+
 ## 地图像素包围盒（背景/视野拟合/界内判定的统一口径）。
 ## 正交 = 精确矩形；等距 = 菱形网格多边形包围盒（精确）；六边 = 四角 cell 包围盒（近似）。
 func map_bounds(map_rect: Rect2i) -> Rect2:

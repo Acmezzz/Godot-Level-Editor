@@ -18,10 +18,11 @@ func _init(c) -> void:
 ## cvs._move_snap / _move_from / _move_grab / _move_cell_delta / _move_active
 
 ## 点是否落在已有区域选区里（用来区分「拖走这块」和「重新框选」）
+## 区域选区是 root 空间格号（与层参数无关），拾取走 root_cell。
 func _in_region_sel(pos: Vector2) -> bool:
 	if cvs._region_sel.size.x <= 0 or cvs._region_sel.size.y <= 0:
 		return false
-	return cvs._region_sel.has_point(cvs._cell_of(pos))
+	return cvs._region_sel.has_point(cvs.root_cell(pos))
 
 ## 实体的「所在格」判定：由资产的 anchor 统一（top_left 型 = 矩形左上格，
 ## center 型 = 中心格）。区域复制/剪切/框入/拖动四处共用，防止复制进了剪贴板、
@@ -112,7 +113,7 @@ func _begin_region_move(pos: Vector2) -> void:
 
 
 func _move_region_preview(pos: Vector2) -> void:
-	var d: Vector2i = cvs._cell_of(pos) - cvs._cell_of(cvs._move_grab)
+	var d: Vector2i = cvs.root_cell(pos) - cvs.root_cell(cvs._move_grab)
 	if d != cvs._move_cell_delta:
 		cvs._move_cell_delta = d
 		cvs.queue_redraw()
@@ -156,11 +157,15 @@ func _finish_region_move() -> void:
 			cvs.set_collision_cell(Vector2i(int(ta[0]), int(ta[1])) + delta, true, str(ta[2]), str(ta[3]))
 		else:
 			cvs.set_collision_cell(Vector2i(int(ta[0]), int(ta[1])) + delta, true)
-	# 实例：区块内的实例原地平移（保持身份码与层归属，不重建节点）
+	# 实例：区块内的实例原地平移（保持身份码与层归属，不重建节点）。
+	# 平移量按各实例所在层逆变换（E02）：跨层组的层偏移/缩放不同，不能共用一个世界位移。
 	for e in cvs.ents_all():
 		var n := e as EntityNode
 		if n != null and n.asset != "" and cvs._region_sel.has_point(n.cell()):
-			n.position += cvs.grid_dir_px(delta.x, delta.y)
+			var li: int = cvs._layer_index_of(n.layer_id)
+			var dl: Vector2 = cvs.grid_dir_px(delta.x, delta.y) if li < 0 \
+				else cvs.world_delta_local(li, cvs.grid_dir_px(delta.x, delta.y))
+			n.position += dl
 	# 选区跟着搬到新位置，方便接着拖第二下
 	cvs._region_sel.position = from + delta
 	cvs._mark()
@@ -416,7 +421,7 @@ func _remap_refs_in(container, id_map: Dictionary) -> bool:
 	return changed
 
 func _cell_rect(a: Vector2, b: Vector2) -> Rect2i:
-	var ca: Vector2i = cvs._cell_of(a)
-	var cb: Vector2i = cvs._cell_of(b)
+	var ca: Vector2i = cvs.root_cell(a)
+	var cb: Vector2i = cvs.root_cell(b)
 	return Rect2i(Vector2i(mini(ca.x, cb.x), mini(ca.y, cb.y)),
 		Vector2i(absi(ca.x - cb.x) + 1, absi(ca.y - cb.y) + 1))

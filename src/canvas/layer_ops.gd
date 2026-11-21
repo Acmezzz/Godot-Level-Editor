@@ -140,29 +140,43 @@ func _layer_display_node(i: int) -> Node2D:
 	return null
 
 ## 设置图层可见/锁定；隐藏 = 该层瓦片与实体一起隐（视觉遮挡，锁定阻止编辑写入）
+## 编辑态按**层码**存档（E04）：重排/删除层后下标会变，按 id 存才能跟着层走。
 func set_layer_hidden(i: int, now_hidden: bool) -> void:
-	layer_hidden[i] = now_hidden
+	layer_hidden[_layer_key(i)] = now_hidden
+	_apply_layer_shown(i)
+	cvs.queue_redraw()
+
+## 真节点显隐：数据节点 + 实体容器 + 碰撞可视（单点应用，载入/重排复用）
+func _apply_layer_shown(i: int) -> void:
+	var vis := is_layer_visible(i)
 	if _is_grid_layer(i):
 		if coll_view:
-			coll_view.visible = not now_hidden
-	elif i >= 0 and i < layer_tiles.size():
-		(layer_tiles[i] as TileMapLayer).visible = not now_hidden
+			coll_view.visible = vis
+		return
+	if i >= 0 and i < layer_tiles.size():
+		(layer_tiles[i] as TileMapLayer).visible = vis
 		if i < layer_ents.size():
-			(layer_ents[i] as Node2D).visible = not now_hidden
-	cvs.queue_redraw()
+			(layer_ents[i] as Node2D).visible = vis
 
 ## 图层当前是否可见（未隐藏）。所有图层默认可见——包括碰撞层：用户明确要求
 ## 开图就能看到碰撞（整图染红是可接受的代价）。显隐只由 layer_hidden 记录决定。
 func is_layer_visible(i: int) -> bool:
-	if layer_hidden.has(i):
-		return not bool(layer_hidden[i])
+	var k := _layer_key(i)
+	if layer_hidden.has(k):
+		return not bool(layer_hidden[k])
 	return true
 
+## 层码键：层栈内用层 id，碰撞元层用固定串（层重排后仍指向同一层）
+func _layer_key(i: int) -> String:
+	if _is_grid_layer(i):
+		return "_collision"
+	return layer_id(i) if i >= 0 and i < layer_count() else "_none%d" % i
+
 func set_layer_locked(i: int, locked: bool) -> void:
-	layer_locked[i] = locked
+	layer_locked[_layer_key(i)] = locked
 
 func is_layer_locked(i: int) -> bool:
-	return bool(layer_locked.get(i, false))
+	return bool(layer_locked.get(_layer_key(i), false))
 # —— 层管理：新建/删除/上下移（先 extract 快照 → 在快照上改 → load_data 重建） ——
 ## 顺序是硬约束：extract 按节点下标取瓦片、按声明序取层码，两者必须对齐——
 ## 不能「先改活体 meta 再 extract 反向同步」（会串层/丢瓦片）。
@@ -313,7 +327,8 @@ func layer_set_param(i: int, key: String, v) -> void:
 	if i < 0 or i >= L.size():
 		return
 	if key == "ySort" and not bool(v):
-		return  # false = 缺省，erase 等价于无事发生
+		# 关掉 ySort 是合法操作（E11）：erase 键 = 回到缺省顺序，不能静默拒绝
+		pass
 	# 快照先行（同 layer_set_visible：改层参数走同一纪律）
 	_push_undo()
 	var snap := extract()
@@ -325,7 +340,10 @@ func layer_set_param(i: int, key: String, v) -> void:
 		return
 	match key:
 		"ySort":
-			(SL[i] as Dictionary)["ySort"] = true
+			if bool(v):
+				(SL[i] as Dictionary)["ySort"] = true
+			else:
+				(SL[i] as Dictionary).erase("ySort")   # 关 ySort = 回到层内既定顺序（E11）
 		"parallax":
 			var pv := float(v)
 			if is_zero_approx(pv - 1.0):

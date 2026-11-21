@@ -575,12 +575,15 @@ func _refresh_sel_bar() -> void:
 	_sel_bar.visible = true
 
 ## 眼睛开关：切换选中实例的编辑器可见性（objects[].visible，游戏侧忽略）。
+## 走 EntityNode 的 setter（E06）：旗标与真节点 visible 同步，不能只改 meta——
+## 只改旗标会出现「眼睛关了贴图还在、命中已失效」的半显隐态。
 func _toggle_sel_visible(v: bool) -> void:
 	var n = app.selected_spr
 	if n == null or not is_instance_valid(n):
 		return
 	app.canvas._push_undo()
 	n.visible_flag = v
+	n.refresh_visual()
 	app.canvas._mark()
 
 ## 图层面板已收进层下拉，保留下钻点供既有调用方（editor_state._sync_ui）使用。

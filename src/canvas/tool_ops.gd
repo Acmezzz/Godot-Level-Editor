@@ -17,10 +17,12 @@ func _apply_tool(pos: Vector2) -> void:
 	if cvs.is_layer_locked(cvs.active_layer):
 		cvs._hint("当前图层已锁定：解锁后再编辑")
 		return
+	# 世界鼠标 → 活动层局部（E02）：涂刷格号与摆落点都在层局部空间算
+	var lp: Vector2 = cvs.to_layer_local(clampi(cvs.active_layer, 0, maxi(cvs.layer_count() - 1, 0)), pos)
 	if cvs.place_kind == "object":
-		_stamp(pos)
+		_stamp(lp)
 	else:
-		_paint(cvs._cell_of(pos))
+		_paint(cvs.grid.pick_cell(lp))
 
 
 func _brush_cells(c: Vector2i) -> Array:
@@ -30,6 +32,24 @@ func _brush_cells(c: Vector2i) -> Array:
 		for dx in cvs.brush_size:
 			out.append(Vector2i(c.x + dx - half, c.y + dy - half))
 	return out
+
+## 路径上的多格笔刷展开（去重）：补格路径与笔刷边长共存
+func _brush_cells_multi(cells: Array) -> Array:
+	var seen := {}
+	var out: Array = []
+	for c: Vector2i in cells:
+		for bc: Vector2i in _brush_cells(c):
+			if not seen.has(bc):
+				seen[bc] = true
+				out.append(bc)
+	return out
+
+
+## 笔画内首个真实改动前压一次撤销快照（点击不动 = 零副作用）——涂/擦共用。
+func _ensure_stroke_undo() -> void:
+	if not cvs._paint_pushed:
+		cvs._push_undo()
+		cvs._paint_pushed = true
 
 
 func _paint(c: Vector2i) -> void:
@@ -47,9 +67,7 @@ func _paint(c: Vector2i) -> void:
 			var same: bool = had and cm != null and str(cm.get("type", "solid")) == cvs.collision_type \
 				and str(cm.get("shape", "")) == cvs.collision_shape
 			if not same:
-				if not cvs._paint_pushed:
-					cvs._push_undo()   # 笔画内首个真实改动前压一次快照（点击不动 = 零副作用）
-					cvs._paint_pushed = true
+				_ensure_stroke_undo()
 				cvs.set_collision_cell(bc, true, cvs.collision_type, cvs.collision_shape)
 				changed = true
 		if changed:
@@ -67,9 +85,7 @@ func _paint(c: Vector2i) -> void:
 		if layer.get_cell_source_id(bc) != src \
 				or layer.get_cell_atlas_coords(bc) != cvs.paint_cell \
 				or MapFormat.alt_of_godot(layer.get_cell_alternative_tile(bc)) != cvs.tile_alt:
-			if not cvs._paint_pushed:
-				cvs._push_undo()   # 笔画内首个真实改动前压一次快照（点击不动 = 零副作用）
-				cvs._paint_pushed = true
+			_ensure_stroke_undo()
 			TilesetCache.set_cell_alt(layer, bc, src, cvs.paint_cell, cvs.tile_alt)
 			changed = true
 	if changed:
@@ -83,18 +99,44 @@ func _erase_hits(pos: Vector2) -> bool:
 		return false
 	if cvs._entity_hit_on(cvs.active_layer, pos) != null:
 		return true
+	var lp: Vector2 = cvs._active_local(pos)
 	if cvs._is_grid_layer(cvs.active_layer):
-		for bc in _brush_cells(cvs._cell_of(pos)):
+		for bc in _brush_cells(cvs.grid.pick_cell(lp)):
 			if cvs.collision.get_cell_source_id(bc) != -1:
 				return true
 		return false
 	var layer = cvs._layer_node(cvs.active_layer)
 	if layer == null:
 		return false
-	for bc in _brush_cells(cvs._cell_of(pos)):
+	for bc in _brush_cells(cvs.grid.pick_cell(lp)):
 		if layer.get_cell_source_id(bc) != -1:
 			return true
 	return false
+
+
+## 按格批量擦除（瓦片/碰撞），返回是否有真实改动。路径补格与起手共用。
+## 撤销快照在首个真实改动前压一次（空擦 = 零副作用、不留空快照）。
+func erase_cells(cells: Array) -> bool:
+	var changed := false
+	var layer = null
+	if not cvs._is_grid_layer(cvs.active_layer):
+		layer = cvs._layer_node(cvs.active_layer)
+		if layer == null:
+			return false
+	for bc in cells:
+		var has: bool = cvs.collision.get_cell_source_id(bc) != -1 if layer == null \
+			else layer.get_cell_source_id(bc) != -1
+		if not has:
+			continue
+		_ensure_stroke_undo()
+		if layer == null:
+			cvs.set_collision_cell(bc, false)
+		else:
+			layer.erase_cell(bc)
+		changed = true
+	if changed:
+		cvs._mark(false)   # 纯瓦片/碰撞擦除，实体集不变
+	return changed
 
 
 func _erase_at(pos: Vector2) -> void:
@@ -114,26 +156,11 @@ func _erase_at(pos: Vector2) -> void:
 		cvs.selected_multi.erase(hit)
 		(hit.get_parent() as Node2D).remove_child(hit)
 		hit.free()
-		cvs.entity_selected.emit(cvs.selected_entity)
+		cvs.commit_selection(cvs.selected_entity)
 		cvs._mark()
 		return
 	# 碰撞元层擦除走统一入口（类型元数据一并清）——有真实改动才 _mark（热路径同 _paint）
-	var changed := false
-	if cvs._is_grid_layer(cvs.active_layer):
-		for bc in _brush_cells(cvs._cell_of(pos)):
-			if cvs.collision.get_cell_source_id(bc) != -1:
-				cvs.set_collision_cell(bc, false)
-				changed = true
-	else:
-		var layer = cvs._layer_node(cvs.active_layer)
-		if layer == null:
-			return
-		for bc in _brush_cells(cvs._cell_of(pos)):
-			if layer.get_cell_source_id(bc) != -1:
-				layer.erase_cell(bc)
-				changed = true
-	if changed:
-		cvs._mark(false)   # 纯瓦片/碰撞擦除，实体集不变
+	erase_cells(_brush_cells(cvs.grid.pick_cell(cvs._active_local(pos))))
 
 
 func _stamp(pos: Vector2) -> void:
@@ -157,9 +184,15 @@ func _stamp(pos: Vector2) -> void:
 	cvs._push_undo()
 	var n: EntityNode = cvs.make_object(cvs.stamp_asset)
 	# 带 sizeFields 的资产（事件区这类实例各自定尺寸）落下去要带默认尺寸，
-	# 否则就是个看不见的空实例；mode/event/once 已作废，语义归 functions[]。
-	if n.decl.get("sizeFields", null) is Array:
-		n.props = {"w": 2, "h": 2}
+	# 否则就是个看不见的空实例；键名与缺省值都从声明/原字典取（E10），不写死 w/h。
+	var sf: Array = n.decl.get("sizeFields", []) if n.decl.get("sizeFields", null) is Array else []
+	if sf.size() >= 2:
+		var p: Dictionary = n.props
+		if not p.has(str(sf[0])):
+			p[str(sf[0])] = 2
+		if not p.has(str(sf[1])):
+			p[str(sf[1])] = 2
+		n.props = p
 	# poly/path 资产（R-02 几何段）：落下带缺省点集——优先声明 visual.points，
 	# 没声明按类型给最小形状（poly 一格三角形 / path 两点横线），否则是看不见的空实例
 	if n.visual_type() != "rect" and not (n.props.get("points", null) is Array):
@@ -178,8 +211,9 @@ func _stamp(pos: Vector2) -> void:
 	cvs._place_in_layer(n, cvs.active_layer)
 	cvs._ensure_code(n)
 	cvs._mark()
-	# 放置即选中（"放置→配置"不断档）；连放不受影响
-	cvs.entity_selected.emit(n)
+	# 放置即选中（"放置→配置"不断档）；连放不受影响。
+	# 走选择提交入口（E09）：单选/多选/信息条一起更新，Del 不会再删到旧组。
+	cvs.commit_selection(n)
 
 ## —— 从 editor_canvas.gd 并入：碰撞自动生成（宿主经 cvs 转发） ——
 
@@ -265,11 +299,17 @@ func count_auto_collision(strategy := "full", replace := false, src_override := 
 func _collision_wanted(c: Vector2i, strategy: String, src_idx: int) -> bool:
 	match strategy:
 		"top":
-			return not cvs._has_terrain_in(c + Vector2i(0, -1), src_idx)
+			# 顶面 = 视觉上方没有地形。六边（E16）：上方是两格（奇偶行各一），
+			# 两格都空才算顶面，不能只查 (0,-1)。
+			for u: Vector2i in cvs.grid.up_neighbors(c):
+				if cvs._has_terrain_in(u, src_idx):
+					return false
+			return true
 		"outline":
-			return not cvs._has_terrain_in(c + Vector2i(1, 0), src_idx) \
-				or not cvs._has_terrain_in(c + Vector2i(-1, 0), src_idx) \
-				or not cvs._has_terrain_in(c + Vector2i(0, 1), src_idx) \
-				or not cvs._has_terrain_in(c + Vector2i(0, -1), src_idx)
+			# 轮廓 = 任一真实邻格为空（六边按六邻，E16）
+			for nb: Vector2i in cvs.grid.neighbors(c):
+				if not cvs._has_terrain_in(nb, src_idx):
+					return true
+			return false
 		_:
 			return true

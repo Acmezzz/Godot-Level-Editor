@@ -43,7 +43,10 @@ var layer_id: String:
 ## 实例参数（只丢空值，保留游戏侧自定义键）
 var props: Dictionary:
 	get:
-		var p = get_meta("props", {})
+		if not has_meta("props"):
+			# 缺失时惰性建 meta 条目：直接 `props["k"] = v` 的调用点不能改到临时字典上
+			set_meta("props", {})
+		var p = get_meta("props")
 		return p if p is Dictionary else {}
 	set(v):
 		set_meta("props", v)
@@ -59,7 +62,10 @@ var functions: Array:
 ## {scale:[sx,sy], rotation: 弧度, flip_h, flip_v}；缺省整键省略（零冗余）
 var data_transform: Dictionary:
 	get:
-		var t = get_meta("transform", {})
+		if not has_meta("transform"):
+			# 惰性建 meta：`data_transform["k"] = v` 的调用点不能改到临时字典上
+			set_meta("transform", {})
+		var t = get_meta("transform")
 		return t if t is Dictionary else {}
 	set(v):
 		set_meta("transform", v)
@@ -88,12 +94,15 @@ var z_policy: String:
 		set_meta("zPolicy", v)
 
 ## 编辑器专用显示开关（缺省 true，落盘时 true 省略；游戏侧应忽略）
+## setter 直接同步真节点 visible（E06）：隐藏必须立刻生效，不能等下一次 refresh_visual
 var visible_flag: bool:
 	get:
 		var v = get_meta("visible", true)
 		return v if v is bool else true
 	set(v):
 		set_meta("visible", v)
+		if is_inside_tree():
+			visible = v
 
 ## 声明尺寸（editorSize / prefab 碰撞尺寸 / 1 格），像素
 var base_size: Vector2:
@@ -206,20 +215,30 @@ static func anchor_off_of(unit: Vector2, size: Vector2) -> Vector2:
 ## 数据 x/y → 世界锚点位置。
 ## 六边（B1）：to_px(整数格) 已经是格中心，不能再把正交的 +anchor_unit 方格偏量塞进去；
 ## 锚点偏移改为相对格中心的包围盒偏移（center = 0，top_left = 左上，bottom_center = 底中）。
+## 排序点（E11）：sortAnchor 把 y-sort 用的 position 偏移到真实排序原点，
+## 视觉/命中用 rect() 反向扣回，数据锚点位置不变。
 func world_of_grid(gx: float, gy: float) -> Vector2:
 	if grid_ref != null:
 		if grid_ref.is_hex():
-			return grid_ref.to_px(Vector2(gx, gy)) + _hex_anchor_off()
-		return grid_ref.to_px(Vector2(gx, gy) + anchor_unit())
-	return (Vector2(gx, gy) + anchor_unit()) * float(tile_px)
+			return grid_ref.to_px(Vector2(gx, gy)) + _hex_anchor_off() + sort_anchor()
+		return grid_ref.to_px(Vector2(gx, gy) + anchor_unit()) + sort_anchor()
+	return (Vector2(gx, gy) + anchor_unit()) * float(tile_px) + sort_anchor()
 
 ## 世界位置 → 数据 x/y（保留浮点，吸附由调用方决定）。六边走连续反算，保留亚格。
 func grid_of_world(p: Vector2) -> Vector2:
+	var q := p - sort_anchor()
 	if grid_ref != null:
 		if grid_ref.is_hex():
-			return grid_ref.to_continuous_grid(p - _hex_anchor_off())
-		return grid_ref.to_grid(p) - anchor_unit()
-	return p / float(tile_px) - anchor_unit()
+			return grid_ref.to_continuous_grid(q - _hex_anchor_off())
+		return grid_ref.to_grid(q) - anchor_unit()
+	return q / float(tile_px) - anchor_unit()
+
+## 排序点偏移（raw.sortAnchor，像素、相对数据锚点；缺省 0 = 锚点即排序点）
+func sort_anchor() -> Vector2:
+	var sa = raw.get("sortAnchor", null)
+	if sa is Array and (sa as Array).size() >= 2:
+		return Vector2(float((sa as Array)[0]), float((sa as Array)[1]))
+	return Vector2.ZERO
 
 ## 六边锚点像素偏移（相对格中心）：把「格内单位坐标」映射为包围盒内的像素偏移。
 func _hex_anchor_off() -> Vector2:
@@ -237,10 +256,51 @@ func cell() -> Vector2i:
 func apply_grid(gx: float, gy: float) -> void:
 	position = world_of_grid(gx, gy)
 
-## 视觉矩形（世界坐标）：命中/绘制/选中框共用这一口径
+## 视觉矩形（层局部坐标）：命中/绘制/选中框共用这一口径。
+## 排序点（E11）时 position 是排序原点（锚点 + sortAnchor），视觉矩形反向扣回，
+## 保证「改排序点只改遮挡顺序，不改贴图位置」。
 func rect() -> Rect2:
 	var sz := display_size()
-	return Rect2(position - anchor_off(), sz)
+	return Rect2(position - sort_anchor() - anchor_off(), sz)
+
+## 视觉四角（层局部坐标，含 rotation/scale 后的实际形状，E10）：
+## 未旋转未缩放时与 rect() 四角一致；旋转/缩放后是真实占位四边形。
+## 呈现、命中、框选共用这一份几何，不再拿未旋转外接框当真相。
+func quad() -> PackedVector2Array:
+	var r := rect()
+	var b := Transform2D(data_rotation(), data_scale(), 0.0, Vector2.ZERO)
+	return PackedVector2Array([
+		position + b.basis_xform(r.position - position),
+		position + b.basis_xform(Vector2(r.end.x, r.position.y) - position),
+		position + b.basis_xform(r.end - position),
+		position + b.basis_xform(Vector2(r.position.x, r.end.y) - position)])
+
+## 数据变换里的旋转（弧度）
+func data_rotation() -> float:
+	return float(data_transform.get("rotation", 0.0))
+
+## 数据变换里的缩放（缺省 1,1；不带贴图 fit 系数）
+func data_scale() -> Vector2:
+	var s = data_transform.get("scale", null)
+	if s is Array and (s as Array).size() >= 2:
+		return Vector2(float((s as Array)[0]), float((s as Array)[1]))
+	return Vector2.ONE
+
+## 点是否落在实例实际几何内（层局部坐标）。无旋转无缩放时走矩形快速路径。
+func contains_point(p: Vector2) -> bool:
+	if is_zero_approx(data_rotation()) and data_scale().is_equal_approx(Vector2.ONE):
+		return rect().has_point(p)
+	return Geometry2D.is_point_in_polygon(p, quad())
+
+## 实际几何的轴对齐包围盒（层局部）：框选/并集用
+func aabb() -> Rect2:
+	if is_zero_approx(data_rotation()) and data_scale().is_equal_approx(Vector2.ONE):
+		return rect()
+	var q := quad()
+	var r := Rect2(q[0], Vector2.ZERO)
+	for pt: Vector2 in q:
+		r = r.expand(pt)
+	return r
 
 func flipped_h() -> bool:
 	return bool(data_transform.get("flip_h", false))
@@ -254,6 +314,20 @@ func apply_flip_h(v: bool) -> void:
 		data_transform["flip_h"] = true
 	else:
 		data_transform.erase("flip_h")
+	refresh_visual()
+
+## 原子写入 sortAnchor（像素偏移）：0 = 删键（缺省零冗余）。
+## position 是排序原点（= 视觉锚点 + sortAnchor）：改排序点时同步平移 position，
+## 视觉位置由 rect() 反向扣回，贴图不漂移、数据坐标不变。
+func set_sort_anchor(off: Vector2) -> void:
+	var old := sort_anchor()
+	var r: Dictionary = raw
+	if is_zero_approx(off.x) and is_zero_approx(off.y):
+		r.erase("sortAnchor")
+	else:
+		r["sortAnchor"] = [off.x, off.y]
+	raw = r
+	position += off - old
 	refresh_visual()
 
 func toggle_flip_h() -> void:
@@ -377,10 +451,12 @@ func refresh_visual() -> void:
 	flip_v = flipped_v()
 	# 贴图默认以 position 为中心；锚点非 center 时用 offset 把贴图推到 rect() 的位置。
 	# offset 是「未缩放局部坐标」（Sprite2D 先加 offset 再乘 scale），所以要除掉 scale。
+	# 排序点（E11）：position 含 sortAnchor，视觉反向扣回，贴图不随排序点漂移。
 	var sc := scale
+	var sa := sort_anchor()
 	offset = Vector2(
-		(display_size().x * 0.5 - anchor_off().x) / sc.x if sc.x != 0.0 else 0.0,
-		(display_size().y * 0.5 - anchor_off().y) / sc.y if sc.y != 0.0 else 0.0)
+		(display_size().x * 0.5 - anchor_off().x - sa.x) / sc.x if sc.x != 0.0 else 0.0,
+		(display_size().y * 0.5 - anchor_off().y - sa.y) / sc.y if sc.y != 0.0 else 0.0)
 	visible = visible_flag
 	# R-02：poly/path 呈现子节点随声明装配；点集/变换/翻转变化都经 refresh_visual → _sync_poly_view 重绘
 	_sync_poly_view()

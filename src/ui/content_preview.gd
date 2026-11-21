@@ -134,15 +134,16 @@ func _zoom_at(pos: Vector2, factor: float) -> void:
 	_pan = pos - (pos - origin_old) * (s_new / s_old) - center_new
 	refresh()
 
-## 光标下的实例 id（"" = 空白处）。后画的在上层，命中测试反向遍历
+## 光标下的实例码（"" = 空白处）。后画的在上层，命中测试反向遍历
 ## （同一格叠多个时取最上面那个）。坐标均为预览控件本地坐标。
+## 命中口径复用主画布（E14）：世界坐标先经主画布层变换反算，再用实例真实几何
+## （含旋转/缩放/翻转）判定；隐藏层与隐藏实例不命中，与主画布一致。
 func _hit_at(pos: Vector2) -> String:
 	if not host._map_ready():
 		return ""
 	var s := _scale()
 	if s <= 0.0:
 		return ""
-	var meta: Dictionary = host.app.canvas.map_data.get("meta", {})
 	var origin := _origin(s)
 	var world := (pos - origin) / s
 	var ents: Array = host._entities()
@@ -151,8 +152,11 @@ func _hit_at(pos: Vector2) -> String:
 		var n: EntityNode = row.node
 		if n == null or not is_instance_valid(n):
 			continue
-		var r: Rect2 = n.rect()
-		if r.grow(4.0).has_point(world):
+		if not host.app.canvas.is_entity_shown(n):
+			continue
+		var li: int = host.app.canvas._layer_index_of(n.layer_id)
+		var lp: Vector2 = world if li < 0 else host.app.canvas.to_layer_local(li, world)
+		if n.contains_point(lp):
 			return str(row.code)
 	return ""
 
@@ -227,8 +231,13 @@ func _draw_map() -> void:
 		var n: EntityNode = row.node
 		if n == null or not is_instance_valid(n):
 			continue
-		var dsz: Vector2 = n.display_size() * s
-		var rect := Rect2(origin + (n.position - n.anchor_off()) * s, dsz)
+		# 与主画布同一可见性口径（E06）：隐藏层/隐藏实例在预览里也不显示
+		if not host.app.canvas.is_entity_shown(n):
+			continue
+		# 层局部 → 世界 → 预览屏幕（E02）：层偏移/缩放/排序点在预览里同样生效
+		var li: int = host.app.canvas._layer_index_of(n.layer_id)
+		var wrect: Rect2 = n.aabb() if li < 0 else host.app.canvas.layer_xform(li) * n.aabb()
+		var rect := Rect2(origin + wrect.position * s, wrect.size * s)
 		var tex: Texture2D = host.app.canvas.thumbs.get(str(row.asset))
 		if tex != null:
 			draw_texture_rect(tex, rect, false)
