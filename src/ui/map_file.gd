@@ -20,6 +20,9 @@ var _opened_mtime := 0   # A4.3：打开地图时记录的磁盘 mtime（保存�
 var _last_alive_poll := 0   # PF-04：存活轮询节流
 var _play_pid := 0
 var _play_started_msec: int = 0
+var _play_program := ""        # A6：实际启动的程序（结构化配置的 exe 或模板首个 token）
+var _play_args_text := ""      # A6：实际参数（数组直启时原样，模板时为空）
+var _play_tracked := true      # false = 跟踪的是包装进程（playCommand 模板）
 ## 文档身份（A2）：切图/退出/保存都用它判断“当前请求是否仍是同一个文档”。
 ## generation 每次切图自增；await 回来后代次不符 = 请求已过期，绝不发布图名/路径/基线。
 var _doc_generation := 0
@@ -664,7 +667,15 @@ func on_play(spawn_tiles: Vector2i = Vector2i(-1, -1)) -> void:
 		return
 	_play_pid = int(play_res.get("pid", 0))
 	_play_started_msec = Time.get_ticks_msec()
-	app._set_status(" 试玩启动: " + play_path.get_file() + "（游戏退出后此处会提示）")
+	_play_program = str(play_res.get("program", ""))
+	_play_args_text = " ".join(play_res.get("args", PackedStringArray()))
+	_play_tracked = bool(play_res.get("tracked", false))
+	# 状态里说清「启动了什么、又在跟踪什么」：模板包装进程退出 ≠ 游戏退出
+	var what := _play_program.get_file() if _play_program != "" else "playCommand"
+	var tail := Playtest.log_tail(str(app.manifest.get("_dir", "")), 2)
+	app._set_status(" 试玩启动: %s %s%s%s" % [what, play_path.get_file(),
+		"（跟踪包装进程）" if not _play_tracked else "",
+		("；日志: " + tail) if tail != "" else ""])
 
 ## 试玩进程跟踪：退出后回报一次（Windows tasklist 轮询）
 
@@ -681,13 +692,16 @@ func poll_playtest() -> void:
 	if Playtest.is_alive(_play_pid):
 		return
 	var secs := int((Time.get_ticks_msec() - _play_started_msec) / 1000.0)
+	var prog := _play_program
 	_play_pid = 0
 	# 试玩日志尾随——游戏侧写 editor/playtest.log，退出后取最后几行（无文件 = 原消息）
 	var tail := Playtest.log_tail(str(app.manifest.get("_dir", "")), 4)
+	var who := prog.get_file() if prog != "" else "进程"
+	var tracked_note := "" if _play_tracked else "（跟踪的包装进程已退出）"
 	if tail != "":
-		app._set_status(" 试玩退出（%d 秒）· 日志: %s" % [secs, tail.replace("\n", " | ")])
+		app._set_status(" 试玩%s退出（%s，%d 秒）· 日志: %s" % [who, tracked_note, secs, tail.replace("\n", " | ")])
 	else:
-		app._set_status(" 试玩进程已退出（运行 %d 秒）" % secs)
+		app._set_status(" 试玩%s已退出%s（运行 %d 秒）" % [who, tracked_note, secs])
 
 ## 试玩配置弹窗（v7）：清单 playtest.flags/params 声明驱动，替代写死的 dash/glide/hp。
 ## flags → 勾选框（启用时启动参数原样追加 flag.arg）；params → SpinBox（追加 arg 以 %d 填数）。
@@ -734,7 +748,7 @@ func _open_play_cfg() -> void:
 		for sid in states:
 			cfg[sid] = (states[sid] as Callable).call()
 		app.play_cfg = cfg
-		app._prefs[app.cur_map_name] = app.play_cfg
+		app._prefs[_prefs_key()] = app.play_cfg
 		app._save_prefs()
 		pop.hide()
 		app._set_status("试玩配置已应用（仅影响试玩启动参数）")
@@ -768,8 +782,24 @@ func _play_args(spawn_tiles := Vector2i(-1, -1)) -> PackedStringArray:
 
 ## 试玩配置（v7）：prefs 由 {abilities:[],hp} 旧形态展平为 {flag_id: bool, param_id: int}。
 ## 旧键 abilities[] 展开成对应 flag id 勾选、hp 落到 hp 键——与旧 CLI 参数一一对应。
+## 偏好键（A6）= <项目根>|<地图码>：两个项目有同名地图时配置不串，改名也不丢。
+func _prefs_key() -> String:
+	var root := str(app.manifest.get("_dir", ""))
+	var code := ""
+	if app.canvas != null and app.canvas.map_data.get("meta", null) is Dictionary:
+		code = str((app.canvas.map_data["meta"] as Dictionary).get("code", ""))
+	if code == "":
+		code = str(app.cur_map_name)
+	return root.path_join("|") + code
+
 func _sync_play_cfg_to_map() -> void:
-	var raw = app._prefs.get(app.cur_map_name, null)
+	var raw = app._prefs.get(_prefs_key(), null)
+	# 兼容旧键（纯图名）：只在项目键缺失时回退一次，读到即迁移到新键
+	if not (raw is Dictionary):
+		var legacy = app._prefs.get(app.cur_map_name, null)
+		if legacy is Dictionary:
+			raw = legacy
+			app._prefs[_prefs_key()] = legacy
 	if not (raw is Dictionary):
 		app.play_cfg = {}
 		return
@@ -785,5 +815,5 @@ func _sync_play_cfg_to_map() -> void:
 		if not cfg.has(k):
 			cfg[k] = (raw as Dictionary)[k]
 	app.play_cfg = cfg
-	app._prefs[app.cur_map_name] = cfg
+	app._prefs[_prefs_key()] = cfg
 	app._save_prefs()

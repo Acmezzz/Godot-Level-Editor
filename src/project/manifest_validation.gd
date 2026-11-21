@@ -338,6 +338,20 @@ static func _validate_playtest(data: Dictionary, issues: Array[Dictionary]) -> v
 				_add(issues, "error", "playtest.flags." + fid, "must have an arg")
 			if kind == "params" and not str(d.get("arg", "")).contains("%d"):
 				_add(issues, "error", "playtest.params." + fid, "arg must contain %d for the number")
+	# 结构化启动（A6）：executable 为路径字符串，args 为参数数组；两者都可选。
+	var exe = pt2.get("executable", null)
+	if exe != null and not (exe is String):
+		_add(issues, "error", "playtest.executable", "must be a path string")
+	elif exe is String and (exe as String).strip_edges() == "" and pt2.has("executable"):
+		_add(issues, "warning", "playtest.executable", "empty executable: falls back to playCommand")
+	var args = pt2.get("args", null)
+	if args != null:
+		if not (args is Array):
+			_add(issues, "error", "playtest.args", "must be an array of strings")
+		else:
+			for i in (args as Array).size():
+				if not ((args as Array)[i] is String):
+					_add(issues, "error", "playtest.args[%d]" % i, "must be a string")
 
 ## 步骤池：id 非空唯一（array 写法查重）、条目码池内唯一、字段 id/kind/type 合法、
 ## 步骤字段码与功能/条件字段同空间查重（跨池同码 = 静默合并，报错）。

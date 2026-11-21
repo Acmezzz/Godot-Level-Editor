@@ -162,3 +162,33 @@ func test_fn_timebase_enum() -> void:
 	var m3 := _good()
 	(m3.functions.f1 as Dictionary)["timebase"] = "warp"
 	ok(_errs_of(m3).size() >= 1, "timebase 非法枚举报错")
+
+## A6：playtest.executable + args 结构化启动声明的校验
+func test_playtest_structured_launch() -> void:
+	var m := _good()
+	m["playtest"] = {"executable": "game.exe", "args": ["--path", "%projectpath%", "--", "--map=%mapfile%"]}
+	eq(_errs_of(m).size(), 0, "结构化启动声明零错误")
+	var m2 := _good()
+	m2["playtest"] = {"executable": 3}
+	ok(_errs_of(m2).size() >= 1, "executable 非字符串报错")
+	var m3 := _good()
+	m3["playtest"] = {"args": ["ok", 5]}
+	ok(_errs_of(m3).size() >= 1, "args 含非字符串报错")
+	var m4 := _good()
+	m4["playtest"] = {"args": "--map=%mapfile%"}
+	ok(_errs_of(m4).size() >= 1, "args 非数组报错")
+	# 缺 playtest 键 = 空字典语义，零错误也不崩
+	eq(_errs_of(_good()).size(), 0, "缺 playtest 不报错")
+
+## A6：%mapfile% / %projectpath% 在参数数组里逐项替换，路径含空格不破坏分段
+func test_playtest_arg_substitution() -> void:
+	var m := _good()
+	m["_dir"] = "D:/proj with space"
+	var mapp := "D:/proj with space/maps/a.json"
+	var args: Array = ["--path", "%projectpath%", "--", "--map=%mapfile%"]
+	var out: Array = []
+	for a in args:
+		out.append(preload("res://src/project/manifest.gd").substitute_vars_raw(str(a), mapp, str(m.get("_dir", ""))))
+	eq(str(out[1]), "D:/proj with space", "projectpath 替换")
+	eq(str(out[3]), "--map=D:/proj with space/maps/a.json", "mapfile 替换（含空格原样）")
+	eq(str(out[0]), "--path", "无变量参数不变")

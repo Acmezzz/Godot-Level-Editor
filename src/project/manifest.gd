@@ -31,6 +31,11 @@ static func _substitute_one(cmd: String, token: String, value: String) -> String
 		idx = cmd.find(token, idx + repl.length())
 	return cmd
 
+## 参数数组用的替换：原样内联，不加引号（A6）。
+## OS.create_process 直接收 argv，引号会变成值的一部分；路径含空格正是数组分段的价值所在。
+static func substitute_vars_raw(arg: String, map_file: String, project_path: String) -> String:
+	return arg.replace("%mapfile%", map_file).replace("%projectpath%", project_path)
+
 ## 地图名是否安全：必须是纯文件名，不能包含分隔符、盘符或 ..，也不能是保留名
 static func is_valid_map_name(name: String) -> bool:
 	if name == "" or name != name.strip_edges():

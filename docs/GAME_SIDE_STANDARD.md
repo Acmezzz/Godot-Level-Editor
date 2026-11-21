@@ -70,13 +70,16 @@
 | `contentDir` | string | 内容根目录（相对工程根），缺省 `content`；不允许 `..` 或绝对路径 |
 | `playCommand` | string | 试玩命令模板；支持 `%mapfile%`、`%projectpath%` |
 | `godotExe` | string | 可选，覆盖 `playCommand` 首个可执行文件路径；支持 `%projectpath%` |
-| `playtest` | object | 可选。试玩面板声明驱动：`flags: [{id, name, arg}]`（勾选后启动参数**原样追加** arg）、`params: [{id, name, arg(含 %d), def, min, max}]`（数字参数，值 ≠ def 才追加）。值只存编辑器本地 prefs，键 = id。未声明 = 面板空态提示 |
+| `playtest` | object | 可选。试玩面板声明驱动：`flags: [{id, name, arg}]`（勾选后启动参数**原样追加** arg）、`params: [{id, name, arg(含 %d), def, min, max}]`（数字参数，值 ≠ def 才追加）。值只存编辑器本地 prefs，键 = `<项目根>|<地图码>`（A6：两项目同名地图不串）。未声明 = 面板空态提示 |
+| `playtest.executable` | string | 可选（A6）。结构化启动：可执行文件路径，支持 `%projectpath%`/`%mapfile%`；配置后编辑器用 `OS.create_process()` **直接启动**，退出状态代表游戏本体 |
+| `playtest.args` | string[] | 可选（A6）。参数字符串数组，逐项替换 `%mapfile%`、`%projectpath%`（**不加引号**，空格路径由数组分段保证）。Godot 项目示例：`['--path', '%projectpath%', '--', '--map=%mapfile%']`。未配 `executable` 时退回 `playCommand` 模板，状态栏会标明跟踪的是包装进程 |
 
 清单校验把 `assets` 非 Array、`tileSize` 非正数、资产 id 空或重复、
 **实例码重复**、图集/图片路径含 `..` 或为空、palette 元素缺 `cell`、功能/步骤/音频**条目码池内重复**、
 **字段码跨池/跨功能同码**（三池共用一个码空间，同码 = 静默别名，报错）、步骤**码重复**、音频**码重复**、
 时机**id/码池内重复**、字段缺 `kind` 或 kind/type 非法、挂载引用未声明的功能、功能引用未声明的条件、
-功能引用未声明的时机、`timing.mode` 非法、`playtest` 结构错（flags 缺 `arg` / params 的 `arg` 缺 `%d` / id 重复 / name 空）、
+功能引用未声明的时机、`timing.mode` 非法、`playtest` 结构错（flags 缺 `arg` / params 的 `arg` 缺 `%d` / id 重复 / name 空 /
+`executable` 非字符串 / `args` 非字符串数组）、
 顶层可选键形态错（`playCommand`/`godotExe`/`contentDir` 非字符串、`contentDir` 含 `..` 或绝对路径、`screenSize` 非 `[w,h]` 数值），
 以及 `assets[]` 里 `kind` 非法、scene 同时给 `atlas` 与 `texture`、entity 既无 `prefab` 也无 `visual`，
 判为**错误**（编辑器拒绝加载）。

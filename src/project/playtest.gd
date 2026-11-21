@@ -1,28 +1,55 @@
 class_name Playtest
-## 试玩启动器：清单里的 playCommand 模板 + 变量替换 → 拉起游戏子进程。
-## 学自 Ogmo 的 playCommand（ChildProcess.spawn cwd=项目目录）与 Tiled 的 %mapfile% 变量。
+## 试玩启动器（A6）：优先用清单的结构化配置 playtest.executable + playtest.args
+## （OS.create_process 直启，参数按数组传递，空格路径无需引号转义）；
+## 没有结构化配置时退回 playCommand 模板（经 cmd /c 或 sh -c 执行整条命令，
+## 此时跟踪到的是包装进程而不是游戏本体，返回 tracked_kind 让 UI 说清楚）。
 
-## 启动并跟踪：返回 {ok, error, pid}
-## 调用方可用 is_alive(pid) 轮询进程退出（仅 Windows 下经 tasklist）。
+## 启动并跟踪：返回 {ok, error, pid, program, args, tracked, kind}
+## kind = "direct"（结构化配置直启）/ "shell"（playCommand 模板）；
+## tracked = false 时 pid 是包装进程，退出状态不代表游戏本身。
 static func launch_tracked(m: Dictionary, map_path: String, extra_args: PackedStringArray = []) -> Dictionary:
+	var pt: Dictionary = m.get("playtest", {}) if m.get("playtest", null) is Dictionary else {}
+	var project_dir := str(m.get("_dir", ""))
+	var exe_rel := str(pt.get("executable", "")).strip_edges()
+	var arg_decls: Array = pt.get("args", []) if pt.get("args", null) is Array else []
+	var spec_args: PackedStringArray = PackedStringArray()
+	for a in arg_decls:
+		spec_args.append(EditorManifest.substitute_vars_raw(str(a), map_path, project_dir))
+	spec_args.append_array(extra_args)
+	if exe_rel != "":
+		var exe := EditorManifest.substitute_vars_raw(exe_rel, map_path, project_dir)
+		if not FileAccess.file_exists(exe):
+			return {"ok": false, "error": "找不到试玩可执行文件: " + exe,
+				"pid": -1, "program": exe, "args": spec_args, "tracked": true, "kind": "direct"}
+		# 项目根作工作目录：游戏侧相对路径/%projectpath% 语义一致
+		# （create_process 的第 3 参不是 cwd；需要时由 args 显式传 --path 等）
+		var pid := OS.create_process(exe, spec_args)
+		if pid == -1:
+			return {"ok": false, "error": "进程启动失败: " + exe,
+				"pid": -1, "program": exe, "args": spec_args, "tracked": true, "kind": "direct"}
+		return {"ok": true, "error": "", "pid": pid, "program": exe,
+			"args": spec_args, "tracked": true, "kind": "direct"}
+	# —— 退回 playCommand 模板 ——
 	var cmd := EditorManifest.resolved_play_command(m, map_path)
 	if cmd.strip_edges() == "":
-		return {"ok": false, "error": "清单里没配 playCommand，无法试玩"}
-	# 可执行文件明显不存在时提前报错：cmd /c 即便找不到命令也会成功创建进程
-	var exe := _first_token(cmd)
-	if exe != "" and (exe.contains("/") or exe.contains("\\")) and not FileAccess.file_exists(exe):
-		return {"ok": false, "error": "找不到游戏可执行文件: " + exe}
+		return {"ok": false, "error": "清单没配 playtest.executable 或 playCommand，无法试玩",
+			"pid": -1, "program": "", "args": PackedStringArray(), "tracked": false, "kind": "shell"}
+	var exe0 := _first_token(cmd)
+	if exe0 != "" and (exe0.contains("/") or exe0.contains("\\")) and not FileAccess.file_exists(exe0):
+		return {"ok": false, "error": "找不到游戏可执行文件: " + exe0,
+			"pid": -1, "program": exe0, "args": PackedStringArray(), "tracked": false, "kind": "shell"}
 	if not extra_args.is_empty():
 		cmd += " " + " ".join(extra_args)
-	# Windows 经 cmd /c 执行整条命令（模板里可以直接带引号与参数）；其它平台经 sh -c
-	var pid := -1
+	var sh_pid := -1
 	if OS.get_name().begins_with("Windows"):
-		pid = OS.create_process("cmd", ["/c", cmd])
+		sh_pid = OS.create_process("cmd", ["/c", cmd])
 	else:
-		pid = OS.create_process("/bin/sh", ["-c", cmd])
-	if pid == -1:
-		return {"ok": false, "error": "进程启动失败: " + cmd}
-	return {"ok": true, "error": "", "pid": pid}
+		sh_pid = OS.create_process("/bin/sh", ["-c", cmd])
+	if sh_pid == -1:
+		return {"ok": false, "error": "进程启动失败: " + cmd,
+			"pid": -1, "program": exe0, "args": PackedStringArray(), "tracked": false, "kind": "shell"}
+	return {"ok": true, "error": "", "pid": sh_pid, "program": exe0,
+		"args": PackedStringArray(), "tracked": false, "kind": "shell"}
 
 ## 轮询某个 pid 是否还活着（Windows: tasklist；其它平台返回 true = 假定运行中）
 static func is_alive(pid: int) -> bool:
