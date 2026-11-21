@@ -8,6 +8,8 @@ var cvs   # editor_canvas 宿主
 
 const MapFormat := preload("res://src/map/map_format.gd")
 const TilesetCache := preload("res://src/canvas/tileset_cache.gd")
+const ClonePlan := preload("res://src/content/clone_plan.gd")
+const ContentStore := preload("res://src/content/content_store.gd")
 
 func _init(c) -> void:
 	cvs = c
@@ -96,6 +98,8 @@ func _ent_template(n: EntityNode, at: Vector2) -> Dictionary:
 		"props": n.props.duplicate(true),
 		"zPolicy": n.z_policy,
 		"visible": n.visible_flag,
+		# 完整对象负载（E12）：sortAnchor 与游戏侧自定义键随区域快照走
+		"raw": n.raw.duplicate(true),
 	}
 
 func _begin_region_move(pos: Vector2) -> void:
@@ -191,6 +195,8 @@ func _instantiate(t: Dictionary, origin: Vector2i) -> EntityNode:
 	n.data_transform = (t.get("transform", {}) as Dictionary).duplicate(true)
 	n.z_policy = str(t.get("zPolicy", "auto"))
 	n.visible_flag = bool(t.get("visible", true))
+	# 完整对象负载（E12）：sortAnchor 与游戏侧未知键随模板走
+	n.raw = (t.get("raw", {}) as Dictionary).duplicate(true) if t.get("raw", null) is Dictionary else {}
 	n.refresh_visual()
 	n.apply_grid(origin.x + float(t.get("dx", 0.0)), origin.y + float(t.get("dy", 0.0)))
 	var ei: int = cvs._layer_index_of(n.layer_id)
@@ -216,7 +222,11 @@ func copy_region() -> void:
 		cvs._hint("先框选一块区域再复制")
 		return
 	# 层栈剪贴板：tiles = {层id: [[dx,dy,资产id,ax,ay,alt]...]}，碰撞/实体照旧（实体带 layer）
-	cvs._region_clip = {"tiles": {}, "collision": [], "size": cvs._region_sel.size}
+	# 源图身份随剪贴板带走（C2）：跨图粘贴时配对地图字段据此补源图键。
+	cvs._region_clip = {"tiles": {}, "collision": [], "size": cvs._region_sel.size,
+		"map": cvs.cur_map_name,
+		"map_code": str((cvs.map_data.get("meta", {}) as Dictionary).get("code", "")) \
+			if cvs.map_data.get("meta", {}) is Dictionary else ""}
 	# 层名凭据：粘贴时同图按 id 直配，跨图按层名重映射（谁的名字谁带走）
 	var lnames := {}
 	for li2 in cvs.layer_count():
@@ -321,13 +331,43 @@ func _paste_region(origin: Vector2i) -> void:
 	if cvs._any_layer_locked():
 		cvs._hint("有图层处于锁定状态：解锁后再粘贴区域")
 		return
+	# 实例：按相对格位重建，落回各自的层（找不到同码层落最底层）；
+	# C2：实例码与附属内容 ID 统一由 ClonePlan 预留——组内引用重映射、组外保留，
+	# 组内内容每条生成独立文件（此前所有副本共享同一内容 ID，改一份全变）。
+	var rows: Array = []
+	for t in cvs._region_clip.get("ents", []):
+		if not (t is Dictionary):
+			continue
+		rows.append({
+			"asset": str(t.get("asset", "")),
+			"code": str(t.get("code", "")),
+			"props": (t.get("props", {}) as Dictionary).duplicate(true),
+			"functions": (t.get("functions", []) as Array).duplicate(true),
+		})
+	var plan: Dictionary = ClonePlan.build(
+		{"data": {"meta": {"code": str(cvs._region_clip.get("map_code", ""))}, "objects": rows},
+			"manifest": cvs.manifest, "map": str(cvs._region_clip.get("map", ""))},
+		{"data": cvs.map_data, "manifest": cvs.manifest, "map": cvs.cur_map_name})
+	if str(plan.get("status", "")) != "ok":
+		cvs._hint("区域粘贴已取消：" + ClonePlan.conflicts_text(plan.get("conflicts", [])))
+		return
+	# 内容先落盘（A2）：写失败整条粘贴放弃，画布未被改动
+	for pc in (plan.get("pending_contents", []) as Array):
+		var pd: Dictionary = pc
+		if not ContentStore.write(cvs.manifest, str(pd.get("fn_id", "")), str(pd.get("id", "")),
+				pd.get("data", {}) as Dictionary):
+			cvs._hint("区域粘贴已取消：新内容 %s 写入失败" % str(pd.get("id", "")))
+			return
+	# 校验全过才动手：一条撤销步覆盖瓦片 + 碰撞 + 实例
 	cvs._push_undo()
 	# 粘贴按 层id 维度重建（tiles = {层id: [[dx,dy,资产id,ax,ay]...]}）
 	# 层重映射：同图按 id 直配，跨图按层名，都不匹配则落最底层（末尾黄字提示）
 	var lnames: Dictionary = cvs._region_clip.get("layer_names", {})
+	var clip_map := str(cvs._region_clip.get("map", ""))
+	var same_map: bool = clip_map == "" or clip_map == cvs.cur_map_name
 	var missed: Array = []
 	for lid in (cvs._region_clip.get("tiles", {}) as Dictionary):
-		var li: int = _paste_layer_index(str(lid), lnames, missed)
+		var li: int = _paste_layer_index(str(lid), lnames, missed, same_map)
 		for t in (cvs._region_clip.get("tiles", {})[lid] as Array):
 			var ta := t as Array
 			var src: int = cvs.source_of_asset(str(ta[2]))
@@ -343,34 +383,33 @@ func _paste_region(origin: Vector2i) -> void:
 			cvs.set_collision_cell(cc, true, str(t[2]), str(t[3]))
 		else:
 			cvs.set_collision_cell(cc, true)
-	# 实例：按相对格位重建，落回各自的层（找不到同码层落最底层）；引用重映射照旧
-	var id_map := {}   # 旧码 → 粘贴后新码
+	# 行与剪贴板条目一一对应（ClonePlan 不跳行）：按下标取重映射结果
+	var remapped: Array = (plan.get("map_patch", {}) as Dictionary).get("objects", [])
 	var pasted: Array = []
+	var idx := 0
 	for t in cvs._region_clip.get("ents", []):   # 键统一为 ents（预览也读 ents）
-		var old_code := str(t.get("code", ""))
-		var n := _instantiate(t, origin)
+		var tpl := t as Dictionary
+		var n := _instantiate(tpl, origin)
 		if n == null:
 			continue
 		# 层重映射失败时 _instantiate 落最底层，但要记下哪几层没匹配上
-		var src_lid := str(t.get("layer", ""))
+		var src_lid := str(tpl.get("layer", ""))
 		if src_lid != "" and cvs._layer_index_of(src_lid) < 0:
 			var nm: String = str((cvs._region_clip.get("layer_names", {}) as Dictionary).get(src_lid, ""))
 			if not missed.has(nm if nm != "" else src_lid):
 				missed.append(nm if nm != "" else src_lid)
-		if old_code != "" and n.code != "":
-			id_map[old_code] = n.code
+		# 重映射后的行覆盖身份/引用/绑定（位置与变换来自模板，已由 _instantiate 落好）
+		if idx < remapped.size():
+			var row: Dictionary = remapped[idx]
+			if str(row.get("code", "")) != "":
+				n.code = str(row.get("code", ""))
+			if row.get("props", null) is Dictionary:
+				n.props = (row.get("props", {}) as Dictionary).duplicate(true)
+			if row.get("functions", null) is Array:
+				n.functions = (row.get("functions", []) as Array).duplicate(true)
+			n.refresh_visual()
 		pasted.append(n)
-	# 引用重映射：props/functions 里命中旧 id 的字符串全部换成新 id
-	for n2 in pasted:
-		var props2: Dictionary = (n2 as EntityNode).props.duplicate(true)
-		var functions2: Array = (n2 as EntityNode).functions.duplicate(true)
-		var changed := _remap_refs_in(props2, id_map)
-		if _remap_refs_in(functions2, id_map):
-			changed = true
-		if changed:
-			(n2 as EntityNode).props = props2
-		(n2 as EntityNode).functions = functions2
-		(n2 as EntityNode).refresh_visual()
+		idx += 1
 	cvs._mark()   # 区域粘贴含实体，保持索引置脏
 	cvs._paste_mode = false
 	if missed.is_empty():
@@ -378,47 +417,35 @@ func _paste_region(origin: Vector2i) -> void:
 	else:   # 层匹配失败提示合并进同一条（状态栏单条消息，分开发会被覆盖）
 		cvs._hint("区域已粘贴；有 %d 个层按名匹配失败，其内容落在最底层：%s" % [missed.size(), ", ".join(missed)])
 
-## 区域粘贴的层重映射：源层 id 在目标图存在则直配；否则按层名匹配；
-## 都不匹配则落最底层（index 0），层名记入 missed（调用方末尾黄字提示）。
-func _paste_layer_index(src_lid: String, lnames: Dictionary, missed: Array) -> int:
+## 区域粘贴的层重映射（C2）：同图按 id 直配；跨图按**唯一**层名匹配，
+## 名字重复或不匹配落最底层并记入 missed（末尾黄字提示，绝不猜）。
+func _paste_layer_index(src_lid: String, lnames: Dictionary, missed: Array, same_map := true) -> int:
 	var li: int = cvs._layer_index_of(src_lid)
-	if li >= 0:
-		return li
+	if li >= 0 and same_map:
+		return li   # 同一地图：层 ID 就是同一层（跨图层 ID 可能巧合相同，不能直配）
 	var nm: String = str(lnames.get(src_lid, ""))
 	if nm != "":
+		var hits: Array = []
 		for i in cvs.layer_count():
 			if cvs.layer_name(i) == nm:
-				return i
-	# 名字已知但目标图没有同名层、或名字未知：都算没匹配上，记下来提示
-	if not missed.has(nm if nm != "" else src_lid):
-		missed.append(nm if nm != "" else src_lid)
+				hits.append(i)
+		if hits.size() == 1:
+			return int(hits[0])
+	# 名字已知但目标图没有唯一同名层、或名字未知：都算没匹配上，记下来提示
+	var tag: String = nm if nm != "" else src_lid
+	if nm != "" and not same_map and _layer_name_count(nm) > 1:
+		tag = nm + "（重名）"
+	if not missed.has(tag):
+		missed.append(tag)
 	return 0
 
-## 区域粘贴的引用重映射：递归遍历 Dictionary/Array，把命中 id_map 的字符串换成新 id。
-## 返回是否发生了替换。props 与 functions 共用（两者都可能有指向实例的字符串）。
-func _remap_refs_in(container, id_map: Dictionary) -> bool:
-	var changed := false
-	var stack: Array = [container]
-	while not stack.is_empty():
-		var cur = stack.pop_back()
-		if cur is Dictionary:
-			for k in (cur as Dictionary).keys():
-				var v = (cur as Dictionary)[k]
-				if v is String and id_map.has(v):
-					(cur as Dictionary)[k] = id_map[v]
-					changed = true
-				elif v is Dictionary or v is Array:
-					stack.append(v)
-		elif cur is Array:
-			var arr := cur as Array
-			for i in arr.size():
-				var v2 = arr[i]
-				if v2 is String and id_map.has(v2):
-					arr[i] = id_map[v2]
-					changed = true
-				elif v2 is Dictionary or v2 is Array:
-					stack.append(v2)
-	return changed
+## 目标图里与 name 同名的层数（跨图层名匹配的唯一性判定）
+func _layer_name_count(nm: String) -> int:
+	var n := 0
+	for i in cvs.layer_count():
+		if cvs.layer_name(i) == nm:
+			n += 1
+	return n
 
 func _cell_rect(a: Vector2, b: Vector2) -> Rect2i:
 	var ca: Vector2i = cvs.root_cell(a)

@@ -346,8 +346,11 @@ static func rename_map(m: Dictionary, old_name: String, new_name: String) -> Str
 			DirAccess.remove_absolute(hp)
 	return ""
 
-## 复制地图文件（新名冲突拒绝）；内容原样复制，引用不动。
-static func duplicate_map(m: Dictionary, old_name: String, new_name: String) -> String:
+## 复制地图（C2）：整图走 ClonePlan——实例码与附属内容全部独立、组内引用重映射，
+## 目标图重发地图码。内容先写（A2），再写地图；任何一步失败都不留新地图文件。
+## 返回错误信息（"" = 成功）；conflicts_out 收计划冲突给人看。
+static func duplicate_map(m: Dictionary, old_name: String, new_name: String,
+		conflicts_out: Array = [], src_data: Dictionary = {}) -> String:
 	new_name = new_name.strip_edges()
 	if not ManifestScript.is_valid_map_name(new_name):
 		return "名称非法"
@@ -356,23 +359,34 @@ static func duplicate_map(m: Dictionary, old_name: String, new_name: String) -> 
 	if FileAccess.file_exists(path_for(m, new_name)):
 		return "同名地图已存在"
 	var src := path_for(m, old_name)
-	if src == "" or not FileAccess.file_exists(src):
+	if src == "" or (src_data.is_empty() and not FileAccess.file_exists(src)):
 		return "原图不存在"
-	var d := read(m, old_name)
+	var d: Dictionary = src_data if not src_data.is_empty() else read(m, old_name)
 	if d.is_empty():
 		return "原图解析失败"
-	# 地图码项目内唯一：复制图重发 meta.code（占用表含原图码，新码避开）。
-	# 实例码保留——实例码作用域是本图（引用/审计按本图码集判定），整图克隆不冲突。
-	var meta: Dictionary = d.get("meta", {}) if d.get("meta", {}) is Dictionary else {}
+	# 地图码项目内唯一：新码避开全部现有码（含原图码）
 	var taken := code_map(m)
-	taken[str(meta.get("code", ""))] = true
 	var code := ContentId.new_inst_code()
 	while taken.has(code):
 		code = ContentId.new_inst_code()
-	meta["code"] = code
-	d["meta"] = meta
-	# 走原子写单入口（tmp+rename）：写失败不留半截文件堵死同名重试；缓存失效 write_text 内部已做
-	if not write_json(path_for(m, new_name), d):
+	var ClonePlan := preload("res://src/content/clone_plan.gd")
+	var ContentStore := preload("res://src/content/content_store.gd")
+	var plan: Dictionary = ClonePlan.whole_map_document(
+		{"data": d, "manifest": m, "map": old_name}, new_name, code)
+	if str(plan.get("status", "")) != "ok":
+		conflicts_out.append_array(plan.get("conflicts", []))
+		return "复制计划有冲突（见问题列表）"
+	# A2 顺序：先写内容（失败即停，地图文件未动），再写地图
+	for pc in (plan.get("pending_contents", []) as Array):
+		var pd: Dictionary = pc
+		if not ContentStore.write(m, str(pd.get("fn_id", "")), str(pd.get("id", "")),
+				pd.get("data", {}) as Dictionary):
+			return "新内容写入失败：%s" % str(pd.get("id", ""))
+	var doc: Dictionary = plan.get("document", {}) if plan.get("document", {}) is Dictionary else {}
+	if doc.is_empty():
+		return "复制文档组装失败"
+	# 走原子写单入口（tmp+rename）：写失败不留半截文件堵死同名重试
+	if not write_json(path_for(m, new_name), doc):
 		return "复制写盘失败"
 	return ""
 

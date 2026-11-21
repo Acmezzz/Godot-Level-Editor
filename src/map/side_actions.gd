@@ -23,13 +23,8 @@ func _rename_map_by_name(old_name: String, new_name: String) -> void:
 		app.cur_map_path = app.MapStore.path_for(app.manifest, new_name)
 	app._set_status("已改名：%s → %s（引用未迁移）" % [old_name, new_name])
 
-## 地图复制——文件级复制，引用原样保留在副本里。
-func _duplicate_map_by_name(old_name: String, new_name: String) -> void:
-	var err: String = app.MapStore.duplicate_map(app.manifest, old_name, new_name)
-	if err != "":
-		app._set_status("复制失败：" + err)
-		return
-	app._set_status("已创建副本：%s → %s" % [old_name, new_name])
+## 地图复制已迁到 map_file.on_duplicate（C2 整图克隆：新码/新内容/引用重映射），
+## 不再是文件级复制——这里不再保留第二套实现。
 
 
 ## 资产 id → 显示名（未声明时原样返回 id，便于发现清单缺失）

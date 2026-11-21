@@ -5,6 +5,8 @@ extends RefCounted
 ## 全部按节点自己的 rect()/display_size() 口径，不再写死 16px 或依赖 Sprite2D 类型。
 
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
+const ClonePlan := preload("res://src/content/clone_plan.gd")
+const ContentStore := preload("res://src/content/content_store.gd")
 
 var cvs   # 宿主引用
 
@@ -538,6 +540,8 @@ func copy_selection() -> void:
 			"props": n.props.duplicate(true),
 			"zPolicy": n.z_policy,
 			"visible": n.visible_flag,
+			# 完整对象负载（E12）：sortAnchor 与游戏侧自定义键随复制走
+			"raw": n.raw.duplicate(true),
 		})
 	cvs._hint("已复制 %d 个实例（Ctrl+V 粘贴到光标处）" % cvs._clipboard.size())
 
@@ -587,58 +591,72 @@ func paste_at(pos: Vector2) -> void:
 	if cvs.is_layer_locked(target):
 		cvs._hint("目标图层已锁定：解锁后再粘贴")
 		return
-	cvs._push_undo()
-	# 先建副本并给每个 fresh 码；建 旧码→新码 映射，供组内引用重映射
-	var copied := {}   # 旧码 → 新码
-	var built: Array = []   # [{node, asset, props, functions}]
+	# C2：复制走统一计划——实例码与附属内容 ID 一起预留，组内引用重映射、组外保留，
+	# 附属内容生成独立文件（此前所有副本共享同一内容 ID，改一个台词全部变）。
+	var rows: Array = []
 	for t in cvs._clipboard:
-		var aid := str(t.get("asset", ""))
-		var n: EntityNode = cvs.make_object(aid)
-		n.position = pos + Vector2(t.get("dx", 0.0), t.get("dy", 0.0))
-		n.asset = aid
-		n.data_transform = (t.get("transform", {}) as Dictionary).duplicate(true)
-		n.z_policy = str(t.get("zPolicy", "auto"))
-		n.visible_flag = bool(t.get("visible", true))
-		n.refresh_visual()
-		var code: String = ""
-		var src := str(t.get("code", ""))
-		if n.is_entity():
-			code = cvs._fresh_inst_code()
-			n.code = code
-			if src != "":
-				copied[src] = code
-		# 每个副本独立一份数据；组内引用的重映射在下面统一做
-		built.append({
-			"node": n,
-			"asset": aid,
+		rows.append({
+			"asset": str(t.get("asset", "")),
+			"code": str(t.get("code", "")),
 			"props": (t.get("props", {}) as Dictionary).duplicate(true),
 			"functions": (t.get("functions", []) as Array).duplicate(true),
 		})
+	var plan: Dictionary = ClonePlan.build(
+		{"data": {"objects": rows}, "manifest": cvs.manifest},
+		{"data": cvs.map_data, "manifest": cvs.manifest})
+	if str(plan.get("status", "")) != "ok":
+		cvs._hint("粘贴已取消：" + ClonePlan.conflicts_text(plan.get("conflicts", [])))
+		return
+	# 内容先落盘（A2 顺序：先内容后地图）；写失败不动画布
+	for pc in (plan.get("pending_contents", []) as Array):
+		var pd: Dictionary = pc
+		if not ContentStore.write(cvs.manifest, str(pd.get("fn_id", "")), str(pd.get("id", "")),
+				pd.get("data", {}) as Dictionary):
+			cvs._hint("粘贴已取消：新内容 %s 写入失败" % str(pd.get("id", "")))
+			return
+	var remapped: Array = (plan.get("map_patch", {}) as Dictionary).get("objects", [])
+	cvs._push_undo()
+	# 建副本：数据取自重映射后的行；位置/变换/显隐取剪贴板原模板
+	var built: Array = []
+	for i in cvs._clipboard.size():
+		var t2: Dictionary = cvs._clipboard[i]
+		var row: Dictionary = remapped[i] if i < remapped.size() else {}
+		var aid := str(t2.get("asset", ""))
+		var n: EntityNode = cvs.make_object(aid)
+		n.position = pos + Vector2(t2.get("dx", 0.0), t2.get("dy", 0.0))
+		n.asset = aid
+		n.data_transform = (t2.get("transform", {}) as Dictionary).duplicate(true)
+		n.z_policy = str(t2.get("zPolicy", "auto"))
+		n.visible_flag = bool(t2.get("visible", true))
+		# 完整对象负载（E12）：sortAnchor/未知键随剪贴板走，身份键以重映射行为准
+		var raw: Dictionary = (t2.get("raw", {}) as Dictionary).duplicate(true) \
+			if t2.get("raw", null) is Dictionary else {}
+		if str(row.get("code", "")) != "":
+			raw["code"] = str(row.get("code", ""))
+		n.raw = raw
+		n.code = str(row.get("code", ""))
 		n.layer_id = cvs.layer_id(target)
 		cvs._place_in_layer(n, target)
-	# 副本间引用重映射：props 声明驱动（entity_ref fields）+ functions 盲重映射
+		built.append({
+			"node": n,
+			"props": row.get("props", {}) if row.get("props", null) is Dictionary else (t2.get("props", {}) as Dictionary).duplicate(true),
+			"functions": row.get("functions", []) if row.get("functions", null) is Array else (t2.get("functions", []) as Array).duplicate(true),
+		})
 	for b in built:
 		var n2: EntityNode = b.node
-		var props2: Dictionary = b.props
-		var edef: Dictionary = AssetDecl.by_id(cvs.manifest, str(b.asset))
-		for field in edef.get("fields", []):
-			if not (field is Dictionary):
-				continue
-			var field_id := str((field as Dictionary).get("id", ""))
-			var target_id := str(props2.get(field_id, ""))
-			if str((field as Dictionary).get("type", "")) == "entity_ref" and copied.has(target_id):
-				props2[field_id] = copied[target_id]
-		var functions2: Array = b.functions
-		_remap_refs_in(functions2, copied)
-		n2.props = props2
-		n2.functions = functions2
+		n2.props = b.props
+		n2.functions = b.functions
 		n2.refresh_visual()   # props 就位后按 sizeFields 重算尺寸
+		if n2.code == "" and n2.is_entity():
+			cvs._ensure_code(n2)   # 场景图片实例不产码；实体缺码时兜底补发
 		# 吸附：多选粘贴的相对偏移（center 是均值，可为半格）会骑在格线上，
 		# 保存再载入整体漂半格。吸附到格（或吸附关闭时保留原像素位）。
 		n2.position = cvs.snap_point(n2.position, n2)
 	cvs._mark()
 	cvs.queue_redraw()
-	cvs._hint("已粘贴 %d 个实例（Ctrl+Z 撤销）" % cvs._clipboard.size())
+	var n_contents: int = (plan.get("pending_contents", []) as Array).size()
+	cvs._hint("已粘贴 %d 个实例%s（Ctrl+Z 撤销）" % [
+		cvs._clipboard.size(), ("，复制内容 %d 条" % n_contents) if n_contents > 0 else ""])
 
 
 ## 选区是否触碰锁定层（按**层码**判定，E04：重排后下标变了也挡得住）；
@@ -743,5 +761,3 @@ func _live_selection() -> Array:
 
 func _instantiate(t: Dictionary, origin: Vector2i) -> EntityNode:
 	return cvs._region_ops_ctrl._instantiate(t, origin)
-func _remap_refs_in(container, id_map: Dictionary) -> bool:
-	return cvs._region_ops_ctrl._remap_refs_in(container, id_map)

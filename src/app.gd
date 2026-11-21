@@ -151,6 +151,10 @@ func _on_open() -> void:
 func _on_rename() -> void:
 	_map_file_ctrl.on_rename()
 
+## 整图复制（C2）：新图名 → 计划预览 → 先内容后地图
+func _on_duplicate_map() -> void:
+	_map_file_ctrl.on_duplicate()
+
 func _maybe_autosave() -> void:
 	_map_file_ctrl.maybe_autosave()
 
@@ -392,29 +396,9 @@ func _shortcut_input(event: InputEvent) -> void:
 				_set_status(" 选中实例所在图层已锁定：解锁后再复制")
 				get_viewport().set_input_as_handled()
 				return
-			canvas._push_undo()
-			for s in srcs:
-				var orig := s as EntityNode
-				if orig == null or not is_instance_valid(orig):
-					continue
-				var dup := canvas.make_object(orig.asset)
-				dup.props = orig.props.duplicate(true)
-				dup.functions = orig.functions.duplicate(true)
-				dup.data_transform = orig.data_transform.duplicate(true)
-				dup.z_policy = orig.z_policy
-				dup.visible_flag = orig.visible_flag
-				dup.refresh_visual()
-				dup.position = orig.position + canvas.grid_dir_px(1, 0)
-				# 副本跟随原件所在层（层栈化后实例散在各层容器）
-				var oi: int = canvas._layer_index_of(orig.layer_id)
-				if oi < 0:
-					oi = 0
-				dup.layer_id = canvas.layer_id(oi)
-				canvas._place_in_layer(dup, oi)
-				canvas._ensure_code(dup)
-			canvas._mark()
-			get_viewport().set_input_as_handled()
-			return
+			if canvas.duplicate_selected_at_offset(srcs, Vector2i(1, 0)):
+				get_viewport().set_input_as_handled()
+				return
 	# Ctrl+N/O 新建/打开
 	if ctrl and k == KEY_N:
 		_on_new()
@@ -769,12 +753,9 @@ func _build_project_view() -> void:
 	_layout_ctrl._build_project_view()
 ## —— 拆到 src/map/side_actions.gd 的委托（调用点保持不变） ——
 
-## 地图改名/复制——委托 side_actions 控制器
+## 地图改名——委托 side_actions 控制器
 func _rename_map_by_name(old_name: String, new_name: String) -> void:
 	_side_actions_ctrl._rename_map_by_name(old_name, new_name)
-
-func _duplicate_map_by_name(old_name: String, new_name: String) -> void:
-	_side_actions_ctrl._duplicate_map_by_name(old_name, new_name)
 
 func _scene_name(sid: String) -> String:
 	return _side_actions_ctrl._scene_name(sid)

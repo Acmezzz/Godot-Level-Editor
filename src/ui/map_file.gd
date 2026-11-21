@@ -3,6 +3,7 @@ extends RefCounted
 ## 自动保存/试玩/尺寸/导出。状态经宿主访问；写盘统一走 MapStore
 ## （.tmp 原子替换，正式保存带 .history 轮转备份）。
 const MapExport := preload("res://src/map/map_export.gd")
+const ClonePlan := preload("res://src/content/clone_plan.gd")
 const UiKitScript := preload("res://src/ui/ui_kit.gd")
 const UiThemeScript := preload("res://src/ui/ui_theme.gd")
 const K := preload("res://src/core/constants.gd")
@@ -66,7 +67,61 @@ func _unique_map_name(base: String) -> String:
 		i += 1
 	return base + "_imported"
 
-## 地图文件生命周期——新建/打开/保存/改名（纯改名，引用不迁移）/自动保存/试玩/尺寸/导出
+## 整图复制（C2）：新图名 + C2 计划预览 → 内容先写、地图后写；成功后新图加入地图菜单。
+func on_duplicate() -> void:
+	if not app.map_loaded:
+		app._set_status("无地图：先新建或打开一张地图")
+		return
+	var old_name: String = _effective_map_name()
+	if old_name == "":
+		app._set_status("当前地图没有名字，无法复制")
+		return
+	var shell: Dictionary = app._popup_body("复制整张地图",
+		"副本的实例与附属内容全部独立（新实例码、新内容 ID），组内引用自动重映射；目标图重发地图码。")
+	var pop: PopupPanel = shell.pop
+	var body: VBoxContainer = shell.body
+	var name_edit := LineEdit.new()
+	name_edit.text = _unique_map_name(old_name + "_copy")
+	name_edit.placeholder_text = "新地图名"
+	body.add_child(UiKitScript.field_row("新名字", name_edit))
+	var err_label := UiKitScript.text_label("", UiThemeScript.WARN, UiThemeScript.FS_SMALL)
+	err_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	err_label.custom_minimum_size = Vector2(app.POPUP_BODY_W, 0)
+	body.add_child(err_label)
+	var btn_row := UiKitScript.hbox(8)
+	btn_row.alignment = BoxContainer.ALIGNMENT_END
+	btn_row.add_child(UiKitScript.button("取消", func(): pop.hide(), "ghost"))
+	btn_row.add_child(UiKitScript.button("复制",
+		func(): duplicate_current_from_dialog(old_name, name_edit, err_label, pop), "primary"))
+	body.add_child(btn_row)
+	app._open_popup(pop)
+
+func duplicate_current_from_dialog(old_name: String, name_edit: LineEdit, err_label: Label, pop: PopupPanel) -> void:
+	var nn: String = name_edit.text.strip_edges()
+	if nn == "":
+		err_label.text = "先填新图名"
+		return
+	if not EditorManifest.is_valid_map_name(nn):
+		err_label.text = "地图名不合法：不能含 / \\ : * ? \" < > | 或以 . 开头"
+		return
+	if FileAccess.file_exists(EditorManifest.map_path(app.manifest, nn)):
+		err_label.text = "同名地图已存在：换个名字"
+		return
+	# 以画布提交状态为源（未保存改动一并进副本；原图磁盘文件不动）
+	var data: Dictionary = app.canvas.extract()
+	if data.is_empty():   # 重建窗口哨兵：此刻复制会得到空图
+		err_label.text = "地图重建中，请稍后再试"
+		return
+	data.meta.name = old_name
+	data.meta.erase("code")   # 源图码不进副本：duplicate_map 给目标发新码
+	var conflicts: Array = []
+	var err: String = app.MapStore.duplicate_map(app.manifest, old_name, nn, conflicts, data)
+	if err != "":
+		var detail := ClonePlan.conflicts_text(conflicts) if not conflicts.is_empty() else ""
+		err_label.text = "复制失败：" + err + (("\n" + detail) if detail != "" else "")
+		return
+	pop.hide()
+	app._set_status("已创建副本：%s → %s（实例与内容均为独立副本）" % [old_name, nn])
 func confirm_discard(action: String) -> bool:
 	if not app.map_loaded or not app.canvas.modified_flag:
 		return true

@@ -158,7 +158,7 @@ func _build_global_bar() -> PanelContainer:
 	# —— 地图设置：新建 / 打开 / 保存 / 重命名 / 导出 / 尺寸 ——
 	# 放在顶栏左侧。地图**切换**是另一件事，见右侧「地图 ▾」下拉。
 	app._map_btn = app.UiKitScript.button("设置 ▾", Callable(), "plain")
-	app._map_btn.tooltip_text = "地图设置：新建 / 打开 / 保存 · 重命名 / 导出 / 尺寸"
+	app._map_btn.tooltip_text = "地图设置：新建 / 打开 / 保存 · 重命名 / 复制 / 导出 / 尺寸"
 	app._map_btn.custom_minimum_size = Vector2(92, 0)
 	bar.add_child(app._map_btn)
 	var map_menu := PopupMenu.new()
@@ -167,6 +167,7 @@ func _build_global_bar() -> PanelContainer:
 	map_menu.add_item("保存", 3)
 	map_menu.add_separator()
 	map_menu.add_item("重命名地图…", 10)
+	map_menu.add_item("复制整张地图…", 11)
 	map_menu.add_item("导出当前地图", 4)
 	map_menu.add_item("调整地图尺寸", 5)
 	map_menu.add_separator()
@@ -209,6 +210,9 @@ func _on_map_menu_id(id: int) -> void:
 		10:
 			# 顶栏名字输入框已删：改名只能从菜单进弹窗
 			app._on_rename()
+		11:
+			# 整图复制（C2）：先填新名，计划预览失败留在弹窗里
+			app._on_duplicate_map()
 		20:
 			app._switch_project()
 		30:
