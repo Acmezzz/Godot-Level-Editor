@@ -45,29 +45,32 @@ func _rebuild_right() -> void:
 var _steps_pop: PopupPanel = null
 var _steps_i := -1            # 正在编辑的绑定行下标
 var _steps_fn_id := ""        # 该绑定的功能 id
+var _steps_cid := ""          # 该绑定的内容 ID（身份校验：绑定换内容 = 数据源失效）
+var _steps_rev := 0           # 结构版本：增删/排序后递增，过期控件回调据此丢弃（D1）
 var _steps_sel := -1          # 当前选中步骤下标；-1 = 无
 var _steps_list: VBoxContainer = null
 var _steps_form: VBoxContainer = null
+var _steps_warn_box: VBoxContainer = null
 # 时间轴视图页签（第 4 批）：同一份 steps，两种呈现。
 var _steps_view := "list"     # "list" / "timeline"
 var _steps_tabs: HBoxContainer = null
 var _steps_tl_box: VBoxContainer = null
 var _steps_scroll: ScrollContainer = null
 var _steps_tl: TimelineView = null
+var _steps_tl_rev := -1       # 时间轴视图绑定的结构版本
 
-## 打开演出子面板：先保证内容条目存在（首改即建），再建弹窗填步骤列表。
+## 打开演出子面板：绑定已有内容就地编辑；空绑定**首次实际改动才预留内容 ID**（D1/A2）。
 func _open_steps_editor(i: int) -> void:
-	commit()   # 主表单待提交值先落盘：子面板写盘不该挤掉未提交值
+	host.commit_fields()   # 主表单待提交值先落盘：子面板写盘不该挤掉未提交值
 	var fns := _current_fns()
 	var f: Dictionary = fns[i] if i >= 0 and i < fns.size() and fns[i] is Dictionary else {}
 	var fn_id := str(_resolve_fn(f).get("id", ""))
 	if fn_id == "":
 		return
-	if _ensure_content(i) == "":
-		_ensure_failed()
-		return
 	_steps_i = i
 	_steps_fn_id = fn_id
+	_steps_cid = str(f.get("content", ""))
+	_steps_rev = 0
 	_steps_sel = -1
 	_steps_view = "list"
 	var shell: Dictionary = app._popup_body("演出编辑：%s" % FunctionDecls.function_name(manifest, fn_id),
@@ -87,7 +90,9 @@ func _open_steps_editor(i: int) -> void:
 	_steps_tl = TimelineView.new()
 	_steps_tl.set_steps([], _step_name_of)
 	_steps_tl.picked.connect(func(idx: int): _steps_pick_tl(idx))
-	_steps_tl.changed.connect(_on_steps_tl_changed)
+	# 视图按起手时的结构版本发请求：宿主据此丢弃过期拖拽（D1）
+	_steps_tl.step_change_requested.connect(func(idx: int, revision: int, patch: Dictionary):
+		_on_step_change_requested(idx, revision, patch))
 	_steps_scroll = ScrollContainer.new()
 	_steps_scroll.custom_minimum_size = Vector2(0, 120)
 	_steps_scroll.add_child(_steps_tl)
@@ -111,6 +116,8 @@ func _build_steps_tabs(parent: Control) -> void:
 func _set_steps_view(mode: String) -> void:
 	if mode != "list" and mode != "timeline":
 		return
+	# 切页签前先提交当前控件（D1）：待提交值属于旧下标，切完再落到新表单上会串步
+	host.commit_fields()
 	_steps_view = mode
 	_rebuild_steps_all()
 
@@ -137,36 +144,55 @@ func _steps_timebase() -> String:
 
 ## 时间轴点选：只换选中与表单，不重建视图（拖拽进行中 picked 会被发多次）。
 func _steps_pick_tl(idx: int) -> void:
+	# 换选中前提交旧步骤的待提交控件值（同 _steps_pick）
+	host.commit_fields()
+	_pending_commits.clear()
 	_steps_sel = idx
 	if _steps_tl != null and is_instance_valid(_steps_tl):
 		_steps_tl.sel = idx
 		_steps_tl.queue_redraw()
 	_rebuild_steps_form_from_data()
 
-## 当前正在编辑的演出内容（绑定 _steps_i 的内容文件）；读不到返回 {}。
-func _steps_data() -> Dictionary:
+## 身份校验：绑定行还在、功能 id 与内容 ID 都还是开面板时的那个（换内容 = 数据源失效）。
+func _steps_identity_ok() -> bool:
 	var fns := _current_fns()
 	if _steps_i < 0 or _steps_i >= fns.size() or not (fns[_steps_i] is Dictionary):
-		return {}
-	# 身份校验：绑定行的功能已不是开面板时的那个 → 数据源失效（防串内容）
-	if str(_resolve_fn(fns[_steps_i]).get("id", "")) != _steps_fn_id:
-		return {}
-	var cid := str((fns[_steps_i] as Dictionary).get("content", ""))
-	return host.read_content_staged(_steps_fn_id, cid) if cid != "" else {}
+		return false
+	var f: Dictionary = fns[_steps_i]
+	if str(_resolve_fn(f).get("id", "")) != _steps_fn_id:
+		return false
+	# 空绑定：会话内还没预留内容 ID，仍可写（首次实际改动才预留）
+	return _steps_cid == "" or str(f.get("content", "")) == _steps_cid
 
-## 写回演出内容；失败给可见反馈，不静默吞掉。
+## 工作副本读取：已绑定内容读磁盘/暂存；空绑定返回内存空壳（不落盘、不建 ID）。
+func _steps_data() -> Dictionary:
+	if not _steps_identity_ok():
+		return {}
+	if _steps_cid == "":
+		return {"id": "", "function": FunctionDecls.fn_code(manifest, _steps_fn_id),
+			"name": _steps_fn_id, "fields": {}, "steps": []}
+	return host.read_content_staged(_steps_fn_id, _steps_cid)
+
+## 工作副本写回：**首次实际改动时才预留内容 ID**（D1）；内容写盘失败给可见反馈。
 func _steps_write(data: Dictionary) -> void:
-	var fns := _current_fns()
-	if _steps_i < 0 or _steps_i >= fns.size() or not (fns[_steps_i] is Dictionary):
+	if not _steps_identity_ok():
 		return
-	# 身份校验同 _steps_data：绑定行功能对不上就不写（防串内容）
-	if str(_resolve_fn(fns[_steps_i]).get("id", "")) != _steps_fn_id:
-		return
-	var cid := str((fns[_steps_i] as Dictionary).get("content", ""))
-	if cid == "":
-		return
-	if not host.write_content_staged(_steps_fn_id, cid, data):
+	if _steps_cid == "":
+		# 空绑定：先预留（绑定行加 content、生成 staged 新 ID），再走同一写路径
+		var cid := _ensure_content(_steps_i)
+		if cid == "":
+			_ensure_failed()
+			return
+		_steps_cid = cid
+		if str(data.get("id", "")) == "":
+			data["id"] = cid
+	if not host.write_content_staged(_steps_fn_id, _steps_cid, data):
 		_ensure_failed()
+
+## 结构版本递增：增删/排序/复制后旧控件与旧拖拽请求一律失效（D1）。
+func _bump_steps_rev() -> void:
+	_steps_rev += 1
+	_steps_tl_rev = -1
 
 ## 重建子面板：页签同步 + 列表/时间轴互斥重建 + 当前步骤表单。
 func _rebuild_steps_all() -> void:
@@ -202,26 +228,35 @@ func _rebuild_steps_list(arr: Array) -> void:
 		_steps_list.add_child(_steps_row(si, st, pool))
 
 ## 时间轴视图：换数据源 + 选中态 + 滚动容器高度。
+## 结构版本变了才 set_steps（换数据源并清拖拽）；版本没变只同步选中，不打断进行中的拖拽。
 func _rebuild_steps_tl(arr: Array) -> void:
 	if _steps_tl == null or not is_instance_valid(_steps_tl):
 		return
 	_steps_tl.set_timebase(_steps_timebase())
-	_steps_tl.set_steps(arr, _step_name_of)
+	if _steps_tl_rev != _steps_rev:
+		_steps_tl.set_steps(arr, _step_name_of, _steps_rev)
+		_steps_tl_rev = _steps_rev
 	_steps_tl.sel = _steps_sel
 	_steps_tl.sync_min_size()
 	if _steps_scroll != null:
 		_steps_scroll.custom_minimum_size = Vector2(0, minf(_steps_tl.fit_height() + 8.0, 220.0))
 
-## 时间轴拖拽落定：净化回写（剥缺省键），整体重建（视图重新指向净化后的数组）。
-func _on_steps_tl_changed() -> void:
+## 时间轴拖拽落定：**一次拖动 = 一次编辑**（D1）。补丁按步骤身份 + 结构版本校验后合并，
+## 过期请求（期间增删/换序/换页签/换绑定）直接丢弃；合并只净化被编辑的键。
+func _on_step_change_requested(idx: int, revision: int, patch: Dictionary) -> void:
+	if revision != _steps_rev or not _steps_identity_ok():
+		return   # 过期拖拽：结构已变，按下标写回会落到别的步骤上
 	var data := _steps_data()
-	var arr: Array = data.get("steps", [])
-	if not (arr is Array):
-		arr = []
-	data["steps"] = StepTimeline.from_timeline(arr)
+	if data.is_empty():
+		return
+	var arr: Array = data.get("steps", []) if data.get("steps", []) is Array else []
+	var res: Dictionary = StepTimeline.apply_patch(arr, idx, patch)
+	if not bool(res.get("ok", false)):
+		return
+	data["steps"] = res.get("steps", arr)
 	_steps_write(data)
-	if _steps_sel >= (data["steps"] as Array).size():
-		_steps_sel = (data["steps"] as Array).size() - 1
+	_steps_sel = idx
+	_bump_steps_rev()
 	_rebuild_steps_all()
 
 ## 表单重建（数据自取）：时间轴点选后只换表单、不动视图。
@@ -260,6 +295,9 @@ func _steps_row(si: int, st: Dictionary, _pool: Dictionary) -> Control:
 
 ## 点步骤名选中该步：右侧表单换到这一步（重建保持 _steps_sel 选中态）。
 func _steps_pick(si: int) -> void:
+	# 换选中前先提交当前表单控件：SpinBox 之类的待提交值属于旧步骤下标
+	host.commit_fields()
+	_pending_commits.clear()
 	_steps_sel = si
 	_rebuild_steps_all()
 
@@ -269,6 +307,8 @@ func _rebuild_steps_form(arr: Array) -> void:
 	var box := _steps_form
 	if box == null:
 		return
+	# 表单整片重建：待提交项绑定的是旧控件（旧步骤下标），重建后一律失效
+	_pending_commits.clear()
 	for c in box.get_children():
 		box.remove_child(c)
 		c.queue_free()
@@ -302,6 +342,8 @@ func _rebuild_steps_form(arr: Array) -> void:
 		return
 	box.add_child(Kit.divider())
 	box.add_child(Kit.section_header("第 %d 步：%s" % [_steps_sel + 1, str(decl.get("name", sc))]))
+	# 时间与轨道（D1）：与时间轴同一份数据、同一补丁入口；缺 at 显示「随前序」
+	box.add_child(_steps_time_row(arr, _steps_sel))
 	var sfields: Array = decl.get("fields", [])
 	var sfd: Dictionary = st.get("fields", {}) if st.get("fields", {}) is Dictionary else {}
 	for fd in sfields:
@@ -329,21 +371,143 @@ func _rebuild_steps_form(arr: Array) -> void:
 			box.add_child(row)
 
 ## 步骤字段行：复用 field_widgets，值取自步骤自己的 fields（键=字段码）。
+## 回调捕获**步骤下标 + 结构版本 + 绑定身份**（D1）：换序/切页签后迟到的回调按版本丢弃。
 func _step_field_row(fd: Dictionary, sfd: Dictionary) -> Control:
 	var key := str(fd.get("code", ""))
 	var val = sfd.get(key, fd.get("default", FieldWidgets.default_for(fd)))
 	var label := str(fd.get("name", str(fd.get("id", ""))))
+	var si := _steps_sel
+	var rev := _steps_rev
 	var built := FieldWidgets.build(fd, val, func(v):
-		_set_step_field(_steps_sel, key, v), _resolve_options)
+		_set_step_field(si, key, v, rev), _resolve_options)
 	if built.get("commit") is Callable and (built.commit as Callable).is_valid():
 		_pending_commits.append(built.commit)
 	return Kit.field_row(label, built.ctl, 96)
 
-## 写步骤字段：即时写盘，不重建表单（保焦点）。
-func _set_step_field(si: int, key: String, value) -> void:
+## 时间与轨道行（D1）：默认收起，展开后可输入起点 / 时长 / 轨号 / 阻塞。
+## 起点留空 = 「随前序」（缺 at）；显式 0 = 从零开始。时长接受 0。
+func _steps_time_row(arr: Array, si: int) -> Control:
+	var box := Kit.vbox(2)
+	var eff: Dictionary = StepTimeline.effective(arr, si)
+	var st: Dictionary = arr[si] if si < len(arr) and arr[si] is Dictionary else {}
+	var has_at := st.has("at")
+	var body := Kit.vbox(2)
+	body.visible = false
+	var head := Kit.button("▸ 时间与轨道（%s 起，时长 %s，轨 %d）" % [
+		_num_text(eff.get("at", 0.0)), _num_text(eff.get("duration", 0.0)),
+		int(eff.get("track", 0))], Callable(), "ghost")
+	head.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	head.pressed.connect(func():
+		body.visible = not body.visible
+		head.text = ("▾" if body.visible else "▸") + head.text.substr(1))
+	box.add_child(head)
+	box.add_child(body)
+	var row := Kit.hbox(6)
+	# 起点
+	var at_edit := LineEdit.new()
+	at_edit.custom_minimum_size = Vector2(74, 0)
+	at_edit.placeholder_text = "随前序"
+	at_edit.text = _num_text(st.get("at", null)) if has_at else ""
+	at_edit.tooltip_text = "留空 = 随前序（接着上一阻塞步骤结束）；填 0 = 从零开始"
+	var rev_at := _steps_rev
+	at_edit.text_submitted.connect(func(t: String):
+		if rev_at != _steps_rev:
+			return
+		if t.strip_edges() == "":
+			_apply_time_patch(si, {}, ["at"])   # 清起点 = 恢复「随前序」
+		else:
+			_apply_time_patch(si, {"at": maxf(t.to_float(), 0.0)}, []))
+	at_edit.focus_exited.connect(func():
+		if rev_at == _steps_rev and at_edit.text.strip_edges() != "":
+			_apply_time_patch(si, {"at": maxf(at_edit.text.to_float(), 0.0)}, []))
+	row.add_child(Kit.text_label("起点", Th.TEXT_DIM, Th.FS_META))
+	row.add_child(at_edit)
+	# 时长
+	var dur_edit := LineEdit.new()
+	dur_edit.custom_minimum_size = Vector2(64, 0)
+	dur_edit.text = _num_text(eff.get("duration", 0.0))
+	dur_edit.tooltip_text = "持续时长；0 = 瞬发（不占时）"
+	var rev_dur := _steps_rev
+	dur_edit.text_submitted.connect(func(t: String):
+		if rev_dur != _steps_rev:
+			return
+		_apply_time_patch(si, {"duration": maxf(t.to_float(), 0.0)}, []))
+	row.add_child(Kit.text_label("时长", Th.TEXT_DIM, Th.FS_META))
+	row.add_child(dur_edit)
+	# 轨号
+	var trk := SpinBox.new()
+	trk.min_value = 0
+	trk.max_value = 99
+	trk.step = 1
+	trk.value = int(eff.get("track", 0))
+	trk.custom_minimum_size = Vector2(60, 0)
+	trk.tooltip_text = "轨道号；同轨按起点排序，重叠只警告"
+	var rev_trk := _steps_rev
+	trk.value_changed.connect(func(v: float):
+		if rev_trk == _steps_rev:
+			_apply_time_patch(si, {"track": int(v)}, []))
+	row.add_child(Kit.text_label("轨", Th.TEXT_DIM, Th.FS_META))
+	row.add_child(trk)
+	# 阻塞
+	var blk := CheckBox.new()
+	blk.text = "阻塞"
+	blk.button_pressed = bool(eff.get("blocking", true))
+	blk.tooltip_text = "阻塞 = 后续步骤等这一步结束；关掉则同刻继续"
+	var rev_blk := _steps_rev
+	blk.toggled.connect(func(v: bool):
+		if rev_blk == _steps_rev:
+			_apply_time_patch(si, {"blocking": v}, []))
+	row.add_child(blk)
+	var rev_new := _steps_rev
+	var new_trk := Kit.button("移至新轨", func():
+		if rev_new == _steps_rev:
+			_apply_time_patch(si, {"track": _next_track()}, []), "ghost")
+	new_trk.tooltip_text = "轨号取当前最大值 + 1（新轨在时间轴底部）"
+	row.add_child(new_trk)
+	body.add_child(row)
+	return box
+
+## 新轨号 = 当前所有步骤的最大轨号 + 1。
+func _next_track() -> int:
+	var data := _steps_data()
+	var arr: Array = data.get("steps", []) if data.get("steps", []) is Array else []
+	var mx := 0
+	var tl := StepTimeline.to_timeline(arr)
+	for e in tl:
+		mx = maxi(mx, int((e as Dictionary).get("track", 0)))
+	return mx + 1
+
+static func _num_text(v) -> String:
+	if v == null:
+		return ""
+	if v is int:
+		return str(v)
+	var f := float(v)
+	return str(int(f)) if is_equal_approx(f, floorf(f)) else ("%.2f" % f)
+
+## 表单的时间编辑：与时间轴同一个补丁入口（StepTimeline.apply_patch + 同一写回）。
+func _apply_time_patch(si: int, patch: Dictionary, erase_keys: Array) -> void:
+	var data := _steps_data()
+	if data.is_empty():
+		return
+	var arr: Array = data.get("steps", []) if data.get("steps", []) is Array else []
+	var res: Dictionary = StepTimeline.apply_patch(arr, si, patch, erase_keys)
+	if not bool(res.get("ok", false)):
+		return
+	data["steps"] = res.get("steps", arr)
+	_steps_write(data)
+	_bump_steps_rev()
+	_rebuild_steps_all()
+
+## 写步骤字段：即时写盘，不重建表单（保焦点）。版本过期/下标越界直接丢弃。
+func _set_step_field(si: int, key: String, value, rev := -1) -> void:
 	if si < 0 or key == "":
 		return
+	if rev >= 0 and rev != _steps_rev:
+		return   # 过期控件回调：期间增删/换序过，按下标写回会落到别的步骤上
 	var data := _steps_data()
+	if data.is_empty():
+		return
 	var arr: Array = data.get("steps", []) if data.get("steps", []) is Array else []
 	if si >= arr.size() or not (arr[si] is Dictionary):
 		return
@@ -366,6 +530,7 @@ func _steps_add(code: String) -> void:
 	data["steps"] = arr
 	_steps_sel = arr.size() - 1
 	_steps_write(data)
+	_bump_steps_rev()
 	_rebuild_steps_all()
 
 ## 删除步骤；删的是选中的步骤时清除选中。
@@ -378,7 +543,10 @@ func _steps_del(si: int) -> void:
 	data["steps"] = arr
 	if _steps_sel >= arr.size():
 		_steps_sel = arr.size() - 1
+	if _steps_sel > si:
+		_steps_sel -= 1
 	_steps_write(data)
+	_bump_steps_rev()
 	_rebuild_steps_all()
 
 ## 上移/下移一格。
@@ -394,6 +562,7 @@ func _steps_move(si: int, dir: int) -> void:
 	data["steps"] = arr
 	_steps_sel = nj
 	_steps_write(data)
+	_bump_steps_rev()
 	_rebuild_steps_all()
 
 ## 复制步骤：浅拷贝 fields 并插到下一步；步骤码引用清单声明、跨内容共享，无需重映射。
@@ -408,4 +577,5 @@ func _steps_dup(si: int) -> void:
 	data["steps"] = arr
 	_steps_sel = si + 1
 	_steps_write(data)
+	_bump_steps_rev()
 	_rebuild_steps_all()

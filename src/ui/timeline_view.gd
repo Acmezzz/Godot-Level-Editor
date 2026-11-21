@@ -9,14 +9,18 @@ class_name TimelineView
 const Th := preload("res://src/ui/ui_theme.gd")
 const StepTimeline := preload("res://src/content/step_timeline.gd")
 
-## 松手后发：宿主据此 from_timeline 净化并写盘 + 刷新。
-signal changed
+## 拖拽落定后发一次：宿主按步骤身份 + 结构版本校验后合并补丁（D1）。
+## revision = set_steps 时宿主给的结构版本（拖动起手即固定）；宿主据此丢弃过期请求。
+signal step_change_requested(index: int, revision: int, patch: Dictionary)
 ## 点中条块（含拖动起始）后发；-1 = 点到空白处取消选中。
 signal picked(index: int)
 
-var steps: Array = []                # 直引用宿主的内容 steps 数组（拖拽就地改）
+## 引擎给的数据（只读）：宿主传工作副本；视图不再直接改它——
+## 拖动期间只画预览偏移，松手交补丁给宿主统一合并/净化/写盘。
+var steps: Array = []
 var name_of: Callable = Callable()   # 步骤码 -> 显示名（Callable 返回 String）
 var sel := -1                        # 当前选中步骤下标；-1 = 无
+var struct_rev := 0                  # 数据源结构版本（宿主增删/排序后变化）
 
 const SNAP := {"seconds": 0.1, "frames": 1.0, "beats": 0.25}   # 吸附粒度按时间基
 const MARGIN_L := 10.0
@@ -29,14 +33,17 @@ var _pps := 64.0              # 像素/单位（set_timebase 按基设）
 var _drag := ""               # "" / "move" / "resize"
 var _drag_idx := -1
 var _drag_off_x := 0.0
-var _drag_orig := {}          # 拖动起点的 at/track/duration 快照（未移动就还原）
+var _drag_orig := {}          # 拖动起手的生效区间 {at,track,duration}
+var _preview := {}            # 拖动中的预览值 {at,track,duration}（只画，不写数据）
 var _moved := false
 
-func set_steps(arr: Array, name_of_cb: Callable) -> void:
+func set_steps(arr: Array, name_of_cb: Callable, rev := 0) -> void:
 	steps = arr
 	name_of = name_of_cb
+	struct_rev = rev
 	_drag = ""
 	_drag_idx = -1
+	_preview = {}
 	sync_min_size()
 	queue_redraw()
 
@@ -77,18 +84,27 @@ func set_timebase(tb: String) -> void:
 func _snap(v: float) -> float:
 	return snappedf(maxf(v, 0.0), float(SNAP.get(timebase, 0.1)))
 
-## 条块矩形（含选中/命中判定用）。
+## 条块矩形（含选中/命中判定用）。拖动中的步骤用预览值（数据不动）。
 func _block_rect(i: int) -> Rect2:
-	var tl := StepTimeline.to_timeline(steps)
-	if i < 0 or i >= tl.size():
+	var e: Dictionary = _eff(i)
+	if e.is_empty():
 		return Rect2()
-	var e: Dictionary = tl[i]
+	if i == _drag_idx and not _preview.is_empty():
+		e = {
+			"at": float(_preview.get("at", e.get("at", 0.0))),
+			"duration": float(_preview.get("duration", e.get("duration", 0.0))),
+			"track": int(_preview.get("track", e.get("track", 0))),
+		}
 	var at := float(e.get("at", 0.0))
 	var dur := maxf(float(e.get("duration", 0.0)), 0.0)
 	var track := int(e.get("track", 0))
 	var y := RULER_H + TRACK_H * float(track)
 	var w := maxf(dur * _pps, 10.0)
 	return Rect2(MARGIN_L + at * _pps, y + 3.0, w, TRACK_H - 6.0)
+
+## 生效条目（含缺省展开）；越界/非对象返回 {}。
+func _eff(i: int) -> Dictionary:
+	return StepTimeline.effective(steps, i)
 
 func _hit(pos: Vector2) -> int:
 	for i in steps.size():
@@ -123,62 +139,60 @@ func _press(p: Vector2) -> void:
 		return
 	sel = i
 	_drag_idx = i
-	var r := _block_rect(i)
-	if p.x > r.end.x - EDGE:
+	# 起手快照 = 生效区间（缺省展开后的值）；拖拽增量基于它算，松手交补丁
+	_drag_orig = _eff(i).duplicate(true)
+	_preview = {}
+	if p.x > _block_rect(i).end.x - EDGE:
 		_drag = "resize"
-		_drag_orig = {"at": _cur_at(i), "track": _cur_track(i), "duration": _cur_dur(i)}
 	else:
 		_drag = "move"
-		_drag_off_x = p.x - r.position.x
-		_drag_orig = {"at": _cur_at(i), "track": _cur_track(i), "duration": _cur_dur(i)}
+		_drag_off_x = p.x - _block_rect(i).position.x
 	_moved = false
 	picked.emit(i)
 	queue_redraw()
 
-## 就地读写当前步骤的时间轴键（视图直改宿主数组；写盘由宿主在 changed 后统一做）。
-func _cur_at(i: int) -> float:
-	return float(_step(i).get("at", 0.0))
-
-func _cur_track(i: int) -> int:
-	return int(_step(i).get("track", 0))
-
-func _cur_dur(i: int) -> float:
-	return float(_step(i).get("duration", 0.0))
-
+## 当前步骤的工作副本数据（步骤不是对象时返回 {}）。
 func _step(i: int) -> Dictionary:
 	return steps[i] if i >= 0 and i < steps.size() and steps[i] is Dictionary else {}
 
 func _motion(p: Vector2) -> void:
 	if _drag_idx < 0 or _drag_idx >= steps.size():
 		return
-	var st: Dictionary = steps[_drag_idx]
-	if not (st is Dictionary):
+	var orig := _drag_orig
+	if orig.is_empty():
 		return
 	if _drag == "move":
 		var at := _snap((p.x - MARGIN_L - _drag_off_x) / _pps)
-		if not is_equal_approx(_cur_at(_drag_idx), at):
-			st["at"] = at
-			_moved = true
-		var track := clampi(int(floorf((p.y - RULER_H) / TRACK_H)), 0, _track_count() - 1)
-		if _cur_track(_drag_idx) != track:
-			st["track"] = track
-			_moved = true
+		var track := clampi(int(floorf((p.y - RULER_H) / TRACK_H)), 0, maxi(_track_count(), 1) - 1)
+		_preview = {"at": at, "track": track, "duration": float(orig.get("duration", 0.0))}
+		_moved = true
 	elif _drag == "resize":
-		var at0 := _snap(float(_drag_orig.get("at", 0.0)))
-		var dur := _snap((p.x - MARGIN_L) / _pps - at0)
-		if dur > 0.0 and not is_equal_approx(_cur_dur(_drag_idx), dur):
-			st["duration"] = dur
-			_moved = true
+		var at0 := float(orig.get("at", 0.0))
+		# 右缘拖拽：先求绝对终点再减起点——终点被吸附到格，时长随之为合成值
+		var end := _snap((p.x - MARGIN_L) / _pps)
+		var dur := maxf(end - at0, _snap(0.0))
+		_preview = {"at": at0, "track": int(orig.get("track", 0)), "duration": dur}
+		_moved = true
 	queue_redraw()
 
+## 松手：有位移就把预览差值作为补丁发给宿主（只含真正变了的键）。
 func _release() -> void:
 	if _drag == "":
 		return
+	var idx := _drag_idx
 	var moved := _moved
+	var patch := {}
+	if moved and not _preview.is_empty():
+		for k in ["at", "duration", "track"]:
+			if _preview.has(k) and not is_equal_approx(float(_preview[k]), float(_drag_orig.get(k, 0.0))):
+				patch[k] = _preview[k]
 	_drag = ""
 	_drag_idx = -1
-	if moved:
-		changed.emit()
+	_preview = {}
+	_moved = false
+	if moved and not patch.is_empty():
+		step_change_requested.emit(idx, struct_rev, patch)
+	queue_redraw()
 
 func _draw() -> void:
 	var fnt: Font = ThemeDB.fallback_font

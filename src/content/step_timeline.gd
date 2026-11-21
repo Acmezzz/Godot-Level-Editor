@@ -65,27 +65,67 @@ static func from_timeline(steps: Array) -> Array:
 static func conflicts(steps: Array) -> Array:
 	var tl := to_timeline(steps)
 	var out: Array = []
+	# 每轨按起点排序后线性扫描：O(n log n)，大段演出拖动时每帧都要算
+	var by_track := {}
 	for i in tl.size():
-		var a: Dictionary = tl[i]
-		var dur_a := float(a.get("duration", 0.0))
-		if dur_a <= 0.0 or not (steps[i] is Dictionary):
+		var e: Dictionary = tl[i]
+		if float(e.get("duration", 0.0)) <= 0.0:
 			continue
-		for j in range(i + 1, tl.size()):
-			var b: Dictionary = tl[j]
-			if not (steps[j] is Dictionary):
-				continue
-			var dur_b := float(b.get("duration", 0.0))
-			if dur_b <= 0.0:
-				continue
-			if int(a.get("track", 0)) != int(b.get("track", 0)):
-				continue
+		var tr := int(e.get("track", 0))
+		if not by_track.has(tr):
+			by_track[tr] = []
+		(by_track[tr] as Array).append(i)
+	for tr2 in by_track:
+		var idxs: Array = by_track[tr2]
+		idxs.sort_custom(func(a, b):
+			return float((tl[a] as Dictionary).get("at", 0.0)) < float((tl[b] as Dictionary).get("at", 0.0)))
+		for k in range(0, idxs.size() - 1):
+			var a: Dictionary = tl[idxs[k]]
 			var s0 := float(a.get("at", 0.0))
-			var e0 := s0 + dur_a
-			var s1 := float(b.get("at", 0.0))
-			var e1 := s1 + dur_b
-			if s0 < e1 and s1 < e0:
-				out.append({"a": i, "b": j})
+			var e0 := s0 + float(a.get("duration", 0.0))
+			for m in range(k + 1, idxs.size()):
+				var b: Dictionary = tl[idxs[m]]
+				var s1 := float(b.get("at", 0.0))
+				if s1 >= e0:
+					break   # 已按起点排序：后面的更靠右，不会与 a 重叠
+				out.append({"a": idxs[k], "b": idxs[m]})
 	return out
+
+## 允许进补丁的时间键（D1）；fields/step 等身份键不在此列，永不经时间轴改写。
+const PATCH_KEYS := ["at", "duration", "track", "blocking"]
+
+## 补丁合并（D1）：把时间键补丁合并到 steps[index] 的工作副本上，
+## 只净化**被编辑的键**（等于缺省就删键），其余未知键与未改条目原样保留。
+## erase_keys 是独立命令（清 at = 恢复「随前序」），与补丁分开表达。
+## 返回 {ok, steps, error}；steps 为新的深拷贝数组，原数组不动。
+static func apply_patch(steps: Array, index: int, patch: Dictionary, erase_keys: Array = []) -> Dictionary:
+	if index < 0 or index >= steps.size():
+		return {"ok": false, "steps": steps, "error": "步骤下标越界"}
+	if not (steps[index] is Dictionary):
+		return {"ok": false, "steps": steps, "error": "该步骤不是对象"}
+	for k in patch:
+		if not PATCH_KEYS.has(str(k)):
+			return {"ok": false, "steps": steps, "error": "不允许的时间键: %s" % str(k)}
+	var next: Array = steps.duplicate(true)
+	var step: Dictionary = next[index]
+	step.merge(patch, true)
+	# 只净化被编辑的键：from_timeline 对单步做缺省剥离，再按编辑集裁回
+	var normalized: Dictionary = from_timeline([step])[0]
+	for key in patch:
+		if not normalized.has(key):
+			step.erase(key)
+	for key in erase_keys:
+		if PATCH_KEYS.has(str(key)):
+			step.erase(str(key))
+	next[index] = step
+	return {"ok": true, "steps": next, "error": ""}
+
+## 某步的生效时间轴条目（含缺省展开）；越界返回 {}。
+static func effective(steps: Array, index: int) -> Dictionary:
+	var tl := to_timeline(steps)
+	if index < 0 or index >= tl.size():
+		return {}
+	return tl[index]
 
 ## 汇总警告（只警告不阻断）：负 at/duration（手改 JSON 才会出现）+ 同轨重叠。
 static func warnings(steps: Array) -> Array:
