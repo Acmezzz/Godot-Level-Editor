@@ -17,9 +17,14 @@ const Th := preload("res://src/ui/ui_theme.gd")
 const ContentStore := preload("res://src/content/content_store.gd")
 const MapStore := preload("res://src/map/map_store.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
+const RefFields := preload("res://src/content/ref_fields.gd")
 
 const KIND_INPUT := "input"
 const KIND_CHOICE := "choice"
+
+## 值是否「未填」：null 或空串（数组/字典不算未填——比较时要避开 Variant 类型错误）
+static func _is_unset(v) -> bool:
+	return v == null or (v is String and str(v) == "")
 
 ## 声明的种类：一律读 kind 键，不做推断。
 ## 缺 kind / 认不出的 kind 一律走只读展示（校验层把缺 kind 报成错误）。
@@ -35,7 +40,10 @@ static func default_for(decl: Dictionary) -> Variant:
 		"bool": return false
 		"int": return int(decl.get("min", 0))
 		"float", "range": return float(decl.get("min", 0.0))
-		"vector2": return [float(decl.get("min", 0.0)), float(decl.get("min", 0.0))]
+		"vector2":
+			var dims := RefFields.vector_dims(decl)
+			var lo := float(decl.get("min", 0.0))
+			return [lo, lo, lo] if dims == 3 else [lo, lo]
 		"color": return "#ffffff"
 		"choice": return [] if bool(decl.get("multiple", false)) else ""
 		"array": return []
@@ -64,6 +72,11 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 	var typ := type_of(decl)
 	match typ:
 		"bool":
+			# 布尔必须是布尔（C06）："false" 这类字符串不能被 bool() 静默当真——
+			# 旧值非法时只读展示，用户显式修正（勾选控件以外的路径都不可写）
+			if not _is_unset(value) and not (value is bool):
+				return _readonly(decl, value, "值类型不符：声明 bool，实际是 %s" % type_name(value),
+					"编辑器不会改写它，请游戏侧或手工修正")
 			var cb := CheckBox.new()
 			cb.button_pressed = bool(value)
 			cb.toggled.connect(func(v: bool): on_set.call(v))
@@ -128,24 +141,28 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 			cp.color_changed.connect(func(c: Color): on_set.call("#%s" % c.to_html(false)))
 			return {"ctl": cp, "commit": Callable()}
 		"vector2":
-			# 值形态不符（声明 [x,y]，实际是别的）只读展示——commit() 冲刷不能把坏值悄悄写成 [0,0]
-			if not (value is Array) or (value as Array).size() < 2:
-				if value != null and value != "":
-					return _readonly(decl, value, "值类型不符：声明 vector2（[x,y]），实际是 %s" % type_name(value),
-						"编辑器不会改写它，请游戏侧或手工修正")
+			# 维数按声明（C06）：缺省二维；声明 dims: 3 时只接受三元。多一元/少一元都只读，
+			# 否则一提交就会静默丢维度或把第三位吞掉。
+			var dims := RefFields.vector_dims(decl)
+			if not _is_unset(value) and (not (value is Array) or (value as Array).size() != dims):
+				return _readonly(decl, value, "值类型不符：声明 vector2/%d 维，实际是 %s" % [dims, type_name(value)],
+					"编辑器不会改写它，请游戏侧或手工修正")
+			if not (value is Array):
 				value = default_for(decl)   # 未填：按声明 default（[min, min]）起步，与 int/float 的空串口径一致
 			var vv: Array = value
 			var h := HBoxContainer.new()
 			h.add_theme_constant_override("separation", 4)
-			var pending := {"v": [float(vv[0]), float(vv[1])]}
-			for axis in 2:
+			var pending := {"v": []}
+			for axis in dims:
+				(pending.v as Array).append(float(vv[axis]))
+			for axis in dims:
 				var sp := SpinBox.new()
 				sp.step = 0.1
 				sp.min_value = float(decl.get("min", -999999))
 				sp.max_value = float(decl.get("max", 999999))
 				sp.value = pending.v[axis]
 				sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-				sp.prefix = ("x" if axis == 0 else "y") + ": "
+				sp.prefix = ("xyz"[axis] if axis < 3 else str(axis)) + ": "
 				var ai := axis
 				sp.value_changed.connect(func(n: float):
 					pending.v[ai] = n)
@@ -160,7 +177,7 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 		"range":
 			# 数字之外的值（空串占位除外）只读展示——commit() 不能把它悄悄写成 min
 			if not (value is int or value is float):
-				if value != null and value != "":
+				if not _is_unset(value):
 					return _readonly(decl, value, "值类型不符：声明 range，实际是 %s" % type_name(value),
 						"编辑器不会改写它，请游戏侧或手工修正")
 				value = float(decl.get("min", 0.0))   # 未填：从 min 起步，落盘走声明 default 同一形态
@@ -207,17 +224,20 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 			if not ok_of.has(of):
 				return _readonly(decl, value, "array.of 未声明（应写基础类型或 choice）",
 					"补全声明后重新加载清单即可恢复编辑")
-			if value != null and value != "" and not (value is Array):
+			if not _is_unset(value) and not (value is Array):
 				return _readonly(decl, value, "值类型不符：声明 array，实际是 %s" % type_name(value),
 					"编辑器不会改写它，请游戏侧或手工修正")
 			var items: Array = value if value is Array else []
 			return _build_array(decl, items, on_set, option_resolver)
 		"asset_ref":
 			# 资产引用走 choice 的同一套控件，只是选项来源由 asset: 解析器提供。
+			# 白名单两种写法：`of`（字段直写）或 `ids`（数组元素的同型声明——`of` 已被元素类型占用）。
 			var d2: Dictionary = decl.duplicate(true)
 			d2["kind"] = KIND_CHOICE
 			var ak := str(decl.get("assetKind", ""))
 			var only := str(decl.get("of", ""))
+			if only == "" and decl.get("ids", null) is Array:
+				only = ",".join(PackedStringArray(decl.get("ids", [])))
 			d2["source"] = "asset:" + ak + (":" + only if only != "" else "")
 			return _build_choice(d2, value, on_set, option_resolver)
 		_:
@@ -225,16 +245,27 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 				else "未声明的输入类型「%s」" % typ
 			return _readonly(decl, value, why, "补全声明后重新加载清单即可恢复编辑")
 
-## array 元素声明：of 指基础类型或 choice；choice 元素继承 options/source。
+## array 元素声明：of 指基础类型或 choice；choice 元素继承 options/source，
+## 其它同型声明继承范围/固定选项/过滤参数（C10）——每个元素拿到的是独立同型声明副本。
+## 注意 `of` 在数组上表示**元素类型**，所以 asset_ref 元素的 id 白名单用 `ids`（不用 of）。
 static func _elem_decl(decl: Dictionary) -> Dictionary:
 	var of := str(decl.get("of", "string"))
 	if of == "choice":
 		var d: Dictionary = {"kind": KIND_CHOICE}
-		for k in ["options", "source"]:
+		for k in ["options", "source", "multiple", "mapField"]:
 			if decl.get(k, null) != null:
-				d[k] = decl.get(k)
+				d[k] = (decl.get(k) as Variant).duplicate(true) if (decl.get(k) is Array or decl.get(k) is Dictionary) \
+					else decl.get(k)
 		return d
-	return {"kind": KIND_INPUT, "type": of}
+	var out := {"kind": KIND_INPUT, "type": of}
+	for k in ["min", "max", "step", "dims", "assetKind"]:
+		if decl.get(k, null) != null:
+			out[k] = decl.get(k)
+	if of == "asset_ref":
+		var ids = decl.get("ids", null)
+		if ids is Array:
+			out["of"] = ",".join(PackedStringArray(ids))
+	return out
 
 ## array：可增删行容器，每行一个元素控件；值 = 各行 state.v 按顺序收集。
 ## 行删除前先冲刷该行连续控件的待写值（commit），行序变动靠行字典引用而非闭包下标。
@@ -301,6 +332,13 @@ static func _build_choice(decl: Dictionary, value, on_set: Callable,
 	var opt := OptionButton.new()
 	opt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var idx := -1
+	# 引用型字段给显式空态（C10）：选中「未设置」= 删键，而不是被逼在旧值里打转
+	var empty_ok := RefFields.wants_empty_option(decl)
+	if empty_ok:
+		opt.add_item("（未设置）")
+		opt.set_item_metadata(0, "")
+		if cur == "":
+			idx = 0
 	for o in opts:
 		opt.add_item(str((o as Dictionary).get("t", "")))
 		var at := opt.get_item_count() - 1
@@ -330,11 +368,14 @@ static func _build_choice_multi(decl: Dictionary, value, on_set: Callable,
 		for o in option_resolver.call(decl):
 			opts.append(_norm_option(o))
 	var chosen: Array = []
+	# 多选必须是数组（C06）：标量旧值不能被包成单元素数组——那是形状改写，
+	# 一勾一取消就把原来的字符串写成了列表。非法旧值只读 + 显式替换。
+	if not _is_unset(value) and not (value is Array):
+		return _readonly(decl, value, "值类型不符：声明多选（数组），实际是 %s" % type_name(value),
+			"勾选组不会自动改写它：确认要清空后再写一次")
 	if value is Array:
 		for x in value:
 			chosen.append(str(x))
-	elif value != null and str(value) != "":
-		chosen.append(str(value))
 	var known := {}
 	for o in opts:
 		known[str((o as Dictionary).get("v", ""))] = true

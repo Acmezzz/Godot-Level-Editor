@@ -116,12 +116,13 @@ static func _validate_functions(data: Dictionary, issues: Array[Dictionary]) -> 
 		for k0 in (decl as Dictionary).keys():
 			if str(k0) == "":
 				_add(issues, "error", "functions", "function ids must be non-empty (dict form)")
-	# 功能 id 同时是内容目录名与内容 ID 第四段——字符集受限（ContentStore 同一规则），
-	# 非法字符集的声明能过结构校验但内容读写全废，必须在加载期就报出来
+	# 功能 id 同时是内容目录名与内容 ID 第四段——字符集必须过**目录名**规则（C07：
+	# 与 ContentStore.is_valid_kind 同一条权威规则）。`dlg.one` 这类带点的 id 会被
+	# 内容目录校验拒绝，若这里放行就是「声明能载入、第一次编辑才失败」。
 	for fid2 in FunctionDecls.functions(data):
-		if not ContentStore.is_valid_id(fid2):
+		if not ContentStore.is_valid_kind(fid2):
 			_add(issues, "error", "functions.%s" % str(fid2),
-				"function id may only contain letters/digits/_/./- (content dir + id segment)")
+				"function id must be a valid content folder name: letters/digits/_/- (no dot, no leading/trailing dash)")
 	var dup := FunctionDecls.duplicate_codes(data)
 	for d in dup:
 		_add(issues, "error", "functions", "duplicate code %s (%s)" % [str(d.get("code", "")), str(d.get("scope", ""))])

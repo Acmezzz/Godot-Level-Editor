@@ -20,6 +20,7 @@ const MapStore := preload("res://src/map/map_store.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
 const FieldWidgets := preload("res://src/ui/field_widgets.gd")
 const FunctionDecls := preload("res://src/content/function_decl.gd")
+const RefFields := preload("res://src/content/ref_fields.gd")
 const Preview := preload("res://src/ui/content_preview.gd")
 const ContentForm := preload("res://src/ui/content_form.gd")
 const FnBind := preload("res://src/ui/fn_bind.gd")
@@ -516,6 +517,7 @@ func _sync_mounted(spr: EntityNode) -> void:
 
 ## 按实体类型的引用型字段声明渲染下拉；值存实例 props。编辑器只管存取与呈现，
 ## 语义归游戏侧。类型没有引用声明就不出这个区块。
+## 字段顺序按声明：配对地图字段（mapField 指向）先渲染，引用行据此取目标域（C1）。
 func _build_refs_block() -> Control:
 	var spr := _current_spr()
 	if spr == null or not is_instance_valid(spr):
@@ -524,38 +526,50 @@ func _build_refs_block() -> Control:
 	var edef: Dictionary = AssetDecl.by_id(manifest, sid)
 	var fdecls: Array = edef.get("fields", []) if edef.get("fields", []) is Array else []
 	var rows: Array = []
+	var map_rows: Array = []
 	for fd in fdecls:
 		if fd is Dictionary:
 			var t := str(fd.get("type", ""))
 			if t == "entity_ref" or t == "map_ref":
 				rows.append(fd)
+				if t == "map_ref":
+					map_rows.append(fd)
 	if rows.is_empty():
 		return null
 	var box := Kit.vbox(6)
 	box.add_child(Kit.section_header("引用"))
 	var props: Dictionary = spr.props
+	# 先出配对地图字段：引用行的「目标图」来自它们（缺省 = 本图）
+	for fd in map_rows:
+		box.add_child(_build_ref_row(fd, props, fdecls))
 	for fd in rows:
-		box.add_child(_build_ref_row(fd, props))
+		if not map_rows.has(fd):
+			box.add_child(_build_ref_row(fd, props, fdecls))
 	return box
 
 ## 单个引用字段行：entity_ref → 实例下拉（of 限定类型，未声明 of 列全部）；
-## map_ref → 地图下拉。值不在选项里时由 FieldWidgets 保留原值（绝不静默改写）。
-func _build_ref_row(fd: Dictionary, props: Dictionary) -> Control:
+## map_ref → 地图下拉。声明了 mapField 的 entity_ref 枚举**配对地图**的实例；
+## 配对地图未填时取所属图（本图）。值不在选项里时由 FieldWidgets 保留原值。
+func _build_ref_row(fd: Dictionary, props: Dictionary, fdecls: Array = []) -> Control:
 	var fid := str(fd.get("id", ""))
-	var typ := str(fd.get("type", ""))
 	var cur := str(props.get(fid, ""))
 	var built: Dictionary
-	if typ == "map_ref":
-		built = FieldWidgets.build({"kind": "choice", "source": "map"}, cur,
-			func(v): _set_prop_ref(fd, v), _resolve_options)
+	var d := fd.duplicate(true)
+	if str(fd.get("type", "")) == "map_ref":
+		d["kind"] = "choice"
+		d["source"] = "map"
 	else:
-		var of := str(fd.get("of", ""))
-		var src := "entity_inst:" + of if of != "" else "entity_inst:"
-		built = FieldWidgets.build({"kind": "choice", "source": src}, cur,
-			func(v): _set_prop_ref(fd, v), _resolve_options)
+		d["kind"] = "choice"
+		d["source"] = "entity_inst:" + str(fd.get("of", ""))
+		var target_map := RefFields.paired_map_value(fd, fdecls, props)
+		if target_map != "":
+			d["_mapKey"] = target_map   # _resolve_options 据此枚举目标图实例
+	built = FieldWidgets.build(d, cur, func(v): _set_prop_ref(fd, v), _resolve_options)
 	return Kit.field_row(str(fd.get("name", fid)), built.ctl, 96)
 
 ## 写实例 props 的引用字段：props 是地图数据，改动进撤销栈；并做指向预览高亮。
+## 改「配对地图字段」时旧落点会指向别的图的实例码（C1）：先确认，再把配对引用一起清空——
+## 留着旧码就是在目标图里指向一个不存在的实例。
 func _set_prop_ref(fd: Dictionary, value: String) -> void:
 	var spr := _current_spr()
 	if spr == null or not is_instance_valid(spr) or not app.map_loaded:
@@ -563,15 +577,33 @@ func _set_prop_ref(fd: Dictionary, value: String) -> void:
 	var props: Dictionary = spr.props.duplicate(true)
 	if props.get(fd.id, null) == value:
 		return
+	# 该字段是否被 entity_ref 的 mapField 配对
+	var edef: Dictionary = AssetDecl.by_id(manifest, spr.asset)
+	var paired_refs: Array = []
+	for other in (edef.get("fields", []) as Array):
+		if other is Dictionary and str((other as Dictionary).get("mapField", "")) == str(fd.get("id", "")):
+			var cur_ref := str(props.get(str((other as Dictionary).get("id", "")), ""))
+			if cur_ref != "":
+				paired_refs.append(other)
+	if not paired_refs.is_empty():
+		var msg := "改目标地图会清空 %d 个已填引用（旧落点属于原图）。继续？" % paired_refs.size()
+		if not await app._confirm_action("改目标地图", msg, "改并清空"):
+			# 取消：控件回填旧值，别让下拉停在新图上
+			_rebuild_right()
+			return
 	app.canvas._push_undo()
 	if value == "":
 		props.erase(fd.id)
 	else:
 		props[fd.id] = value
+	for other2 in paired_refs:
+		props.erase(str((other2 as Dictionary).get("id", "")))
 	spr.props = props
 	app.canvas._mark()
-	# 指向预览：高亮被指实例（仅 entity_ref；map_ref 指向别的图，不高亮）
-	var target := value if str(fd.type) == "entity_ref" else ""
+	# 指向预览：高亮被指实例（仅当前图 entity_ref；跨图/地图引用不高亮）
+	var target := ""
+	if str(fd.get("type", "")) == "entity_ref" and app.canvas.is_entity_code_local(value):
+		target = value
 	app.canvas.ref_highlight = target
 	app.canvas.queue_redraw()
 	if _preview != null:

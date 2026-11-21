@@ -812,6 +812,12 @@ func _ent_by_code_index() -> Dictionary:
 		_ent_by_id_dirty = false
 	return _ent_by_id
 
+## 实例码是否指向本图实例（引用字段高亮用：跨图引用码在本图不存在，不能高亮）。
+func is_entity_code_local(code: String) -> bool:
+	if code == "":
+		return false
+	return _ent_by_code_index().has(code)
+
 # —— 撤销/重做（快照式：每次笔画/盖章/删除/移动前存整图状态） ——
 # 快照以 JSON 字符串保存：比嵌套 Variant 字典省内存，深拷贝天然隔离。
 const UNDO_MAX := 80

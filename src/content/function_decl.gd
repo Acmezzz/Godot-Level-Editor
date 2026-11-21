@@ -114,13 +114,15 @@ static func functions(m: Dictionary) -> Dictionary:
 ## 归一化单个功能声明：**以声明原件为底**（未知键原样保留，游戏侧写什么编辑器都不丢），
 ## 只规范化编辑器认识的键。此前是白名单重建，`triggers`/`timing`/`view` 等键进不了视图，
 ## UI 连"看得见"都做不到。
+## conditions 非数组时**不归一成空数组**（C07）：那会把坏声明静默洗白，校验也就查不到了。
 static func _normalize_fn(fid: String, src: Dictionary) -> Dictionary:
 	var d: Dictionary = src.duplicate(true)
 	d["id"] = fid
 	d["code"] = str(src.get("code", ""))
 	d["name"] = str(src.get("name", fid)) if str(src.get("name", "")) != "" else fid
 	d["fields"] = src.get("fields", []) if src.get("fields", []) is Array else []
-	d["conditions"] = src.get("conditions", []) if src.get("conditions", []) is Array else []
+	if d.get("conditions", null) == null:
+		d["conditions"] = []
 	d["steps"] = bool(src.get("steps", false))
 	return d
 

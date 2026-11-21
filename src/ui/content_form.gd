@@ -14,6 +14,7 @@ const MapStore := preload("res://src/map/map_store.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
 const FieldWidgets := preload("res://src/ui/field_widgets.gd")
 const FunctionDecls := preload("res://src/content/function_decl.gd")
+const RefFields := preload("res://src/content/ref_fields.gd")
 const RIGHT_W := 360
 
 var host   # content_editor 宿主
@@ -249,8 +250,12 @@ func _resolve_options(decl: Dictionary) -> Array:
 			out2.append({"v": sid, "t": str((e as Dictionary).get("name", sid))})
 		return out2
 	if src.begins_with("entity_inst:"):
-	# 实例级来源：列当前图里这些类型的实例（值=实例码）。类型列表空 = 全部实例。
+	# 实例级来源：列实例（值=实例码）。目标域 = 声明的 _mapKey（配对地图字段，C1）：
+	# 有目标图就枚举目标图实例（跨图引用按 (地图码, 实例码) 语义），否则列当前图。
 		var want := src.substr(12).split(",", false)
+		var map_key := str(decl.get("_mapKey", ""))
+		if map_key != "":
+			return RefFields.map_instances(manifest, map_key, Array(want))
 		var out4: Array = []
 		if _map_ready():
 			for e0 in app.canvas.ents_all():

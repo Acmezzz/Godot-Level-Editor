@@ -30,7 +30,9 @@ static func _is_id_char(ch: String) -> bool:
 		or ch == "_"
 
 ## kind 直接拼进目录名，比内容 id 更严：不允许点，避免把 dlg.one 之类 id 当目录。
-static func _is_valid_kind(kind: String) -> bool:
+## 公开给清单校验用（C07）：功能 id 既是内容目录名，就必须过这一条——
+## 否则声明能载入、内容目录却建不出来，第一次编辑才失败。
+static func is_valid_kind(kind: String) -> bool:
 	return is_valid_id(kind) and not kind.contains(".")
 
 ## 内容根目录：清单可用 contentDir 覆盖；缺省 <项目>/content。
@@ -53,19 +55,19 @@ static func declared_kinds(m: Dictionary) -> Array:
 	if decl is Dictionary:
 		for key in (decl as Dictionary):
 			var k := str(key)
-			if _is_valid_kind(k):
+			if is_valid_kind(k):
 				kinds[k] = true
 	elif decl is Array:
 		for item in (decl as Array):
 			if not (item is Dictionary):
 				continue
 			var k := str((item as Dictionary).get("id", ""))
-			if _is_valid_kind(k):
+			if is_valid_kind(k):
 				kinds[k] = true
 	var root := root_dir(m)
 	if root != "":
 		for dirname in DirAccess.get_directories_at(root):
-			if _is_valid_kind(str(dirname)):
+			if is_valid_kind(str(dirname)):
 				kinds[str(dirname)] = true
 	var out: Array = kinds.keys()
 	out.sort()
@@ -73,7 +75,7 @@ static func declared_kinds(m: Dictionary) -> Array:
 
 ## 某类资源的目录；种类非法或项目目录缺失返回 ""。
 static func dir_for(m: Dictionary, kind: String) -> String:
-	if not _is_valid_kind(kind):
+	if not is_valid_kind(kind):
 		return ""
 	var root := root_dir(m)
 	if root == "":
