@@ -80,6 +80,10 @@ func _ready() -> void:
 ## 首次进入或项目切换后重建编辑器控制器；选择页阶段不提前创建，
 ## 避免布局控制器在宿主没有项目上下文时被误用（A1/E00）。
 func _ensure_editor_controllers() -> void:
+	if _picker_ctrl == null:
+		_picker_ctrl = ProjectPicker.new(self)
+	if _map_dialogs_ctrl == null:
+		_map_dialogs_ctrl = MapDialogs.new(self)
 	if _layout_ctrl == null:
 		_layout_ctrl = preload("res://src/ui/editor_layout.gd").new(self)
 	if _side_actions_ctrl == null:
@@ -601,6 +605,10 @@ func _sync_panel_buttons(mode: String) -> void:
 			nb.set_mode(mode)
 
 func _save_manifest_file() -> void:
+	await _save_manifest_file_async()
+
+## 清单落盘；返回是否成功（await 结果）。地图保存前需要知道成功与否（D06）。
+func _save_manifest_file_async() -> bool:
 	var out := {}
 	for k in manifest.keys():
 		if not str(k).begins_with("_"):
@@ -616,7 +624,7 @@ func _save_manifest_file() -> void:
 	var txt := JSON.stringify(out, "\t")
 	if not (JSON.parse_string(txt) is Dictionary):
 		_set_status(" 清单写回校验失败，未保存")
-		return
+		return false
 	var p: String = str(manifest.get("_dir", "")).path_join("editor/editor_manifest.json")
 	# C-20：清单同样做外部改动预警——手改细配置（palette 等）被编辑器覆盖是真实损失
 	var mt0 := int(manifest.get("_manifest_mtime", 0))
@@ -624,11 +632,11 @@ func _save_manifest_file() -> void:
 		if not await _confirm_action("外部改动",
 			"清单文件在编辑器打开后被外部修改过。\n覆盖保存将丢失外部改动。", "覆盖保存"):
 			_set_status(" 已取消保存（保留磁盘上的外部改动）")
-			return
+			return false
 	# 清单写盘走 MapStore 原子写单入口
 	if not MapStore.write_text(p, txt):
 		_set_status(" 清单写入失败: " + p)
-		return
+		return false
 	# 新补发的执行码已经随清单落盘，标记清掉（D6：避免每次内容视图 Ctrl+S 都重写清单）
 	manifest.erase("_codes_issued")
 	manifest["_manifest_mtime"] = FileAccess.get_modified_time(p)
@@ -650,6 +658,7 @@ func _save_manifest_file() -> void:
 		doc += "\n" + tdoc
 	if not MapStore.write_text(cp, doc):
 		_set_status(" 清单已保存，但码表写入失败: " + cp)
+	return true
 ## —— 拆到 src/canvas/editor_state.gd 的委托（调用点保持不变） ——
 func _apply_state(tool := "", layer := -1) -> void:
 	_editor_state_ctrl._apply_state(tool, layer)

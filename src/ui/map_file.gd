@@ -298,6 +298,30 @@ func _effective_map_name() -> String:
 			return cname
 	return n
 
+## 统一提交入口（A2）：先结束编辑手势，再按「清单 → 内容 → 地图」顺序落盘。
+## 返回 {status, written, error}；status = ok / cancelled / failed。
+## 任何一步失败即停，已写文件保留，调用方按 written 显示脏状态。
+func commit_document(reason := "") -> Dictionary:
+	if app.canvas != null and app.canvas.has_method("end_gesture"):
+		app.canvas.end_gesture()
+	var written: Array = []
+	# 1) 内容页正在编辑的连续控件值
+	if app.project_shell != null and app.project_shell.content_editor != null:
+		app.project_shell.content_editor.commit()
+	# 2) 清单补发的身份码（地图/内容引用它们之前必须落盘）
+	if bool(app.manifest.get("_codes_issued", false)):
+		if not await app._save_manifest_file_async():
+			return {"status": "cancelled", "written": written, "error": "清单补码保存被取消或失败"}
+		written.append("manifest")
+	# 3) 地图
+	if app.map_loaded and app.canvas != null and app.canvas.modified_flag:
+		if not await on_save():
+			return {"status": "failed", "written": written, "error": "地图保存失败"}
+		written.append("map")
+	if reason != "":
+		app._set_status(" 已提交（%s）%s" % [reason, ("：" + ", ".join(PackedStringArray(written))) if not written.is_empty() else "：无待写改动"])
+	return {"status": "ok", "written": written, "error": ""}
+
 ## 保存当前地图；返回是否成功（试玩前依赖它决定是否继续）
 func on_save() -> bool:
 	if not app.map_loaded:
@@ -314,6 +338,12 @@ func on_save() -> bool:
 	if data.is_empty():   # 重建窗口哨兵：绝不能把空快照写盘
 		app._set_status(" 地图重建中，保存已跳过：请稍后再试")
 		return false
+	# 依赖身份先落盘（D06）：本次画布可能用到刚补发的资产码/功能码；地图引用它们前
+	# 清单必须先写成功，否则取消/前置失败会留下指向不存在身份的地图。
+	if bool(app.manifest.get("_codes_issued", false)):
+		if not await app._save_manifest_file_async():
+			app._set_status(" 保存中止：清单补码写入失败，地图未写盘")
+			return false
 	data.meta.name = n
 	MapStore.ensure_code(app.manifest, data)   # 地图码（v7）：保存时补发，跨图引用写码的前提
 	var path := EditorManifest.map_path(app.manifest, n)
