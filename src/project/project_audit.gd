@@ -33,6 +33,19 @@ static func audit(manifest: Dictionary) -> Array:
 				_collect_used_content(d, used_content)
 	# 3. 内容文件：损坏 JSON / function 码漂移 / 孤立内容
 	out.append_array(_content_checks(manifest, used_content))
+	# 4. 地图码唯一性（A2/D08）：重复码必须列出全部路径，引用解析据此拒绝猜测
+	var dup_codes := MapStore.code_conflicts(manifest)
+	for code in dup_codes:
+		var names: Array = dup_codes[code]
+		var paths: PackedStringArray = PackedStringArray()
+		for nm in names:
+			paths.append(maps_dir.path_join(str(nm) + ".json") if maps_dir != "" else str(nm))
+		out.append({
+			"kind": "map", "severity": "warning",
+			"path": "maps/" + str(code),
+			"message": "地图码重复：%s（引用解析会拒绝猜测，请改名或重发码）" % ", ".join(paths),
+			"map": str(names[0]) if not names.is_empty() else "", "jump": {},
+		})
 	return out
 
 ## 收集全项目被实例绑定引用的内容 ID（objects[].functions[].content）。

@@ -139,3 +139,25 @@ func test_map_write_rejects_bad_data() -> void:
 	ok(not FileAccess.file_exists(path), "拒绝时不生成目标文件")
 	ok(MapStore.write_error(m, d) != "", "给出首个错误原因")
 	_wipe()
+
+## A2/D08：撞码时列出全部路径（引用解析不能靠 code_map 的最后写入者猜）
+func test_map_code_conflict_lists_all_paths() -> void:
+	_wipe()
+	var m := _fake_manifest()
+	var a := MapStore.new_map("a", 8, 8)
+	var b := MapStore.new_map("b", 8, 8)
+	a.meta["code"] = "ZZZZ"
+	b.meta["code"] = "ZZZZ"
+	ok(MapStore.write(m, "a", a), "a 写入")
+	ok(MapStore.write(m, "b", b), "b 写入")
+	var conf := MapStore.code_conflicts(m)
+	ok(conf.has("ZZZZ"), "检出重复码")
+	eq((conf.get("ZZZZ", []) as Array).size(), 2, "列出两个文件")
+	var all := ProjectAudit.audit(m)
+	var found := 0
+	for e in all:
+		if str(e.get("message", "")).contains("地图码重复") and str(e.get("message", "")).contains("a.json") \
+				and str(e.get("message", "")).contains("b.json"):
+			found += 1
+	eq(found, 1, "审计报告给出两条路径")
+	_wipe()

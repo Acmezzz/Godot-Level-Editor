@@ -165,6 +165,8 @@ static func ensure_code(m: Dictionary, data: Dictionary) -> bool:
 	return true
 
 ## 项目内重复地图码 → {code: [图名...]}（>1 个文件共用同码）。审计/引用解析据此拒绝猜测。
+## 引用解析侧的「一码一图」表（code_map）在撞码时只保留最后读到的图名——
+## 这正是必须用本函数把全部路径摆出来的原因。
 static func code_conflicts(m: Dictionary) -> Dictionary:
 	var by_code := {}
 	for mn in list_maps(m):
