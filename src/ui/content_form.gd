@@ -280,10 +280,11 @@ func _resolve_options(decl: Dictionary) -> Array:
 		return out6
 	if src == "map":
 		var out3: Array = []
+		# 值 = 地图码（v7）：改名不破坏引用；老图缺码时退回图名（保存一次即补码）。
+		# 走 code_map 的 mtime+size 签名缓存（C-17）：表单每次刷新不再全量解析地图文件。
+		var n2c: Dictionary = MapStore.name_to_code(manifest)
 		for mn in MapStore.list_maps(manifest):
-			var md := MapStore.read(manifest, str(mn))
-			var mc := str((md.get("meta", {}) as Dictionary).get("code", ""))
-			# 值 = 地图码（v7）：改名不破坏引用；老图缺码时退回图名（保存一次即补码）
+			var mc := str(n2c.get(str(mn), ""))
 			out3.append({"v": mc if mc != "" else str(mn), "t": str(mn)})
 		return out3
 	return []

@@ -134,6 +134,14 @@ static func code_map(m: Dictionary) -> Dictionary:
 	_cm_key = key
 	return out
 
+## 图名 → 地图码表（code_map 的反向视图；复用同一签名缓存，O(n) 反转一次）
+static func name_to_code(m: Dictionary) -> Dictionary:
+	var out := {}
+	var cm := code_map(m)
+	for c in cm:
+		out[str(cm[c])] = str(c)
+	return out
+
 ## 确保这张图有 meta.code：缺就发一个不与全项目冲突的新码并写回 data。
 ## 返回是否有改动（调用方据此置脏）。就地修改。
 static func ensure_code(m: Dictionary, data: Dictionary) -> bool:

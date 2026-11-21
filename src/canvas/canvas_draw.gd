@@ -160,6 +160,16 @@ func _draw() -> void:
 	if cvs.selected_entity and is_instance_valid(cvs.selected_entity):
 		var sn: EntityNode = cvs.selected_entity
 		cvs.draw_rect(sn.rect().grow(2.0), Color(1.0, 0.85, 0.3, 0.9), false, 2.0)
+		# 排序点十字（R-04）：排序点 = 锚点 + 实例 sortAnchor 像素偏移（raw 透传键）。
+		# 缺省（无 sortAnchor 键）排序点 = 锚点本身，不画——标记只对显式覆盖有信息量。
+		var sa = sn.raw.get("sortAnchor", null)
+		if sa is Array and (sa as Array).size() >= 2:
+			var sp: Vector2 = sn.position + Vector2(float((sa as Array)[0]), float((sa as Array)[1]))
+			var scol := Color(0.85, 0.4, 1.0, 0.9)
+			cvs.draw_line(sp + Vector2(-5, 0), sp + Vector2(5, 0), scol, 1.5)
+			cvs.draw_line(sp + Vector2(0, -5), sp + Vector2(0, 5), scol, 1.5)
+			if sp.distance_to(sn.position) > 2.0:
+				cvs.draw_line(sn.position, sp, Color(0.85, 0.4, 1.0, 0.45), 1.0)
 	# 引用指向预览：编辑引用字段时高亮被指实例（青色粗框）
 	if cvs.ref_highlight != "":
 		var hs = cvs._ent_by_code_index().get(cvs.ref_highlight, null)

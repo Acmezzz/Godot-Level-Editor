@@ -851,6 +851,8 @@ func layer_set_visible(i: int, v: bool) -> void:
 	await _layer_ops_ctrl.layer_set_visible(i, v)
 func layer_set_blend(i: int, blend: String) -> void:
 	await _layer_ops_ctrl.layer_set_blend(i, blend)
+func layer_set_param(i: int, key: String, v) -> void:
+	await _layer_ops_ctrl.layer_set_param(i, key, v)
 func _load_snap_layers(snap: Dictionary, active_id: String) -> void:
 	await _layer_ops_ctrl._load_snap_layers(snap, active_id)
 func make_object(aid: String) -> EntityNode:

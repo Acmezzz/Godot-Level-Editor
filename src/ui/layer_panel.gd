@@ -136,6 +136,7 @@ func _rebuild_layer_mgr() -> void:
 		return
 	for i in decl.size():
 		_layer_mgr_rows.add_child(_layer_mgr_row(i, decl[i] as Dictionary))
+		_layer_mgr_rows.add_child(_layer_mgr_params(i, decl[i] as Dictionary))
 
 ## 一层一行：名字（行内改名，回车提交）+ 运行时可见 + ↑ ↓ 删除
 func _layer_mgr_row(i: int, decl: Dictionary) -> Control:
@@ -191,4 +192,58 @@ func _layer_mgr_row(i: int, decl: Dictionary) -> Control:
 		app._sync_ui(), "ghost")
 	del.tooltip_text = "删除该层（层上瓦片与实体一并删除）"
 	row.add_child(del)
+	return row
+
+## 数字字段（回车提交；非法输入回填当前值）
+func _num_field(init: float, tip: String, cb: Callable) -> LineEdit:
+	var f := LineEdit.new()
+	f.text = "%g" % init
+	f.tooltip_text = tip
+	f.custom_minimum_size.x = 48
+	f.text_submitted.connect(func(s: String):
+		if s.is_valid_float():
+			cb.call(float(s))
+		else:
+			f.text = "%g" % init)
+	return f
+
+## 当前层的偏移分量（提交时现读，避免闭包里留过期快照）
+func _cur_off(i: int, comp: int) -> float:
+	var d: Array = app.canvas.layers_decl()
+	if i < 0 or i >= d.size():
+		return 0.0
+	var o = (d[i] as Dictionary).get("offset", null)
+	if o is Array and (o as Array).size() >= 2:
+		return float((o as Array)[comp])
+	return 0.0
+
+## 参数行（R-04 控件批）：y排序开关 + 视差/偏移/缩放数字字段，改动走 layer_set_param 重建
+func _layer_mgr_params(i: int, decl: Dictionary) -> Control:
+	var row = app.UiKitScript.hbox(6)
+	var ys := CheckBox.new()
+	ys.text = "y排序"
+	ys.button_pressed = bool(decl.get("ySort", false))
+	ys.tooltip_text = "层内 y-sort（瓦片与 auto 实体按 y 排序；改动重建全图）"
+	ys.toggled.connect(func(on: bool):
+		await app.canvas.layer_set_param(i, "ySort", on)
+		_rebuild_layer_mgr()
+		app._sync_ui())
+	row.add_child(ys)
+	row.add_child(_num_field(float(decl.get("parallax", 1.0)), "视差：1 = 正常，<1 = 远景半速，0 = 固定（回车提交）", func(v: float):
+		await app.canvas.layer_set_param(i, "parallax", v)
+		_rebuild_layer_mgr()
+		app._sync_ui()))
+	row.add_child(_num_field(_cur_off(i, 0), "层偏移 X（像素，回车提交）", func(v: float):
+		await app.canvas.layer_set_param(i, "offset", Vector2(v, _cur_off(i, 1)))
+		_rebuild_layer_mgr()
+		app._sync_ui()))
+	row.add_child(_num_field(_cur_off(i, 1), "层偏移 Y（像素，回车提交）", func(v: float):
+		await app.canvas.layer_set_param(i, "offset", Vector2(_cur_off(i, 0), v))
+		_rebuild_layer_mgr()
+		app._sync_ui()))
+	row.add_child(_num_field(float(decl.get("scale", 1.0)), "层缩放（>0，回车提交）", func(v: float):
+		if v > 0.0:
+			await app.canvas.layer_set_param(i, "scale", v)
+			_rebuild_layer_mgr()
+			app._sync_ui()))
 	return row

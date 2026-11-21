@@ -304,6 +304,52 @@ func layer_set_visible(i: int, v: bool) -> void:
 	snap["meta"] = meta
 	await _load_snap_layers(snap, layer_id(active_layer))
 
+## 层参数写回（R-04 控件批）：快照先行 → 改 meta.layers[i] 单键（缺省整键省略）→ 整图重建。
+## ySort 改层容器结构（y-sorted 父），parallax/offset/scale 只改容器变换——统一走重建最省心。
+func layer_set_param(i: int, key: String, v) -> void:
+	if map_root == null or not is_instance_valid(map_root):
+		return
+	var L := layers_decl()
+	if i < 0 or i >= L.size():
+		return
+	if key == "ySort" and not bool(v):
+		return  # false = 缺省，erase 等价于无事发生
+	# 快照先行（同 layer_set_visible：改层参数走同一纪律）
+	_push_undo()
+	var snap := extract()
+	if snap.is_empty():
+		return
+	var meta: Dictionary = snap.get("meta", {})
+	var SL: Array = (meta.get("layers", []) as Array).duplicate(true)
+	if i < 0 or i >= SL.size():
+		return
+	match key:
+		"ySort":
+			(SL[i] as Dictionary)["ySort"] = true
+		"parallax":
+			var pv := float(v)
+			if is_zero_approx(pv - 1.0):
+				(SL[i] as Dictionary).erase("parallax")
+			else:
+				(SL[i] as Dictionary)["parallax"] = pv
+		"offset":
+			var ov := v as Vector2
+			if is_zero_approx(ov.x) and is_zero_approx(ov.y):
+				(SL[i] as Dictionary).erase("offset")
+			else:
+				(SL[i] as Dictionary)["offset"] = [ov.x, ov.y]
+		"scale":
+			var sv := float(v)
+			if is_zero_approx(sv - 1.0):
+				(SL[i] as Dictionary).erase("scale")
+			else:
+				(SL[i] as Dictionary)["scale"] = sv
+		_:
+			return
+	meta["layers"] = SL
+	snap["meta"] = meta
+	await _load_snap_layers(snap, layer_id(active_layer))
+
 ## 层操作收尾：按新快照重建，激活层跟随身份（同码层下标，层没了落最底层）。
 func _load_snap_layers(snap: Dictionary, active_id: String) -> void:
 	await load_data(snap, cur_map_name, true, true)
