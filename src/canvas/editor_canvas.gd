@@ -18,6 +18,7 @@ const AssetDecl := preload("res://src/assets/asset_decl.gd")   # 清单资产表
 const EntityNodeRef := preload("res://src/canvas/entity_node.gd")   # 摆放物节点（场景/实体共用）
 const GridSpaceScript := preload("res://src/canvas/grid_space.gd")   # 格↔像素转换层（正交/等距）
 const MapFormat := preload("res://src/map/map_format.gd")   # 格式版本/瓦片变换位（v7）
+const FunctionDeclsRef := preload("res://src/content/function_decl.gd")   # 挂载补齐（C09）
 
 var active_layer := 0          # 0..N-1 = 层栈下标，N = 碰撞元层
 var place_kind := "tiles"      # 放置语义跟资产走："tiles"=涂瓦片 / "object"=摆实例（左栏驱动）
@@ -380,6 +381,7 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	# 摆放物：objects[] 统一收场景图片与实体（数据形状一致，仅 entity 带 code）。
 	# 位置 = 浮点格坐标 + anchor 换算；transform/visible/zPolicy 缺省整键省略。
 	var bottom := layer_id(0)
+	var mount_filled := false
 	for e in data.get("objects", []):
 		if not (e is Dictionary):
 			continue
@@ -390,6 +392,12 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 		n.code = str((e as Dictionary).get("code", ""))
 		n.props = (e as Dictionary).get("props", {}) if (e as Dictionary).get("props", {}) is Dictionary else {}
 		n.functions = (e as Dictionary).get("functions", []) if (e as Dictionary).get("functions", []) is Array else []
+		# C09：载图即补齐类型挂载（只在工作副本上，不碰选中事件）；缺的补一条 mounted 行并标脏
+		if n.is_entity():
+			var fill := FunctionDeclsRef.fill_bindings(manifest, aid, n.functions)
+			if bool(fill.get("changed", false)):
+				n.functions = fill.get("functions", [])
+				mount_filled = true
 		n.data_transform = (e as Dictionary).get("transform", {}) if (e as Dictionary).get("transform", {}) is Dictionary else {}
 		n.raw = (e as Dictionary).duplicate(true)
 		n.z_policy = str((e as Dictionary).get("zPolicy", "auto"))
@@ -423,7 +431,10 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	_update_cam()
 	# keep_dirty：撤销/重做恢复路径不抹脏标记（快照恢复后内容与磁盘
 	# 不一致就是脏的），普通载入清零；emit 只在这里发一次，undo/redo 不再自己发。
-	modified_flag = keep_dirty
+	# C09：载图补齐过挂载 → 工作副本与磁盘不一致，必须标脏，等作者保存。
+	modified_flag = keep_dirty or mount_filled
+	if mount_filled:
+		_hint("已给实例补齐类型自带功能（挂载）——保存后写入地图")
 	# 换图后层数可能变少：激活层钳回合法区间（0..层栈数，含碰撞元层下标）
 	active_layer = clampi(active_layer, 0, layer_count())
 	_ent_by_id_dirty = true   # 整图载入（含撤销恢复）索引置脏

@@ -152,11 +152,25 @@ func _draw() -> void:
 				var wobble := str(props.get("target_map", "")) != ""
 				var col := Color(0.4, 0.4, 1.0, 0.6) if wobble else Color(1.0, 0.85, 0.3, 0.6)
 				cvs.draw_line(wp, _w(n2), col, 1.5)
-		# 跨图出口「已接好」角标——有 target_map 的 exit 画 ↗+目标图名
-		if ManifestScript.has_role(cvs.manifest, sid, "exit"):
-			var tmap := str(props.get("target_map", ""))
-			if tmap != "":
-				exits.append([wp, tmap])
+		# 跨图引用角标（C3）：值 = 地图码，显示时码→名解析一次（code_map 带缓存）。
+		# ① 旧约定：role=exit 且 props.target_map 已填；
+		# ② 声明驱动：类型声明的 map_ref 字段（含被 entity_ref 配对用的）已填。
+		# 两者同一呈现：↗ + 目标图名，让人一眼看到「这条引用跨图了」。
+		var tmap := str(props.get("target_map", "")) \
+			if ManifestScript.has_role(cvs.manifest, sid, "exit") else ""
+		if tmap == "":
+			var ad0 := AssetDecl.by_id(cvs.manifest, sid)
+			for fd in (ad0.get("fields", []) as Array):
+				if not (fd is Dictionary):
+					continue
+				if str((fd as Dictionary).get("type", "")) != "map_ref":
+					continue
+				var mv := str(props.get(str((fd as Dictionary).get("id", "")), ""))
+				if mv != "":
+					tmap = mv
+					break
+		if tmap != "":
+			exits.append([wp, tmap])
 		# 传送落点（青色描边）与出生 marker（绿十字）拉开色系
 		if ManifestScript.has_role(cvs.manifest, sid, "landing"):
 			landings.append(n)

@@ -173,8 +173,11 @@ static func fn_id_of(m: Dictionary, code: String) -> String:
 
 ## 资产类型的自带功能（挂载）：清单 assets[].functions = 功能 id 数组，声明顺序即默认执行顺序。
 ## 返回 [{id, code}]；挂载了未声明功能的 id 被过滤（校验层报错误），保证返回的都可用。
+## 重复挂载的同功能只保留第一条（C09）：同码两条会让实例补出两条同码绑定，
+## 「唯一继承行」无从辨认；校验层已把重复挂载报为错误，这里做运行期去重兜底。
 static func entity_mounts(m: Dictionary, sid: String) -> Array:
 	var out: Array = []
+	var seen := {}
 	for ed in m.get("assets", []):
 		if not (ed is Dictionary) or str((ed as Dictionary).get("id", "")) != sid:
 			continue
@@ -184,9 +187,52 @@ static func entity_mounts(m: Dictionary, sid: String) -> Array:
 		for fid in mounts:
 			var fids := str(fid)
 			var code := fn_code(m, fids)
-			if fids != "" and code != "":
-				out.append({"id": fids, "code": code})
+			if fids == "" or code == "" or seen.has(code):
+				continue
+			seen[code] = true
+			out.append({"id": fids, "code": code})
 	return out
+
+## 给一行实例绑定补齐类型挂载（C09）：放置和载图时在**工作副本**上调用，
+## 与选中事件彻底解耦——没被点开过的实例也补齐。
+## 只在「该功能码一条绑定都没有」时追加唯一继承行 `mounted: true`；
+## 同码已有多条（旧图/库复用/手工）不猜哪条是继承行，留给作者确认（返回 ambiguous）。
+## 返回 {functions, changed, ambiguous}；functions 与传入数组不共享引用。
+static func fill_bindings(m: Dictionary, asset_id: String, fns: Array) -> Dictionary:
+	var out: Array = fns.duplicate(true)
+	var mounts := entity_mounts(m, asset_id)
+	if mounts.is_empty():
+		return {"functions": out, "changed": false, "ambiguous": []}
+	var counts := {}
+	var marked := {}
+	for f in out:
+		if not (f is Dictionary):
+			continue
+		var code := str((f as Dictionary).get("fn", ""))
+		if code == "":
+			continue
+		counts[code] = int(counts.get(code, 0)) + 1
+		if bool((f as Dictionary).get("mounted", false)):
+			marked[code] = true
+	var changed := false
+	var ambiguous: Array = []
+	for mt in mounts:
+		var code := str((mt as Dictionary).get("code", ""))
+		if code == "":
+			continue
+		var n := int(counts.get(code, 0))
+		if n == 0:
+			out.append({"fn": code, "content": "", "name": "", "order": 0,
+				"parallel": false, "mounted": true})
+			changed = true
+		elif n > 1 and not marked.has(code):
+			ambiguous.append(code)
+	if not changed:
+		return {"functions": out, "changed": false, "ambiguous": ambiguous}
+	for k in out.size():
+		if out[k] is Dictionary:
+			(out[k] as Dictionary)["order"] = k + 1
+	return {"functions": out, "changed": true, "ambiguous": ambiguous}
 
 ## 人类名 ↔ 执行码对照表（Markdown），保存清单时写到 editor/CODES.md。
 ## 游戏侧启动时读清单即可重建同样的运行时映射；本表是给人看的快照 + git diff 友好。

@@ -10,6 +10,7 @@ var cvs   # 宿主引用
 
 const TilesetCache := preload("res://src/canvas/tileset_cache.gd")
 const MapFormat := preload("res://src/map/map_format.gd")
+const FunctionDecls := preload("res://src/content/function_decl.gd")   # 挂载补齐（C09）
 
 func _init(host) -> void:
 	cvs = host
@@ -210,6 +211,11 @@ func _stamp(pos: Vector2) -> void:
 	n.refresh_visual()   # props 就位后按 sizeFields 定尺寸
 	n.layer_id = cvs.layer_id(cvs.active_layer)
 	n.position = cvs.snap_point(pos, n)
+	# C09：放置即补齐类型挂载（不依赖选中事件），写出 mounted 继承行
+	if n.is_entity():
+		var fill: Dictionary = FunctionDecls.fill_bindings(cvs.manifest, n.asset, n.functions)
+		if bool(fill.get("changed", false)):
+			n.functions = fill.get("functions", [])
 	cvs._place_in_layer(n, cvs.active_layer)
 	cvs._ensure_code(n)
 	cvs._mark()

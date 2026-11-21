@@ -536,12 +536,18 @@ static func _validate_entity_asset(data: Dictionary, ad: Dictionary, path: Strin
 			_add(issues, "error", path + ".functions", "must be an array of function ids")
 		else:
 			var pool := FunctionDecls.functions(data)
+			var seen_mounts := {}
 			for fid in ad.functions:
 				if not (fid is String) or str(fid) == "":
 					_add(issues, "error", path + ".functions", "mounts must be non-empty function ids")
 				elif not pool.has(str(fid)):
 					_add(issues, "error", path + ".functions",
 						"mounted function is not declared: " + str(fid))
+				elif seen_mounts.has(str(fid)):
+					# C09：同功能重复挂载会让实例补出两条同码绑定，「唯一继承行」无处可认
+					_add(issues, "error", path + ".functions", "duplicate mount: " + str(fid))
+				else:
+					seen_mounts[str(fid)] = true
 	if ad.has("frames") and not (ad.frames is Array):
 		_add(issues, "error", path + ".frames", "must be an array of texture paths")
 	var fields := {}

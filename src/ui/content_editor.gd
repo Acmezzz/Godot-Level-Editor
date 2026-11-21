@@ -380,10 +380,7 @@ func select_inst(code: String) -> void:
 	app.canvas.queue_redraw()
 	if _preview != null:
 		_preview.set_highlight("")
-	# 自带功能（类型挂载）补齐绑定：缺就按声明顺序追加到列表末尾（见 _sync_mounted）。
-	var spr0 := _find_ent(code)
-	if spr0 != null:
-		_sync_mounted(spr0)
+	# 自带功能（类型挂载）已在放置/载图时补齐（C09）：选中只刷新界面，不写数据
 	# 内容页隐藏时（关卡编辑器里点实体）不做整套左列/右栏重建，只记住选中，
 	# 等切到内容视图时 refresh_list 再重建。
 	if not _is_view_visible():
@@ -469,7 +466,8 @@ func _rebuild_right() -> void:
 
 ## 自带功能（挂载）——类型自带、实例不可删，与附加功能同一套绑定/内容模型：
 ## 值在 content/<功能id>/<内容ID>.json，未编辑过的实例 = 声明 default（游戏侧兜底）。
-## 选中实例时补齐缺失的挂载绑定（见 _sync_mounted）；列表里的锁 = 挂载码集。
+## 绑定补齐在放置/载图时完成（C09，FunctionDecl.fill_bindings，写 mounted 继承行）；
+## 选中事件只刷新界面。列表里的锁 = 挂载码集。
 
 ## 实体类型的挂载码集（{code: true}）；码由 ensure_codes 保证非空。
 func _mount_codes() -> Dictionary:
@@ -481,37 +479,6 @@ func _mount_codes() -> Dictionary:
 	for m in FunctionDecls.entity_mounts(manifest, sid):
 		out[str((m as Dictionary).get("code", ""))] = true
 	return out
-
-## 给当前实例补齐缺失的挂载绑定：缺的按声明顺序追加到末尾并重排 order。
-## 只在真的补了东西时写盘/标脏——常规路径（绑定齐全）零副作用。
-func _sync_mounted(spr: EntityNode) -> void:
-	var sid := spr.asset
-	var mounts: Array = FunctionDecls.entity_mounts(manifest, sid)
-	if mounts.is_empty():
-		return
-	var fns: Array = spr.functions
-	if not (fns is Array):
-		fns = []
-	var have := {}
-	for f in fns:
-		if f is Dictionary:
-			have[str((f as Dictionary).get("fn", ""))] = true
-	var missing: Array = []
-	for m in mounts:
-		var code := str((m as Dictionary).get("code", ""))
-		if code != "" and not have.has(code):
-			missing.append({"fn": code, "content": "", "name": "",
-				"order": 0, "parallel": false})
-	if missing.is_empty():
-		return
-	app.canvas._push_undo()   # 自动补绑定也是地图修改：进撤销栈，Ctrl+Z 整步退回
-	fns = fns.duplicate(true)
-	fns.append_array(missing)
-	for k in fns.size():
-		if fns[k] is Dictionary:
-			(fns[k] as Dictionary)["order"] = k + 1
-	spr.functions = fns
-	app.canvas._mark()
 
 # ──────────── 实例引用编辑（实体类型 fields 声明的 entity_ref/map_ref） ────────────
 

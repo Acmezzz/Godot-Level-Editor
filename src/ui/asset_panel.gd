@@ -9,6 +9,7 @@ const Th := preload("res://src/ui/ui_theme.gd")
 const MapStore := preload("res://src/map/map_store.gd")
 const FunctionDecls := preload("res://src/content/function_decl.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
+const ProjectAudit := preload("res://src/project/project_audit.gd")   # 使用统计（C3）
 
 var manifest := {}
 var save_manifest: Callable
@@ -302,7 +303,15 @@ func _fill_distribution(sid: String) -> void:
 	for c in _dist_rows.get_children():
 		_dist_rows.remove_child(c)
 		c.queue_free()
-	var dist := _instance_distribution(sid)
+	var usage := _usage(sid)
+	var dist: Dictionary = usage.get("by_map", {})
+	# C3：读不出的源文件必须显形——否则「没有实例」是假的
+	var unreadable: Array = usage.get("unreadable", [])
+	if not unreadable.is_empty():
+		_dist_rows.add_child(Kit.text_label(
+			"⚠ 统计不完整：%d 张地图读不出来（%s），这些图的引用未计入" % [
+				unreadable.size(), ", ".join(PackedStringArray(unreadable))],
+			Th.WARN, Th.FS_SMALL))
 	if dist.is_empty():
 		_dist_rows.add_child(Kit.hint_label("没有已放置实例", 220))
 		return
@@ -336,48 +345,25 @@ func _dist_map_section(map_name: String, rows: Array) -> Control:
 func _dist_head_text(map_name: String, n: int, open: bool) -> String:
 	return ("▾ " if open else "▸ ") + "%s × %d" % [map_name, n]
 
-## 全项目扫描：{地图名: [{id, x, y}, ...]}——实例分布与删除检查共用数据源
-## 当前打开的地图以画布内存为底：磁盘底册+内存补丁的混合体会让新增未保存的实例
-## 不出现、已删除的还留着。所以当前图直接用实体树生成，其余图读磁盘。
-func _instance_distribution(sid: String) -> Dictionary:
-	var out := {}
-	var maps := MapStore.read_all(manifest)
+## 全项目使用统计（C3）：唯一实现是 ProjectAudit.asset_usage（与引用自检共用读盘），
+## 这里只补「当前图以画布内存为底」的差异——磁盘底册+内存补丁的混合体
+## 会让新增未保存的实例不出现、已删除的还留着。
+func _usage(sid: String) -> Dictionary:
+	var cur := ""
 	var live_rows: Array = []
-	var canvas_ok: bool = host != null and host.canvas != null and is_instance_valid(host.canvas)
-	if canvas_ok:
+	if host != null and host.canvas != null and is_instance_valid(host.canvas):
+		cur = str(host.cur_map_name)
 		for e in host.canvas.ents_all():
 			var n := e as EntityNode
 			if n == null or n.asset != sid:
 				continue
 			var c: Vector2i = n.cell()
-			live_rows.append({
-				"id": n.code,
-				"x": c.x,
-				"y": c.y,
-			})
-	for map_name in maps:
-		var is_cur: bool = host != null and map_name == str(host.cur_map_name)
-		if is_cur:
-			# 当前图：磁盘内容完全不参与（画布才是真相）
-			if not live_rows.is_empty():
-				out[map_name] = live_rows
-			continue
-		var data: Dictionary = maps[map_name]
-		var rows: Array = []
-		for obj in data.get("objects", []):
-			if not (obj is Dictionary) or str((obj as Dictionary).get("asset", "")) != sid:
-				continue
-			rows.append({
-				"id": str((obj as Dictionary).get("code", "")),
-				"x": floori(float((obj as Dictionary).get("x", 0))),
-				"y": floori(float((obj as Dictionary).get("y", 0))),
-			})
-		if not rows.is_empty():
-			out[map_name] = rows
-	# 当前图尚未落盘（新建未保存）：read_all 里没有它，也要把画布实例列出来
-	if canvas_ok and not live_rows.is_empty() and not out.has(str(host.cur_map_name)):
-		out[str(host.cur_map_name)] = live_rows
-	return out
+			live_rows.append({"id": n.code, "x": c.x, "y": c.y})
+	return ProjectAudit.asset_usage(manifest, sid, cur, live_rows)
+
+## 兼容旧调用（删除检查只看每图实例数）：{地图名: [{id,x,y}]}
+func _instance_distribution(sid: String) -> Dictionary:
+	return _usage(sid).get("by_map", {})
 
 ## 分布行（只读）：id · 坐标。值在内容编辑器按实例填，这里不再提供第二套编辑入口
 ## （旧 props.stats 双写就是两个编辑面各写各的造成的分裂）。
@@ -449,7 +435,7 @@ func _delete_asset_checked(sid: String) -> void:
 	refresh_list()
 
 # —— 自带功能（挂载）编辑器 ——
-## 挂载 = 类型自带的 functions 声明 id 列表；实例绑定在选中时自动补齐（content_editor._sync_mounted）。
+## 挂载 = 类型自带的 functions 声明 id 列表；实例绑定在放置/载图时自动补齐（C09）。
 ## 声明本体（fields/kind/type）在清单 functions 池，属开发契约——这里只挂载，不编辑声明。
 func _mount_rows(edef: Dictionary) -> void:
 	for c in mounts_box.get_children():

@@ -541,12 +541,15 @@ func _open_lib(i: int) -> void:
 			app._set_status(" 先选一条内容")
 			return
 		pop.hide()
-		_duplicate_from_lib(fn_id, picked[0], name_edit.text)
+		_duplicate_from_lib(fn_id, picked[0], name_edit.text, i)
 	body.add_child(Kit.popup_buttons(on_ok, func(): pop.hide(), "复用", "取消"))
 	app._open_popup(pop)
 
-## 复制成新 ID：深拷贝 fields，name 用弹窗里填的；追加到实例附加功能末尾并选中。
-func _duplicate_from_lib(fn_id: String, old_id: String, new_name: String) -> void:
+## 复制成新 ID：深拷贝整份源内容（保留原文件不动），name 用弹窗里填的。
+## 继承行（类型挂载行）复用 = 把副本填进**这一行**，不追加同码第二条
+## ——追加会让「唯一继承行」无从辨认，也把挂载行变成了两条同码（C09）。
+## 附加功能复用 = 追加一条新绑定到末尾并选中。
+func _duplicate_from_lib(fn_id: String, old_id: String, new_name: String, bind_index := -1) -> void:
 	var src := _content_read(fn_id, old_id)
 	if src.is_empty():
 		app._set_status(" 读不到内容 %s（文件缺失或损坏）" % old_id)
@@ -572,13 +575,20 @@ func _duplicate_from_lib(fn_id: String, old_id: String, new_name: String) -> voi
 	if not (data.get("steps", null) is Array):
 		data["steps"] = []
 	# 新内容 + 新绑定都属于 staged 范围（A2）：先暂存，等正式保存/试玩再落盘
-	_staged[new_id] = {"fn_id": fn_id, "data": data, "ent": spr.code, "bind_index": -1}
 	commit()   # 复制库内容前先落盘当前表单待提交值（下标保持有效）
 	var fns := _current_fns().duplicate(true)
-	# 绑定里写执行码；码由 ensure_codes 保证非空
-	fns.append({"fn": FunctionDecls.fn_code(manifest, fn_id), "content": new_id, "name": nm,
-		"order": fns.size() + 1, "parallel": false})
-	_selected_fn = fns.size() - 1
+	if bind_index >= 0 and bind_index < fns.size() and fns[bind_index] is Dictionary:
+		# 继承行复用：内容填进原行，行身份（mounted 标记/时机/并行）原样保留
+		_staged[new_id] = {"fn_id": fn_id, "data": data, "ent": spr.code, "bind_index": bind_index}
+		(fns[bind_index] as Dictionary)["content"] = new_id
+		(fns[bind_index] as Dictionary)["name"] = nm
+		_selected_fn = bind_index
+	else:
+		_staged[new_id] = {"fn_id": fn_id, "data": data, "ent": spr.code, "bind_index": -1}
+		# 绑定里写执行码；码由 ensure_codes 保证非空
+		fns.append({"fn": FunctionDecls.fn_code(manifest, fn_id), "content": new_id, "name": nm,
+			"order": fns.size() + 1, "parallel": false})
+		_selected_fn = fns.size() - 1
 	_write_fns(spr, fns)
 	_refresh_all()
 	app._set_status(" 已复制「%s」为新内容 %s" % [nm, new_id])

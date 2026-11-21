@@ -58,7 +58,7 @@ func test_content_drift_audit() -> void:
 	m["functions"] = [{"id": "f1", "name": "F", "code": "CURCOD", "fields": []}]
 	ok(ContentStore.write(m, "f1", "A1B2", {"name": "ok", "function": "CURCOD", "fields": {}}), "一致内容写入")
 	ok(ContentStore.write(m, "f1", "C3D4", {"name": "drift", "function": "OLDCODE", "fields": {}}), "漂移内容写入")
-	var all := ProjectAudit._content_checks(m, {"A1B2": true})
+	var all := ProjectAudit._content_checks(m, {ProjectAudit._content_key("f1", "A1B2"): true})
 	var drift := 0
 	var orphan := 0
 	for e in all:
