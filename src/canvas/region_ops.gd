@@ -160,7 +160,7 @@ func _finish_region_move() -> void:
 	for e in cvs.ents_all():
 		var n := e as EntityNode
 		if n != null and n.asset != "" and cvs._region_sel.has_point(n.cell()):
-			n.position += Vector2(delta) * cvs.tile_px
+			n.position += cvs.grid_dir_px(delta.x, delta.y)
 	# 选区跟着搬到新位置，方便接着拖第二下
 	cvs._region_sel.position = from + delta
 	cvs._mark()

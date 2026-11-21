@@ -171,7 +171,8 @@ func display_size() -> Vector2:
 	if sf.size() >= 2:
 		var w := int(props.get(str(sf[0]), 1))
 		var h := int(props.get(str(sf[1]), 1))
-		return Vector2(maxi(w, 1) * tile_px, maxi(h, 1) * tile_px)
+		var cell := Vector2(grid_ref.tile) if grid_ref != null else Vector2.ONE * float(tile_px)
+		return Vector2(maxi(w, 1), maxi(h, 1)) * cell
 	return base_size if base_size != Vector2.ZERO else Vector2(tile_px, tile_px)
 
 func _size_fields() -> Array:

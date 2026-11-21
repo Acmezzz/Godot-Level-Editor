@@ -183,3 +183,20 @@ func grid_lines(vis: Rect2, map_rect: Rect2i) -> PackedVector2Array:
 			out.append(to_px(a2))
 			out.append(to_px(b2))
 	return out
+
+## 格像素尺寸的较大边（像素容差/热区半径的统一口径；正方形格 = 旧 tile_px 口径不变）
+func cell_max() -> float:
+	return maxf(float(tile.x), float(tile.y))
+
+## 地图像素包围盒（背景/视野拟合/界内判定的统一口径）。
+## 正交 = 精确矩形；等距 = 菱形网格多边形包围盒（精确）；六边 = 四角 cell 包围盒（近似）。
+func map_bounds(map_rect: Rect2i) -> Rect2:
+	if is_iso() or is_hex():
+		var pts := grid_polygon(map_rect.position, map_rect.end)
+		var mn := pts[0]
+		var mx := pts[0]
+		for p: Vector2 in pts:
+			mn = mn.min(p)
+			mx = mx.max(p)
+		return Rect2(mn, mx - mn)
+	return Rect2(Vector2(map_rect.position) * Vector2(tile), Vector2(map_rect.size) * Vector2(tile))

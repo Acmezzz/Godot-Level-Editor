@@ -97,9 +97,10 @@ func _fit() -> float:
 		return 0.0
 	var meta: Dictionary = host.app.canvas.map_data.get("meta", {})
 	# app.canvas 在宿主上是无类型 var，链式取值是 Variant：必须显式标注，否则推断失败
-	var tile_px: float = float(host.app.canvas.tile_px)
-	var w: float = float(int(meta.get("w", K.DEFAULT_MAP_W))) * tile_px
-	var h: float = float(int(meta.get("h", K.DEFAULT_MAP_H))) * tile_px
+	var tile_w: float = float(host.app.canvas.tile_w)
+	var tile_h: float = float(host.app.canvas.tile_h)
+	var w: float = float(int(meta.get("w", K.DEFAULT_MAP_W))) * tile_w
+	var h: float = float(int(meta.get("h", K.DEFAULT_MAP_H))) * tile_h
 	if w <= 0 or h <= 0:
 		return 0.0
 	return minf((size.x - 48) / w, (size.y - 48) / h)
@@ -110,9 +111,10 @@ func _scale() -> float:
 ## 预览视图原点：居中原点 + 用户 pan 偏移（绘制与命中测试共用同一变换）
 func _origin(s: float) -> Vector2:
 	var meta: Dictionary = host.app.canvas.map_data.get("meta", {})
-	var tile_px: float = float(host.app.canvas.tile_px)
-	var map_px := Vector2(float(int(meta.get("w", K.DEFAULT_MAP_W))) * tile_px,
-		float(int(meta.get("h", K.DEFAULT_MAP_H))) * tile_px) * s
+	var tile_w: float = float(host.app.canvas.tile_w)
+	var tile_h: float = float(host.app.canvas.tile_h)
+	var map_px := Vector2(float(int(meta.get("w", K.DEFAULT_MAP_W))) * tile_w,
+		float(int(meta.get("h", K.DEFAULT_MAP_H))) * tile_h) * s
 	return (size - map_px) * 0.5 + _pan
 
 ## 滚轮缩放预览：缩放前后鼠标指着的地图点不动。pan 屏幕偏移 = 新原点 − 新居中原点。
@@ -171,19 +173,21 @@ func _draw_map() -> void:
 	var meta: Dictionary = host.app.canvas.map_data.get("meta", {})
 	var mw := int(meta.get("w", K.DEFAULT_MAP_W))
 	var mh := int(meta.get("h", K.DEFAULT_MAP_H))
-	var tile := float(host.app.canvas.tile_px)
-	var map_px := Vector2(float(mw) * tile, float(mh) * tile) * s
+	var tile_w := float(host.app.canvas.tile_w)
+	var tile_h := float(host.app.canvas.tile_h)
+	var map_px := Vector2(float(mw) * tile_w, float(mh) * tile_h) * s
 	var origin := _origin(s)
 	draw_rect(Rect2(origin, map_px), Th.BG_BASE)
-	var step := tile * s
-	# 网格：缩略后逐格线过密就不画（避免一整片灰）
-	if step >= 6.0:
+	# 网格：缩略后逐格线过密就不画（避免一整片灰）；矩形格两轴步长分开
+	var step_x := tile_w * s
+	var step_y := tile_h * s
+	if minf(step_x, step_y) >= 6.0:
 		var grid_col := Color(1, 1, 1, 0.05)
 		for x in mw + 1:
-			var px := origin.x + x * step
+			var px := origin.x + x * step_x
 			draw_line(Vector2(px, origin.y), Vector2(px, origin.y + map_px.y), grid_col, 1.0)
 		for y in mh + 1:
-			var py := origin.y + y * step
+			var py := origin.y + y * step_y
 			draw_line(Vector2(origin.x, py), Vector2(origin.x + map_px.x, py), grid_col, 1.0)
 	draw_rect(Rect2(origin, map_px), Color(1, 1, 1, 0.25), false, 1.0)
 
@@ -207,7 +211,7 @@ func _draw_map() -> void:
 			var ai: int = host.app.canvas.source_of_asset(aid)
 			var cs := Vector2(host.app.canvas.asset_cell(aid))
 			var src := Rect2(Vector2(float(t[3]), float(t[4])) * cs, cs)
-			var dst := Rect2(origin + Vector2(float(t[0]), float(t[1])) * step, Vector2(step, step))
+			var dst := Rect2(origin + Vector2(float(t[0]) * step_x, float(t[1]) * step_y), Vector2(step_x, step_y))
 			var atex: Texture2D = null
 			if ai >= 0 and ai < texs.size():
 				atex = texs[ai] as Texture2D

@@ -134,7 +134,8 @@ static func size_fields(m: Dictionary, aid: String) -> Array:
 	return sf if sf is Array and (sf as Array).size() >= 2 else []
 
 ## 实例实际显示尺寸：声明了 sizeFields 就读 props，否则用声明的 editorSize。
-static func instance_size(m: Dictionary, aid: String, props: Dictionary, tile_px: int) -> Vector2:
+## `cell` = 画布格像素尺寸（Vector2，矩形格宽高可不同）。
+static func instance_size(m: Dictionary, aid: String, props: Dictionary, cell: Vector2) -> Vector2:
 	var sf := size_fields(m, aid)
 	if sf.size() >= 2:
 		var w := int(props.get(str(sf[0]), 1))
@@ -143,9 +144,9 @@ static func instance_size(m: Dictionary, aid: String, props: Dictionary, tile_px
 			w = 1
 		if h <= 0:
 			h = 1
-		return Vector2(w * tile_px, h * tile_px)
+		return Vector2(w, h) * cell
 	var sz := editor_size(m, aid)
-	return sz if sz != Vector2.ZERO else Vector2(tile_px, tile_px)
+	return sz if sz != Vector2.ZERO else cell
 
 ## 资产类型的连接语义（role: portal/exit/landing/trigger）；未声明返回空串。
 static func role_of(m: Dictionary, aid: String) -> String:

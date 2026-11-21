@@ -19,7 +19,7 @@ var thumbs:
 var manifest:
 	get: return cvs.manifest
 var tile_px:
-	get: return cvs.tile_px
+	get: return cvs.tile_w
 var grid:
 	get: return cvs.grid
 var _ent_by_id:
@@ -51,7 +51,7 @@ func _size_of(aid: String) -> Vector2:
 func entity_display_size(aid: String) -> Vector2:
 	var sz := _size_of(aid)
 	if sz == Vector2.ZERO:
-		sz = Vector2(tile_px, tile_px)
+		sz = Vector2(cvs.grid.tile)
 	return sz
 
 ## 实例级显示尺寸：带 sizeFields 的资产（事件区）尺寸写在实例 props 里，

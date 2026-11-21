@@ -141,7 +141,7 @@ src/
 | 键 | 用途 |
 |---|---|
 | `projectName` | 顶栏品牌 / 窗口标题 |
-| `tileSize` | 瓦片像素尺寸（默认 16） |
+| `tileSize` | 瓦片像素尺寸，标量或 `[w,h]` 矩形格（默认 16） |
 | `screenSize` | 游玩视野预览框尺寸（默认 `[640,360]`） |
 | `assets[]` | **统一资产表**：`kind` 分 `scene`/`entity`；scene 用 `shape` 分 `tile`（`atlas`+`cell`+`palette[]`）与 `image`（`texture`+`editorSize`+`anchor`）；`anchor` 对两类都成立（缺省 `center`） |
 | （`assets[]` 里 `kind=entity` 的条目） | 实体类型：`id` / `name` / `thumb` / `prefab` / `editorSize` / `sizeFields` / `functions[]`（自带功能挂载）/ `fields[]` / `role` / `code` / `visual` |
@@ -161,7 +161,7 @@ src/
 > 游戏工程该怎样声明清单/读地图/实现功能，见 **[GAME_SIDE_STANDARD.md](GAME_SIDE_STANDARD.md)**（数据契约唯一权威）。
 
 **实体占位尺寸**：`editorSize: [w,h]` 优先；否则读 `prefab` 的第一个碰撞形状
-（Rectangle 用 `size`，Circle 用 `radius*2`，Capsule 用 `radius*2 × height`）；都没有 = 用 1 格（tileSize×tileSize）。
+（Rectangle 用 `size`，Circle 用 `radius*2`，Capsule 用 `radius*2 × height`）；都没有 = 用 1 格（tileSize 尺寸）。
 
 **角色声明**：`assets[].role` = `portal` / `exit` / `landing` / `trigger`（连接语义标签）。
 **只认清单显式声明**——未声明的实体就是普通实体，画布不猜、不画连接标记（零兼容）。
@@ -624,7 +624,7 @@ src/
 | 检查项 | 级别 |
 |---|---|
 | `assets` 不是数组 / 资产 `id` 空或重复 / `kind` 不在 `scene`/`entity` | 错误 |
-| `functions`·`conditions`·`steps`·`audio`·`triggers` 不是数组或对象 / `tileSize` 非正数 | 错误 |
+| `functions`·`conditions`·`steps`·`audio`·`triggers` 不是数组或对象 / `tileSize` 非正数或 `[w,h]` 非两正数 | 错误 |
 | 清单出现 `tiles` / `entities`（已并入 `assets[]`） | 错误（跑 `tools/migrate_project.gd`） |
 | scene: `shape` 不在 `tile`/`image` / `atlas` 与 `texture` 恰好给一个 / `atlas` 为空或含 `..` / 调色板条目缺 `cell` / `gridProjection` 取值非法 | 错误 |
 | entity: 声明了 `shape`（实体无形状）/ `prefab` 与 `visual` 都没有 / `editorSize` 形状非法 / `fields` 非数组 | 错误 |
@@ -695,7 +695,7 @@ godot --headless --path "<编辑器工程>" --script res://tests/run_tests.gd
 
 约定：套件 `extends "res://tests/_suite_base.gd"`，方法名 `test_` 开头即被发现；
 `ok()` / `eq()` 收集失败；**每个用例至少一条断言**（崩溃中断的用例断言数不增长，
-runner 判 FAIL——防止半路崩掉变成假 PASS）。退出码非 0 = 有失败。当前 10 套件 74 用例。
+runner 判 FAIL——防止半路崩掉变成假 PASS）。退出码非 0 = 有失败。当前 10 套件 75 用例。
 
 截图辅助 `tools/screenshot.gd`（模式清单见文件头注释）与警告扫描 `tools/warn_scan.gd`
 （headless 全量加载 src/ 校验可加载性）；`tools/migrate_project.gd` 是一次性迁移脚本
@@ -731,6 +731,8 @@ godot --headless --path "<编辑器工程>" --script res://tools/migrate_project
 - 六边形（`gridProjection: hexagonal`）画布同样全对齐（odd-r 错行 + 尖顶，与 Godot 默认
   HEXAGON/STACKED/HORIZONTAL 逐位一致，探针实测）：命中 = 最近中心 Voronoi，格线 = 行界折线 + 行内竖边；
   区域/笔刷/地图边界外框按四角 cell 包围盒近似。
+- 格尺寸（`tileSize`）可声明 `[w,h]` 矩形格：全部格对齐换算走 GridSpace（tile Vector2 口径），
+  画布/幽灵/预览/缩放拟合/热区容差自适应；等距 2:1 菱形、六边配矩形格同走各自公式。
 - 层参数（parallax/ySort/offset/scale）与层内三段遮挡容器由画布直接预览，
   **没有层参数编辑控件**（手改地图 JSON）；碰撞自动生成不区分声明形状（按整格矩形推）。
 - 排序点（`sortAnchor`）在画布上只参与数据，选中十字标记未实现。

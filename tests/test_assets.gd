@@ -46,11 +46,11 @@ func test_cell_size_non_square() -> void:
 
 func test_editor_size_and_instance_size() -> void:
 	eq(AD.editor_size(_m(), "bg"), Vector2(640, 360), "editorSize 原样")
-	eq(AD.instance_size(_m(), "bg", {}, 16), Vector2(640, 360), "无 sizeFields 用 editorSize")
+	eq(AD.instance_size(_m(), "bg", {}, Vector2(16, 16)), Vector2(640, 360), "无 sizeFields 用 editorSize")
 	var m2 := _m()
 	(m2.assets[1] as Dictionary)["sizeFields"] = ["w", "h"]
-	eq(AD.instance_size(m2, "bg", {"w": 3, "h": 2}, 16), Vector2(48, 32), "sizeFields 读 props 格数")
-	eq(AD.instance_size(m2, "bg", {"w": 0, "h": -5}, 16), Vector2(16, 16), "非法格数兜底 1 格")
+	eq(AD.instance_size(m2, "bg", {"w": 3, "h": 2}, Vector2(16, 16)), Vector2(48, 32), "sizeFields 读 props 格数")
+	eq(AD.instance_size(m2, "bg", {"w": 0, "h": -5}, Vector2(16, 16)), Vector2(16, 16), "非法格数兜底 1 格")
 
 func test_live_list_is_original() -> void:
 	var m := _m()

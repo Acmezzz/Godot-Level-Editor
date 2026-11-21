@@ -41,9 +41,17 @@ static func validate(data: Dictionary, project_dir := "") -> Array[Dictionary]:
 	if data.has("collisionTypes"):
 		_validate_collision_types(data, issues)
 	_validate_playtest(data, issues)
+	# tileSize：正数（正方形格）或 [w,h] 两正数（矩形格，R-01 批 1c）
 	var tile_size = data.get("tileSize", 16)
-	if not (tile_size is int or tile_size is float) or float(tile_size) <= 0.0:
-		_add(issues, "error", "tileSize", "must be a positive number")
+	if tile_size is Array:
+		var bad := (tile_size as Array).size() != 2
+		for v in (tile_size as Array):
+			if not (v is int or v is float) or float(v) <= 0.0:
+				bad = true
+		if bad:
+			_add(issues, "error", "tileSize", "must be a positive number or [w, h] of two positive numbers")
+	elif not (tile_size is int or tile_size is float) or float(tile_size) <= 0.0:
+		_add(issues, "error", "tileSize", "must be a positive number or [w, h] of two positive numbers")
 	# C-15 混投影：画布口径是「任一 tile 资产声明非正交投影即整图按它」，混用会静默错位——警告
 	var projs := {}
 	var assets_arr = data.get("assets", null)

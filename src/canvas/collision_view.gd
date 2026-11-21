@@ -13,7 +13,6 @@ extends Node2D
 const CollisionTypes := preload("res://src/assets/collision_types.gd")
 
 var layer: TileMapLayer
-var tile_px := 16
 var grid_ref: GridSpace = null   # GridSpace 引用：cell 多边形随投影（等距 = 菱形）
 var canvas_ref   # 宿主编码画布：读 _collision_meta 做类型化分色分形
 var manifest := {}   # 清单（declared pool 的颜色来源）
@@ -29,9 +28,9 @@ static func _colors_of(d: Dictionary) -> Array:
 		base = Color.from_hsv(h * 0.28, 0.55, 0.9)   # 限制在暖红~黄区间的柔和色
 	return [Color(base, 0.28), Color(base.lightened(0.2), 0.55)]
 
+## 兼容转发（tile_px 参数退役：格尺寸随 grid_ref.tile，兜底 16×16）
 func setup(p_layer: TileMapLayer, p_tile_px: int, p_grid: GridSpace = null) -> Node2D:
 	layer = p_layer
-	tile_px = p_tile_px
 	grid_ref = p_grid
 	return self
 
@@ -71,12 +70,13 @@ func _draw() -> void:
 		draw_colored_polygon(poly, cols[0])
 		draw_polyline(poly + PackedVector2Array([poly[0]]), cols[1], 1.0)
 
-## cell 覆盖多边形：有 grid_ref = 格多边形（等距 = 菱形）；无 = 正交方形（兜底）
+## cell 覆盖多边形：有 grid_ref = 格多边形（等距 = 菱形/六边 = 六角）；无 = 正交方形（兜底）
 func _cell_poly(c: Vector2i) -> PackedVector2Array:
 	if grid_ref != null:
 		return grid_ref.cell_polygon(c)
-	var o := Vector2(c) * tile_px
-	return PackedVector2Array([o, o + Vector2(tile_px, 0), o + Vector2(tile_px, tile_px), o + Vector2(0, tile_px)])
+	var cs := Vector2(16, 16)
+	var o := Vector2(c) * cs
+	return PackedVector2Array([o, o + Vector2(cs.x, 0), o + cs, o + Vector2(0, cs.y)])
 
 ## 多边形包围盒（斜坡三角形底座）
 func _bbox_of(poly: PackedVector2Array) -> Rect2:

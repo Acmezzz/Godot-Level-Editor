@@ -40,7 +40,7 @@
 |---|---|---|
 | `version` | int | 缺省补 `1`；只作迁移锚点，编辑器不按版本号拒绝清单 |
 | `projectName` | string | 顶栏品牌名，缺省空 |
-| `tileSize` | number | 必须 > 0（否则清单报错）；缺省 16。瓦片边长像素 |
+| `tileSize` | number 或 [w,h] | 正数（正方形格）或两个正数（矩形格，宽高可不同），否则清单报错；缺省 16。格宽/格高像素 |
 | `screenSize` | [w,h] | 游玩视野框尺寸，缺省 `[640,360]`；纯编辑器视觉 |
 | `assets` | array | **统一资产表**，`kind` 区分场景/实体，见 2.2 / 2.4 |
 | `tiles` | — | 非法键：出现即校验报错；瓦片资产在 `assets[]`（`kind: "scene"`, `shape: "tile"`） |
@@ -182,7 +182,7 @@ solid+矩形碰撞：`col.set_cell(cell, 0, Vector2i(4,0))`。
 | `visual` | 二者之一 | 无 prefab 时的编辑器呈现：`{mode: "rect"/"sprite"/"none", color, alpha}`；`prefab` 与 `visual` 都没有 = 校验报错 |
 | `thumb` | 否 | 缩略图 PNG 路径；缺失时编辑器按 `visual` 声明画占位 |
 | `frames` | 否 | 帧动画贴图路径数组（按播放顺序）；编辑器画布按 8fps 循环**预览**（只确认帧序），游戏侧自定播放节奏。预览优先级：thumb > texture（image 资产）> frames 首帧 |
-| `editorSize` | 否 | `[w,h]` **像素**，画布占位尺寸。缺省读 prefab 的第一个碰撞形状；再缺用 1 格（tileSize×tileSize） |
+| `editorSize` | 否 | `[w,h]` **像素**，画布占位尺寸。缺省读 prefab 的第一个碰撞形状；再缺用 1 格（tileSize 尺寸） |
 | `sizeFields` | 否 | `["w","h"]`：尺寸写在实例 `props` 的这两个键里（格数），取代「按 id 硬编码矩形」 |
 | `role` | 否 | 连接语义：`portal` / `exit` / `landing` / `trigger`；见 2.6 |
 | `code` | 否 | 4 位实体身份码。缺省由编辑器补发并随清单写回；**不要手工改动** |
@@ -574,8 +574,9 @@ BGM 切换、环境音触发、音效播放在哪一步响起，都是功能代�
 | 4 | 图集内格坐标 y |
 | 5 | 变换位 alt（0-7）；`alt != 0` 的瓦片用对应变换落盘/渲染，缺省 0 |
 
-瓦片原点：格 `(x,y)` 的像素矩形 = `Rect2(x*tileSize, y*tileSize, tileSize, tileSize)`，
-`tileSize` 取自清单，不是地图。**游戏侧的瓦片像素常量必须与清单 `tileSize` 一致，否则整体错位**
+瓦片原点：格 `(x,y)` 的像素矩形 = `Rect2(x*TILE_W, y*TILE_H, TILE_W, TILE_H)`，
+TILE_W/TILE_H = 清单 `tileSize`（标量或 `[w,h]` 矩形格），取自清单，不是地图。
+**游戏侧的瓦片像素常量必须与清单 `tileSize` 一致，否则整体错位**
 （建议游戏侧也从清单读 `tileSize`，而不是写死 16）。
 
 ### 3.3 碰撞条目 `collision[]`
@@ -640,13 +641,13 @@ v5 的定长数组条目校验报错（跑 `tools/migrate_project.gd`）。
 | `zPolicy` | 否 | `"auto"`（缺省）/ `"below"` / `"above"`——**同层内分组**，不是全局 z。缺省省略 |
 | `sortAnchor` | 否 | `[dx, dy]` 像素，覆盖资产排序点偏移（悬空招牌、挂墙火把）。缺省省略 |
 
-**x/y 与像素的换算**（由资产的 `anchor` 决定，缺省 `center`）：
+**x/y 与像素的换算**（TILE_W/TILE_H = 清单 `tileSize` 标量或 `[w,h]`；由资产的 `anchor` 决定，缺省 `center`）：
 
 | `anchor` | 像素位置（节点锚点世界坐标） |
-|---|---|
-| `center`（缺省） | `((x + 0.5) * tileSize, (y + 0.5) * tileSize)` |
-| `top_left` | `(x * tileSize, y * tileSize)` |
-| `bottom_center` | `((x + 0.5) * tileSize, (y + 1) * tileSize)` |
+|------|---|
+| `center`（缺省） | `((x + 0.5) * TILE_W, (y + 0.5) * TILE_H)` |
+| `top_left` | `(x * TILE_W, y * TILE_H)` |
+| `bottom_center` | `((x + 0.5) * TILE_W, (y + 1) * TILE_H)` |
 
 锚点决定的是「数据坐标落在格的哪个位置」，**与贴图尺寸无关**：同一格的树不管画多高，
 脚底都在该格底边。视觉矩形的左上角 = 锚点像素 − 锚点偏移（偏移由 `anchor` 和实例显示尺寸算出）。
@@ -827,14 +828,18 @@ func _apply_transform(inst: Node2D, t: Dictionary) -> void:
 新工程从零接入时，按 §10 的检查清单逐条自己实现；下面是最小可用的读取骨架：
 
 ```gdscript
-## TILE 与清单 tileSize 一致；每个资产的 cell 可非正方形（缺省 = TILE）
+## TILE_W/TILE_H 与清单 tileSize 一致（标量或 [w,h]）；每个资产的 cell 可非正方形（缺省 = TILE_W×TILE_H）
 static func build(root: Node2D, data: Dictionary, manifest: Dictionary) -> Dictionary:
 	var meta: Dictionary = data.get("meta", {})
 	var mw := int(meta.get("w", 120))
 	var mh := int(meta.get("h", 56))
 	# 清单 assets[] 里 shape=tile 的条目 → {资产 id: source_id}；磁盘瓦片条目写的是资产 id
 	var ts := TileSet.new()
-	ts.tile_size = Vector2i(int(manifest.get("tileSize", 16)), int(manifest.get("tileSize", 16)))
+	var tw = manifest.get("tileSize", 16)
+	if tw is Array and (tw as Array).size() == 2:
+		ts.tile_size = Vector2i(int((tw as Array)[0]), int((tw as Array)[1]))
+	else:
+		ts.tile_size = Vector2i(int(tw), int(tw))
 	var src_of := {}
 	for a in manifest.get("assets", []):
 		if not (a is Dictionary) or str(a.get("kind", "")) != "scene" or str(a.get("shape", "")) != "tile":
@@ -960,7 +965,7 @@ func _apply_door(inst: Node, fn: Dictionary) -> void:
 | `id` | 全局唯一，且**用英文小写下划线**——它就是地图 `scene` 值，也是游戏侧查表的键 |
 | `prefab` | 相对工程根的 `.tscn`。**根节点必须是 `Node2D` 系**，否则 `position` 注入无效 |
 | `thumb` | 96×96 左右的 PNG 到 `editor/previews/`。没有它画布上是空白方块，但仍可放置 |
-| `editorSize` | 像素。省略则编辑器读 prefab 第一个碰撞形状；再省略按 1 格（tileSize×tileSize）画 |
+| `editorSize` | 像素。省略则编辑器读 prefab 第一个碰撞形状；再省略按 1 格（tileSize 尺寸）画 |
 | `functions` | 只挂已在顶层 `functions` 声明过的功能 id；资产目录「自带功能」UI 可点选挂载，也可手写清单 |
 | 缩略图烘焙 | 自己写一个截图脚本把 prefab 渲染成 PNG（需窗口，不能 headless）；编辑器只读 `thumb` 路径 |
 
@@ -986,8 +991,8 @@ func _apply_door(inst: Node, fn: Dictionary) -> void:
 
 1. **源 0 已烘焙**：`assets/tiles/terrain_tiles.tres` 必须存在且源 0 有 `(4,0)` 隐形碰撞格。
    游戏侧按 `assets[]` 里的 `id` 建 `{id → source_id}` 映射，映射顺序由游戏侧自定。
-2. **`TILE` 一致性**：运行时 `TileSet` 的 `tile_size` 必须等于清单 `tileSize`；
-   每个 `TileSetAtlasSource.texture_region_size` 取该资产的 `cell`（可非正方形，缺省 = `tileSize`）。
+2. **`TILE` 一致性**：运行时 `TileSet` 的 `tile_size` 必须等于清单 `tileSize`（标量 = 正方形，`[w,h]` = 矩形格）；
+   每个 `TileSetAtlasSource.texture_region_size` 取该资产的 `cell`（可非正方形，缺省 = 清单 tileSize）。
 3. **PNG 必须在 `res://` 下且已导入**。游戏侧加载用 `load("res://" + rel)`，
    路径含 `..` 直接跳过（安全，但静默——查不到图集时只 `push_warning`）。
 

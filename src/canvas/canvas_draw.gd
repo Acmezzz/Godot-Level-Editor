@@ -19,11 +19,10 @@ func _draw() -> void:
 	var meta0: Dictionary = cvs.map_data.get("meta", {})
 	var map_rect := Rect2i(0, 0, int(meta0.get("w", K.DEFAULT_MAP_W)), int(meta0.get("h", K.DEFAULT_MAP_H)))
 	if cvs.show_grid:
-		var origin = Vector2(map_rect.position) * cvs.tile_px
-		var endv = Vector2(map_rect.end) * cvs.tile_px
 		# 网格按可视区间裁剪——120×56 满图每帧 176 条抗锯齿线，鼠标一动就全付。
-		# 可见世界矩形由 canvas_transform 反变换得到（headless 无视口时退回整图）。
-		var vis := Rect2(origin, endv - origin)
+		# 可见世界矩形由 canvas_transform 反变换得到（headless 无视口时退回整图包围盒）。
+		var mb = cvs.grid.map_bounds(map_rect)
+		var vis := Rect2(mb.position, mb.size)
 		var vp: Viewport = cvs.get_viewport()
 		if vp != null:
 			vis = vp.get_canvas_transform().affine_inverse() * Rect2(Vector2.ZERO, vp.get_visible_rect().size)
@@ -33,7 +32,7 @@ func _draw() -> void:
 		
 	# 幽灵预览：只看「手上拿着什么」，没有工具要判断
 	var on_ent: bool = cvs.place_kind == "object"
-	if Rect2(Vector2(map_rect.position) * cvs.tile_px, Vector2(map_rect.size) * cvs.tile_px).has_point(pos):
+	if cvs.grid.map_bounds(map_rect).has_point(pos):
 		if on_ent:
 			# 摆放模式：手上拿着资产就画它的幽灵，否则画「点这里会选中」的提示框
 			if cvs.stamp_asset != "":
@@ -42,7 +41,7 @@ func _draw() -> void:
 				var gsz: Vector2 = cvs.entity_display_size(cvs.stamp_asset)
 				# 带 sizeFields 的资产落下时带 2×2 默认尺寸（tool_ops._stamp），幽灵按同一尺寸画
 				if ad.get("sizeFields", null) is Array:
-					gsz = Vector2(2, 2) * float(cvs.tile_px)
+					gsz = Vector2(2, 2) * Vector2(cvs.grid.tile)
 				var anchor: Vector2 = pos
 				if cvs.snap_to_grid:
 					var g: Vector2 = cvs.grid.to_grid(pos) - unit
@@ -174,7 +173,7 @@ func _draw() -> void:
 	# 框选集合高亮（小黄框）
 	for s in cvs.selected_multi:
 		if is_instance_valid(s):
-			var mr: Rect2 = (s as EntityNode).rect().grow(maxf(cvs.tile_px * 0.25, 2.0))
+			var mr: Rect2 = (s as EntityNode).rect().grow(maxf(cvs.grid.cell_max() * 0.25, 2.0))
 			cvs.draw_rect(mr, Color(1.0, 0.85, 0.3, 0.85), false, 1.5)
 	# 多选集合的外接框：明确标出「这一块可以整体拖动」。
 	# 框内空白处按下就能拖，鼠标悬停在框内时加亮，给出可操作性暗示。
@@ -230,11 +229,11 @@ func _draw() -> void:
 			var d0: Dictionary = e0
 			var gaid := str(d0.get("asset", ""))
 			var gprops0: Dictionary = d0.get("props", {}) if d0.get("props", {}) is Dictionary else {}
-			var gsz0: Vector2 = AssetDecl.instance_size(cvs.manifest, gaid, gprops0, cvs.tile_px)
+			var gsz0: Vector2 = AssetDecl.instance_size(cvs.manifest, gaid, gprops0, Vector2(cvs.grid.tile))
 			var ep: Vector2 = Vector2(cvs._region_sel.position + md) \
 				+ Vector2(float(d0.get("dx", 0.0)), float(d0.get("dy", 0.0)))
 			var gu := EntityNode.anchor_unit_of(AssetDecl.by_id(cvs.manifest, gaid))
-			var gr := Rect2((ep + gu) * cvs.tile_px - EntityNode.anchor_off_of(gu, gsz0), gsz0)
+			var gr := Rect2(cvs.grid.to_px(ep + gu) - EntityNode.anchor_off_of(gu, gsz0), gsz0)
 			var gtex0: Texture2D = cvs.thumbs.get(gaid)
 			if gtex0 != null:
 				cvs.draw_texture_rect(gtex0, gr, false, Color(1, 1, 1, 0.6))
@@ -257,7 +256,7 @@ func _draw() -> void:
 				if tex3 != null:
 					var cs3: Vector2i = cvs.asset_cell(aid3)
 					cvs.draw_texture_rect_region(tex3,
-						Rect2(Vector2(tc) * cvs.tile_px, Vector2(cs3)),
+						cvs.grid.cell_tex_rect(tc, cs3),
 						Rect2(Vector2(int((t as Array)[3]), int((t as Array)[4])) * Vector2(cs3), Vector2(cs3)),
 						Color(1, 1, 1, 0.5))
 		for t in cvs._region_clip.get("collision", []):
@@ -267,11 +266,11 @@ func _draw() -> void:
 		for t in cvs._region_clip.get("ents", []):
 			var gaid2 := str(t.get("asset", ""))
 			var gprops: Dictionary = t.get("props", {}) if t.get("props", {}) is Dictionary else {}
-			var gsz: Vector2 = AssetDecl.instance_size(cvs.manifest, gaid2, gprops, cvs.tile_px)
+			var gsz: Vector2 = AssetDecl.instance_size(cvs.manifest, gaid2, gprops, Vector2(cvs.grid.tile))
 			# dx/dy 是格坐标（浮点）：与落位后的 apply_grid 同一口径
 			var eg: Vector2 = Vector2(org) + Vector2(float(t.get("dx", 0.0)), float(t.get("dy", 0.0)))
 			var gu2 := EntityNode.anchor_unit_of(AssetDecl.by_id(cvs.manifest, gaid2))
-			var er := Rect2((eg + gu2) * cvs.tile_px - EntityNode.anchor_off_of(gu2, gsz), gsz)
+			var er := Rect2(cvs.grid.to_px(eg + gu2) - EntityNode.anchor_off_of(gu2, gsz), gsz)
 			var tex: Texture2D = cvs.thumbs.get(gaid2)
 			if tex == null:
 				var ad2 := AssetDecl.by_id(cvs.manifest, gaid2)

@@ -81,3 +81,17 @@ func test_grid_hex() -> void:
 	eq(gp, PackedVector2Array([Vector2(0, 0), Vector2(32, 0), Vector2(32, 16), Vector2(0, 16)]), "六边格矩形 = 四角 cell 包围盒")
 	var segs: PackedVector2Array = g.grid_lines(Rect2(0, 0, 48, 48), Rect2i(0, 0, 3, 3))
 	ok(segs.size() == 80, "六边格线 40 段 = 80 点")
+
+func test_grid_rect_cells() -> void:
+	var g = GridSpaceScript.new(Vector2i(32, 16), "orthogonal")
+	eq(g.to_px(Vector2(3, 4)), Vector2(96, 64), "矩形格正交 to_px")
+	eq(g.to_grid(Vector2(96, 64)), Vector2(3, 4), "矩形格正交往返")
+	eq(g.map_bounds(Rect2i(0, 0, 3, 3)), Rect2(0, 0, 96, 48), "矩形格 map_bounds = 精确矩形")
+	var gi = GridSpaceScript.new(Vector2i(32, 16), "isometric")
+	eq(gi.cell_center_px(Vector2i(1, 0)), Vector2(16, 16), "矩形格等距 2:1 菱形中心")
+	eq(gi.to_grid(Vector2(16, 16)), Vector2(1.5, 0.5), "矩形格等距 to_grid 落在 (1,0) 格内")
+	eq(gi.map_bounds(Rect2i(0, 0, 2, 2)), Rect2(-32, 0, 64, 32), "等距 map_bounds = 菱形包围盒")
+	var gh = GridSpaceScript.new(Vector2i(32, 16), "hexagonal")
+	eq(gh.cell_center_px(Vector2i(0, 1)), Vector2(32, 20), "矩形格六边 (0,1) 中心")
+	eq(gh.to_px(Vector2(1, 0)), Vector2(48, 8), "矩形格六边 to_px (1,0) 中心")
+	eq(gh.to_grid(Vector2(48, 8)), Vector2(1, 0), "矩形格六边往返")

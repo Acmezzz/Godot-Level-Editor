@@ -82,7 +82,8 @@ var _collision_meta: Dictionary = {}
 var thumbs := {}
 ## 实体类型 → 编辑器占位尺寸（像素）。有值时画布按该尺寸画框（比缩略图更接近游戏碰撞）。
 var ent_sizes := {}
-var tile_px := 16
+var tile_w := 16   # 格宽（像素）；tileSize 标量时 tile_h = tile_w
+var tile_h := 16   # 格高（像素）；矩形格 [w,h]（R-01 批 1c）
 var grid   # GridSpaceScript：格↔像素转换层（正交/等距），_cell_of 与落点换算走它
 var modified_flag := false
 var cam_pos := Vector2.ZERO      # 相机中心（世界坐标）
@@ -102,8 +103,8 @@ func _update_cam() -> void:
 	# 层参数预览：parallax ≠ 1 的层按相机位移反向平移（远景半速、0 = 固定）。
 	# offset/scale 在 load_data 时已作用到层容器；这里只补视差分量。
 	var meta: Dictionary = map_data.get("meta", {}) if map_data != null else {}
-	var mw := int(meta.get("w", 0)) * tile_px
-	var mh := int(meta.get("h", 0)) * tile_px
+	var mw := int(meta.get("w", 0)) * tile_w
+	var mh := int(meta.get("h", 0)) * tile_h
 	var center := Vector2(mw * 0.5, mh * 0.5)
 	for n in layer_ents:
 		var root := n as Node2D
@@ -133,7 +134,7 @@ func _build_tileset() -> bool:
 			"atlas_abs": str(d.get("atlas_abs", "")),
 			"cell": AssetDecl.cell_size(manifest, aid),
 			"ysort": ys})
-	var got := TilesetCache.build(lst, Vector2i(tile_px, tile_px), _map_projection())
+	var got := TilesetCache.build(lst, Vector2i(tile_w, tile_h), _map_projection())
 	if got.is_empty():
 		return false
 	atlas_imgs = got.imgs
@@ -169,8 +170,14 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	map_data = data
 	cur_map_name = map_name
 	# 清单 tileSize 是「一格 = 多少像素」的唯一真相：网格/边界/实体对齐/碰撞视图全用它。
-	# 此前只建 tileset 时读了它，tile_px 本体从不赋值（恒 16）——tileSize≠16 的项目全画布错位。
-	tile_px = int(manifest.get("tileSize", 16))
+	# 标量 = 正方形格；[w,h] = 矩形格（R-01 批 1c）。grid.tile 是画布侧唯一真相。
+	var ts = manifest.get("tileSize", 16)
+	if ts is Array and (ts as Array).size() == 2:
+		tile_w = int((ts as Array)[0])
+		tile_h = int((ts as Array)[1])
+	else:
+		tile_w = int(ts)
+		tile_h = tile_w
 	# 节点全部重建：选区/剪贴板引用失效，清空（剪贴板只存模板数据可保留，但引用选区必须清）
 	selected_entity = null
 	selected_multi.clear()
@@ -213,7 +220,7 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	add_child(map_root)
 	_build_tileset()
 	# 格↔像素转换层（正交/等距）：瓦片资产清单就位后才能判投影
-	grid = GridSpaceScript.new(Vector2i(tile_px, tile_px), _map_projection())
+	grid = GridSpaceScript.new(Vector2i(tile_w, tile_h), _map_projection())
 	# 背景：整块铺满视口（比地图尺寸大得多），作为地图之外区域的底色
 	var meta: Dictionary = data.get("meta", {})
 	# 分层身份码：地图段。老图没有就补发（保存在 meta.code，地图改名不影响它）
@@ -237,7 +244,7 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	bg.z_index = -10
 	# 覆盖范围远大于地图（相机可平移出界）。纯按地图尺寸算，不查 viewport——
 	# load_data 可能在节点还没进树时被调用，get_viewport_rect() 会报错。
-	var map_size := Vector2(mw * tile_px, mh * tile_px)
+	var map_size := Vector2(mw * tile_w, mh * tile_h)
 	bg.size = map_size * 6.0
 	bg.position = -map_size * 2.5
 	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -247,7 +254,7 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	field.name = "Field"
 	field.color = Color("#101520")
 	field.position = Vector2.ZERO
-	field.size = Vector2(mw * tile_px, mh * tile_px)
+	field.size = Vector2(mw * tile_w, mh * tile_h)
 	field.z_index = -9
 	field.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	map_root.add_child(field)
@@ -306,7 +313,7 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	coll_view.name = "CollisionView"
 	coll_view.z_index = 2
 	map_root.add_child(coll_view)
-	coll_view.setup(collision, tile_px, grid)
+	coll_view.setup(collision, tile_w, grid)
 	coll_view.canvas_ref = self   # 读 _collision_meta 做类型化分色分形
 	coll_view.manifest = manifest   # 碰撞类型颜色按清单 collisionTypes 声明
 	# 涂瓦片：tiles = {层id: [[x,y,资产id,ax,ay]...]}（5 元，第 3 位是资产 id 字符串）
@@ -429,7 +436,7 @@ func set_thumbs(t: Dictionary) -> void:
 func _on_spawn(pos: Vector2) -> bool:
 	if spawn == null or not is_instance_valid(spawn):
 		return false
-	return pos.distance_to(spawn.position) <= tile_px * 0.6
+	return pos.distance_to(spawn.position) <= grid.cell_max() * 0.6
 
 ## 拖动出生点：位置对齐到格中心（数据只存格坐标，浮点位置保存会被取整回去）
 func _drag_spawn_to(pos: Vector2) -> void:
@@ -525,9 +532,9 @@ func _fit_view() -> void:
 		used = Rect2i(0, 0, 10, 10)
 	cam_pos = grid.cell_center_px(Vector2i(used.get_center()))
 	var vp := get_viewport_rect().size
-	var w := maxf(float(used.size.x), 1.0) * tile_px
-	var h := maxf(float(used.size.y), 1.0) * tile_px
-	zoom = clampf(minf(vp.x / w, vp.y / h) * 0.9, 0.5, 6.0)
+	# 视野拟合用地图像素包围盒（等距/六边 = 多边形包围盒，不是格子数×格宽）
+	var pb = grid.map_bounds(used)
+	zoom = clampf(minf(vp.x / maxf(pb.size.x, 1.0), vp.y / maxf(pb.size.y, 1.0)) * 0.9, 0.5, 6.0)
 	_update_cam()
 
 # —— 选择实体 ——
