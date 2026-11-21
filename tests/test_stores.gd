@@ -12,7 +12,7 @@ func _fake_manifest() -> Dictionary:
 func _wipe() -> void:
 	if DirAccess.dir_exists_absolute(TMP):
 		DirAccess.remove_absolute(TMP)   # 递归删？remove_absolute 不递归——先清文件再删目录
-	for f in ["maps/t.json", "content/f1/x.json", "content/f1/y.json", "maps/t.history.1.json"]:
+	for f in ["maps/t.json", "maps/t2.json", "content/f1/x.json", "content/f1/y.json", "maps/t.history.1.json"]:
 		var p := TMP.path_join(f)
 		if FileAccess.file_exists(p):
 			DirAccess.remove_absolute(p)

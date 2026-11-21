@@ -37,7 +37,7 @@ var tile_list: ItemList
 var ent_list: ItemList
 ## 碰撞层左栏：说明 + 类型/形状选择器
 var grid_hint: VBoxContainer
-# 下面三个成员只在 ui/editor_layout.gd（赋值）与 core/editor_state.gd（读取）经 app. 访问，
+# 下面三个成员只在 ui/editor_layout.gd（赋值）与 canvas/editor_state.gd（读取）经 app. 访问，
 # 本类确实不直接使用——但必须在这里声明（动态赋值会静默失败），故定向压制警告。
 @warning_ignore("unused_private_class_variable")
 var _coll_type_opt: OptionButton
@@ -46,11 +46,11 @@ var _coll_shape_opt: OptionButton
 var status: Label
 var _props_panel_ctrl   # ui/props_panel.gd 控制器（只剩「从地形生成碰撞」弹窗）
 var _map_file_ctrl   # ui/map_file.gd 控制器
-var _editor_state_ctrl   # core/editor_state.gd 控制器（状态流）
+var _editor_state_ctrl   # canvas/editor_state.gd 控制器（状态流）
 var _layout_ctrl   # ui/editor_layout.gd 控制器（界面搭建）
 var _picker_ctrl   # ui/project_picker.gd 控制器（项目选择页）
 var _map_dialogs_ctrl   # ui/map_dialogs.gd 控制器（尺寸/导出弹窗）
-var _side_actions_ctrl   # core/side_actions.gd 控制器（侧栏动作）
+var _side_actions_ctrl   # map/side_actions.gd 控制器（侧栏动作）
 var _palette_ctrl   # ui/palette_panel.gd 控制器（调色板导航：多图集三级/单图集两级）
 var selected_spr: EntityNode = null
 var map_loaded := false          # 防呆：是否已载入地图

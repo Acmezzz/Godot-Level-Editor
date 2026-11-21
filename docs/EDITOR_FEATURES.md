@@ -79,7 +79,7 @@ src/
 	├── steps_panel.gd      演出子面板：列表/时间轴双视图 + 步骤表单（content_editor 拆出）
 	├── timeline_view.gd    演出时间轴视图：横轴时间纵轴轨道，拖块改 at/duration/轨道，重叠描红
 	├── content_preview.gd  内容编辑器的中列只读地图预览（自绘缩放/平移/点选）
-	├── field_widgets.gd    声明式字段控件工厂：input（string/int/float/bool/color/vector2/range/asset_ref）/ choice，认不出的只读展示
+	├── field_widgets.gd    声明式字段控件工厂：input（string/int/float/bool/color/vector2/range/asset_ref/array）/ choice，认不出的只读展示
 	└── asset_panel.gd      资产目录：图鉴详情、自带功能挂载、实例分布清点、删除检查
 ```
 
@@ -631,10 +631,11 @@ src/
 | 资产 `code`（`kind=entity`）重复 | 错误 |
 | 实体挂载了未声明的功能（实体字段**不查 kind**，kind 只约束功能/条件/步骤声明） | 错误 |
 | 功能/步骤/音频/时机**条目码**池内重复；**字段码跨池/跨功能同码**（三池一个码空间）报错 | 错误 |
-| 字段 `type` 不在 `string`/`int`/`float`/`bool`/`color`/`vector2`/`range`/`asset_ref` | 错误 |
+| 字段 `type` 不在 `string`/`int`/`float`/`bool`/`color`/`vector2`/`range`/`asset_ref`/`array` | 错误 |
 | 功能/条件/步骤/音频/时机 id 空或重复（数组写法）/ 步骤条目（dict 写法值）不是对象 / 功能 id 含非 `A-Za-z0-9_./-` 字符 | 错误 |
 | 功能引用未声明的条件 | 错误 |
 | 功能 `triggers` 不是数组或引用未声明的时机 / `timing` 不是对象或 `timing.mode` 不在 `instant`/`duration`/`continuous` | 错误 |
+| `playtest.flags/params` 结构错：id 空或重复 / name 空 / flags 缺 `arg` / params 的 `arg` 不含 `%d` | 错误 |
 
 有错误时清单整体作废，进项目错误页；只有警告时正常进入，警告挂在清单 `_warnings`。
 
@@ -645,7 +646,7 @@ src/
 | `meta.layers` 缺失/空 / 层 id 空或重复 / name 空 / visible 非布尔 | 错误 |
 | `tiles` 键不在层集 / 瓦片条目不是 6 元（x, y, 资产id, atlas_x, atlas_y, alt 0-7） | 错误 |
 | 实体 `layer` 不在层集 | 错误 |
-| `collision` 条目不是数值（2–4 元）/ `spawn` 不是 2 元数值 | 错误 |
+| `collision` 条目不是对象 {x, y}（旧数组形态报错）/ `spawn` 不是 2 元数值 | 错误 |
 | 实体不是对象 / `code` 重复 / `x`·`y` 非数值 / `asset` 为空 | 错误 |
 | 实体 `asset` 不在当前清单 | 警告 |
 | 实体 `props` 不是对象 | 错误 |
@@ -662,7 +663,7 @@ src/
 - **入口**：地图菜单「检查项目完整性」（跑完自动展开列表）；抽屉标题「问题 N」常驻状态栏上方，
   点标题折叠 / 展开，「重扫」随时再跑。
 - **收集范围**：清单校验（10.1）+ 全部地图读盘校验（10.2）+ 引用悬空——`props` 里 `entity_ref`
-  指向本图不存在的实例码、`map_ref` 指向不存在的地图文件 = **警告**（未填 = 合法状态不报）。
+  指向本图不存在的实例码、`map_ref` 指向不存在的地图码 = **警告**（未填 = 合法状态不报）。
 - **条目**：`{kind, severity, path, message, map, jump}`——地图问题点击**开图**；实例问题
   开图后**选中该实例**；清单问题只列出（纯数据收集器，抽屉只是呈现层）。
 - **已知边界**：不做「一键清除悬空引用」（只有跳转）；编辑器改动后**不自动重扫**（点「重扫」）。
@@ -713,13 +714,14 @@ godot --headless --path "<编辑器工程>" --script res://tools/migrate_project
   正式保存另有 `maps/.history/*.1..3` 三轮备份。
 - 撤销快照是整图快照，大图（数千格 + 数百实体）连续操作仍有内存与耗时成本。
 - 校验只做静态数据检查，不验证运行时可达性（例如落点是否在实心碰撞里）。
-- 试玩进程跟踪基于 Windows `tasklist` 轮询；其它平台视为一直在运行。
+- 试玩**启动与进程跟踪**均基于 Windows（`cmd /c` 启动 + `tasklist` 轮询）；其它平台启动不可用，跟踪视为一直在运行。
 - `trigger_zone`（事件）的 `w/h` 尺寸没有专用编辑控件，只能直接改地图 JSON；触发语义在绑定的 `functions[]`（timing + 时机码）。
 - 不做瓦片自动拼接（autotile）；碰撞自动生成是辅助功能，生成后仍可手改。
 - 无图集编辑器入口；新增瓦片组需要直接改清单。
 - 只在格对齐意义上吸附（吸附默认开）：关掉后可放在任意像素位置，存浮点格坐标。
   没有旋转/缩放的编辑控件——`transform` 目前由数据侧读写，`F` 只 toggle 水平翻转。
-- 编辑器写盘只有一条路径：`editor_canvas.extract()`；游戏侧 `MapLoader` 只读，不反向写回，避免格式分叉。
+- **地图数据**写盘只有一条路径：`editor_canvas.extract()`（prefs/清单/内容文件各走各的入口）；
+  游戏侧 `MapLoader` 只读，不反向写回，避免格式分叉。
 - 内容系统只做「绑定 + 内容字段编辑」，功能行为完全在项目侧；编辑器不校验内容语义。
 - 时间轴只做条块摆放（at/duration/track/blocking）：不做关键帧曲线、嵌套时间轴、音频波形。
 - 等距（`gridProjection: isometric`）只覆盖**涂刷与格号**（`grid_space.gd` 转换层 + 菱形 tile_shape）：

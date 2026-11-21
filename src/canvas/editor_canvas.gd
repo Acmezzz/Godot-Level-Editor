@@ -452,7 +452,7 @@ func _cell_of(pos: Vector2) -> Vector2i:
 	var g: Vector2 = grid.to_grid(pos)
 	return Vector2i(floori(g.x), floori(g.y))
 
-## 地图投影：任一瓦片资产声明 isometric 即等距（混投影由清单校验给警告）。
+## 地图投影：任一瓦片资产声明 isometric 即整图等距（混投影暂无警告，正交资产会错位）。
 func _map_projection() -> String:
 	for a in _tile_assets:
 		if str((a as Dictionary).get("gridProjection", "orthogonal")) == "isometric":

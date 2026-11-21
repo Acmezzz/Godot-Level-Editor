@@ -208,7 +208,7 @@ func _build_field_row(i: int, fn_id: String, fd: Dictionary, cur: Dictionary) ->
 
 ## choice.source 的选项来源解析（由游戏侧声明，编辑器只查不解释）。
 ## 支持：content:<功能id>（内容库）、entity:<id,id>（清单实体类型）、
-## entity_inst:<id,id>（当前图实例，值=实例码）、map（地图文件）、audio:（音频池）、
+## entity_inst:<id,id>（当前图实例，值=实例码）、map（值=地图码，显示图名）、audio:（音频池）、
 ## layer:（当前图用户层栈，值=层码，显示「序号.层名」）、
 ## asset:<kind>:<id,id>（资产引用，kind 空 = 全部；asset_ref 类型的 input 字段也走这里）。
 func _resolve_options(decl: Dictionary) -> Array:

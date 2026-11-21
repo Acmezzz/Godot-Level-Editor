@@ -210,7 +210,7 @@ func copy_region() -> void:
 	if cvs._region_sel.size.x <= 0:
 		cvs._hint("先框选一块区域再复制")
 		return
-	# 层栈剪贴板：tiles = {层id: [[dx,dy,资产id,ax,ay]...]}，碰撞/实体照旧（实体带 layer）
+	# 层栈剪贴板：tiles = {层id: [[dx,dy,资产id,ax,ay,alt]...]}，碰撞/实体照旧（实体带 layer）
 	cvs._region_clip = {"tiles": {}, "collision": [], "size": cvs._region_sel.size}
 	# 层名凭据：粘贴时同图按 id 直配，跨图按层名重映射（谁的名字谁带走）
 	var lnames := {}
