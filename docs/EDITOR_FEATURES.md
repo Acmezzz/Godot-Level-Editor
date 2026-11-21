@@ -23,6 +23,7 @@ src/
 ├── project/                —— 项目域（清单 / 校验 / 自检 / 试玩） ——
 │   ├── manifest.gd         清单读取器：路径/试玩命令/role/占位尺寸，加载链补发身份码、并入内置种类
 │   ├── manifest_validation.gd  清单校验：资产/功能/条件/步骤/音频声明/挂载，坏清单给出错误列表
+│   ├── asset_scan.gd       资产零登记扫描：约定目录新文件补条目发码、改名 md5 重链、消失标缺失
 │   ├── project_audit.gd    全项目自检：清单+地图校验汇总、引用悬空（纯数据收集器）
 │   └── playtest.gd         试玩：按清单命令模板拉起游戏进程并跟踪
 ├── map/                    —— 地图数据域 ——
@@ -697,7 +698,7 @@ godot --headless --path "<编辑器工程>" --script res://tests/run_tests.gd
 
 约定：套件 `extends "res://tests/_suite_base.gd"`，方法名 `test_` 开头即被发现；
 `ok()` / `eq()` 收集失败；**每个用例至少一条断言**（崩溃中断的用例断言数不增长，
-runner 判 FAIL——防止半路崩掉变成假 PASS）。退出码非 0 = 有失败。当前 10 套件 75 用例。
+runner 判 FAIL——防止半路崩掉变成假 PASS）。退出码非 0 = 有失败。当前 11 套件 79 用例。
 
 截图辅助 `tools/screenshot.gd`（模式清单见文件头注释）与警告扫描 `tools/warn_scan.gd`
 （headless 全量加载 src/ 校验可加载性）；`tools/migrate_project.gd` 是一次性迁移脚本
@@ -739,7 +740,10 @@ godot --headless --path "<编辑器工程>" --script res://tools/migrate_project
   （y排序开关 + 视差/偏移/缩放数字字段，回车提交，缺省整键省略）。
   碰撞自动生成不区分声明形状（按整格矩形推）。
 - 排序点（`sortAnchor`）实例选中时画排序点十字（锚点 + sortAnchor 像素偏移，紫十字 + 连线；无覆盖不画）。
-- 资产浏览器没有新建资产流程：新建资产走手改清单。
+- 资产零登记扫描制：文件放进约定目录（`assets/tiles|images|entities`，递归；图片 png/jpg/jpeg/webp/bmp/tga、
+  实体 .tscn）即资产，打开项目扫描自动补条目 + 发 4 位资产码（id=码、name=文件名 stem，出生定永不回收）；
+  改名同 md5 重链原条目，消失标缺失不删条目，约定外手写条目不碰；
+  细配置（palette/cell/锚点/挂载）仍走清单条目覆盖，扫描只补骨架不改写已有条目。
 - 问题抽屉的引用悬空只列条目 + 跳转，**没有一键清除**；编辑器改动后不自动重扫（手动「重扫」）。
 
 ---

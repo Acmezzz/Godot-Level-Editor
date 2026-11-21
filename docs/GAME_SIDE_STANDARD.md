@@ -25,12 +25,31 @@
 ├── maps/<地图名>.json               # 地图（编辑器唯一的地图写盘产物）
 ├── maps/<地图名>.autosave.json      # 编辑器自动草稿（游戏扫描时必须忽略）
 ├── content/<功能id>/<内容ID>.json   # 内容条目
-└── assets/tiles/*.png + *.tres      # 图集与烘焙 TileSet
+└── assets/                          # 资产目录（扫描制：目录约定 = 注册表）
+    ├── tiles/                       # 图片 → 瓦片图集资产（递归；png/jpg/jpeg/webp/bmp/tga）
+    ├── images/                      # 图片 → 图片摆放资产（递归；同上扩展名）
+    └── entities/                    # .tscn → 实体资产（递归）
 ```
 
 地图名规则（`manifest.gd::is_valid_map_name`）：必须是纯文件名，不含 `/ \ : * ? " < > |`、
 不以 `.` 开头、不含 `..`、不以点或空格结尾、不是 Windows 保留设备名
 （`CON/PRN/AUX/NUL`、`COM1`–`COM9`、`LPT1`–`LPT9`，带扩展名同样命中，如 `CON.json`）。游戏侧拼路径前照此校验。
+
+## 1.1 资产发现约定（扫描制，2026-11-21 拍板）
+
+**目录约定 = 资产注册表**：文件放进约定目录即资产，编辑器打开项目时扫描自动发现，零登记。
+
+- **目录**：`assets/tiles/` 图片→瓦片图集资产、`assets/images/` 图片→图片摆放资产、
+  `assets/entities/` .tscn→实体资产；子目录递归；约定目录之外的文件扫描不碰。
+- **扩展名**：图片 = png/jpg/jpeg/webp/bmp/tga（`Image.load_from_file` 原生可读）；实体 = .tscn。
+- **身份**：资产 id = 4 位资产码（`ContentId.new_asset_code`，出生定永不回收）；`name` = 文件名 stem（出生定）。
+  **文件名只是显示壳**：改名后老路径消失，扫描按 md5 指纹重链原条目，码与地图引用全部不破。
+- **消失 / 约定外**：文件消失 → 条目保留 + 校验警告「atlas/texture file not found on disk」；
+  条目指向约定目录之外的文件 → 扫描完全不碰（手写条目零兼容）。
+- **细配置仍走清单条目**：palette/cell/锚点/挂载功能/editorSize 等写进 `assets[]` 条目覆盖缺省，
+  扫描只补骨架条目，已存在的条目从不改写。
+  扫描变化（新增/重链）随下次清单保存落盘（`_codes_issued` 标记位）。
+- 游戏侧读取契约不变：仍按清单 `assets[]` 条目拿 id/prefab/atlas（见 §6/§9），不要扫目录。
 
 ## 2. 清单 `editor/editor_manifest.json`
 
@@ -976,6 +995,8 @@ func _apply_door(inst: Node, fn: Dictionary) -> void:
   游戏侧静默跳过、编辑器只警告。删资产前先扫全项目地图（资产目录的「实例分布」就是干这个的）。
 
 ## 9. 新增图集
+
+图集文件放进 `assets/tiles/`（扫描制，§1.1）即自动获得条目（id = 4 位资产码）；下面是手工追加 / 细配置的写法。
 
 ### 9.1 追加一条 `assets[]`
 

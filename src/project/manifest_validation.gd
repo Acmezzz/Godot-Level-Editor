@@ -447,6 +447,8 @@ static func _validate_scene_asset(ad: Dictionary, path: String, project_dir: Str
 			_add(issues, "error", path + ".atlas", "tile shape needs an atlas")
 		elif project_dir != "" and atlas.contains(".."):
 			_add(issues, "error", path + ".atlas", "path cannot traverse outside the project")
+		elif project_dir != "" and not FileAccess.file_exists(project_dir.path_join(atlas)):
+			_add(issues, "warning", path + ".atlas", "atlas file not found on disk")
 		if ad.has("palette"):
 			if not (ad.palette is Array):
 				_add(issues, "error", path + ".palette", "must be an array")
@@ -463,6 +465,8 @@ static func _validate_scene_asset(ad: Dictionary, path: String, project_dir: Str
 			_add(issues, "error", path + ".texture", "image shape needs a texture")
 		elif project_dir != "" and texture.contains(".."):
 			_add(issues, "error", path + ".texture", "path cannot traverse outside the project")
+		elif project_dir != "" and not FileAccess.file_exists(project_dir.path_join(texture)):
+			_add(issues, "warning", path + ".texture", "texture file not found on disk")
 	if atlas != "" and texture != "":
 		_add(issues, "error", path, "scene asset must declare exactly one of atlas / texture")
 	# 网格投影枚举校验；混投影（不同投影混用）在 validate() 尾部统一给警告

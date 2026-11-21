@@ -108,6 +108,10 @@ static func load_from(project_dir: String) -> Dictionary:
 	issued = AudioDecls.ensure_codes(data) or issued
 	# 时机码：triggers 池条目补发执行码（时机不带字段，不进字段码空间）。
 	issued = TriggerDecls.ensure_codes(data) or issued
+	# 资产零登记扫描（2026-11-21 用户模型）：约定目录自动补条目/发码/改名重链。
+	# 新增与重链改了数据 → 随下次清单保存落盘（_codes_issued 同一标记位）。
+	var scan: Dictionary = preload("res://src/project/asset_scan.gd").sync(data)
+	issued = (scan.added as Array).size() > 0 or int(scan.renamed) > 0 or issued
 	# 补码只改内存：内容文件马上就会带着新码落盘，清单却要等下一次显式保存。
 	# 留标记让「内容视图 Ctrl+S」顺手把清单也写回（D6），否则新码在磁盘上无对应对照。
 	if issued:

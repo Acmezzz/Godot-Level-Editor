@@ -37,6 +37,10 @@ static func new_inst_code() -> String:
 static func new_fn_code() -> String:
 	return _code(LAYER_LEN)
 
+## 资产身份码（AssetScan 发放）：资产 id = 码（出生定永不回收），文件名只是显示壳。
+static func new_asset_code() -> String:
+	return _code(LAYER_LEN)
+
 ## 三池字段码占用表：功能+条件+步骤的 fields[].code 全量收集。
 ## 零依赖——直接读 manifest 原始数组/对象，不 preload 任何声明域
 ## （声明域互相 preload 会成环，补码时只需要这份占用表）。
