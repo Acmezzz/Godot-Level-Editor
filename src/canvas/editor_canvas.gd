@@ -124,7 +124,16 @@ func _update_cam() -> void:
 
 # —— 运行时 TileSet：从清单 assets[] 的 shape=tile 资产构建（按资产缓存，见 tileset_cache.gd） ——
 func _build_tileset() -> bool:
-	_tile_assets = AssetDecl.tile_sets(manifest)
+	var all_sets: Array = AssetDecl.tile_sets(manifest)
+	# 故障隔离（A4）：一个图集文件缺失只影响它自己的瓦片，不拖垮整张图的 TileSet。
+	# 停用资产仍参与构建——已有瓦片要能继续渲染，停用只把它从调色板摘掉。
+	_tile_assets = []
+	for a in all_sets:
+		var ap := str((a as Dictionary).get("atlas_abs", ""))
+		if ap == "" or not FileAccess.file_exists(ap):
+			push_warning("图集缺失，已跳过: %s (%s)" % [str((a as Dictionary).get("id", "")), ap])
+			continue
+		_tile_assets.append(a)
 	if _tile_assets.is_empty():
 		return false
 	var lst: Array = []

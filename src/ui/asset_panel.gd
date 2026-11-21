@@ -150,9 +150,17 @@ func refresh_list(focus_sid := "") -> void:
 		var sid := str((edef as Dictionary).get("id", ""))
 		if not _matches_filter(sid, edef as Dictionary):
 			continue
-		asset_list.add_item(str((edef as Dictionary).get("name", sid)), _asset_texture(edef))
-		# tooltip 露出 id——地图数据引用的是它，界面上看不到就没法排查
-		asset_list.set_item_tooltip(idx, sid + "  ·  " + str((edef as Dictionary).get("name", sid)))
+		asset_list.add_item(_list_label(sid, edef as Dictionary), _asset_texture(edef))
+		# tooltip 露出 id 与停用状态——地图数据引用的是它，界面上看不到就没法排查
+		var tip := sid + "  ·  " + str((edef as Dictionary).get("name", sid))
+		if bool((edef as Dictionary).get("disabled", false)):
+			tip += "\n已停用：不进调色板，原 ID 保留"
+		elif bool((edef as Dictionary).get("retired", false)):
+			if (edef as Dictionary).has("relinkCandidates"):
+				tip += "\n改名待确认：多个同指纹候选"
+			else:
+				tip += "\n停用：" + str((edef as Dictionary).get("retiredPath", "")) + " 已不在磁盘上"
+		asset_list.set_item_tooltip(idx, tip)
 		asset_list.set_item_metadata(idx, sid)
 		if sid == focus_sid:
 			focus_idx = idx
@@ -166,6 +174,17 @@ func refresh_list(focus_sid := "") -> void:
 		# 列表空（含「删掉最后一个资产」）：右栏必须走空态，否则名称框/挂载/分布/删除按钮
 		# 全部滞留上一项，残留闭包还会往已 erase 的字典里写。
 		_show_detail("")
+
+## 列表显示名：停用/待确认的资产带前缀，扫一眼就知道哪些需要处理（A4）
+func _list_label(sid: String, edef: Dictionary) -> String:
+	var nm := str(edef.get("name", sid))
+	if bool(edef.get("disabled", false)):
+		return "⊗ " + nm + "（已停用）"
+	if bool(edef.get("retired", false)):
+		if edef.has("relinkCandidates"):
+			return "⚠ " + nm + "（改名待确认）"
+		return "⊘ " + nm + "（停用）"
+	return nm
 
 ## 过滤视图：名称或 id 任一包含关键字（大小写不敏感）
 func _matches_filter(sid: String, edef: Dictionary) -> bool:
@@ -196,6 +215,15 @@ func _show_detail(sid: String) -> void:
 		_detail_hint.visible = true
 		return
 	_detail_hint.visible = false
+	if bool(_edef.get("disabled", false)):
+		_detail_hint.text = "已停用：不进调色板，但保留原 ID；重新启用即恢复。"
+		_detail_hint.visible = true
+	elif bool(_edef.get("retired", false)):
+		# A4：停用/待确认状态在详情顶部给出可操作说明（列表前缀只是索引线索）
+		var amb: bool = _edef.has("relinkCandidates")
+		_detail_hint.text = "改名待确认：在下方候选里选一个路径" if amb else \
+			"停用：源文件不在 %s。把文件放回原位后重开项目即可恢复；已有引用仍按原 ID 解析。" % str(_edef.get("retiredPath", ""))
+		_detail_hint.visible = true
 	_loading = true
 	name_edit.text = str(_edef.get("name", sid))
 	thumb.texture = _asset_texture(_edef)
@@ -203,12 +231,60 @@ func _show_detail(sid: String) -> void:
 	for child in extra.get_children():
 		extra.remove_child(child)
 		child.queue_free()
+	_add_scan_section(sid)
 	_add_distribution_section(sid)
-	var del := Kit.button("删除此资产", func(): _delete_asset_checked(sid), "ghost")
+	var already: bool = bool(_edef.get("disabled", false))
+	var del := Kit.button("永久删除（不可恢复）" if already else "删除此资产",
+		func(): _delete_asset_checked(sid), "ghost")
 	del.add_theme_color_override("font_color", Th.ERR)
 	del.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	extra.add_child(del)
 	_loading = false
+
+## 扫描状态（A4）：停用条目给恢复按钮；改名歧义给候选路径按钮（确认重链）。
+func _add_scan_section(sid: String) -> void:
+	if bool(_edef.get("disabled", false)):
+		extra.add_child(Kit.section_label("扫描状态"))
+		var row0 := Kit.hbox(6)
+		row0.add_child(Kit.button("重新启用", func():
+			preload("res://src/project/asset_scan.gd").enable(manifest, sid)
+			save_manifest.call()
+			refresh_list(sid), "primary"))
+		extra.add_child(row0)
+		extra.add_child(Kit.hint_label(
+			"此条目已停用：不再出现在调色板，但保留原 ID——已有引用仍能定位到它，重新启用即恢复。", 460))
+		return
+	if not bool(_edef.get("retired", false)):
+		return
+	extra.add_child(Kit.section_label("扫描状态"))
+	var box := Kit.vbox(4)
+	extra.add_child(box)
+	box.add_child(Kit.hint_label("原路径：" + str(_edef.get("retiredPath", "（无）")), 460))
+	var cands: Array = []
+	var raw = _edef.get("relinkCandidates", [])
+	if raw is PackedStringArray or raw is Array:
+		for c in raw:
+			cands.append(str(c))
+	if cands.is_empty():
+		var row := Kit.hbox(6)
+		row.add_child(Kit.button("恢复（文件已放回原位）", func():
+			preload("res://src/project/asset_scan.gd").restore(manifest, sid)
+			save_manifest.call()
+			refresh_list(sid), "primary"))
+		box.add_child(row)
+		box.add_child(Kit.hint_label("引用检查：地图或内容里仍按此 ID 引用时会继续定位到本条目。", 460))
+		return
+	for c in cands:
+		var r2 := Kit.hbox(6)
+		var lbl := Kit.text_label(c, Th.TEXT_MUTE, Th.FS_META)
+		lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		r2.add_child(lbl)
+		r2.add_child(Kit.button("用这个路径", func():
+			preload("res://src/project/asset_scan.gd").confirm_relink(manifest, sid, c)
+			save_manifest.call()
+			refresh_list(sid), "primary"))
+		box.add_child(r2)
 
 ## 实例分布（只读视图）：按地图折叠列实例 id 与坐标，供清点/删除检查。
 ## 自带功能的值 = 实例绑定内容（内容编辑器填），未填的用声明 default（游戏侧兜底）。
@@ -328,7 +404,17 @@ func _delete_asset_checked(sid: String) -> void:
 		return
 	# 有引用先列出来；没有引用也要问一次——删资产不可撤销
 	var dist := _instance_distribution(sid)
-	var text := "将删除资产「%s」(%s)，不可撤销。" % [str(_edef.get("name", sid)), sid]
+	var permanent: bool = bool(_edef.get("disabled", false))
+	var scanned_asset: bool = str(_edef.get("scanFingerprint", "")) != "" \
+		or str(_edef.get("retiredPath", "")) != ""
+	var text := ""
+	if permanent:
+		text = "将永久删除已停用资产「%s」(%s)，不可恢复。" % [str(_edef.get("name", sid)), sid]
+	elif scanned_asset:
+		# A4/D12：扫描资产「删除」= 停用记录（保 ID 可恢复）
+		text = "将停用资产「%s」(%s)。\n\n条目与 ID 保留：不再出现在调色板，已有引用仍能定位；可随时重新启用。" % [str(_edef.get("name", sid)), sid]
+	else:
+		text = "将删除资产「%s」(%s)，不可撤销。" % [str(_edef.get("name", sid)), sid]
 	if not dist.is_empty():
 		var lines := []
 		var total := 0
@@ -336,12 +422,27 @@ func _delete_asset_checked(sid: String) -> void:
 			var n: int = (dist[map_name] as Array).size()
 			total += n
 			lines.append("%s × %d" % [map_name, n])
-		text += "\n\n还有 %d 张地图在用（共 %d 个实例）：%s。\n删除后这些实体失去调色板/占位框/导出依据。" % [dist.size(), total, ", ".join(lines)]
+		text += "\n\n还有 %d 张地图在用（共 %d 个实例）：%s。\n%s" % [dist.size(), total, ", ".join(lines),
+			"停用后这些实体从调色板消失；引用仍按原 ID 解析。" if scanned_asset and not permanent \
+			else "删除后这些实体失去调色板/占位框/导出依据。"]
 	else:
 		text += "\n\n当前没有地图实例在用它。"
 	if not await host._confirm_action("删除资产", text, "删除"):
 		return
-	manifest.get("assets", []).erase(_edef)
+	# 已停用的扫描条目：这一步是「永久删除」，真从清单里抹掉（用户已明确放弃）
+	if permanent:
+		manifest.get("assets", []).erase(_edef)
+		save_manifest.call()
+		_edef = {}
+		refresh_list()
+		return
+	# 扫描产出的条目不 erase：记停用，保 ID 可恢复（D12）。
+	# 否则源文件还在目录里，下次扫描就带新 ID 回来，旧引用全断。
+	if scanned_asset:
+		preload("res://src/project/asset_scan.gd").disable(manifest, sid)
+		host._set_status(" 已停用资产 %s（条目保留，可在资产页恢复）" % sid)
+	else:
+		manifest.get("assets", []).erase(_edef)
 	save_manifest.call()
 	_edef = {}
 	# 删除后留在图鉴：刷新列表并落到第一项（没有则给空态提示）

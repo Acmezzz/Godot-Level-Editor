@@ -75,3 +75,23 @@ func test_audit_map_issues() -> void:
 		eq(str(e0.get("map")), "t", "map=图名")
 		eq(str((e0.get("jump", {}) as Dictionary).get("type")), "map", "jump.type=map")
 	_wipe()
+
+## A4：停用/改名待确认的资产进审计，jump 指资产页
+func test_audit_scan_states() -> void:
+	var m := _fake_manifest()
+	m["assets"] = [
+		{"id": "A1", "kind": "entity", "visual": {"type": "rect"}, "retired": true, "retiredPath": "assets/entities/a.tscn"},
+		{"id": "B2", "kind": "entity", "visual": {"type": "rect"}, "retired": true,
+			"retiredPath": "assets/entities/b.tscn", "relinkCandidates": ["assets/entities/x.tscn", "assets/entities/y.tscn"]},
+	]
+	m["_scan_report"] = {
+		"retired": ["A1"], "ambiguous": [{"id": "B2", "candidates": ["assets/entities/x.tscn", "assets/entities/y.tscn"]}],
+	}
+	var out := ProjectAudit.audit(m)
+	var ast := out.filter(func(e): return str(e.get("kind")) == "asset")
+	eq(ast.size(), 2, "停用 + 歧义各报一条")
+	for e in ast:
+		eq(str((e as Dictionary).get("severity")), "warning", "资产问题 warning 级")
+		eq(str(((e as Dictionary).get("jump", {}) as Dictionary).get("type")), "asset", "jump.type=asset")
+	var amb := ast.filter(func(e): return str(e.get("path")) == "assets/B2")
+	ok(amb.size() == 1 and str((amb[0] as Dictionary).get("message")).contains("待确认"), "歧义条目指名待确认")

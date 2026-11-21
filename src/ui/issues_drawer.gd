@@ -124,11 +124,15 @@ func _issue_row(it: Dictionary) -> Control:
 	b.tooltip_text = txt
 	return b
 
-## 行点击跳转：地图问题开图；实例问题开图后选中；清单问题不可跳转
+## 行点击跳转：地图问题开图；实例问题开图后选中；资产问题开资产页；清单问题不可跳转
 func _jump_to(it: Dictionary) -> void:
 	var j := it.get("jump", {}) as Dictionary
 	var typ := str(j.get("type", ""))
 	if typ == "" or app.canvas == null:
+		return
+	if typ == "asset":
+		# A4：停用/待确认的资产在资产页有恢复与候选按钮
+		app._set_mode("asset", str(j.get("id", "")))
 		return
 	var map := str(j.get("map", ""))
 	if typ == "entity":

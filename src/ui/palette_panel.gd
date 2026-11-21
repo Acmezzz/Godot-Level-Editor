@@ -51,12 +51,15 @@ func fill_tiles() -> void:
 			old_empty.queue_free()
 		tl.remove_meta("_empty_node")
 	tl.clear()
-	var sets: Array = AssetDecl.tile_sets(app.manifest)
+	var sets: Array = AssetDecl.tile_sets_placed(app.manifest)
 	if sets.is_empty():
 		_show_empty(tl, "清单没有瓦片图集", "在 assets[] 里声明 kind=scene / shape=tile 的资产")
 		return
 	if (app.canvas.atlas_imgs as Array).is_empty():
 		app.canvas._build_tileset()   # 多图集 images/texs 就位
+	# 停用/缺失图集会让可用列表变短：_atlas 越界就落回第一个，别在索引上崩
+	if _atlas >= sets.size():
+		_atlas = 0
 	if sets.size() > 1:
 		_fill_multi(tl, sets)
 	else:
@@ -128,7 +131,7 @@ func on_tile_click(i: int, at: Vector2, mb: int) -> void:
 		if bool(md.get("back", false)):
 			if _cat != "":
 				_cat = ""
-			elif AssetDecl.tile_sets(app.manifest).size() > 1:
+			elif AssetDecl.tile_sets_placed(app.manifest).size() > 1:
 				_atlas = -1
 			fill_tiles()
 			return
@@ -226,7 +229,7 @@ func fill_placeables(cat: String) -> void:
 	var thumbs: Dictionary = app._entity_thumbs()
 	var shown := 0
 	if cat == "images":
-		for a in AssetDecl.of_kind(app.manifest, "scene"):
+		for a in AssetDecl.of_kind_placed(app.manifest, "scene"):
 			var d: Dictionary = a
 			if str(d.get("shape", "")) != "image":
 				continue
@@ -240,7 +243,7 @@ func fill_placeables(cat: String) -> void:
 			el.set_item_metadata(ie, eid)
 			shown += 1
 	else:
-		for a in AssetDecl.of_kind(app.manifest, "entity"):
+		for a in AssetDecl.of_kind_placed(app.manifest, "entity"):
 			var ad: Dictionary = a
 			var eid := str(ad.get("id", ""))
 			var tex: Texture2D = thumbs.get(eid, null)

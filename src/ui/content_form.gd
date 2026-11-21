@@ -242,7 +242,7 @@ func _resolve_options(decl: Dictionary) -> Array:
 	if src.begins_with("entity:"):
 		var want := src.substr(7).split(",", false)
 		var out2: Array = []
-		for e in AssetDecl.of_kind(manifest, "entity"):
+		for e in AssetDecl.of_kind_placed(manifest, "entity"):
 			var sid := str((e as Dictionary).get("id", ""))
 			if not want.is_empty() and not want.has(sid):
 				continue

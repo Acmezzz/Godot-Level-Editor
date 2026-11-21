@@ -11,11 +11,17 @@ extends RefCounted
 const ContentId := preload("res://src/content/content_id.gd")
 const IMG_EXT := ["png", "jpg", "jpeg", "webp", "bmp", "tga"]
 
-## 扫描同步：diff 约定目录与清单 assets[]：新文件补条目发码、改名重链、消失标缺失。
-## 返回 {added: [资产id...], missing: [资产id...], renamed: 重链数}。
+## 扫描同步（A4）：diff 约定目录与清单 assets[]。
+## 身份规则：
+##   1. 路径仍在扫描目录的条目 → 原位保留（含停用记录）；
+##   2. 路径消失但指纹在别处唯一命中（同类、同指纹、且该文件未被任何条目占用）
+##      → 一对一重链，ID 不变；候选有歧义 → 保留旧 ID 与候选路径，记为待确认；
+##   3. 真消失 → 保留条目与 ID，标记 retired（停用）+ 原路径，可恢复；
+##   4. 新文件 → 新发码。
+## 返回 {added, missing, renamed, retired, ambiguous, changes}。changes = 是否改过清单。
 static func sync(m: Dictionary) -> Dictionary:
 	var root := str(m.get("_dir", ""))
-	var out := {"added": [], "missing": [], "renamed": 0}
+	var out := {"added": [], "missing": [], "renamed": 0, "retired": [], "ambiguous": [], "changes": false}
 	if root == "":
 		return out
 	var found := {}   # 相对路径 → {kind, shape, stem, md5}
@@ -25,38 +31,114 @@ static func sync(m: Dictionary) -> Dictionary:
 	if not (m.get("assets", null) is Array):
 		m["assets"] = []
 	var assets: Array = m.get("assets", [])
-	# 改名重链基础：本轮发现文件里还没被条目指向的（md5 → 相对路径）
-	var free_files := {}
+	# 指纹索引：md5 → [rel...]（同类判定在下面按条目 kind/shape 过滤）
+	var by_md5 := {}
 	for rel in found:
-		free_files[str((found[rel] as Dictionary).md5)] = rel
-	var prev_hashes: Dictionary = m.get("_scan_hashes", {})
-	# 先重链再补新：重链消费掉的文件不再发新条目；约定目录之外的条目扫描不碰。
+		var md5 := str((found[rel] as Dictionary).md5)
+		if not by_md5.has(md5):
+			by_md5[md5] = []
+		(by_md5[md5] as Array).append(rel)
+	# 被条目占用的文件：重链/新条目都不许再分给别的条目（一对一）。
+	var claimed := {}
+	# 歧义候选也先占住——用户确认前把候选文件再发一份新 ID，会得到两份指向同一文件的资产。
+	# 这里只挡「新条目」，不挡条目自己再解析候选（否则歧义永远无法重新判断）。
+	var reserved := {}
+	for a in assets:
+		if a is Dictionary:
+			var r0 := _rel_of(a)
+			if r0 != "":
+				claimed[r0] = true
+			var raw_c = (a as Dictionary).get("relinkCandidates", [])
+			if raw_c is PackedStringArray or raw_c is Array:
+				for c0 in raw_c:
+					reserved[str(c0)] = true
+	# —— 先处理消失/改名 ——
 	for a in assets:
 		if not (a is Dictionary):
 			continue
+		# 用户在图鉴里删掉的扫描资产：保留条目与 ID 作停用记录（D12）。
+		# 文件仍在约定目录时尤其重要——否则下次扫描会把它当新文件再发一个 ID。
+		if bool((a as Dictionary).get("disabled", false)):
+			continue
 		var rel := _rel_of(a)
-		if rel == "" or found.has(rel):
+		if rel == "":
+			continue
+		if found.has(rel):
+			# 文件在原位：停用记录自动解除（文件回来了，原引用直接生效）。
+			if (a as Dictionary).has("retired") or (a as Dictionary).has("retiredPath") \
+					or (a as Dictionary).has("relinkCandidates"):
+				(a as Dictionary).erase("retired")
+				(a as Dictionary).erase("retiredPath")
+				(a as Dictionary).erase("relinkCandidates")
+				out["changes"] = true
 			continue
 		if FileAccess.file_exists(root.path_join(rel)):
+			continue   # 文件真实存在（约定目录之外）：不碰
+		# 手写条目（约定目录之外、且没有我们发的指纹）：扫描不接管它的身份，
+		# 但缺失要让审计看得见（区分「仍存在」与「已缺失」）。
+		var fp := str((a as Dictionary).get("scanFingerprint", ""))
+		if fp == "" and not _under_scan_dir(rel):
+			(out["missing"] as Array).append(str((a as Dictionary).get("id", "")))
 			continue
-		var old_md5 := str(prev_hashes.get(rel, ""))
-		if old_md5 != "" and free_files.has(old_md5):
-			_set_rel(a, str(free_files[old_md5]))
-			free_files.erase(old_md5)
+		var cands: Array = []
+		if fp != "" and by_md5.has(fp):
+			for c in (by_md5[fp] as Array):
+				var cr := str(c)
+				if claimed.has(cr):
+					continue
+				if _compatible(a, found[cr] as Dictionary):
+					cands.append(cr)
+		if cands.size() == 1:
+			var newrel := str(cands[0])
+			_set_rel(a, newrel)
+			claimed[newrel] = true
+			# 停用记录在重链后失效（文件找到了）
+			(a as Dictionary).erase("retired")
+			(a as Dictionary).erase("retiredPath")
+			(a as Dictionary).erase("relinkCandidates")
 			out["renamed"] = int(out["renamed"]) + 1
+			out["changes"] = true
+		elif cands.size() > 1:
+			# 有歧义：保留旧 ID 与候选路径，等人工确认（不猜）。
+			# 候选集没变就别反复报——每次加载都算「变更」会每次都让清单脏。
+			var prev: Array = []
+			var raw_prev = (a as Dictionary).get("relinkCandidates", [])
+			if raw_prev is PackedStringArray or raw_prev is Array:
+				for p in raw_prev:
+					prev.append(str(p))
+			if bool((a as Dictionary).get("retired", false)) and prev == cands \
+					and str((a as Dictionary).get("retiredPath", "")) == rel:
+				# 状态没变：不弄脏清单，但报告里继续列出（界面每次加载都能提示）
+				(out["ambiguous"] as Array).append({"id": str((a as Dictionary).get("id", "")), "candidates": cands})
+				continue
+			(a as Dictionary)["retiredPath"] = rel
+			(a as Dictionary)["relinkCandidates"] = PackedStringArray(cands)
+			(a as Dictionary)["retired"] = true
+			# 候选文件占住：确认前不能再给它们发新 ID（否则同一文件两份资产）
+			for c1 in cands:
+				reserved[str(c1)] = true
+			(out["ambiguous"] as Array).append({"id": str((a as Dictionary).get("id", "")), "candidates": cands})
+			out["changes"] = true
 		else:
-			out["missing"].append(str(a.get("id", "")))
-	# 新文件补条目：id = 新发码，name = 文件名；实体条目 id 与实体码段同值。
+			if bool((a as Dictionary).get("retired", false)) and str((a as Dictionary).get("retiredPath", "")) == rel \
+					and not (a as Dictionary).has("relinkCandidates"):
+				# 已停用且路径没再变：不重复报变更（报告里仍列出，界面可继续提示）
+				(out["retired"] as Array).append(str((a as Dictionary).get("id", "")))
+				continue
+			(a as Dictionary)["retired"] = true
+			(a as Dictionary)["retiredPath"] = rel
+			(a as Dictionary).erase("relinkCandidates")
+			out["missing"].append(str((a as Dictionary).get("id", "")))
+			(out["retired"] as Array).append(str((a as Dictionary).get("id", "")))
+			out["changes"] = true
+	# —— 再补新条目 ——
 	for rel in found:
-		# 未命中返回 {} 不是 null：{} != null 恒真，按 != null 判会把新文件全跳掉
-		if not _entry_with_rel(assets, rel).is_empty():
-			continue
-		if not free_files.has(str((found[rel] as Dictionary).md5)):
+		if claimed.has(str(rel)) or reserved.has(str(rel)):
 			continue
 		var info: Dictionary = found[rel] as Dictionary
 		var stem := str(info.stem)
 		var code := ContentId.new_asset_code()
-		var e := {"id": code, "name": stem}
+		var e := {"id": code, "name": stem, "scanFingerprint": str(info.md5)}
 		if str(info.kind) == "entity":
 			e["kind"] = "entity"
 			e["prefab"] = rel
@@ -70,9 +152,82 @@ static func sync(m: Dictionary) -> Dictionary:
 			e["shape"] = "image"
 			e["texture"] = rel
 		assets.append(e)
-		out["added"].append(code)
-	m["_scan_hashes"] = _hashes_of(found)
+		claimed[str(rel)] = true
+		(out["added"] as Array).append(code)
+		out["changes"] = true
+	# —— 指纹补齐：原位条目缺 scanFingerprint 时按当前文件补（只补不改身份） ——
+	for a in assets:
+		if not (a is Dictionary):
+			continue
+		var r := _rel_of(a)
+		if r == "" or not found.has(r):
+			continue
+		if str((a as Dictionary).get("scanFingerprint", "")) == "":
+			(a as Dictionary)["scanFingerprint"] = str((found[r] as Dictionary).md5)
+			out["changes"] = true
+	m["_scan_report"] = out
 	return out
+
+## 相对路径是否位于扫描约定目录之下
+static func _under_scan_dir(rel: String) -> bool:
+	var r := rel.replace("\\", "/")
+	return r.begins_with("assets/tiles/") or r.begins_with("assets/images/") or r.begins_with("assets/entities/")
+
+## 删除扫描资产（D12）：不 erase 条目，改记 disabled + 原 ID + 原路径。
+## 文件还在约定目录里时，扫到它也不复活；引用仍按原 ID 解析得到「已停用」。
+static func disable(m: Dictionary, aid: String) -> bool:
+	for a in (m.get("assets", []) as Array):
+		if a is Dictionary and str((a as Dictionary).get("id", "")) == aid:
+			var rel := _rel_of(a)
+			(a as Dictionary)["disabled"] = true
+			if rel != "":
+				(a as Dictionary)["retiredPath"] = rel
+			(a as Dictionary).erase("retired")
+			(a as Dictionary).erase("relinkCandidates")
+			return true
+	return false
+
+## 反向：恢复被删除/停用的条目（清 disabled，若文件在原位再清停用记录）。
+static func enable(m: Dictionary, aid: String) -> bool:
+	for a in (m.get("assets", []) as Array):
+		if a is Dictionary and str((a as Dictionary).get("id", "")) == aid:
+			(a as Dictionary).erase("disabled")
+			(a as Dictionary).erase("retired")
+			(a as Dictionary).erase("retiredPath")
+			(a as Dictionary).erase("relinkCandidates")
+			return true
+	return false
+
+## 条目与候选文件是否同类（scene/tile、scene/image、entity 三种，形状必须一致）。
+static func _compatible(a: Dictionary, info: Dictionary) -> bool:
+	var ak := str(a.get("kind", "scene"))
+	var ik := str(info.get("kind", "scene"))
+	if ak != ik:
+		return false
+	if ak == "scene":
+		return str(a.get("shape", "tile")) == str(info.get("shape", "tile"))
+	return true
+
+## 恢复停用条目：按 id 清掉 retired 标记（文件回来时或用户手动确认后调用）。
+static func restore(m: Dictionary, aid: String) -> bool:
+	for a in (m.get("assets", []) as Array):
+		if a is Dictionary and str((a as Dictionary).get("id", "")) == aid:
+			(a as Dictionary).erase("retired")
+			(a as Dictionary).erase("retiredPath")
+			(a as Dictionary).erase("relinkCandidates")
+			return true
+	return false
+
+## 确认歧义重链：把条目指到候选路径之一（用户选择），清停用状态。
+static func confirm_relink(m: Dictionary, aid: String, rel: String) -> bool:
+	for a in (m.get("assets", []) as Array):
+		if a is Dictionary and str((a as Dictionary).get("id", "")) == aid:
+			_set_rel(a, rel)
+			(a as Dictionary).erase("retired")
+			(a as Dictionary).erase("retiredPath")
+			(a as Dictionary).erase("relinkCandidates")
+			return true
+	return false
 
 ## 递归收集目录下的资产文件；rel = 相对工程根路径（/ 分隔）
 static func _walk(abs_dir: String, root: String, kind: String, shape: String, found: Dictionary) -> void:
@@ -109,15 +264,3 @@ static func _set_rel(a: Dictionary, rel: String) -> void:
 			a[key] = rel
 			return
 
-## 指向 rel 的条目（无则空字典）
-static func _entry_with_rel(assets: Array, rel: String) -> Dictionary:
-	for a in assets:
-		if a is Dictionary and _rel_of(a) == rel:
-			return a
-	return {}
-
-static func _hashes_of(found: Dictionary) -> Dictionary:
-	var out := {}
-	for rel in found:
-		out[rel] = str((found[rel] as Dictionary).md5)
-	return out

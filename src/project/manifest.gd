@@ -116,9 +116,13 @@ static func load_from(project_dir: String) -> Dictionary:
 	# 时机码：triggers 池条目补发执行码（时机不带字段，不进字段码空间）。
 	issued = TriggerDecls.ensure_codes(data) or issued
 	# 资产零登记扫描（2026-11-21 用户模型）：约定目录自动补条目/发码/改名重链。
-	# 新增与重链改了数据 → 随下次清单保存落盘（_codes_issued 同一标记位）。
+	# 新增/重链/停用改了数据 → 随下次清单保存落盘（_codes_issued 同一标记位）。
+	# A4：changes 覆盖「补指纹 / 标停用 / 歧义待确认」，不只是 added/renamed。
 	var scan: Dictionary = preload("res://src/project/asset_scan.gd").sync(data)
-	issued = (scan.added as Array).size() > 0 or int(scan.renamed) > 0 or issued
+	issued = bool(scan.get("changes", false)) or issued
+	if not (scan.get("retired", []) as Array).is_empty() or not (scan.get("ambiguous", []) as Array).is_empty():
+		push_warning("资产扫描：%d 个资产停用、%d 个改名待确认（资产页可处理）" % [
+			(scan.get("retired", []) as Array).size(), (scan.get("ambiguous", []) as Array).size()])
 	# 补码只改内存：内容文件马上就会带着新码落盘，清单却要等下一次显式保存。
 	# 留标记让「内容视图 Ctrl+S」顺手把清单也写回（D6），否则新码在磁盘上无对应对照。
 	if issued:

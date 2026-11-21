@@ -32,7 +32,8 @@ const KINDS := [
 static func merge_into(manifest: Dictionary) -> void:
 	var raw = manifest.get("assets", [])
 	var assets: Array = raw if raw is Array else []
-	if not (raw is Array):
+	# 缺键同样要挂回去：否则内置条目并进临时数组，函数返回就丢了（D12）
+	if not (raw is Array) or not manifest.has("assets"):
 		manifest["assets"] = assets
 	var existing := {}
 	for a in assets:

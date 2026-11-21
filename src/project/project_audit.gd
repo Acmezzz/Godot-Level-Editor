@@ -33,7 +33,27 @@ static func audit(manifest: Dictionary) -> Array:
 				_collect_used_content(d, used_content)
 	# 3. 内容文件：损坏 JSON / function 码漂移 / 孤立内容
 	out.append_array(_content_checks(manifest, used_content))
-	# 4. 地图码唯一性（A2/D08）：重复码必须列出全部路径，引用解析据此拒绝猜测
+	# 4. 资产停用/改名待确认（A4）：已有引用仍按原 ID 解析，但要让人看见问题所在
+	var scan: Dictionary = manifest.get("_scan_report", {}) if manifest.get("_scan_report", {}) is Dictionary else {}
+	for aid in (scan.get("retired", []) as Array):
+		var ent := _asset_by_id(manifest, str(aid))
+		out.append({
+			"kind": "asset", "severity": "warning",
+			"path": "assets/" + str(aid),
+			"message": "资产停用：%s 的源文件不在 %s（可恢复；原 ID 引用仍有效）" % [
+				str(ent.get("name", aid)), str(ent.get("retiredPath", "?"))],
+			"map": "", "jump": {"type": "asset", "id": str(aid)},
+		})
+	for amb in (scan.get("ambiguous", []) as Array):
+		var aid2 := str((amb as Dictionary).get("id", ""))
+		var cands: Array = (amb as Dictionary).get("candidates", [])
+		out.append({
+			"kind": "asset", "severity": "warning",
+			"path": "assets/" + aid2,
+			"message": "资产改名待确认：%d 个同指纹候选（资产页选择）" % cands.size(),
+			"map": "", "jump": {"type": "asset", "id": aid2},
+		})
+	# 5. 地图码唯一性（A2/D08）：重复码必须列出全部路径，引用解析据此拒绝猜测
 	var dup_codes := MapStore.code_conflicts(manifest)
 	for code in dup_codes:
 		var names: Array = dup_codes[code]
@@ -47,6 +67,13 @@ static func audit(manifest: Dictionary) -> Array:
 			"map": str(names[0]) if not names.is_empty() else "", "jump": {},
 		})
 	return out
+
+## 按 id 取清单里的资产条目原件（无则空字典）。
+static func _asset_by_id(manifest: Dictionary, aid: String) -> Dictionary:
+	for a in (manifest.get("assets", []) as Array):
+		if a is Dictionary and str((a as Dictionary).get("id", "")) == aid:
+			return a
+	return {}
 
 ## 收集全项目被实例绑定引用的内容 ID（objects[].functions[].content）。
 static func _collect_used_content(data: Dictionary, used: Dictionary) -> void:
