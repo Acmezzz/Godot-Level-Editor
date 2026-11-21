@@ -132,6 +132,7 @@ static func _ref_checks(data: Dictionary, manifest: Dictionary, map_name: String
 					"message": "引用的实例码不存在: %s" % str(val),
 					"map": map_name,
 					"jump": {"type": "entity", "map": map_name, "code": str(o.get("code", ""))},
+					"fix": {"op": "clear_prop", "map": map_name, "code": str(o.get("code", "")), "prop": key},
 				})
 			elif typ == "map_ref" and not ok_target:
 				out.append({
@@ -140,6 +141,7 @@ static func _ref_checks(data: Dictionary, manifest: Dictionary, map_name: String
 					"message": "目标地图不存在: %s" % str(val),
 					"map": map_name,
 					"jump": {"type": "entity", "map": map_name, "code": str(o.get("code", ""))},
+					"fix": {"op": "clear_prop", "map": map_name, "code": str(o.get("code", "")), "prop": key},
 				})
 	return out
 ## 清单校验条目包装（带 kind 标记；清单级问题不可跳转）。

@@ -15,6 +15,7 @@ var save_manifest: Callable
 var host = null  # 宿主 app（确认框复用其链路）
 
 var asset_list: ItemList
+var _filter_edit: LineEdit
 var mounts_box: VBoxContainer
 var name_edit: LineEdit
 var thumb: TextureRect
@@ -54,6 +55,12 @@ func build() -> void:
 	var left := Kit.vbox(8)
 	left_wrap.add_child(left)
 	left.add_child(Kit.section_label("图鉴"))
+	# 过滤视图：名称/id 关键字过滤（资产多起来后的基本效率件）
+	_filter_edit = LineEdit.new()
+	_filter_edit.placeholder_text = "过滤：名称/id"
+	_filter_edit.clear_button_enabled = true
+	_filter_edit.text_changed.connect(func(_t: String): refresh_list())
+	left.add_child(_filter_edit)
 	asset_list = ItemList.new()
 	asset_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	asset_list.icon_mode = ItemList.ICON_MODE_LEFT
@@ -141,6 +148,8 @@ func refresh_list(focus_sid := "") -> void:
 		if bool((edef as Dictionary).get("builtin", false)):
 			continue
 		var sid := str((edef as Dictionary).get("id", ""))
+		if not _matches_filter(sid, edef as Dictionary):
+			continue
 		asset_list.add_item(str((edef as Dictionary).get("name", sid)), _asset_texture(edef))
 		# tooltip 露出 id——地图数据引用的是它，界面上看不到就没法排查
 		asset_list.set_item_tooltip(idx, sid + "  ·  " + str((edef as Dictionary).get("name", sid)))
@@ -157,6 +166,13 @@ func refresh_list(focus_sid := "") -> void:
 		# 列表空（含「删掉最后一个资产」）：右栏必须走空态，否则名称框/挂载/分布/删除按钮
 		# 全部滞留上一项，残留闭包还会往已 erase 的字典里写。
 		_show_detail("")
+
+## 过滤视图：名称或 id 任一包含关键字（大小写不敏感）
+func _matches_filter(sid: String, edef: Dictionary) -> bool:
+	var q := str(_filter_edit.text).strip_edges().to_lower()
+	if q == "":
+		return true
+	return sid.to_lower().contains(q) or str(edef.get("name", "")).to_lower().contains(q)
 
 func _on_asset_pick(idx: int, _at: Vector2 = Vector2.ZERO, mb: int = 0) -> void:
 	# 只认左键（与实体大纲列表同一约定）

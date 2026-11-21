@@ -307,6 +307,13 @@ func on_save() -> bool:
 	# 外部变更检测——打开后磁盘 mtime 变了 = 别处改过这份文件（本次保存会覆盖外部改动）
 	var ext_changed := _opened_mtime > 0 and FileAccess.file_exists(path) \
 		and FileAccess.get_modified_time(path) != _opened_mtime
+	if ext_changed:
+		# C-20：保存前确认而不是覆盖后提示——外部改动是别人的工作，覆盖是破坏性动作
+		if not await app._confirm_action("外部改动",
+			"地图文件在编辑器打开后被外部修改过。\n覆盖保存将丢失外部改动（上一轮已在 maps/.history 自动备份）。",
+			"覆盖保存"):
+			app._set_status(" 已取消保存（保留磁盘上的外部改动）")
+			return false
 	# 写盘收敛到 MapStore 单入口（.tmp 原子替换，中途崩溃不留半截 JSON）
 	if not app.MapStore.write(app.manifest, n, data):
 		app._set_status(" 保存失败: " + path)
@@ -324,8 +331,6 @@ func on_save() -> bool:
 	for lid2 in (data.get("tiles", {}) as Dictionary):
 		tcount2 += ((data.get("tiles", {}) as Dictionary)[lid2] as Array).size()
 	var msg := " 已保存 %s（%d 瓦片 / %d 摆放物）" % [n, tcount2, (data.get("objects", []) as Array).size()]
-	if ext_changed:
-		msg += "；注意：磁盘文件在打开后被外部修改过，本次保存覆盖了外部改动"
 	app._set_status(msg)
 	return true
 
@@ -355,7 +360,7 @@ func on_play(spawn_tiles: Vector2i = Vector2i(-1, -1)) -> void:
 	if _effective_map_name() == "":
 		app._set_status(" 试玩前先「新建地图」并填名字")
 		return
-	if not on_save():
+	if not await on_save():
 		app._set_status(" 试玩中止：地图未保存成功")
 		return
 	var res := Playtest.launch_tracked(app.manifest, app.cur_map_path, app._play_args(spawn_tiles))

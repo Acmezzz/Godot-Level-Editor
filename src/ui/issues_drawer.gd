@@ -3,6 +3,7 @@ extends RefCounted
 
 const ProjectAudit := preload("res://src/project/project_audit.gd")
 const EntityNodeScript := preload("res://src/canvas/entity_node.gd")
+const MapStore := preload("res://src/map/map_store.gd")
 
 var host   # editor_layout 宿主
 var app    # 根应用（= host.app）
@@ -50,6 +51,9 @@ func _build_issues_drawer() -> PanelContainer:
 	var rerun: Button = app.UiKitScript.button("重扫", func(): _run_audit(false), "ghost")
 	rerun.tooltip_text = "重新扫描全项目"  # 读回校验锚
 	head.add_child(rerun)
+	var clear_btn: Button = app.UiKitScript.button("清除悬空", func(): _clear_dangling(), "ghost")
+	clear_btn.tooltip_text = "把悬空引用字段的值清掉（字段留空=未填），可在 maps/.history 找回"  # 读回校验锚
+	head.add_child(clear_btn)
 	# 条目列表（展开时显示；行点击跳转；ScrollContainer 封顶防吞屏）
 	_issues_drawer = box
 	var scroll := ScrollContainer.new()
@@ -69,10 +73,14 @@ func _build_issues_drawer() -> PanelContainer:
 
 ## —— 全项目自检（REFACTOR_PLAN 4.6-3）：project_audit 的呈现层 ——
 
-## 展开/收起条目列表
+## 展开/收起条目列表。展开时先重扫再显示——条目永远新鲜（C-20 配套）。
 func _toggle_issues_drawer() -> void:
-	if _issues_list:
-		_issues_list.visible = not _issues_list.visible
+	if not _issues_list:
+		return
+	var expanding: bool = not _issues_list.visible
+	if expanding:
+		_run_audit(false)
+	_issues_list.visible = expanding
 
 ## 跑全项目审计并刷新抽屉。open_after=自检菜单入口（跑完自动展开列表）。
 func _run_audit(open_after := true) -> void:
@@ -148,3 +156,71 @@ func _select_by_code(code: String) -> void:
 	app.canvas.selected_multi.clear()
 	app.canvas.entity_selected.emit(n)
 	app.canvas.queue_redraw()
+
+## 一键清除悬空引用：把 audit 报出的 fix 项落地——按地图分组，逐图读文件、
+## 按 code 找实例、擦掉悬空 props 键（字段留空=未填）、写回（.history 自动备份）。
+## 当前打开的图有未保存修改时跳过该图（先保存再清）。
+func _clear_dangling() -> void:
+	var by_map := {}
+	for it in _issues_items:
+		if str(it.get("kind", "")) != "ref":
+			continue
+		var fx = it.get("fix", null)
+		if not (fx is Dictionary):
+			continue
+		var fx2: Dictionary = fx
+		var mn := str(fx2.get("map", ""))
+		if mn == "":
+			continue
+		if not by_map.has(mn):
+			by_map[mn] = []
+		(by_map[mn] as Array).append(fx2)
+	if by_map.is_empty():
+		app._set_status(" 没有可清除的悬空引用（先重扫）")
+		return
+	var total := 0
+	var fixed_cur := false
+	for mn in by_map:
+		var fix_list: Array = by_map[mn]
+		if mn == app.cur_map_name and app.map_loaded and app.canvas.modified_flag:
+			app._set_status(" %s 有未保存修改，跳过该图的清除（先保存再清）" % mn)
+			continue
+		var r: Dictionary = MapStore.read_path(MapStore.path_for(app.manifest, mn), app.manifest)
+		if not bool(r.get("ok", false)):
+			continue
+		var d: Dictionary = r.get("data", {}) as Dictionary
+		var changed := false
+		for fx3 in fix_list:
+			var f: Dictionary = fx3
+			var code := str(f.get("code", ""))
+			var prop := str(f.get("prop", ""))
+			if code == "" or prop == "":
+				continue
+			for o in (d.get("objects", []) as Array):
+				if not (o is Dictionary):
+					continue
+				var od: Dictionary = o
+				if str(od.get("code", "")) != code:
+					continue
+				var props: Dictionary = od.get("props", {}) if od.get("props", {}) is Dictionary else {}
+				if props.has(prop):
+					props.erase(prop)
+					changed = true
+					total += 1
+		if changed:
+			MapStore.write(app.manifest, mn, d)
+		if changed and mn == app.cur_map_name:
+			fixed_cur = true
+	if total == 0:
+		app._set_status(" 没有清掉任何悬空引用")
+		return
+	# 当前打开的图被改了 → 重载画布让视图与磁盘一致
+	if fixed_cur and app.map_loaded:
+		await app._open_map_by_name(app.cur_map_name)
+	_run_audit(false)
+	app._set_status(" 已清除 %d 个悬空引用" % total)
+	if total == 0:
+		app._set_status(" 没有清掉任何悬空引用")
+		return
+	_run_audit(false)
+	app._set_status(" 已清除 %d 个悬空引用" % total)
