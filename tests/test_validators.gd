@@ -151,3 +151,14 @@ func test_collision_types_decl() -> void:
 	var m3 := _good()
 	m3["collisionTypes"] = [{"id": "a"}, {"id": "a"}]
 	ok(_errs_of(m3).size() >= 1, "数组写法 id 重复报错")
+
+func test_fn_timebase_enum() -> void:
+	var m := _good()
+	(m.functions.f1 as Dictionary)["timebase"] = "frames"
+	eq(_errs_of(m).size(), 0, "timebase frames 合法")
+	var m2 := _good()
+	(m2.functions.f1 as Dictionary)["timebase"] = "beats"
+	eq(_errs_of(m2).size(), 0, "timebase beats 合法")
+	var m3 := _good()
+	(m3.functions.f1 as Dictionary)["timebase"] = "warp"
+	ok(_errs_of(m3).size() >= 1, "timebase 非法枚举报错")

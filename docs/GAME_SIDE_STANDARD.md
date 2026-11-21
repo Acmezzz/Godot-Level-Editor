@@ -399,7 +399,9 @@ BGM 切换、环境音触发、音效播放在哪一步响起，都是功能代�
 演出 = 一个功能（挂实例、声明链引用条件库做触发）+ 内容里的**步骤数组**。游戏侧声明
 **步骤池**（与 functions 同形：`{id, code, name, fields}`，条目码由 `ensure_codes` 补发），
 每个步骤是游戏侧代码 + 暴露字段（move_to / play_anim / wait / show_dialogue …）。
-功能声明加可选键 `"steps": true` 标记演出功能。
+功能声明加可选键 `"steps": true` 标记演出功能；演出时间基可选 `timebase`：
+`"seconds"`（缺省，at/duration 单位秒、0.1 吸附）/ `"frames"`（单位帧、1 帧吸附，格斗帧数据）/
+`"beats"`（单位拍、1/4 拍吸附，节奏谱面）——数据形态（at/duration/track）不变，游戏侧按声明解释单位。
 
 ```json
 "steps": {

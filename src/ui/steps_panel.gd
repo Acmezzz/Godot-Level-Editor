@@ -127,6 +127,14 @@ func _step_name_of(sc: String) -> String:
 	var d: Dictionary = StepDecls.step_by_code(manifest, sc)
 	return str(d.get("name", sc)) if not d.is_empty() else sc
 
+## 功能声明 timebase（R-10 帧级时间轴）：seconds（缺省）/ frames / beats
+func _steps_timebase() -> String:
+	var fns: Dictionary = FunctionDecls.functions(manifest)
+	var d = fns.get(_steps_fn_id, null)
+	if not (d is Dictionary):
+		return "seconds"
+	return str((d as Dictionary).get("timebase", "seconds"))
+
 ## 时间轴点选：只换选中与表单，不重建视图（拖拽进行中 picked 会被发多次）。
 func _steps_pick_tl(idx: int) -> void:
 	_steps_sel = idx
@@ -197,6 +205,7 @@ func _rebuild_steps_list(arr: Array) -> void:
 func _rebuild_steps_tl(arr: Array) -> void:
 	if _steps_tl == null or not is_instance_valid(_steps_tl):
 		return
+	_steps_tl.set_timebase(_steps_timebase())
 	_steps_tl.set_steps(arr, _step_name_of)
 	_steps_tl.sel = _steps_sel
 	_steps_tl.sync_min_size()

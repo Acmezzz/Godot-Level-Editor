@@ -169,7 +169,12 @@ static func _validate_functions(data: Dictionary, issues: Array[Dictionary]) -> 
 					and not ["instant", "duration", "continuous"].has(str((timing as Dictionary).get("mode"))):
 				_add(issues, "error", "functions.%s.timing.mode" % str(fid),
 					"must be instant / duration / continuous")
-
+		# R-10 时间基：seconds（缺省）/ frames / beats——时间轴刻度/吸附单位随声明
+		var tb := str(d.get("timebase", "seconds"))
+		if str(d.get("timebase", null)) != "" and d.get("timebase", null) != null \
+				and not ["seconds", "frames", "beats"].has(tb):
+			_add(issues, "error", "functions.%s.timebase" % str(fid),
+				"must be seconds / frames / beats")
 ## 条件声明：结构 + id 唯一性 + 字段种类合法性（与功能声明同一套规则）。
 ## 条件按 id 被功能声明引用（清单内人类名，条件无执行码）；字段码与功能字段同空间。
 static func _validate_conditions(data: Dictionary, issues: Array[Dictionary]) -> void:

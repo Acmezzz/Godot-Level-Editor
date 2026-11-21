@@ -150,6 +150,7 @@ src/
 | `functions` | 功能声明池：`{fnId: {name, code, fields[], triggers[], timing, view}}` 或数组；实体类型从中挂载 |
 | `conditions` | 条件声明池：`{condId: {name, fields[]}}` 或数组；条件无执行码，被功能声明链引用 |
 | `steps` | 步骤池：`{stepId: {name, code, fields[]}}`；演出功能（`"steps": true`）的步骤主体，条目码/字段码三池同空间 |
+| `functions[].timebase` | 可选：`seconds`（缺省）/ `frames` / `beats`——演出时间轴刻度/吸附单位（R-10），数据形态不变 |
 | `audio` | 音频池：`{audioId: {name, code, path}}`；choice 字段 `audio:` source 的选项来源 |
 | `triggers` | 时机池：`{triggerId: {name, code}}` 或数组；**无字段**，功能声明 `triggers` 白名单引用，绑定写时机码 |
 | `playCommand` | 试玩命令模板，支持 `%mapfile%` / `%projectpath%` |
@@ -497,7 +498,8 @@ src/
 **演出子面板**：「列表 / 时间轴」两个页签渲染同一份 `steps` 数组 + 当前步骤参数表单
 （复用同一套 field widgets 与 choice source）。列表页签：添加/删除/上移/下移/复制；
 时间轴页签：条块按 `at/duration/track` 布局，拖块改 `at`、拖右缘改 `duration`、上下拖换轨
-（0.1 秒吸附，负值夹回 0），松手净化回写（剥掉等于缺省的键）；同轨重叠/负值给 ⚠ 警告
+（吸附粒度随功能声明 timebase：seconds 0.1 秒 / frames 1 帧 / beats 1/4 拍，负值夹回 0），
+松手净化回写（剥掉等于缺省的键）；同轨重叠/负值给 ⚠ 警告
 （不改数据）。步骤引用清单 `steps` 池（值=步骤码），步骤参数存在每个步骤自己的 `fields` 里；
 未声明的步骤码/参数键只读保留 + ⚠ 提示。
 
@@ -700,7 +702,7 @@ godot --headless --path "<编辑器工程>" --script res://tests/run_tests.gd
 
 约定：套件 `extends "res://tests/_suite_base.gd"`，方法名 `test_` 开头即被发现；
 `ok()` / `eq()` 收集失败；**每个用例至少一条断言**（崩溃中断的用例断言数不增长，
-runner 判 FAIL——防止半路崩掉变成假 PASS）。退出码非 0 = 有失败。当前 12 套件 82 用例。
+runner 判 FAIL——防止半路崩掉变成假 PASS）。退出码非 0 = 有失败。当前 12 套件 83 用例。
 
 截图辅助 `tools/screenshot.gd`（模式清单见文件头注释）与警告扫描 `tools/warn_scan.gd`
 （headless 全量加载 src/ 校验可加载性）；`tools/migrate_project.gd` 是一次性迁移脚本
@@ -730,7 +732,8 @@ godot --headless --path "<编辑器工程>" --script res://tools/migrate_project
 - **地图数据**写盘只有一条路径：`editor_canvas.extract()`（prefs/清单/内容文件各走各的入口）；
   游戏侧 `MapLoader` 只读，不反向写回，避免格式分叉。
 - 内容系统只做「绑定 + 内容字段编辑」，功能行为完全在项目侧；编辑器不校验内容语义。
-- 时间轴只做条块摆放（at/duration/track/blocking）：不做关键帧曲线、嵌套时间轴、音频波形。
+- 时间轴只做条块摆放（at/duration/track）：时间基随功能声明（`timebase: seconds/frames/beats`——
+  帧级数据 = frames 基的步骤数组，格斗 hitbox/谱面音符按声明帧/拍摆块）；不做关键帧曲线、嵌套时间轴、音频波形。
 - 等距（`gridProjection: isometric`）画布已全对齐：网格线/幽灵/选区框/实体锚点换算走 GridSpace 格原语（菱形口径）；
   斜坡碰撞可视化按菱形包围盒近似；内容编辑器小地图仍按正交画。
 - 六边形（`gridProjection: hexagonal`）画布同样全对齐（odd-r 错行 + 尖顶，与 Godot 默认

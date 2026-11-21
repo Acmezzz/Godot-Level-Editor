@@ -18,13 +18,14 @@ var steps: Array = []                # 直引用宿主的内容 steps 数组（�
 var name_of: Callable = Callable()   # 步骤码 -> 显示名（Callable 返回 String）
 var sel := -1                        # 当前选中步骤下标；-1 = 无
 
-const SNAP := 0.1      # 秒
+const SNAP := {"seconds": 0.1, "frames": 1.0, "beats": 0.25}   # 吸附粒度按时间基
 const MARGIN_L := 10.0
 const RULER_H := 16.0
 const TRACK_H := 26.0
 const EDGE := 7.0      # 右缘拖拽热区宽
 
-var _pps := 64.0              # 像素/秒
+var timebase := "seconds"   # R-10：seconds（缺省）/ frames / beats——刻度/吸附单位随声明
+var _pps := 64.0              # 像素/单位（set_timebase 按基设）
 var _drag := ""               # "" / "move" / "resize"
 var _drag_idx := -1
 var _drag_off_x := 0.0
@@ -67,8 +68,14 @@ func fit_height() -> float:
 func fit_width() -> float:
 	return MARGIN_L + _time_max() * _pps + 24.0
 
+## R-10：按声明时间基设刻度/吸附/像素密度（数据形态 at/duration 不变，游戏侧按声明解释单位）
+func set_timebase(tb: String) -> void:
+	timebase = tb if SNAP.has(tb) else "seconds"
+	_pps = {"seconds": 64.0, "frames": 12.0, "beats": 48.0}.get(timebase, 64.0)
+	queue_redraw()
+
 func _snap(v: float) -> float:
-	return snappedf(maxf(v, 0.0), SNAP)
+	return snappedf(maxf(v, 0.0), float(SNAP.get(timebase, 0.1)))
 
 ## 条块矩形（含选中/命中判定用）。
 func _block_rect(i: int) -> Rect2:
@@ -178,11 +185,13 @@ func _draw() -> void:
 	# 滚动容器按内容宽撑开：视图自身尺寸 = max(容器给宽, 内容宽)
 	var w := maxf(size.x, fit_width())
 	var tracks := _track_count()
-	# 顶标尺：每秒一格 + 秒数标签
-	for t in int(_time_max()) + 1:
+	# 顶标尺：每单位一格 + 单位标签（frames 每 5 帧一档防挤）
+	var tstep := 5 if timebase == "frames" else 1
+	var suffix: String = {"seconds": "s", "frames": "f", "beats": "拍"}.get(timebase, "s")
+	for t in range(0, int(_time_max()) + 1, tstep):
 		var x := MARGIN_L + float(t) * _pps
 		draw_line(Vector2(x, 0), Vector2(x, fit_height()), Th.BORDER, 1.0)
-		draw_string(fnt, Vector2(x + 2, RULER_H - 4), "%ds" % t,
+		draw_string(fnt, Vector2(x + 2, RULER_H - 4), "%s%s" % [t, suffix],
 			HORIZONTAL_ALIGNMENT_LEFT, -1, Th.FS_META, Th.TEXT_MUTE)
 	# 轨道分隔线
 	for k in tracks + 1:
