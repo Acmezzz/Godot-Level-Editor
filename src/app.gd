@@ -327,7 +327,7 @@ func _shortcut_input(event: InputEvent) -> void:
 			for s in sel:
 				var n := s as EntityNode
 				if n and is_instance_valid(n):
-					n.position += Vector2(delta) * canvas.tile_px
+					n.position += canvas.grid_dir_px(delta.x, delta.y)
 			canvas._mark()
 			get_viewport().set_input_as_handled()
 			return
@@ -347,7 +347,7 @@ func _shortcut_input(event: InputEvent) -> void:
 				dup.z_policy = orig.z_policy
 				dup.visible_flag = orig.visible_flag
 				dup.refresh_visual()
-				dup.position = orig.position + Vector2(canvas.tile_px, 0)
+				dup.position = orig.position + canvas.grid_dir_px(1, 0)
 				# 副本跟随原件所在层（层栈化后实例散在各层容器）
 				var oi: int = canvas._layer_index_of(orig.layer_id)
 				if oi < 0:

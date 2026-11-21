@@ -104,6 +104,8 @@ var base_size: Vector2:
 
 ## 地图格像素尺寸
 var tile_px := 16
+## 画布 GridSpace 引用（等距口径随画布；null = 退回旧的正交标量口径）
+var grid_ref: GridSpace = null
 ## 贴图按显示框缩放的比例（与数据 transform 的 scale 分开存，互不干扰）
 var _fit := Vector2.ONE
 
@@ -114,11 +116,12 @@ var _frame_t := 0.0
 
 ## 建一个摆放物节点（视觉贴图取 thumb；图片场景资产退回资产 texture）
 static func create(m: Dictionary, aid: String, size: Vector2, tile: int,
-		thumbs: Dictionary = {}) -> EntityNode:
+		thumbs: Dictionary = {}, grid: GridSpace = null) -> EntityNode:
 	var n := EntityNode.new()
 	n.asset = aid
 	n.decl = AssetDecl.by_id(m, aid)
 	n.tile_px = tile
+	n.grid_ref = grid
 	n.base_size = size if size != Vector2.ZERO else Vector2(tile, tile)
 	var tex: Texture2D = thumbs.get(aid, null)
 	if tex == null and str((n.decl as Dictionary).get("shape", "")) == "image":
@@ -199,16 +202,22 @@ static func anchor_off_of(unit: Vector2, size: Vector2) -> Vector2:
 
 ## 数据 x/y → 世界锚点位置
 func world_of_grid(gx: float, gy: float) -> Vector2:
+	if grid_ref != null:
+		return grid_ref.to_px(Vector2(gx, gy) + anchor_unit())
 	return (Vector2(gx, gy) + anchor_unit()) * float(tile_px)
 
 ## 世界位置 → 数据 x/y（保留浮点，吸附由调用方决定）
 func grid_of_world(p: Vector2) -> Vector2:
+	if grid_ref != null:
+		return grid_ref.to_grid(p) - anchor_unit()
 	return p / float(tile_px) - anchor_unit()
 
 ## 实例「所在格」（区域框选/复制/剪切判定用）：视觉矩形左上角所在格，浮点向下取整。
 ## 不走锚点格——bottom_center 这类锚点的格号不是矩形起始格。
 func cell() -> Vector2i:
 	var r := rect()
+	if grid_ref != null:
+		return Vector2i(floori(grid_ref.to_grid(r.position).x), floori(grid_ref.to_grid(r.position).y))
 	return Vector2i(floori(r.position.x / tile_px), floori(r.position.y / tile_px))
 
 func apply_grid(gx: float, gy: float) -> void:

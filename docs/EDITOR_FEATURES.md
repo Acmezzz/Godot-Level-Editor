@@ -33,7 +33,7 @@ src/
 │   └── side_actions.gd     地图改名/复制、按名开图
 ├── canvas/                 —— 画布（关卡编辑器主体） ——
 │   ├── editor_canvas.gd    画布宿主：装载地图、三段遮挡容器层栈（meta.layers 逐图声明）、相机、序列化
-│   ├── grid_space.gd       格↔像素转换层：正交/等距两套（等距 = Godot 原生菱形 tile_shape）
+│   ├── grid_space.gd       格↔像素转换层：正交/等距两套 + 格对齐绘制原语（等距 = Godot 原生菱形 tile_shape）
 │   ├── entity_node.gd      一个摆放物的唯一运行时表示（场景图片实例与实体实例共用，anchors/transform/尺寸）
 │   ├── canvas_draw.gd      画布上画什么：网格、幽灵预览、连线、占位框、visual:rect 实体、选区
 │   ├── canvas_input.gd     鼠标事件分派：缩放平移、涂/擦、框选、拖拽
@@ -687,7 +687,7 @@ godot --headless --path "<编辑器工程>" --script res://tests/run_tests.gd
 | `test_step_audio.gd` | 步骤池归一化与按码查询、步骤补码避让三池占用、音频池归一化与补码、时机池归一化/补码/按码反查（时机码不进字段码空间）、时间轴缺省计算/非阻塞与轨道/回写净化/冲突对 |
 | `test_validators.gd` | 清单校验：合法零错误、kind 缺失、条目码池内重复、字段码**跨池**同码、步骤 dict 值非对象、未声明条件/实体/音频码重、功能 id 字符集、时机池 id/码重复与引用校验、`timing.mode` 非法、新字段类型全合法 |
 | `test_map_v4.gd` | v6 模板、层栈校验、瓦片 6 元精确校验（第 3 位资产 id、第 6 位 alt 0-7）、`objects[]` 各道防线（code 查重、场景实例不得发码、图集场景不可摆放、层归属、transform/visible/zPolicy 类型、entities 旧键报错）、碰撞条目（旧数组形态报错）、层参数类型、spawn、decode_text 门槛 |
-| `test_grid_space.gd` | GridSpace 正交/等距往返换算、collisionTypes 池归一化（缺省池/声明覆盖/按 id 查声明） |
+| `test_grid_space.gd` | GridSpace 正交/等距往返换算 + 格原语自洽（中心/多边形/纹理落位/格线）、collisionTypes 池归一化 |
 | `test_audit.gd` | 全项目审计：清单/地图条目包装（kind/map/jump 可跳转性）、引用悬空（entity_ref/map_ref → 警告，未填合法不报） |
 | `test_assets.gd` | `assets[]` 归一化：kind 分派、未知键保留、palette 展平、非正方形 `cell`、`editorSize`/`sizeFields` 尺寸、编辑期原件入口、挂载过滤 |
 | `test_entity_node.gd` | `EntityNode` 锚点↔格坐标换算（center/top_left/bottom_center 正反算）、浮点坐标与所在格、`sizeFields` 尺寸覆盖、`transform` 缺省判定（1/0/false 算缺省、翻转 toggle 后键被删掉） |
@@ -695,7 +695,7 @@ godot --headless --path "<编辑器工程>" --script res://tests/run_tests.gd
 
 约定：套件 `extends "res://tests/_suite_base.gd"`，方法名 `test_` 开头即被发现；
 `ok()` / `eq()` 收集失败；**每个用例至少一条断言**（崩溃中断的用例断言数不增长，
-runner 判 FAIL——防止半路崩掉变成假 PASS）。退出码非 0 = 有失败。当前 10 套件 71 用例。
+runner 判 FAIL——防止半路崩掉变成假 PASS）。退出码非 0 = 有失败。当前 10 套件 73 用例。
 
 截图辅助 `tools/screenshot.gd`（模式清单见文件头注释）与警告扫描 `tools/warn_scan.gd`
 （headless 全量加载 src/ 校验可加载性）；`tools/migrate_project.gd` 是一次性迁移脚本
@@ -726,8 +726,8 @@ godot --headless --path "<编辑器工程>" --script res://tools/migrate_project
   游戏侧 `MapLoader` 只读，不反向写回，避免格式分叉。
 - 内容系统只做「绑定 + 内容字段编辑」，功能行为完全在项目侧；编辑器不校验内容语义。
 - 时间轴只做条块摆放（at/duration/track/blocking）：不做关键帧曲线、嵌套时间轴、音频波形。
-- 等距（`gridProjection: isometric`）只覆盖**涂刷与格号**（`grid_space.gd` 转换层 + 菱形 tile_shape）：
-  画布网格按菱形画，但幽灵预览/选区框/实例锚点换算仍是轴对齐矩形近似；六边形不做。
+- 等距（`gridProjection: isometric`）画布已全对齐：网格线/幽灵/选区框/实体锚点换算走 GridSpace 格原语（菱形口径）；
+  斜坡碰撞可视化按菱形包围盒近似；内容编辑器小地图仍按正交画。六边形未实现（R-01 后续批）。
 - 层参数（parallax/ySort/offset/scale）与层内三段遮挡容器由画布直接预览，
   **没有层参数编辑控件**（手改地图 JSON）；碰撞自动生成不区分声明形状（按整格矩形推）。
 - 排序点（`sortAnchor`）在画布上只参与数据，选中十字标记未实现。

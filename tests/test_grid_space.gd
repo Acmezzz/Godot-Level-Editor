@@ -31,3 +31,35 @@ func test_collision_types_pool() -> void:
 	eq(CollisionTypes.decl_of(declared, "nope"), Dictionary(), "未声明返回空")
 	var arr := {"collisionTypes": [{"id": "a"}, {"id": "a"}]}
 	ok(arr != null, "数组写法可解析（查重归清单校验）")
+
+func test_grid_primitives_ortho() -> void:
+	var g = GridSpaceScript.new(Vector2i(16, 16), "orthogonal")
+	for i in range(-2, 3):
+		for j in range(-2, 3):
+			var c := Vector2i(i, j)
+			var p = g.cell_center_px(c)
+			var back = g.to_grid(p)
+			ok(floori(back.x) == i and floori(back.y) == j, "正交中心命中格 (%d,%d)" % [i, j])
+			var poly: PackedVector2Array = g.cell_polygon(c)
+			ok(poly.size() == 4 and Geometry2D.is_point_in_polygon(p, poly), "正交 cell 多边形含中心 (%d,%d)" % [i, j])
+	eq(g.cell_tex_rect(Vector2i(0, 0), Vector2i(16, 16)), Rect2(Vector2(0, 0), Vector2(16, 16)), "正交纹理左上对齐")
+	var segs: PackedVector2Array = g.grid_lines(Rect2(0, 0, 48, 48), Rect2i(0, 0, 3, 3))
+	ok(segs.size() > 0 and segs.size() % 2 == 0, "格线成对")
+	var has_vert := false
+	for k in range(0, segs.size(), 2):
+		if segs[k].x == segs[k + 1].x:
+			has_vert = true
+	ok(has_vert, "正交格线含竖线")
+
+func test_grid_primitives_iso() -> void:
+	var g = GridSpaceScript.new(Vector2i(16, 16), "isometric")
+	eq(g.cell_center_px(Vector2i(0, 0)), Vector2(0, 8), "等距 (0,0) 中心 = (0, h/2)")
+	eq(g.cell_tex_rect(Vector2i(0, 0), Vector2i(16, 16)), Rect2(Vector2(-8, 0), Vector2(16, 16)), "等距纹理 = 菱形包围盒")
+	var gp: PackedVector2Array = g.grid_polygon(Vector2i(0, 0), Vector2i(2, 1))
+	eq(gp, PackedVector2Array([Vector2(0, 0), Vector2(16, 16), Vector2(8, 24), Vector2(-8, 8)]), "等距格矩形顶点")
+	for c in [Vector2i(2, 1), Vector2i(-1, 3), Vector2i(5, 5)]:
+		var ctr = g.cell_center_px(c)
+		var back = g.to_grid(ctr)
+		ok(floori(back.x) == c.x and floori(back.y) == c.y, "等距中心命中格 %s" % str(c))
+		var poly: PackedVector2Array = g.cell_polygon(c)
+		ok(poly.size() == 4 and Geometry2D.is_point_in_polygon(ctr, poly), "等距菱形含中心 %s" % str(c))

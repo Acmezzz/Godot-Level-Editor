@@ -20,6 +20,8 @@ var manifest:
 	get: return cvs.manifest
 var tile_px:
 	get: return cvs.tile_px
+var grid:
+	get: return cvs.grid
 var _ent_by_id:
 	get: return cvs._ent_by_id
 	set(v): cvs._ent_by_id = v
@@ -62,7 +64,7 @@ func entity_display_size_of(node: Node) -> Vector2:
 ## 建一个摆放物节点：尺寸按资产声明算，视觉（缩略图/图片/无）由 EntityNode 自己装配。
 ## 落层、props、code 由调用方填——这里只管「一个形状正确的空实例」。
 func make_object(aid: String) -> EntityNode:
-	return EntityNodeRef.create(manifest, aid, entity_display_size(aid), tile_px, thumbs)
+	return EntityNodeRef.create(manifest, aid, entity_display_size(aid), tile_px, thumbs, grid)
 
 ## 该资产是否可以摆到画布上：实体（kind=entity）与图片场景（shape=image）。
 ## 图集型场景（shape=tile）走瓦片通道，不是摆放物。

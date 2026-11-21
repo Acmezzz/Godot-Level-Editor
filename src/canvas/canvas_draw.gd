@@ -27,18 +27,10 @@ func _draw() -> void:
 		var vp: Viewport = cvs.get_viewport()
 		if vp != null:
 			vis = vp.get_canvas_transform().affine_inverse() * Rect2(Vector2.ZERO, vp.get_visible_rect().size)
-		var x0 := maxf(origin.x, floorf(vis.position.x / cvs.tile_px) * cvs.tile_px)
-		var x1 := minf(endv.x, ceilf(vis.end.x / cvs.tile_px) * cvs.tile_px)
-		var y0 := maxf(origin.y, floorf(vis.position.y / cvs.tile_px) * cvs.tile_px)
-		var y1 := minf(endv.y, ceilf(vis.end.y / cvs.tile_px) * cvs.tile_px)
-		var gx := x0
-		while gx <= x1:
-			cvs.draw_line(Vector2(gx, maxf(y0, origin.y)), Vector2(gx, minf(y1, endv.y)), Color(1, 1, 1, 0.07), 1.0, true)
-			gx += cvs.tile_px
-		var gy := y0
-		while gy <= y1:
-			cvs.draw_line(Vector2(maxf(x0, origin.x), gy), Vector2(minf(x1, endv.x), gy), Color(1, 1, 1, 0.07), 1.0, true)
-			gy += cvs.tile_px
+		var segs = cvs.grid.grid_lines(vis, map_rect)
+		for k in range(0, segs.size(), 2):
+			cvs.draw_line(segs[k], segs[k + 1], Color(1, 1, 1, 0.07), 1.0, true)
+		
 	# 幽灵预览：只看「手上拿着什么」，没有工具要判断
 	var on_ent: bool = cvs.place_kind == "object"
 	if Rect2(Vector2(map_rect.position) * cvs.tile_px, Vector2(map_rect.size) * cvs.tile_px).has_point(pos):
@@ -53,8 +45,8 @@ func _draw() -> void:
 					gsz = Vector2(2, 2) * float(cvs.tile_px)
 				var anchor: Vector2 = pos
 				if cvs.snap_to_grid:
-					var g: Vector2 = pos / float(cvs.tile_px) - unit
-					anchor = (Vector2(roundf(g.x), roundf(g.y)) + unit) * float(cvs.tile_px)
+					var g: Vector2 = cvs.grid.to_grid(pos) - unit
+					anchor = cvs.grid.to_px(Vector2(roundf(g.x), roundf(g.y)) + unit)
 				# 幽灵按落点的真实占位画（锚点由资产声明决定），和落下去之后完全一致
 				var grect := Rect2(anchor - EntityNode.anchor_off_of(unit, gsz), gsz)
 				var gtex: Texture2D = cvs.stamp_thumb
@@ -73,13 +65,14 @@ func _draw() -> void:
 					cvs.draw_rect(grect, col, true)
 					cvs.draw_rect(grect, Color(col, 0.85), false, 1.5)
 			else:
-				cvs.draw_rect(Rect2(Vector2(c) * cvs.tile_px, Vector2(cvs.tile_px, cvs.tile_px)),
-					Color(0.55, 0.85, 1.0, 0.5), false, 1.0)
+				var gp = cvs.grid.cell_polygon(c)
+				cvs.draw_polyline(gp + PackedVector2Array([gp[0]]), Color(0.55, 0.85, 1.0, 0.5), 1.0, true)
 		else:
 			# 瓦片 / 碰撞层：笔刷范围轮廓 + 中心格瓦片幽灵（碰撞层不画瓦片图，只画范围）
-			var brect := _brush_rect(c)
+			var bcell := Vector2i(c.x - cvs.brush_size / 2, c.y - cvs.brush_size / 2)
+			var bpoly = cvs.grid.grid_polygon(bcell, bcell + Vector2i(cvs.brush_size, cvs.brush_size))
 			var tint := Color(1.0, 0.45, 0.45, 0.55) if cvs._is_grid_layer(cvs.active_layer) else Color(1, 1, 1, 0.5)
-			cvs.draw_rect(brect, tint, false, 1.0)
+			cvs.draw_polyline(bpoly + PackedVector2Array([bpoly[0]]), tint, 1.0, true)
 			# 无图集（headless 测试/清单缺图）时不画幽灵，避免 draw_texture_rect_region 空纹理警告
 			if not cvs._is_grid_layer(cvs.active_layer):
 				# 笔刷幽灵跟 paint_asset 走（多图集项目不再画成 0 号图集的错图）
@@ -89,16 +82,15 @@ func _draw() -> void:
 				if gtex != null:
 					var cs: Vector2i = cvs.asset_cell(cvs.paint_asset)
 					cvs.draw_texture_rect_region(gtex,
-						Rect2(Vector2(c) * cvs.tile_px, Vector2(cs)),
+						cvs.grid.cell_tex_rect(c, cs),
 						Rect2(Vector2(cvs.paint_cell) * Vector2(cs), Vector2(cs)),
 						Color(1, 1, 1, 0.5))
 	# 碰撞叠加由 CollisionView 节点绘制（图层接口控制显隐），这里不再特例绘制。
 	# 地图边界（meta w×h，关卡的实际范围）
 	var meta: Dictionary = cvs.map_data.get("meta", {})
-	var bounds := Rect2(Vector2.ZERO, Vector2(
-		int(meta.get("w", K.DEFAULT_MAP_W)) * cvs.tile_px,
-		int(meta.get("h", K.DEFAULT_MAP_H)) * cvs.tile_px))
-	cvs.draw_rect(bounds, Color(1, 1, 1, 0.35), false, 2.0)
+	var bpoly = cvs.grid.grid_polygon(Vector2i.ZERO,
+		Vector2i(int(meta.get("w", K.DEFAULT_MAP_W)), int(meta.get("h", K.DEFAULT_MAP_H))))
+	cvs.draw_polyline(bpoly + PackedVector2Array([bpoly[0]]), Color(1, 1, 1, 0.35), 2.0, true)
 	# 游玩视野预览（跟随鼠标）：鼠标在哪 = 假设玩家在那，屏幕里能看到什么
 	var ss: Array = cvs.manifest.get("screenSize", [640, 360])
 	var view_here := Rect2(pos - Vector2(ss[0], ss[1]) * 0.5, Vector2(ss[0], ss[1]))
@@ -109,10 +101,10 @@ func _draw() -> void:
 	cvs.draw_rect(screen_rect, Color(0.35, 0.65, 1.0, 0.40), false, 1.0)
 	# 出生点标记：摆放模式下画成「可拖」的样子，其余画淡一些——避免误导成可点
 	var spawn_draggable: bool = cvs.place_kind == "object"
-	var half = cvs.tile_px * 0.5
-	var srect := Rect2(spos - Vector2(half, half), Vector2(cvs.tile_px, cvs.tile_px))
 	var spawn_col := Color(0.3, 1.0, 0.5, 0.9) if spawn_draggable else Color(0.3, 1.0, 0.5, 0.35)
-	cvs.draw_rect(srect, spawn_col, false, 2.0)
+	var sg = cvs.grid.to_grid(spos)
+	var spoly = cvs.grid.cell_polygon(Vector2i(floori(sg.x), floori(sg.y)))
+	cvs.draw_polyline(spoly + PackedVector2Array([spoly[0]]), spawn_col, 2.0, true)
 	cvs.draw_line(Vector2(spos.x - 6, spos.y), Vector2(spos.x + 6, spos.y), spawn_col, 2.0)
 	cvs.draw_line(Vector2(spos.x, spos.y - 6), Vector2(spos.x, spos.y + 6), spawn_col, 2.0)
 	# 引用连线：props.target_point 指向同图另一实例（跨图蓝线 / 同图黄线）
@@ -211,8 +203,8 @@ func _draw() -> void:
 	_draw_visual_rects(zones)
 	# 区域选区轮廓（框选的结果——开关或 Ctrl+拖动，可跨层）
 	if cvs._region_sel.size.x > 0:
-		var rr := Rect2(Vector2(cvs._region_sel.position) * cvs.tile_px, Vector2(cvs._region_sel.size) * cvs.tile_px)
-		cvs.draw_rect(rr, Color(1.0, 0.85, 0.3, 0.8), false, 2.0)
+		var rpoly = cvs.grid.grid_polygon(cvs._region_sel.position, cvs._region_sel.end)
+		cvs.draw_polyline(rpoly + PackedVector2Array([rpoly[0]]), Color(1.0, 0.85, 0.3, 0.8), 2.0, true)
 	# 区域拖动预览：整块幽灵按当前格偏移跟手，松手才真搬
 	if cvs._move_active and not cvs._move_snap.is_empty():
 		var md: Vector2i = cvs._move_cell_delta
@@ -227,12 +219,12 @@ func _draw() -> void:
 				if tex2 != null:
 					var cs2: Vector2i = cvs.asset_cell(aid2)
 					cvs.draw_texture_rect_region(tex2,
-						Rect2(Vector2(Vector2i(int((t as Array)[0]), int((t as Array)[1])) + md) * cvs.tile_px, Vector2(cs2)),
+						cvs.grid.cell_tex_rect(Vector2i(int((t as Array)[0]), int((t as Array)[1])) + md, cs2),
 						Rect2(Vector2(int((t as Array)[3]), int((t as Array)[4])) * Vector2(cs2), Vector2(cs2)),
 						Color(1, 1, 1, 0.6))
 		for t in cvs._move_snap.get("collision", []):
 			var mc: Vector2i = Vector2i(int(t[0]), int(t[1])) + md
-			cvs.draw_rect(Rect2(Vector2(mc) * cvs.tile_px, Vector2(cvs.tile_px, cvs.tile_px)), Color(1.0, 0.25, 0.25, 0.45), true)
+			cvs.draw_colored_polygon(cvs.grid.cell_polygon(mc), Color(1.0, 0.25, 0.25, 0.45))
 		for e0 in cvs._move_snap.get("ents", []):
 			# 快照条目 {dx,dy,asset,...}：按区域原点 + 偏移画（快照只存数据，不存节点）
 			var d0: Dictionary = e0
@@ -248,8 +240,8 @@ func _draw() -> void:
 				cvs.draw_texture_rect(gtex0, gr, false, Color(1, 1, 1, 0.6))
 			else:
 				cvs.draw_rect(gr, Color(0.6, 1.0, 0.6, 0.35), true)
-		var gr0 := Rect2(Vector2(cvs._region_sel.position + md) * cvs.tile_px, Vector2(cvs._region_sel.size) * cvs.tile_px)
-		cvs.draw_rect(gr0, Color(0.45, 1.0, 0.75, 0.9), false, 2.0)
+		var mpoly = cvs.grid.grid_polygon(cvs._region_sel.position + md, cvs._region_sel.end + md)
+		cvs.draw_polyline(mpoly + PackedVector2Array([mpoly[0]]), Color(0.45, 1.0, 0.75, 0.9), 2.0, true)
 	# 区域粘贴预览：各层幽灵跟随鼠标，左键落位
 	if cvs._paste_mode and not cvs._region_clip.is_empty():
 		var org = cvs._cell_of(pos)
@@ -270,7 +262,7 @@ func _draw() -> void:
 						Color(1, 1, 1, 0.5))
 		for t in cvs._region_clip.get("collision", []):
 			var cc = org + Vector2i(t[0], t[1])
-			cvs.draw_rect(Rect2(Vector2(cc) * cvs.tile_px, Vector2(cvs.tile_px, cvs.tile_px)), Color(1.0, 0.25, 0.25, 0.35), true)
+			cvs.draw_colored_polygon(cvs.grid.cell_polygon(cc), Color(1.0, 0.25, 0.25, 0.35))
 	# 实例幽灵：区域碎片里的实例也预览（按资产声明的实例尺寸，不只是 1 格）
 		for t in cvs._region_clip.get("ents", []):
 			var gaid2 := str(t.get("asset", ""))
@@ -289,8 +281,8 @@ func _draw() -> void:
 				cvs.draw_texture_rect(tex, er, false, Color(1, 1, 1, 0.55))
 			else:
 				cvs.draw_rect(er, Color(0.6, 1.0, 0.6, 0.4), true)
-		var gr := Rect2(Vector2(org) * cvs.tile_px, Vector2(cvs._region_clip.get("size", Vector2i.ONE)) * cvs.tile_px)
-		cvs.draw_rect(gr, Color(1.0, 0.85, 0.3, 0.9), false, 2.0)
+		var ppoly = cvs.grid.grid_polygon(org, org + Vector2i(cvs._region_clip.get("size", Vector2i.ONE)))
+		cvs.draw_polyline(ppoly + PackedVector2Array([ppoly[0]]), Color(1.0, 0.85, 0.3, 0.9), 2.0, true)
 ## visual:rect 资产的画布呈现：颜色/alpha 读资产声明，尺寸走实例 rect()。
 ## 不含 props.event/mode/once 分支——事件就是绑定了功能的实体，语义只在 functions[] 里。
 func _draw_visual_rects(nodes: Array) -> void:
@@ -304,9 +296,3 @@ func _draw_visual_rects(nodes: Array) -> void:
 		var rect := n.rect()
 		cvs.draw_rect(rect, Color(col, alpha), true)
 		cvs.draw_rect(rect, Color(col, minf(1.0, alpha + 0.5)), false, 1.5)
-
-# 笔刷覆盖矩形（世界坐标）
-
-func _brush_rect(c: Vector2i) -> Rect2:
-	var half = cvs.brush_size / 2
-	return Rect2(Vector2(c.x - half, c.y - half) * cvs.tile_px, Vector2(cvs.brush_size, cvs.brush_size) * cvs.tile_px)

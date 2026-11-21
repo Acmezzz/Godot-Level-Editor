@@ -14,6 +14,7 @@ const CollisionTypes := preload("res://src/assets/collision_types.gd")
 
 var layer: TileMapLayer
 var tile_px := 16
+var grid_ref: GridSpace = null   # GridSpace 引用：cell 多边形随投影（等距 = 菱形）
 var canvas_ref   # 宿主编码画布：读 _collision_meta 做类型化分色分形
 var manifest := {}   # 清单（declared pool 的颜色来源）
 
@@ -28,9 +29,10 @@ static func _colors_of(d: Dictionary) -> Array:
 		base = Color.from_hsv(h * 0.28, 0.55, 0.9)   # 限制在暖红~黄区间的柔和色
 	return [Color(base, 0.28), Color(base.lightened(0.2), 0.55)]
 
-func setup(p_layer: TileMapLayer, p_tile_px: int) -> Node2D:
+func setup(p_layer: TileMapLayer, p_tile_px: int, p_grid: GridSpace = null) -> Node2D:
 	layer = p_layer
 	tile_px = p_tile_px
+	grid_ref = p_grid
 	return self
 
 ## 数据变了就重画（碰撞格增删、撤销、区域粘贴都走这里）
@@ -53,17 +55,34 @@ func _draw() -> void:
 		if d.is_empty():
 			d = {"id": ctype, "name": ctype, "shape": cshape}
 		var cols: Array = _colors_of(d)
-		var r := Rect2(Vector2(c) * tile_px, Vector2(tile_px, tile_px))
-		# 斜坡画三角形：r45 = 右高（实心在斜线下方），l45 = 左高
+		var poly := _cell_poly(c)
+		var r := _bbox_of(poly)
+		# 斜坡按包围盒近似：r45 = 右高（实心在斜线下方），l45 = 左高
 		if cshape == "r45":
-			var pts := PackedVector2Array([r.position + Vector2(0, tile_px), r.position + Vector2(tile_px, 0), r.position + Vector2(tile_px, tile_px)])
+			var pts := PackedVector2Array([r.position + Vector2(0, r.size.y), r.position + Vector2(r.size.x, 0), r.position + Vector2(r.size.x, r.size.y)])
 			draw_colored_polygon(pts, cols[0])
 			draw_polyline(pts + PackedVector2Array([pts[0]]), cols[1], 1.0)
 			continue
 		if cshape == "l45":
-			var pts2 := PackedVector2Array([r.position + Vector2(0, 0), r.position + Vector2(tile_px, tile_px), r.position + Vector2(0, tile_px)])
+			var pts2 := PackedVector2Array([r.position + Vector2(0, 0), r.position + Vector2(r.size.x, r.size.y), r.position + Vector2(0, r.size.y)])
 			draw_colored_polygon(pts2, cols[0])
 			draw_polyline(pts2 + PackedVector2Array([pts2[0]]), cols[1], 1.0)
 			continue
-		draw_rect(r, cols[0], true)
-		draw_rect(r, cols[1], false, 1.0)
+		draw_colored_polygon(poly, cols[0])
+		draw_polyline(poly + PackedVector2Array([poly[0]]), cols[1], 1.0)
+
+## cell 覆盖多边形：有 grid_ref = 格多边形（等距 = 菱形）；无 = 正交方形（兜底）
+func _cell_poly(c: Vector2i) -> PackedVector2Array:
+	if grid_ref != null:
+		return grid_ref.cell_polygon(c)
+	var o := Vector2(c) * tile_px
+	return PackedVector2Array([o, o + Vector2(tile_px, 0), o + Vector2(tile_px, tile_px), o + Vector2(0, tile_px)])
+
+## 多边形包围盒（斜坡三角形底座）
+func _bbox_of(poly: PackedVector2Array) -> Rect2:
+	var mn := poly[0]
+	var mx := poly[0]
+	for p in poly:
+		mn = mn.min(p)
+		mx = mx.max(p)
+	return Rect2(mn, mx - mn)

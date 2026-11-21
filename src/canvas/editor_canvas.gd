@@ -306,7 +306,7 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	coll_view.name = "CollisionView"
 	coll_view.z_index = 2
 	map_root.add_child(coll_view)
-	coll_view.setup(collision, tile_px)
+	coll_view.setup(collision, tile_px, grid)
 	coll_view.canvas_ref = self   # 读 _collision_meta 做类型化分色分形
 	coll_view.manifest = manifest   # 碰撞类型颜色按清单 collisionTypes 声明
 	# 涂瓦片：tiles = {层id: [[x,y,资产id,ax,ay]...]}（5 元，第 3 位是资产 id 字符串）
@@ -375,7 +375,7 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	spawn = Marker2D.new()
 	spawn.name = "Spawn"
 	var sp: Array = data.get("spawn", [2, 2])
-	spawn.position = Vector2(int(sp[0]) * tile_px + tile_px / 2.0, int(sp[1]) * tile_px + tile_px / 2.0)
+	spawn.position = grid.cell_center_px(Vector2i(int(sp[0]), int(sp[1])))
 	map_root.add_child(spawn)
 	# 地图装载后同步碰撞可视节点与图层可见性（按图层索引恢复，不只是节点 flag）
 	coll_view.refresh()
@@ -436,7 +436,7 @@ func _drag_spawn_to(pos: Vector2) -> void:
 	if spawn == null or not is_instance_valid(spawn):
 		return
 	var c := _cell_of(pos)
-	spawn.position = Vector2(c.x * tile_px + tile_px / 2.0, c.y * tile_px + tile_px / 2.0)
+	spawn.position = grid.cell_center_px(c)
 	queue_redraw()
 
 # —— 坐标换算 ——
@@ -459,14 +459,19 @@ func _map_projection() -> String:
 			return "isometric"
 	return "orthogonal"
 
+## 格空间方向向量 → 像素位移（方向键微调/原位复制的格对齐移动；正交 = 轴对齐，等距沿菱形方向）
+func grid_dir_px(dx: int, dy: int) -> Vector2:
+	return grid.to_px(Vector2(dx, dy)) - grid.to_px(Vector2.ZERO)
+
 ## 放置/拖动落点：吸附开启时把「数据格坐标」四舍五入到整格（对齐锚点在格内的位置，
 ## 与实例尺寸无关）。关闭时原样保留。
 func snap_point(p: Vector2, n: EntityNode = null) -> Vector2:
 	if not snap_to_grid:
 		return p
 	var unit: Vector2 = n.anchor_unit() if n != null else Vector2(0.5, 0.5)
-	var g := p / float(tile_px) - unit
-	return (Vector2(roundf(g.x), roundf(g.y)) + unit) * float(tile_px)
+	# 格空间里吸附后映回像素：正交时逐位等于旧口径；等距沿菱形网格吸附
+	var g = grid.to_grid(p) - unit
+	return grid.to_px(Vector2(roundf(g.x), roundf(g.y)) + unit)
 
 # —— 涂刷/擦除（图层硬规则：瓦片/碰撞层禁盖章，实体层禁涂刷；笔刷 = 以 c 为基准的 brush_size×brush_size 格，偶数尺寸时 c 偏右下） ——
 func _hint(t: String) -> void:
@@ -517,7 +522,7 @@ func _fit_view() -> void:
 		used = r if used.size == Vector2i.ZERO else used.merge(r)
 	if used.size == Vector2i.ZERO:
 		used = Rect2i(0, 0, 10, 10)
-	cam_pos = Vector2(used.get_center()) * tile_px
+	cam_pos = grid.cell_center_px(Vector2i(used.get_center()))
 	var vp := get_viewport_rect().size
 	var w := maxf(float(used.size.x), 1.0) * tile_px
 	var h := maxf(float(used.size.y), 1.0) * tile_px
@@ -760,8 +765,6 @@ func extract() -> Dictionary:
 func _draw() -> void:
 	_canvas_draw_ctrl._draw()
 
-func _brush_rect(c: Vector2i) -> Rect2:
-	return _canvas_draw_ctrl._brush_rect(c)
 ## —— 拆到 src/canvas/canvas_input.gd 的委托（调用点保持不变） ——
 func _unhandled_input(event: InputEvent) -> void:
 	_canvas_input_ctrl._unhandled_input(event)
