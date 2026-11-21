@@ -54,7 +54,6 @@ func build() -> void:
 	var left := Kit.vbox(8)
 	left_wrap.add_child(left)
 	left.add_child(Kit.section_label("图鉴"))
-	left.add_child(Kit.button("＋ 新建资产", _open_new_asset, "ghost"))
 	asset_list = ItemList.new()
 	asset_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	asset_list.icon_mode = ItemList.ICON_MODE_LEFT
@@ -128,88 +127,6 @@ func _commit_name() -> void:
 	if _edef.is_empty() or _loading:
 		return
 	save_manifest.call()
-
-## —— 新建资产（最小形态起步：瓦片=图集路径 / 图片=贴图路径 / 实体=rect 占位声明） ——
-## id 是地图数据与内容文件的引用键，建档后勿改——弹窗里说清楚，不提供改名入口。
-
-func _open_new_asset() -> void:
-	if manifest.is_empty():
-		host._set_status(" 先打开项目再新建资产")
-		return
-	var shell: Dictionary = host._popup_body("新建资产",
-		"最小形态起步；名称/路径/占位随时可改，id 建档后勿改（它是引用键）")
-	var pop: PopupPanel = shell.pop
-	var body: Control = shell.body
-	var kind_opt := OptionButton.new()
-	kind_opt.add_item("场景 · 瓦片（涂刷通道）")
-	kind_opt.add_item("场景 · 图片（摆放物）")
-	kind_opt.add_item("实体（功能绑定物）")
-	body.add_child(kind_opt)
-	var id_e := LineEdit.new()
-	id_e.placeholder_text = "id（英文小写/数字/下划线，全项目唯一）"
-	body.add_child(id_e)
-	var nm_e := LineEdit.new()
-	nm_e.placeholder_text = "名称（图鉴显示名）"
-	body.add_child(nm_e)
-	var path_e := LineEdit.new()
-	path_e.placeholder_text = "图集路径（相对工程根）"
-	body.add_child(path_e)
-	var color_e := LineEdit.new()
-	color_e.placeholder_text = "占位色（实体专用，如 #4fc3f7，可空）"
-	body.add_child(color_e)
-	# 切种类时换路径字段的提示文案（瓦片=图集 / 图片=贴图）
-	kind_opt.item_selected.connect(func(idx: int):
-		path_e.placeholder_text = "图集路径（相对工程根）" if idx == 0 else "贴图路径（相对工程根）")
-	var btn_row := Kit.hbox(6)
-	btn_row.add_child(Kit.button("取消", func(): pop.hide(), "plain"))
-	btn_row.add_child(Kit.button("新建", func(): _do_new_asset(kind_opt, id_e, nm_e, path_e, color_e, pop), "primary"))
-	body.add_child(btn_row)
-	host._open_popup(pop)
-
-## 落库：局部校验（必填/id 字符集/唯一）→ 按种类建最小条目 → 清单追加 → 写盘刷新
-func _do_new_asset(kind_opt: OptionButton, id_e: LineEdit, nm_e: LineEdit, path_e: LineEdit, color_e: LineEdit, pop: PopupPanel) -> void:
-	var aid := id_e.text.strip_edges()
-	var nm := nm_e.text.strip_edges()
-	var p := path_e.text.strip_edges()
-	if aid.is_empty() or nm.is_empty():
-		host._set_status(" id 与名称必填")
-		return
-	var okc := true
-	for ch in aid:
-		if not ((ch >= "a" and ch <= "z") or (ch >= "0" and ch <= "9") or ch == "_"):
-			okc = false
-	if not okc:
-		host._set_status(" id 只允许英文小写/数字/下划线")
-		return
-	for a in manifest.get("assets", []):
-		if a is Dictionary and str(a.get("id", "")) == aid:
-			host._set_status(" id 已存在：" + aid)
-			return
-	var entry := {}
-	match kind_opt.selected:
-		0:
-			if p.is_empty():
-				host._set_status(" 瓦片资产必须给图集路径")
-				return
-			entry = {"id": aid, "kind": "scene", "shape": "tile", "atlas": p, "name": nm}
-		1:
-			if p.is_empty():
-				host._set_status(" 图片资产必须给贴图路径")
-				return
-			entry = {"id": aid, "kind": "scene", "shape": "image", "texture": p, "name": nm}
-		2:
-			var vc := color_e.text.strip_edges()
-			if vc.is_empty():
-				vc = "#4fc3f7"
-			entry = {"id": aid, "kind": "entity", "name": nm,
-				"visual": {"mode": "rect", "color": vc, "alpha": 0.35}}
-	if entry.is_empty():
-		return
-	manifest.get("assets", []).append(entry)
-	save_manifest.call()
-	refresh_list()
-	host._set_status(" 已新建资产 " + aid + "（详情页可继续补缩略图/挂载）")
-	pop.hide()
 
 # —— 视图切换 ——
 func show_detail(sid: String) -> void:
