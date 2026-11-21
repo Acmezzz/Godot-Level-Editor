@@ -1,6 +1,5 @@
 extends RefCounted
-## 全项目一致性审计（REFACTOR_PLAN 4.6-3/4/5）：清单校验 + 地图校验 + 内容码漂移 +
-## 引用悬空，统一产出 {kind, severity, path, message, map, jump} 条目。
+## 全项目一致性审计：清单校验 + 地图校验 + 引用悬空，统一产出 {kind, severity, path, message, map, jump} 条目。
 ## 纯字典/文件扫描，不碰场景树——UI（问题抽屉/自检入口）只是它的呈现层。
 
 const ManifestValidation := preload("res://src/project/manifest_validation.gd")
@@ -31,6 +30,7 @@ static func audit(manifest: Dictionary) -> Array:
 ## 引用悬空检查：objects[].props 里 entity_ref/map_ref 声明字段的值指向不存在对象 = 警告。
 static func _ref_checks(data: Dictionary, manifest: Dictionary, map_name: String) -> Array:
 	var out: Array = []
+	var map_codes := MapStore.code_map(manifest)
 	# 本图实例码集合
 	var codes := {}
 	for e in (data.get("objects", []) as Array):
@@ -65,7 +65,9 @@ static func _ref_checks(data: Dictionary, manifest: Dictionary, map_name: String
 			if val == null or str(val) == "":
 				continue   # 未填 = 合法状态
 			var typ := str(f.get("type", ""))
-			var ok_target: bool = maps_dir == "" or FileAccess.file_exists(maps_dir.path_join(str(val) + ".json"))
+			# map_ref 值 = 地图码（v7）：码表判定为主；图名兜底（老图兼容值）/ maps_dir 未配放行
+			var ok_target: bool = map_codes.has(str(val)) \
+				or (maps_dir == "" or FileAccess.file_exists(maps_dir.path_join(str(val) + ".json")))
 			if typ == "entity_ref" and not codes.has(str(val)):
 				out.append({
 					"kind": "ref", "severity": "warning",

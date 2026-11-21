@@ -688,11 +688,11 @@ godot --headless --path "<编辑器工程>" --script res://tests/run_tests.gd
 | `test_audit.gd` | 全项目审计：清单/地图条目包装（kind/map/jump 可跳转性）、引用悬空（entity_ref/map_ref → 警告，未填合法不报） |
 | `test_assets.gd` | `assets[]` 归一化：kind 分派、未知键保留、palette 展平、非正方形 `cell`、`editorSize`/`sizeFields` 尺寸、编辑期原件入口、挂载过滤 |
 | `test_entity_node.gd` | `EntityNode` 锚点↔格坐标换算（center/top_left/bottom_center 正反算）、浮点坐标与所在格、`sizeFields` 尺寸覆盖、`transform` 缺省判定（1/0/false 算缺省、翻转 toggle 后键被删掉） |
-| `test_stores.gd` | MapStore v7 写读回环、ContentStore 写读回环（user:// 临时目录，跑完自清） |
+| `test_stores.gd` | MapStore v7 写读回环 + 复制图重发码、ContentStore 写读回环（user:// 临时目录，跑完自清） |
 
 约定：套件 `extends "res://tests/_suite_base.gd"`，方法名 `test_` 开头即被发现；
 `ok()` / `eq()` 收集失败；**每个用例至少一条断言**（崩溃中断的用例断言数不增长，
-runner 判 FAIL——防止半路崩掉变成假 PASS）。退出码非 0 = 有失败。当前 10 套件 67 用例。
+runner 判 FAIL——防止半路崩掉变成假 PASS）。退出码非 0 = 有失败。当前 10 套件 69 用例。
 
 截图辅助 `tools/screenshot.gd`（模式清单见文件头注释）与警告扫描 `tools/warn_scan.gd`
 （headless 全量加载 src/ 校验可加载性）；`tools/migrate_project.gd` 是一次性迁移脚本

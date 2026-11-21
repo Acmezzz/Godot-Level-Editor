@@ -829,22 +829,24 @@ func set_layer_locked(i: int, locked: bool) -> void:
 func is_layer_locked(i: int) -> bool:
 	return _layer_ops_ctrl.is_layer_locked(i)
 func layer_add(new_name: String) -> void:
-	_layer_ops_ctrl.layer_add(new_name)
+	await _layer_ops_ctrl.layer_add(new_name)
 func layer_del(i: int) -> void:
-	_layer_ops_ctrl.layer_del(i)
+	await _layer_ops_ctrl.layer_del(i)
 func layer_rename(i: int, new_name: String) -> void:
-	_layer_ops_ctrl.layer_rename(i, new_name)
+	await _layer_ops_ctrl.layer_rename(i, new_name)
 func layer_move(i: int, dir: int) -> void:
-	_layer_ops_ctrl.layer_move(i, dir)
+	await _layer_ops_ctrl.layer_move(i, dir)
 func layer_set_visible(i: int, v: bool) -> void:
-	_layer_ops_ctrl.layer_set_visible(i, v)
+	await _layer_ops_ctrl.layer_set_visible(i, v)
 func layer_set_blend(i: int, blend: String) -> void:
-	_layer_ops_ctrl.layer_set_blend(i, blend)
+	await _layer_ops_ctrl.layer_set_blend(i, blend)
 func _load_snap_layers(snap: Dictionary, active_id: String) -> void:
-	_layer_ops_ctrl._load_snap_layers(snap, active_id)
+	await _layer_ops_ctrl._load_snap_layers(snap, active_id)
 func make_object(aid: String) -> EntityNode:
 	return _entity_factory_ctrl.make_object(aid)
 func is_placeable(aid: String) -> bool:
 	return _entity_factory_ctrl.is_placeable(aid)
 func _ensure_code(n: EntityNode) -> void:
 	_entity_factory_ctrl._ensure_code(n)
+func _fresh_inst_code() -> String:
+	return _entity_factory_ctrl._fresh_inst_code()

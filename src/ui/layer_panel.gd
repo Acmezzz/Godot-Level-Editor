@@ -109,7 +109,7 @@ func _open_layer_manager() -> void:
 	_layer_mgr_input = input
 	row.add_child(input)
 	row.add_child(app.UiKitScript.button("新建层", func():
-		app.canvas.layer_add(_layer_mgr_input.text)
+		await app.canvas.layer_add(_layer_mgr_input.text)
 		_layer_mgr_input.clear()
 		_rebuild_layer_mgr()
 		app._sync_ui()), "primary")
@@ -146,14 +146,14 @@ func _layer_mgr_row(i: int, decl: Dictionary) -> Control:
 	nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	nm.tooltip_text = "层名（改成新名字后回车提交）"
 	nm.text_submitted.connect(func(s: String):
-		app.canvas.layer_rename(i, s)
+		await app.canvas.layer_rename(i, s)
 		app._sync_ui())
 	row.add_child(nm)
 	var vis := CheckBox.new()
 	vis.button_pressed = bool(decl.get("visible", true))
 	vis.tooltip_text = "运行时初始可见（差分视图用）"
 	vis.toggled.connect(func(on: bool):
-		app.canvas.layer_set_visible(i, on)
+		await app.canvas.layer_set_visible(i, on)
 		app._sync_ui())
 	row.add_child(vis)
 	var blend_opt := OptionButton.new()
@@ -166,17 +166,17 @@ func _layer_mgr_row(i: int, decl: Dictionary) -> Control:
 	blend_opt.select({"mix": 0, "add": 1, "mul": 2}.get(str(decl.get("blend", "mix")), 0))
 	blend_opt.tooltip_text = "层混合模式：混合（缺省）/ 加法（发光类）/ 相乘（遮罩类）"
 	blend_opt.item_selected.connect(func(idx: int):
-		app.canvas.layer_set_blend(i, str(blend_opt.get_item_metadata(idx))))
+		await app.canvas.layer_set_blend(i, str(blend_opt.get_item_metadata(idx))))
 	row.add_child(blend_opt)
 	var up = app.UiKitScript.button("↑", func():
-		app.canvas.layer_move(i, -1)
+		await app.canvas.layer_move(i, -1)
 		_rebuild_layer_mgr()
 		app._sync_ui(), "ghost")
 	up.disabled = i == 0
 	up.tooltip_text = "上移一层"
 	row.add_child(up)
 	var down = app.UiKitScript.button("↓", func():
-		app.canvas.layer_move(i, 1)
+		await app.canvas.layer_move(i, 1)
 		_rebuild_layer_mgr()
 		app._sync_ui(), "ghost")
 	down.disabled = i >= app.canvas.layer_count() - 1
@@ -184,7 +184,7 @@ func _layer_mgr_row(i: int, decl: Dictionary) -> Control:
 	row.add_child(down)
 	var del = app.UiKitScript.button("删除", func():
 		var before: int = app.canvas.layer_count()
-		app.canvas.layer_del(i)
+		await app.canvas.layer_del(i)
 		if app.canvas.layer_count() == before:
 			app._set_status("至少保留一个图层")
 		_rebuild_layer_mgr()

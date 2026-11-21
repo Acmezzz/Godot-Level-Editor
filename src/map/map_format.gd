@@ -18,7 +18,7 @@ extends RefCounted
 const VERSION := 7
 
 ## —— 瓦片变换位（编辑器口径 0-7） ——
-## Godot 的 alternative_tile 把变换编在第 12/13 位（TRANSFORM_FLIP_H/V/TRANSPOSE）；
+## Godot 的 alternative_tile 把变换编在第 12/13/14 位（FLIP_H=4096 / FLIP_V=8192 / TRANSPOSE=16384）；
 ## 磁盘数据收敛到 0-7，读写时经这两个函数与 Godot 位互转。
 const TILE_FLIP_H := 1
 const TILE_FLIP_V := 2
@@ -31,7 +31,7 @@ static func alt_to_godot(f: int) -> int:
 	if f & TILE_FLIP_V:
 		g |= 8192
 	if f & TILE_ROT90:
-		g |= 12288
+		g |= 16384
 	return g
 
 static func alt_of_godot(g: int) -> int:
@@ -40,6 +40,6 @@ static func alt_of_godot(g: int) -> int:
 		f |= TILE_FLIP_H
 	if g & 8192:
 		f |= TILE_FLIP_V
-	if g & 12288:
+	if g & 16384:
 		f |= TILE_ROT90
 	return f

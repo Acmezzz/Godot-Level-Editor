@@ -287,13 +287,21 @@ static func duplicate_map(m: Dictionary, old_name: String, new_name: String) -> 
 	var src := path_for(m, old_name)
 	if src == "" or not FileAccess.file_exists(src):
 		return "原图不存在"
-	var f := FileAccess.open(src, FileAccess.READ)
-	if f == null:
-		return "原图读取失败"
-	var txt := f.get_as_text()
-	f.close()
+	var d := read(m, old_name)
+	if d.is_empty():
+		return "原图解析失败"
+	# 地图码项目内唯一：复制图重发 meta.code（占用表含原图码，新码避开）。
+	# 实例码保留——实例码作用域是本图（引用/审计按本图码集判定），整图克隆不冲突。
+	var meta: Dictionary = d.get("meta", {}) if d.get("meta", {}) is Dictionary else {}
+	var taken := code_map(m)
+	taken[str(meta.get("code", ""))] = true
+	var code := ContentId.new_inst_code()
+	while taken.has(code):
+		code = ContentId.new_inst_code()
+	meta["code"] = code
+	d["meta"] = meta
 	# 走原子写单入口（tmp+rename）：写失败不留半截文件堵死同名重试；缓存失效 write_text 内部已做
-	if not write_text(path_for(m, new_name), txt):
+	if not write_json(path_for(m, new_name), d):
 		return "复制写盘失败"
 	return ""
 

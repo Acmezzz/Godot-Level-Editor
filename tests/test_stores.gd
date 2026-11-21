@@ -1,5 +1,5 @@
 extends "res://tests/_suite_base.gd"
-## 两个存储层：MapStore v4 写读回环 + ContentStore 写读回环（临时目录，跑完清理）。
+## 两个存储层：MapStore 写读回环 + 复制图重发码 + ContentStore 写读回环（临时目录，跑完清理）。
 
 const MapStore := preload("res://src/map/map_store.gd")
 const ContentStore := preload("res://src/content/content_store.gd")
@@ -33,6 +33,20 @@ func test_map_write_read_roundtrip() -> void:
 	eq(int(data.get("version")), MapStore.FORMAT_VERSION, "版本保真")
 	eq(str((data.get("meta", {}) as Dictionary).get("name")), "t", "图名保真")
 	eq((data.get("meta", {}) as Dictionary).get("layers", []).size(), 2, "层栈保真")
+	_wipe()
+
+func test_duplicate_map_reissue_code() -> void:
+	_wipe()
+	var m := _fake_manifest()
+	var d := MapStore.new_map("t", 40, 30)
+	ok(MapStore.write(m, "t", d), "原图写入")
+	eq(MapStore.duplicate_map(m, "t", "t2"), "", "复制成功")
+	var d2 := MapStore.read(m, "t2")
+	ok(d2.size() > 0, "复制图可读")
+	var c1 := str((d.get("meta", {}) as Dictionary).get("code", ""))
+	var c2 := str((d2.get("meta", {}) as Dictionary).get("code", ""))
+	ok(c2 != "", "复制图有码")
+	ok(c2 != c1, "复制图重发码（项目内唯一）")
 	_wipe()
 
 func test_content_write_read_roundtrip() -> void:

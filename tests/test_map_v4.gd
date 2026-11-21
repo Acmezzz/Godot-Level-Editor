@@ -1,8 +1,9 @@
 extends "res://tests/_suite_base.gd"
-## 地图 JSON v6：new_map 模板 + map_data_validation 各道防线。
+## 地图 JSON 契约：new_map 模板 + map_data_validation 各道防线 + 变换位互转。
 
 const Store := preload("res://src/map/map_store.gd")
 const MV := preload("res://src/map/map_data_validation.gd")
+const MapFormat := preload("res://src/map/map_format.gd")
 
 ## 最小清单：一张图集场景、一张图片场景、一个实体种类——够覆盖 assets 归属检查
 const MANIFEST := {"assets": [
@@ -23,6 +24,12 @@ func test_new_map_template() -> void:
 	for lm in (meta.get("layers", []) as Array):
 		eq(str((lm as Dictionary).get("id", "")).length(), 4, "层 id 4 位")
 		eq(bool((lm as Dictionary).get("visible")), true, "层默认可见")
+
+func test_alt_roundtrip() -> void:
+	for f in range(8):
+		eq(MapFormat.alt_of_godot(MapFormat.alt_to_godot(f)), f, "alt %d 往返幂等" % f)
+	eq(MapFormat.alt_to_godot(MapFormat.TILE_ROT90), 16384, "转置 = Godot bit14 (16384)")
+	eq(MapFormat.alt_to_godot(MapFormat.TILE_FLIP_H | MapFormat.TILE_FLIP_V | MapFormat.TILE_ROT90), 28672, "H+V+转置全置位")
 
 func _box() -> Dictionary:
 	var d := Store.new_map("t", 40, 30)

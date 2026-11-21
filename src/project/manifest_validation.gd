@@ -40,7 +40,7 @@ static func validate(data: Dictionary, project_dir := "") -> Array[Dictionary]:
 		_validate_triggers(data, issues)
 	if data.has("collisionTypes"):
 		_validate_collision_types(data, issues)
-		_validate_playtest(data, issues)
+	_validate_playtest(data, issues)
 	var tile_size = data.get("tileSize", 16)
 	if not (tile_size is int or tile_size is float) or float(tile_size) <= 0.0:
 		_add(issues, "error", "tileSize", "must be a positive number")

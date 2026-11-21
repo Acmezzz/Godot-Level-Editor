@@ -26,7 +26,10 @@ func _restore(snapshot) -> void:
 func _push_undo() -> void:
 	if cvs.map_root == null or not is_instance_valid(cvs.map_root):
 		return
-	cvs.undo_stack.append(_snapshot())
+	var snap := _snapshot()
+	if snap == "{}":
+		return   # 重建窗口哨兵（extract 返回 {}）：恢复它=清空整图，拒绝入栈
+	cvs.undo_stack.append(snap)
 	if cvs.undo_stack.size() > cvs.UNDO_MAX:
 		cvs.undo_stack.pop_front()
 	cvs.redo_stack.clear()

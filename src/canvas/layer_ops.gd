@@ -40,7 +40,7 @@ func _push_undo() -> void:
 func extract() -> Dictionary:
 	return cvs.extract()
 func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty := false) -> void:
-	cvs.load_data(data, map_name, keep_cam, keep_dirty)
+	await cvs.load_data(data, map_name, keep_cam, keep_dirty)
 
 # —— 图层栈：地图 meta.layers 声明（[{id, name, visible}]，栈序 = 数组序，底→顶） ——
 ## 层=纯 z 槽只管画画；清单 layers[] 已退役，层词汇逐图声明。
@@ -184,9 +184,9 @@ func layer_add(name: String) -> void:
 		L.append(entry)
 	meta["layers"] = L
 	snap["meta"] = meta
-	_load_snap_layers(snap, layer_id(active_layer))
+	await _load_snap_layers(snap, layer_id(active_layer))
 
-## 删层 = 删内容：快照上摘掉层声明，该层瓦片与实体一并过滤（撤销可回）。
+## 删层 = 删内容：快照上摘掉层声明，该层瓦片与 objects 条目一并过滤（撤销可回）。
 ## 拒绝时静默返回；调用方（层管理 UI）负责给状态栏反馈。
 func layer_del(i: int) -> void:
 	if map_root == null or not is_instance_valid(map_root) or i < 0 or i >= layer_count():
@@ -208,11 +208,11 @@ func layer_del(i: int) -> void:
 	tiles.erase(lid)
 	snap["tiles"] = tiles
 	var keep := []
-	for e in (snap.get("entities", []) as Array):
-		if str((e as Dictionary).get("layer", "")) != lid:
-			keep.append(e)
-	snap["entities"] = keep
-	_load_snap_layers(snap, active_id)
+	for o in (snap.get("objects", []) as Array):
+		if o is Dictionary and str((o as Dictionary).get("layer", "")) != lid:
+			keep.append(o)
+	snap["objects"] = keep
+	await _load_snap_layers(snap, active_id)
 
 func layer_rename(i: int, name: String) -> void:
 	if map_root == null or not is_instance_valid(map_root):
@@ -232,7 +232,7 @@ func layer_rename(i: int, name: String) -> void:
 	(SL[i] as Dictionary)["name"] = str(name)
 	meta["layers"] = SL
 	snap["meta"] = meta
-	_load_snap_layers(snap, layer_id(active_layer))
+	await _load_snap_layers(snap, layer_id(active_layer))
 
 ## 层混合模式（v7）：mix 缺省省略（erase），add/mul 写盘。快照先行，与 layer_rename 同纪律。
 ## 值未变直接返回（幂等）——控件回填不产生幽灵撤销步。
@@ -260,7 +260,7 @@ func layer_set_blend(i: int, blend: String) -> void:
 		(SL[i] as Dictionary)["blend"] = blend
 	meta["layers"] = SL
 	snap["meta"] = meta
-	_load_snap_layers(snap, layer_id(active_layer))
+	await _load_snap_layers(snap, layer_id(active_layer))
 
 func layer_move(i: int, dir: int) -> void:
 	if map_root == null or not is_instance_valid(map_root):
@@ -281,7 +281,7 @@ func layer_move(i: int, dir: int) -> void:
 	SL[nj] = tmp
 	meta["layers"] = SL
 	snap["meta"] = meta
-	_load_snap_layers(snap, active_id)
+	await _load_snap_layers(snap, active_id)
 
 ## 运行时初始可见（差分视图用）；编辑视图显隐走 set_layer_hidden，两回事。
 func layer_set_visible(i: int, v: bool) -> void:
@@ -302,10 +302,10 @@ func layer_set_visible(i: int, v: bool) -> void:
 	(SL[i] as Dictionary)["visible"] = v
 	meta["layers"] = SL
 	snap["meta"] = meta
-	_load_snap_layers(snap, layer_id(active_layer))
+	await _load_snap_layers(snap, layer_id(active_layer))
 
 ## 层操作收尾：按新快照重建，激活层跟随身份（同码层下标，层没了落最底层）。
 func _load_snap_layers(snap: Dictionary, active_id: String) -> void:
-	load_data(snap, cur_map_name, true, true)
+	await load_data(snap, cur_map_name, true, true)
 	var ni := _layer_index_of(active_id)
 	active_layer = ni if ni >= 0 else 0
