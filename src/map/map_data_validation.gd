@@ -3,6 +3,25 @@ extends RefCounted
 
 const MapFormat := preload("res://src/map/map_format.gd")
 
+## 原始文档前置检查（D11）：必须在 upgrade() 抬版本号之前跑。
+## 版本缺失/超前、退役顶层键都在这里拒收；低于当前格式只给警告（结构问题由 validate 各项报出）。
+static func precheck(data: Dictionary) -> Array[Dictionary]:
+	var issues: Array[Dictionary] = []
+	if not data.has("version"):
+		_add(issues, "error", "version", "version is required")
+	elif not (data["version"] is int or data["version"] is float):
+		_add(issues, "error", "version", "must be a number")
+	elif int(data["version"]) > MapFormat.VERSION:
+		_add(issues, "error", "version",
+			"map format %d is newer than this editor supports (%d)" % [int(data["version"]), MapFormat.VERSION])
+	elif int(data["version"]) < MapFormat.VERSION:
+		_add(issues, "warning", "version",
+			"older map format %d (upgraded in memory)" % int(data["version"]))
+	for key in ["terrain", "decor"]:
+		if data.has(key):
+			_add(issues, "error", key, "retired top-level key: run tools/migrate_project.gd")
+	return issues
+
 static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 	var issues: Array[Dictionary] = []
 	# version：缺失/非数字 = 错误（结构契约没有锚点）；高于当前格式 = 错误（打不开新图）；
@@ -43,12 +62,14 @@ static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 					var cell = (tiles[lid] as Array)[j]
 					var p := "tiles.%s[%d]" % [str(lid), j]
 					# 6 元（v7）：[x, y, 资产id, atlas_x, atlas_y, alt]——第 3 位是字符串资产 id，
-					# 第 6 位 = 变换位 0-7（bit0 水平翻转 / bit1 垂直翻转 / bit2 转置 90°），0 = 原样
+					# 第 6 位 = 变换位 0-7（bit0 水平翻转 / bit1 垂直翻转 / bit2 转置 90°），0 = 原样。
+					# JSON 数字一律是 float：alt 接受「有限且为整数」的值（5.0 合法、5.5 拒绝），
+					# 否则编辑器自己写出的 JSON 会被自己拒收（D01）。
 					if not (cell is Array) or (cell as Array).size() != 6 \
 							or not _is_number_prefix(cell, 2) or not (cell[2] is String) \
 							or not (((cell as Array)[3] is int or (cell as Array)[3] is float) \
 								and ((cell as Array)[4] is int or (cell as Array)[4] is float) \
-								and (cell as Array)[5] is int):
+								and _is_integral_number((cell as Array)[5])):
 						_add(issues, "error", p, "must contain x, y, asset id, atlas_x, atlas_y, alt (v6 5-tuple retired: run tools/migrate_project.gd)")
 					elif int((cell as Array)[3]) < 0 or int((cell as Array)[4]) < 0 \
 							or int((cell as Array)[5]) < 0 or int((cell as Array)[5]) > 7:
@@ -223,6 +244,15 @@ static func _is_number_prefix(values: Array, count: int) -> bool:
 		if not (values[i] is int or values[i] is float):
 			return false
 	return true
+
+## JSON 数字都是 float：接受有限且为整数的值，拒绝 5.5、NAN、INF（D01）。
+static func _is_integral_number(v) -> bool:
+	if v is int:
+		return true
+	if not (v is float):
+		return false
+	var f: float = v
+	return is_finite(f) and f == floorf(f)
 
 static func _add(issues: Array[Dictionary], severity: String, path: String, message: String) -> void:
 	issues.append({"severity": severity, "path": path, "message": message})

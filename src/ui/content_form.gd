@@ -54,6 +54,8 @@ func _write_fns(n: EntityNode, fns: Array) -> void:
 	host._write_fns(n, fns)
 func _refresh_all() -> void:
 	host._refresh_all()
+func _rebuild_right() -> void:
+	host._rebuild_right()
 func _rebuild_rows() -> void:
 	host._rebuild_rows()
 func _open_steps_editor(i: int) -> void:
@@ -76,7 +78,9 @@ func _build_form_block() -> Control:
 	var content_id := str(f.get("content", ""))
 	var fn_label := str(FunctionDecls.function_name(manifest, fn_id)) if bool(ref.get("known", false)) \
 		else "(未声明的功能) " + str(f.get("fn", ""))
-	var data: Dictionary = ContentStore.read(manifest, fn_id, content_id) if content_id != "" and fn_id != "" else {}
+	var cres := ContentStore.read_ex(manifest, fn_id, content_id) if content_id != "" and fn_id != "" \
+		else {"status": "missing", "data": {}, "error": ""}
+	var data: Dictionary = cres.data if str(cres.status) == "ok" else {}
 	var cname := str(data.get("name", "")) if not data.is_empty() else str(f.get("name", ""))
 
 	var head := Kit.hbox(6)
@@ -90,6 +94,15 @@ func _build_form_block() -> Control:
 	if drift != "":
 		box.add_child(Kit.text_label("⚠ 内容记录的功能码 %s 与清单当前码 %s 不一致（改动任一字段即按当前码重写）"
 			% [drift, FunctionDecls.fn_code(manifest, fn_id)], Th.WARN, Th.FS_META))
+	# 损坏内容：拒绝静默覆盖，给显式修复入口（C04）。修复前表单只读。
+	if str(cres.status) == "invalid":
+		box.add_child(Kit.text_label("⚠ 内容文件损坏，已拒绝写入：%s" % str(cres.error), Th.ERR, Th.FS_META))
+		var fix := Kit.button("重建为空白内容（会覆盖坏文件）", func():
+			var blank := _blank_content(fn_id, content_id)
+			if ContentStore.write(manifest, fn_id, content_id, blank, true):
+				app._set_status(" 内容已重建：" + content_id)
+				_rebuild_right())
+		box.add_child(fix)
 
 	# 只读层级 ID：创建后显示完整 id，未创建时明确写「未创建」而不是伪造一个随机码
 	var id_text := content_id

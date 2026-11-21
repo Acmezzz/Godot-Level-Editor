@@ -42,13 +42,15 @@ static func _file_size(path: String) -> int:
 	return n
 
 ## 统一文本解码、版本升级与结构校验；错误时不返回可编辑数据。
+## 先跑原始文档检查（版本缺失/超前、退役键），再抬版本号并做结构校验（D11）。
 static func decode_text(text: String, source := "", manifest := {}) -> Dictionary:
 	var parsed = JSON.parse_string(text)
 	if not (parsed is Dictionary):
 		return {"ok": false, "data": {}, "errors": [{"path": source, "message": "JSON must be an object"}], "warnings": [], "migrated": false}
 	var data: Dictionary = parsed
+	var issues := MapValidator.precheck(data)
 	var migrated := upgrade(data)
-	var issues := MapValidator.validate(data, manifest)
+	issues.append_array(MapValidator.validate(data, manifest))
 	var errors: Array[Dictionary] = []
 	var warnings: Array[Dictionary] = []
 	for issue in issues:
@@ -144,17 +146,40 @@ static func name_to_code(m: Dictionary) -> Dictionary:
 
 ## 确保这张图有 meta.code：缺就发一个不与全项目冲突的新码并写回 data。
 ## 返回是否有改动（调用方据此置脏）。就地修改。
+## 占用表直接扫全部地图文件（含重复码的影子条目），不只信 code_map 的「一码一图」（D08）。
 static func ensure_code(m: Dictionary, data: Dictionary) -> bool:
 	var meta: Dictionary = data.get("meta", {}) if data.get("meta", {}) is Dictionary else {}
 	if str(meta.get("code", "")) != "":
 		return false
-	var taken := code_map(m)
+	var taken := {}
+	for mn in list_maps(m):
+		var md := read(m, str(mn))
+		var c := str((md.get("meta", {}) as Dictionary).get("code", ""))
+		if c != "":
+			taken[c] = true
 	var code := ContentId.new_inst_code()
 	while taken.has(code):
 		code = ContentId.new_inst_code()
 	meta["code"] = code
 	data["meta"] = meta
 	return true
+
+## 项目内重复地图码 → {code: [图名...]}（>1 个文件共用同码）。审计/引用解析据此拒绝猜测。
+static func code_conflicts(m: Dictionary) -> Dictionary:
+	var by_code := {}
+	for mn in list_maps(m):
+		var md := read(m, str(mn))
+		var c := str((md.get("meta", {}) as Dictionary).get("code", ""))
+		if c == "":
+			continue
+		if not by_code.has(c):
+			by_code[c] = []
+		(by_code[c] as Array).append(str(mn))
+	var out := {}
+	for c in by_code:
+		if (by_code[c] as Array).size() > 1:
+			out[c] = by_code[c]
+	return out
 
 ## 地图文件路径；名称非法时返回 ""（调用方必须检查）
 static func path_for(m: Dictionary, name: String) -> String:
@@ -166,7 +191,7 @@ static func read(m: Dictionary, name: String) -> Dictionary:
 	var data = result.data if result.ok else {}
 	return data
 
-## 写地图 JSON；名称非法或写盘失败返回 false
+## 写地图 JSON；名称非法、写入前校验失败或写盘失败均返回 false。
 ## 正式保存轮转备份——写前把当前文件拷进 <maps_dir>/.history/<名>.json.1..3（.1 最新）。
 ## 无 git 环境的最后保险；autosave/levels/事务写盘不进历史（各有机制）。
 const HISTORY_DEPTH := 3
@@ -175,8 +200,23 @@ static func write(m: Dictionary, name: String, data: Dictionary) -> bool:
 	var path := path_for(m, name)
 	if path == "":
 		return false
+	# 写前校验序列化结果（D11）：坏图（层栈空/瓦片元组错/退役键）不落盘覆盖好文件。
+	if not validate_for_write(data, m):
+		return false
 	_rotate_history(path)
 	return write_json(path, data)
+
+## 校验待写文档；返回首个错误文本，"" = 通过。
+static func write_error(m: Dictionary, data: Dictionary) -> String:
+	var issues := MapValidator.precheck(data)
+	issues.append_array(MapValidator.validate(data, m))
+	for issue in issues:
+		if str(issue.severity) == "error":
+			return "%s: %s" % [str(issue.path), str(issue.message)]
+	return ""
+
+static func validate_for_write(data: Dictionary, m: Dictionary) -> bool:
+	return write_error(m, data) == ""
 
 ## 轮转 .3←.2←.1←当前（copy 当前而非 rename：备份失败绝不阻断保存本身）
 ## 内容文件也要同样的回滚保险（内容条目是可复用资产），所以开放成公开入口。

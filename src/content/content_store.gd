@@ -89,30 +89,43 @@ static func path_for(m: Dictionary, kind: String, id: String) -> String:
 		return ""
 	return dir.path_join(id + ".json").simplify_path()
 
-## 读单个资源；缺失/损坏/非法一律返回 {}。
-## 按文件 mtime+尺寸缓存——属性面板/库反复 read 不再逐文件读盘；
-## 返回缓存副本防调用方污染；写盘后 mtime 变化自动失效（与 map_store 同款）。
-static var _cache := {}   # path -> {mtime: int, data: Dictionary}
+## 读缓存：path -> {mtime, size, data}。read_ex 命中缓存时返回副本，
+## 写盘/改名/删除显式失效（见 write/rename/remove）。
+static var _cache := {}   # path -> {mtime: int, size: int, data: Dictionary}
 
-static func read(m: Dictionary, kind: String, id: String) -> Dictionary:
+## 严格读取：区分「缺失」「损坏」「可写」（C04）。
+## status: ok / missing / invalid；invalid 时 data 为空、error 说明原因，调用方不得覆盖原文件。
+static func read_ex(m: Dictionary, kind: String, id: String) -> Dictionary:
 	var path := path_for(m, kind, id)
-	if path == "" or not FileAccess.file_exists(path):
-		return {}
+	if path == "":
+		return {"status": "invalid", "data": {}, "error": "内容目录或 id 非法"}
+	if not FileAccess.file_exists(path):
+		return {"status": "missing", "data": {}, "error": "内容文件不存在"}
 	var mt := FileAccess.get_modified_time(path)
 	var sz := _file_size(path)
 	var hit = _cache.get(path, null)
-	# mtime 秒级粒度，同秒改写会被脏缓存吃掉——缓存键补文件长度兜住绝大多数情形
 	if hit != null and int(hit.get("mtime", -1)) == mt and int(hit.get("size", -1)) == sz:
-		return (hit.get("data", {}) as Dictionary).duplicate(true)
+		return {"status": "ok", "data": (hit.get("data", {}) as Dictionary).duplicate(true), "error": ""}
 	var f := FileAccess.open(path, FileAccess.READ)
 	if f == null:
-		return {}
+		return {"status": "invalid", "data": {}, "error": "内容文件无法打开"}
 	var text := f.get_as_text()
 	f.close()
-	var data := _decode(text, id)
-	if not data.is_empty():
-		_cache[path] = {"mtime": mt, "size": sz, "data": data}
-	return data
+	var json := JSON.new()
+	if json.parse(text) != OK:
+		return {"status": "invalid", "data": {}, "error": "JSON 解析失败: " + json.get_error_message()}
+	if not (json.data is Dictionary):
+		return {"status": "invalid", "data": {}, "error": "内容文件顶层必须是对象"}
+	var data: Dictionary = json.data
+	if str(data.get("id", "")) == "":
+		data["id"] = id
+	_cache[path] = {"mtime": mt, "size": sz, "data": data}
+	return {"status": "ok", "data": data.duplicate(true), "error": ""}
+
+## 读单个资源；缺失/损坏/非法一律返回 {}（旧调用兼容；需要区分状态请用 read_ex）。
+static func read(m: Dictionary, kind: String, id: String) -> Dictionary:
+	var res := read_ex(m, kind, id)
+	return res.data if str(res.status) == "ok" else {}
 
 static func _file_size(path: String) -> int:
 	var f := FileAccess.open(path, FileAccess.READ)
@@ -124,6 +137,7 @@ static func _file_size(path: String) -> int:
 
 ## 静默解析：JSON.parse_string 遇到坏文件会向引擎打 ERROR 日志，
 ## 校验页扫描大量资源时会被噪声淹没；JSON.new().parse() 只返回错误码。
+## 仅 read_all 的宽松路径使用；read_ex 自带严格状态。
 static func _decode(text: String, id: String) -> Dictionary:
 	var json := JSON.new()
 	if json.parse(text) != OK:
@@ -137,10 +151,15 @@ static func _decode(text: String, id: String) -> Dictionary:
 	return data
 
 ## 写单个资源；目录不存在时自动创建。
-static func write(m: Dictionary, kind: String, id: String, data: Dictionary) -> bool:
+## 已有文件损坏时拒绝静默覆盖（C04）：除非调用方显式传 allow_repair=true。
+static func write(m: Dictionary, kind: String, id: String, data: Dictionary, allow_repair := false) -> bool:
 	var path := path_for(m, kind, id)
 	if path == "":
 		return false
+	if FileAccess.file_exists(path) and not allow_repair:
+		var cur := read_ex(m, kind, id)
+		if str(cur.status) == "invalid":
+			return false
 	DirAccess.make_dir_recursive_absolute(path.get_base_dir())
 	if FileAccess.file_exists(path):
 		# 内容文件与地图同权——误写可回滚（3 层 .history，最新 .1）
@@ -171,14 +190,16 @@ static func list_ids(m: Dictionary, kind: String) -> Array:
 	return out
 
 ## 读某类全部资源；坏文件不进结果但记入 bad_out（与 MapStore.read_all 一致）。
+## 条目带 status/error，调用方可区分「缺失」与「损坏」（C04）。
 static func read_all(m: Dictionary, kind: String, bad_out: Array = []) -> Dictionary:
 	var out := {}
 	for id in list_ids(m, kind):
-		var data := read(m, kind, id)
-		if data.is_empty():
-			bad_out.append({"name": id, "kind": kind, "reason": "无法读取或 JSON 解析失败"})
+		var res := read_ex(m, kind, str(id))
+		if str(res.status) != "ok":
+			bad_out.append({"name": id, "kind": kind, "reason": str(res.error),
+				"status": str(res.status)})
 			continue
-		out[id] = data
+		out[id] = res.data
 	return out
 
 ## 改名：复制到新 id 后删旧文件；任一步失败回滚为原状。

@@ -64,6 +64,9 @@ var spawn: Marker2D
 var tile_set: TileSet
 var atlas_tex: Texture2D
 var atlas_img: Image
+## 装载时未能解析的瓦片（资产缺失/图集读不到）：按层保存原始 6 元组，
+## 提取时原样写回——缺素材不允许把已存瓦片记录抹掉（D02）。
+var _unresolved_tiles := {}
 # 多图集：全部图集（索引 = TileSet source_id = 地图格 atlas 维度）
 var atlas_imgs: Array = []
 # 实体 by_id 索引缓存——_mark/load_data 置脏，绘制连线时 O(n) 复用
@@ -223,10 +226,11 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	grid = GridSpaceScript.new(Vector2i(tile_w, tile_h), _map_projection())
 	# 背景：整块铺满视口（比地图尺寸大得多），作为地图之外区域的底色
 	var meta: Dictionary = data.get("meta", {})
-	# 分层身份码：地图段。老图没有就补发（保存在 meta.code，地图改名不影响它）
+	# 分层身份码：地图段。老图没有就补发（保存在 meta.code，地图改名不影响它）。
+	# 统一走项目级分配器，避免新图与缺码老图撞上同码后互相覆盖（D08）。
 	if str(meta.get("code", "")) == "":
-		meta["code"] = ContentIdRef.new_map_code()
-		map_data["meta"] = meta
+		if MapStoreRef.ensure_code(manifest, data):
+			map_data = data
 	# 图层栈：meta.layers 缺失/为空时补默认两层（资产层/FL）——不是旧数据迁移，
 	# 是新建图的同款默认；层词汇逐图声明。
 	var dl = meta.get("layers", null)
@@ -316,10 +320,12 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	coll_view.setup(collision, tile_w, grid)
 	coll_view.canvas_ref = self   # 读 _collision_meta 做类型化分色分形
 	coll_view.manifest = manifest   # 碰撞类型颜色按清单 collisionTypes 声明
-	# 涂瓦片：tiles = {层id: [[x,y,资产id,ax,ay]...]}（5 元，第 3 位是资产 id 字符串）
+	# 涂瓦片：tiles = {层id: [[x,y,资产id,ax,ay,alt]...]}（6 元，第 3 位是资产 id 字符串）
 	var tiles_data = data.get("tiles", {})
 	if not (tiles_data is Dictionary):
 		tiles_data = {}
+	_unresolved_tiles.clear()
+	var missing_assets := {}
 	for li2 in L.size():
 		var lid := layer_id(li2)
 		var tn2: TileMapLayer = layer_tiles[li2]
@@ -327,10 +333,19 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 			var arr := c as Array
 			var src: int = source_of_asset(str(arr[2]))
 			if src < 0:
-				continue   # 指向已删资产：跳过，不写坏格子
+				# 资产缺失（清单还没同步/图集读不到）：保留原始记录，保存时原样写回
+				if not _unresolved_tiles.has(lid):
+					_unresolved_tiles[lid] = []
+				(_unresolved_tiles[lid] as Array).append((arr as Array).duplicate())
+				missing_assets[str(arr[2])] = true
+				continue
 			var alt: int = int(arr[5]) if (arr as Array).size() >= 6 else 0
 			TilesetCache.set_cell_alt(tn2, Vector2i(int(arr[0]), int(arr[1])), src,
 				Vector2i(int(arr[3]), int(arr[4])), alt)
+	if not missing_assets.is_empty():
+		var names: Array = missing_assets.keys()
+		_hint("有 %d 种瓦片资产未能装载（%s）：这些瓦片已保留，补齐清单/图集后重开可恢复" % [
+			names.size(), ", ".join(PackedStringArray(names.slice(0, 4)))])
 	# 碰撞条目对象（v6）：{x, y}，type 缺省省略（solid）、shape 缺省省略（矩形）。
 	# 读侧兼容 v5 数组条目（在内存里归一成对象，保存时写对象），写侧只产对象。
 	for c in data.get("collision", []):

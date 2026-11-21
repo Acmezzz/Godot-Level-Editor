@@ -246,6 +246,22 @@ func load_map_file(p: String) -> void:
 	if was_draft:
 		base = base.trim_suffix(".autosave")
 		p = EditorManifest.map_path(app.manifest, base)
+	# 只认项目 maps 目录内的正式文件（D03）：项目外/别处的同名图必须显式导入，
+	# 否则保存会按当前项目拼路径，悄悄覆盖另一个文件。
+	var canon := str(p).simplify_path()
+	var maps_root := str(app.manifest.get("_maps_dir", "")).simplify_path()
+	var outside := maps_root != "" and not canon.begins_with(maps_root.path_join(""))
+	if outside and not was_draft:
+		if not await app._confirm_action("导入外部地图",
+			"这张图不在当前项目的 maps 目录内：\n%s\n\n导入会把它复制为项目内的 %s.json。" % [canon, base],
+			"导入并打开"):
+			return
+		if not app.MapStore.write(app.manifest, base, data):
+			app._set_status("导入失败：无法写入 " + EditorManifest.map_path(app.manifest, base))
+			return
+		p = EditorManifest.map_path(app.manifest, base)
+		canon = str(p).simplify_path()
+		app._set_status("已导入外部地图 → " + p)
 	_opened_mtime = FileAccess.get_modified_time(p)
 	app.canvas.set_thumbs(app._entity_thumbs())
 	await app.canvas.load_data(data, base)
@@ -314,9 +330,11 @@ func on_save() -> bool:
 			"覆盖保存"):
 			app._set_status(" 已取消保存（保留磁盘上的外部改动）")
 			return false
-	# 写盘收敛到 MapStore 单入口（.tmp 原子替换，中途崩溃不留半截 JSON）
+	# 写盘收敛到 MapStore 单入口（.tmp 原子替换，中途崩溃不留半截 JSON）；
+	# 写前校验不过时把首个错误带回状态栏，避免只看到「保存失败」无从下手。
 	if not app.MapStore.write(app.manifest, n, data):
-		app._set_status(" 保存失败: " + path)
+		var why: String = app.MapStore.write_error(app.manifest, data)
+		app._set_status(" 保存失败: %s%s" % [path, ("（%s）" % why) if why != "" else ""])
 		return false
 	_opened_mtime = FileAccess.get_modified_time(path)
 	# 画布与 app 的地图名必须同步：跨图配对/撤销等都以 app.canvas.cur_map_name 为来源

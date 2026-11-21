@@ -82,3 +82,23 @@ func test_content_write_read_roundtrip() -> void:
 	eq(ids.size(), 1, "列出一个内容")
 	ok(ids.has("X1Y2Z3"), "id 正确")
 	_wipe()
+
+func test_v7_tile_alt_roundtrip() -> void:
+	var data := MapStore.new_map("alt", 8, 8)
+	var layer_id := str((data.meta.layers[0] as Dictionary).get("id"))
+	data.tiles[layer_id] = [[1, 2, "AB23", 0, 0, 5]]
+	var decoded := MapStore.decode_text(JSON.stringify(data))
+	ok(decoded.ok, "合法的 v7 瓦片变换可读回")
+	if decoded.ok:
+		eq(int(decoded.data.tiles[layer_id][0][5]), 5, "变换位保真")
+
+## JSON 数字都是 float：5.0 合法；5.5 / -1 / 8 拒绝（D01）
+func test_v7_tile_alt_float_rejected() -> void:
+	var mk := func(alt):
+		var d := MapStore.new_map("alt", 8, 8)
+		var lid := str((d.meta.layers[0] as Dictionary).get("id"))
+		d.tiles[lid] = [[1, 2, "AB23", 0, 0, alt]]
+		return MapStore.decode_text(JSON.stringify(d))
+	ok(bool((mk.call(5.0) as Dictionary).ok), "整数值 5.0 接受")
+	ok(not bool((mk.call(5.5) as Dictionary).ok), "5.5 拒绝")
+	ok(not bool((mk.call(8) as Dictionary).ok), "8 拒绝")
