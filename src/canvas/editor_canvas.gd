@@ -52,6 +52,9 @@ var snap_to_grid := true
 var select_mode := false
 var zoom := 2.0
 var manifest: Dictionary
+## E2：根 app 引用（引用字段写入口需要状态栏/确认框）。由 editor_layout 在挂树前注入；
+## 空 = 未注入（引用连线的写入口自动降级为不可用，其余编辑不受影响）。
+var app_host = null
 var map_data := {}
 var cur_map_name := ""
 var map_root: Node2D
@@ -471,6 +474,9 @@ func _ready() -> void:
 	_canvas_draw_ctrl = preload("res://src/canvas/canvas_draw.gd").new(self)
 	_canvas_input_ctrl = preload("res://src/canvas/canvas_input.gd").new(self)
 	_tool_ops_ctrl = preload("res://src/canvas/tool_ops.gd").new(self)
+	# E2：实例引用字段的统一写入口（宿主 = 根 app：状态栏/确认框在那边）。
+	# app_host 由 editor_layout 在 add_child 之前注入（_ready 时已就位）。
+	_ref_ops_ctrl = preload("res://src/canvas/ref_ops.gd").new(app_host)
 	# 视口尺寸变化时重绘底色（否则窗口缩放后底板会露出旧底色）
 	get_viewport().size_changed.connect(func(): queue_redraw())
 	queue_redraw()
@@ -764,6 +770,7 @@ var pick_mode_hover := ""      # 光标下的候选（只做高亮预览，不�
 var pick_mode_hint := ""       # 确认条文字（由宿主设定：字段名 + 操作说明）
 var pick_mode_accept := "entity"  # "entity" = 只认实体；"any" = 实体与场景实例都可选
 var pick_mode_owner := ""      # 发起方标记（"content" / "steps"），归宿主管
+var pick_mode_types: Array = []  # E2：声明的 of 白名单（空 = 不限资产类型）
 @warning_ignore("unused_private_class_variable")
 var _clipboard: Array = []       # 实例复制模板 [{asset, code, dx, dy, transform, functions, props}]
 var _region_sel := Rect2i(-1, 0, 0, 0)  # 区域框选结果（瓦片层 Ctrl+C 用）
@@ -785,6 +792,18 @@ var _undo_history_ctrl   # UndoHistory：快照式撤销/重做控制器
 var _canvas_draw_ctrl   # CanvasDraw：绘制控制器
 var _canvas_input_ctrl   # CanvasInput：鼠标输入路由控制器
 var _tool_ops_ctrl   # ToolOps：左键/右键语义执行控制器
+## E2 连线：引用端点拖动（跨控制器读写，分析器看不到类内使用）
+var _ref_ops_ctrl   # RefOps：实例引用字段统一写入口
+@warning_ignore("unused_private_class_variable")
+var _link_node: EntityNode = null
+@warning_ignore("unused_private_class_variable")
+var _link_fd := {}
+@warning_ignore("unused_private_class_variable")
+var _link_hover := ""
+@warning_ignore("unused_private_class_variable")
+var _link_grab := Vector2.ZERO
+@warning_ignore("unused_private_class_variable")
+var _link_can_clear := false
 var _last_copy_region := false   # 最近一次复制是区域还是实体（Ctrl+V 分发）
 
 # —— 选择提交入口（E09）——
@@ -799,13 +818,16 @@ func commit_selection(n: EntityNode, multi: Array = []) -> void:
 # —— E1 临时选点：为引用字段在画布上挑目标（确认才提交） ——
 
 ## 进入选点模式：不碰选中/数据；候选高亮画在画布层，宿主负责确认条与提交。
-func begin_pick_mode(owner: String, accept: String, hint: String) -> void:
+## want_types（E2）：声明的 of 白名单；非空时候选只认这些资产类型——与连线把手同一判据，
+## 不让「画布选…」点到一个字段收不下的目标。
+func begin_pick_mode(owner: String, accept: String, hint: String, want_types: Array = []) -> void:
 	pick_mode_active = true
 	pick_mode_owner = owner
 	pick_mode_accept = accept if accept == "any" else "entity"
 	pick_mode_code = ""
 	pick_mode_hover = ""
 	pick_mode_hint = hint
+	pick_mode_types = want_types.duplicate()
 	queue_redraw()
 
 ## 退出选点模式（确认/取消都走这里）：只清模式状态，不动选中与字段值。
@@ -815,6 +837,7 @@ func end_pick_mode() -> void:
 	pick_mode_hover = ""
 	pick_mode_hint = ""
 	pick_mode_owner = ""
+	pick_mode_types = []
 	queue_redraw()
 
 ## 选点模式下光标处的候选实例码（"" = 不可选）。命中口径与普通选择一致；
@@ -826,6 +849,8 @@ func pick_candidate_at(pos: Vector2) -> String:
 	if n.code == "":
 		return ""
 	if pick_mode_accept == "entity" and not n.is_entity():
+		return ""
+	if not pick_mode_types.is_empty() and not pick_mode_types.has(n.asset):
 		return ""
 	return n.code
 
@@ -985,7 +1010,7 @@ var redo_stack := []
 ## 拖出生点时按右键会拖动+擦除并行。现在只留一个枚举：起手即接管，松手即清零，
 ## 任何新起手都会顶掉上一个手势（物理上不可能叠加）。
 ## _paste_mode 是「模式」不是手势（跨点击存活），不在枚举里。
-enum Gesture { NONE, PAN, ENTITY_VERTEX, PAINT, BOX, SPAWN_DRAG, ERASE, ENTITY_DRAG, ENTITY_RESIZE, REGION_MOVE }
+enum Gesture { NONE, PAN, ENTITY_VERTEX, PAINT, BOX, SPAWN_DRAG, ERASE, ENTITY_DRAG, ENTITY_RESIZE, REGION_MOVE, LINK_DRAG }
 var gesture: int = Gesture.NONE
 ## 起手按键：中键松手只清中键起的平移，不会误杀 Space+左键的平移（反之亦然）。
 var gesture_button := 0
@@ -1032,6 +1057,13 @@ func cancel_preview_gesture() -> bool:
 		Gesture.REGION_MOVE:
 			_move_snap = {}
 			_move_cell_delta = Vector2i.ZERO
+		Gesture.LINK_DRAG:
+			# E2：连线拖动只在松手时写数据，取消只需清暂存（画布未被改动）
+			_link_node = null
+			_link_fd = {}
+			_link_hover = ""
+			_link_grab = Vector2.ZERO
+			_link_can_clear = false
 		_:
 			return false
 	end_gesture()
@@ -1159,6 +1191,18 @@ func _add_vertex_at(pos: Vector2) -> bool:
 	return _selection_ops_ctrl._add_vertex_at(pos)
 func _delete_vertex_at(pos: Vector2) -> bool:
 	return _selection_ops_ctrl._delete_vertex_at(pos)
+
+## —— E2 空间连线转发 ——
+func _link_handles() -> Array:
+	return _selection_ops_ctrl._link_handles()
+func _link_handle_hit(pos: Vector2) -> Dictionary:
+	return _selection_ops_ctrl._link_handle_hit(pos)
+func _begin_link_drag(h: Dictionary, pos: Vector2) -> void:
+	_selection_ops_ctrl._begin_link_drag(h, pos)
+func _move_link_preview(pos: Vector2) -> void:
+	_selection_ops_ctrl._move_link_preview(pos)
+func _finish_link_drag() -> void:
+	await _selection_ops_ctrl._finish_link_drag()
 
 func copy_region() -> void:
 	_region_ops_ctrl.copy_region()

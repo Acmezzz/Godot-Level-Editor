@@ -225,6 +225,8 @@ func _draw() -> void:
 		var hs = cvs._ent_by_code_index().get(cvs.ref_highlight, null)
 		if hs and is_instance_valid(hs):
 			cvs.draw_rect(_wr(hs as EntityNode).grow(4.0), Color(0.2, 1.0, 0.9, 0.95), false, 2.5)
+	# E2 连线把手：选中实例的本图引用端点（拖动换落点）。画在选中高亮之后、框选之前。
+	_draw_link_handles()
 	# 框选拖拽矩形（框选开关或 Ctrl+拖动，摆放模式或瓦片模式都画同一个框）
 	if cvs._drag_box:
 		var br := Rect2(cvs._drag_start.min(pos), (cvs._drag_start - pos).abs())
@@ -402,6 +404,50 @@ func _draw_visual_rects(nodes: Array) -> void:
 		var rect := n.rect()
 		cvs.draw_rect(rect, Color(col, alpha), true)
 		cvs.draw_rect(rect, Color(col, minf(1.0, alpha + 0.5)), false, 1.5)
+
+## E2 连线把手：每条本图引用一条线（源锚点 → 落点），源端与落点各一个方块把手。
+## 拖动中：线跟手、光标下的候选实例高亮。把手画在世界空间（层变换已作用）。
+func _draw_link_handles() -> void:
+	var handles: Array = cvs._link_handles()
+	var pos: Vector2 = cvs.get_global_mouse_position()
+	if cvs.gesture == cvs.Gesture.LINK_DRAG:
+		# 拖动中：从源锚点画到光标；候选实例青框预览落点
+		var src: Vector2 = Vector2.ZERO
+		for h in handles:
+			var hd: Dictionary = h
+			if hd.get("fd", {}) == cvs._link_fd:
+				src = hd.get("from", Vector2.ZERO)
+				break
+		cvs.draw_line(src, pos, Color(0.2, 1.0, 0.9, 0.85), 2.0, true)
+		var hov = cvs._ent_by_code_index().get(str(cvs._link_hover), null)
+		if hov != null and is_instance_valid(hov):
+			cvs.draw_rect(_wr(hov as EntityNode).grow(3.0), Color(0.2, 1.0, 0.9, 0.9), false, 2.0)
+		var hs := maxf(cvs.grid.cell_max() * 0.32, 6.0)
+		cvs.draw_rect(Rect2(pos - Vector2.ONE * hs * 0.5, Vector2.ONE * hs), Color(0.2, 1.0, 0.9, 0.95), true)
+		return
+	if handles.is_empty():
+		return
+	var side := maxf(cvs.grid.cell_max() * 0.28, 5.0)
+	var stub: Vector2 = Vector2(maxf(cvs.grid.cell_max() * 0.56, 10.0), -maxf(cvs.grid.cell_max() * 0.56, 10.0))
+	for h in handles:
+		var hd2: Dictionary = h
+		var from: Vector2 = hd2.get("from", Vector2.ZERO)
+		var at: Vector2 = hd2.get("at", from)
+		var has_t: bool = bool(hd2.get("has_target", false))
+		# 有落点 = 实线青；空引用 = 一条斜向短线（把手在线段末端，不压锚点）
+		var col := Color(0.2, 1.0, 0.9, 0.9) if has_t else Color(0.2, 1.0, 0.9, 0.55)
+		if has_t:
+			cvs.draw_line(from, at, col, 1.5, true)
+		else:
+			cvs.draw_line(from, from + stub, col, 1.2, true)
+		# 端点把手：方形（区别于顶点的实心方块略小）
+		cvs.draw_rect(Rect2(at - Vector2.ONE * side * 0.5, Vector2.ONE * side), Color(0.2, 1.0, 0.9, 0.95), true)
+		# 名字角标：字段名（多个引用字段时才需要区分）
+		if handles.size() > 1:
+			var fname := str((hd2.get("fd", {}) as Dictionary).get("name", ""))
+			if fname != "":
+				cvs.draw_string(ThemeDB.fallback_font, at + Vector2(side, -side),
+					fname, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, col)
 
 ## E1 临时选点覆盖层：候选实例高亮 + 顶部提示条（提示条用屏幕坐标，画在最上层）。
 ## 已点中的候选实线粗框，悬停预览虚线细框——两者可同时存在（悬停下一个看效果）。

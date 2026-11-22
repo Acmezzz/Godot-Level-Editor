@@ -634,47 +634,27 @@ func _pick_prop_ref(fd: Dictionary) -> void:
 			return
 		_set_prop_ref(fd, code)
 		_rebuild_right()
-	app._begin_canvas_pick("content", "entity", hint, on_ok, Callable())
+	app._begin_canvas_pick("content", "entity", hint, on_ok, Callable(), of)
 
 ## 写实例 props 的引用字段：props 是地图数据，改动进撤销栈；并做指向预览高亮。
-## 改「配对地图字段」时旧落点会指向别的图的实例码（C1）：先确认，再把配对引用一起清空——
-## 留着旧码就是在目标图里指向一个不存在的实例。
+## E2：与画布连线把手走同一写入口（ref_ops.set_entity_ref）——改配对地图字段时
+## 旧落点会指向别的图的实例码（C1），确认与「一起清空」的规则只写在一处。
 func _set_prop_ref(fd: Dictionary, value: String) -> void:
 	var spr := _current_spr()
 	if spr == null or not is_instance_valid(spr) or not app.map_loaded:
 		return
-	var props: Dictionary = spr.props.duplicate(true)
-	if props.get(fd.id, null) == value:
+	var res: Dictionary = await app.canvas._ref_ops_ctrl.set_entity_ref(spr, fd, value)
+	if str(res.get("status", "")) == "cancelled":
+		# 取消：控件回填旧值，别让下拉停在新图上
+		_rebuild_right()
 		return
-	# 该字段是否被 entity_ref 的 mapField 配对
-	var edef: Dictionary = AssetDecl.by_id(manifest, spr.asset)
-	var paired_refs: Array = []
-	for other in (edef.get("fields", []) as Array):
-		if other is Dictionary and str((other as Dictionary).get("mapField", "")) == str(fd.get("id", "")):
-			var cur_ref := str(props.get(str((other as Dictionary).get("id", "")), ""))
-			if cur_ref != "":
-				paired_refs.append(other)
-	if not paired_refs.is_empty():
-		var msg := "改目标地图会清空 %d 个已填引用（旧落点属于原图）。继续？" % paired_refs.size()
-		if not await app._confirm_action("改目标地图", msg, "改并清空"):
-			# 取消：控件回填旧值，别让下拉停在新图上
-			_rebuild_right()
-			return
-	app.canvas._push_undo()
-	if value == "":
-		props.erase(fd.id)
-	else:
-		props[fd.id] = value
-	for other2 in paired_refs:
-		props.erase(str((other2 as Dictionary).get("id", "")))
-	spr.props = props
-	app.canvas._mark()
-	# 指向预览：高亮被指实例（仅当前图 entity_ref；跨图/地图引用不高亮）
+	if str(res.get("status", "")) != "ok":
+		return
+	# 指向预览：高亮被指实例（仅当前图 entity_ref；跨图/地图引用不高亮）——
+	# RefOps 已在画布上写好 ref_highlight，这里同步只读预览列
 	var target := ""
 	if str(fd.get("type", "")) == "entity_ref" and app.canvas.is_entity_code_local(value):
 		target = value
-	app.canvas.ref_highlight = target
-	app.canvas.queue_redraw()
 	if _preview != null:
 		_preview.set_highlight(target)
 

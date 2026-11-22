@@ -108,3 +108,36 @@ func test_array_elem_inherits_decl() -> void:
 		"assetKind": "entity", "ids": ["A1", "B2"]})
 	eq(str(elem3.get("assetKind", "")), "entity", "asset_ref 元素继承 assetKind")
 	eq(str(elem3.get("of", "")), "A1,B2", "ids 白名单转成元素 of")
+
+## —— E2：画布连线的本图引用筛选与目标类型白名单 ——
+## 连线只列「落点能在本图解出来」的引用：跨图配对（target_map 指向别的图）不列；
+## 配对地图留空或写本图码/本图名 = 本图。目标实例必须落在声明的 of 白名单内。
+func test_local_entity_refs_and_accepts() -> void:
+	var ad := {"fields": [
+		{"id": "target_point", "type": "entity_ref", "of": "portal,spawn", "mapField": "target_map"},
+		{"id": "target_map", "type": "map_ref"},
+		{"id": "route", "type": "entity_ref"},
+		{"id": "note", "type": "input", "input": "string"},
+	]}
+	# 配对地图留空 = 本图：两条引用都列；非引用字段不列
+	var props := {"target_point": "AAAA", "route": "BBBB"}
+	var rows := RefFields.local_entity_refs(ad, props, "m1", "M1CD")
+	eq(rows.size(), 2, "本图引用两条（跨图字段不填 = 本图）")
+	eq(str((rows[0].fd as Dictionary).get("id", "")), "target_point", "保持声明顺序")
+	eq(str((rows[0] as Dictionary).get("value", "")), "AAAA", "带出当前值")
+	# 配对地图写本图码 = 仍算本图；写别的图码/图名 = 不列
+	eq(RefFields.local_entity_refs(ad, {"target_map": "M1CD", "target_point": "AAAA"}, "m1", "M1CD").size(), 2,
+		"配对地图写本图码仍是本图")
+	eq(RefFields.local_entity_refs(ad, {"target_map": "m1", "target_point": "AAAA"}, "m1", "M1CD").size(), 2,
+		"配对地图写本图名仍是本图（老数据）")
+	eq(RefFields.local_entity_refs(ad, {"target_map": "ZZZZ", "target_point": "AAAA"}, "m1", "M1CD").size(), 1,
+		"配对地图指向别的图：该引用不参与本图连线")
+	# map_key_local 的单点判定
+	ok(RefFields.map_key_local("", "m1", "M1CD"), "空键 = 本图")
+	ok(not RefFields.map_key_local("ZZZZ", "m1", "M1CD"), "别的图码 = 跨图")
+	# of 白名单：空 = 不限；非空只收列出的资产
+	ok(RefFields.field_accepts({"type": "entity_ref"}, "anything"), "of 为空不限制目标类型")
+	ok(RefFields.field_accepts({"type": "entity_ref", "of": "portal,spawn"}, "spawn"), "白名单内可连")
+	ok(not RefFields.field_accepts({"type": "entity_ref", "of": "portal"}, "chest"), "白名单外不可连")
+	# ref_fields 只挑 entity_ref（map_ref / 普通字段不算）
+	eq(RefFields.ref_fields(ad).size(), 2, "只列 entity_ref 字段")

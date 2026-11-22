@@ -249,7 +249,7 @@ func _pick_entity_for(fd: Dictionary, key: String, commit: Callable) -> void:
 		commit.call(code)
 		# 下拉控件还停在旧值：提交后重建右栏让新值上屏（用户主动确认的写盘）
 		_rebuild_right()
-	app._begin_canvas_pick("content", "entity", hint, on_ok, Callable())
+	app._begin_canvas_pick("content", "entity", hint, on_ok, Callable(), of)
 
 ## choice.source 的选项来源解析（由游戏侧声明，编辑器只查不解释）。
 ## 支持：content:<功能id>（内容库）、entity:<id,id>（清单实体类型）、

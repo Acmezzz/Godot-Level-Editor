@@ -106,6 +106,8 @@ func _build_editor_ui() -> void:
 	svc.add_child(sv)
 	app.canvas = EditorCanvas.new()
 	app.canvas.manifest = app.manifest
+	# E2：引用字段写入口需要根 app（状态栏/确认框）——必须在挂树（_ready）之前注入
+	app.canvas.app_host = app
 	app.canvas.set_entity_sizes(app._entity_sizes())
 	sv.add_child(app.canvas)
 
@@ -639,6 +641,12 @@ func _refresh_sel_bar() -> void:
 	else:
 		_sel_state.text = "%d 个附加功能" % count
 		_sel_state.add_theme_color_override("font_color", app.UiThemeScript.ACCENT_HI)
+	# E2：本图引用端点拖动提示（青线/青方块 = 可拖到别的实例换落点）。
+	# 只对实体且确实有本图引用字段时追加，别让无关实例也挂一句看不懂的话。
+	if n.is_entity() and app.canvas != null:
+		var refs: Array = app.canvas._link_handles()
+		if not refs.is_empty():
+			_sel_state.text += " · %d 条引用（拖青点换落点）" % refs.size()
 	if _sel_eye:
 		# 静默回填（A2）：普通赋值会发 toggled → _toggle_sel_visible 再压撤销步 + 置脏，
 		# 结果是「一选中实体地图就变脏」。

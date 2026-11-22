@@ -114,6 +114,43 @@ static func describe(decl: Dictionary) -> Dictionary:
 static func is_ref(decl: Dictionary) -> bool:
 	return bool(describe(decl).get("is_ref", false))
 
+## E2：资产声明里的全部实例引用字段（type=entity_ref）。返回声明原件，供画布连线/把手用。
+static func ref_fields(ad: Dictionary) -> Array:
+	var out := []
+	for fd in (ad.get("fields", []) as Array):
+		if fd is Dictionary and str((fd as Dictionary).get("type", "")) == "entity_ref":
+			out.append(fd)
+	return out
+
+## E2：配对地图值是否指向当前图（C1：未填配对地图 = 本图；v7 写地图码，老数据存图名）。
+## 只有指向本图的实例引用才有画布落点可连——跨图引用的目标实例不在本图。
+static func map_key_local(key: String, cur_name: String, cur_code: String) -> bool:
+	if key == "":
+		return true
+	if cur_code != "" and key == cur_code:
+		return true
+	return key == cur_name
+
+## E2：资产声明里「可画布连线」的 entity_ref 字段及其当前值。
+## 返回 [{fd, value}]；跨图配对（配对地图字段指向别的图）的引用不在本图，不列。
+## 纯函数：画布不传节点，只按声明 + props 判断——同一份判据测试可独立验证。
+static func local_entity_refs(ad: Dictionary, props: Dictionary,
+		cur_name: String, cur_code: String) -> Array:
+	var out := []
+	var fdecls: Array = ad.get("fields", []) if ad.get("fields", []) is Array else []
+	for fd in ref_fields(ad):
+		var f: Dictionary = fd
+		var pair := paired_map_value(f, fdecls, props)
+		if not map_key_local(pair, cur_name, cur_code):
+			continue
+		out.append({"fd": f, "value": str(props.get(str(f.get("id", "")), ""))})
+	return out
+
+## E2：目标资产是否满足字段的 of 白名单（空 = 不限）。
+static func field_accepts(decl: Dictionary, asset_id: String) -> bool:
+	var of := Array((describe(decl).get("filter", {}) as Dictionary).get("ids", []))
+	return of.is_empty() or of.has(asset_id)
+
 ## 声明是否是「需要清空项」的单选/多选引用：source 型引用一律给空项；
 ## entity_ref/map_ref 也是；asset_ref 不强制（资产选择通常必填，声明可开 allowEmpty）。
 static func wants_empty_option(decl: Dictionary) -> bool:

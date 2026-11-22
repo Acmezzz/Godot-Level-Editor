@@ -818,7 +818,7 @@ func _pick_step_ref(fd: Dictionary, key: String, si: int, rev: int) -> void:
 	_steps_pop = null
 	if old != null and is_instance_valid(old):
 		old.hide()
-	app._begin_canvas_pick("steps", "entity", hint, on_ok, on_cancel)
+	app._begin_canvas_pick("steps", "entity", hint, on_ok, on_cancel, of)
 
 ## 选点归来：重开同一个绑定行的演出面板（步骤/视图/播放头由 _steps_mem 恢复）。
 ## 期间实例/绑定换了（身份校验失败）就不重开——对着另一条绑定弹出旧面板更糟。

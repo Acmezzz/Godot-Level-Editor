@@ -95,6 +95,8 @@ func _unhandled_input(event: InputEvent) -> void:
 				cvs._move_vertex_preview(pos)
 			cvs.Gesture.ENTITY_RESIZE:
 				cvs._move_resize_preview(pos)
+			cvs.Gesture.LINK_DRAG:
+				cvs._move_link_preview(pos)
 			cvs.Gesture.REGION_MOVE:
 				cvs._move_region_preview(pos)
 			cvs.Gesture.SPAWN_DRAG:
@@ -200,6 +202,12 @@ func _on_object_layer_press(pos: Vector2, b: InputEventMouseButton) -> void:
 	if cvs._resize_handle_hit(pos):
 		cvs._begin_entity_resize(cvs.selected_entity, pos)
 		return
+	# E2 连线把手：选中实例的引用端点。优先于移动/框选，低于顶点/尺寸把手——
+	# 端点一般落在别的实例上，两个把手通常不重叠；重叠时几何编辑优先。
+	var lh: Dictionary = cvs._link_handle_hit(pos)
+	if not lh.is_empty():
+		cvs._begin_link_drag(lh, pos)
+		return
 	var hit = cvs._entity_at(pos)
 	if cvs.select_mode:
 	# 框选开关打开：
@@ -288,6 +296,12 @@ func _on_right_press(pos: Vector2) -> void:
 				cvs._finish_vertex_drag()
 			cvs.Gesture.REGION_MOVE:
 				cvs._finish_region_move()
+			cvs.Gesture.LINK_DRAG:
+				# 右键打断连线 = 取消（没有数据改动可收尾，只清暂存）
+				cvs._link_node = null
+				cvs._link_fd = {}
+				cvs._link_hover = ""
+				cvs._link_can_clear = false
 			cvs.Gesture.SPAWN_DRAG:
 				if _spawn_moved:
 					cvs._mark()   # 与左键松手同语义：动过才置脏
@@ -331,6 +345,10 @@ func _on_left_release(pos: Vector2) -> void:
 		cvs.Gesture.ENTITY_RESIZE:
 			cvs._finish_entity_resize()
 			cvs.end_gesture()
+		cvs.Gesture.LINK_DRAG:
+			# 先收暂存再清手势？_finish_link_drag 自己清暂存，手势由这里收
+			cvs.end_gesture()
+			cvs._finish_link_drag()
 		cvs.Gesture.ENTITY_VERTEX:
 			cvs._finish_vertex_drag()
 			cvs.end_gesture()

@@ -301,6 +301,112 @@ func _finish_entity_resize() -> void:
 	cvs.queue_redraw()
 
 
+## —— E2 空间连线：选中实例的 entity_ref 端点把手 ——
+## 每条本图引用从源实例画到落点；落点实例上/源实例上空引用处各给一个把手。
+## 拖动把手 = 换落点——松手时经 RefOps 同一写入口落地（C1 配对清空规则、撤销一致）。
+## 数据真相仍是 props 里的引用字段；画布从不自造字段。
+
+## 选中实例的连线把手：[{fd, value, from: Vector2, at: Vector2, has_target}]（世界坐标）。
+## from 永远画在源实例锚点；at 落在目标锚点。空引用没有落点：把手放在锚点右上方的
+## 短线段末端（与绘制同一偏移）——压在锚点正中会和「拖动实例」抢同一处点击。
+func _link_handles() -> Array:
+	var n = cvs.selected_entity
+	if n == null or not is_instance_valid(n) or cvs.place_kind != "object":
+		return []
+	if cvs._ref_ops_ctrl == null:
+		return []
+	var out: Array = []
+	var src: Vector2 = cvs._w_for(n as EntityNode)
+	var stub: Vector2 = Vector2(maxf(cvs.grid.cell_max() * 0.56, 10.0), -maxf(cvs.grid.cell_max() * 0.56, 10.0))
+	for r in cvs._ref_ops_ctrl.local_refs(n as EntityNode):
+		var rd: Dictionary = r
+		var tgt = rd.get("target", null)
+		var at: Vector2 = cvs._w_for(tgt as EntityNode) if tgt != null else src + stub
+		out.append({"fd": rd.get("fd", {}), "value": str(rd.get("value", "")),
+			"from": src, "at": at, "has_target": tgt != null})
+	return out
+
+## 把手命中：返回 {fd, ...} 或空字典。半径与顶点把手一致（0.45 格）。
+## 只有选中的实例才有把手——连线是「当前实例的引用」，不是全图常驻装饰。
+func _link_handle_hit(pos: Vector2) -> Dictionary:
+	var r: float = cvs.grid.cell_max() * 0.45
+	var best := {}
+	var best_d := r
+	for h in _link_handles():
+		var hd: Dictionary = h
+		var d: float = (hd.at as Vector2).distance_to(pos)
+		# 有目标的把手画在目标上：远处实例不可见时点不到，先让相机跟过去（focus）。无目标落在源上。
+		if d <= best_d:
+			best = hd
+			best_d = d
+	return best
+
+## 起手：只记身份，不改数据（松手才写）。
+## 从「有落点的目标把手」拖到空白 = 断开引用（RefOps 清空，复用 C1 规则）；
+## 从空引用把手拖到空白 = 取消（本来就是空的）。
+func _begin_link_drag(h: Dictionary, pos: Vector2) -> void:
+	var n = cvs.selected_entity
+	if n == null or not is_instance_valid(n):
+		return
+	if cvs.is_layer_locked(cvs._layer_index_of((n as EntityNode).layer_id)):
+		cvs._hint("实例所在图层已锁定：解锁后再改引用")
+		return
+	cvs._link_node = n
+	cvs._link_fd = (h.get("fd", {}) as Dictionary).duplicate(true)
+	cvs._link_grab = pos
+	cvs._link_hover = ""
+	cvs._link_can_clear = bool(h.get("has_target", false))
+	cvs.begin_gesture(cvs.Gesture.LINK_DRAG, MOUSE_BUTTON_LEFT)
+	cvs._hint("拖动「%s」到目标实例松手%s" % [str(cvs._link_fd.get("name", "")),
+		"；松在空白 = 断开引用" if cvs._link_can_clear else "；松在空白 = 取消"])
+
+## 拖动预览：只记光标下的候选（绘制层画高亮），不写数据。
+## 候选必须满足声明的 of 白名单——不满足时高亮为空并当场说明（不让人拖到无效目标上）。
+func _move_link_preview(pos: Vector2) -> void:
+	var code: String = str(cvs.pick_candidate_at(pos))
+	var n = cvs._ent_by_code_index().get(code, null)
+	if code != "" and n != null and not cvs._ref_ops_ctrl.accepts(cvs._link_fd, n as EntityNode):
+		code = ""
+		cvs._hint("目标类型不在「%s」的允许范围内，换个实例" % str(cvs._link_fd.get("name", "")))
+	if code == str(cvs._link_hover):
+		return
+	cvs._link_hover = code
+	cvs.queue_redraw()
+
+## 松手：候选有效且不是源实例自己才写；空白/自连按起手来源决定「断开」还是「取消」。
+## 写入走 RefOps——与内容表单下拉、画布选点同一规则（含配对地图改动的确认与清空）。
+func _finish_link_drag() -> void:
+	var n = cvs._link_node
+	var fd: Dictionary = cvs._link_fd
+	var code: String = str(cvs._link_hover)
+	var can_clear: bool = cvs._link_can_clear
+	cvs._link_node = null
+	cvs._link_fd = {}
+	cvs._link_hover = ""
+	cvs._link_grab = Vector2.ZERO
+	cvs._link_can_clear = false
+	if n == null or not is_instance_valid(n) or fd.is_empty():
+		cvs.queue_redraw()
+		return
+	if code == "":
+		if can_clear:
+			var rc: Dictionary = await cvs._ref_ops_ctrl.set_entity_ref(n as EntityNode, fd, "")
+			if str(rc.get("status", "")) != "ok":
+				cvs._hint("断开未生效（已取消）")
+		else:
+			cvs._hint("已取消连线（没有落在其它实例上）")
+		cvs.queue_redraw()
+		return
+	if code == (n as EntityNode).code:
+		cvs._hint("已取消：实例不能引用自己")
+		cvs.queue_redraw()
+		return
+	var res: Dictionary = await cvs._ref_ops_ctrl.set_entity_ref(n as EntityNode, fd, code)
+	if str(res.get("status", "")) != "ok":
+		cvs._hint("连线未生效：%s" % ("取消了配对地图改动" if str(res.get("status", "")) == "cancelled" else "写入失败"))
+	cvs.queue_redraw()
+
+
 ## —— 顶点编辑（R-02 几何段）：选中 poly/path 实例的顶点把手 ——
 ## 预览期直写 props.points，收尾恢复原值压撤销再写终值（与尺寸把手同一纪律）。
 
