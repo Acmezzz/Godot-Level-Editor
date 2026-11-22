@@ -900,9 +900,10 @@ func stage_clone(fn_id: String, cid: String, data: Dictionary, ent: String) -> v
 ## 正式提交：把当前文档的暂存内容写盘（A2）。失败时返回 false 并保留剩余暂存。
 func flush_staged_content(on_written: Callable = Callable()) -> bool:
 	return _form.flush_staged(on_written)
-## B1：单条暂存内容的冲刷（DocumentCommit.apply 逐目标调用）；返回 {status: ok|dropped|failed}。
-func flush_one_content(cid: String, on_written: Callable = Callable()) -> Dictionary:
-	return _form.flush_one(cid, on_written)
+## B1：单条暂存内容的冲刷（DocumentCommit.apply 逐目标调用）；payload = 计划冻结的 {fn_id, cid, data}。
+## 返回 {status: ok|dropped|failed}。
+func flush_one_content(cid: String, payload := {}, on_written: Callable = Callable()) -> Dictionary:
+	return _form.flush_one(cid, payload, on_written)
 ## B1：暂存表本体（与 DocumentSession 共享同一份工作副本，字典按引用传递）。
 func staged_table() -> Dictionary:
 	return _form.staged_table()
@@ -925,7 +926,8 @@ func read_content_staged_ex(fn_id: String, cid: String) -> Dictionary:
 	return _form._content_read_ex(fn_id, cid)
 
 ## 暂存感知写回（R05）：base_digest 非空时写前比对，磁盘被外部改过不覆盖。
-func write_content_staged(fn_id: String, cid: String, data: Dictionary, base_digest := "") -> bool:
+## 返回 ContentStore 口径的 "ok" / "conflict" / "fail"（不是布尔：冲突与失败要分开报）。
+func write_content_staged(fn_id: String, cid: String, data: Dictionary, base_digest := "") -> String:
 	return _form._content_write(fn_id, cid, data, base_digest)
 
 func _ensure_failed() -> void:

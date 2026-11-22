@@ -23,8 +23,10 @@ func prepare(operation: Dictionary, snap: Dictionary) -> Dictionary:
 	for row in (snap.get("contents", []) as Array):
 		var r: Dictionary = row
 		var cp := ContentStore.path_for(m, str(r.get("fn_id", "")), str(r.get("cid", "")))
+		var exists := FileAccess.file_exists(cp)
 		targets.append({"op": "write", "kind": "content", "id": str(r.get("cid", "")),
-			"path": cp, "baseline": Recovery.digest(cp), "expected": "",
+			"path": cp, "baseline": Recovery.digest(cp) if exists else "", "expected": "",
+			"expect_absent": not exists,
 			"payload": {"fn_id": str(r.get("fn_id", "")), "cid": str(r.get("cid", "")), "data": r.get("data", {})}})
 	# 3) 地图（只脏图入计划：干净图没有待写项；写前外部改动确认在 hooks.save_map 里）
 	if bool(operation.get("map_dirty", false)) and str(operation.get("map_path", "")) != "":
@@ -63,25 +65,34 @@ func apply(plan: Dictionary, hooks: Dictionary) -> Dictionary:
 		var tgt: Dictionary = t2
 		var kind := str(tgt.get("kind", ""))
 		var path := str(tgt.get("path", ""))
-		if kind == "content" and FileAccess.file_exists(path):
-			# §7.1 accepted_state：写前复验磁盘摘要 = prepare 基线；外部改动 → conflict 停
-			var cur := Recovery.digest(path)
-			if cur != str(tgt.get("baseline", "")):
+		if kind == "content":
+			# §7.1 accepted_state：写前复验磁盘状态与 prepare 基线一致。
+			# 计划里「预期不存在」的新内容：文件在提交期间被别的写入方创建 → 冲突停，
+			# 绝不用暂存加载覆盖刚出现的正式文件。
+			var exists_now := FileAccess.file_exists(path)
+			var conflict := false
+			if bool(tgt.get("expect_absent", false)):
+				conflict = exists_now
+			elif exists_now:
+				conflict = Recovery.digest(path) != str(tgt.get("baseline", ""))
+			if conflict:
 				conflicts.append({"path": path, "kind": kind,
 					"message": "内容文件在提交期间被外部改动：%s" % path})
-				Recovery.clear_pending(m, log_path)
-				return {"status": "conflict", "written": written, "conflicts": conflicts, "receipt": {}}
+				return {"status": "conflict", "written": written, "conflicts": conflicts,
+					"receipt": {}, "journal": log_path}
 		var ok := false
 		if kind == "manifest":
 			ok = await hooks.save_manifest.call()
 			if ok:
 				written.append("manifest")
 		elif kind == "content":
-			var res: Dictionary = hooks.flush_one.call(str(tgt.get("id", "")))
+			# 写入使用冻结的 payload，不回读当前表单：Plan 里是什么就写什么（R04/A2）。
+			var payload: Dictionary = tgt.get("payload", {}) if tgt.get("payload", null) is Dictionary else {}
+			var res: Dictionary = hooks.flush_one.call(str(tgt.get("id", "")), payload)
 			var st := str(res.get("status", ""))
 			if st == "failed":
 				return {"status": "failed", "written": written, "conflicts": [],
-					"error": "暂存内容写盘失败：%s" % str(tgt.get("id", ""))}
+					"error": "暂存内容写盘失败：%s" % str(tgt.get("id", "")), "journal": log_path}
 			if st == "dropped":
 				continue   # 绑定复核丢弃：不写盘、不回填日志（R02），提交继续
 			ok = true

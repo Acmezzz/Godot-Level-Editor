@@ -552,7 +552,7 @@ func _steps_write(data: Dictionary) -> void:
 		_steps_cid = cid
 		if str(data.get("id", "")) == "":
 			data["id"] = cid
-	if not host.write_content_staged(_steps_fn_id, _steps_cid, data, _steps_base):
+	if str(host.write_content_staged(_steps_fn_id, _steps_cid, data, _steps_base)) != "ok":
 		_ensure_failed()
 
 ## 结构版本递增：增删/排序/复制后旧控件与旧拖拽请求一律失效（D1）。

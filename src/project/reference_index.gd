@@ -8,18 +8,26 @@ extends RefCounted
 const MapStore := preload("res://src/map/map_store.gd")
 
 ## 地图键（码或图名）解析 → {status, key(图名), candidates}。
-## ambiguous：一码多图（R09 拒绝猜测，候选 = 冲突图名列表）；missing：键不存在；
-## ok：唯一图名（码命中时 key_code 带回原码）。
+## 一码多图（R09 拒绝猜测，候选 = 冲突图名列表）；键同时是图名又是另一张图的码 = ambiguous
+## （名字先于码命中会让按码存储的引用悄悄改指另一张图，宁可报歧义让人修）。
+## 同一张图「图名 == 自己的码」不算歧义。missing：键不存在；ok：唯一图名（码命中时 key_code 带回原码）。
 static func resolve_map(manifest: Dictionary, map_key: String) -> Dictionary:
 	if map_key == "":
 		return {"status": "unset", "key": "", "candidates": []}
 	var names: Array = MapStore.list_maps(manifest)
-	if names.has(map_key):
-		return {"status": "ok", "key": str(map_key), "candidates": [str(map_key)]}
 	var conflicts: Dictionary = MapStore.code_conflicts(manifest)
-	if conflicts.has(map_key):
+	var by_name := names.has(map_key)
+	if by_name and conflicts.has(map_key):
 		return {"status": "ambiguous", "key": "", "candidates": conflicts[map_key]}
 	var name := str(MapStore.code_map(manifest).get(map_key, ""))
+	if by_name and name != "" and name != map_key:
+		# 键既是图名又是别的图的码：两种解释指向不同文件，不猜
+		var cands: Array = [str(map_key), name]
+		return {"status": "ambiguous", "key": "", "candidates": cands}
+	if by_name:
+		return {"status": "ok", "key": str(map_key), "candidates": [str(map_key)]}
+	if conflicts.has(map_key):
+		return {"status": "ambiguous", "key": "", "candidates": conflicts[map_key]}
 	if name == "":
 		return {"status": "missing", "key": "", "candidates": []}
 	return {"status": "ok", "key": name, "key_code": map_key, "candidates": [name]}

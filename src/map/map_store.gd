@@ -95,9 +95,9 @@ static func upgrade(data: Dictionary) -> bool:
 
 ## 新建地图模板：两层用户层栈（「资产层」+「FL」，底→顶，层码用 ContentId 发放），
 ## tiles/collision/objects 均空。新建地图入口用它组装，保证 meta.layers 从出生就是当前契约。
-## `proj` = 逐图格投影（B1）：正交缺省不写键；等距/六边写 meta.gridProjection。
+## `proj` = 逐图格投影（B1）："" = 沿用项目默认（不写键）；显式选择（含正交）原样写盘。
 ## `topo` = 格拓扑（B3）：triangles 写 meta.gridTopology；quads 缺省不写键。
-static func new_map(name: String, w: int, h: int, proj := "orthogonal", topo := "") -> Dictionary:
+static func new_map(name: String, w: int, h: int, proj := "", topo := "") -> Dictionary:
 	var meta := {
 		"code": ContentId.new_inst_code(),
 		"name": name,
@@ -108,7 +108,9 @@ static func new_map(name: String, w: int, h: int, proj := "orthogonal", topo := 
 			{"id": ContentId.new_inst_code(), "name": "FL", "visible": true},
 		],
 	}
-	if proj == "isometric" or proj == "hexagonal":
+	# R17：显式选择必须原样落盘。缺键才是「沿用项目默认」——面板里亲手点「正交」
+	# 与「不选投影」是两种意图，在非正交默认项目里不能都变成同一结果。
+	if proj == "orthogonal" or proj == "isometric" or proj == "hexagonal":
 		meta["gridProjection"] = proj
 	# B3：三角拓扑（缺省 quads 不写冗余键）；hex 没有平行四边形列，组合不成立
 	if topo == "triangles" and proj != "hexagonal":

@@ -134,6 +134,91 @@ static func load_from(project_dir: String) -> Dictionary:
 		data["_codes_issued"] = true
 	return data
 
+## 本次会话已发出的声明身份（id → code）：草稿保存它，重启恢复时按基线合并，
+## 避免「清单未落盘 → 重启重发新码 → 草稿里的旧引用悬空」（R07）。
+## scope 前缀区分池：fn/cond/step/audio/trigger/asset。
+static func issued_codes(m: Dictionary) -> Dictionary:
+	var out := {}
+	for fid in FunctionDecls.functions(m):
+		var c := str((FunctionDecls.functions(m)[fid] as Dictionary).get("code", ""))
+		if c != "":
+			out["fn:" + str(fid)] = c
+	for cid in ConditionDecls.conditions(m):
+		var c2 := str((ConditionDecls.conditions(m)[cid] as Dictionary).get("code", ""))
+		if c2 != "":
+			out["cond:" + str(cid)] = c2
+	for sid in StepDecls.steps(m):
+		var c3 := str((StepDecls.steps(m)[sid] as Dictionary).get("code", ""))
+		if c3 != "":
+			out["step:" + str(sid)] = c3
+	for aid in AudioDecls.audio(m):
+		var c4 := str((AudioDecls.audio(m)[aid] as Dictionary).get("code", ""))
+		if c4 != "":
+			out["audio:" + str(aid)] = c4
+	for tid in TriggerDecls.triggers(m):
+		var c5 := str((TriggerDecls.triggers(m)[tid] as Dictionary).get("code", ""))
+		if c5 != "":
+			out["trigger:" + str(tid)] = c5
+	for a in (m.get("assets", []) as Array):
+		if a is Dictionary and str((a as Dictionary).get("kind", "")) == "entity":
+			var aid2 := str((a as Dictionary).get("id", ""))
+			var c6 := str((a as Dictionary).get("code", ""))
+			if aid2 != "" and c6 != "":
+				out["asset:" + aid2] = c6
+	return out
+
+## 草稿恢复：把草稿记录的已发码合并回内存清单（只补空码，不覆盖现有声明）。
+## 返回补回的条数；草稿来自另一个项目形态时会静默跳过不存在的声明。
+## 直接改清单原始结构（dict/array 两种写法），不走归一化视图——那是缓存副本。
+static func merge_issued_codes(m: Dictionary, codes: Dictionary) -> int:
+	if codes.is_empty():
+		return 0
+	var n := 0
+	for key in codes:
+		var k := str(key)
+		var code := str(codes[key])
+		if code == "":
+			continue
+		var parts := k.split(":", false)
+		if parts.size() != 2:
+			continue
+		var scope := str(parts[0])
+		var id := str(parts[1])
+		if scope == "asset":
+			for ae in (m.get("assets", []) as Array):
+				if ae is Dictionary and str((ae as Dictionary).get("id", "")) == id \
+						and str((ae as Dictionary).get("kind", "")) == "entity" \
+						and str((ae as Dictionary).get("code", "")) == "":
+					(ae as Dictionary)["code"] = code
+					n += 1
+			continue
+		var pool_key := ""
+		match scope:
+			"fn": pool_key = "functions"
+			"cond": pool_key = "conditions"
+			"step": pool_key = "steps"
+			"audio": pool_key = "audio"
+			"trigger": pool_key = "triggers"
+		if pool_key == "":
+			continue
+		var decl = m.get(pool_key, null)
+		if decl is Dictionary:
+			var body = (decl as Dictionary).get(id, null)
+			if body is Dictionary and str((body as Dictionary).get("code", "")) == "" \
+					and str((body as Dictionary).get("id", id)) == id:
+				(body as Dictionary)["code"] = code
+				n += 1
+		elif decl is Array:
+			for item in (decl as Array):
+				if item is Dictionary and str((item as Dictionary).get("id", "")) == id \
+						and str((item as Dictionary).get("code", "")) == "":
+					(item as Dictionary)["code"] = code
+					n += 1
+					break
+	if n > 0:
+		m["_codes_issued"] = true
+	return n
+
 ## 试玩命令 = 模板 + 变量替换；清单可选 godotExe（支持 %projectpath%）覆盖可执行文件，
 ## 便于换机器/多人协作时不必改 playCommand。
 static func resolved_play_command(m: Dictionary, map_file: String) -> String:

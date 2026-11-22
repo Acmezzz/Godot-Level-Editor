@@ -370,6 +370,14 @@ func _restore_content(entry: Dictionary, forward: bool) -> bool:
 		return false
 	if not ContentStore.write(cvs.manifest, fn_id, cid, want as Dictionary, true):
 		return false
+	# 写回的是重新序列化后的文本：实际摘要可能与记录时的原文摘要不同（手写 JSON 缩进/键序）。
+	# 回填实际摘要，下一次反向恢复才对得上，不会把手写文件误判成「外部改过」。
+	var wrote := ContentStore.file_digest(path)
+	if wrote != "":
+		if forward:
+			entry["digest_after"] = wrote
+		else:
+			entry["digest_before"] = wrote
 	_refresh_content_ui(fn_id, cid)
 	return true
 

@@ -79,7 +79,10 @@ func _snapshot_region(sel: Rect2i) -> Dictionary:
 	for c2 in _used_in_rect(cvs.collision, sel):
 		var cm = cvs._collision_meta.get(c2, null)
 		if cm != null:
-			snap["collision"].append([c2.x, c2.y, str(cm.get("type", "solid")), str(cm.get("shape", ""))])
+			# 第 5 位带 raw（游戏侧扩展键）：区域移动/复制原样往返，不靠类型/形状白名单重建
+			var raw0: Dictionary = cm["raw"].duplicate(true) \
+				if (cm as Dictionary).get("raw", null) is Dictionary else {}
+			snap["collision"].append([c2.x, c2.y, str(cm.get("type", "solid")), str(cm.get("shape", "")), raw0])
 		else:
 			snap["collision"].append([c2.x, c2.y])
 	for e in cvs.ents_all():
@@ -153,22 +156,26 @@ func _finish_region_move() -> void:
 	for lid2 in (snap.get("tiles", {}) as Dictionary):
 		var li2: int = cvs._layer_index_of(str(lid2))
 		if li2 < 0:
-			continue
-			for t2 in (snap.get("tiles", {})[lid2] as Array):
-				var src2: int = cvs.source_of_asset(str((t2 as Array)[2]))
-				if src2 < 0:
-					continue
-				var ta2 := t2 as Array
-				# R22：格平移走投影几何（六边 odd-r 行错位、三角半格列），不再原始格号相加
-				TilesetCache.set_cell_alt(cvs.layer_tiles[li2] as TileMapLayer,
-					cvs.grid.shift_cell(Vector2i(int(ta2[0]), int(ta2[1])), delta), src2,
-					Vector2i(int(ta2[3]), int(ta2[4])),
-					int(ta2[5]) if ta2.size() >= 6 else 0)
+			continue   # 层已不在（撤销/切图窗口）：跳过，不写回不存在的层
+		for t2 in (snap.get("tiles", {})[lid2] as Array):
+			var src2: int = cvs.source_of_asset(str((t2 as Array)[2]))
+			if src2 < 0:
+				continue
+			var ta2 := t2 as Array
+			# R22：格平移走投影几何（六边 odd-r 行错位、三角半格列），不再原始格号相加
+			TilesetCache.set_cell_alt(cvs.layer_tiles[li2] as TileMapLayer,
+				cvs.grid.shift_cell(Vector2i(int(ta2[0]), int(ta2[1])), delta), src2,
+				Vector2i(int(ta2[3]), int(ta2[4])),
+				int(ta2[5]) if ta2.size() >= 6 else 0)
 	for t in snap.get("collision", []):
 		var ta := t as Array
 		var cc2: Vector2i = cvs.grid.shift_cell(Vector2i(int(ta[0]), int(ta[1])), delta)
 		if ta.size() >= 4:
 			cvs.set_collision_cell(cc2, true, str(ta[2]), str(ta[3]))
+			# 碰撞行里的游戏侧扩展键随区域一起搬：原样挂回 raw，不丢自定义字段
+			if ta.size() >= 5 and ta[4] is Dictionary and not (ta[4] as Dictionary).is_empty() \
+					and cvs._collision_meta.get(cc2, null) is Dictionary:
+				(cvs._collision_meta[cc2] as Dictionary)["raw"] = (ta[4] as Dictionary).duplicate(true)
 		else:
 			cvs.set_collision_cell(cc2, true)
 	# 实例：区块内的实例原地平移（保持身份码与层归属，不重建节点）。
@@ -266,7 +273,9 @@ func copy_region() -> void:
 		var d2: Vector2i = c2 - cvs._region_sel.position
 		var cm = cvs._collision_meta.get(c2, null)
 		if cm != null:
-			cvs._region_clip["collision"].append([d2.x, d2.y, str(cm.get("type", "solid")), str(cm.get("shape", ""))])
+			var raw1: Dictionary = cm["raw"].duplicate(true) \
+				if (cm as Dictionary).get("raw", null) is Dictionary else {}
+			cvs._region_clip["collision"].append([d2.x, d2.y, str(cm.get("type", "solid")), str(cm.get("shape", "")), raw1])
 		else:
 			cvs._region_clip["collision"].append([d2.x, d2.y])
 	# 实例也一起复制：区域块含实例，才能整块房间复用（层随实例走）
@@ -411,6 +420,10 @@ func _paste_region(origin: Vector2i) -> void:
 		var cc: Vector2i = cvs.grid.shift_cell(Vector2i(int(t[0]), int(t[1])), origin)
 		if (t as Array).size() >= 4:
 			cvs.set_collision_cell(cc, true, str(t[2]), str(t[3]))
+			# 剪贴板第 5 位 raw（游戏侧扩展键）：粘贴沿用，不靠类型/形状白名单重建
+			if (t as Array).size() >= 5 and t[4] is Dictionary and not (t[4] as Dictionary).is_empty() \
+					and cvs._collision_meta.get(cc, null) is Dictionary:
+				(cvs._collision_meta[cc] as Dictionary)["raw"] = (t[4] as Dictionary).duplicate(true)
 		else:
 			cvs.set_collision_cell(cc, true)
 	# 行与剪贴板条目一一对应（ClonePlan 不跳行）：对账下标按**剪贴板行序**推进（R11：跳过的实例不消费计划项）。

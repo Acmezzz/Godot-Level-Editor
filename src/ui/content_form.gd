@@ -665,13 +665,15 @@ func flush_staged(on_written: Callable = Callable()) -> bool:
 		var st: Dictionary = _staged.get(cid, {})
 		if str(st.get("doc", "")) != doc:
 			continue   # 别的文档的暂存：不写、不丢
-		if str(flush_one(str(cid), on_written).get("status", "")) == "failed":
+		if str(flush_one(str(cid), {}, on_written).get("status", "")) == "failed":
 			return false
 	return true
 
 ## 单条暂存内容的冲刷（B1：DocumentCommit.apply 逐目标调用）。
 ## 绑定复核失败就地丢弃并报告（R02）；写盘失败保留暂存。返回 {status: ok|dropped|failed}。
-func flush_one(cid: String, on_written: Callable = Callable()) -> Dictionary:
+## payload（B1）：提交计划冻结的 {fn_id, cid, data}——非空时写计划里那份，不再回读当前表单
+## （避免 prepare 与 apply 之间控件/选中变化导致「写出去的不是确认过的那份」）。
+func flush_one(cid: String, payload := {}, on_written: Callable = Callable()) -> Dictionary:
 	var st: Dictionary = _staged.get(cid, {})
 	if st.is_empty():
 		return {"status": "dropped"}
@@ -680,7 +682,12 @@ func flush_one(cid: String, on_written: Callable = Callable()) -> Dictionary:
 		_staged.erase(cid)   # 绑定已撤销/实例已删：这条不再写盘（R02）
 		app._set_status(" 暂存内容 %s 的绑定已不在（撤销/切图放弃）：未写盘，已丢弃" % cid)
 		return {"status": "dropped"}
-	if not ContentStore.write(manifest, str(st.get("fn_id", "")), cid, st.get("data", {}) as Dictionary):
+	var fn_id := str(st.get("fn_id", ""))
+	var data: Dictionary = st.get("data", {}) as Dictionary
+	if payload is Dictionary and not (payload as Dictionary).is_empty():
+		fn_id = str((payload as Dictionary).get("fn_id", fn_id))
+		data = (payload as Dictionary).get("data", data) as Dictionary
+	if not ContentStore.write(manifest, fn_id, cid, data):
 		_ensure_failed()
 		return {"status": "failed"}
 	_staged.erase(cid)

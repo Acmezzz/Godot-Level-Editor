@@ -95,9 +95,11 @@ static func draft_path(m: Dictionary, map_code: String, map_name: String) -> Str
 ## 写草稿：记录目标路径、正式图基线、地图快照、待提交内容载荷（R03：数据本体进草稿，
 ## 恢复时校验绑定后重新暂存，不再只有文件路径）、以及**清单补码是否待写**——
 ## 地图里可能已经用了刚补发的资产码/功能码，漏了这项恢复后保存会先写地图再补清单。
+## codes_map（R07）：上次会话实际补发的声明身份（函数/条件/步骤/音频/时机/资产 id → 码）。
+## 只存标记不存映射时重启会重发新码，草稿里的引用随之作废。
 static func write_draft(m: Dictionary, map_code: String, map_name: String,
 		target_path: String, baseline: String, snapshot: Dictionary,
-		pending_contents: Array = [], codes_pending := false) -> String:
+		pending_contents: Array = [], codes_pending := false, codes_map := {}) -> String:
 	var path := draft_path(m, map_code, map_name)
 	if path == "":
 		return ""
@@ -111,6 +113,7 @@ static func write_draft(m: Dictionary, map_code: String, map_name: String,
 		"snapshot": snapshot,
 		"pendingContents": pending_contents,   # [{fn_id, id, data}]（R03）
 		"codesPending": codes_pending,
+		"codesMap": codes_map,                 # 上次会话已发出的码（R07 恢复合并）
 		"savedAt": Time.get_unix_time_from_system(),
 	}
 	return path if write_json(path, payload) else ""

@@ -817,7 +817,10 @@ func commit_document(reason := "", dry_run := false) -> Dictionary:
 		"reason": reason, "manifest": app.manifest,
 		"map_name": app.cur_map_name, "map_path": app.cur_map_path,
 		"map_digest": _opened_digest,
-		"map_dirty": bool(app.map_loaded and app.canvas != null and app.canvas.modified_flag),
+		# 从未落过盘的新图（含恢复草稿后正式文件不存在）：即使画布还没标脏也必须建文件，
+		# 否则首次保存报「无待写改动」而地图目录里什么都没有。
+		"map_dirty": bool(app.map_loaded and app.canvas != null and app.canvas.modified_flag)
+			or (app.map_loaded and str(app.cur_map_path) != "" and not FileAccess.file_exists(str(app.cur_map_path))),
 	}
 	var prep: Dictionary = _doc_commit.prepare(op, sess.snapshot())
 	if str(prep.get("status", "")) == "empty":
@@ -870,11 +873,11 @@ func _hook_save_manifest() -> bool:
 func _hook_save_map() -> bool:
 	return await on_save()
 
-func _hook_flush_one(cid: String) -> Dictionary:
+func _hook_flush_one(cid: String, payload := {}) -> Dictionary:
 	var ce = app.project_shell.content_editor if app.project_shell != null else null
 	if ce == null:
 		return {"status": "dropped"}
-	return ce.flush_one_content(cid)
+	return ce.flush_one_content(cid, payload)
 
 ## 待写项盘点（A2 staged）：清单补码 / 暂存内容 / 脏地图。
 ## 只读：不冲刷控件、不写盘、不登记日志——给 dry_run 与状态提示共用同一口径。
@@ -1044,7 +1047,8 @@ func write_draft_now() -> bool:
 	if app.project_shell != null and app.project_shell.content_editor != null:
 		pend = app.project_shell.content_editor.staged_rows_current_doc()
 	var path := Recovery.write_draft(app.manifest, code, name, target, baseline, data, pend,
-		bool(app.manifest.get("_codes_issued", false)))
+		bool(app.manifest.get("_codes_issued", false)),
+		EditorManifest.issued_codes(app.manifest) if bool(app.manifest.get("_codes_issued", false)) else {})
 	if path == "":
 		# 失败退避：半间隔后再试，状态栏只说一次当前问题
 		_last_autosave_msec = Time.get_ticks_msec() - AUTOSAVE_INTERVAL_MS / 2
@@ -1105,7 +1109,11 @@ func restore_draft_key(draft_key: String) -> bool:
 	app.canvas.modified_flag = true   # 草稿内容与磁盘不同：必须显式保存
 	# R03：待提交内容载荷重新暂存（绑定在恢复后的画布上才收，其余逐条报告）。
 	var pend: Array = draft.get("pendingContents", []) if draft.get("pendingContents", null) is Array else []
-	# 草稿里记了「清单补码待写」：恢复后重新挂上标记，下次提交仍按 清单 → 内容 → 地图 的顺序写。
+	# 草稿里记了「清单补码待写」：先按草稿记录的已发码合并回内存清单（R07），
+	# 再重新挂上标记——否则重启补发的新码与草稿里的引用对不上。
+	var draft_codes = draft.get("codesMap", null)
+	if draft_codes is Dictionary and not (draft_codes as Dictionary).is_empty():
+		EditorManifest.merge_issued_codes(app.manifest, draft_codes as Dictionary)
 	if bool(draft.get("codesPending", false)):
 		app.manifest["_codes_issued"] = true
 	if not pend.is_empty() and app.project_shell != null and app.project_shell.content_editor != null:
