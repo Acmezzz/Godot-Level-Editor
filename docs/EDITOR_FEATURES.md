@@ -755,13 +755,16 @@ godot --headless --path "<编辑器工程>" --script res://tests/run_tests.gd
 `ok()` / `eq()` 收集失败；**每个用例至少一条断言**（崩溃中断的用例断言数不增长，
 runner 判 FAIL——防止半路崩掉变成假 PASS）。退出码非 0 = 有失败。当前 22 套件 197 用例。
 
-截图辅助 `tools/screenshot.gd`（模式清单见文件头注释）与警告扫描 `tools/warn_scan.gd`
-（headless 全量加载 src/ 校验可加载性）；`tools/migrate_project.gd` 是一次性迁移脚本
+截图辅助 `tools/screenshot.gd`（模式清单见文件头注释）、警告扫描 `tools/warn_scan.gd`
+（headless 全量加载 src/ 校验可加载性）、接入自检 `tools/f2_pilot.gd`（在 user:// 临时工程里
+用 §3 的刷怪片段跑完整加载链：清单补码 → 建图摆实例 → 写内容 → 重读核对码/ID/字段/时间，
+跑完自清，24 项断言）；`tools/migrate_project.gd` 是一次性迁移脚本
 （清单 `tiles[]`/`entities[]` → `assets[]`、瓦片索引 → 资产 id 并补变换位、`entities[]` → `objects[]`、全图补发地图码并把跨图引用的图名重映射成码，抬到当前版本，幂等）：
 
 ```
 godot --path "<编辑器工程>" --script res://tools/screenshot.gd -- <模式> <输出.png> [地图名]
 godot --headless --path "<编辑器工程>" --script res://tools/warn_scan.gd
+godot --headless --path "<编辑器工程>" --script res://tools/f2_pilot.gd
 godot --headless --path "<编辑器工程>" --script res://tools/migrate_project.gd -- <游戏项目目录>
 ```
 
