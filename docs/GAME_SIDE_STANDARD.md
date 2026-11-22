@@ -321,6 +321,11 @@ choice 的 `source` 取值：`content:<kind>`（列该目录内容条目）、`e
 `default` 决定新建内容时的初值：`bool`→false、`int`→`min`（缺省 0）、`float`/`range`→`min`（缺省 0.0）、
 `vector2`→`[min, min]`、`color`→`"#ffffff"`、其他→`""`。
 
+字段行的悬浮说明由编辑器**从已声明的键拼出**（字段 id · 执行码 · 类型与 min/max · 可选值或
+`source` · `default`），见 `field_widgets.gd::decl_tooltip`。契约里**没有**独立的「说明」「单位」
+键：需要自由文字或单位时，游戏侧先把键写进本文档，编辑器才接——不自行发明。当前惯例是
+把单位写进 `name`（如 `时长(秒)`、`数量(格)`）。
+
 **功能声明里编辑器支持的键**：`id` / `code` / `name` / `fields` / `conditions` / `steps` /
 `triggers`（白名单，见 2.5.4）/ `timing` / `view`。其余键（`scope`、`icon`、`params`、
 `category`、`group` 等）一律被忽略——归一化保留已知键，未知键不剥离但不参与编辑。

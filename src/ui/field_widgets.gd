@@ -62,6 +62,41 @@ static func default_for(decl: Dictionary) -> Variant:
 		"array": return []
 		_: return ""
 
+## 声明里能读到的说明性信息（E1）：字段 id / 执行码 / 类型与范围 / 缺省值。
+## 契约里没有独立的「说明」「单位」键（GAME_SIDE_STANDARD §2.4/§2.5），
+## 因此这里只拼**已声明**的键，不发明新键；需要文字说明时游戏侧补契约再接。
+static func decl_tooltip(decl: Dictionary) -> String:
+	var parts: Array[String] = []
+	var fid := str(decl.get("id", ""))
+	if fid != "":
+		parts.append("字段 " + fid)
+	var code := str(decl.get("code", ""))
+	if code != "":
+		parts.append("码 " + code)
+	var kind := kind_of(decl)
+	if kind == KIND_CHOICE:
+		var opts = decl.get("options", null)
+		if opts is Array and not (opts as Array).is_empty():
+			parts.append("可选：" + ",".join(PackedStringArray((opts as Array).map(func(o): return str(o)))))
+		elif str(decl.get("source", "")) != "":
+			parts.append("来源 " + str(decl.get("source", "")))
+		if bool(decl.get("multiple", false)):
+			parts.append("可多选")
+	else:
+		var typ := type_of(decl)
+		if typ != "":
+			var rng := ""
+			if decl.get("min", null) != null:
+				rng += "min %s" % str(decl.get("min"))
+			if decl.get("max", null) != null:
+				rng += (" " if rng != "" else "") + "max %s" % str(decl.get("max"))
+			parts.append(typ + ("（%s）" % rng if rng != "" else ""))
+	var dflt = decl.get("default", null)
+	if dflt != null:
+		parts.append("缺省 " + (str(dflt) if (dflt is String or dflt is int or dflt is float
+			or dflt is bool) else JSON.stringify(dflt)))
+	return " · ".join(parts)
+
 ## 构建控件。返回 {ctl: Control, commit: Callable}。
 ## commit 用于重建/切实例前统一提交连续控件（SpinBox/多行文本）的待写值；
 ## 幂等（值未变不写盘）由下游 _set_field 保证。离散控件（CheckBox/LineEdit/OptionButton）commit 为空操作。

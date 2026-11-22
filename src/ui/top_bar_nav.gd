@@ -7,6 +7,7 @@ extends HBoxContainer
 ## 切图是协程，await 完成后触发 after_switch（无论是否真的切成功；项目页用它留在当前视图）。
 
 const Kit := preload("res://src/ui/ui_kit.gd")
+const MapMenuIdentity := preload("res://src/ui/map_menu_identity.gd")
 
 var app
 var after_switch: Callable   # 切图后宿主可选回调（项目页用它回到内容视图）
@@ -138,27 +139,32 @@ func _on_map_selected(id: int) -> void:
 	# 绑定的图名 + 地图码仍指向同一个文件才切；否则刷新菜单并报告失效，
 	# 绝不按下标去读一份新的 list_maps。
 	var at := id
-	var bound: Dictionary = _menu_binds[at] if at >= 0 and at < _menu_binds.size() else {}
-	var nm := str(bound.get("name", ""))
-	if nm == "":
-		_refresh_map_menu()
-		app._set_status("地图菜单条目已失效，列表已刷新：请重新选择")
-		return
-	var p := EditorManifest.map_path(app.manifest, nm)
-	if p == "" or not FileAccess.file_exists(p):
-		_refresh_map_menu()
-		app._set_status("地图条目已失效：%s 已不存在（列表已刷新）" % nm)
-		return
+	var nm := ""
+	var p := ""
+	if at >= 0 and at < _menu_binds.size():
+		nm = str((_menu_binds[at] as Dictionary).get("name", ""))
+		p = EditorManifest.map_path(app.manifest, nm)
 	# 身份校验：文件还在但地图码变了 = 同一个名字现在指着另一张图（重新生成/替换过）
-	var bound_code := str(bound.get("code", ""))
-	if bound_code != "":
-		var cur_code := str((app.MapStore.read(app.manifest, nm).get("meta", {}) as Dictionary).get("code", ""))
-		if cur_code != "" and cur_code != bound_code:
+	var cur_code := ""
+	if nm != "" and p != "" and FileAccess.file_exists(p):
+		cur_code = str((app.MapStore.read(app.manifest, nm).get("meta", {}) as Dictionary).get("code", ""))
+	var res: Dictionary = MapMenuIdentity.resolve(_menu_binds, at,
+		p != "" and FileAccess.file_exists(p), cur_code, str(app.cur_map_name))
+	match str(res.get("status", "")):
+		MapMenuIdentity.STALE:
+			_refresh_map_menu()
+			app._set_status("地图菜单条目已失效，列表已刷新：请重新选择")
+			return
+		MapMenuIdentity.MISSING:
+			_refresh_map_menu()
+			app._set_status("地图条目已失效：%s 已不存在（列表已刷新）" % nm)
+			return
+		MapMenuIdentity.RECODE:
 			_refresh_map_menu()
 			app._set_status("地图条目已失效：%s 的地图码已变化（列表已刷新，请重新选择）" % nm)
 			return
-	if nm == app.cur_map_name:
-		return
+		MapMenuIdentity.SAME:
+			return
 	# 切图是协程（可能有未保存确认弹窗）：必须等加载完成再回调宿主刷新，
 	# 否则内容/资产页会在旧画布内容上刷新（列表与地图名对不上）。
 	await app._open_map_by_name(nm)

@@ -251,6 +251,10 @@ func _build_field_row(i: int, fn_id: String, fd: Dictionary, cur: Dictionary) ->
 	if built.get("commit") is Callable and (built.commit as Callable).is_valid():
 		_pending_commits.append(built.commit)
 	var row := Kit.field_row(label, built.ctl, 96)
+	# E1：按声明显示能给出的说明（类型/范围/缺省/码）；契约没有独立说明/单位键，不发明
+	var tip := FieldWidgets.decl_tooltip(fd)
+	if tip != "":
+		row.tooltip_text = tip
 	if FieldWidgets.wants_canvas_pick(fd):
 		var pick := Kit.button("画布选…", func():
 			_pick_entity_for(fd, key, func(code): _set_field(i, fn_id, key, code)), "ghost")

@@ -6,6 +6,7 @@ const MapExport := preload("res://src/map/map_export.gd")
 const UiKitScript := preload("res://src/ui/ui_kit.gd")
 const K := preload("res://src/core/constants.gd")
 const MapStore := preload("res://src/map/map_store.gd")
+const MapResize := preload("res://src/ui/map_resize.gd")
 
 var app   # app 宿主
 
@@ -87,89 +88,21 @@ func open_size_dialog() -> void:
 	body.add_child(btn_row)
 	app._open_popup(pop)
 
-## 现有条目计数：{tiles, collision, objects}（与 extract() 的段形状一致）。
+## 现有条目计数 / 裁剪范围 / 就地裁剪：纯逻辑在 map_resize.gd（同一判据，可单测）。
 func _counts(d: Dictionary) -> Dictionary:
-	var tiles := 0
-	for lid in (d.get("tiles", {}) as Dictionary):
-		var cells = (d.get("tiles", {}) as Dictionary)[lid]
-		if cells is Array:
-			tiles += (cells as Array).size()
-	return {"tiles": tiles, "collision": (d.get("collision", []) as Array).size(),
-		"objects": (d.get("objects", []) as Array).size()}
+	return MapResize.counts(d)
 
-## 目标尺寸会裁掉的条目数（缩小才非零；扩大恒为零）。
 func _crop_counts(d: Dictionary, nw: int, nh: int) -> Dictionary:
-	var out := {"tiles": 0, "collision": 0, "objects": 0}
-	for lid in (d.get("tiles", {}) as Dictionary):
-		var cells = (d.get("tiles", {}) as Dictionary)[lid]
-		if not (cells is Array):
-			continue
-		for c in (cells as Array):
-			if not (c is Array) or (c as Array).size() < 2:
-				continue
-			if _outside(int((c as Array)[0]), int((c as Array)[1]), nw, nh):
-				out.tiles = int(out.tiles) + 1
-	for ce in (d.get("collision", []) as Array):
-		if ce is Dictionary:
-			if _outside(int((ce as Dictionary).get("x", 0)), int((ce as Dictionary).get("y", 0)), nw, nh):
-				out.collision = int(out.collision) + 1
-		elif ce is Array and (ce as Array).size() >= 2:
-			if _outside(int((ce as Array)[0]), int((ce as Array)[1]), nw, nh):
-				out.collision = int(out.collision) + 1
-	for o in (d.get("objects", []) as Array):
-		if o is Dictionary and _outside_float(float((o as Dictionary).get("x", 0.0)),
-				float((o as Dictionary).get("y", 0.0)), nw, nh):
-			out.objects = int(out.objects) + 1
-	return out
+	return MapResize.crop_counts(d, nw, nh)
 
 func _outside(x: int, y: int, nw: int, nh: int) -> bool:
-	return x < 0 or y < 0 or x >= nw or y >= nh
+	return MapResize.outside(x, y, nw, nh)
 
 func _outside_float(x: float, y: float, nw: int, nh: int) -> bool:
-	return x < 0.0 or y < 0.0 or x >= float(nw) or y >= float(nh)
+	return MapResize.outside_float(x, y, nw, nh)
 
-## 就地裁掉边界外条目（层栈与 meta 其它键不动）。与 _crop_counts 同一判据。
 func _crop_data(d: Dictionary, nw: int, nh: int) -> void:
-	var tiles_in = d.get("tiles", null)
-	if tiles_in is Dictionary:
-		for lid in (tiles_in as Dictionary):
-			var cells = (tiles_in as Dictionary)[lid]
-			if not (cells is Array):
-				continue
-			var keep: Array = []
-			for c in (cells as Array):
-				if c is Array and (c as Array).size() >= 2 \
-						and not _outside(int((c as Array)[0]), int((c as Array)[1]), nw, nh):
-					keep.append(c)
-			(tiles_in as Dictionary)[lid] = keep
-	var coll_in = d.get("collision", null)
-	if coll_in is Array:
-		var keep2: Array = []
-		for ce in (coll_in as Array):
-			var cx := 0
-			var cy := 0
-			var ok_shape := false
-			if ce is Dictionary:
-				cx = int((ce as Dictionary).get("x", 0))
-				cy = int((ce as Dictionary).get("y", 0))
-				ok_shape = true
-			elif ce is Array and (ce as Array).size() >= 2:
-				cx = int((ce as Array)[0])
-				cy = int((ce as Array)[1])
-				ok_shape = true
-			if ok_shape and not _outside(cx, cy, nw, nh):
-				keep2.append(ce)
-		d["collision"] = keep2
-	var objs_in = d.get("objects", null)
-	if objs_in is Array:
-		var keep3: Array = []
-		for o in (objs_in as Array):
-			if not (o is Dictionary):
-				continue
-			if not _outside_float(float((o as Dictionary).get("x", 0.0)),
-					float((o as Dictionary).get("y", 0.0)), nw, nh):
-				keep3.append(o)
-		d["objects"] = keep3
+	MapResize.crop_data(d, nw, nh)
 
 func apply_map_size(nw: int, nh: int, pop: PopupPanel, proj := "") -> void:
 	var d: Dictionary = app.canvas.extract()

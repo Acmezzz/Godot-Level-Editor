@@ -702,6 +702,9 @@ func _build_ref_row(fd: Dictionary, props: Dictionary, fdecls: Array = []) -> Co
 			d["_mapKey"] = target_map   # _resolve_options 据此枚举目标图实例
 	built = FieldWidgets.build(d, cur, func(v): _set_prop_ref(fd, v), _resolve_options)
 	var row := Kit.field_row(str(fd.get("name", fid)), built.ctl, 96)
+	var tip := FieldWidgets.decl_tooltip(fd)
+	if tip != "":
+		row.tooltip_text = tip
 	# E1：同图实例引用给画布选点（跨图配对字段不给：画布点的是本图实例）
 	if FieldWidgets.wants_canvas_pick(fd):
 		var pick := Kit.button("画布选…", func(): _pick_prop_ref(fd), "ghost")

@@ -787,6 +787,9 @@ func _step_field_row(fd: Dictionary, sfd: Dictionary) -> Control:
 	if built.get("commit") is Callable and (built.commit as Callable).is_valid():
 		_pending_commits.append(built.commit)
 	var row := Kit.field_row(label, built.ctl, 96)
+	var tip := FieldWidgets.decl_tooltip(fd)
+	if tip != "":
+		row.tooltip_text = tip
 	if FieldWidgets.wants_canvas_pick(fd):
 		var pick := Kit.button("画布选…", func(): _pick_step_ref(fd, key, si, rev), "ghost")
 		pick.tooltip_text = "临时切到画布点一个实例；确认才写入这一步，取消不改当前值"
