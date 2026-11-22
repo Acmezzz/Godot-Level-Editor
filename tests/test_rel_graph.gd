@@ -1,0 +1,148 @@
+extends "res://tests/_suite_base.gd"
+## E2-3：关系图（纯数据层）——节点/边生成、写回同一字段、断开删键、staged 并入、循环保留。
+
+const RelGraph := preload("res://src/content/rel_graph.gd")
+const ContentStore := preload("res://src/content/content_store.gd")
+
+const TMP := "user://test_rel_graph_tmp"
+
+func _manifest() -> Dictionary:
+	return {"_dir": TMP, "_maps_dir": TMP.path_join("maps"), "contentDir": "content",
+		"projectName": "p", "tileSize": 16,
+		"functions": {
+			"dialog": {"name": "对话", "code": "F100", "fields": [
+				{"id": "next", "code": "N100", "name": "下一句", "kind": "choice", "source": "content:dialog"},
+				{"id": "intro", "code": "N200", "name": "开场", "kind": "input", "type": "string"},
+			]},
+			"quest": {"name": "任务", "code": "F200", "fields": [
+				{"id": "goal", "code": "N300", "name": "目标", "kind": "choice", "source": "content:dialog"},
+			]},
+		},
+		"steps": {"say": {"code": "S100", "name": "说", "fields": [
+			{"id": "line", "code": "N400", "name": "台词", "kind": "intro"},
+			{"id": "to", "code": "N500", "name": "跳到", "kind": "choice", "source": "content:dialog"},
+		]}},
+		"assets": []}
+
+func _nuke(p: String) -> void:
+	if DirAccess.dir_exists_absolute(p):
+		for f in DirAccess.get_files_at(p):
+			DirAccess.remove_absolute(p.path_join(str(f)))
+		for d in DirAccess.get_directories_at(p):
+			_nuke(p.path_join(str(d)))
+		DirAccess.remove_absolute(p)
+
+func _cleanup() -> void:
+	_nuke(TMP)
+
+func _write(m: Dictionary, fn_id: String, cid: String, fields: Dictionary, name := "") -> void:
+	ContentStore.write(m, fn_id, cid, {"id": cid, "name": name if name != "" else cid, "fields": fields})
+
+## 建图：边读声明字段（含步骤字段），跨功能目标补占位节点，不存在目标进 external
+func test_build_edges() -> void:
+	_cleanup()
+	var m := _manifest()
+	_write(m, "dialog", "a", {"N100": "b"})
+	_write(m, "dialog", "b", {"N100": "a"})   # 循环（游戏允许，必须保留）
+	_write(m, "dialog", "c", {"N100": "gone"})
+	_write(m, "quest", "q1", {"N300": "a"})
+	var g := RelGraph.build(m, "dialog")
+	var keys := []
+	for n in g.nodes:
+		keys.append(str((n as Dictionary).get("key", "")))
+	ok(keys.has("dialog\u0001a") and keys.has("dialog\u0001b"), "两端节点都在")
+	ok(keys.has("dialog\u0001c"), "孤立节点也画（可从这里接线）")
+	eq((g.get("edges", []) as Array).size(), 2, "a→b 与 b→a 两条边（循环保留）")
+	eq((g.get("external", []) as Array).size(), 1, "指向不存在内容的引用进 external")
+	eq(str((g.external[0] as Dictionary).get("value", "")), "gone", "external 带原值")
+	# 跨功能：任务→对话 a 从 quest 侧建图时补出 dialog 占位节点
+	var g2 := RelGraph.build(m, "quest")
+	var keys2 := []
+	for n in g2.nodes:
+		keys2.append(str((n as Dictionary).get("key", "")))
+	ok(keys2.has("dialog\u0001a"), "跨功能目标补占位节点（身份含功能 ID）")
+	_cleanup()
+
+## 步骤字段里的内容引用也要成边（step 下标随边带出，写回定位用）
+func test_build_step_edges() -> void:
+	_cleanup()
+	var m := _manifest()
+	_write(m, "dialog", "a", {})
+	_write(m, "dialog", "b", {})
+	ContentStore.write(m, "dialog", "a", {"id": "a", "name": "a", "fields": {},
+		"steps": [{"step": "S100", "fields": {"N500": "b"}}]})
+	var g := RelGraph.build(m, "dialog")
+	eq((g.get("edges", []) as Array).size(), 1, "步骤字段引用生成一条边")
+	var e: Dictionary = g.edges[0]
+	eq(int(e.get("step", -2)), 0, "边带步骤下标")
+	eq(str(e.get("field", "")), "N500", "边带字段码")
+	_cleanup()
+
+## staged 内容并入建图（A2 未落盘的新内容在图上立刻可见）
+func test_build_merges_staged() -> void:
+	_cleanup()
+	var m := _manifest()
+	_write(m, "dialog", "a", {"N100": "new1"})
+	var g0 := RelGraph.build(m, "dialog")
+	eq((g0.get("external", []) as Array).size(), 1, "新内容未落盘前，引用算悬空")
+	var staged := {"new1": {"id": "new1", "name": "新一句", "fields": {}}}
+	var g1 := RelGraph.build(m, "dialog", staged)
+	eq((g1.get("edges", []) as Array).size(), 1, "并入 staged 后边成立")
+	var keys := []
+	for n in g1.nodes:
+		keys.append(str((n as Dictionary).get("key", "")))
+	ok(keys.has("dialog\u0001new1"), "staged 节点在图上")
+	_cleanup()
+
+## 写回同一字段：改接、断开（删键）、幂等、多选原位替换
+func test_set_edge_roundtrip() -> void:
+	_cleanup()
+	var m := _manifest()
+	_write(m, "dialog", "a", {"N100": "b"})
+	_write(m, "dialog", "b", {})
+	_write(m, "dialog", "c", {})
+	var rd := func(fid: String, cid: String) -> Dictionary: return ContentStore.read(m, fid, cid)
+	var wr := func(fid: String, cid: String, data: Dictionary) -> bool:
+		return ContentStore.write(m, fid, cid, data)
+	# 改接
+	var r1 := RelGraph.set_edge(rd, wr, "dialog", "a", -1, "N100", "c", false)
+	eq(str(r1.get("status", "")), "ok", "改接成功")
+	eq(str(ContentStore.read(m, "dialog", "a").get("fields", {}).get("N100", "")), "c", "字段换成新目标")
+	# 幂等
+	var r2 := RelGraph.set_edge(rd, wr, "dialog", "a", -1, "N100", "c", false)
+	eq(str(r2.get("status", "")), "noop", "同值不重写")
+	# 断开 = 删键（C1 未设置语义）
+	var r3 := RelGraph.set_edge(rd, wr, "dialog", "a", -1, "N100", "", false)
+	eq(str(r3.get("status", "")), "ok", "断开成功")
+	ok(not (ContentStore.read(m, "dialog", "a").get("fields", {}) as Dictionary).has("N100"),
+		"断开删键而不是留空串")
+	# 图与表单一致：重读图的边
+	_write(m, "dialog", "a", {"N100": "b"})
+	var g := RelGraph.build(m, "dialog")
+	eq(str((g.edges[0] as Dictionary).get("to", "")), "dialog\u0001b", "重开后边指向同一目标")
+	_cleanup()
+
+func test_set_edge_step_scope_and_multi() -> void:
+	_cleanup()
+	var m := _manifest()
+	_write(m, "dialog", "a", {"N100": "x"})
+	_write(m, "dialog", "b", {})
+	ContentStore.write(m, "dialog", "a", {"id": "a", "fields": {"N100": "x"},
+		"steps": [{"step": "S100", "fields": {"N500": "b"}}]})
+	var rd := func(fid: String, cid: String) -> Dictionary: return ContentStore.read(m, fid, cid)
+	var wr := func(fid: String, cid: String, data: Dictionary) -> bool:
+		return ContentStore.write(m, fid, cid, data)
+	# 步骤内字段写回只动该步
+	var r := RelGraph.set_edge(rd, wr, "dialog", "a", 0, "N500", "", false)
+	eq(str(r.get("status", "")), "ok", "步骤字段断开")
+	var d := ContentStore.read(m, "dialog", "a")
+	ok(not (((d.get("steps", []) as Array)[0] as Dictionary).get("fields", {}) as Dictionary).has("N500"),
+		"只删步骤里的键")
+	eq(str((d.get("fields", {}) as Dictionary).get("N100", "")), "x", "顶层字段不受影响")
+	# 多选：原位替换一条、其余保留
+	_write(m, "dialog", "a", {"N100": ["x", "b"]})
+	var r2 := RelGraph.set_edge(rd, wr, "dialog", "a", -1, "N100", "b", true, "x")
+	eq(str(r2.get("status", "")), "ok", "多选改接成功")
+	var arr: Array = ContentStore.read(m, "dialog", "a").get("fields", {}).get("N100", [])
+	eq(str(arr), str(["b", "b"]), "原位替换，其余元素保留")
+	_cleanup()
