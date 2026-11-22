@@ -3,8 +3,9 @@ extends RefCounted
 ##
 ## 与其它控制器同形：RefCounted + _init(host)，样式统一走 Kit/Th。
 ## 数据真相：实例绑定在画布 EntityNode 上（functions），功能内容在
-## content/<功能id>/<内容id>.json。离散控件改动即时写盘；SpinBox/多行等
-## 连续控件在失焦或 commit() 时统一落盘（见 _pending_commits）。
+## content/<功能id>/<内容id>.json。连续控件（SpinBox/多行等）在失焦或 commit()
+## 时统一落盘（见 _pending_commits）；离散控件（勾选/下拉/行操作）当场写。
+## 注意：写盘给的是内容文件，实例绑定（functions 数组）仍在地图里、随地图保存。
 ## 中列是重绘式预览——同一节点不能两处上屏，不挂 app.canvas，按坐标重画。
 
 const Kit := preload("res://src/ui/ui_kit.gd")

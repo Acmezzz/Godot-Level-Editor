@@ -1256,7 +1256,8 @@ func _paste_region(origin: Vector2i) -> void:
 	_region_ops_ctrl._paste_region(origin)
 
 func _cell_rect(a: Vector2, b: Vector2) -> Rect2i:
-	return _selection_ops_ctrl._cell_rect(a, b)
+	# 区域框选几何归 RegionOps（E03：松手转发曾错发到选区控制器，调用必炸）
+	return _region_ops_ctrl._cell_rect(a, b)
 ## —— 拆到 src/core/undo_history.gd 的委托（调用点保持不变） ——
 func _snapshot() -> String:
 	return _undo_history_ctrl._snapshot()

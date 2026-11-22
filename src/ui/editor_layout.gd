@@ -401,7 +401,9 @@ func _build_palette_column() -> PanelContainer:
 	app._editor_state_ctrl = preload("res://src/canvas/editor_state.gd").new(app)
 	return col
 
-## 资产列表跟随层类型：地形/装饰 → 瓦片，碰撞（grid）无资产 → 空，实体层 → 实体。
+## 左栏列表切换：which 由 place_kind / 当前类别决定——
+## "tiles" 显示瓦片图集，按资产语义再分 "images"/"entities" 给摆放列表，
+## "" 表示碰撞元层（无资产，显示网格提示/类型形状控件）。
 func _set_palette_page(which: String) -> void:
 	var show_tiles := which == "tiles"
 	var show_objects := which == "entities" or which == "images"

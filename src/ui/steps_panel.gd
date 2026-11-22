@@ -1143,7 +1143,8 @@ func _steps_move(si: int, dir: int) -> void:
 	_bump_steps_rev()
 	_rebuild_steps_all()
 
-## 复制步骤：浅拷贝 fields 并插到下一步；步骤码引用清单声明、跨内容共享，无需重映射。
+## 复制步骤：整条深拷贝（duplicate(true)，fields 再单独拷一层防共享嵌套），插到下一步；
+## 步骤码引用清单声明、跨内容共享，无需重映射。
 func _steps_dup(si: int) -> void:
 	var data := _steps_data()
 	var arr: Array = data.get("steps", []) if data.get("steps", []) is Array else []

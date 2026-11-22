@@ -23,7 +23,7 @@ static func _code(n: int) -> String:
 		out += CHARS[randi() % CHARS.length()]
 	return out
 
-## 各层身份码：出生时发放，存在对应载体上（地图 meta / 清单 entities / 实体 meta）
+## 各层身份码：出生时发放，存在对应载体上（地图 meta.code / 清单 assets[].code / 实例 meta.code—随 objects[] 落盘）
 static func new_map_code() -> String:
 	return _code(LAYER_LEN)
 static func new_entity_code() -> String:
@@ -33,7 +33,7 @@ static func new_inst_code() -> String:
 
 ## 功能段 / 字段段的执行码：与地图、实例码同一字符集同一长度。
 ## 它才是磁盘上的执行引用（地图 functions[].fn、内容 fields 的键）；
-## 人类名（功能 id / 字段 id）只负责显示与内容目录名，改名不破数据。
+## 人类名（功能 id / 字段 id）只负责显示与内容目录名——改功能人类 id 会让内容目录随之搬家。
 static func new_fn_code() -> String:
 	return _code(LAYER_LEN)
 

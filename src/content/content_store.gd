@@ -1,6 +1,7 @@
 extends RefCounted
 ## 内容资源存储层：content/<功能id>/<内容ID>.json 的读写入口。
-## 只做路径解析与 JSON 读写，不含业务校验；写盘复用 MapStore.write_json 的原子替换。
+## 只做路径解析与 JSON 读写，不含业务校验；写盘复用 MapStore.write_json 的原子替换，
+## 覆盖已有文件前先 Rotate 出 3 层 .history（与地图同权，误写可回滚）。
 ## 目录名 = 功能人类 id（给人读的），文件内 "function" 键 = 功能执行码（给代码执行的）。
 
 const Store := preload("res://src/map/map_store.gd")
@@ -91,8 +92,8 @@ static func path_for(m: Dictionary, kind: String, id: String) -> String:
 		return ""
 	return dir.path_join(id + ".json").simplify_path()
 
-## 读缓存：path -> {mtime, size, data}。read_ex 命中缓存时返回副本，
-## 写盘/改名/删除显式失效（见 write/rename/remove）。
+## 读缓存：path -> {mtime, size, data}，命中要求 mtime+size 双双相同。
+## read_ex 命中时返回深拷贝（调用方拿不到缓存原件）；write/rename/remove 显式失效。
 static var _cache := {}   # path -> {mtime: int, size: int, data: Dictionary}
 
 ## 严格读取：区分「缺失」「损坏」「可写」（C04）。

@@ -1,7 +1,8 @@
 extends Control
 class_name TimelineView
 ## 时间轴视图：步骤 = 横轴时间、纵轴轨道的条块。
-## 只负责呈现与拖拽；数据与写盘归 content_editor（视图直接读写同一份 steps 数组）。
+## 只负责呈现与拖拽；数据与写盘归 content_editor。视图读同一份步骤数组，
+## 但改动只走「松手发补丁 → 宿主合并回写」，自己从不直接改数据（见下方 steps 注释）。
 ##
 ## 交互：点条块选中（发 picked）；拖条块左右改 at、拖右缘改 duration、上下拖换轨；
 ## 落定（松手）发一次 changed，由宿主净化回写盘。吸附件随功能声明 timebase

@@ -364,7 +364,8 @@ static func _validate_collision_types(data: Dictionary, issues: Array[Dictionary
 
 ## 试玩声明（v7）：清单 playtest.flags/params 驱动试玩面板（替代写死的 dash/glide/hp）。
 ## flags = {id, name, arg}（arg 为启动时原样追加的 CLI 参数）；params = {id, name, arg(含 %d), def, min, max}。
-## 未声明 playtest = 面板空态提示；结构错报 error，不拦载入（试玩是编辑期功能）。
+## 未声明 playtest = 面板空态提示；结构错报 error——和其它 error 一样会拦住清单载入
+## （manifest.gd 只会对 warning 放行；试玩面板本身在无声明时也能用）。
 static func _validate_playtest(data: Dictionary, issues: Array[Dictionary]) -> void:
 	if not data.has("playtest"):
 		return

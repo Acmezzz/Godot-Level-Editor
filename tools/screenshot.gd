@@ -127,7 +127,7 @@ func _run() -> void:
 				if e is EntityNode and (e as EntityNode).asset != "":
 					pick.append(e)
 			if pick.size() > 1:
-				app._apply_state("select", app.canvas._ent_layer_index())
+				app._apply_state("select", _ent_layer(app, pick[0]))
 				# 取靠近地图中心的一簇，保证外接框和文字都在可视区内
 				var meta: Dictionary = app.canvas.map_data.get("meta", {})
 				var mid := Vector2(float(meta.get("w", 40)) * 8.0, float(meta.get("h", 22)) * 8.0)
@@ -162,7 +162,7 @@ func _run() -> void:
 			print("MEASURE decor_items=%d" % tl.item_count)
 		"ents_page":
 			# v2：切到实体层 = 唯一的「换到实体资产」入口（页签按钮已删）
-			app._on_layer(app.canvas._ent_layer_index())
+			app._on_layer(_any_ent_layer(app))
 		"layer_menu":
 			# v2 §2.2：层下拉展开，应看到每一层一行 + 👁/🔒
 			app._layout_ctrl._toggle_layer_menu()
@@ -177,7 +177,7 @@ func _run() -> void:
 				if e is EntityNode and (e as EntityNode).asset != "":
 					pick2.append(e)
 			if pick2.size() > 1:
-				app._apply_state("", app.canvas._ent_layer_index())
+				app._apply_state("", _ent_layer(app, pick2[0]))
 				app.canvas.selected_multi = pick2.slice(0, 2)
 				app.canvas.selected_entity = pick2[0]
 				app._on_entity_selected(pick2[0])
@@ -191,7 +191,7 @@ func _run() -> void:
 				if e is EntityNode and (e as EntityNode).asset != "":
 					pickx.append(e)
 			if pickx.size() > 1:
-				app._apply_state("select", app.canvas._ent_layer_index())
+				app._apply_state("select", _ent_layer(app, pickx[0]))
 				app.canvas.selected_multi = pickx.slice(0, 3)
 				app.canvas.selected_entity = pickx[0]
 				app._on_entity_selected(pickx[0])
@@ -203,3 +203,15 @@ func _run() -> void:
 	img.save_png(out)
 	print("SHOT_SAVED ", out, " mode=", mode)
 	quit(0)
+
+## 实例所在图层下标：层栈化后实体分散在各层容器，没有合成「实体层」索引，
+## 按实例自己的 layer_id 反查（旧 _ent_layer_index() 已随图层开放化删除）。
+func _ent_layer(app, e) -> int:
+	return app.canvas._layer_index_of(str((e as EntityNode).layer_id))
+
+## 「实体层」入口用：取第一个有实体的层；没有实体时回落到当前层。
+func _any_ent_layer(app) -> int:
+	for e in app.canvas.ents_all():
+		if e is EntityNode and (e as EntityNode).asset != "":
+			return app.canvas._layer_index_of(str((e as EntityNode).layer_id))
+	return app.canvas.active_layer

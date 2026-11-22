@@ -204,7 +204,7 @@ static func read(m: Dictionary, name: String) -> Dictionary:
 ## 写地图 JSON；名称非法、写入前校验失败或写盘失败均返回 false。
 ## 历史（A3）：原文件快照先暂存到 <项目>/editor/history/maps/<地图码>/，
 ## 新文件原子替换成功后才把快照纳入历史——替换失败时快照丢弃，旧历史条目不减少。
-## 无 git 环境的最后保险；autosave/levels/事务写盘不进历史（各有机制）。
+## 无 git 环境的最后保险；草稿（editor/drafts）与内容文件自动写入不进历史（各有机制）。
 const Recovery := preload("res://src/map/recovery.gd")
 const HISTORY_DEPTH := 3
 
