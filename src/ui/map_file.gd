@@ -710,8 +710,22 @@ func _pending_targets() -> Array:
 		out.append("map")
 	return out
 
+## Ctrl+S / 地图菜单「保存」入口（A2）：清单 → 内容 → 地图，按依赖顺序一次写完。
+## 只调 on_save() 会在有暂存内容时把地图先写出去：地图里已经带着新内容 ID，
+## 而内容文件还没落盘，游戏侧读到悬空引用。没地图时退回原来的「无地图」提示。
+func save_all() -> bool:
+	if not app.map_loaded and not _has_staged_or_codes():
+		return await on_save()   # 保持原语义与提示（无地图 = 报错，不是静默成功）
+	var res: Dictionary = await commit_document("保存")
+	return str(res.get("status", "")) == "ok"
+
+func _has_staged_or_codes() -> bool:
+	return not _pending_targets().is_empty()
+
 ## 保存当前地图；返回是否成功（试玩前依赖它决定是否继续）
 ## 直接入口（Ctrl+S）也冻结撤销/重做；已在 commit_document 内嵌套调用时沿用外层标记。
+## 注意：这里只写地图本身。Ctrl+S 那种「用户以为全都存了」的入口走 save_all()——
+## 否则暂存内容还没落盘、地图却先写出去了，地图引用一个磁盘上不存在的内容 ID（A2 顺序）。
 func on_save() -> bool:
 	if app.canvas == null or app.canvas.doc_busy:
 		return await _save_now()

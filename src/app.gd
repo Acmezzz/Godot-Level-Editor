@@ -142,7 +142,9 @@ func _load_map_file(p: String) -> void:
 
 ## 保存当前地图；返回是否成功（试玩前依赖它决定是否继续）
 func _on_save() -> bool:
-	return await _map_file_ctrl.on_save()
+	# Ctrl+S / 地图菜单「保存」= 用户以为「全都存了」的入口：按 A2 顺序
+	# 清单 → 内容 → 地图一次写完（只写地图会留下指向未落盘内容的引用）。
+	return await _map_file_ctrl.save_all()
 
 func _on_new() -> void:
 	_map_file_ctrl.on_new()
