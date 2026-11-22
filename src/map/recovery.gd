@@ -115,6 +115,26 @@ static func remove_draft(m: Dictionary, map_code: String, map_name: String) -> b
 		return true
 	return DirAccess.remove_absolute(p) == OK
 
+## —— 按草稿键（= 文件名，无扩展名）直接寻址（A3）——
+## 列表来自 list_drafts（文件名），UI 只有键、没有「当时用的是码还是图名」；
+## 再拿空码 + 图名重算路径会算出别的键（带码地图尤其明显），所以键必须能独立解析。
+static func draft_path_of_key(m: Dictionary, key: String) -> String:
+	var k := key.strip_edges()
+	var dir := _dir(m, DRAFT_DIR)
+	if k == "" or dir == "":
+		return ""
+	return dir.path_join(k + ".json")
+
+static func read_draft_key(m: Dictionary, key: String) -> Dictionary:
+	var p := draft_path_of_key(m, key)
+	return read_json(p) if p != "" else {}
+
+static func remove_draft_key(m: Dictionary, key: String) -> bool:
+	var p := draft_path_of_key(m, key)
+	if p == "" or not FileAccess.file_exists(p):
+		return true
+	return DirAccess.remove_absolute(p) == OK
+
 ## 列出全部草稿键（供打开项目时提示可恢复项）。
 static func list_drafts(m: Dictionary) -> Array:
 	var dir := _dir(m, DRAFT_DIR)
@@ -126,7 +146,11 @@ static func list_drafts(m: Dictionary) -> Array:
 		return out
 	for f in d.get_files():
 		if str(f).ends_with(".json"):
-			out.append(str(f).get_basename())
+			var base := str(f).get_basename()
+			# 冲突备份（<键>.conflict-<时间>）是留档，不是可恢复草稿：列出会让同一份草稿显示两次
+			if base.contains(".conflict"):
+				continue
+			out.append(base)
 	out.sort()
 	return out
 

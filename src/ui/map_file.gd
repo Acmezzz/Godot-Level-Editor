@@ -202,10 +202,13 @@ func _ask_discard(action: String) -> bool:
 	if not extra.is_empty():
 		dlg.dialog_text += "\n\n此外还有未落盘：%s。" % "、".join(PackedStringArray(extra))
 	# 自动保存草稿存得进、捞不出——放弃修改时至少把草稿路径说出来，
-	# 否则用户以为这份保险不存在。草稿在「打开」里同样可被识别并归位（见 load_map_file）。
-	var draft_path := str(app.manifest.get("_maps_dir", "")).path_join(str(app.cur_map_name) + ".autosave.json")
-	if FileAccess.file_exists(draft_path):
-		dlg.dialog_text += "\n\n最近一次自动保存的草稿在：\n%s\n放弃后仍可从「打开」中载入它找回内容。" % draft_path
+	# 否则用户以为这份保险不存在。草稿从「地图 ▾ → 恢复草稿…」也能载入（见 top_bar_nav）。
+	# A3 草稿已迁到 editor/drafts/<地图码>.json；旧 maps/<名>.autosave.json 只作兼容来源。
+	var code := str((app.canvas.map_data.get("meta", {}) as Dictionary).get("code", "")) \
+		if app.canvas != null and app.canvas.map_data.get("meta", null) is Dictionary else ""
+	var draft_path := Recovery.draft_path(app.manifest, code, app.cur_map_name)
+	if draft_path != "" and FileAccess.file_exists(draft_path):
+		dlg.dialog_text += "\n\n最近一次自动保存的草稿在：\n%s\n放弃后仍可从「地图 ▾ → 恢复草稿…」载入它找回内容。" % draft_path
 	dlg.ok_button_text = "放弃修改并继续"
 	dlg.cancel_button_text = "取消"
 	# 中文正文需要足够宽度，否则 ConfirmationDialog 的 Label 会被压成一条看不见的窄条
@@ -833,14 +836,22 @@ func _pending_ids() -> Array:
 	return out
 
 ## 恢复草稿：把快照载入画布并标记脏（正式文件未动，Ctrl+S 才写回）。
-func restore_draft(map_name: String) -> bool:
-	var draft := Recovery.read_draft(app.manifest, "", map_name)
+## 参数是**草稿键**（文件名，A3）：带地图码的地图键是码、不带码才是图名，
+## 拿「空码 + 图名」重算路径会算出另一个键，读不到自己刚写的草稿。
+func restore_draft_key(draft_key: String) -> bool:
+	var draft := Recovery.read_draft_key(app.manifest, draft_key)
 	if draft.is_empty():
-		app._set_status(" 没有可恢复的草稿：" + map_name)
+		app._set_status(" 没有可恢复的草稿：" + draft_key)
 		return false
+	var map_name := str(draft.get("mapName", ""))
+	if map_name == "":
+		map_name = draft_key
 	var snap = draft.get("snapshot", null)
 	if not (snap is Dictionary) or (snap as Dictionary).is_empty():
 		app._set_status(" 草稿内容为空，无法恢复：" + map_name)
+		return false
+	# 恢复会把画布整份换掉：当前未保存改动同样要确认（与打开/切图一致）
+	if not await confirm_discard("恢复草稿"):
 		return false
 	# 基线不同 = 正式图在草稿之后被改过：保留草稿并提示冲突（A3），不静默覆盖
 	var target := str(draft.get("targetPath", ""))
@@ -850,7 +861,7 @@ func restore_draft(map_name: String) -> bool:
 			"正式图在草稿保存后被改动过。\n恢复会把草稿载入画布（磁盘文件不动），Ctrl+S 将覆盖正式图。\n草稿已另存副本保留。",
 			"仍然恢复"):
 			return false
-		_keep_conflict_copy(map_name)
+		_keep_conflict_copy(draft_key)
 	var gen := _begin_doc_op()
 	app.canvas.set_thumbs(app._entity_thumbs())
 	await app.canvas.load_data((snap as Dictionary).duplicate(true), map_name, false, true)
@@ -871,17 +882,38 @@ func restore_draft(map_name: String) -> bool:
 	return true
 
 ## 冲突时保留草稿副本（原草稿保留，另存一份带时间戳的）
-func _keep_conflict_copy(map_name: String) -> void:
-	var src := Recovery.draft_path(app.manifest, "", map_name)
+## 名字带草稿键：同一目录下可能有多份草稿，副本必须与来源对得上（A3）。
+func _keep_conflict_copy(draft_key: String) -> void:
+	var src := Recovery.draft_path_of_key(app.manifest, draft_key)
 	var text := Recovery.read_text(src)
 	if text == "":
 		return
-	Recovery.write_text(src.get_basename() + ".conflict.json", text)
+	var stamp := Time.get_datetime_string_from_system().replace(":", "").replace("-", "").replace("T", "-")
+	Recovery.write_text(src.get_basename() + ".conflict-" + stamp + ".json", text)
 
 ## 正式保存成功后删掉对应草稿（草稿已完成使命）
 func _drop_draft_for(name: String) -> void:
 	var code := str((app.canvas.map_data.get("meta", {}) as Dictionary).get("code", ""))
 	Recovery.remove_draft(app.manifest, code, name)
+
+## 「查看正式图」：草稿只记身份，不记磁盘外的东西——按草稿里的 targetPath 打开正式图。
+## targetPath 缺失/已删时退回按图名在项目里找（图被改名时可能找不到，状态栏说清楚）。
+func open_draft_target(draft_key: String) -> void:
+	var draft := Recovery.read_draft_key(app.manifest, draft_key)
+	if draft.is_empty():
+		app._set_status(" 没有这份草稿：" + draft_key)
+		return
+	if not await confirm_discard("打开正式图"):
+		return
+	var target := str(draft.get("targetPath", ""))
+	if target == "" or not FileAccess.file_exists(target):
+		var nm := str(draft.get("mapName", ""))
+		target = EditorManifest.map_path(app.manifest, nm) if nm != "" else ""
+		if target == "" or not FileAccess.file_exists(target):
+			app._set_status(" 正式图已不在（草稿：%s）：可在「打开」里手动选文件" % draft_key)
+			return
+		app._set_status(" 草稿记录的路径已失效，按图名打开：" + target.get_file())
+	await load_map_file(target)
 
 ## 打开项目时提示可恢复草稿（A3）：有草稿就列出来，让用户选恢复/查看正式图/丢弃。
 func offer_draft_recovery() -> void:

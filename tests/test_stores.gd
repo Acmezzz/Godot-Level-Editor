@@ -235,7 +235,23 @@ func test_draft_roundtrip_by_map_code() -> void:
 	ok(Recovery.list_drafts(m).is_empty(), "删除后不再列出")
 	_wipe()
 
-## A3：旧式 .autosave.json 只认带 _autosave_of 的作为草稿来源
+## A3：草稿按键（文件名）寻址。带码地图的键是码，用「空码 + 图名」重算会指向另一条路径，
+## 这正是「草稿写得进、恢复列表读不到」的旧形态；冲突备份只留档、不算草稿。
+func test_draft_key_addressing() -> void:
+	_wipe()
+	var m := _fake_manifest()
+	var snap := MapStore.new_map("d", 8, 8)
+	var target := str(m._maps_dir).path_join("d.json")
+	ok(Recovery.write_draft(m, "AB23", "d", target, "", snap) != "", "按码写草稿")
+	ok(Recovery.read_draft(m, "", "d").is_empty(), "空码 + 图名的旧口径读不到带码草稿")
+	eq(str(Recovery.read_draft_key(m, "AB23").get("mapName")), "d", "按键读到同一份草稿")
+	var copy := Recovery.draft_path_of_key(m, "AB23") + ".conflict.json"
+	Recovery.write_text(copy, "{}")
+	eq(Recovery.list_drafts(m), ["AB23"], "冲突备份不列入可恢复草稿")
+	ok(Recovery.remove_draft_key(m, "AB23"), "按键删除")
+	ok(Recovery.list_drafts(m).is_empty(), "删除后只剩备份文件，不再列出")
+	_wipe()
+
 func test_legacy_draft_requires_marker() -> void:
 	_wipe()
 	var m := _fake_manifest()

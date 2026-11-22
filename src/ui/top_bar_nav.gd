@@ -93,36 +93,40 @@ func _open_draft_picker() -> void:
 	var pop: PopupPanel = shell.pop
 	var body: VBoxContainer = shell.body
 	for k in keys:
-		var d: Dictionary = rec.read_draft(app.manifest, "", str(k))
+		# 草稿文件名 = 草稿键（有地图码用码、否则图名）。按文件名直接读，
+		# 不能拿空码 + 图名去重算路径——带码地图会算出另一种键，读不到自己的草稿（A3）。
+		var key := str(k)
+		var d: Dictionary = rec.read_draft_key(app.manifest, key)
 		var row: HBoxContainer = app.UiKitScript.hbox(6)
-		var label: Label = app.UiKitScript.text_label("%s  ·  %s" % [str(d.get("mapName", k)), str(k)], app.UiThemeScript.TEXT, app.UiThemeScript.FS_SMALL)
+		var label: Label = app.UiKitScript.text_label("%s  ·  %s" % [str(d.get("mapName", key)), key], app.UiThemeScript.TEXT, app.UiThemeScript.FS_SMALL)
 		label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		row.add_child(label)
 		row.add_child(app.UiKitScript.button("恢复", func():
 			pop.hide()
-			draft_pick(str(d.get("mapName", k)), "restore"), "primary"))
+			draft_pick(key, "restore"), "primary"))
 		row.add_child(app.UiKitScript.button("查看正式图", func():
 			pop.hide()
-			draft_pick(str(d.get("mapName", k)), "open"), "ghost"))
+			draft_pick(key, "open"), "ghost"))
 		row.add_child(app.UiKitScript.button("丢弃", func():
 			pop.hide()
-			draft_pick(str(d.get("mapName", k)), "discard"), "ghost"))
+			draft_pick(key, "discard"), "ghost"))
 		body.add_child(row)
 	app._open_popup(pop)
 
-## 由弹窗按钮调用的实际动作入口（地图控制器负责载入/丢弃）
-func draft_pick(map_name: String, action: String) -> void:
+## 由弹窗按钮调用的实际动作入口（地图控制器负责载入/丢弃）。
+## 参数是**草稿键**（文件名），不是图名：地图改名后图名会变，键仍指向同一份草稿。
+func draft_pick(draft_key: String, action: String) -> void:
 	if app._map_file_ctrl == null:
 		return
 	match action:
 		"restore":
-			await app._map_file_ctrl.restore_draft(map_name)
+			await app._map_file_ctrl.restore_draft_key(draft_key)
 		"open":
-			await app._open_map_by_name(map_name)
+			await app._map_file_ctrl.open_draft_target(draft_key)
 		"discard":
 			var rec := preload("res://src/map/recovery.gd")
-			rec.remove_draft(app.manifest, "", map_name)
-			app._set_status("已丢弃草稿：" + map_name)
+			rec.remove_draft_key(app.manifest, draft_key)
+			app._set_status("已丢弃草稿：" + draft_key)
 	if after_switch.is_valid():
 		after_switch.call()
 
