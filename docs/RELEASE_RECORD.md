@@ -24,7 +24,8 @@
 
 | 项 | 制作输入 | 落盘结果 | 文件版本 | 试玩结果 |
 |---|---|---|---|---|
-| 逐图投影 | 新建地图时选正交/等距/六边形 | `meta.gridProjection`；缺键沿用项目解析，首次保存冻结进地图 | v7 | 待试玩 |
+| 逐图投影 | 新建地图时选正交/等距/六边形 | `meta.gridProjection`；缺键沿用项目解析，首次保存冻结进地图 | v7 | 已验证（`tests/test_map_v4.gd:175-187`） |
+| 另存并转换投影 | 「设置 ▾ → 另存并转换投影…」选目标投影 | 另存为新图：实例与出生点按锚点换算（像素位置不变）、副本重发实例码/内容 ID/地图码；瓦片与碰撞保留原格号 | v7 + 新内容文件 | 已验证（`tests/test_map_convert.gd`：锚点像素不变、往返回原值、瓦片/碰撞计入待核对、原图未改）；瓦片/碰撞的实际核对靠 GUI |
 | 三角格 | 高级设置选 `triangles` 拓扑 | `meta.gridTopology: "triangles"`；半格自绘，`alt` 按 §3.2 消费 | v7 | 待试玩 |
 | 斜切格 | `meta.gridBasis` 平行四边形基 | 画布/导出/校验共用同一解析 | v7 | 待试玩 |
 | 发布前对照 | `tools/projection_baseline.gd` 只读逐图记录 | 生效投影、拓扑、每实例「数据坐标 → 锚点像素」；`--convert=` 另算「原坐标原锚点 → 像素 → 新坐标新锚点」 | 输出 JSON，不改源图 | 已验证（探针项目：等距图 `--convert=orthogonal` 后每个实例 `converted.pxAfter` 与原 `px` 完全相同，锚点不漂移） |
@@ -81,7 +82,7 @@
 ```
 godot --headless --path . --script res://tools/f2_pilot.gd        # §3 刷怪片段端到端，24 项断言，跑完自清
 godot --headless --path . --script res://tools/projection_baseline.gd -- <项目目录> [--out=<文件>]
-godot --headless --path . --script res://tests/run_tests.gd       # 22 套件 203 用例
+godot --headless --path . --script res://tests/run_tests.gd       # 23 套件 211 用例
 godot --headless --path . --script res://tools/warn_scan.gd       # 全量加载 + 警告扫描
 ```
 
@@ -89,7 +90,7 @@ godot --headless --path . --script res://tools/warn_scan.gd       # 全量加载
 
 - 字段声明没有「说明 / 单位」键（`GAME_SIDE_STANDARD.md` §2.4 只定义 `id/name/type/...`）；
   需要时先改契约再由编辑器渲染，不自行发明键。
-- 带内容的地图**不能**在普通设置里直接切投影；「另存副本并转换」的显式转换操作未做。
+- 带内容的地图**不能**在普通设置里直接切投影；要换投影走「设置 ▾ → 另存并转换投影…」。瓦片与碰撞格号在格系变化下没有唯一对应，转换时保留原格号，需在副本里自行核对或清空。
 - 演出面板的播放头、视图模式与画布缩放/居中不做跨视图持久化（实例 + 功能会恢复）。
 - 时间视图的波形、拍号段、逐帧形状轨与卷轴联动未做（D2 末条，需实测瓶颈后再加）。
 - 区域操作未做事务差量：整图快照（`JSON.stringify`，约 5 ms / 1 万瓦片）仍是主要成本，见 F1 记录。

@@ -9,6 +9,7 @@ const K := preload("res://src/core/constants.gd")
 const MapStore := preload("res://src/map/map_store.gd")
 const Recovery := preload("res://src/map/recovery.gd")
 const GridSpaceScript := preload("res://src/canvas/grid_space.gd")
+const MapConvert := preload("res://src/map/map_convert.gd")
 
 var app   # 宿主引用
 
@@ -150,6 +151,121 @@ func _counts(d: Dictionary) -> Dictionary:
 	var objs = d.get("objects", null)
 	return {"tiles": tiles, "collision": (coll as Array).size() if coll is Array else 0,
 		"objects": (objs as Array).size() if objs is Array else 0}
+
+## B1-2 另存并转换投影：先预览（目标投影、换算后仍能对上的实例、原样保留待核对的瓦片/碰撞），
+## 确认后以画布提交状态为源另存为新图——实例码/内容 ID 走 C2 整图复制，原图不动。
+func on_convert_projection() -> void:
+	if not app.map_loaded:
+		app._set_status("无地图：先新建或打开一张地图")
+		return
+	var old_name: String = _effective_map_name()
+	if old_name == "":
+		app._set_status("当前地图没有名字，无法另存")
+		return
+	var data: Dictionary = app.canvas.extract()
+	if data.is_empty():
+		app._set_status("地图重建中，请稍后再试")
+		return
+	var cur_proj := MapConvert.current_projection(data, app.manifest)
+	var shell: Dictionary = app._popup_body("另存并转换投影",
+		"另存为副本并换算实例与出生点：原图不动。瓦片与碰撞没有唯一对应，保留原格号，转换后需在副本里核对。")
+	var pop: PopupPanel = shell.pop
+	var body: VBoxContainer = shell.body
+	var name_edit := LineEdit.new()
+	name_edit.placeholder_text = "新地图名"
+	body.add_child(UiKitScript.field_row("新名字", name_edit))
+	var proj_sel := OptionButton.new()
+	var keys: Array = []
+	for p in ["orthogonal", "isometric", "hexagonal"]:
+		if p == cur_proj:
+			continue   # 目标必须与当前不同（同投影另存请用「复制整张地图」）
+		keys.append(p)
+		proj_sel.add_item(_proj_label(p))
+		proj_sel.set_item_metadata(proj_sel.item_count - 1, p)
+	body.add_child(UiKitScript.field_row("目标投影", proj_sel, UiKitScript.LABEL_W_LONG))
+	var note := UiKitScript.hint_label("", 460)
+	body.add_child(note)
+	var err_label := UiKitScript.text_label("", UiThemeScript.WARN, UiThemeScript.FS_SMALL)
+	err_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	err_label.custom_minimum_size = Vector2(app.POPUP_BODY_W, 0)
+	body.add_child(err_label)
+	var last_plan := {"ok": false, "error": "先填新图名"}
+	var refresh := func():
+		var nn: String = name_edit.text.strip_edges()
+		if nn == "":
+			last_plan = {"ok": false, "error": "先填新图名"}
+			err_label.text = ""
+			note.text = "当前投影：%s" % _proj_label(cur_proj)
+			return
+		if not EditorManifest.is_valid_map_name(nn):
+			last_plan = {"ok": false, "error": "名称非法"}
+			err_label.text = "地图名不合法：不能含 / \\ : * ? \" < > | 或以 . 开头"
+			return
+		if FileAccess.file_exists(EditorManifest.map_path(app.manifest, nn)):
+			last_plan = {"ok": false, "error": "同名地图已存在"}
+			err_label.text = "同名地图已存在：换个名字"
+			return
+		var p := MapConvert.plan(data, app.manifest, str(proj_sel.get_item_metadata(proj_sel.selected)))
+		last_plan = p
+		err_label.text = str(p.get("error", ""))
+		if not bool(p.get("ok", false)):
+			note.text = "当前投影：%s" % _proj_label(cur_proj)
+			return
+		var lines: Array[String] = ["当前投影：%s → 目标投影：%s（另存为新图，原图不动）" % [
+			_proj_label(cur_proj), _proj_label(str(p.get("projection", "")))]]
+		var doc: Dictionary = p.get("document", {})
+		var n_obj: int = (doc.get("objects", []) as Array).size() if doc.get("objects", null) is Array else 0
+		lines.append("实例 %d 个：按锚点换算到新格系（像素位置保持不变）" % n_obj)
+		for m in (p.get("manual", []) as Array):
+			lines.append("⚠ " + str((m as Dictionary).get("message", "")))
+		for w in (p.get("warnings", []) as Array):
+			lines.append("· " + str(w))
+		note.text = "\n".join(lines)
+	name_edit.text_changed.connect(func(_t: String): refresh.call())
+	proj_sel.item_selected.connect(func(_i: int): refresh.call())
+	refresh.call()
+	var btn_row := UiKitScript.hbox(8)
+	btn_row.alignment = BoxContainer.ALIGNMENT_END
+	btn_row.add_child(UiKitScript.button("取消", func(): pop.hide(), "ghost"))
+	var ok_btn: Button = UiKitScript.button("另存并转换",
+		func(): convert_current_to_dialog(old_name, name_edit, err_label, pop, last_plan), "primary")
+	btn_row.add_child(ok_btn)
+	body.add_child(btn_row)
+	app._open_popup(pop)
+
+## 另存转换确认：转换计划已由弹窗预览算好（last_plan），这里只校验名字并落盘。
+func convert_current_to_dialog(old_name: String, name_edit: LineEdit, err_label: Label,
+		pop: PopupPanel, last_plan: Dictionary) -> void:
+	var nn: String = name_edit.text.strip_edges()
+	if nn == "":
+		err_label.text = "先填新图名"
+		return
+	if not EditorManifest.is_valid_map_name(nn):
+		err_label.text = "地图名不合法：不能含 / \\ : * ? \" < > | 或以 . 开头"
+		return
+	if FileAccess.file_exists(EditorManifest.map_path(app.manifest, nn)):
+		err_label.text = "同名地图已存在：换个名字"
+		return
+	if not bool(last_plan.get("ok", false)):
+		err_label.text = str(last_plan.get("error", "转换计划未就绪"))
+		return
+	var doc: Dictionary = last_plan.get("document", {}) if last_plan.get("document", null) is Dictionary else {}
+	if doc.is_empty():
+		err_label.text = "转换结果为空：请重试"
+		return
+	doc.meta.name = old_name
+	doc.meta.erase("code")   # 副本重发地图码（duplicate_map 发行）
+	var conflicts: Array = []
+	var err: String = app.MapStore.duplicate_map(app.manifest, old_name, nn, conflicts, doc)
+	if err != "":
+		err_label.text = "另存失败：" + err + (("（" + ClonePlan.conflicts_text(conflicts) + "）")
+			if not conflicts.is_empty() else "")
+		return
+	pop.hide()
+	var manual_n: int = (last_plan.get("manual", []) as Array).size()
+	app._set_status("已另存并转换：%s → %s（%s）；%s" % [old_name, nn,
+		_proj_label(str(last_plan.get("projection", ""))),
+		"瓦片/碰撞保留原格号，请在副本里核对" if manual_n > 0 else "无瓦片/碰撞需核对"])
 
 func duplicate_current_from_dialog(old_name: String, name_edit: LineEdit, err_label: Label, pop: PopupPanel) -> void:
 	var nn: String = name_edit.text.strip_edges()

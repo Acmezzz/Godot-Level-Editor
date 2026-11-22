@@ -185,6 +185,7 @@ func _build_global_bar() -> PanelContainer:
 	map_menu.add_separator()
 	map_menu.add_item("重命名地图…", 10)
 	map_menu.add_item("复制整张地图…", 11)
+	map_menu.add_item("另存并转换投影…", 13)
 	map_menu.add_item("地图历史…", 12)
 	map_menu.add_item("导出当前地图", 4)
 	map_menu.add_item("调整地图尺寸", 5)
@@ -235,6 +236,9 @@ func _on_map_menu_id(id: int) -> void:
 		11:
 			# 整图复制（C2）：先填新名，计划预览失败留在弹窗里
 			app._on_duplicate_map()
+		13:
+			# B1-2：另存副本并把实例/出生点换算到新投影（原图不动）
+			app._on_convert_projection()
 		12:
 			# 历史版本（A3）：列出正式保存前的快照，载入只改画布
 			app._on_map_history()

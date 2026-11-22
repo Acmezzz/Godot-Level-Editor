@@ -195,8 +195,9 @@ func test_v7_tile_alt_roundtrip() -> void:
 
 - [x] 公用格尺寸校验接受 `16` 和 `[32,16]` 这类整数像素值，拒绝零、负数和非整数。内部统一用 `Vector2i`，缺省图集 `cell` 直接用这一对宽高。
   - 实现：`src/project/manifest_validation.gd:44-54` 标量或 `[w,h]` 均按正整数校验，错误文案统一；`tests/test_stores.gd`/`test_grid_space.gd` 覆盖 `tile_size_of` 与矩形格。
-- [ ] 拟议地图键 `meta.gridProjection` 支持 `orthogonal`、`isometric`、`hexagonal`。新图在高级设置选择，缺键时沿用项目原有解析结果。旧图首次保存前冻结生效投影。带内容的地图禁止通过普通设置直接切投影。转换另作显式操作，先展示目标并保存副本，再验证游戏加载器版本。
-  - 已有：新建弹窗可选投影（`src/ui/map_file.gd:254-263`）、普通设置里带内容图禁用并说明（`src/ui/map_dialogs.gd:61-79`）、缺键沿用项目解析并首次保存冻结（`editor_canvas.gd` `_map_projection`/`_freeze_projection`）。缺：「另存副本并转换」的显式转换操作。
+- [x] 拟议地图键 `meta.gridProjection` 支持 `orthogonal`、`isometric`、`hexagonal`。新图在高级设置选择，缺键时沿用项目原有解析结果。旧图首次保存前冻结生效投影。带内容的地图禁止通过普通设置直接切投影。转换另作显式操作，先展示目标并保存副本，再验证游戏加载器版本。
+  - 实现：新建弹窗可选投影（`src/ui/map_file.gd:254-263`）、普通设置里带内容图禁用并说明（`src/ui/map_dialogs.gd:61-79`）、缺键沿用项目解析并首次保存冻结（`editor_canvas.gd` `_map_projection`/`_freeze_projection`）。
+  - 显式转换：「设置 ▾ → 另存并转换投影…」（`editor_layout.gd:188,239-241` → `map_file.gd` `on_convert_projection`）先出目标投影与实例/待核对计数预览，确认后走 `src/map/map_convert.gd` 换算实例与出生点（像素锚点不变），再交 `MapStore.duplicate_map` 另存（C2 重发实例码/内容 ID/地图码，原图不动）。瓦片/碰撞保留原格号并计入 `manual` 待核对；`gridBasis` 与非法拓扑组合拒绝。回归 `tests/test_map_convert.gd`（6 用例，含另存后原图与副本对照）。
 - [x] 给 `GridSpace` 增加 `pick_cell(px: Vector2) -> Vector2i` 与 `to_continuous_grid(px: Vector2) -> Vector2`。六边拾取在附近格内按实际轮廓判断，边界以稳定格序决胜。连续换算按 `gy = (py - h/2) / (0.75*h)` 计算行，再反解 `gx = (px - w/2) / w - odd_offset(floor(gy))`，对应现有 `to_px`。吸附直接使用 `cell_center_px()` 或根据锚点求顶点，不把方格偏量塞到六边中心坐标。
   - 实现：`src/canvas/grid_space.gd:266` `pick_cell`（六边 3×3 轮廓判定，遍历序固定）、`:289` `to_continuous_grid`（严格反解 to_px）；回归 `tests/test_grid_space.gd:114` `test_pick_cell_and_continuous`。
 - [ ] 六边离格拖动以像素位移为输入，每帧按当前位置反算亚格坐标。过奇偶行边界时记录的 `gx` 可变化半格，视觉位置必须连续。反算接近边界时用候选行的正变换误差决胜。用 `[32,16]` 和 `(2.2,2.2)` 测亚格往返，并测试偶行拖到奇行再拖回、保存重开。等距可见区从视口四角反算。整格移动从各自起始格求目标。投影缓存键包含生效配置和格尺寸，资产冲突提示具体条目。
@@ -421,11 +422,14 @@ for key in patch:
 
 ## 4. 兼容与发布检查
 
-- [ ] 投影功能发布前，以只读方式逐张记录旧地图的生效投影和实例像素锚点。B1 改锚点规则时，旧记录继续使用原规则。显式转换时通过「原坐标与原锚点 → 像素锚点 → 新坐标与新锚点」计算。用另存副本验证实例、出生点、瓦片和碰撞。格系变化的瓦片与碰撞没有唯一的对应规则时，保留原图并交给制作者在副本中确认。
+- [x] 投影功能发布前，以只读方式逐张记录旧地图的生效投影和实例像素锚点。B1 改锚点规则时，旧记录继续使用原规则。显式转换时通过「原坐标与原锚点 → 像素锚点 → 新坐标与新锚点」计算。用另存副本验证实例、出生点、瓦片和碰撞。格系变化的瓦片与碰撞没有唯一的对应规则时，保留原图并交给制作者在副本中确认。
+  - 记录：`tools/projection_baseline.gd` 只读逐图输出生效投影/拓扑/每实例像素锚点，`--convert=` 另算换算结果不写原图（探针项目上 `converted.pxAfter` 与原 `px` 逐实例相同）。
+  - 另存副本：`map_convert.gd` + `duplicate_map` 已实现（见 B1）；`tests/test_map_convert.gd::test_saved_copy_differs_from_source` 断言副本实例像素锚点与源图一致、原图未被改动。
+  - 瓦片/碰撞：无唯一对应时原格号保留、`manual` 逐项报数并在预览与状态栏提示「需在副本里核对」——不在代码里猜换算。
 - [ ] 校订 `docs/GAME_SIDE_STANDARD.md` 的最小读取器。逐图读取投影及原有缺省值，按图层顺序载入 `tiles`，消费 `alt`，碰撞按对象读取，`objects[].asset` 查清单。功能和字段用码查表，缺键按功能定义的默认值解释。只接受项目公开给当前功能的内容数据。
 - [ ] 为新增可选键补保存前后对照，并用试点游戏的加载器复核。需要改变已存字段的含义时，先产出显式迁移和读入版本判断，再开放写入。项目首轮优先采用可选键和原有格式。
 - [x] 形成一个发布记录，每项记录制作输入、落盘结果、文件版本和试玩结果。手势和菜单靠 GUI 验收。坐标、存储、类型化引用、时钟换算由现有测试套件覆盖。
   - `docs/RELEASE_RECORD.md`：7 节（保存恢复 / 空间坐标 / 引用复制 / 步骤时间 / 资产扫描 / 试玩 / 导出），四项字段齐全；每行标 `已验证` / `待试玩` / `仅有实现`，并给出测试名或 `file:line`。
-  - 补跑证据：`tools/f2_pilot.gd` 24 项断言通过；`projection_baseline.gd --convert=orthogonal` 在探针项目上 `converted.pxAfter` 与原 `px` 逐实例相同；测试套件 203 通过；`warn_scan` 73 文件 0 失败。
+  - 补跑证据：`tools/f2_pilot.gd` 24 项断言通过；`projection_baseline.gd --convert=orthogonal` 在探针项目上 `converted.pxAfter` 与原 `px` 逐实例相同；测试套件 211 通过；`warn_scan` 74 文件 0 失败。
   - 待游戏侧复核的行已显式标 `待试玩`（含需真实 exe 的结构化试玩）；`已知限制` 6 条列出未做项，不以文档代替实现。
 
