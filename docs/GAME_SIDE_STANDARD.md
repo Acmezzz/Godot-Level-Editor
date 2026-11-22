@@ -869,17 +869,74 @@ func _apply_transform(inst: Node2D, t: Dictionary) -> void:
 ### 6.4 参考实现
 
 编辑器不附带示例游戏工程。
-新工程从零接入时，按 §10 的检查清单逐条自己实现；下面是最小可用的读取骨架：
+新工程从零接入时，按 §10 的检查清单逐条自己实现；下面是最小可用的读取骨架。
+骨架覆盖：投影解析 → 图集 source 建表 → 按 `meta.layers` 栈序建层 → 瓦片六元组（含 `alt`）→
+运行时层开关 → 碰撞对象（含类型/形状）→ 尺寸矩形。
 
 ```gdscript
-## TILE_W/TILE_H 与清单 tileSize 一致（标量或 [w,h]）；每个资产的 cell 可非正方形（缺省 = TILE_W×TILE_H）
+# 清单缺 tileSize 时的格尺寸（注意不是写死 16×16）
+const TILE_W := 16
+const TILE_H := 16
+
+## 0) 投影解析（§3.1 三个 meta 键 + 清单项目的缺省）
+##    缺 meta.gridProjection 时沿用「清单任一瓦片资产声明非正交即整项目按它」。
+static func resolve_projection(data: Dictionary, manifest: Dictionary) -> String:
+	var meta: Dictionary = data.get("meta", {})
+	var gp := str(meta.get("gridProjection", ""))
+	if gp == "isometric" or gp == "hexagonal" or gp == "orthogonal":
+		return gp
+	for a in manifest.get("assets", []):
+		if not (a is Dictionary) or str(a.get("kind", "")) != "scene" or str(a.get("shape", "")) != "tile":
+			continue
+		var p := str(a.get("gridProjection", "orthogonal"))
+		if p == "isometric" or p == "hexagonal":
+			return p
+	return "orthogonal"
+
+## 1) 格号 ↔ 像素（与编辑器 grid_space.gd 同口径；非正交时游戏侧必须用同一套公式）
+##    ortho: 左上角系；iso: 2:1 菱形顶点系；hex: odd-r 错行尖顶（只对整数格有中心语义）。
+##    gridBasis 存在时为任意平行四边形，优先级高于投影预设。
+static func cell_to_px_g(g: Vector2, proj: String, basis: Array) -> Vector2:
+	if basis.size() == 2:
+		var u: Array = basis[0]
+		var v: Array = basis[1]
+		return Vector2(float(u[0]), float(u[1])) * g.x + Vector2(float(v[0]), float(v[1])) * g.y
+	var tw := float(TILE_W)
+	var th := float(TILE_H)
+	if proj == "hexagonal":
+		var off := 0.5 if posmod(floori(g.y), 2) == 1 else 0.0
+		return Vector2((g.x + off) * tw + tw * 0.5, g.y * th * 0.75 + th * 0.5)
+	if proj == "isometric":
+		return Vector2((g.x - g.y) * tw * 0.5, (g.x + g.y) * th * 0.5)
+	return g * Vector2(tw, th)
+
+## 对象数据坐标 x/y 是**格**坐标（浮点），锚点换算见 §3.4 的表——
+## 直接 (x,y) * TILE 只对 top_left 成立；center 要 +0.5，bottom_center 要 +0.5/+1。
+## 非正交投影下格中心不是「格号 + 0.5」：六边是格中心系，等距是菱形顶点系平移半格。
+static func object_px(x: float, y: float, anchor: String, proj: String, basis: Array) -> Vector2:
+	var g := Vector2(x, y)
+	if proj == "hexagonal":
+		# 六边：to_px 直接给格中心（含奇偶行错位），锚点偏移只在格内做像素级平移
+		var c := cell_to_px_g(Vector2(floori(g.x), floori(g.y)), proj, basis)
+		return c + (g - Vector2(floori(g.x), floori(g.y))) * Vector2(TILE_W, TILE_H)
+	var off := Vector2.ZERO
+	match anchor:
+		"center":
+			off = Vector2(0.5, 0.5)
+		"bottom_center":
+			off = Vector2(0.5, 1.0)
+	return cell_to_px_g(g + off, proj, basis)
+
+## 2) 建层 + 瓦片（含 alt）；3) 碰撞对象
 static func build(root: Node2D, data: Dictionary, manifest: Dictionary) -> Dictionary:
 	var meta: Dictionary = data.get("meta", {})
 	var mw := int(meta.get("w", 120))
 	var mh := int(meta.get("h", 56))
+	var proj := resolve_projection(data, manifest)
+	var basis: Array = meta.get("gridBasis", []) if meta.get("gridBasis", null) is Array else []
 	# 清单 assets[] 里 shape=tile 的条目 → {资产 id: source_id}；磁盘瓦片条目写的是资产 id
 	var ts := TileSet.new()
-	var tw = manifest.get("tileSize", 16)
+	var tw = manifest.get("tileSize", [TILE_W, TILE_H])
 	if tw is Array and (tw as Array).size() == 2:
 		ts.tile_size = Vector2i(int((tw as Array)[0]), int((tw as Array)[1]))
 	else:
@@ -938,13 +995,35 @@ static func build(root: Node2D, data: Dictionary, manifest: Dictionary) -> Dicti
 		if tn2 == null:
 			continue
 		tn2.visible = bool(lm.get("visible", true))
+	# 碰撞：对象条目 {x, y, type?, shape?}，缺 type = solid、缺 shape = 矩形（§3.3）。
+	# 编辑器不写定长数组；类型语义归游戏侧，这里只把类型/形状交出去。
+	var coll := []
+	for e in (data.get("collision", []) as Array):
+		if not (e is Dictionary):
+			continue
+		var ce: Dictionary = e
+		coll.append({
+			"cell": Vector2i(int(ce.get("x", 0)), int(ce.get("y", 0))),
+			"type": str(ce.get("type", "solid")),
+			"shape": str(ce.get("shape", "")),
+		})
 	# collision / objects / spawn 见 §3.3 / §3.4 / 6.3
 	var px := Vector2(mw * ts.tile_size.x, mh * ts.tile_size.y)   # 矩形格两个分量都要用
-	return {"tiles": tile_nodes, "rect": Rect2(Vector2.ZERO, px)}
+	return {"tiles": tile_nodes, "collision": coll, "projection": proj,
+		"rect": Rect2(Vector2.ZERO, px)}
 ```
 
-**不要照抄别人的工程**。上面这段只覆盖分层的瓦片渲染 + 运行时层开关；碰撞类型、实体实例化、
-功能消费各自取决于目标游戏，§2.3、§3.3 和 §6.3 给了字段语义，实现自由。
+**不要照抄别人的工程**。上面这段覆盖分层瓦片渲染（含 `alt` 与运行时层开关）、投影解析与格↔像素换算、
+碰撞对象读取；实体实例化、功能消费各自取决于目标游戏，§2.3、§3.3、§3.4 和 §6.3 给了字段语义，实现自由。
+
+**这段骨架仍不负责的部分**（按需自己补）：
+
+| 场景 | 需要做什么 |
+|---|---|
+| 三角格（`meta.gridTopology = "triangles"`） | `TileMapLayer` 表达不了半格三角；按 §3.2 的「三角格」说明自绘（顶点 + 图集切片按包围盒做 UV 映射）。格号 `(i,row)` 的 `i` 是三角列 |
+| 等距/六边的对象锚点 | 等距沿用 `cell_to_px_g`（菱形顶点系，`center` = 格号+0.5 即菱形中心）；六边由 `object_px` 的六边分支处理（格中心系 + 格内像素偏移） |
+| 碰撞形状 `r45`/`l45` | 按 §3.3 的多边形表建 CollisionPolygon2D；矩形格用整格 |
+| `props.sizeFields` 尺寸 | 带 `sizeFields` 声明的资产（事件区）宽高在 `props` 里，单位是格 |
 ## 7. 新增一个「功能」的标准流程
 
 以「开关门」为例，游戏侧需要动三处、编辑器侧一处。
