@@ -16,6 +16,11 @@ class_name GridSpace
 
 var tile: Vector2i = Vector2i(16, 16)
 var projection := "orthogonal"   # "orthogonal" / "isometric" / "hexagonal"
+## B3：格拓扑。`quads`（缺省）= 平行四边形格；`triangles` = 每个平行四边形列切成
+## 两个共斜边的三角格。三角格里格号 (i, row) 的 i 是**三角列**：
+## 平行四边形列 c = floor(i / 2)，i 的奇偶选半格（偶 = 左下 (0,0),(1,0),(0,1)；
+## 奇 = 右上 (1,1),(0,1),(1,0)）。六边形投影不支持三角拓扑。
+var topology := "quads"
 ## B3：可选双基向量斜平面（meta.gridBasis: [[ux,uy],[vx,vy]]）。
 ## 非零时 to_px = g.x·u + g.y·v，to_grid = 基矩阵的逆——格仍是平行四边形（含正交/斜平行两种特例）。
 ## 与 projection 正交：projection 决定缺省几何，basis 显式覆盖它（校验保证有限且可逆）。
@@ -49,8 +54,90 @@ func set_basis(u: Vector2, v: Vector2) -> bool:
 static func _finite2(p: Vector2) -> bool:
 	return is_finite(p.x) and is_finite(p.y)
 
-## 解析 meta.gridBasis：[[ux,uy],[vx,vy]] → {ok, u, v, why}。非数组/非数值/不可逆都拒绝。
-## 纯函数：清单校验与画布/导出共用同一份判据。
+## 解析 meta.gridTopology：缺键/`quads` = 平行四边格；`triangles` = 三角格。
+## 三角格依赖列内两半格的划分，六边投影没有平行四边形列 → 组合非法。
+static func parse_topology(meta: Dictionary, proj: String) -> Dictionary:
+	var raw := str(meta.get("gridTopology", ""))
+	if raw == "" or raw == "quads":
+		return {"ok": true, "topology": "quads", "why": ""}
+	if raw != "triangles":
+		return {"ok": false, "topology": "quads", "why": "gridTopology 只能是 \"quads\" / \"triangles\""}
+	if proj == "hexagonal":
+		return {"ok": false, "topology": "quads", "why": "hexagonal 投影不支持 triangles 拓扑"}
+	return {"ok": true, "topology": "triangles", "why": ""}
+
+## 设置格拓扑。非法值静默保持 quads（调用方已按 parse_topology 报过具体键）。
+func set_topology(topo: String) -> void:
+	topology = "triangles" if topo == "triangles" and not is_hex() else "quads"
+
+func is_tri() -> bool:
+	return topology == "triangles"
+
+# —— B3 三角格：列映射与半格几何（纯函数，绘制/命中/邻接共用） ——
+
+## 三角列 i → (平行四边形列 c, 是否奇半格)。i 奇 = 右上三角。
+static func tri_col(i: int) -> Dictionary:
+	return {"c": i >> 1 if i >= 0 else int(floorf(float(i) / 2.0)), "odd": posmod(i, 2) == 1}
+
+## 三角格 (i, row) 的三个格空间顶点（单位基下，再经 to_px 变换）。
+## 偶半格 (0,0),(1,0),(0,1)；奇半格 (1,1),(0,1),(1,0)。c,row 平移后三点一起移。
+static func tri_unit_points(i: int, row: int) -> PackedVector2Array:
+	var c := float(tri_col(i).c)
+	var odd := bool(tri_col(i).odd)
+	var g := Vector2(c, float(row))
+	if odd:
+		return PackedVector2Array([g + Vector2(1, 1), g + Vector2(0, 1), g + Vector2(1, 0)])
+	return PackedVector2Array([g + Vector2(0, 0), g + Vector2(1, 0), g + Vector2(0, 1)])
+
+## 三角格 (i, row) 的像素多边形（to_px 作用在三个单位顶点上）。
+func tri_polygon(i: int, row: int) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	for p: Vector2 in tri_unit_points(i, row):
+		out.append(to_px(p))
+	return out
+
+## 像素 → 三角格号。先按平行四边形列反算连续格，再按「x+y ≤ 1」判定落在哪半格。
+## 返回 Vector2i(三角列 i, row)。六边/无法判定返回 ZERO（调用方应走 pick_cell）。
+func pick_tri(px: Vector2) -> Vector2i:
+	var g := to_grid(px)
+	var c := floori(g.x)
+	var row := floori(g.y)
+	var fx := g.x - float(c)
+	var fy := g.y - float(row)
+	# 局部坐标在单位正方形内；对角线 x+y=1 分割左下/右上
+	var odd := fx + fy > 1.0
+	return Vector2i(c * 2 + (1 if odd else 0), row)
+
+## 三角格的共边邻格（每个三角形 3 条边 → 3 个邻格）。
+## 偶半格 (0,0),(1,0),(0,1)：底边 y=row → 同列奇半格的上方一格；左边 x=c → 左邻列的奇半格；
+## 斜边 → 本列奇半格（同一平行四边形的另一半）。
+## 奇半格 (1,1),(0,1),(1,0)：顶边 y=row+1 → 同列偶半格的下方一格；右边 x=c+1 → 右邻列的偶半格；
+## 斜边 → 本列偶半格。三边互为镜像，按 (三角列, 行) 平移。
+func neighbors_tri(i: int, row: int) -> Array:
+	if posmod(i, 2) == 0:
+		return [Vector2i(i + 1, row), Vector2i(i + 1, row - 1), Vector2i(i - 1, row)]
+	return [Vector2i(i - 1, row), Vector2i(i - 1, row + 1), Vector2i(i + 1, row)]
+
+## 三角格邻居版 neighbors()：拓扑是 triangles 时按三角邻接，否则保持原口径。
+func neighbors_any(c: Vector2i) -> Array:
+	if is_tri():
+		return neighbors_tri(c.x, c.y)
+	return neighbors(c)
+
+## 三角格中心像素（三点平均）——落点/角标/拖动把手用。
+func tri_center_px(i: int, row: int) -> Vector2:
+	var poly := tri_polygon(i, row)
+	return (poly[0] + poly[1] + poly[2]) / 3.0
+
+## 三角格纹理落位：按三角形的轴对齐包围盒（图集切片拉伸到该包围盒，再按三角裁）
+func tri_tex_rect(i: int, row: int, cs: Vector2i) -> Rect2:
+	var poly := tri_polygon(i, row)
+	var mn := poly[0]
+	var mx := poly[0]
+	for p: Vector2 in poly:
+		mn = mn.min(p)
+		mx = mx.max(p)
+	return Rect2(mn, mx - mn)
 static func parse_basis(meta: Dictionary) -> Dictionary:
 	if not meta.has("gridBasis"):
 		return {"ok": true, "u": Vector2.ZERO, "v": Vector2.ZERO, "why": ""}
@@ -175,7 +262,10 @@ func to_grid(p: Vector2) -> Vector2:
 ## 拾取（B1）：像素 → 格号。正交/等距 = floor(连续格坐标)；六边 = 附近 3×3 格里
 ## 按实际六角轮廓判定（最近中心只是 Voronoi 近似，与绘制形状在边界上不一致），
 ## 轮廓内优先、再取中心更近者；遍历序固定 → 边界结果稳定。
+## B3 三角拓扑：返回值仍是 Vector2i（三角列 i, row），按对角线 x+y=1 分半格。
 func pick_cell(px: Vector2) -> Vector2i:
+	if is_tri():
+		return pick_tri(px)
 	var g := to_grid(px)
 	if not is_hex():
 		return Vector2i(floori(g.x), floori(g.y))
@@ -209,12 +299,17 @@ func to_continuous_grid(px: Vector2) -> Vector2:
 
 ## cell 的中心像素（正交 = 方形中心；等距 = 菱形中心；六边 = 格中心，与 TileMapLayer.map_to_local 口径一致）
 func cell_center_px(c: Vector2i) -> Vector2:
+	if is_tri():
+		return tri_center_px(c.x, c.y)   # B3：三角形重心
 	if is_hex():
 		return to_px(Vector2(c))
 	return to_px(Vector2(c) + Vector2(0.5, 0.5))
 
-## cell 的像素多边形（正交 = 方形四角；等距 = 菱形四角 = to_px 映射格空间正方形；六边 = 尖顶六角）
+## cell 的像素多边形（正交 = 方形四角；等距 = 菱形四角 = to_px 映射格空间正方形；六边 = 尖顶六角；
+## B3 三角拓扑 = 半格三角形，格号是三角列 (i, row)）
 func cell_polygon(c: Vector2i) -> PackedVector2Array:
+	if is_tri():
+		return tri_polygon(c.x, c.y)
 	if is_hex():
 		var q := cell_center_px(c)
 		var w2 := float(tile.x) * 0.5
@@ -257,6 +352,8 @@ func grid_polygon(a: Vector2i, b: Vector2i) -> PackedVector2Array:
 ## B3 斜平面：平行四边形没有全局「轴对齐左上角」，按格原点（to_px(c)）为锚左上对齐——
 ## 与正交的 g·tile 口径一致（正交 basis = [tile,0],[0,tile] 时逐位相同）。
 func cell_tex_rect(c: Vector2i, cs: Vector2i) -> Rect2:
+	if is_tri():
+		return tri_tex_rect(c.x, c.y, cs)   # B3：三角形包围盒
 	if has_basis:
 		return Rect2(to_px(Vector2(c)), Vector2(cs))
 	if is_iso() or is_hex():
@@ -277,6 +374,24 @@ func grid_lines(vis: Rect2, map_rect: Rect2i) -> PackedVector2Array:
 	var gmax := Vector2(maxf(maxf(g0.x, g1.x), maxf(g2.x, g3.x)), maxf(maxf(g0.y, g1.y), maxf(g2.y, g3.y)))
 	var lo := Vector2i(floori(gmin.x), floori(gmin.y)) - Vector2i(1, 1)
 	var hi := Vector2i(ceilf(gmax.x), ceilf(gmax.y)) + Vector2i(1, 1)
+	if is_tri():
+		# B3 三角网格线 = 平行四边形网格 + 每个平行四边形格的对角线（x+y = c+c+1 那条，即
+		# 单位基里的 (c+1,c)→(c,c+1) 斜线，把格分成左下/右上两个三角）。
+		var i0 := maxi(lo.x, map_rect.position.x)
+		var i1 := mini(hi.x, map_rect.end.x)
+		var j0 := maxi(lo.y, map_rect.position.y)
+		var j1 := mini(hi.y, map_rect.end.y)
+		for i in range(i0, i1 + 1):
+			out.append(to_px(Vector2(i, j0)))
+			out.append(to_px(Vector2(i, j1)))
+		for j in range(j0, j1 + 1):
+			out.append(to_px(Vector2(i0, j)))
+			out.append(to_px(Vector2(i1, j)))
+		for i2 in range(i0, i1):
+			for j2 in range(j0, j1):
+				out.append(to_px(Vector2(i2 + 1, j2)))
+				out.append(to_px(Vector2(i2, j2 + 1)))
+		return out
 	if is_hex():
 		var hw := float(tile.x)
 		var hh := float(tile.y)

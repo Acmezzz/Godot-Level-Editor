@@ -211,3 +211,59 @@ func test_parse_basis() -> void:
 	eq(g.to_px(Vector2(1, 0)), Vector2(16, 0), "共线基被拒，仍是正交")
 	ok(not g.has_basis, "has_basis 保持 false")
 
+## B3：三角格——列映射、半格顶点、三角形命中、共边邻接
+func test_grid_triangles() -> void:
+	var g = GridSpaceScript.new(Vector2i(16, 16), "orthogonal")
+	g.set_topology("triangles")
+	ok(g.is_tri(), "拓扑生效")
+	# 列映射：i=0 → (c=0, 偶)；i=1 → (c=0, 奇)；i=2 → (c=1, 偶)；i=-1 → (c=-1, 奇)
+	eq(GridSpaceScript.tri_col(0), {"c": 0, "odd": false}, "i=0 = 第 0 列偶半格")
+	eq(GridSpaceScript.tri_col(1), {"c": 0, "odd": true}, "i=1 = 第 0 列奇半格")
+	eq(GridSpaceScript.tri_col(2), {"c": 1, "odd": false}, "i=2 = 第 1 列偶半格")
+	eq(GridSpaceScript.tri_col(-1), {"c": -1, "odd": true}, "-1 = 第 -1 列奇半格（负数向下取整）")
+	# 半格顶点（单位基）
+	eq(GridSpaceScript.tri_unit_points(0, 0), PackedVector2Array([Vector2(0, 0), Vector2(1, 0), Vector2(0, 1)]),
+		"偶半格 = (0,0),(1,0),(0,1)")
+	eq(GridSpaceScript.tri_unit_points(1, 0), PackedVector2Array([Vector2(1, 1), Vector2(0, 1), Vector2(1, 0)]),
+		"奇半格 = (1,1),(0,1),(1,0)")
+	eq(GridSpaceScript.tri_unit_points(2, 3), PackedVector2Array([Vector2(1, 3), Vector2(2, 3), Vector2(1, 4)]),
+		"列平移：i=2,row=3 → c=1")
+	# 拾取：偶半格内部点 vs 奇半格内部点
+	eq(g.pick_cell(Vector2(16 * 0.25, 16 * 0.25)), Vector2i(0, 0), "左下三角内部 → 偶半格")
+	eq(g.pick_cell(Vector2(16 * 0.75, 16 * 0.75)), Vector2i(1, 0), "右上三角内部 → 奇半格")
+	eq(g.pick_cell(Vector2(16 * 1.25, 16 * 0.25)), Vector2i(2, 0), "第 1 列左下 → i=2")
+	# 多边形三点必须与半格顶点一致（正交下 = 16 倍）
+	var poly0: PackedVector2Array = g.cell_polygon(Vector2i(0, 0))
+	eq(poly0.size(), 3, "三角格多边形 = 3 点")
+	eq(poly0, PackedVector2Array([Vector2(0, 0), Vector2(16, 0), Vector2(0, 16)]), "偶半格像素多边形")
+	# 共边邻接：每格 3 邻，互不重复，且邻格反向包含本格
+	for c in [Vector2i(0, 0), Vector2i(1, 0), Vector2i(4, 2), Vector2i(5, 3)]:
+		var nbs: Array = g.neighbors_any(c)
+		eq(nbs.size(), 3, "三角格三邻 %s" % str(c))
+		ok(nbs.has(Vector2i(c.x + 1 if posmod(c.x, 2) == 0 else c.x - 1, c.y)), "斜边邻 = 同列另一半 %s" % str(c))
+		for nb: Vector2i in nbs:
+			ok((g.neighbors_any(nb) as Array).has(c), "邻接对称 %s ↔ %s" % [str(c), str(nb)])
+	# 三角格中心 = 重心
+	var ctr: Vector2 = g.cell_center_px(Vector2i(0, 0))
+	ok(ctr.distance_to(Vector2(16, 16) / 3.0) < 0.001, "偶半格重心 = 三点平均")
+	# 网格线含对角线；六边 + 三角组合被拒
+	ok(g.grid_lines(Rect2(-8, -8, 48, 48), Rect2i(0, 0, 2, 2)).size() >= 12, "三角网格线含外框/内线/对角线")
+	var hexg = GridSpaceScript.new(Vector2i(16, 16), "hexagonal")
+	hexg.set_topology("triangles")
+	ok(not hexg.is_tri(), "六边投影拒绝三角拓扑（保持 quads）")
+
+## B3：gridTopology 解析（缺省 quads、非法值/六边组合报具体原因）
+func test_parse_topology() -> void:
+	eq(str(GridSpaceScript.parse_topology({}, "orthogonal").get("topology", "")), "quads", "缺键 = quads")
+	eq(str(GridSpaceScript.parse_topology({"gridTopology": "quads"}, "isometric").get("topology", "")),
+		"quads", "显式 quads")
+	var tri: Dictionary = GridSpaceScript.parse_topology({"gridTopology": "triangles"}, "isometric")
+	ok(bool(tri.get("ok", false)), "等距 + triangles 合法")
+	eq(str(tri.get("topology", "")), "triangles", "解析出 triangles")
+	var bad1: Dictionary = GridSpaceScript.parse_topology({"gridTopology": "hex"}, "orthogonal")
+	ok(not bool(bad1.get("ok", true)), "未知拓扑拒绝")
+	ok(str(bad1.get("why", "")) != "", "给出拒绝原因")
+	var bad2: Dictionary = GridSpaceScript.parse_topology({"gridTopology": "triangles"}, "hexagonal")
+	ok(not bool(bad2.get("ok", true)), "六边 + triangles 拒绝")
+
+

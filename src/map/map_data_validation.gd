@@ -55,6 +55,11 @@ static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 			var bp: Dictionary = GridSpaceScript.parse_basis(meta)
 			if not bool(bp.get("ok", false)):
 				_add(issues, "error", "meta.gridBasis", str(bp.get("why", "invalid")))
+		# B3：可选格拓扑（quads / triangles）。三角格与 hex 投影互斥（六边没有平行四边形列）。
+		if meta.has("gridTopology"):
+			var tp: Dictionary = GridSpaceScript.parse_topology(meta, str(meta.get("gridProjection", "orthogonal")))
+			if not bool(tp.get("ok", false)):
+				_add(issues, "error", "meta.gridTopology", str(tp.get("why", "invalid")))
 		layer_ids = _validate_layers(meta, issues)
 	var tiles = data.get("tiles", null)
 	if tiles != null and not (tiles is Dictionary):

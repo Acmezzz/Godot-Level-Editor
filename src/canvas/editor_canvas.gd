@@ -17,6 +17,7 @@ const ContentIdRef := preload("res://src/content/content_id.gd")   # 分层身�
 const AssetDecl := preload("res://src/assets/asset_decl.gd")   # 清单资产表（assets[]）
 const EntityNodeRef := preload("res://src/canvas/entity_node.gd")   # 摆放物节点（场景/实体共用）
 const GridSpaceScript := preload("res://src/canvas/grid_space.gd")   # 格↔像素转换层（正交/等距）
+const TriTileViewScript := preload("res://src/canvas/tri_tile_view.gd")   # B3：三角格自绘层
 const MapFormat := preload("res://src/map/map_format.gd")   # 格式版本/瓦片变换位（v7）
 const FunctionDeclsRef := preload("res://src/content/function_decl.gd")   # 挂载补齐（C09）
 
@@ -62,6 +63,8 @@ var map_root: Node2D
 # 树序 = 栈序（底→顶），碰撞网格与红叠加在栈外（永远画在最上）。
 var layer_tiles: Array = []
 var layer_ents: Array = []
+## B3 三角拓扑：每层一个自绘视图（与 layer_tiles 同序；非三角拓扑时为空）
+var tri_views: Array = []
 var spawn: Marker2D
 var tile_set: TileSet
 var atlas_tex: Texture2D
@@ -246,6 +249,9 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	var bparsed: Dictionary = GridSpaceScript.parse_basis(bmeta)
 	if bool(bparsed.get("ok", false)) and (bparsed.get("u", Vector2.ZERO) as Vector2) != Vector2.ZERO:
 		grid.set_basis(bparsed.get("u", Vector2.ZERO), bparsed.get("v", Vector2.ZERO))
+	# B3：可选格拓扑（meta.gridTopology = triangles）：格号 evens/odds 组合成平行四边形列。
+	var tparsed: Dictionary = GridSpaceScript.parse_topology(bmeta, _map_projection())
+	grid.set_topology(str(tparsed.get("topology", "quads")))
 	# 旧图冻结生效投影（B1）：此后清单资产增删不再改变这张图的空间口径
 	_freeze_projection()
 	# 背景：整块铺满视口（比地图尺寸大得多），作为地图之外区域的底色
@@ -290,6 +296,7 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	# below / YSort（瓦片 + auto 实体同住一个 y-sorted 父）/ above；全程不写 z_index，跨层只认栈序。
 	layer_tiles.clear()
 	layer_ents.clear()
+	tri_views.clear()
 	var L := layers_decl()
 	for li in L.size():
 		var ld: Dictionary = L[li] if L[li] is Dictionary else {}
@@ -306,6 +313,14 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 		tn.tile_set = tile_set
 		tn.y_sort_enabled = ly
 		ysp.add_child(tn)
+		# B3 三角拓扑：TileMapLayer 表现不了半格三角，叠一个自绘视图（数据仍住在 tn）
+		if grid != null and grid.is_tri():
+			var tv := TriTileViewScript.new()
+			tv.name = "TriTiles"
+			tv.setup(tn, grid, self)
+			ysp.add_child(tv)
+			tri_views.append(tv)
+			tn.visible = false   # 数据节点不显示；可见性由 TriTileView 跟随层显隐
 		var above := Node2D.new()
 		above.name = "Above"
 		root.add_child(below)
@@ -660,6 +675,10 @@ func snap_point_local(li: int, p: Vector2, n: EntityNode = null) -> Vector2:
 func snap_anchor_px(unit: Vector2, p: Vector2) -> Vector2:
 	if not snap_to_grid:
 		return p
+	if grid.is_tri():
+		# B3 三角格：吸附到三角形重心（格号 = (三角列, 行)）
+		var tri: Vector2i = grid.pick_cell(p)
+		return grid.tri_center_px(tri.x, tri.y)
 	if grid.is_hex():
 		var off: Vector2 = (unit - Vector2(0.5, 0.5)) * Vector2(grid.tile)
 		var gh: Vector2 = grid.to_continuous_grid(p - off)
@@ -982,6 +1001,10 @@ func _mark(ents_changed := true) -> void:
 	# 统一在这里刷新，避免每个调用点各记一次、漏掉就出现「数据改了但红块没变」。
 	if coll_view and is_instance_valid(coll_view):
 		coll_view.refresh()
+	# 三角自绘层同样镜像瓦片数据（drop_cell/mark 后必须重画）
+	for tv in tri_views:
+		if tv != null and is_instance_valid(tv):
+			(tv as Node).refresh()
 	modified.emit()
 
 ## 实例 {code: EntityNode} 索引——绘制连线 O(n) 复用；置脏后首次取用重建。
