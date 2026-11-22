@@ -273,7 +273,9 @@ static func _elem_decl(decl: Dictionary) -> Dictionary:
 	var out := {"kind": KIND_INPUT, "type": of}
 	for k in ["min", "max", "step", "dims", "assetKind"]:
 		if decl.get(k, null) != null:
-			out[k] = decl.get(k)
+			# 逐元素独立声明副本（C1）：数组/字典值不能与父声明共享引用
+			out[k] = decl.get(k).duplicate(true) if (decl.get(k) is Array or decl.get(k) is Dictionary) \
+				else decl.get(k)
 	if of == "asset_ref":
 		var ids = decl.get("ids", null)
 		if ids is Array:
