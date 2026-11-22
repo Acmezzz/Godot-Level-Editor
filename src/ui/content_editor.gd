@@ -128,6 +128,70 @@ func _build_left() -> Control:
 	head.add_child(_left_title)
 	col.add_child(head)
 
+	# E2 筛选：名称/实例码 + 层 + 资产。列表长时按需收窄，不改数据、不动选中。
+	var frow := Kit.vbox(4)
+	_filter_edit = LineEdit.new()
+	_filter_edit.placeholder_text = "筛选：名称或实例码"
+	_filter_edit.clear_button_enabled = true
+	_filter_edit.text_changed.connect(func(t: String):
+		_filter_text = t
+		_rebuild_rows())
+	frow.add_child(_filter_edit)
+	var srow := Kit.hbox(4)
+	var layer_opt := OptionButton.new()
+	layer_opt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	layer_opt.tooltip_text = "按图层收窄实例列表（不影响画布选中）"
+	var asset_opt := OptionButton.new()
+	asset_opt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	asset_opt.tooltip_text = "按资产类型收窄实例列表"
+	# 选项在每次刷新列表时按当前图重建（层/资产随切图变化）
+	var refill_opts := func():
+		var keep_l := _filter_layer
+		var keep_a := _filter_asset
+		layer_opt.clear()
+		layer_opt.add_item("全部层")
+		layer_opt.set_item_metadata(0, "")
+		if app.canvas != null:
+			for i in app.canvas.layer_count():
+				layer_opt.add_item(app._layer_label(i))
+				layer_opt.set_item_metadata(layer_opt.item_count - 1, app.canvas.layer_id(i))
+		asset_opt.clear()
+		asset_opt.add_item("全部资产")
+		asset_opt.set_item_metadata(0, "")
+		var seen := {}
+		for row in _entities():
+			var aid := str((row as Dictionary).get("asset", ""))
+			if aid == "" or seen.has(aid):
+				continue
+			seen[aid] = true
+			asset_opt.add_item(AssetDecl.label(manifest, aid))
+			asset_opt.set_item_metadata(asset_opt.item_count - 1, aid)
+		# 回填（静默）：选项里没有原来的值就退回「全部」
+		var li := 0
+		for k in layer_opt.item_count:
+			if str(layer_opt.get_item_metadata(k)) == keep_l:
+				li = k
+		layer_opt.select(li)
+		_filter_layer = str(layer_opt.get_item_metadata(li))
+		var ai := 0
+		for k2 in asset_opt.item_count:
+			if str(asset_opt.get_item_metadata(k2)) == keep_a:
+				ai = k2
+		asset_opt.select(ai)
+		_filter_asset = str(asset_opt.get_item_metadata(ai))
+	layer_opt.item_selected.connect(func(k: int):
+		_filter_layer = str(layer_opt.get_item_metadata(k))
+		_rebuild_rows())
+	asset_opt.item_selected.connect(func(k: int):
+		_filter_asset = str(asset_opt.get_item_metadata(k))
+		_rebuild_rows())
+	srow.add_child(layer_opt)
+	srow.add_child(asset_opt)
+	frow.add_child(srow)
+	col.add_child(frow)
+	# 切图/换清单后选项要跟着换；_rebuild_rows 每次都会调到这里（幂等）
+	_filter_refill = refill_opts
+
 	var scroll := ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -326,6 +390,7 @@ func _entities() -> Array:
 			"node": n,
 			"code": n.code,
 			"asset": n.asset,
+			"layer": n.layer_id,
 			"name": str(app._scene_name(n.asset)),
 			"fns": n.functions,
 		})
@@ -369,20 +434,54 @@ func _write_fns(n: EntityNode, fns: Array) -> void:
 
 # ──────────── 左列渲染 ────────────
 
+## E2：实例列表筛选（名称/实例码 + 图层 + 资产）。放在左列标题下、列表上，
+## 三件套一起决定「现在看哪些实例」；筛选只影响列表显示，不动数据与选中。
+var _filter_text := ""
+var _filter_layer := ""   # 空 = 全部层
+var _filter_asset := ""   # 空 = 全部资产
+var _filter_edit: LineEdit = null
+var _filter_refill: Callable = Callable()   # 层/资产下拉的选项重建（列表刷新时调用）
+
+## E2：筛选后的实例快照（保持画布放置顺序）。
+func _filtered_ents() -> Array:
+	var q := _filter_text.strip_edges().to_lower()
+	var out: Array = []
+	for row in _entities():
+		var r: Dictionary = row
+		if _filter_layer != "" and str(r.get("layer", "")) != _filter_layer:
+			continue
+		if _filter_asset != "" and str(r.get("asset", "")) != _filter_asset:
+			continue
+		if q != "":
+			var hay := ("%s %s" % [str(r.get("name", "")), str(r.get("code", ""))]).to_lower()
+			if not hay.contains(q):
+				continue
+		out.append(r)
+	return out
+
 func _rebuild_rows() -> void:
 	if _rows_box == null:
 		return
+	# 层/资产下拉的选项跟随当前图的层栈与实例集（幂等：保留已选值，失效则退回「全部」）
+	if _filter_refill is Callable and (_filter_refill as Callable).is_valid():
+		(_filter_refill as Callable).call()
 	for c in _rows_box.get_children():
 		_rows_box.remove_child(c)
 		c.queue_free()
-	var ents := _entities()
+	var ents := _filtered_ents()
+	var all_n: int = _entities().size()
 	# 标题以画布实际加载的地图为准（app.cur_map_name 在切图协程里可能短暂超前/滞后）
 	var map_name := str(app.canvas.cur_map_name) if str(app.canvas.cur_map_name) != "" else "未命名"
-	_left_title.text = "%s 实例" % map_name
+	_left_title.text = "%s 实例" % map_name if ents.size() == all_n \
+		else "%s 实例 %d/%d" % [map_name, ents.size(), all_n]
 
 	if ents.is_empty():
-		_rows_box.add_child(Kit.empty_state("▦", "这张图没有实例",
-			"去关卡编辑器放几个实体再回来挂功能"))
+		if all_n == 0:
+			_rows_box.add_child(Kit.empty_state("▦", "这张图没有实例",
+				"去关卡编辑器放几个实体再回来挂功能"))
+		else:
+			_rows_box.add_child(Kit.empty_state("⌕", "筛选没有命中",
+				"清空上方筛选条件，或换一个关键词"))
 		return
 	for row in ents:
 		_rows_box.add_child(_build_row(row))

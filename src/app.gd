@@ -50,6 +50,7 @@ var _editor_state_ctrl   # canvas/editor_state.gd 控制器（状态流）
 var _layout_ctrl   # ui/editor_layout.gd 控制器（界面搭建）
 var _picker_ctrl   # ui/project_picker.gd 控制器（项目选择页）
 var _map_dialogs_ctrl   # ui/map_dialogs.gd 控制器（尺寸/导出弹窗）
+var _tile_replace_ctrl   # ui/tile_replace_dialog.gd 控制器（E2 批量替换瓦片）
 var _side_actions_ctrl   # map/side_actions.gd 控制器（侧栏动作）
 var _palette_ctrl   # ui/palette_panel.gd 控制器（调色板导航：多图集三级/单图集两级）
 var selected_spr: EntityNode = null
@@ -84,6 +85,8 @@ func _ensure_editor_controllers() -> void:
 		_picker_ctrl = ProjectPicker.new(self)
 	if _map_dialogs_ctrl == null:
 		_map_dialogs_ctrl = MapDialogs.new(self)
+	if _tile_replace_ctrl == null:
+		_tile_replace_ctrl = preload("res://src/ui/tile_replace_dialog.gd").new(self)
 	if _layout_ctrl == null:
 		_layout_ctrl = preload("res://src/ui/editor_layout.gd").new(self)
 	if _side_actions_ctrl == null:
@@ -173,6 +176,12 @@ func _open_size_dialog() -> void:
 
 func _open_export_dialog() -> void:
 	_map_dialogs_ctrl.open_export_dialog()
+
+## E2：按区域选区批量替换瓦片（弹窗在 ui/tile_replace_dialog.gd）
+func _open_tile_replace() -> void:
+	if _tile_replace_ctrl == null:
+		_tile_replace_ctrl = preload("res://src/ui/tile_replace_dialog.gd").new(self)
+	_tile_replace_ctrl.open()
 
 ## 切换项目：有未保存修改先确认，然后回选择页。
 ## 回选择页会 free 掉整个编辑器界面（画布/三面板）；再进项目统一走 _enter_project，

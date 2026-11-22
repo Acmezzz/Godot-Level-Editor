@@ -188,6 +188,7 @@ func _build_global_bar() -> PanelContainer:
 	map_menu.add_item("地图历史…", 12)
 	map_menu.add_item("导出当前地图", 4)
 	map_menu.add_item("调整地图尺寸", 5)
+	map_menu.add_item("批量替换瓦片…", 6)
 	map_menu.add_separator()
 	map_menu.add_separator()
 	map_menu.add_item("检查项目完整性", 30)
@@ -225,6 +226,9 @@ func _on_map_menu_id(id: int) -> void:
 			app._open_export_dialog()
 		5:
 			app._open_size_dialog()
+		6:
+			# E2：按区域选区批量替换瓦片（一笔撤销；冲突先列）
+			app._open_tile_replace()
 		10:
 			# 顶栏名字输入框已删：改名只能从菜单进弹窗
 			app._on_rename()

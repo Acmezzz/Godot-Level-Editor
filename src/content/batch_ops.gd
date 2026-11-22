@@ -109,6 +109,37 @@ static func apply_field(manifest: Dictionary, fn_id: String, plan: Dictionary,
 			failed.append({"cid": id, "why": "写入失败"})
 	return {"written": written, "failed": failed}
 
+## 计划的可读文本（弹窗预览用）：命中数 + 旧值→新值 + 跳过/冲突逐条列名。
+## 纯字符串，UI 只贴到 Label 上——同一份描述测试也能核对。
+static func plan_text(plan: Dictionary) -> String:
+	if str(plan.get("status", "")) != "ok":
+		return "⚠ " + str(plan.get("error", "计划不可用"))
+	var lines: Array[String] = []
+	var old_values: Dictionary = plan.get("old_values", {}) if plan.get("old_values", {}) is Dictionary else {}
+	var targets: Array = plan.get("targets", [])
+	var olds: Array[String] = []
+	for cid in targets:
+		olds.append(str(old_values.get(cid, "")))
+	var uniq := {}
+	for o in olds:
+		uniq[o] = true
+	var old_txt := "（空）" if uniq.has("") and uniq.size() == 1 else \
+		(",".join(PackedStringArray(olds)) if olds.size() <= 6 else "%d 种旧值" % uniq.size())
+	lines.append("命中 %d 条 · 旧值 %s → 新值 %s" % [targets.size(), old_txt, str(plan.get("new", ""))])
+	var skipped: Array = plan.get("skipped", [])
+	if not skipped.is_empty():
+		var s_parts: Array[String] = []
+		for s in skipped:
+			s_parts.append("%s（%s）" % [str((s as Dictionary).get("cid", "")), str((s as Dictionary).get("why", ""))])
+		lines.append("跳过 %d 条：%s" % [skipped.size(), "；".join(s_parts)])
+	var conflicts: Array = plan.get("conflicts", [])
+	if not conflicts.is_empty():
+		var c_parts: Array[String] = []
+		for c in conflicts:
+			c_parts.append("%s（%s）" % [str((c as Dictionary).get("cid", "")), str((c as Dictionary).get("why", ""))])
+		lines.append("⚠ 冲突 %d 条（不写）：%s" % [conflicts.size(), "；".join(c_parts)])
+	return "\n".join(lines)
+
 ## 同码同类型判据（给 UI 显示「哪些字段可以一起改」用）：
 ## 返回该功能里所有可批量字段 [{fd, code, type, name}]。
 static func batchable_fields(manifest: Dictionary, fn_id: String) -> Array:
