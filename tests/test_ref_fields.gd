@@ -141,3 +141,60 @@ func test_local_entity_refs_and_accepts() -> void:
 	ok(not RefFields.field_accepts({"type": "entity_ref", "of": "portal"}, "chest"), "白名单外不可连")
 	# ref_fields 只挑 entity_ref（map_ref / 普通字段不算）
 	eq(RefFields.ref_fields(ad).size(), 2, "只列 entity_ref 字段")
+
+## —— B3-3：同 (x,y) 的多个目标必须能明确区分（按地图 / 按实例码） ——
+## 多楼层/叠放写在同一格时，引用下拉靠实例码区分（标签带码）；
+## 跨图时同一格各自只在所属图的枚举里出现，按地图键区分。
+const TMP := "user://test_ref_fields_tmp"
+
+func _wipe() -> void:
+	_nuke(TMP)
+
+func _nuke(p: String) -> void:
+	if not DirAccess.dir_exists_absolute(p):
+		if FileAccess.file_exists(p):
+			DirAccess.remove_absolute(p)
+		return
+	for f in DirAccess.get_files_at(p):
+		DirAccess.remove_absolute(p.path_join(str(f)))
+	for d in DirAccess.get_directories_at(p):
+		_nuke(p.path_join(str(d)))
+	DirAccess.remove_absolute(p)
+
+func test_same_cell_targets_distinguishable() -> void:
+	_wipe()
+	var MapStore := preload("res://src/map/map_store.gd")
+	var m := {"_dir": TMP, "_maps_dir": TMP.path_join("maps"), "contentDir": "content",
+		"assets": [{"id": "door", "kind": "entity", "prefab": "door.tscn"}]}
+	DirAccess.make_dir_recursive_absolute(TMP.path_join("maps"))
+	# 图 A：同一格 (5,5) 两个实例（叠放/多楼层）；图 B：同格另一个实例
+	var a := MapStore.new_map("A", 20, 20)
+	var lid := str(((a.meta.layers as Array)[0] as Dictionary).get("id", ""))
+	a["objects"] = [
+		{"asset": "door", "code": "AAA1", "x": 5.0, "y": 5.0, "layer": lid, "props": {}, "functions": []},
+		{"asset": "door", "code": "BBB2", "x": 5.0, "y": 5.0, "layer": lid, "props": {}, "functions": []},
+	]
+	ok(MapStore.write(m, "A", a), "图 A 落盘")
+	var b := MapStore.new_map("B", 20, 20)
+	var lid2 := str(((b.meta.layers as Array)[0] as Dictionary).get("id", ""))
+	b["objects"] = [
+		{"asset": "door", "code": "CCC3", "x": 5.0, "y": 5.0, "layer": lid2, "props": {}, "functions": []},
+	]
+	ok(MapStore.write(m, "B", b), "图 B 落盘")
+	# 按地图区分：同格目标各归各图
+	var ra := RefFields.map_instances(m, "A", ["door"])
+	var rb := RefFields.map_instances(m, "B", ["door"])
+	eq(ra.size(), 2, "图 A 同格两个实例都在枚举里")
+	eq(rb.size(), 1, "图 B 只列自己的同格实例")
+	var codes_a := [str((ra[0] as Dictionary).get("v", "")), str((ra[1] as Dictionary).get("v", ""))]
+	ok(codes_a.has("AAA1") and codes_a.has("BBB2"), "图 A 两个码都可见")
+	eq(str((rb[0] as Dictionary).get("v", "")), "CCC3", "图 B 的码不串到图 A")
+	# 按实例码区分：同格同类型两行的显示标签必须不同（不能都叫 «door · (5,5)»）
+	var la := str((ra[0] as Dictionary).get("t", ""))
+	var lb := str((ra[1] as Dictionary).get("t", ""))
+	ok(la != lb, "同格两行标签可区分: %s / %s" % [la, lb])
+	ok(la.contains("AAA1") or la.contains("BBB2"), "标签带实例码")
+	# 按地图码作键同样可用（ref 控件拿到的是码）
+	ok(RefFields.map_instances(m, str((a.meta as Dictionary).get("code", "")), ["door"]).size() == 2,
+		"地图码键与图名等价")
+	_wipe()

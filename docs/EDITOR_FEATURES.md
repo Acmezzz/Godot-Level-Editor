@@ -744,7 +744,7 @@ godot --headless --path "<编辑器工程>" --script res://tests/run_tests.gd
 | `test_clone_plan.gd` | C2 统一复制语义（组内 A→B、组外 A→C、功能执行码与普通字符串区分、内容独立文件、整图复制） |
 | `test_geometry.gd` | 几何段：`visual_type` / `points_local` / `points_write` 与 PolyView 装配（不进树） |
 | `test_map_export_a5.gd` | 导出几何/像素预算/碰撞对象口径/统计文本（PNG 概览的纯数据部分） |
-| `test_ref_fields.gd` | 引用字段描述、类型严格性、配对地图字段与地图目录校验（C06/C07/C10） |
+| `test_ref_fields.gd` | 引用字段描述、类型严格性、配对地图字段与地图目录校验（C06/C07/C10）、同格多目标按地图/实例码区分（B3-3） |
 | `test_rel_graph.gd` | E2-3 关系图纯数据层：节点/边生成、写回同一字段、断开删键、staged 并入、循环保留 |
 | `test_session_context_e1.gd` | E1 视图切换的身份校验与会话记忆（纯逻辑，无 UI） |
 | `test_step_timeline_d1.gd` | D1 步骤时间轴单一数据源：补丁合并、净化、生效区间、结构版本与警告 |
@@ -753,7 +753,7 @@ godot --headless --path "<编辑器工程>" --script res://tests/run_tests.gd
 
 约定：套件 `extends "res://tests/_suite_base.gd"`，方法名 `test_` 开头即被发现；
 `ok()` / `eq()` 收集失败；**每个用例至少一条断言**（崩溃中断的用例断言数不增长，
-runner 判 FAIL——防止半路崩掉变成假 PASS）。退出码非 0 = 有失败。当前 22 套件 197 用例。
+runner 判 FAIL——防止半路崩掉变成假 PASS）。退出码非 0 = 有失败。当前 22 套件 198 用例。
 
 截图辅助 `tools/screenshot.gd`（模式清单见文件头注释）、警告扫描 `tools/warn_scan.gd`
 （headless 全量加载 src/ 校验可加载性）、接入自检 `tools/f2_pilot.gd`（在 user:// 临时工程里
