@@ -115,10 +115,10 @@
 
 - [x] 冷启动打开 A，记录缺失委托。退出到选择页再打开 B，验证布局控制器的生命周期。在宿主实现 `_enter_project(next_manifest: Dictionary) -> void`，负责组装本项目控制器并构建视图。启动恢复和项目选择器都调用此入口。
   - 实现：`src/app.gd:198` `_enter_project(dir, loaded_manifest)` 是唯一入口（启动恢复与选择页都走它），先 `_clear_project_session()` 再 `_build_editor_ui()`，最后 `_report_recovery_items()`。
-- [ ] 在 `EditorCanvas` 恢复 `set_entity_sizes(sizes: Dictionary) -> void` 和 `entity_display_size(asset_id: String) -> Vector2` 的工厂委托。补齐碰撞预览和生成委托，现有碰撞弹窗允许选择源普通层，输出固定为碰撞元层。把区域命中和松手转回 `RegionOps`。
-  - 已有：`src/canvas/editor_canvas.gd` 的 `set_entity_sizes` / `entity_display_size`，碰撞自动生成（`tool_ops.gd` 自审源层）。缺：碰撞弹窗的「选源普通层」入口，以及区域命中/松手显式回 `RegionOps` 的接线。
-- [ ] 左栏常驻「瓦片 / 摆放物」分类，摆放物含图片和实体。进碰撞层时按项目合法类型池初始化，无 `solid` 时取首个合法类型。离开恢复之前笔刷。内容页空态用 `set_hover("")`，选中缓存使用实例 `code`。
-  - 已有：`src/ui/editor_layout.gd` 常驻分类（瓦片/图片/实体），`src/canvas/editor_state.gd:46-61` 碰撞笔刷按合法池回落首个类型，`content_editor.gd:288` 空态 `set_hover("")`。缺：离开碰撞层后恢复之前笔刷。
+- [x] 在 `EditorCanvas` 恢复 `set_entity_sizes(sizes: Dictionary) -> void` 和 `entity_display_size(asset_id: String) -> Vector2` 的工厂委托。补齐碰撞预览和生成委托，现有碰撞弹窗允许选择源普通层，输出固定为碰撞元层。把区域命中和松手转回 `RegionOps`。
+  - 实现：`src/canvas/editor_canvas.gd:1432` `set_entity_sizes` / `:1434` `entity_display_size`；碰撞生成委托 `generate_collision`/`count_auto_collision`（`editor_canvas.gd:1349-1353` → `tool_ops.gd` 自审源层），弹窗在 `src/ui/props_panel.gd:25-39`（「源层」下拉只列普通层、碰撞层不可选，输出一律写碰撞元层）；区域命中/松手/搬动全部经 `canvas_input.gd:101,259,298,334` → `editor_canvas.gd:1277-1297` → `RegionOps`。
+- [x] 左栏常驻「瓦片 / 摆放物」分类，摆放物含图片和实体。进碰撞层时按项目合法类型池初始化，无 `solid` 时取首个合法类型。离开恢复之前笔刷。内容页空态用 `set_hover("")`，选中缓存使用实例 `code`。
+  - 实现：`src/ui/editor_layout.gd:279-285` 常驻「瓦片/图片/实体」三分类；碰撞笔刷按合法池回落见 `src/canvas/editor_state.gd` `_sync_collision_controls`；离开碰撞层恢复笔刷 = `editor_state.gd` `_brush_before_collision` + `remember_brush`（进层记住 place_kind，出层还原；停在碰撞层时选资产只登记意图，不覆盖）；`content_editor.gd:288` 空态 `set_hover("")`。
 - [ ] 验收 A → B → A、无图打开内容、首个混合层摆三类资产，以及用只有 `water` 的碰撞池绘制。落盘碰撞类型为 `water`，在空图和切项目时检查存活的菜单和信号。
 
 ### A2 · 地图、内容和清单保存闭环
@@ -168,16 +168,21 @@ func test_v7_tile_alt_roundtrip() -> void:
 
 **对应审查**　D09、D16、U02。**依赖**　A2、B1。**文件**　`src/map/map_export.gd`、`src/ui/map_dialogs.gd`、`src/ui/popups.gd`。回归 `tests/test_map_v4.gd`。
 
-- [ ] 单图、批量都先校验 v7。PNG 概览从 `{x,y,type?,shape?}` 取碰撞位置，从格尺寸取宽高，并用 `GridSpace` 的格轮廓求输出边界。用同一格坐标对照概览、主画布与内容预览。概览按投影显示地图格，完整画布截图作为后续可选交付，复用 B2 的只读呈现。
-- [ ] 创建图像前按输出边界计算像素总数。首版上限取 `16_777_216` 像素，约 64 MiB 原始 RGBA，超限时提示可用缩放倍率。对 `4000×4000` 地图用 16 px 格导出，应在分配前给出缩放选项。
-- [ ] 批量导出捕获项目代次和输出目录，每次让帧后检查取消与窗口有效性。只运行一个作业，项目切换自动取消，已写文件保留。逐图报告 PNG 与统计文本结果。用矩形碰撞图、超预算图、文本写失败和中途取消四项验收。
+- [x] 单图、批量都先校验 v7。PNG 概览从 `{x,y,type?,shape?}` 取碰撞位置，从格尺寸取宽高，并用 `GridSpace` 的格轮廓求输出边界。用同一格坐标对照概览、主画布与内容预览。概览按投影显示地图格，完整画布截图作为后续可选交付，复用 B2 的只读呈现。
+  - 实现：单图 `src/ui/map_dialogs.gd:305` `_write_check` 走 `map_data_validation.validate`（v7 与退役键）；批量 `:364` 用 `MapStore.read_path` 的 ok 判定。概览 `src/map/map_export.gd` `output_geometry`/`render_preview` 用 `grid_of` + 格轮廓求边界，回归 `tests/test_map_export_a5.gd`。
+- [x] 创建图像前按输出边界计算像素总数。首版上限取 `16_777_216` 像素，约 64 MiB 原始 RGBA，超限时提示可用缩放倍率。对 `4000×4000` 地图用 16 px 格导出，应在分配前给出缩放选项。
+  - 实现：`src/map/map_export.gd:17` `MAX_PIXELS := 16_777_216`，`budget()` 超限时逐档下探并回报建议倍率（`:62-77`）；两个导出入口都先 `budget()` 再 `render_preview`，超预算直接取消。
+- [x] 批量导出捕获项目代次和输出目录，每次让帧后检查取消与窗口有效性。只运行一个作业，项目切换自动取消，已写文件保留。逐图报告 PNG 与统计文本结果。用矩形碰撞图、超预算图、文本写失败和中途取消四项验收。
+  - 实现：`src/ui/map_dialogs.gd:318-408` `_run_batch_export`——`_batch_running` 互斥、按钮改作取消、逐图比对项目根与 `is_instance_valid`、逐图 append PNG/统计各自结果并落 `_export_report.txt`。
 
 ### A6 · 试玩路径、参数与反馈
 
 **对应审查**　D15。**依赖**　A2。**文件**　`src/project/playtest.gd`、`src/project/manifest.gd`、`src/project/manifest_validation.gd`、`src/ui/map_file.gd`。
 
-- [ ] 缺 `playtest` 键时用空字典。新增可选 `playtest.executable` 与 `playtest.args`，分别为可执行路径和参数字符串数组。把 `%mapfile%`、`%projectpath%` 替换成正式地图路径和项目根目录，替换后的参数直接组成数组。Godot 项目可用 `['--path', '%projectpath%', '--', '--map=%mapfile%']` 对接。声明有结构化配置时优先用 `OS.create_process()` 直接启动，现有 `playCommand` 走原模板并标明跟踪的是包装进程。
-- [ ] 试玩优先读取 A2 确认后的地图绝对路径。偏好以项目根目录和地图码为键。显示启动的程序、退出状态和本项目 `editor/playtest.log` 的最新内容。用两个有同名地图的项目、带空格的路径、缺配置和启动失败分别验收。
+- [x] 缺 `playtest` 键时用空字典。新增可选 `playtest.executable` 与 `playtest.args`，分别为可执行路径和参数字符串数组。把 `%mapfile%`、`%projectpath%` 替换成正式地图路径和项目根目录，替换后的参数直接组成数组。Godot 项目可用 `['--path', '%projectpath%', '--', '--map=%mapfile%']` 对接。声明有结构化配置时优先用 `OS.create_process()` 直接启动，现有 `playCommand` 走原模板并标明跟踪的是包装进程。
+  - 实现：`src/project/playtest.gd:10-52` `launch_tracked`——`playtest.executable`/`args` 走 `OS.create_process` 数组直启（`kind:"direct"`、`tracked:true`），参数经 `EditorManifest.substitute_vars_raw` 替换 `%mapfile%`/`%projectpath%`；无结构化配置才回退 `playCommand` 模板并标 `kind:"shell"`、`tracked:false`，状态栏文案说明跟踪的是包装进程。
+- [x] 试玩优先读取 A2 确认后的地图绝对路径。偏好以项目根目录和地图码为键。显示启动的程序、退出状态和本项目 `editor/playtest.log` 的最新内容。用两个有同名地图的项目、带空格的路径、缺配置和启动失败分别验收。
+  - 实现：`src/ui/map_file.gd` `on_play` 先 `commit_document("试玩前提交")` 拿项目内路径，再 `Playtest.launch_tracked`；偏好键 `_prefs_key()` = 项目根 + `|` + 地图码（无码退回图名，旧键只回退读一次即迁移）；`poll_playtest` 显示程序名、退出码/秒数与 `Playtest.log_tail` 最后几行。
 
 ### B1 · 逐图投影与统一坐标
 
@@ -185,9 +190,12 @@ func test_v7_tile_alt_roundtrip() -> void:
 
 **文件**　`src/canvas/grid_space.gd`、`src/canvas/editor_canvas.gd`、`src/canvas/entity_node.gd`、`src/canvas/tileset_cache.gd`、`src/map/map_data_validation.gd`、`src/ui/map_dialogs.gd`、`src/ui/palette_panel.gd`、`src/assets/asset_decl.gd`、`src/project/manifest_validation.gd`。回归 `tests/test_grid_space.gd`。
 
-- [ ] 公用格尺寸校验接受 `16` 和 `[32,16]` 这类整数像素值，拒绝零、负数和非整数。内部统一用 `Vector2i`，缺省图集 `cell` 直接用这一对宽高。
+- [x] 公用格尺寸校验接受 `16` 和 `[32,16]` 这类整数像素值，拒绝零、负数和非整数。内部统一用 `Vector2i`，缺省图集 `cell` 直接用这一对宽高。
+  - 实现：`src/project/manifest_validation.gd:44-54` 标量或 `[w,h]` 均按正整数校验，错误文案统一；`tests/test_stores.gd`/`test_grid_space.gd` 覆盖 `tile_size_of` 与矩形格。
 - [ ] 拟议地图键 `meta.gridProjection` 支持 `orthogonal`、`isometric`、`hexagonal`。新图在高级设置选择，缺键时沿用项目原有解析结果。旧图首次保存前冻结生效投影。带内容的地图禁止通过普通设置直接切投影。转换另作显式操作，先展示目标并保存副本，再验证游戏加载器版本。
-- [ ] 给 `GridSpace` 增加 `pick_cell(px: Vector2) -> Vector2i` 与 `to_continuous_grid(px: Vector2) -> Vector2`。六边拾取在附近格内按实际轮廓判断，边界以稳定格序决胜。连续换算按 `gy = (py - h/2) / (0.75*h)` 计算行，再反解 `gx = (px - w/2) / w - odd_offset(floor(gy))`，对应现有 `to_px`。吸附直接使用 `cell_center_px()` 或根据锚点求顶点，不把方格偏量塞到六边中心坐标。
+  - 已有：新建弹窗可选投影（`src/ui/map_file.gd:254-263`）、普通设置里带内容图禁用并说明（`src/ui/map_dialogs.gd:61-79`）、缺键沿用项目解析并首次保存冻结（`editor_canvas.gd` `_map_projection`/`_freeze_projection`）。缺：「另存副本并转换」的显式转换操作。
+- [x] 给 `GridSpace` 增加 `pick_cell(px: Vector2) -> Vector2i` 与 `to_continuous_grid(px: Vector2) -> Vector2`。六边拾取在附近格内按实际轮廓判断，边界以稳定格序决胜。连续换算按 `gy = (py - h/2) / (0.75*h)` 计算行，再反解 `gx = (px - w/2) / w - odd_offset(floor(gy))`，对应现有 `to_px`。吸附直接使用 `cell_center_px()` 或根据锚点求顶点，不把方格偏量塞到六边中心坐标。
+  - 实现：`src/canvas/grid_space.gd:266` `pick_cell`（六边 3×3 轮廓判定，遍历序固定）、`:289` `to_continuous_grid`（严格反解 to_px）；回归 `tests/test_grid_space.gd:114` `test_pick_cell_and_continuous`。
 - [ ] 六边离格拖动以像素位移为输入，每帧按当前位置反算亚格坐标。过奇偶行边界时记录的 `gx` 可变化半格，视觉位置必须连续。反算接近边界时用候选行的正变换误差决胜。用 `[32,16]` 和 `(2.2,2.2)` 测亚格往返，并测试偶行拖到奇行再拖回、保存重开。等距可见区从视口四角反算。整格移动从各自起始格求目标。投影缓存键包含生效配置和格尺寸，资产冲突提示具体条目。
 
 ### B2 · 预览、拾取和摆放使用同一个空间口径
@@ -216,10 +224,14 @@ func test_v7_tile_alt_roundtrip() -> void:
 
 **对应审查**　C06、C07、C10。**依赖**　A2。**文件**　`src/ui/field_widgets.gd`、`src/ui/content_form.gd`、`src/ui/content_editor.gd`、`src/ui/steps_panel.gd`、`src/project/manifest_validation.gd`、`src/content/function_decl.gd`、`src/content/content_store.gd`。拟建 `src/content/ref_fields.gd`，回归 `tests/test_validators.gd`。
 
-- [ ] 让声明校验和 `ContentStore` 共用功能目录名校验。将 `dlg.one` 和非数组的 `conditions` 分别作为拒绝样例，在归一化前报具体键。校验字段值时，向量只接受声明维数，布尔必须是布尔，多选必须是数组。已存非法值以原值只读显示并允许显式替换。
-- [ ] 提取 `RefFields.describe(decl: Dictionary) -> Dictionary`，返回 `{kind, scope, filter, many, map_field}`。沿用 `choice.source` 和 `props` 引用声明。解析 `asset::id` 时保留空段，`of` 独立传 ID 过滤。数组元素控件接收独立复制的同型声明，保留范围、固定选项与过滤参数。单选「未设置」删除该键，多选清空存 `[]`。
-- [ ] 给实例引用增加同级 `mapField`。例如 `entity_ref` 使用 `mapField: "target_map"`，功能、条件及步骤可使用 `entity_inst:` 配合同一份 `fields` 中的 `map` 选择字段。声明按人类字段 ID 查配对，再以各自声明码读写。地图未填时取所属图。改地图时确认并清空旧落点。引用目标使用 `(地图码, 实例码)`，未存码先走 A2。
-- [ ] 在两个都有 `AB23` 的地图切换目标，验证选项、自检输入及复制计划拿到相同目标域。再测试 `[1,2,3]` 误写给二维向量、布尔字符串 `"false"`、空资产类别但有 ID 过滤，以及数组数字越界。仅打开无效值时磁盘不变。
+- [x] 让声明校验和 `ContentStore` 共用功能目录名校验。将 `dlg.one` 和非数组的 `conditions` 分别作为拒绝样例，在归一化前报具体键。校验字段值时，向量只接受声明维数，布尔必须是布尔，多选必须是数组。已存非法值以原值只读显示并允许显式替换。
+  - 实现：`src/project/manifest_validation.gd:120-123` 直接调 `ContentStore.is_valid_kind`（带点的 `dlg.one` 被拒），`:155-162` 非数组 `conditions` 报具体键；字段值严格性在 `src/ui/field_widgets.gd:89,157,191,234`（布尔非布尔、向量按声明维数、多选非数组、非法旧值只读 + 显式替换），文件头 `:11,30` 写明「认不出的声明一律只读，绝不提供可写控件」。回归 `tests/test_validators.gd:50,84`。
+- [x] 提取 `RefFields.describe(decl: Dictionary) -> Dictionary`，返回 `{kind, scope, filter, many, map_field}`。沿用 `choice.source` 和 `props` 引用声明。解析 `asset::id` 时保留空段，`of` 独立传 ID 过滤。数组元素控件接收独立复制的同型声明，保留范围、固定选项与过滤参数。单选「未设置」删除该键，多选清空存 `[]`。
+  - 实现：`src/content/ref_fields.gd:51` `describe` 返回 `{kind, scope, filter, many, map_field, is_ref, allow_empty}`；`:89-98` `asset::id` 保留空段；`tests/test_ref_fields.gd` 覆盖引用字段描述与严格性。
+- [x] 给实例引用增加同级 `mapField`。例如 `entity_ref` 使用 `mapField: "target_map"`，功能、条件及步骤可使用 `entity_inst:` 配合同一份 `fields` 中的 `map` 选择字段。声明按人类字段 ID 查配对，再以各自声明码读写。地图未填时取所属图。改地图时确认并清空旧落点。引用目标使用 `(地图码, 实例码)`，未存码先走 A2。
+  - 实现：`src/content/ref_fields.gd:166-199` 按人类字段 id 找 `mapField` 配对（`entity_ref` 用 `target_map`）；`src/content/ref_ops.gd` 负责读写与作用域；未填地图取所属图见同文件 `scope == "map_ref"` 分支。
+- [x] 在两个都有 `AB23` 的地图切换目标，验证选项、自检输入及复制计划拿到相同目标域。再测试 `[1,2,3]` 误写给二维向量、布尔字符串 `"false"`、空资产类别但有 ID 过滤，以及数组数字越界。仅打开无效值时磁盘不变。
+  - 实现：目标域解析为 `RefFields.describe` 的统一口径（`map_field` 配对），自检与 `ClonePlan.build` 共用同一解析；上述误写/越界样例由 `tests/test_ref_fields.gd:76` `test_widget_type_strictness` 与 `:11-62` 各例覆盖，非法旧值只读展示、不改磁盘（`field_widgets.gd:89,157,191,234`）。
 
 ### C2 · 统一复制语义与持久引用
 
@@ -228,7 +240,8 @@ func test_v7_tile_alt_roundtrip() -> void:
 **文件**　`src/app.gd`、`src/canvas/selection_ops.gd`、`src/canvas/region_ops.gd`、`src/map/map_store.gd`、`src/content/content_store.gd`、`src/content/content_id.gd`、`src/ui/content_form.gd`。拟建 `src/content/clone_plan.gd`，回归 `tests/test_stores.gd`、`tests/test_content_id.gd`。
 
 - [ ] 复制先用一张映射表预留新对象和内容身份。复制组内实例和附属内容时生成独立内容文件。应用 C1 的声明规则，只重映射组内实例引用和副本之间的内容跳转。组外引用保留原目标。跨图时若字段支持地图配对，补源地图码。仅允许本图目标的字段无法保留组外引用时，在预览中列出并要求重新选目标或取消。移动保持原身份。
-- [ ] `ClonePlan.build(source: Dictionary, target: Dictionary, instance_codes: PackedStringArray) -> Dictionary` 读取两份文档的地图路径、地图快照及占码，返回 `{status, instance_map, content_map, map_patch, pending_contents, conflicts}`。整图复制传全部实体码并纳入地图的图片、瓦片、碰撞和出生点。重复或无法读取的身份先列入冲突。纯场景资产的摆放仍无实例码。
+- [x] `ClonePlan.build(source: Dictionary, target: Dictionary, instance_codes: PackedStringArray) -> Dictionary` 读取两份文档的地图路径、地图快照及占码，返回 `{status, instance_map, content_map, map_patch, pending_contents, conflicts}`。整图复制传全部实体码并纳入地图的图片、瓦片、碰撞和出生点。重复或无法读取的身份先列入冲突。纯场景资产的摆放仍无实例码。
+  - 实现：`src/content/clone_plan.gd:110` `build(src, dst, codes, include_world)`，返回键在 `:227-232` 完全对齐；整图 `include_world` 并入瓦片/碰撞/出生点，重复码/缺码先进 `conflicts`；纯场景摆放不发码（`tests/test_clone_plan.gd`）。
 - [ ] 用完整序列化负载以及一次组位移。仅当同一地图或明确来自同源层时直接按层 ID 匹配，其他跨图按唯一层名或手选映射。区域剪贴板保存独立快照，切图后仍可用。撤销移除副本绑定。未落盘内容从待写列表移至重做记录，已落盘内容留在功能库。重做沿用同一 ID。
 - [ ] 将完整地图改动及待写内容放入 A2 的同一工作集。先校验目标锁、目标文件不存在、声明和引用，再一次应用到工作快照；校验失败不改画布。正式提交按 A2 顺序先写内容后写地图，失败保留工作快照和原预留 ID，复用 A3 恢复。整图复制在目标图正式写成功后才加入地图菜单。
 - [ ] 回归组内 A → B、组外 A → C、普通字符串 `AB23` 和功能执行码 `AB23`。复制后只改副本内部边的目标。修改副本台词后比较原文件，原值保持不变。整图复制和 `Ctrl+D` 复用这条流程。
@@ -237,8 +250,10 @@ func test_v7_tile_alt_roundtrip() -> void:
 
 **对应审查**　D07、C09、C12。**依赖**　C1、A2。**文件**　`src/project/project_audit.gd`、`src/project/manifest_validation.gd`、`src/ui/content_editor.gd`、`src/ui/content_form.gd`、`src/ui/fn_bind.gd`、`src/ui/issues_drawer.gd`、`src/canvas/canvas_draw.gd`。回归 `tests/test_audit.gd`、`tests/test_decl_pools.gd`。
 
-- [ ] 校验挂载声明去重。放置和载图时在工作副本补齐无歧义的挂载，并标记待保存。切换选中只刷新界面。用可选 `mounted: true` 标识唯一继承行，保留手动同功能行。旧图有多条候选时由作者确认继承行。库复用为继承行生成新内容 ID，保留原文件。
-- [ ] 自检按 `(功能人类 ID, 内容 ID)` 索引内容地址，按 C1 解析资源、条件、步骤、时机和内容引用。检查绑定文件缺失、挂载、时机池与白名单。资产使用统计沿用同一索引，展示读取失败的源文件，检查范围不完整时禁用清除。
+- [x] 校验挂载声明去重。放置和载图时在工作副本补齐无歧义的挂载，并标记待保存。切换选中只刷新界面。用可选 `mounted: true` 标识唯一继承行，保留手动同功能行。旧图有多条候选时由作者确认继承行。库复用为继承行生成新内容 ID，保留原文件。
+  - 实现：`src/content/function_decl.gd:180-229` 运行期去重 + 只在「该功能一条绑定都没有」时追加 `mounted: true` 继承行（已有手动行不覆盖）；放置即补齐见 `src/canvas/tool_ops.gd` `_stamp`（`FunctionDecls.fill_bindings`），载图见 `editor_canvas.gd` 的挂载补齐；重复挂载由校验层报错（`manifest_validation.gd`）。
+- [x] 自检按 `(功能人类 ID, 内容 ID)` 索引内容地址，按 C1 解析资源、条件、步骤、时机和内容引用。检查绑定文件缺失、挂载、时机池与白名单。资产使用统计沿用同一索引，展示读取失败的源文件，检查范围不完整时禁用清除。
+  - 实现：`src/project/project_audit.gd:21` `audit(manifest, meta_out)` 产出 `incomplete`/`unreadable_maps`，`:348-391` 自检索引（`by_map`/`bad_contents`/`incomplete`），`:458-486` `asset_usage` 同一索引并回报 `unreadable`；`src/ui/issues_drawer.gd:99-108` 检查范围不完整时禁用「清除悬空」。
 - [ ] 清理候选记录源路径、所有者身份、字段位置、预期旧值与目标作用域。提交前重新读取并查验预期仍相同、目标仍确认失效。当前图有脏改动时基于工作快照预览并走 A2 提交。写入成功才计数，原位同步当前图。跨图连线按目标图码解析，跨图时显示目标图名。
 - [ ] 验收两功能同尾码、两图同实例码、坏时机和已恢复引用。用过期报告执行清理，已修项不变。注入一次写入失败，成功数不增加。未选过的实体也已挂载合法功能。解绑后内容文件留在功能库，自检显示零入边，撤销后入边恢复。再从 A3 恢复一次待写绑定，确认自检、资产使用和清理使用同一批引用数据。
 
@@ -248,10 +263,14 @@ func test_v7_tile_alt_roundtrip() -> void:
 
 **文件**　`src/ui/steps_panel.gd`、`src/ui/timeline_view.gd`、`src/content/step_timeline.gd`、`src/content/content_store.gd`。回归 `tests/test_step_audio.gd`。
 
-- [ ] 面板为当前绑定打开工作副本。已有内容用功能码和内容 ID 定位，空绑定先用会话内的绑定标记定位。首次实际改动才预留内容 ID。时间轴发 `step_change_requested(index: int, revision: int, patch: Dictionary)`。表单回调捕获步骤索引、绑定身份和结构版本。增删、排序、切页签前提交当前控件，失败时保留输入与当前位置。过期控件与拖拽请求直接丢弃。
-- [ ] 面板将补丁合并到工作副本，只净化被编辑的时间键，保留未知键和未改条目。暂存结果走 A2。`ok` 和 `staged` 都发布同一工作快照，`staged` 标为未落盘。失败时保留输入并提供重试或撤回。列表、数值和拖拽共用这一入口。
-- [ ] 步骤默认用列表，展开「时间与轨道」后可输入起点、时长、轨号和阻塞。缺 `at` 显示「随前序」，显式的 `0` 表示从零开始。接受 `duration=0`。新轨用「移至新轨」，轨号取当前最大值加一。拖拽根据起手时的生效区间与鼠标偏移计算增量。
-- [ ] 每次编辑或装载重算一次 `StepTimeline.to_timeline(steps)`。重叠用每轨按起点排序扫描，只展示可见刻度。播放头首版是定位工具，读取时间而不调用游戏判定。一次拖动生成一次内容编辑记录，同一面板可撤销并再次保存。
+- [x] 面板为当前绑定打开工作副本。已有内容用功能码和内容 ID 定位，空绑定先用会话内的绑定标记定位。首次实际改动才预留内容 ID。时间轴发 `step_change_requested(index: int, revision: int, patch: Dictionary)`。表单回调捕获步骤索引、绑定身份和结构版本。增删、排序、切页签前提交当前控件，失败时保留输入与当前位置。过期控件与拖拽请求直接丢弃。
+  - 实现：`src/ui/steps_panel.gd:508-530` 工作副本读/写（空绑定只在首次实际改动时 `_ensure_content` 预留 ID，`:509-514` 内存空壳不落盘）；`src/ui/timeline_view.gd:16` 信号 `step_change_requested(index, revision, patch)`，`:237` 带 `struct_rev` 发出；`steps_panel.gd:644-657` 版本不符或身份不符直接丢弃，`:533` `_bump_steps_rev` 在增删/排序后递增；`:784,870-930` 各回调用闭包捕获的 `rev_*` 二次校验。
+- [x] 面板将补丁合并到工作副本，只净化被编辑的时间键，保留未知键和未改条目。暂存结果走 A2。`ok` 和 `staged` 都发布同一工作快照，`staged` 标为未落盘。失败时保留输入并提供重试或撤回。列表、数值和拖拽共用这一入口。
+  - 实现：`src/content/step_timeline.gd:102` `from_timeline` 只净化显式改动的键、`erase_keys` 独立表达「清 at」；`steps_panel.gd:644` 是唯一补丁入口（列表/数值/拖拽共用），写回走 `_steps_write` → `write_content_staged`（A2 暂存），失败 `_ensure_failed` 保留输入。
+- [x] 步骤默认用列表，展开「时间与轨道」后可输入起点、时长、轨号和阻塞。缺 `at` 显示「随前序」，显式的 `0` 表示从零开始。接受 `duration=0`。新轨用「移至新轨」，轨号取当前最大值加一。拖拽根据起手时的生效区间与鼠标偏移计算增量。
+  - 实现：`src/ui/steps_panel.gd:452-467` 列表/时间轴互斥切换；`:845-930` 时间与轨道行——占位文案「随前序」（`:867`）、填 0 = 从零（`:869`）、`duration=0` 接受、`阻塞` 勾选、`移至新轨` 取 `max(track)+1`。拖拽增量见 `timeline_view.gd`（起手区间 + 鼠标偏移）。
+- [x] 每次编辑或装载重算一次 `StepTimeline.to_timeline(steps)`。重叠用每轨按起点排序扫描，只展示可见刻度。播放头首版是定位工具，读取时间而不调用游戏判定。一次拖动生成一次内容编辑记录，同一面板可撤销并再次保存。
+  - 实现：`src/content/step_timeline.gd:19` `to_timeline` 单一数据源，重叠按每轨起点排序扫描（F1 起改为每帧一张生效区间表，只画可见跨度）；`steps_panel.gd:634-636` 结构版本变化才重建时间轴；播放头只读时间（`timeline_view.gd`），不调用游戏判定。
 - [ ] 回归 `[{"duration":2},{"duration":1}]` 所示的两步数据。第二步初始生效起点为 `2`，右边拖至 `4` 后只把时长改为 `2`，再归零并换新轨。编辑第一步文本后直接重排、切页，核对文本仍属于第一步。在换序后送达旧版本回调，断言新位置不被误写。步骤身份使用会话内索引与版本，磁盘格式保持原有步骤数组。验证缓存命中、显式起点、随前序、保存失败与重开。
 
 调用前核对内容 ID、版本、索引与允许的补丁键。用单条结果净化显式改动的键，清除 `at` 由独立命令处理。
@@ -272,11 +291,16 @@ for key in patch:
 
 **依赖**　D1、C1。**文件**　`src/content/function_decl.gd`、`src/project/manifest_validation.gd`、`src/ui/steps_panel.gd`、`src/ui/timeline_view.gd`。拟建 `src/content/timeline_clock.gd`，回归 `tests/test_step_audio.gd`。
 
-- [ ] 保留 `at/duration` 的原始单位。已存小数帧标记待修，新录帧取整数。拍数在界面按声明的细分吸附，缺省每拍四格。底层保留既有拍数精度，吸附更改仅作用于新输入或显式量化选中项。
-- [ ] 用可选 `functions[].timePreview` 指定数据来源。`fpsField`、`audioField`、`offsetField` 引用该功能的字段 ID。`tempoStep` 引用变速步骤 ID，`bpmField` 引用该步骤的数值字段 ID。可用 `subdivisionsPerBeat` 设置拍网格的每拍格数，缺省 `4`，须为正整数。读取内容时把声明 ID 转成执行码。缺参考参数时保留原单位编辑并显示具体缺项。
-- [ ] `TimelineClock.seconds_at(value: float) -> float` 根据时钟初始化参数换算时间。帧使用 `value / fps`。拍以第 0 拍开段，预验有限正 BPM 与严格递增起点，再累加各段 `拍差 × 60 / BPM` 和首拍偏移。分别换算起点与终点。预览参考帧和试听只用于对齐，游戏行为继续由试玩验证。
-- [ ] `frameAssetField` 可指向同一功能的资产选择字段。帧基预览按播放头帧索引显示该资产声明的帧序列，从第 0 帧计数，越界显示提示。音频预览以换算后的秒数定位，负秒在音频起点前保持静音。形状仍是游戏公开的步骤参数，编辑时以选中步骤身份经 D1 写回。试玩负责验证实际姿态、判定和音效。
-- [ ] 用 0 拍 120 BPM、4 拍 60 BPM 和首拍偏移 0.25 秒验收。第 6 拍对应 4.25 秒。跨变速的第 3 至第 5 拍对应 1.75 到 3.25 秒。60 fps 的第 12 帧预览时间为 0.2 秒。
+- [x] 保留 `at/duration` 的原始单位。已存小数帧标记待修，新录帧取整数。拍数在界面按声明的细分吸附，缺省每拍四格。底层保留既有拍数精度，吸附更改仅作用于新输入或显式量化选中项。
+  - 实现：`src/content/timeline_clock.gd:126` `fractional_frames()` / `:141` `quantize_frames()`（只标记已存小数帧，量化是显式动作）；吸附粒度由 `snap_step()` 按 `subdivisionsPerBeat` 给出（缺省 `DEFAULT_SUBDIVISIONS = 4`）；`src/ui/steps_panel.gd:1063` 新输入的 at/duration 才吸附。回归 `tests/test_timeline_clock_d2.gd:64-77`。
+- [x] 用可选 `functions[].timePreview` 指定数据来源。`fpsField`、`audioField`、`offsetField` 引用该功能的字段 ID。`tempoStep` 引用变速步骤 ID，`bpmField` 引用该步骤的数值字段 ID。可用 `subdivisionsPerBeat` 设置拍网格的每拍格数，缺省 `4`，须为正整数。读取内容时把声明 ID 转成执行码。缺参考参数时保留原单位编辑并显示具体缺项。
+  - 实现：`src/content/timeline_clock.gd:151-207` `from_decl` 把声明 ID 解析成执行码并收集 `missing`；`src/project/manifest_validation.gd:189-234` 校验引用与 `subdivisionsPerBeat` 正整数；缺项时 `seconds_at` 按 1:1 保留原单位（`timeline_clock.gd:56-66`）并由界面显示 `missing`。
+- [x] `TimelineClock.seconds_at(value: float) -> float` 根据时钟初始化参数换算时间。帧使用 `value / fps`。拍以第 0 拍开段，预验有限正 BPM 与严格递增起点，再累加各段 `拍差 × 60 / BPM` 和首拍偏移。分别换算起点与终点。预览参考帧和试听只用于对齐，游戏行为继续由试玩验证。
+  - 实现：`src/content/timeline_clock.gd:57` `seconds_at`、`:69` `value_at`（逆换算，时间轴刻度反查）、`:81` `_beats_to_seconds`（第 0 拍开段逐段累加）；BPM/起点预验在构造期 `is_ready()` 收集 `missing`。
+- [x] `frameAssetField` 可指向同一功能的资产选择字段。帧基预览按播放头帧索引显示该资产声明的帧序列，从第 0 帧计数，越界显示提示。音频预览以换算后的秒数定位，负秒在音频起点前保持静音。形状仍是游戏公开的步骤参数，编辑时以选中步骤身份经 D1 写回。试玩负责验证实际姿态、判定和音效。
+  - 实现：`src/ui/steps_panel.gd:581-606` 按声明解析 `frameAssetField`/`audioField` 为资产码与音频码；帧预览按播放头帧索引取序列、越界提示与音频只对齐不播放见同文件帧/音频预览段（`:980-1020`）；形状仍走 D1 补丁入口。
+- [x] 用 0 拍 120 BPM、4 拍 60 BPM 和首拍偏移 0.25 秒验收。第 6 拍对应 4.25 秒。跨变速的第 3 至第 5 拍对应 1.75 到 3.25 秒。60 fps 的第 12 帧预览时间为 0.2 秒。
+  - 实现：`tests/test_timeline_clock_d2.gd:12,29,39,40` 逐条断言上述数值（含逆换算与端到端解析）。
 - [ ] 基础帧拍试点通过后，再按实测瓶颈加时间视图。波形按时间窗口聚合音频峰值并使用同一参考时钟。拍号段通过项目声明的标记步骤读取，只影响小节显示。批量移动选中音符先预览起点差值，再由 D1 一次提交。逐帧形状轨展示被选帧区间的公开形状，结合 E2 把手编辑。卷轴联动可读取游戏给出的时间与镜头位置参考点，供时间轴定位画布预览。
 
 ### E1 · 在制作流程中提供清晰的入口和反馈
@@ -284,8 +308,12 @@ for key in patch:
 **依赖**　A2、B2、C1、C3、D1。**文件**　`src/ui/project_shell.gd`、`src/ui/top_bar_nav.gd`、`src/ui/editor_layout.gd`、`src/ui/content_editor.gd`、`src/ui/content_form.gd`、`src/ui/fn_bind.gd`、`src/ui/steps_panel.gd`、`src/ui/issues_drawer.gd`。
 
 - [ ] `project_shell.gd` 保留当前地图码、图层 ID、实例码和画布视口。演出额外保留功能码、内容 ID、步骤索引及其版本、列表或时间轴模式和播放头。归来时按身份校验，目标已删除则显示空态。选引用的临时画布使用 `确认 / 取消`，仅确认时提交目标，返回时恢复原表单与焦点。使用既有顶栏、Esc 和上下文入口切换。
-- [ ] 将演出拆为可复用容器。先从当前功能侧边展开，再支持停靠在内容或画布下方及独立展开。保留同一控制器和工作副本。搬动容器前记下当前输入，复原后步骤索引和版本一致。缺 `steps` 声明时隐藏入口。
+  - 已有：`src/app.gd:632-659` `_set_mode` 切走前提交控件值并 `remember_content_context()`；`src/ui/content_editor.gd:331-339` 按实例码 + 功能执行码记忆，`:301-328` 归来按 `SessionContext.has_code`/`fn_index_of` 校验身份，目标已删则空态；选点会话走「确认 / 取消」条（`editor_layout.gd:594-630`），取消时 `app.gd:702-724` 恢复原表单焦点。缺：画布视口（缩放/居中）与演出播放头/视图模式的持久化。
+- [x] 将演出拆为可复用容器。先从当前功能侧边展开，再支持停靠在内容或画布下方及独立展开。保留同一控制器和工作副本。搬动容器前记下当前输入，复原后步骤索引和版本一致。缺 `steps` 声明时隐藏入口。
+  - 实现：`src/ui/steps_panel.gd:51-54` 一个控制器 + `_steps_dock`，`:206-231` 三种停靠（内容下方 / 画布下方 / 独立展开）；`:278-344` 搬动前记下当前输入、`revalidate_dock` 复原后索引与版本一致；入口按 `steps` 声明显示（`content_form.gd:157` 只对声明 `steps: true` 的功能给子面板入口）。
 - [ ] 首次流程为项目 → 新建或打开地图 → 摆放 → 点实例 → 从选中对象进入内容 → 添加功能 → 填参 → 保存试玩。已有字段说明、单位和默认值按声明显示。从问题抽屉跳到源实例或字段，失败时保留输入并显示文件与重试操作。
+  - 已有：整条流程的入口都在（`app.gd` `_set_mode`、`content_editor` 实例列表→功能→表单、`commit_document` → 试玩）；默认值按声明显示（`field_widgets.gd` `default_for`）；问题抽屉行点击跳转（`issues_drawer.gd:124-148`：地图问题开图、实例问题开图后选中、资产问题开资产页）。
+  - 未做：声明的「说明 / 单位」没有对应契约键（`GAME_SIDE_STANDARD.md` §2.4 字段声明只有 `id/name/type/...`），当前用 `name` 充当说明，没有单位字段。按「不臆想功能」不自行发明键；若游戏侧要提供，需先在契约里声明，再接到 `_build_field_row`。
 - [ ] 以刷怪试点验收。按步选中第二波并输入数量，临时从画布选出生点，取消一次再确认。切到资产查看原素材，然后回演出。核对地图、缩放、步骤、待输入值和选点结果，保存、重开并试玩。记录首次完成时间、误操作和需询问的步骤。
 
 ### E2 · 复用已有数据的按需视图
@@ -301,9 +329,12 @@ for key in patch:
 
 **对应审查**　D17、U05、审查 §3.6。**依赖**　A3/A4、C2/C3。**文件**　`src/ui/top_bar_nav.gd`、`src/ui/map_dialogs.gd`、`src/ui/asset_panel.gd`、`src/ui/palette_panel.gd`、`src/ui/layer_panel.gd`、`src/ui/project_picker.gd`、`src/ui/issues_drawer.gd`、`src/ui/content_form.gd`。
 
-- [ ] 地图菜单项绑定弹出时的路径与地图码，点击时若条目已失效则刷新列表。现有「设置 ▾」接整图复制，先预览新图名及 C2 计划。改尺寸通过一笔可撤销快照提交。裁去数据前列出瓦片、碰撞和对象数量，恢复时连同原尺寸一起恢复。
-- [ ] 给画布选材与资产图鉴共用显示名、类别及 ID 查询，图鉴回画布保持所选资产。资产详情显示从项目读到的图集切片、分类和锚点，方便定位设置。源素材和图集切片仍由游戏侧维护。现有类型挂载编辑按 C3 验证。
-- [ ] 内容库继续在当前功能内使用。按名称筛选，改显示 `name` 保持 ID。删除操作前运行 C3 引用检查，仍被引用或有未扫描文件时停在报告。保留 A3 草稿恢复与历史入口。折叠问题抽屉同时收起滚动容器，为项目、图层长列表加滚动，重建调色板时替换空态回调。
+- [x] 地图菜单项绑定弹出时的路径与地图码，点击时若条目已失效则刷新列表。现有「设置 ▾」接整图复制，先预览新图名及 C2 计划。改尺寸通过一笔可撤销快照提交。裁去数据前列出瓦片、碰撞和对象数量，恢复时连同原尺寸一起恢复。
+  - 实现：`src/ui/top_bar_nav.gd:55-166` 菜单项绑定 `{name, code, path}`，点击时校验文件存在与码未变，失效即刷新并提示；整图复制「设置 ▾」→ `src/ui/map_file.gd` `on_duplicate` 先出预览（`_plan_preview`）再走 C2；改尺寸在 `src/ui/map_dialogs.gd:43-60` 先列当前总量与将裁掉的数量、`:189` 改前入撤销快照（撤销连同原尺寸与边缘数据一起恢复）。
+- [x] 给画布选材与资产图鉴共用显示名、类别及 ID 查询，图鉴回画布保持所选资产。资产详情显示从项目读到的图集切片、分类和锚点，方便定位设置。源素材和图集切片仍由游戏侧维护。现有类型挂载编辑按 C3 验证。
+  - 实现：`src/ui/asset_panel.gd:258-290` 生效配置区显示锚点、切片尺寸、分类与图集切片条数（只读）；`:323-345` 图鉴回画布设成笔刷（瓦片取首条 palette 切片、实体/图片进摆放模式，碰撞层情形见 `_set_brush_kind`）；显示名/类别/ID 查询共用 `AssetDecl`，与画布选材同源。
+- [x] 内容库继续在当前功能内使用。按名称筛选，改显示 `name` 保持 ID。删除操作前运行 C3 引用检查，仍被引用或有未扫描文件时停在报告。保留 A3 草稿恢复与历史入口。折叠问题抽屉同时收起滚动容器，为项目、图层长列表加滚动，重建调色板时替换空态回调。
+  - 实现：`src/ui/content_form.gd:581-675` 名称筛选 + 改显示名（保 ID）+ 删除入口；`:1016-1077` 删除前三道拦截（检查范围不完整 / 实例引用 / 内容间入边），通过后才确认删除。草稿入口 `top_bar_nav.gd` 「地图 ▾ → 恢复草稿…」与历史入口 `map_file.gd` `on_history` 保留；抽屉折叠见 `issues_drawer.gd`，长列表滚动见 `editor_layout.gd:290-297`，调色板空态见 `palette_panel.gd`。
 - [ ] 验收开着地图菜单时外部插入一张图，点击仍选中原条目或提示失效。改尺寸撤销恢复边缘对象。长列表滚到最后一项。图鉴查找并回画布摆放，内容改显示名后原引用可用。批量改字段和批量替换瓦片由 E2 负责。
 
 ### F1 · 核实热点并降低制作时延
