@@ -50,6 +50,7 @@ func set_steps(arr: Array, name_of_cb: Callable, rev := 0) -> void:
 	_drag = ""
 	_drag_idx = -1
 	_preview = {}
+	_tl_cache_key = ""
 	sync_min_size()
 	queue_redraw()
 
@@ -57,19 +58,30 @@ func set_steps(arr: Array, name_of_cb: Callable, rev := 0) -> void:
 func sync_min_size() -> void:
 	custom_minimum_size = Vector2(fit_width(), fit_height())
 
+## P02：生效区间表一帧/一次改动只算一遍。拖动中只画预览偏移、数据不动，
+## 所以按「数据引用 + 结构版本」缓存就够：宿主换数据或增删步骤必换引用/版本。
+var _tl_cache: Array = []
+var _tl_cache_key := ""
+
+func _timeline() -> Array:
+	var key := "%d:%d" % [steps.size(), struct_rev]
+	if key == _tl_cache_key:
+		return _tl_cache
+	_tl_cache = StepTimeline.to_timeline(steps)
+	_tl_cache_key = key
+	return _tl_cache
+
 ## 时间轴总时长（视图宽度口径）：末尾再加 1 秒留白，至少 2 秒。
 func _time_max() -> float:
 	var t := 2.0
-	var tl := StepTimeline.to_timeline(steps)
-	for e in tl:
+	for e in _timeline():
 		var end_t := float(e.get("at", 0.0)) + float(e.get("duration", 0.0))
 		t = maxf(t, end_t)
 	return t
 
 func _track_count() -> int:
 	var n := 1
-	var tl := StepTimeline.to_timeline(steps)
-	for e in tl:
+	for e in _timeline():
 		n = maxi(n, int(e.get("track", 0)) + 1)
 	return n
 
@@ -116,9 +128,12 @@ func _block_rect(i: int) -> Rect2:
 	var w := maxf(dur * _pps, 10.0)
 	return Rect2(MARGIN_L + at * _pps, y + 3.0, w, TRACK_H - 6.0)
 
-## 生效条目（含缺省展开）；越界/非对象返回 {}。
+## 生效条目（含缺省展开）；越界/非对象返回 {}。走缓存表（P02：不再每块重算整份）。
 func _eff(i: int) -> Dictionary:
-	return StepTimeline.effective(steps, i)
+	var tl := _timeline()
+	if i < 0 or i >= tl.size():
+		return {}
+	return tl[i]
 
 func _hit(pos: Vector2) -> int:
 	for i in steps.size():
@@ -222,11 +237,31 @@ func _release() -> void:
 		step_change_requested.emit(idx, struct_rev, patch)
 	queue_redraw()
 
+## P02：可视时间区间（原始单位）[lo, hi]。视图在 ScrollContainer 里滚动，
+## 自身坐标原点是内容原点，所以可视段 = (滚动偏移, 滚动偏移 + 视宽)。
+## 取不到父滚动容器（单测/未进树）时退化为整条轴。
+func _visible_span(tmax: float) -> Vector2:
+	var p := get_parent()
+	var off := 0.0
+	var vw := size.x
+	if p is ScrollContainer:
+		off = float((p as ScrollContainer).scroll_horizontal)
+	elif p != null and p.get_parent() is ScrollContainer:
+		off = float((p.get_parent() as ScrollContainer).scroll_horizontal)
+	var lo := maxf(0.0, (off - MARGIN_L) / _pps)
+	var hi := maxf(lo, (off + vw) / _pps)
+	return Vector2(lo, minf(hi, tmax + 1.0))
+
 func _draw() -> void:
 	var fnt: Font = ThemeDB.fallback_font
 	# 滚动容器按内容宽撑开：视图自身尺寸 = max(容器给宽, 内容宽)
 	var w := maxf(size.x, fit_width())
+	var tmax := _time_max()
 	var tracks := _track_count()
+	# P02：只画可视横段——长演出（上千步）串在滚动容器里，整条轴都画等于每帧刷几万条线
+	var span := _visible_span(tmax)
+	var vis_lo := span.x
+	var vis_hi := span.y
 	# 主刻度：每单位一格 + 单位标签（frames 每 5 帧一档防挤）
 	var tstep := 5 if timebase == "frames" else 1
 	var suffix: String = {"seconds": "s", "frames": "f", "beats": "拍"}.get(timebase, "s")
@@ -235,13 +270,14 @@ func _draw() -> void:
 		var sub := float(clock.snap_step())
 		var per := int(roundf(1.0 / sub)) if sub > 0.0 else 1
 		if per > 1:
-			var k := 1
-			while float(k) * sub <= _time_max():
+			var k := maxi(1, int(floorf(vis_lo / sub)))
+			while float(k) * sub <= minf(tmax, vis_hi + sub):
 				if k % per != 0:   # 整拍处由主刻度画
 					var xs := MARGIN_L + float(k) * sub * _pps
 					draw_line(Vector2(xs, RULER_H * 0.55), Vector2(xs, fit_height()), Th.BORDER, 1.0)
 				k += 1
-	for t in range(0, int(_time_max()) + 1, tstep):
+	var t0 := int(floorf(vis_lo / float(tstep))) * tstep
+	for t in range(maxi(0, t0), int(minf(tmax, vis_hi)) + 1, tstep):
 		var x := MARGIN_L + float(t) * _pps
 		draw_line(Vector2(x, 0), Vector2(x, fit_height()), Th.BORDER, 1.0)
 		draw_string(fnt, Vector2(x + 2, RULER_H - 4), "%s%s" % [t, suffix],
@@ -253,16 +289,18 @@ func _draw() -> void:
 	# 播放头（D2）：标尺上点/拖定位；只画线+读数，不做游戏判定
 	var phx := MARGIN_L + playhead * _pps
 	# 先记下位置，条块画完再叠播放头（否则会被条块盖住）
-	# 条块：选中高亮、冲突描红、瞬发画细条
-	var cf := StepTimeline.conflicts(steps)
+	# 条块：选中高亮、冲突描红、瞬发画细条（P02：冲突基于同一份缓存区间表）
 	var hot := {}
-	for pair in cf:
+	for pair in StepTimeline.conflicts_of(_timeline()):
 		hot[int((pair as Dictionary).get("a", -1))] = true
 		hot[int((pair as Dictionary).get("b", -1))] = true
 	for i in steps.size():
 		if not (steps[i] is Dictionary):
 			continue
 		var r := _block_rect(i)
+		# P02：条块整块在可视段外就跳过（拖拽中的那块永远画，预览可能被拖到边界外）
+		if i != _drag_idx and (r.end.x < MARGIN_L + vis_lo * _pps or r.position.x > MARGIN_L + vis_hi * _pps):
+			continue
 		var sc := str((steps[i] as Dictionary).get("step", ""))
 		var known: bool = name_of.is_valid() and str(name_of.call(sc)) != sc
 		var base := Th.ACCENT_BG if known else Th.BG_HOVER

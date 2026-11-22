@@ -63,7 +63,10 @@ static func from_timeline(steps: Array) -> Array:
 ## 同轨时间区间重叠的步骤对（只警告，不阻断）。返回 [{a, b}]（下标对）。
 ## 口径与 to_timeline 一致：at 缺省顺序累加，duration 0 不算重叠（瞬发不占时）。
 static func conflicts(steps: Array) -> Array:
-	var tl := to_timeline(steps)
+	return conflicts_of(to_timeline(steps))
+
+## 已有生效区间表时的重叠检测（P02：调用方算一次 to_timeline，多处复用）。
+static func conflicts_of(tl: Array) -> Array:
 	var out: Array = []
 	# 每轨按起点排序后线性扫描：O(n log n)，大段演出拖动时每帧都要算
 	var by_track := {}
