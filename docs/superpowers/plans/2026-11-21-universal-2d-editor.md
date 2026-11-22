@@ -113,9 +113,12 @@
 
 **文件**　`src/app.gd`、`src/ui/project_picker.gd`、`src/ui/editor_layout.gd`、`src/ui/palette_panel.gd`、`src/ui/content_editor.gd`、`src/canvas/editor_state.gd`、`src/canvas/editor_canvas.gd`。
 
-- [ ] 冷启动打开 A，记录缺失委托。退出到选择页再打开 B，验证布局控制器的生命周期。在宿主实现 `_enter_project(next_manifest: Dictionary) -> void`，负责组装本项目控制器并构建视图。启动恢复和项目选择器都调用此入口。
+- [x] 冷启动打开 A，记录缺失委托。退出到选择页再打开 B，验证布局控制器的生命周期。在宿主实现 `_enter_project(next_manifest: Dictionary) -> void`，负责组装本项目控制器并构建视图。启动恢复和项目选择器都调用此入口。
+  - 实现：`src/app.gd:198` `_enter_project(dir, loaded_manifest)` 是唯一入口（启动恢复与选择页都走它），先 `_clear_project_session()` 再 `_build_editor_ui()`，最后 `_report_recovery_items()`。
 - [ ] 在 `EditorCanvas` 恢复 `set_entity_sizes(sizes: Dictionary) -> void` 和 `entity_display_size(asset_id: String) -> Vector2` 的工厂委托。补齐碰撞预览和生成委托，现有碰撞弹窗允许选择源普通层，输出固定为碰撞元层。把区域命中和松手转回 `RegionOps`。
+  - 已有：`src/canvas/editor_canvas.gd` 的 `set_entity_sizes` / `entity_display_size`，碰撞自动生成（`tool_ops.gd` 自审源层）。缺：碰撞弹窗的「选源普通层」入口，以及区域命中/松手显式回 `RegionOps` 的接线。
 - [ ] 左栏常驻「瓦片 / 摆放物」分类，摆放物含图片和实体。进碰撞层时按项目合法类型池初始化，无 `solid` 时取首个合法类型。离开恢复之前笔刷。内容页空态用 `set_hover("")`，选中缓存使用实例 `code`。
+  - 已有：`src/ui/editor_layout.gd` 常驻分类（瓦片/图片/实体），`src/canvas/editor_state.gd:46-61` 碰撞笔刷按合法池回落首个类型，`content_editor.gd:288` 空态 `set_hover("")`。缺：离开碰撞层后恢复之前笔刷。
 - [ ] 验收 A → B → A、无图打开内容、首个混合层摆三类资产，以及用只有 `water` 的碰撞池绘制。落盘碰撞类型为 `water`，在空图和切项目时检查存活的菜单和信号。
 
 ### A2 · 地图、内容和清单保存闭环

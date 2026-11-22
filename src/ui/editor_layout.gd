@@ -426,7 +426,13 @@ func _palette_empty_visible(list: ItemList, visible_now: bool) -> void:
 
 ## 瓦片图集 + 图片/实体统一摆放列表。切换不重建整个左栏，只替换列表内容。
 func set_asset_category(cat: String) -> void:
-	app.canvas.place_kind = "object" if cat != "tiles" else "tiles"
+	var kind := "tiles" if cat == "tiles" else "object"
+	# 停在碰撞元层时选资产类别 = 想换「回去以后用什么画」：记成待恢复笔刷，
+	# 不直接改碰撞层当前的 place_kind（否则离开碰撞层时会被旧值盖掉）。
+	if app.canvas.active_layer == app.canvas.collision_index():
+		app._editor_state_ctrl.remember_brush(kind)
+	else:
+		app.canvas.place_kind = kind
 	app._palette_ctrl.set_category(cat)
 	app._apply_state("")
 
