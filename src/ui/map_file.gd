@@ -175,11 +175,9 @@ func on_convert_projection() -> void:
 	name_edit.placeholder_text = "新地图名"
 	body.add_child(UiKitScript.field_row("新名字", name_edit))
 	var proj_sel := OptionButton.new()
-	var keys: Array = []
 	for p in ["orthogonal", "isometric", "hexagonal"]:
 		if p == cur_proj:
 			continue   # 目标必须与当前不同（同投影另存请用「复制整张地图」）
-		keys.append(p)
 		proj_sel.add_item(_proj_label(p))
 		proj_sel.set_item_metadata(proj_sel.item_count - 1, p)
 	body.add_child(UiKitScript.field_row("目标投影", proj_sel, UiKitScript.LABEL_W_LONG))
@@ -189,24 +187,25 @@ func on_convert_projection() -> void:
 	err_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	err_label.custom_minimum_size = Vector2(app.POPUP_BODY_W, 0)
 	body.add_child(err_label)
-	var last_plan := {"ok": false, "error": "先填新图名"}
+	# lambda 按值捕获局部变量（重新赋值外层看不到）：计划放进容器里用内容变更回传
+	var holder := {"plan": {"ok": false, "error": "先填新图名"}}
 	var refresh := func():
 		var nn: String = name_edit.text.strip_edges()
 		if nn == "":
-			last_plan = {"ok": false, "error": "先填新图名"}
+			holder.plan = {"ok": false, "error": "先填新图名"}
 			err_label.text = ""
 			note.text = "当前投影：%s" % _proj_label(cur_proj)
 			return
 		if not EditorManifest.is_valid_map_name(nn):
-			last_plan = {"ok": false, "error": "名称非法"}
+			holder.plan = {"ok": false, "error": "名称非法"}
 			err_label.text = "地图名不合法：不能含 / \\ : * ? \" < > | 或以 . 开头"
 			return
 		if FileAccess.file_exists(EditorManifest.map_path(app.manifest, nn)):
-			last_plan = {"ok": false, "error": "同名地图已存在"}
+			holder.plan = {"ok": false, "error": "同名地图已存在"}
 			err_label.text = "同名地图已存在：换个名字"
 			return
 		var p := MapConvert.plan(data, app.manifest, str(proj_sel.get_item_metadata(proj_sel.selected)))
-		last_plan = p
+		holder.plan = p
 		err_label.text = str(p.get("error", ""))
 		if not bool(p.get("ok", false)):
 			note.text = "当前投影：%s" % _proj_label(cur_proj)
@@ -227,15 +226,14 @@ func on_convert_projection() -> void:
 	var btn_row := UiKitScript.hbox(8)
 	btn_row.alignment = BoxContainer.ALIGNMENT_END
 	btn_row.add_child(UiKitScript.button("取消", func(): pop.hide(), "ghost"))
-	var ok_btn: Button = UiKitScript.button("另存并转换",
-		func(): convert_current_to_dialog(old_name, name_edit, err_label, pop, last_plan), "primary")
-	btn_row.add_child(ok_btn)
+	btn_row.add_child(UiKitScript.button("另存并转换",
+		func(): convert_current_to_dialog(old_name, name_edit, err_label, pop, holder), "primary"))
 	body.add_child(btn_row)
 	app._open_popup(pop)
 
-## 另存转换确认：转换计划已由弹窗预览算好（last_plan），这里只校验名字并落盘。
+## 另存转换确认：转换计划已由弹窗预览算好（holder.plan），这里只校验名字并落盘。
 func convert_current_to_dialog(old_name: String, name_edit: LineEdit, err_label: Label,
-		pop: PopupPanel, last_plan: Dictionary) -> void:
+		pop: PopupPanel, holder: Dictionary) -> void:
 	var nn: String = name_edit.text.strip_edges()
 	if nn == "":
 		err_label.text = "先填新图名"
@@ -246,6 +244,7 @@ func convert_current_to_dialog(old_name: String, name_edit: LineEdit, err_label:
 	if FileAccess.file_exists(EditorManifest.map_path(app.manifest, nn)):
 		err_label.text = "同名地图已存在：换个名字"
 		return
+	var last_plan: Dictionary = holder.get("plan", {}) if holder.get("plan", null) is Dictionary else {}
 	if not bool(last_plan.get("ok", false)):
 		err_label.text = str(last_plan.get("error", "转换计划未就绪"))
 		return
