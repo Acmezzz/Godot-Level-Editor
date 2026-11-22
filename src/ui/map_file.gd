@@ -191,6 +191,16 @@ func _ask_discard(action: String) -> bool:
 	var dlg := ConfirmationDialog.new()
 	dlg.title = "未保存的修改"
 	dlg.dialog_text = "地图 %s 有未保存修改。\n继续%s将丢失这些修改。" % [app.cur_map_name, action]
+	# A2 staged：盘点随地图一起消失的待写项（含暂存内容与待写清单），
+	# 让「放弃」的代价可见——用户至少知道丢的是哪几类，而不是只看到地图脏。
+	var extra: Array = []
+	for p in _pending_targets():
+		if p == "content":
+			extra.append("内容页暂存的新内容/新绑定")
+		elif p == "manifest":
+			extra.append("清单里新补发的身份码")
+	if not extra.is_empty():
+		dlg.dialog_text += "\n\n此外还有未落盘：%s。" % "、".join(PackedStringArray(extra))
 	# 自动保存草稿存得进、捞不出——放弃修改时至少把草稿路径说出来，
 	# 否则用户以为这份保险不存在。草稿在「打开」里同样可被识别并归位（见 load_map_file）。
 	var draft_path := str(app.manifest.get("_maps_dir", "")).path_join(str(app.cur_map_name) + ".autosave.json")
@@ -606,11 +616,20 @@ func _effective_map_name() -> String:
 	return n
 
 ## 统一提交入口（A2）：先结束编辑手势，再按「清单 → 内容 → 地图」顺序落盘。
-## 返回 {status, written, error}；status = ok / cancelled / failed。
+## 返回 {status, written, error, pending}；status = ok / staged / cancelled / failed。
+## - ok：全部待写项已落盘（含本来就没有待写项的「无改动」）。
+## - staged：dry_run=true 且存在待写项（新内容/补码/脏地图），未写任何文件。
+##   给「先问一句要不要正式保存」的界面用；正式路径（试玩、Ctrl+S、清除悬停引用）不传 dry_run。
 ## 任何一步失败即停，已写文件保留，调用方按 written 显示脏状态。
-func commit_document(reason := "") -> Dictionary:
+func commit_document(reason := "", dry_run := false) -> Dictionary:
 	if app.canvas != null and app.canvas.has_method("end_gesture"):
 		app.canvas.end_gesture()
+	# dry_run：只盘点待写项，不改文档状态也不写盘（不冻结撤销、不登记提交日志）
+	if dry_run:
+		var pending := _pending_targets()
+		if pending.is_empty():
+			return {"status": "ok", "written": [], "error": "", "pending": []}
+		return {"status": "staged", "written": [], "error": "", "pending": pending}
 	if app.canvas != null:
 		app.canvas.doc_busy = true   # 确认/写入期间冻结撤销与重做
 	var written: Array = []
@@ -633,7 +652,7 @@ func commit_document(reason := "") -> Dictionary:
 		if not await app._save_manifest_file_async():
 			_release_busy()
 			# 日志保留：下次启动能看出「清单未写/内容未写」，按同 ID 重试（A3）
-			return {"status": "cancelled", "written": written, "error": "清单补码保存被取消或失败"}
+			return {"status": "cancelled", "written": written, "error": "清单补码保存被取消或失败", "pending": _pending_targets()}
 		written.append("manifest")
 		Recovery.mark_pending_done(app.manifest, log_path, 0)
 	# 2) 内容页正在编辑的连续控件值 + 暂存内容（新 ID/新绑定）
@@ -641,26 +660,39 @@ func commit_document(reason := "") -> Dictionary:
 		var staged_before: bool = app.project_shell.content_editor.has_staged_content()
 		if not app.project_shell.content_editor.commit():
 			_release_busy()
-			return {"status": "failed", "written": written, "error": "暂存内容写盘失败"}
+			return {"status": "failed", "written": written, "error": "暂存内容写盘失败", "pending": _pending_targets()}
 		if staged_before:
 			written.append("content")
 	# 3) 地图
 	if app.map_loaded and app.canvas != null and app.canvas.modified_flag:
 		if not await on_save():
 			_release_busy()
-			return {"status": "failed", "written": written, "error": "地图保存失败"}
+			return {"status": "failed", "written": written, "error": "地图保存失败", "pending": _pending_targets()}
 		written.append("map")
 	_release_busy()
 	# 全部写成功：提交日志完成使命（A3）
 	Recovery.clear_pending(app.manifest, log_path)
 	if reason != "":
 		app._set_status(" 已提交（%s）%s" % [reason, ("：" + ", ".join(PackedStringArray(written))) if not written.is_empty() else "：无待写改动"])
-	return {"status": "ok", "written": written, "error": ""}
+	return {"status": "ok", "written": written, "error": "", "pending": []}
 
 ## 解除文档忙状态（保存失败/取消路径也必须走到，否则撤销永久失效）
 func _release_busy() -> void:
 	if app.canvas != null:
 		app.canvas.doc_busy = false
+
+## 待写项盘点（A2 staged）：清单补码 / 暂存内容 / 脏地图。
+## 只读：不冲刷控件、不写盘、不登记日志——给 dry_run 与状态提示共用同一口径。
+func _pending_targets() -> Array:
+	var out: Array = []
+	if bool(app.manifest.get("_codes_issued", false)):
+		out.append("manifest")
+	if app.project_shell != null and app.project_shell.content_editor != null:
+		if app.project_shell.content_editor.has_staged_content():
+			out.append("content")
+	if app.map_loaded and app.canvas != null and app.canvas.modified_flag:
+		out.append("map")
+	return out
 
 ## 保存当前地图；返回是否成功（试玩前依赖它决定是否继续）
 ## 直接入口（Ctrl+S）也冻结撤销/重做；已在 commit_document 内嵌套调用时沿用外层标记。
