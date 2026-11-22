@@ -241,6 +241,11 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	_build_tileset()
 	# 格↔像素转换层（正交/等距）：瓦片资产清单就位后才能判投影
 	grid = GridSpaceScript.new(Vector2i(tile_w, tile_h), _map_projection())
+	# B3：可选双基向量斜平面（meta.gridBasis）。非法声明静默不生效——校验页会报具体键。
+	var bmeta: Dictionary = map_data.get("meta", {}) if map_data.get("meta", {}) is Dictionary else {}
+	var bparsed: Dictionary = GridSpaceScript.parse_basis(bmeta)
+	if bool(bparsed.get("ok", false)) and (bparsed.get("u", Vector2.ZERO) as Vector2) != Vector2.ZERO:
+		grid.set_basis(bparsed.get("u", Vector2.ZERO), bparsed.get("v", Vector2.ZERO))
 	# 旧图冻结生效投影（B1）：此后清单资产增删不再改变这张图的空间口径
 	_freeze_projection()
 	# 背景：整块铺满视口（比地图尺寸大得多），作为地图之外区域的底色

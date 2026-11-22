@@ -16,13 +16,65 @@ class_name GridSpace
 
 var tile: Vector2i = Vector2i(16, 16)
 var projection := "orthogonal"   # "orthogonal" / "isometric" / "hexagonal"
+## B3：可选双基向量斜平面（meta.gridBasis: [[ux,uy],[vx,vy]]）。
+## 非零时 to_px = g.x·u + g.y·v，to_grid = 基矩阵的逆——格仍是平行四边形（含正交/斜平行两种特例）。
+## 与 projection 正交：projection 决定缺省几何，basis 显式覆盖它（校验保证有限且可逆）。
+var basis_u := Vector2.ZERO
+var basis_v := Vector2.ZERO
+var has_basis := false
 
-func _init(t: Vector2i = Vector2i(16, 16), proj: String = "orthogonal") -> void:
+func _init(t: Vector2i = Vector2i(16, 16), proj: String = "orthogonal", basis: Array = []) -> void:
 	tile = t
 	if proj == "isometric" or proj == "hexagonal":
 		projection = proj
 	else:
 		projection = "orthogonal"
+	if basis.size() == 2:
+		var u: Variant = basis[0]
+		var v: Variant = basis[1]
+		if u is Vector2 and v is Vector2:
+			set_basis(u, v)
+
+## 设置双基向量。拒零/共线（行列式 0）与非有限值——静默保持原几何。
+func set_basis(u: Vector2, v: Vector2) -> bool:
+	if not _finite2(u) or not _finite2(v):
+		return false
+	if absf(u.x * v.y - u.y * v.x) < 0.000001:
+		return false
+	basis_u = u
+	basis_v = v
+	has_basis = true
+	return true
+
+static func _finite2(p: Vector2) -> bool:
+	return is_finite(p.x) and is_finite(p.y)
+
+## 解析 meta.gridBasis：[[ux,uy],[vx,vy]] → {ok, u, v, why}。非数组/非数值/不可逆都拒绝。
+## 纯函数：清单校验与画布/导出共用同一份判据。
+static func parse_basis(meta: Dictionary) -> Dictionary:
+	if not meta.has("gridBasis"):
+		return {"ok": true, "u": Vector2.ZERO, "v": Vector2.ZERO, "why": ""}
+	var raw = meta.get("gridBasis", null)
+	if not (raw is Array) or (raw as Array).size() != 2:
+		return {"ok": false, "u": Vector2.ZERO, "v": Vector2.ZERO, "why": "gridBasis 必须是 [[ux,uy],[vx,vy]]"}
+	var row := func(r) -> Variant:
+		if not (r is Array) or (r as Array).size() != 2:
+			return null
+		var a = (r as Array)[0]
+		var b = (r as Array)[1]
+		if not ((a is int or a is float) and (b is int or b is float)):
+			return null
+		var u := Vector2(float(a), float(b))
+		return u if _finite2(u) else null
+	var u2 = row.call((raw as Array)[0])
+	var v2 = row.call((raw as Array)[1])
+	if u2 == null or v2 == null:
+		return {"ok": false, "u": Vector2.ZERO, "v": Vector2.ZERO, "why": "gridBasis 的行必须是两个有限数值"}
+	var uu: Vector2 = u2
+	var vv: Vector2 = v2
+	if absf(uu.x * vv.y - uu.y * vv.x) < 0.000001:
+		return {"ok": false, "u": Vector2.ZERO, "v": Vector2.ZERO, "why": "gridBasis 不可逆（两向量共线或为零）"}
+	return {"ok": true, "u": uu, "v": vv, "why": ""}
 
 func is_iso() -> bool:
 	return projection == "isometric"
@@ -64,6 +116,8 @@ static func project_projection(m: Dictionary) -> String:
 
 ## 格坐标（浮点，含格内分数）→ 像素。正交 = 左上角系；等距 = 菱形顶点系；六边 = 格中心系（仅整数格有格中心语义）。
 func to_px(g: Vector2) -> Vector2:
+	if has_basis:
+		return basis_u * g.x + basis_v * g.y   # B3：斜平面（平行四边形）优于投影预设
 	if is_hex():
 		var hw := float(tile.x)
 		var hh := float(tile.y)
@@ -77,6 +131,14 @@ func to_px(g: Vector2) -> Vector2:
 
 ## 像素 → 浮点格坐标。正交/等距：格号 = floori(to_grid(p).x/.y)；六边形：直接返回整数格（最近中心 = 精确命中）。
 func to_grid(p: Vector2) -> Vector2:
+	if has_basis:
+		var det := basis_u.x * basis_v.y - basis_u.y * basis_v.x
+		if det == 0.0:
+			return Vector2.ZERO
+		# 逆矩阵乘：g = A⁻¹p
+		return Vector2(
+			(basis_v.y * p.x - basis_v.x * p.y) / det,
+			(-basis_u.y * p.x + basis_u.x * p.y) / det)
 	if is_hex():
 		var w := float(tile.x)
 		var h := float(tile.y)
@@ -168,6 +230,12 @@ func cell_polygon(c: Vector2i) -> PackedVector2Array:
 
 ## 格空间矩形 [a, b) 的像素多边形（区域选区/笔刷块/地图边界统一口径；六边 = 四角 cell 包围盒近似）
 func grid_polygon(a: Vector2i, b: Vector2i) -> PackedVector2Array:
+	if has_basis:
+		var g0b := Vector2(a)
+		var g1b := Vector2(b)
+		return PackedVector2Array([
+			to_px(g0b), to_px(Vector2(g1b.x, g0b.y)),
+			to_px(g1b), to_px(Vector2(g0b.x, g1b.y))])
 	if is_hex():
 		var pts := cell_polygon(a)
 		pts += cell_polygon(Vector2i(b.x - 1, a.y))
@@ -186,7 +254,11 @@ func grid_polygon(a: Vector2i, b: Vector2i) -> PackedVector2Array:
 		to_px(g1), to_px(Vector2(g0.x, g1.y))])
 
 ## 瓦片纹理（尺寸 cs）在 cell 的落位矩形：正交 = 左上对齐；等距/六边 = 格中心居中（包围盒）。
+## B3 斜平面：平行四边形没有全局「轴对齐左上角」，按格原点（to_px(c)）为锚左上对齐——
+## 与正交的 g·tile 口径一致（正交 basis = [tile,0],[0,tile] 时逐位相同）。
 func cell_tex_rect(c: Vector2i, cs: Vector2i) -> Rect2:
+	if has_basis:
+		return Rect2(to_px(Vector2(c)), Vector2(cs))
 	if is_iso() or is_hex():
 		return Rect2(cell_center_px(c) - Vector2(cs) * 0.5, Vector2(cs))
 	return Rect2(Vector2(c) * Vector2(tile), Vector2(cs))
@@ -316,4 +388,13 @@ func map_bounds(map_rect: Rect2i) -> Rect2:
 			mn = mn.min(p)
 			mx = mx.max(p)
 		return Rect2(mn, mx - mn)
+	if has_basis:
+		# 斜平面：四角像素的轴对齐包围盒（不是 size·tile——那是正交专用）
+		var q := grid_polygon(map_rect.position, map_rect.end)
+		var mn2 := q[0]
+		var mx2 := q[0]
+		for p2: Vector2 in q:
+			mn2 = mn2.min(p2)
+			mx2 = mx2.max(p2)
+		return Rect2(mn2, mx2 - mn2)
 	return Rect2(Vector2(map_rect.position) * Vector2(tile), Vector2(map_rect.size) * Vector2(tile))

@@ -27,11 +27,17 @@ static func projection_of(data: Dictionary, manifest: Dictionary) -> String:
 	return GridSpaceScript.project_projection(manifest)
 
 ## 导出用格空间：格尺寸取清单 tileSize（缺省可用 grid_fallback 标量兜底）。
+## B3：与画布共用同一份 meta.gridBasis 解析（非法声明不生效，校验页报具体键）。
 static func grid_of(data: Dictionary, manifest: Dictionary, grid_fallback = 16) -> GridSpace:
 	var tile := GridSpaceScript.tile_size_of(manifest)
 	if manifest.get("tileSize", null) == null and grid_fallback is int and int(grid_fallback) > 0:
 		tile = Vector2i(int(grid_fallback), int(grid_fallback))
-	return GridSpaceScript.new(tile, projection_of(data, manifest))
+	var g := GridSpaceScript.new(tile, projection_of(data, manifest))
+	var meta: Dictionary = data.get("meta", {}) if data.get("meta", {}) is Dictionary else {}
+	var bp: Dictionary = GridSpaceScript.parse_basis(meta)
+	if bool(bp.get("ok", false)) and (bp.get("u", Vector2.ZERO) as Vector2) != Vector2.ZERO:
+		g.set_basis(bp.get("u", Vector2.ZERO), bp.get("v", Vector2.ZERO))
+	return g
 
 ## 输出几何：{size: Vector2i, scale: float, bounds: Rect2}。scale 是「原生像素 → 输出像素」。
 static func output_geometry(data: Dictionary, manifest: Dictionary, px_per_tile := 4,

@@ -172,3 +172,42 @@ func test_cells_between() -> void:
 	var hp: Array = h.cells_between(Vector2i(0, 0), Vector2i(4, 0))
 	eq(hp[0], Vector2i(0, 0), "六边路径首格")
 	eq(hp[hp.size() - 1], Vector2i(4, 0), "六边路径尾格")
+
+## B3：双基向量斜平面——(2,3) 在 u=(32,8)、v=(0,24) 下映成 (64,88)，逆算回原点位
+func test_grid_basis_skew() -> void:
+	var g = GridSpaceScript.new(Vector2i(16, 16), "orthogonal", [Vector2(32, 8), Vector2(0, 24)])
+	eq(g.to_px(Vector2(2, 3)), Vector2(64, 88), "斜平面 (2,3) → (64,88)")
+	eq(g.to_grid(Vector2(64, 88)), Vector2(2, 3), "逆矩阵精确反算")
+	for i in range(-3, 4):
+		for j in range(-3, 4):
+			var p: Vector2 = g.to_px(Vector2(i, j))
+			ok(g.to_grid(p).distance_to(Vector2(i, j)) < 0.0001, "斜平面往返 %d,%d" % [i, j])
+	# 拾取：格内中心命中本格
+	eq(g.pick_cell(g.to_px(Vector2(1, 1) + Vector2(0.5, 0.5))), Vector2i(1, 1), "斜平面格中心拾取")
+	# 四邻不变（平行四边形仍是四邻拓扑）
+	eq((g.neighbors(Vector2i(2, 2)) as Array).size(), 4, "斜平面四邻")
+	# 纹理落位以格原点为锚（正交口径）
+	eq(g.cell_tex_rect(Vector2i(1, 0), Vector2i(16, 16)).position, Vector2(32, 8), "斜平面纹理锚在格原点")
+	# map_bounds 是四角包围盒（不是 size·tile）
+	var b: Rect2 = g.map_bounds(Rect2i(0, 0, 2, 2))
+	eq(b.position, Vector2(0, 0), "斜平面包围盒起点")
+	eq(b.size, Vector2(64, 64), "斜平面包围盒尺寸 = 四角极值")
+
+## B3：gridBasis 解析与拒绝（非数组/非数值/共线/零向量）
+func test_parse_basis() -> void:
+	var ok1: Dictionary = GridSpaceScript.parse_basis({})
+	ok(bool(ok1.get("ok", false)), "缺键 = 合法（无基）")
+	eq(ok1.get("u"), Vector2.ZERO, "缺键 u 为零")
+	var ok2: Dictionary = GridSpaceScript.parse_basis({"gridBasis": [[32, 8], [0, 24]]})
+	ok(bool(ok2.get("ok", false)), "[[32,8],[0,24]] 合法")
+	eq(ok2.get("u"), Vector2(32, 8), "u 解析")
+	eq(ok2.get("v"), Vector2(0, 24), "v 解析")
+	for bad in [[[32, 8]], [[32, 8], [0, 24], [1, 1]], "x", [[32, 8], [0, "a"]], [[0, 0], [0, 24]], [[32, 8], [64, 16]]]:
+		var r: Dictionary = GridSpaceScript.parse_basis({"gridBasis": bad})
+		ok(not bool(r.get("ok", true)), "拒绝非法 gridBasis %s" % str(bad))
+		ok(str(r.get("why", "")) != "", "给出拒绝原因")
+	# 不可逆的基不生效：构造时静默保持原几何
+	var g = GridSpaceScript.new(Vector2i(16, 16), "orthogonal", [Vector2(1, 1), Vector2(2, 2)])
+	eq(g.to_px(Vector2(1, 0)), Vector2(16, 0), "共线基被拒，仍是正交")
+	ok(not g.has_basis, "has_basis 保持 false")
+

@@ -2,6 +2,7 @@ extends RefCounted
 ## 地图 JSON 结构校验，与场景树状态无关（纯字典操作，读图必经之路）。
 
 const MapFormat := preload("res://src/map/map_format.gd")
+const GridSpaceScript := preload("res://src/canvas/grid_space.gd")
 
 ## 原始文档前置检查（D11）：必须在 upgrade() 抬版本号之前跑。
 ## 版本缺失/超前、退役顶层键都在这里拒收；低于当前格式只给警告（结构问题由 validate 各项报出）。
@@ -49,6 +50,11 @@ static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 		# 逐图投影（B1）：可选键，三种枚举；缺键 = 沿用项目解析
 		if meta.has("gridProjection") and not (str(meta.gridProjection) in ["orthogonal", "isometric", "hexagonal"]):
 			_add(issues, "error", "meta.gridProjection", "must be \"orthogonal\" / \"isometric\" / \"hexagonal\"")
+		# B3：可选双基向量。判据与画布/导出同一份（GridSpace.parse_basis）：有限且可逆。
+		if meta.has("gridBasis"):
+			var bp: Dictionary = GridSpaceScript.parse_basis(meta)
+			if not bool(bp.get("ok", false)):
+				_add(issues, "error", "meta.gridBasis", str(bp.get("why", "invalid")))
 		layer_ids = _validate_layers(meta, issues)
 	var tiles = data.get("tiles", null)
 	if tiles != null and not (tiles is Dictionary):
