@@ -252,6 +252,43 @@ func test_stale_report_skips_changed_value() -> void:
 	eq(int(res.get("skipped", 0)), 1, "记一次跳过")
 	_wipe()
 
+## §7.2：清除悬空引用时配对地图字段不能无脑删——还有别的引用字段用它就保留。
+func test_clear_dangling_keeps_still_used_pair_map() -> void:
+	_wipe()
+	var m := _fake_manifest()
+	# door 有两个引用字段共用同一个配对地图字段 TGTMAP
+	m["assets"] = [{"id": "door", "kind": "entity", "fields": [
+		{"id": "TGT", "type": "entity_ref", "mapField": "TGTMAP"},
+		{"id": "TGT2", "type": "entity_ref", "mapField": "TGTMAP"},
+		{"id": "TGTMAP", "type": "map_ref"},
+	]}]
+	var d := MapStore.new_map("m1", 8, 8)
+	var lid := str(d.meta.layers[0].id)
+	# A1：TGT 悬空、TGT2 有效（指向本图 KEEP）→ TGTMAP 必须保留
+	(d.objects as Array).append({"asset": "door", "code": "A1", "layer": lid, "x": 0, "y": 0,
+		"props": {"TGT": "GONE", "TGT2": "KEEP", "TGTMAP": "m1"}})
+	# B1：两个引用都悬空 → 清掉两条后 TGTMAP 无人使用，可以删
+	(d.objects as Array).append({"asset": "door", "code": "B1", "layer": lid, "x": 1, "y": 0,
+		"props": {"TGT": "GONE2", "TGT2": "GONE3", "TGTMAP": "m1"}})
+	(d.objects as Array).append({"asset": "door", "code": "KEEP", "layer": lid, "x": 2, "y": 0})
+	MapStore.write(m, "m1", d)   # 配对图目标要能从磁盘解析出来（KEEP 才算有效引用）
+	var fixes: Array = []
+	for e in ProjectAudit._ref_checks(d, m, "m1"):
+		fixes.append((e as Dictionary).get("fix"))
+	ok(fixes.size() >= 3, "拿到全部悬空修复项（实得 %d）" % fixes.size())
+	var res := ProjectAudit.apply_ref_fixes(m, "m1", fixes, d)
+	ok(int(res.get("erased", 0)) >= 3, "至少清掉 3 个引用字段")
+	for o in (d.objects as Array):
+		var od: Dictionary = o
+		var props: Dictionary = od.get("props", {})
+		if str(od.get("code", "")) == "A1":
+			eq(str(props.get("TGTMAP", "")), "m1", "TGT2 还在用配对地图 → TGTMAP 保留")
+			eq(str(props.get("TGT2", "")), "KEEP", "有效引用不动")
+		if str(od.get("code", "")) == "B1":
+			ok(not props.has("TGT"), "B1.TGT 已清")
+			ok(not props.has("TGTMAP"), "两个引用都没了 → 配对地图字段一并清理")
+	_wipe()
+
 ## 写失败不计数：清除项落地在内存里，但 MapStore.write 失败时成功数不增加
 func test_clear_write_failure_not_counted() -> void:
 	_wipe()

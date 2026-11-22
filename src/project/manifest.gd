@@ -1,8 +1,11 @@
 class_name EditorManifest
 ## 游戏项目清单读取器：编辑器的唯一项目入口。
-## 清单 = <游戏项目>/editor/editor_manifest.json，定义图层/瓦片/实体/功能声明/试玩命令。
-## 加载链里还负责：补发缺失的分层身份码、并入内置种类、实体占位尺寸解析
-## （editorSize → prefab 碰撞形状）、地图名/路径安全校验。
+## 清单 = <游戏项目>/editor/editor_manifest.json，是**声明池**：资产（图集/图片/实体）、
+## 功能/条件/步骤/音频/时机声明、碰撞类型池、试玩配置。**图层不在清单里**——每张地图自带 meta.layers。
+## 加载链：校验（manifest_validation）→ 补发缺失的分层身份码（ensure_codes）→ 并入内置种类
+## （trigger_zone）→ 派生路径（_dir/_maps_dir、atlas_abs）→ 实体占位尺寸解析
+## （editorSize → prefab 碰撞形状 → 1 格）。地图名/路径安全校验也在这里（is_valid_map_name）。
+## 写盘前剥内部键（`_` 前缀、atlas_abs、内置种类）——清单是游戏侧读的公共契约，不留编辑器私有状态。
 
 const BAD_NAME_CHARS := ["/", "\\", ":", "*", "?", "\"", "<", ">", "|"]
 const Validation := preload("res://src/project/manifest_validation.gd")
@@ -98,14 +101,16 @@ static func load_from(project_dir: String) -> Dictionary:
 	data["_warnings"] = warnings
 	# 内置种类（如 trigger_zone）由编辑器提供，不需要游戏工程声明
 	preload("res://src/assets/builtin_kinds.gd").merge_into(data)
-	# 分层身份码：资产段。老清单资产没有就补发（保存清单时随 assets 写回）
+	# 功能段 / 字段段：同样补发（保存清单时随 functions写回）。
+	# 磁盘上的执行引用一律用码，人类名零兼容、无回退——查不到就是数据漂移。
+	var issued := false
+	# 分层身份码：资产段。老清单实体资产没有码就补发（R07）——补码必须置 _codes_issued，
+	# 否则新码进了内容/地图引用而清单没写盘，游戏侧查无对应。
 	for a in data.get("assets", []):
 		if a is Dictionary and str((a as Dictionary).get("kind", "")) == "entity" \
 				and str((a as Dictionary).get("code", "")) == "":
 			(a as Dictionary)["code"] = preload("res://src/content/content_id.gd").new_entity_code()
-	# 功能段 / 字段段：同样补发（保存清单时随 functions 写回）。
-	# 磁盘上的执行引用一律用码，人类名零兼容、无回退——查不到就是数据漂移。
-	var issued := false
+			issued = true
 	issued = FunctionDecls.ensure_codes(data) or issued
 	# 条件字段码：与功能字段共用一个码空间，避开功能字段已占用的码补发。
 	issued = ConditionDecls.ensure_codes(data) or issued

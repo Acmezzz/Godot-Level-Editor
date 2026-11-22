@@ -84,8 +84,43 @@ func test_content_write_read_roundtrip() -> void:
 	ok(ids.has("X1Y2Z3"), "id 正确")
 	_wipe()
 
-## F1/P04：写前冲突检查读实际内容摘要。同秒 + 同长度（mtime 与 size 都看不出来）
-## 的外部改动用摘要必须能认出来；用新基线重写则成功。
+## §7.2：删除前必须由存储层留下历史快照；拿不到快照就不删（删完没有「当前」可备份）。
+func test_content_remove_backs_up_history_first() -> void:
+	_wipe()
+	var m := _fake_manifest()
+	ok(ContentStore.write(m, "f1", "D1E2F3", {"name": "keep me", "fields": {}}), "写入内容")
+	var path := ContentStore.path_for(m, "f1", "D1E2F3")
+	var res := ContentStore.remove_ex(m, "f1", "D1E2F3")
+	eq(bool(res.get("ok", false)), true, "删除成功")
+	eq(bool(res.get("backed_up", false)), true, "删除前留下了快照")
+	ok(not FileAccess.file_exists(path), "正式文件已删")
+	var snap := path.get_base_dir().path_join(".history").path_join(path.get_file() + ".1")
+	ok(FileAccess.file_exists(snap), "快照在 .history/<名>.json.1")
+	ok(FileAccess.get_file_as_string(snap).contains("keep me"), "快照内容 = 删除前的文件")
+	# 幂等：再删一次是「已不存在」，不应谎报备份
+	var again := ContentStore.remove_ex(m, "f1", "D1E2F3")
+	eq(bool(again.get("ok", false)), true, "重复删除幂等")
+	eq(bool(again.get("backed_up", false)), false, "无可删文件时不谎报备份")
+	_wipe()
+
+## §7.2：快照写不进去时必须**拒绝删除**（宁可留着也不能丢掉可回滚性）。
+func test_content_remove_refuses_without_history() -> void:
+	_wipe()
+	var m := _fake_manifest()
+	ok(ContentStore.write(m, "f1", "A9B8C7", {"name": "must survive", "fields": {}}), "写入内容")
+	var path := ContentStore.path_for(m, "f1", "A9B8C7")
+	# 把 .history 占成一个**文件**，目录建不出来 → 备份必然失败
+	var hist := path.get_base_dir().path_join(".history")
+	var blocker := FileAccess.open(hist, FileAccess.WRITE)
+	blocker.store_string("not a dir")
+	blocker.close()
+	var res := ContentStore.remove_ex(m, "f1", "A9B8C7")
+	eq(bool(res.get("ok", false)), false, "备份失败 → 拒绝删除")
+	eq(bool(res.get("backed_up", false)), false, "报告未备份")
+	ok(FileAccess.file_exists(path), "原文件仍在（没删）")
+	ok(FileAccess.get_file_as_string(path).contains("must survive"), "内容未被破坏")
+	DirAccess.remove_absolute(hist)
+	_wipe()
 func test_content_write_conflict_detects_same_second_same_size_edit() -> void:
 	_wipe()
 	var m := _fake_manifest()
@@ -222,14 +257,15 @@ func test_draft_roundtrip_by_map_code() -> void:
 	var m := _fake_manifest()
 	var snap := MapStore.new_map("d", 8, 8)
 	var target := str(m._maps_dir).path_join("d.json")
-	var p := Recovery.write_draft(m, "AB23", "d", target, "digest-1", snap, [{"id": "X1"}], ["X1"])
+	var p := Recovery.write_draft(m, "AB23", "d", target, "digest-1", snap,
+		[{"fn_id": "dialog", "id": "X1", "data": {"id": "X1", "fields": {}}}])
 	ok(p != "", "草稿写入成功")
 	ok(p.contains("editor/drafts") and p.ends_with("AB23.json"), "路径按地图码")
 	var d := Recovery.read_draft(m, "AB23", "d")
 	eq(str(d.get("targetPath")), target, "记录目标路径")
 	eq(str(d.get("baseline")), "digest-1", "记录正式图基线")
 	eq((d.get("snapshot", {}) as Dictionary).size() > 0, true, "记录地图快照")
-	eq((d.get("pendingIds", []) as Array).size(), 1, "记录待写 ID")
+	eq((d.get("pendingContents", []) as Array).size(), 1, "记录待写内容载荷")
 	ok(Recovery.list_drafts(m).has("AB23"), "可列出草稿")
 	ok(Recovery.remove_draft(m, "AB23", "d"), "可删除草稿")
 	ok(Recovery.list_drafts(m).is_empty(), "删除后不再列出")
@@ -326,4 +362,21 @@ func test_pending_log_partial_detection() -> void:
 	eq(states, ["written", "pending", "manual"], "逐条状态按摘要判定")
 	ok(Recovery.clear_pending(m, log), "清除日志")
 	ok(Recovery.scan_pending(m).is_empty(), "清除后扫不到")
+	_wipe()
+
+## §7.1 阶段一：替换已成功但进度标记失败时必须停手，不能报成功也不能继续写。
+## 这里直接验证底层判据：日志不在了，回填就返回 false（调用方据此停）。
+func test_pending_mark_fails_when_log_gone() -> void:
+	_wipe()
+	var m := _fake_manifest()
+	DirAccess.make_dir_recursive_absolute(str(m._maps_dir))
+	var a := str(m._maps_dir).path_join("a.json")
+	MapStore.write_json(a, {"v": 1})
+	var log := Recovery.begin_pending(m, "t", [
+		{"path": a, "baseline": Recovery.digest(a), "expect": "", "kind": "map"}])
+	ok(log != "", "登记成功")
+	ok(Recovery.mark_pending_written(m, log, 0, Recovery.digest(a)), "正常情况下回填成功")
+	DirAccess.remove_absolute(log)
+	ok(not Recovery.mark_pending_written(m, log, 0, Recovery.digest(a)), "日志被删 → 回填失败（调用方必须停手）")
+	ok(not Recovery.mark_pending_written(m, log, 5, "x"), "越界索引也返回失败，不静默跳过")
 	_wipe()

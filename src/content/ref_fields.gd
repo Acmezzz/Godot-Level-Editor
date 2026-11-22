@@ -1,13 +1,25 @@
 extends RefCounted
-## 引用字段描述（C10）：把声明里的引用来源（choice.source / input.type）归一成结构化描述。
+## 引用字段描述：把声明里的引用来源（choice.source / input.type）归一成结构化描述。
+## 本模块是**唯一**的「这个字段指向什么」判定入口——内容表单、步骤面板、复制重映射、
+## 审计与画布连线都走 describe()，不各自解析 source 字符串。
 ##
 ## 返回值 {kind, scope, filter, many, map_field, is_ref, allow_empty}：
-##   kind  "entity_inst" / "entity_type" / "map" / "content" / "asset" / "audio" / "layer" / "value"
-##   scope "same_map"（枚举所属图的实例）/ "map_ref"（由配对地图字段决定目标图）/
+##   kind  "entity_inst" / "entity_type" / "map" / "content" / "asset" / "audio" / "layer" /
+##         "port"（C3 端口引用）/ "value"
+##   scope "same_map"（枚举本图实例）/ "map_ref"（由配对地图字段决定目标图）/
 ##         "pool"（全项目池）/ "static"（固定 options）
-##   filter {ids: Array, kind: String, fn: String, dims: int}
+##   filter {ids: Array, types: Array, kind: String, fn: String, dims: int}
 ##   many  是否多选（choice.multiple）
 ##   map_field 配对的地图选择字段（人类 id；"" = 无）
+##
+## 可验证约束（测试按这些断言，不靠读实现猜）：
+##   - 只有 is_ref=true 的字段参与复制重映射与悬空检查；普通字符串永不按「恰好等于某实例码」改写。
+##   - mapField 按**人类字段 id** 找兄弟声明；值按配对声明的 **code 优先、id 兜底**读
+##     （内容/步骤的键是 code，实例 props 的键是 id）。配对字段缺失 = 作用域退回本图，不报错。
+##   - 地图键解析统一走 ReferenceIndex.resolve_map：**一码多图不猜**（status=ambiguous，
+##     候选进审计），缺键 = missing，两者在候选列表里都返回空数组——控件保留原值显示，
+##     绝不把读不到的目标静默改写成空串。
+##   - 同一图同格多实例不是歧义：候选按实例码区分（显示「类型 码 · (x,y)」）。
 ##
 ## 声明规则沿用现有 source 字符串，避免第二套词汇：
 ##   content:<功能id> / entity:<id,id> / entity_inst:<id,id> / map / audio: / layer: /
@@ -21,6 +33,7 @@ const CONTENT_PREFIX := "content:"
 
 const MapStore := preload("res://src/map/map_store.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
+const ReferenceIndex := preload("res://src/project/reference_index.gd")
 
 ## 逗号分隔 id 白名单（空 = 不限）
 static func _ids(s: String) -> Array:
@@ -56,6 +69,13 @@ static func describe(decl: Dictionary) -> Dictionary:
 		out.kind = "entity_inst"
 		out.scope = "map_ref" if out.map_field != "" else "same_map"
 		out.filter = {"ids": _ids(str(decl.get("of", "")))}
+		out.is_ref = true
+		out.allow_empty = true
+		return out
+	if typ == "port_ref":
+		out.kind = "port"
+		out.scope = "map_ref" if out.map_field != "" else "same_map"
+		out.filter = {"types": _ids(str(decl.get("of", "")))}
 		out.is_ref = true
 		out.allow_empty = true
 		return out
@@ -114,12 +134,73 @@ static func describe(decl: Dictionary) -> Dictionary:
 static func is_ref(decl: Dictionary) -> bool:
 	return bool(describe(decl).get("is_ref", false))
 
+## C1（§7.4）：递归收集引用字段（含 record 数组子字段）。返回 [{fd, path}]：
+## 顶层引用 path = [字段 id]；record 行内 = [记录字段 id, "#", 子字段 id]（# = 逐行维度）。
+## 兄弟配对字段作用域 = 该层声明本身（顶层配对字段在顶层找，记录行的在子字段声明里找）。
+static func ref_fields_deep(ad: Dictionary) -> Array:
+	var out := []
+	_collect_refs(ad.get("fields", []) if ad.get("fields", null) is Array else [], [], out, 0)
+	return out
+
+## 深度收集器：decls 为当前层声明；path 累积路径；depth 限深防声明自嵌套。
+static func _collect_refs(decls: Array, path: Array, out: Array, depth: int) -> void:
+	if depth > 4:
+		return
+	for fd in decls:
+		if not (fd is Dictionary):
+			continue
+		var f: Dictionary = fd
+		if str(f.get("type", "")) == "array" and str(f.get("of", "")) == "record":
+			_collect_refs(f.get("fields", []) if f.get("fields", []) is Array else [], path + [str(f.get("id", "")), "#"], out, depth + 1)
+			continue
+		if bool(describe(f).get("is_ref", false)):
+			out.append({"fd": f, "path": path.duplicate() + [str(f.get("id", ""))]})
+
 ## E2：资产声明里的全部实例引用字段（type=entity_ref）。返回声明原件，供画布连线/把手用。
 static func ref_fields(ad: Dictionary) -> Array:
 	var out := []
 	for fd in (ad.get("fields", []) as Array):
 		if fd is Dictionary and str((fd as Dictionary).get("type", "")) == "entity_ref":
 			out.append(fd)
+	return out
+
+## C3：资产声明的端口表（assets[].ports：{id, x, y, type?}）。无声明返回空数组。
+static func ports_of(ad: Dictionary) -> Array:
+	var ps = ad.get("ports", null)
+	return ps if ps is Array else []
+
+## C3：端口候选（port: 选项来源）：目标图上每个实例的声明端口，按类型过滤。
+## 返回 [{v: JSON 串（{map, inst, port}）, t: 标签}]；地图解析失败返回空（控件保留原值）。
+static func port_candidates(manifest: Dictionary, map_key: String, want_types: Array) -> Array:
+	var out: Array = []
+	var rm := ReferenceIndex.resolve_map(manifest, map_key)
+	if str(rm.get("status", "")) != "ok":
+		return out
+	var name := str(rm.get("key", ""))
+	if name == "":
+		return out
+	var data: Dictionary = MapStore.read(manifest, name)
+	var map_code := str((data.get("meta", {}) as Dictionary).get("code", ""))
+	for o in (data.get("objects", []) as Array):
+		if not (o is Dictionary):
+			continue
+		var code := str((o as Dictionary).get("code", ""))
+		if code == "":
+			continue
+		var ad := AssetDecl.by_id(manifest, str((o as Dictionary).get("asset", "")))
+		if ad.is_empty():
+			continue
+		for p in ports_of(ad):
+			if not (p is Dictionary):
+				continue
+			var pid := str((p as Dictionary).get("id", ""))
+			if pid == "":
+				continue
+			var pt := str((p as Dictionary).get("type", ""))
+			if not want_types.is_empty() and not want_types.has(pt):
+				continue
+			var val := {"map": map_code if map_code != "" else name, "inst": code, "port": pid}
+			out.append({"v": JSON.stringify(val), "t": "%s · %s" % [code, pid]})
 	return out
 
 ## E2：配对地图值是否指向当前图（C1：未填配对地图 = 本图；v7 写地图码，老数据存图名）。
@@ -195,12 +276,11 @@ static func map_instances(manifest: Dictionary, map_key: String, want_types: Arr
 	var out: Array = []
 	if map_key == "":
 		return out
-	var name := map_key
-	var list: Array = MapStore.list_maps(manifest)
-	if not list.has(map_key):
-		# map_key 是地图码：换成图名（一码多图时拒绝猜测）
-		var cm: Dictionary = MapStore.code_map(manifest)
-		name = str(cm.get(map_key, ""))
+	# B2（§7.2）：地图键解析统一走 ReferenceIndex.resolve_map（R09 撞码不猜、缺失即空）。
+	var rm: Dictionary = ReferenceIndex.resolve_map(manifest, map_key)
+	if str(rm.get("status", "")) != "ok":
+		return out
+	var name := str(rm.get("key", ""))
 	if name == "":
 		return out
 	var data: Dictionary = MapStore.read(manifest, name)

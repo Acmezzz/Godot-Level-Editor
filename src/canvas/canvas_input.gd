@@ -14,6 +14,10 @@ extends RefCounted
 
 var cvs   # 宿主引用
 var _spawn_moved := false   # 出生点拖动本次是否真的动过格（点击不动 = 零副作用）
+# 阶段三：纯悬停的重画闸——上一帧鼠标所在格与像素点（手势中不用它们，一律重画）
+var _hover_cell := Vector2i(-999999, -999999)
+var _hover_px := Vector2(-1e9, -1e9)
+var _hover_hot := false   # 上次悬停时是否在框选组热区内（进入/离开都要重画加亮）
 
 func _init(host) -> void:
 	cvs = host
@@ -106,7 +110,7 @@ func _unhandled_input(event: InputEvent) -> void:
 				if c1 != c0 and not _spawn_moved:
 					# 压快照会取消预览手势并把出生点归位到起手快照（E05：撤销基线 = 原位）。
 					# 取消同时结束了手势，这里按同一颗键重新起手，拖动继续、松手才会置脏。
-					cvs._push_undo()
+					cvs.push_undo()
 					cvs.begin_gesture(cvs.Gesture.SPAWN_DRAG, MOUSE_BUTTON_LEFT)
 					_spawn_moved = true
 				cvs._drag_spawn_to(pos)
@@ -118,7 +122,19 @@ func _unhandled_input(event: InputEvent) -> void:
 				_paint_path(pos)
 		var c = cvs._active_cell(pos)
 		cvs.cursor_info.emit("%d,%d" % [c.x, c.y])
-		cvs.queue_redraw()
+		# 阶段三：悬停只失效高亮。手势中每帧都要重画预览（跟手）；没手势时的纯悬停
+		# 只在「换格 / 进出框选组热区 / 位移 ≥ 2px」时重画——鼠标每次微动都付一整帧
+		# _draw（网格 + 实例叠加 + 连线）没有必要，2px 内的预览错位肉眼不可见。
+		if cvs.gesture != cvs.Gesture.NONE:
+			_hover_hot = cvs._inside_multi_box(pos)
+			cvs.queue_redraw()
+		else:
+			var hot: bool = cvs._inside_multi_box(pos)
+			if c != _hover_cell or hot != _hover_hot or pos.distance_squared_to(_hover_px) >= 4.0:
+				_hover_cell = c
+				_hover_px = pos
+				_hover_hot = hot
+				cvs.queue_redraw()
 
 ## 笔画当前格（活动层局部）：涂/擦与坐标栏共用
 func _stroke_cell(pos: Vector2) -> Vector2i:
@@ -261,7 +277,8 @@ func _on_tile_layer_press(pos: Vector2, b: InputEventMouseButton) -> void:
 		cvs.begin_gesture(cvs.Gesture.BOX, MOUSE_BUTTON_LEFT)
 		cvs._drag_start = pos
 		return
-	# 撤销快照不在这里压：涂刷是笔画制——首个真实改动前由 _paint 压一次
+	# 撤销覆盖不在这里压：涂刷是笔画制——首个真实改动前由 _paint stroke_begin 开始差量记录
+	# （点击不动 = 零副作用，空点不再挤掉一条真实历史）。
 	# （点击不动 = 零副作用，空点不再挤掉一条真实历史）
 	cvs._paint_pushed = false
 	cvs._stroke_has_last = false
@@ -317,8 +334,9 @@ func _on_right_press(pos: Vector2) -> void:
 		cvs._stroke_last_cell = _stroke_cell(pos)
 		cvs.begin_gesture(cvs.Gesture.ERASE, MOUSE_BUTTON_RIGHT)
 		return
-	cvs._push_undo()
-	cvs._paint_pushed = true
+	# H01：不预压快照。实例命中走 InstanceKey 差量（§7.5 阶段二），
+	# 瓦片/碰撞命中交给 erase_cells 首改 stroke_begin。左笔画的差量已在上面 end_gesture→stroke_end 定格。
+	cvs._paint_pushed = false
 	cvs._stroke_has_last = true
 	cvs._stroke_last_cell = _stroke_cell(pos)
 	cvs._erase_at(pos)

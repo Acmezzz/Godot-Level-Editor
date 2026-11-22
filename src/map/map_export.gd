@@ -1,17 +1,24 @@
 extends RefCounted
 ## 地图导出（A5）：PNG 概览（按投影画瓦片/碰撞/实体）+ 统计文本。
 ## 纯逻辑绘制到 Image，不依赖场景树，可 headless 调用。
+## 粒度与缓存：每个格按 GridSpace 多边形逐格落色/贴切片（一次导出 = 一趟全图遍历，无中间缓存）；
+## 预算由 MAX_PIXELS 卡住，先算总像素再决定是否出图。
 ##
 ## 几何全部来自 GridSpace（与主画布、内容预览同一口径）：格多边形决定形状，
 ## map_bounds 决定输出边界；等距/六边的菱形/六角不再被画成方块。
 ## 输出尺寸 = 边界 × 缩放（缩放取「每格较长边 = px_per_tile 像素」），
 ## 分配前先算像素总数，超过 MAX_PIXELS 时不给图，由调用方提示可用的缩放倍率。
+##
+## 边界：导出画的是**数据坐标下的俯视概览**——格形/落点/范围保真，层 offset/scale
+## **参与边界与落位**（与内容预览同一 MapViewData.layer_transform），parallax 与 ySort 不参与
+## （它们只影响运行时的相机跟随与遮挡顺序）。
 
 const K := preload("res://src/core/constants.gd")
 const INVISIBLE_CELL := K.INVISIBLE_CELL
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
 const GridSpaceScript := preload("res://src/canvas/grid_space.gd")
 const CollisionTypes := preload("res://src/assets/collision_types.gd")
+const MapViewData := preload("res://src/map/map_view_data.gd")
 
 ## 首版单张预览的像素上限：16_777_216 ≈ 64 MiB 原始 RGBA。
 const MAX_PIXELS := 16_777_216
@@ -27,31 +34,49 @@ static func projection_of(data: Dictionary, manifest: Dictionary) -> String:
 	return GridSpaceScript.project_projection(manifest)
 
 ## 导出用格空间：格尺寸取清单 tileSize（缺省可用 grid_fallback 标量兜底）。
-## B3：与画布共用同一份 meta.gridBasis 解析（非法声明不生效，校验页报具体键）。
+## B3（§7.3）：与画布/校验共用 GridSpace.resolve 同一入口（basis/topology 同一预设验证）。
 static func grid_of(data: Dictionary, manifest: Dictionary, grid_fallback = 16) -> GridSpace:
-	var tile := GridSpaceScript.tile_size_of(manifest)
-	if manifest.get("tileSize", null) == null and grid_fallback is int and int(grid_fallback) > 0:
-		tile = Vector2i(int(grid_fallback), int(grid_fallback))
-	var g := GridSpaceScript.new(tile, projection_of(data, manifest))
 	var meta: Dictionary = data.get("meta", {}) if data.get("meta", {}) is Dictionary else {}
-	var bp: Dictionary = GridSpaceScript.parse_basis(meta)
-	if bool(bp.get("ok", false)) and (bp.get("u", Vector2.ZERO) as Vector2) != Vector2.ZERO:
-		g.set_basis(bp.get("u", Vector2.ZERO), bp.get("v", Vector2.ZERO))
+	var gres: Dictionary = GridSpaceScript.resolve(meta, manifest)
+	var g: GridSpace = gres.get("grid") as GridSpace
+	if manifest.get("tileSize", null) == null and grid_fallback is int and int(grid_fallback) > 0:
+		g.tile = Vector2i(int(grid_fallback), int(grid_fallback))
 	return g
 
 ## 输出几何：{size: Vector2i, scale: float, bounds: Rect2}。scale 是「原生像素 → 输出像素」。
+## 边界 = 根空间地图边界 ∪ 每个层经自身 offset/scale 变换后的地图边界——
+## 层位移/放大后内容可能跑出根边界，不扩边界就会把内容裁掉（§7.3 同一份几何）。
 static func output_geometry(data: Dictionary, manifest: Dictionary, px_per_tile := 4,
 		grid_fallback = 16) -> Dictionary:
 	var grid := grid_of(data, manifest, grid_fallback)
 	var meta: Dictionary = data.get("meta", {}) if data.get("meta", {}) is Dictionary else {}
 	var w := maxi(int(meta.get("w", 1)), 1)
 	var h := maxi(int(meta.get("h", 1)), 1)
-	var bounds: Rect2 = grid.map_bounds(Rect2i(0, 0, w, h))
+	var base: Rect2 = grid.map_bounds(Rect2i(0, 0, w, h))
+	var bounds := base
+	for row in (meta.get("layers", []) as Array):
+		if not (row is Dictionary):
+			continue
+		var lxf := MapViewData.layer_transform(data, str((row as Dictionary).get("id", "")))
+		if lxf == Transform2D.IDENTITY:
+			continue
+		bounds = bounds.merge(_xf_rect(lxf, base))
 	var cell := maxf(float(grid.tile.x), float(grid.tile.y))
 	var px := clampi(int(px_per_tile), 1, MAX_PX_PER_TILE)
 	var scale := float(px) / maxf(cell, 1.0)
 	var size := Vector2i(maxi(1, ceili(bounds.size.x * scale)), maxi(1, ceili(bounds.size.y * scale)))
 	return {"size": size, "scale": scale, "bounds": bounds, "grid": grid}
+
+## 矩形过仿射变换后的轴对齐包围盒。
+static func _xf_rect(xf: Transform2D, r: Rect2) -> Rect2:
+	var pts := [r.position, Vector2(r.end.x, r.position.y), r.end, Vector2(r.position.x, r.end.y)]
+	var mn: Vector2 = xf * (pts[0] as Vector2)
+	var mx := mn
+	for p in pts:
+		var q: Vector2 = xf * (p as Vector2)
+		mn = mn.min(q)
+		mx = mx.max(q)
+	return Rect2(mn, mx - mn)
 
 ## 分配前的预算检查。ok = false 时 suggested 是能压进上限的最大整数 px/格（0 = 1px 也放不下）。
 static func budget(data: Dictionary, manifest: Dictionary, px_per_tile := 4,
@@ -125,11 +150,13 @@ static func _render(data: Dictionary, manifest: Dictionary, geo: Dictionary, gri
 		var cells = (tiles_data as Dictionary)[lid2]
 		if not (cells is Array):
 			continue
+		# 层 offset/scale 参与落位（与内容预览/画布同一 MapViewData 口径）
+		var lxf := MapViewData.layer_transform(data, lid2)
 		for c in (cells as Array):
 			if not (c is Array) or (c as Array).size() < 2:
 				continue
 			var cell := Vector2i(int(c[0]), int(c[1]))
-			var poly := _to_out(grid.cell_polygon(cell), bounds, scale)
+			var poly := _to_out(_xformed(lxf, grid.cell_polygon(cell)), bounds, scale)
 			if _blit_tile(img, poly, c, manifest, grid, atlas_cache):
 				continue
 			_put_poly(img, poly, Color(0.45, 0.70, 0.45, 1), Color(0.45, 0.70, 0.45, 1))
@@ -161,7 +188,9 @@ static func _render(data: Dictionary, manifest: Dictionary, geo: Dictionary, gri
 		else:
 			_put_poly(img, poly2, col, Color(col, 0.9))
 
-	# 摆放物：按资产稳定取色；浮点格坐标 → 格中心着色（出界跳过）
+	# 摆放物：按资产稳定取色；浮点格坐标 → 格中心着色（出界跳过）。
+	# 实例住在自己那一层：格轮廓要过该层的 offset/scale，否则与地形错位（同一 MapViewData 口径）。
+	var layer_xf := {}
 	for e in (data.get("objects", []) as Array):
 		if not (e is Dictionary):
 			continue
@@ -169,8 +198,12 @@ static func _render(data: Dictionary, manifest: Dictionary, geo: Dictionary, gri
 		var eyz := floorf(float((e as Dictionary).get("y", 0)))
 		if int(exz) < 0 or int(eyz) < 0 or int(exz) >= mw or int(eyz) >= mh:
 			continue
+		var elid := str((e as Dictionary).get("layer", ""))
+		if not layer_xf.has(elid):
+			layer_xf[elid] = MapViewData.layer_transform(data, elid)
 		var col2 := _asset_color(str((e as Dictionary).get("asset", "")))
-		_put_poly(img, _to_out(grid.cell_polygon(Vector2i(int(exz), int(eyz))), bounds, scale),
+		_put_poly(img, _to_out(_xformed(layer_xf[elid] as Transform2D,
+			grid.cell_polygon(Vector2i(int(exz), int(eyz)))), bounds, scale),
 			col2, Color(col2, 1.0))
 	# 出生点：白框（格轮廓）
 	var sp: Array = data.get("spawn", [2, 2])
@@ -188,6 +221,16 @@ static func _to_out(poly: PackedVector2Array, bounds: Rect2, scale: float) -> Pa
 	out.resize(poly.size())
 	for i in poly.size():
 		out[i] = _to_out_px(poly[i], bounds, scale)
+	return out
+
+## 多边形过层变换（offset/scale；Transform2D.IDENTITY 时原样返回）。
+static func _xformed(xf: Transform2D, poly: PackedVector2Array) -> PackedVector2Array:
+	if xf == Transform2D.IDENTITY:
+		return poly
+	var out := PackedVector2Array()
+	out.resize(poly.size())
+	for i in poly.size():
+		out[i] = xf * (poly[i] as Vector2)
 	return out
 
 ## 多边形填充 + 描边（fill 为 null 时只描边）。扫描线填充，不依赖 Image 的三角 API。

@@ -7,6 +7,7 @@ const AssetDecl := preload("res://src/assets/asset_decl.gd")
 const ManifestScript := preload("res://src/project/manifest.gd")   # 出口 role 判定
 const MapStoreRef := preload("res://src/map/map_store.gd")   # 地图码→名解析（出口角标）
 const K := preload("res://src/core/constants.gd")
+const CellGraphRef := preload("res://src/map/cell_graph.gd")   # C4：格图多边形高亮
 
 func _init(host) -> void:
 	cvs = host
@@ -452,15 +453,18 @@ func _draw_link_handles() -> void:
 
 ## E1 临时选点覆盖层：候选实例高亮 + 顶部提示条（提示条用屏幕坐标，画在最上层）。
 ## 已点中的候选实线粗框，悬停预览虚线细框——两者可同时存在（悬停下一个看效果）。
+## C4：accept == "cell" 时高亮的是有限格图的多边形，不是实例框。
 func _draw_pick_mode() -> void:
 	if not cvs.pick_mode_active:
 		return
 	var hover: String = str(cvs.pick_mode_hover)
-	if hover != "" and hover != str(cvs.pick_mode_code):
+	if cvs.pick_mode_accept == "cell":
+		_draw_pick_cells(hover)
+	elif hover != "" and hover != str(cvs.pick_mode_code):
 		var hn = cvs._ent_by_code_index().get(hover, null)
 		if hn != null and is_instance_valid(hn):
 			cvs.draw_rect(_wr(hn as EntityNode).grow(2.0), Color(0.55, 0.95, 1.0, 0.55), false, 1.0)
-	if cvs.pick_mode_code != "":
+	if cvs.pick_mode_accept != "cell" and cvs.pick_mode_code != "":
 		var hs = cvs._ent_by_code_index().get(cvs.pick_mode_code, null)
 		if hs != null and is_instance_valid(hs):
 			var r: Rect2 = _wr(hs as EntityNode).grow(4.0)
@@ -475,6 +479,8 @@ func _draw_pick_mode() -> void:
 	var text: String = cvs.pick_mode_hint
 	if cvs.pick_mode_code != "":
 		text += "　已点：%s（左键可换，Enter/确认提交）" % cvs.pick_mode_code
+	elif cvs.pick_mode_accept == "cell":
+		text += "　左键点格图里的格子，Esc 取消"
 	else:
 		text += "　左键点实例，Esc 取消"
 	var font: Font = ThemeDB.fallback_font
@@ -486,4 +492,29 @@ func _draw_pick_mode() -> void:
 	cvs.draw_rect(box, Color(0.2, 1.0, 0.9, 0.8), false, 1.0)
 	cvs.draw_string(font, at + Vector2(0, 12), text, HORIZONTAL_ALIGNMENT_LEFT, -1, 12,
 		Color(0.75, 1.0, 0.95, 0.95))
+
+## C4：格图选点的多边形高亮（根空间多边形 → 世界坐标）。悬停细框、已选粗框填充。
+func _draw_pick_cells(hover: String) -> void:
+	var g: Dictionary = cvs.cell_graph()
+	if g.is_empty():
+		return
+	var xf: Transform2D = cvs.map_root.get_global_transform() if cvs.is_map_ready() else Transform2D.IDENTITY
+	if hover != "" and hover != str(cvs.pick_mode_code):
+		_draw_cell_poly(g, hover, xf, Color(0.55, 0.95, 1.0, 0.55), false, 1.0)
+	if str(cvs.pick_mode_code) != "":
+		_draw_cell_poly(g, str(cvs.pick_mode_code), xf, Color(0.2, 1.0, 0.9, 0.95), true, 2.5)
+
+func _draw_cell_poly(g: Dictionary, id: String, xf: Transform2D, col: Color, fill: bool, width: float) -> void:
+	var poly: PackedVector2Array = CellGraphRef.polygon_of(g, id)
+	if poly.size() < 3:
+		return
+	var world := PackedVector2Array()
+	for p in poly:
+		world.append(xf * p)
+	if fill:
+		cvs.draw_colored_polygon(world, Color(col.r, col.g, col.b, 0.15))
+	# 闭合边：draw_polyline 不自动闭口，补上首点
+	var closed := world.duplicate()
+	closed.append(world[0])
+	cvs.draw_polyline(closed, col, width)
 

@@ -2,11 +2,13 @@ class_name Playtest
 ## 试玩启动器（A6）：优先用清单的结构化配置 playtest.executable + playtest.args
 ## （OS.create_process 直启，参数按数组传递，空格路径无需引号转义）；
 ## 没有结构化配置时退回 playCommand 模板（经 cmd /c 或 sh -c 执行整条命令，
-## 此时跟踪到的是包装进程而不是游戏本体，返回 tracked_kind 让 UI 说清楚）。
+## 此时跟踪到的是包装进程而不是游戏本体，返回 tracked/kind 让 UI 说清楚）。
 
 ## 启动并跟踪：返回 {ok, error, pid, program, args, tracked, kind}
 ## kind = "direct"（结构化配置直启）/ "shell"（playCommand 模板）；
 ## tracked = false 时 pid 是包装进程，退出状态不代表游戏本身。
+## 因此 UI 必须**同时**看 tracked 与 kind 才能说清「跟踪的是谁」：tracked=false 时只能报
+## 「包装进程已退出」，不能断言游戏成功/失败。
 static func launch_tracked(m: Dictionary, map_path: String, extra_args: PackedStringArray = []) -> Dictionary:
 	var pt: Dictionary = m.get("playtest", {}) if m.get("playtest", null) is Dictionary else {}
 	var project_dir := str(m.get("_dir", ""))
@@ -50,6 +52,10 @@ static func launch_tracked(m: Dictionary, map_path: String, extra_args: PackedSt
 			"pid": -1, "program": exe0, "args": PackedStringArray(), "tracked": false, "kind": "shell"}
 	return {"ok": true, "error": "", "pid": sh_pid, "program": exe0,
 		"args": PackedStringArray(), "tracked": false, "kind": "shell"}
+
+## 此平台能否跟踪进程退出（R24）：查不了就明说，不给假的「仍在运行」。
+static func tracking_available() -> bool:
+	return OS.get_name().begins_with("Windows")
 
 ## 轮询某个 pid 是否还活着（Windows: tasklist；其它平台返回 true = 假定运行中）
 static func is_alive(pid: int) -> bool:

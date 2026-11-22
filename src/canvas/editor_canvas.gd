@@ -20,6 +20,7 @@ const GridSpaceScript := preload("res://src/canvas/grid_space.gd")   # 格↔像
 const TriTileViewScript := preload("res://src/canvas/tri_tile_view.gd")   # B3：三角格自绘层
 const MapFormat := preload("res://src/map/map_format.gd")   # 格式版本/瓦片变换位（v7）
 const FunctionDeclsRef := preload("res://src/content/function_decl.gd")   # 挂载补齐（C09）
+const CellGraphScript := preload("res://src/map/cell_graph.gd")   # C4：有限格图（多边形命中）
 
 var active_layer := 0          # 0..N-1 = 层栈下标，N = 碰撞元层
 var place_kind := "tiles"      # 放置语义跟资产走："tiles"=涂瓦片 / "object"=摆实例（左栏驱动）
@@ -242,16 +243,11 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	map_root.name = "MapRoot"
 	add_child(map_root)
 	_build_tileset()
-	# 格↔像素转换层（正交/等距）：瓦片资产清单就位后才能判投影
-	grid = GridSpaceScript.new(Vector2i(tile_w, tile_h), _map_projection())
-	# B3：可选双基向量斜平面（meta.gridBasis）。非法声明静默不生效——校验页会报具体键。
+	# B3（§7.3）：生效格空间统一走 GridSpace.resolve（投影 → 项目默认 → 正交；
+	# basis/topology 按同一生效预设验证；issues 由校验页报，画布按可用几何跑）。
 	var bmeta: Dictionary = map_data.get("meta", {}) if map_data.get("meta", {}) is Dictionary else {}
-	var bparsed: Dictionary = GridSpaceScript.parse_basis(bmeta)
-	if bool(bparsed.get("ok", false)) and (bparsed.get("u", Vector2.ZERO) as Vector2) != Vector2.ZERO:
-		grid.set_basis(bparsed.get("u", Vector2.ZERO), bparsed.get("v", Vector2.ZERO))
-	# B3：可选格拓扑（meta.gridTopology = triangles）：格号 evens/odds 组合成平行四边形列。
-	var tparsed: Dictionary = GridSpaceScript.parse_topology(bmeta, _map_projection())
-	grid.set_topology(str(tparsed.get("topology", "quads")))
+	var gres: Dictionary = GridSpaceScript.resolve(bmeta, manifest)
+	grid = gres.get("grid") as GridSpace
 	# 旧图冻结生效投影（B1）：此后清单资产增删不再改变这张图的空间口径
 	_freeze_projection()
 	# 背景：整块铺满视口（比地图尺寸大得多），作为地图之外区域的底色
@@ -297,6 +293,7 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	layer_tiles.clear()
 	layer_ents.clear()
 	tri_views.clear()
+	_layer_has_tiles.clear()   # 层栈整体重建：按层下标的瓦片存在缓存全部作废
 	var L := layers_decl()
 	for li in L.size():
 		var ld: Dictionary = L[li] if L[li] is Dictionary else {}
@@ -351,7 +348,9 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	# 可视表达交给 CollisionView，由图层接口统一控制显隐，和地形/装饰/实体一致。
 	collision = TileMapLayer.new()
 	collision.name = "Collision"
-	collision.tile_set = tile_set
+	# R20：碰撞层用编辑器自建内部 TileSet（一个 (4,0) 格的独立源），不再借用户图集——
+	# 坏图集只影响瓦片显示，不影响碰撞录入（set_cell 需要源上确有这个格）。
+	collision.tile_set = _collision_tileset()
 	collision.visible = false
 	collision.z_index = 2
 	map_root.add_child(collision)
@@ -407,11 +406,18 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 		collision.set_cell(ccell, 0, INVISIBLE_CELL)
 		var tname := str(ce.get("type", "solid"))
 		var sname := str(ce.get("shape", ""))
-		if tname != "solid" or sname != "":
+		# R21：磁盘碰撞行的未知键（游戏侧自定义）挂在 raw 上，重涂/重建原样带回。
+		var cextras := {}
+		for ck in ce:
+			if not ["x", "y", "type", "shape"].has(str(ck)):
+				cextras[str(ck)] = ce[ck]
+		if tname != "solid" or sname != "" or not cextras.is_empty():
 			_collision_meta[ccell] = {"type": tname, "shape": sname}
+			if not cextras.is_empty():
+				(_collision_meta[ccell] as Dictionary)["raw"] = cextras
 	# 摆放物：objects[] 统一收场景图片与实体（数据形状一致，仅 entity 带 code）。
 	# 位置 = 浮点格坐标 + anchor 换算；transform/visible/zPolicy 缺省整键省略。
-	var bottom := layer_id(0)
+	# 行→节点转换与撤销差量共用一份（_undo_history_ctrl._node_from_row），这里只补 C09 挂载。
 	var mount_filled := false
 	for e in data.get("objects", []):
 		if not (e is Dictionary):
@@ -419,29 +425,13 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 		var aid := str((e as Dictionary).get("asset", ""))
 		if aid == "":
 			continue
-		var n := make_object(aid)
-		n.code = str((e as Dictionary).get("code", ""))
-		n.props = (e as Dictionary).get("props", {}) if (e as Dictionary).get("props", {}) is Dictionary else {}
-		n.functions = (e as Dictionary).get("functions", []) if (e as Dictionary).get("functions", []) is Array else []
+		var n: EntityNode = _undo_history_ctrl._node_from_row(e)
 		# C09：载图即补齐类型挂载（只在工作副本上，不碰选中事件）；缺的补一条 mounted 行并标脏
 		if n.is_entity():
 			var fill := FunctionDeclsRef.fill_bindings(manifest, aid, n.functions)
 			if bool(fill.get("changed", false)):
 				n.functions = fill.get("functions", [])
 				mount_filled = true
-		n.data_transform = (e as Dictionary).get("transform", {}) if (e as Dictionary).get("transform", {}) is Dictionary else {}
-		n.raw = (e as Dictionary).duplicate(true)
-		n.z_policy = str((e as Dictionary).get("zPolicy", "auto"))
-		n.visible_flag = bool((e as Dictionary).get("visible", true))
-		var lid := str((e as Dictionary).get("layer", bottom))
-		var ei := _layer_index_of(lid)
-		if ei < 0:
-			ei = 0
-		n.layer_id = layer_id(ei)
-		n.refresh_visual()   # props 就位后再算一次尺寸（sizeFields 资产按 props 定大小）
-		n.apply_grid(float((e as Dictionary).get("x", 0)), float((e as Dictionary).get("y", 0)))
-		_place_in_layer(n, ei)
-		_ensure_code(n)
 	# 出生点（数据是格坐标，画布上落在格中心）
 	spawn = Marker2D.new()
 	spawn.name = "Spawn"
@@ -853,10 +843,11 @@ func commit_selection(n: EntityNode, multi: Array = []) -> void:
 ## 进入选点模式：不碰选中/数据；候选高亮画在画布层，宿主负责确认条与提交。
 ## want_types（E2）：声明的 of 白名单；非空时候选只认这些资产类型——与连线把手同一判据，
 ## 不让「画布选…」点到一个字段收不下的目标。
+## accept == "cell"（C4）：候选不是实例而是有限格图的 cell_id（多边形命中）。
 func begin_pick_mode(owner: String, accept: String, hint: String, want_types: Array = []) -> void:
 	pick_mode_active = true
 	pick_mode_owner = owner
-	pick_mode_accept = accept if accept == "any" else "entity"
+	pick_mode_accept = accept if accept in ["any", "cell"] else "entity"
 	pick_mode_code = ""
 	pick_mode_hover = ""
 	pick_mode_hint = hint
@@ -876,6 +867,8 @@ func end_pick_mode() -> void:
 ## 选点模式下光标处的候选实例码（"" = 不可选）。命中口径与普通选择一致；
 ## accept=entity 时跳过场景实例（它们没有实例码，不能进引用字段）。
 func pick_candidate_at(pos: Vector2) -> String:
+	if pick_mode_accept == "cell":
+		return pick_cell_id_at(pos)
 	var n := _entity_at(pos)
 	if n == null or not is_instance_valid(n):
 		return ""
@@ -886,6 +879,42 @@ func pick_candidate_at(pos: Vector2) -> String:
 	if not pick_mode_types.is_empty() and not pick_mode_types.has(n.asset):
 		return ""
 	return n.code
+
+## —— C4：有限格图（meta.cellGraph）接入画布 ——
+## 格图声明的多边形在**根空间**（与出生点同系，不进 v7 整数格）。命中走
+## CellGraph.pick_cell；画布只读不写格图（格图是游戏侧契约）。
+func cell_graph() -> Dictionary:
+	var meta: Dictionary = map_data.get("meta", {}) if map_data is Dictionary else {}
+	return CellGraphScript.graph_of(meta)
+
+## 光标世界坐标 → 命中的 cell_id（无格图/未命中返回 ""）。
+func pick_cell_id_at(world: Vector2) -> String:
+	var g := cell_graph()
+	if g.is_empty():
+		return ""
+	var lp := world
+	if is_map_ready():
+		lp = map_root.get_global_transform().affine_inverse() * world
+	return CellGraphScript.pick_cell(g, lp)
+
+## cell_id → 世界重心（选点确认后把相机对到这一格）。
+func cell_centroid_world(id: String) -> Vector2:
+	var g := cell_graph()
+	if g.is_empty() or id == "":
+		return Vector2.ZERO
+	var c := CellGraphScript.centroid_of(g, id)
+	if not is_map_ready():
+		return c
+	return map_root.get_global_transform() * c
+
+## 把相机对准某个 cell_id（无格图/未声明该格返回 false）。
+func focus_cell_id(id: String) -> bool:
+	if id == "" or cell_graph().is_empty() or CellGraphScript.polygon_of(cell_graph(), id).is_empty():
+		return false
+	cam_pos = cell_centroid_world(id)
+	_update_cam()
+	queue_redraw()
+	return true
 
 ## 框选集合提交：首成员作单选，整组进多选，一次 emit
 func commit_multi(multi: Array) -> void:
@@ -935,7 +964,14 @@ func duplicate_selected_at_offset(srcs: Array, offset: Vector2i) -> bool:
 				pd.get("data", {}) as Dictionary):
 			_hint("复制已取消：新内容 %s 写入失败" % str(pd.get("id", "")))
 			return false
-	_push_undo()
+	# §7.5 阶段二：副本都是实体（计划已发码）→ InstanceKey 差量；有场景图片就退回整图快照。
+	var can_delta := true
+	for n0 in live:
+		if not AssetDecl.is_entity(manifest, (n0 as EntityNode).asset):
+			can_delta = false
+			break
+	if not can_delta:
+		push_undo()
 	var remapped: Array = (plan.get("map_patch", {}) as Dictionary).get("objects", [])
 	var copies: Array = []
 	for i in live.size():
@@ -964,7 +1000,9 @@ func duplicate_selected_at_offset(srcs: Array, offset: Vector2i) -> bool:
 		_place_in_layer(dup, oi)
 		_ensure_code(dup)   # 计划已给码；无码实例（场景图片）在这里也不会产码
 		copies.append(dup)
-	_mark()
+	if can_delta:
+		_undo_history_ctrl.inst_commit_add(copies)
+	_mark_ents()
 	commit_multi(copies)
 	var n_contents: int = (plan.get("pending_contents", []) as Array).size()
 	_hint("已复制 %d 个实例%s（Ctrl+Z 撤销）" % [
@@ -980,13 +1018,38 @@ func _valid_multi() -> Array:
 	return out
 
 
+## R20：碰撞层的内部 TileSet——编辑器自建一个 5×1 切片源（含 (4,0) 隐形格），与用户图集完全独立。
+## 碰撞 TileMapLayer 只是数据载体（visible=false，显示由 CollisionView 自绘）；
+## set_cell(0, INVISIBLE_CELL) 需要源上确有这个格，坏图集不再影响碰撞录入。
+static var _col_ts: TileSet = null
+
+func _collision_tileset() -> TileSet:
+	if _col_ts != null:
+		return _col_ts
+	var img := Image.create(80, 16, false, Image.FORMAT_RGBA8)
+	img.fill(Color.WHITE)
+	var src := TileSetAtlasSource.new()
+	src.texture = ImageTexture.create_from_image(img)
+	src.texture_region_size = Vector2i(16, 16)
+	src.create_tile(Vector2i(4, 0))
+	var ts := TileSet.new()
+	ts.add_source(src, 0)
+	_col_ts = ts
+	return ts
+
 ## 碰撞格统一写入口——涂刷/擦除/矩形/粘贴/自动生成全走这里，类型元数据跟着走。
 ## solid+矩形不记 meta（缺省值零冗余）；其余记 {type, shape}；擦除连 meta 一起清。
+## R21：磁盘碰撞行里的未知键（游戏侧自定义）挂在 raw 上，重涂不清、重建时原样带回。
 func set_collision_cell(c: Vector2i, on: bool, type := "solid", shape := "") -> void:
 	if on:
 		collision.set_cell(c, 0, INVISIBLE_CELL)
-		if type != "solid" or shape != "":
+		var prev = _collision_meta.get(c, null)
+		var keep_raw: Dictionary = (prev as Dictionary).get("raw", {}) \
+			if prev is Dictionary and ((prev as Dictionary).get("raw", null) is Dictionary) else {}
+		if type != "solid" or shape != "" or not keep_raw.is_empty():
 			_collision_meta[c] = {"type": type, "shape": shape}
+			if not keep_raw.is_empty():
+				(_collision_meta[c] as Dictionary)["raw"] = keep_raw
 		else:
 			_collision_meta.erase(c)
 	else:
@@ -1024,6 +1087,7 @@ func _mark(ents_changed := true) -> void:
 func _mark_tiles() -> void:
 	modified_flag = true
 	map_rev += 1
+	_layer_has_tiles.clear()   # 任一层的「有没有瓦片」都可能变：整表失效
 	for tv in tri_views:
 		if tv != null and is_instance_valid(tv):
 			(tv as Node).refresh()
@@ -1037,9 +1101,48 @@ func _mark_collision() -> void:
 		coll_view.refresh()
 	modified.emit()
 
+## 阶段三：只改实例（位置/变换/绑定/显隐/引用值）——瓦片与碰撞数据一个都没动，
+## 镜像视图（碰撞红块全层重建、三角瓦片自绘重建）完全不必碰。
+## 阶段三之前这些路径走 _mark()，一次拖动就把碰撞层整层重画一遍。
+func _mark_ents() -> void:
+	modified_flag = true
+	map_rev += 1
+	_ent_by_id_dirty = true
+	ents_rev += 1
+	modified.emit()
+
+## 阶段三：按层失效——只重画指定层的三角瓦片自绘（其它层数据没动）。
+## li < 0 = 不知道/全量（退回全层重建）。
+func _mark_tiles_layer(li: int) -> void:
+	modified_flag = true
+	map_rev += 1
+	_layer_has_tiles.erase(li)
+	for tv_i in tri_views.size():
+		if li >= 0 and tv_i != li:
+			continue
+		var tv = tri_views[tv_i]
+		if tv != null and is_instance_valid(tv):
+			(tv as Node).refresh()
+	modified.emit()
+
 ## 图层显隐版本号：ents_shown() 的可见集合缓存以它为键之一（层隐藏改变可见性
 ## 但不改实体集，ents_rev 抓不到）。实例眼睛开关走 visible_flag → 调用方照常 _mark()。
 var vis_rev := 0
+
+## —— 阶段三：按层计数缓存 ——
+## 「这层有没有瓦片」在混放提示里每次放置都问一次，之前是全层 used_cells 重扫。
+## 键 = 层下标；瓦片写入后由 _mark_tiles/_mark_tiles_layer 失效对应键。
+var _layer_has_tiles := {}
+
+## 该层是否有瓦片（缓存：一次 used_cells 扫描，之后 O(1)）。
+func layer_has_tiles(li: int) -> bool:
+	if li < 0 or li >= layer_tiles.size():
+		return false
+	if _layer_has_tiles.has(li):
+		return bool(_layer_has_tiles[li])
+	var has: bool = (layer_tiles[li] as TileMapLayer).get_used_cells().size() > 0
+	_layer_has_tiles[li] = has
+	return has
 
 ## 可见实例合集缓存：绘制每帧都取（P01 前是每帧全量遍历 + 逐实例查层）。
 var _shown_cache: Array = []
@@ -1064,11 +1167,11 @@ func is_entity_code_local(code: String) -> bool:
 		return false
 	return _ent_by_code_index().has(code)
 
-# —— 撤销/重做（快照式：每次笔画/盖章/删除/移动前存整图状态） ——
-# 快照以 JSON 字符串保存：比嵌套 Variant 字典省内存，深拷贝天然隔离。
-const UNDO_MAX := 80
-var undo_stack := []
-var redo_stack := []
+# —— 撤销/重做 ——
+# 栈与记录器都在 src/core/undo_history.gd（§7.5 阶段一：画布不再持有可写历史状态）。
+# 这里只留只读快照转发给诊断/UI 用，写入口一律走 _undo_history_ctrl。
+func undo_step_count() -> int:
+	return _undo_history_ctrl.undo_stack.size()
 
 # —— 输入状态 ——
 ## 手势互斥。原来平铺 8 个布尔位（_panning/_drag_paint/_drag_box/_drag_spawn/
@@ -1088,6 +1191,7 @@ func begin_gesture(g: int, button := 0) -> void:
 func end_gesture() -> void:
 	gesture = Gesture.NONE
 	gesture_button = 0
+	_undo_history_ctrl.stroke_end()   # H01：涂/擦手势收尾定格差量条目（非涂擦手势时空操作）
 
 ## 取消未完成的**预览型**手势并恢复原值（E05）：拖动/尺寸/顶点/出生点/区域搬迁
 ## 在活体上写的是候选值，相机平移或保存读取前必须先归位，否则落点/草稿带着半途状态。
@@ -1170,7 +1274,8 @@ var _spawn_origin := Vector2.ZERO
 var _stroke_last_cell := Vector2i.ZERO
 var _stroke_has_last := false
 ## 涂刷笔画的撤销快照推迟到首个真实改动前才压（点击不动 = 零副作用，与出生点拖动同模式）
-## 涂刷撤销快照推迟标记：tool_ops 经 cvs._paint_pushed 读写
+## 笔画撤销覆盖标记：true = 本手势已有撤销覆盖（差量记录开启或已压快照）
+## tool_ops/canvas_input 经 cvs._paint_pushed 读写
 @warning_ignore("unused_private_class_variable")
 var _paint_pushed := false
 
@@ -1296,14 +1401,12 @@ func _cell_rect(a: Vector2, b: Vector2) -> Rect2i:
 	# 区域框选几何归 RegionOps（E03：松手转发曾错发到选区控制器，调用必炸）
 	return _region_ops_ctrl._cell_rect(a, b)
 ## —— 拆到 src/core/undo_history.gd 的委托（调用点保持不变） ——
-func _snapshot() -> String:
-	return _undo_history_ctrl._snapshot()
+## §7.5 阶段一：_snapshot/_restore/_push_undo 三个薄转发**已删除**——撤销状态归控制器，
+## 调用方一律走 canvas.undo()/redo()/push_undo() 或 canvas._undo_history_ctrl 的差量入口。
 
-func _restore(snapshot) -> void:
-	await _undo_history_ctrl._restore(snapshot)
-
-func _push_undo() -> void:
-	_undo_history_ctrl._push_undo()
+## 整图快照入栈入口（全局操作与无码场景图片用）。名字保留给既有调用点，行为只在控制器里。
+func push_undo() -> void:
+	_undo_history_ctrl.push_undo()
 
 func undo() -> bool:
 	return await _undo_history_ctrl.undo()

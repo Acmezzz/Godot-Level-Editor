@@ -107,8 +107,10 @@ static func _is_empty_value(v) -> bool:
 
 ## 主入口。codes 为空 = 源文档里的对象全部参与（配合 include_world 做整图）；
 ## 非空只复制这些实例码（缺码的实例 = 冲突）。清单可缺省（纯数据对拷）。
+## staged_contents（R12）：会话里的暂存内容 {内容ID: data}——未落盘的绑定内容也从这里读，
+## 不再把有效内容报成缺失。
 static func build(src: Dictionary, dst: Dictionary, codes: PackedStringArray = PackedStringArray(),
-		include_world := false) -> Dictionary:
+		include_world := false, staged_contents := {}) -> Dictionary:
 	var sdata := _data(src)
 	var ddata := _data(dst)
 	var m := _manifest(src) if not _manifest(src).is_empty() else _manifest(dst)
@@ -189,6 +191,8 @@ static func build(src: Dictionary, dst: Dictionary, codes: PackedStringArray = P
 						"message": "内容 %s 的功能码 %s 未在清单声明" % [cid, fn_code]})
 				continue
 			var cdata := ContentStore.read(m, fn_id, cid)
+			if cdata.is_empty() and staged_contents.has(cid) and (staged_contents[cid] as Variant) is Dictionary:
+				cdata = staged_contents[cid] as Dictionary   # R12：暂存内容也在复制范围内
 			if cdata.is_empty():
 				conflicts.append({"kind": "content_missing", "id": cid,
 					"message": "内容文件读不到：%s/%s" % [fn_id, cid]})
@@ -207,15 +211,17 @@ static func build(src: Dictionary, dst: Dictionary, codes: PackedStringArray = P
 	var cross_code := ""
 	if src_map != "" and src_map != dst_map:
 		cross_code = _source_key(sdata, src_map)   # 同图粘贴 = ""，组外引用原样保留
+	# R10：源图身份键——配对地图字段的现值与它不符的引用指向第三张图，原样保留。
+	var source_key := _source_key(sdata, src_map)
 	var out_objects: Array = []
 	for r5 in selected:
 		out_objects.append(remap_row(r5 as Dictionary, instance_map, content_map, m,
-			cross_code, src_codes, conflicts, ddata, dst_map))
+			cross_code, src_codes, conflicts, ddata, dst_map, source_key, src_map))
 	# —— 内容副本内部引用：组内实例码/内容跳转按声明重映射（C05） ——
 	for pc in pending:
 		_remap_content((pc as Dictionary).data, m, str((pc as Dictionary).fn_id),
 			instance_map, content_map, cross_code, src_codes, conflicts,
-			ddata, dst_map)
+			ddata, dst_map, source_key, src_map)
 	var patch := {"objects": out_objects}
 	if include_world:
 		# 整图：图片/瓦片/碰撞/出生点原样带过去（实例行已重映射）
@@ -239,7 +245,8 @@ static func build(src: Dictionary, dst: Dictionary, codes: PackedStringArray = P
 ## 配对地图字段规则见文件头；冲突写进 conflicts（调用方据此取消整个计划）。
 static func remap_row(row: Dictionary, instance_map: Dictionary, content_map: Dictionary,
 		manifest: Dictionary, cross_code := "", source_codes: Dictionary = {},
-		conflicts = null, target_data: Dictionary = {}, target_map := "") -> Dictionary:
+		conflicts = null, target_data: Dictionary = {}, target_map := "",
+		source_key := "", source_name := "") -> Dictionary:
 	var out: Dictionary = row.duplicate(true)
 	var old_code := str(out.get("code", ""))
 	if old_code != "" and instance_map.has(old_code):
@@ -248,38 +255,26 @@ static func remap_row(row: Dictionary, instance_map: Dictionary, content_map: Di
 	var props: Dictionary = out.get("props", {}) if out.get("props", {}) is Dictionary else {}
 	var ad := AssetDecl.by_id(manifest, aid) if not manifest.is_empty() else {}
 	var fdecls: Array = ad.get("fields", []) if ad.get("fields", []) is Array else []
-	var pairs_to_fill := {}
+	# C1：record 数组行内 entity_ref 递归重映射（行内兄弟 = 子字段声明；配对字段读行内值）
 	for fd in fdecls:
 		if not (fd is Dictionary):
 			continue
 		var f: Dictionary = fd
-		var fid := str(f.get("id", ""))
-		if str(f.get("type", "")) != "entity_ref":
+		if str(f.get("type", "")) != "array" or str(f.get("of", "")) != "record":
 			continue
-		var v = props.get(fid, null)
-		if _is_empty_value(v):
+		var rows = props.get(str(f.get("id", "")), null)
+		if not (rows is Array):
 			continue
-		var pair := str(f.get("mapField", ""))
-		var vv := str(v)
-		if instance_map.has(vv):
-			props[fid] = instance_map[vv]
-			# 组内：配对地图字段指向副本所在的图（同图复制也是本图当前码）
-			if pair != "":
-				pairs_to_fill[pair] = _target_key(target_data, target_map)
-			continue
-		if cross_code == "":
-			continue
-		if not source_codes.is_empty() and not source_codes.has(vv):
-			continue   # 本来就指向第三张图：引用与地图字段都原样保留
-		# 组外且指向源图：跨图时只能靠配对地图字段把目标钉在源图
-		if pair != "":
-			pairs_to_fill[pair] = cross_code
-		elif conflicts is Array:
-			(conflicts as Array).append({"kind": "ref_unpaired", "id": str(out.get("code", "")),
-				"message": "实例 %s 的字段 %s 指向源图 %s，但该字段不支持地图配对：请改选目标或取消" % [
-					str(out.get("code", "")), fid, cross_code]})
-	for k in pairs_to_fill:
-		props[k] = pairs_to_fill[k]
+		var subs: Array = f.get("fields", []) if f.get("fields", []) is Array else []
+		var ri := 0
+		for r in rows:
+			if r is Dictionary:
+				_remap_entity_ref_fields(r as Dictionary, subs, "%s.字段%s#%d" % [str(out.get("code", "")), str(f.get("id", "")), ri], instance_map, cross_code, source_codes, conflicts, target_data, target_map, source_key, source_name)
+			ri += 1
+	# 顶层 entity_ref（值键 = 字段 id；配对字段读 props）
+	_remap_entity_ref_fields(props, fdecls, str(out.get("code", "")), instance_map, cross_code, source_codes, conflicts, target_data, target_map, source_key, source_name)
+	# C3：port_ref 重映射（props 键 = 字段 id，code 兜底）
+	_remap_port_refs(props, fdecls, instance_map, target_data, target_map, cross_code, source_codes, source_key, source_name)
 	# 功能绑定：内容跳转换成副本；未知键原样保留
 	var fns: Array = out.get("functions", []) if out.get("functions", []) is Array else []
 	for i in fns.size():
@@ -305,11 +300,11 @@ static func _target_key(target_data: Dictionary, target_map: String) -> String:
 static func _remap_content(data: Dictionary, manifest: Dictionary, fn_id: String,
 		instance_map: Dictionary, content_map: Dictionary, cross_code: String,
 		source_codes: Dictionary, conflicts: Array, target_data: Dictionary,
-		target_map: String) -> void:
+		target_map: String, source_key := "", source_name := "") -> void:
 	var decls := _content_decls(manifest, fn_id)
 	var owner := str(data.get("id", ""))
 	_remap_field_map(data.get("fields", null), decls, instance_map, content_map,
-		cross_code, source_codes, conflicts, owner, target_data, target_map)
+		cross_code, source_codes, conflicts, owner, target_data, target_map, source_key, source_name)
 	var steps = data.get("steps", null)
 	for st in (steps as Array) if steps is Array else []:
 		if not (st is Dictionary):
@@ -318,15 +313,21 @@ static func _remap_content(data: Dictionary, manifest: Dictionary, fn_id: String
 		var sd: Dictionary = StepDecls.step_by_code(manifest, step_code)
 		var sdecls: Array = sd.get("fields", []) if sd.get("fields", []) is Array else []
 		_remap_field_map((st as Dictionary).get("fields", null), sdecls, instance_map,
-			content_map, cross_code, source_codes, conflicts, owner, target_data, target_map)
+			content_map, cross_code, source_codes, conflicts, owner, target_data, target_map,
+			source_key, source_name)
 
 ## 一组声明字段 → 值字典的引用重映射（功能字段/条件字段/步骤字段共用）。
 static func _remap_field_map(values, decls: Array, instance_map: Dictionary,
 		content_map: Dictionary, cross_code: String, source_codes: Dictionary,
-		conflicts: Array, owner: String, target_data: Dictionary, target_map: String) -> void:
+		conflicts: Array, owner: String, target_data: Dictionary, target_map: String,
+		source_key := "", source_name := "") -> void:
 	if not (values is Dictionary):
 		return
 	var vals: Dictionary = values
+	# C1：record 数组行先递归（行内键 = 码或 id；引用与配对字段作用域 = 行内值）
+	_remap_record_rows(vals, decls, instance_map, content_map, cross_code, source_codes, conflicts, owner, target_data, target_map, source_key, source_name)
+	# C3：port_ref 重映射（内容字段键 = 码优先，id 兜底）
+	_remap_port_refs(vals, decls, instance_map, target_data, target_map, cross_code, source_codes, source_key, source_name)
 	var pairs_to_fill := {}
 	for fd in decls:
 		if not (fd is Dictionary):
@@ -343,25 +344,38 @@ static func _remap_field_map(values, decls: Array, instance_map: Dictionary,
 			key = str(f.get("id", ""))
 		if not vals.has(key):
 			continue
-		var v = vals[key]
 		var id_map: Dictionary = instance_map if kind == "entity_inst" else content_map
+		# R10：先看配对地图字段的现值——目标不是源图的引用原样保留（跨图身份）。
+		var pair := str(f.get("mapField", ""))
+		if kind == "entity_inst" and pair != "" and (source_key != "" or source_name != ""):
+			var pk := _key_of(decls, pair)
+			var pv := str(vals.get(pk, "")) if pk != "" and vals.has(pk) else ""
+			if pv != "" and pv != source_key and pv != source_name:
+				continue
+		var v = vals[key]
 		var touched := _touches(v, id_map)
 		if touched:
 			vals[key] = _swap(v, id_map)
 		if kind != "entity_inst" or _is_empty_value(v):
 			continue
-		var pair := str(f.get("mapField", ""))
 		var pair_key := _key_of(decls, pair)
 		if touched:
 			# 组内：配对地图字段指向副本所在的图
 			if pair_key != "":
-				pairs_to_fill[pair_key] = _target_key(target_data, target_map)
+				var tk := _target_key(target_data, target_map)
+				if pairs_to_fill.has(pair_key) and str(pairs_to_fill[pair_key]) != tk:
+					conflicts.append({"kind": "ref_pair_conflict", "id": owner,
+						"message": "内容 %s 的配对地图字段被多条引用要求指向不同图：无法一次复制，请取消或拆分" % owner})
+				pairs_to_fill[pair_key] = tk
 			continue
 		if cross_code == "":
 			continue
 		if not source_codes.is_empty() and not _touches(v, source_codes):
 			continue
 		if pair_key != "":
+			if pairs_to_fill.has(pair_key) and str(pairs_to_fill[pair_key]) != cross_code:
+				conflicts.append({"kind": "ref_pair_conflict", "id": owner,
+					"message": "内容 %s 的配对地图字段被多条引用要求指向不同图：无法一次复制，请取消或拆分" % owner})
 			pairs_to_fill[pair_key] = cross_code
 		else:
 			conflicts.append({"kind": "ref_unpaired", "id": owner,
@@ -423,3 +437,116 @@ static func whole_map_document(src: Dictionary, new_name: String, new_code: Stri
 			doc[key] = patch[key]
 	plan["document"] = doc
 	return plan
+## entity_ref 字段引用重映射（remap_row 顶层与 C1 记录行共用）：vals = 值字典（键=字段 id），
+## fdecls = 兄弟声明（配对地图字段按 mapField 在这里找，值读 vals）。冲突 id 用 owner。
+## 原逻辑保持不变（R10 配对优先、组内→指向目标图、组外→钉源图/报冲突）。
+static func _remap_entity_ref_fields(vals: Dictionary, fdecls: Array, owner: String,
+		instance_map: Dictionary, cross_code := "", source_codes: Dictionary = {},
+		conflicts = null, target_data: Dictionary = {}, target_map := "",
+		source_key := "", source_name := "") -> void:
+	var pairs_to_fill := {}
+	for fd in fdecls:
+		if not (fd is Dictionary):
+			continue
+		var f: Dictionary = fd
+		var fid := str(f.get("id", ""))
+		if str(f.get("type", "")) != "entity_ref":
+			continue
+		var vv = vals.get(fid, null)
+		if _is_empty_value(vv):
+			continue
+		var pair := str(f.get("mapField", ""))
+		# R10：先看配对地图字段的现值——目标不是源图的引用原样保留（跨图身份 (图码, 实例码)）。
+		if pair != "" and (source_key != "" or source_name != ""):
+			var pk := _key_of(fdecls, pair)
+			var pv := str(vals.get(pk, "")) if pk != "" and vals.has(pk) else ""
+			if pv != "" and pv != source_key and pv != source_name:
+				continue
+		var vs := str(vv)
+		if instance_map.has(vs):
+			vals[fid] = instance_map[vs]
+			# 组内：配对地图字段指向副本所在的图（同图复制也是本图当前码）
+			if pair != "":
+				var tk := _target_key(target_data, target_map)
+				if pairs_to_fill.has(pair) and str(pairs_to_fill[pair]) != tk:
+					if conflicts is Array:
+						(conflicts as Array).append({"kind": "ref_pair_conflict", "id": owner,
+							"message": "实例 %s 的配对地图字段 %s 被多条引用要求指向不同图：无法一次复制，请取消或拆分选择" % [owner, pair]})
+				pairs_to_fill[pair] = tk
+			continue
+		if cross_code == "":
+			continue
+		if not source_codes.is_empty() and not source_codes.has(vs):
+			continue   # 本来就指向第三张图：引用与地图字段都原样保留
+		# 组外且指向源图：跨图时只能靠配对地图字段把目标钉在源图
+		if pair != "":
+			if pairs_to_fill.has(pair) and str(pairs_to_fill[pair]) != cross_code:
+				if conflicts is Array:
+					(conflicts as Array).append({"kind": "ref_pair_conflict", "id": owner,
+						"message": "实例 %s 的配对地图字段 %s 被多条引用要求指向不同图：无法一次复制，请取消或拆分选择" % [owner, pair]})
+			pairs_to_fill[pair] = cross_code
+		elif conflicts is Array:
+			(conflicts as Array).append({"kind": "ref_unpaired", "id": owner,
+				"message": "实例 %s 的字段 %s 指向源图 %s，但该字段不支持地图配对：请改选目标或取消" % [owner, fid, cross_code]})
+	for k in pairs_to_fill:
+		vals[k] = pairs_to_fill[k]
+
+## C1：内容/步骤 fields 的 record 数组行先逐行递归（行内兄弟 = 子字段声明，键=码或 id）。
+## 行内的引用重映射走 _remap_field_map 同一条入口，配对字段作用域 = 行内值。
+static func _remap_record_rows(values: Dictionary, decls: Array, instance_map: Dictionary,
+		content_map: Dictionary, cross_code: String, source_codes: Dictionary,
+		conflicts: Array, owner: String, target_data: Dictionary, target_map: String,
+		source_key := "", source_name := "") -> void:
+	for fd in decls:
+		if not (fd is Dictionary):
+			continue
+		var f: Dictionary = fd
+		if str(f.get("type", "")) != "array" or str(f.get("of", "")) != "record":
+			continue
+		var key := str(f.get("code", ""))
+		if key == "":
+			key = str(f.get("id", ""))
+		var rows = values.get(key, null)
+		if not (rows is Array):
+			continue
+		var subs: Array = f.get("fields", []) if f.get("fields", []) is Array else []
+		for r in rows:
+			if r is Dictionary:
+				_remap_field_map(r as Dictionary, subs, instance_map, content_map, cross_code,
+					source_codes, conflicts, owner, target_data, target_map, source_key, source_name)
+## C3：port_ref 字段的重映射：值 = {map, inst, port}，只改所属实例/地图分量（端口 ID 不动）。
+## 组内：inst 在 instance_map → 换新码，map 分量在空/指向源图时换目标图键；指向第三图原样保留。
+## 组外指向源图 + 跨图复制 → map 钉源图；组外指向第三图 → 原样保留。
+static func _remap_port_refs(vals: Dictionary, fdecls: Array, instance_map: Dictionary,
+		target_data: Dictionary, target_map: String, cross_code := "", source_codes: Dictionary = {},
+		source_key := "", source_name := "") -> void:
+	var tk := _target_key(target_data, target_map)
+	for fd in fdecls:
+		if not (fd is Dictionary):
+			continue
+		var f: Dictionary = fd
+		if str(f.get("type", "")) != "port_ref":
+			continue
+		var key := str(f.get("id", ""))
+		if key == "" or not vals.has(key):
+			key = str(f.get("code", ""))
+		if key == "" or not vals.has(key):
+			continue
+		var v = vals[key]
+		if not (v is Dictionary):
+			continue
+		var vd: Dictionary = v
+		var inst := str(vd.get("inst", ""))
+		if inst == "":
+			continue
+		if instance_map.has(inst):
+			var mcmp := str(vd.get("map", ""))
+			if mcmp == "" or mcmp == source_key or mcmp == source_name:
+				vd["map"] = tk
+				vd["inst"] = str(instance_map[inst])
+			continue
+		if cross_code == "":
+			continue
+		if not source_codes.is_empty() and not source_codes.has(inst):
+			continue
+		vd["map"] = cross_code

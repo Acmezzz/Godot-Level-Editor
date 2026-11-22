@@ -201,6 +201,32 @@ static func project_projection(m: Dictionary) -> String:
 			return gp
 	return "orthogonal"
 
+## B3（§7.3）：生效格空间解析的统一入口——按「明确的逐图投影 → 项目默认 → 正交」确定预设，
+## tileSize（清单级）/ gridBasis / gridTopology 按同一生效预设验证。
+## 返回 {grid, issues}：grid = 配置好的 GridSpace（非法组合仍给可用几何，非法项以 issue 报出，
+## 正式写入是否阻止由调用方按 issues 决定）；issues = [{path, message}]。
+static func resolve(meta: Dictionary, manifest: Dictionary) -> Dictionary:
+	var issues: Array = []
+	var proj := str(meta.get("gridProjection", ""))
+	if proj == "":
+		proj = project_projection(manifest)
+	if proj != "orthogonal" and proj != "isometric" and proj != "hexagonal":
+		issues.append({"path": "meta.gridProjection", "message": "未知投影 %s，按正交处理" % proj})
+		proj = "orthogonal"
+	var grid := GridSpace.new(tile_size_of(manifest), proj)
+	var bs := parse_basis(meta)
+	if not bool(bs.get("ok", false)):
+		issues.append({"path": "meta.gridBasis", "message": str(bs.get("why", ""))})
+	elif (bs.get("u", Vector2.ZERO) as Vector2) != Vector2.ZERO:
+		if not grid.set_basis(bs.get("u", Vector2.ZERO), bs.get("v", Vector2.ZERO)):
+			issues.append({"path": "meta.gridBasis", "message": "基向量未生效（set_basis 拒绝）"})
+	var tp := parse_topology(meta, proj)
+	if not bool(tp.get("ok", false)):
+		issues.append({"path": "meta.gridTopology", "message": str(tp.get("why", ""))})
+	elif str(tp.get("topology", "quads")) == "triangles":
+		grid.set_topology("triangles")
+	return {"grid": grid, "issues": issues}
+
 ## 格坐标（浮点，含格内分数）→ 像素。正交 = 左上角系；等距 = 菱形顶点系；六边 = 格中心系（仅整数格有格中心语义）。
 func to_px(g: Vector2) -> Vector2:
 	if has_basis:
@@ -296,6 +322,14 @@ func to_continuous_grid(px: Vector2) -> Vector2:
 	var gy := (px.y - h * 0.5) / (h * 0.75)
 	var off := 0.5 if posmod(floori(gy), 2) == 1 else 0.0
 	return Vector2((px.x - w * 0.5) / w - off, gy)
+
+## R22：区域移动/粘贴的格平移原语——经像素几何换算（六边 odd-r 行错位、三角半格列由
+## 拾取统一处理）。正交/等距/斜基与直接相加等价；六边/三角按「格中心 + 像素位移」
+## 回拾取，跨奇偶行/半格列的平移不再破坏几何。delta=(0,0) 恒等。
+func shift_cell(c: Vector2i, delta: Vector2i) -> Vector2i:
+	if delta == Vector2i.ZERO:
+		return c
+	return pick_cell(cell_center_px(c) + (to_px(Vector2(delta)) - to_px(Vector2.ZERO)))
 
 ## cell 的中心像素（正交 = 方形中心；等距 = 菱形中心；六边 = 格中心，与 TileMapLayer.map_to_local 口径一致）
 func cell_center_px(c: Vector2i) -> Vector2:

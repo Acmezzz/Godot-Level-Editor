@@ -1,7 +1,12 @@
 extends RefCounted
-## 演出子面板：从 content_editor.gd 拆出的控制器。宿主 = content_editor 实例（host 引用）。
-## 搬迁约定：函数体逐字节原样迁入；跨边界引用经 host 转发——
-## 同名 const 重声明 + 同名转发属性 + 同名包装方法，搬动文本零改动。
+## 演出子面板（列表视图 + 时间轴视图 + 步骤参数表单）：从 content_editor.gd 拆出的控制器，
+## 宿主 = content_editor（host 引用）。
+##
+## 一条数据、两个视图：列表与时间轴渲染**同一份** `steps` 数组，任何改动都写回同一个工作副本，
+## 不存在「时间轴另存一份」。面板令牌（会话 + 内容键 + 绑定身份 + 结构版本）保证异步回调
+## （拖块结束、步进器失焦）落在发起它的那一次编辑上——令牌不匹配就丢弃，不写错内容。
+## 时间单位（秒/帧/拍）由功能声明的 timebase 与 TimelineClock 解释，数据形态不变；
+## 写盘时机与其他内容字段一致（工作副本 → 正式提交），不做逐键写盘。
 
 const Kit := preload("res://src/ui/ui_kit.gd")
 const Th := preload("res://src/ui/ui_theme.gd")
@@ -10,6 +15,7 @@ const FieldWidgets := preload("res://src/ui/field_widgets.gd")
 const StepDecls := preload("res://src/content/step_decl.gd")
 const StepTimeline := preload("res://src/content/step_timeline.gd")
 const FunctionDecls := preload("res://src/content/function_decl.gd")
+const RefFields := preload("res://src/content/ref_fields.gd")
 const TimelineClock := preload("res://src/content/timeline_clock.gd")
 const AudioDecls := preload("res://src/content/audio_decl.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
@@ -57,6 +63,10 @@ var _steps_fn_id := ""        # 该绑定的功能 id
 ## E1：所属实例码。停靠面板会长时间占屏，换实例后身份校验必须能发现（空绑定尤甚）
 var _steps_ent := ""
 var _steps_cid := ""          # 该绑定的内容 ID（身份校验：绑定换内容 = 数据源失效）
+## R05：工作副本对应磁盘摘要（写回基线；暂存条目 digest 为空 = 不比对）。
+var _steps_base := ""
+## R23：面板令牌的地图身份——切图后旧面板对不上就不再写值。
+var _steps_map := ""
 var _steps_rev := 0           # 结构版本：增删/排序后递增，过期控件回调据此丢弃（D1）
 var _steps_sel := -1          # 当前选中步骤下标；-1 = 无
 ## E1：恢复记忆下标时校验「还是同一步」——期间步骤被增删/换序就回落到无选中，
@@ -104,6 +114,7 @@ func _open_steps_editor(i: int) -> void:
 	_steps_fn_id = fn_id
 	_steps_ent = str(host._selected_ent)
 	_steps_cid = str(f.get("content", ""))
+	_steps_map = _current_map_key()
 	_steps_rev = 0
 	# 时间轴视图对象每次开面板都是新建的：版本缓存必须同样归零，
 	# 否则「0 == 0」会跳过 set_steps，再开一次时间轴页签就是空白。
@@ -493,6 +504,8 @@ func _steps_pick_tl(idx: int) -> void:
 ## （换实例/换内容 = 数据源失效）。空绑定也必须过实例这一关：下标 i 在另一个实例上
 ## 可能照样合法，只比下标会把值写进别人的内容。
 func _steps_identity_ok() -> bool:
+	if _steps_map != "" and _steps_map != _current_map_key():
+		return false   # R23：切图后旧面板令牌失效（同码实例/同类空绑定也判失效）
 	if _steps_ent != "" and str(host._selected_ent) != _steps_ent:
 		return false
 	var fns := _current_fns()
@@ -504,6 +517,16 @@ func _steps_identity_ok() -> bool:
 	# 空绑定：会话内还没预留内容 ID，仍可写（首次实际改动才预留）
 	return _steps_cid == "" or str(f.get("content", "")) == _steps_cid
 
+## R23：当前文档身份键（地图码优先，无码退回图名）——与 content_form._doc_key 同口径。
+func _current_map_key() -> String:
+	var root := str(app.manifest.get("_dir", ""))
+	var code := ""
+	if host._map_ready() and host.app.canvas.map_data.get("meta", null) is Dictionary:
+		code = str((host.app.canvas.map_data["meta"] as Dictionary).get("code", ""))
+	if code == "":
+		code = str(app.cur_map_name)
+	return root.path_join(code)
+
 ## 工作副本读取：已绑定内容读磁盘/暂存；空绑定返回内存空壳（不落盘、不建 ID）。
 func _steps_data() -> Dictionary:
 	if not _steps_identity_ok():
@@ -511,7 +534,10 @@ func _steps_data() -> Dictionary:
 	if _steps_cid == "":
 		return {"id": "", "function": FunctionDecls.fn_code(manifest, _steps_fn_id),
 			"name": _steps_fn_id, "fields": {}, "steps": []}
-	return host.read_content_staged(_steps_fn_id, _steps_cid)
+	# R05：读工作副本时记下磁盘摘要（写回基线）；staged 条目 digest 为空（不比对）。
+	var rd: Dictionary = host.read_content_staged_ex(_steps_fn_id, _steps_cid)
+	_steps_base = str(rd.get("digest", ""))
+	return (rd.get("data", {}) as Dictionary) if rd.get("data", null) is Dictionary else {}
 
 ## 工作副本写回：**首次实际改动时才预留内容 ID**（D1）；内容写盘失败给可见反馈。
 func _steps_write(data: Dictionary) -> void:
@@ -526,7 +552,7 @@ func _steps_write(data: Dictionary) -> void:
 		_steps_cid = cid
 		if str(data.get("id", "")) == "":
 			data["id"] = cid
-	if not host.write_content_staged(_steps_fn_id, _steps_cid, data):
+	if not host.write_content_staged(_steps_fn_id, _steps_cid, data, _steps_base):
 		_ensure_failed()
 
 ## 结构版本递增：增删/排序/复制后旧控件与旧拖拽请求一律失效（D1）。
@@ -752,7 +778,7 @@ func _rebuild_steps_form(arr: Array) -> void:
 	for fd in sfields:
 		if not (fd is Dictionary):
 			continue
-		box.add_child(_step_field_row(fd, sfd))
+		box.add_child(_step_field_row(fd, sfd, sfields))
 	# 该步骤里有声明已删的键：只读保留
 	var known := {}
 	for fd2 in sfields:
@@ -776,14 +802,21 @@ func _rebuild_steps_form(arr: Array) -> void:
 ## 步骤字段行：复用 field_widgets，值取自步骤自己的 fields（键=字段码）。
 ## 回调捕获**步骤下标 + 结构版本 + 绑定身份**（D1）：换序/切页签后迟到的回调按版本丢弃。
 ## E1：同图实例引用给「画布选…」——选点会话写回走同一版本校验入口。
-func _step_field_row(fd: Dictionary, sfd: Dictionary) -> Control:
+func _step_field_row(fd: Dictionary, sfd: Dictionary, siblings: Array = []) -> Control:
 	var key := str(fd.get("code", ""))
 	var val = sfd.get(key, fd.get("default", FieldWidgets.default_for(fd)))
 	var label := str(fd.get("name", str(fd.get("id", ""))))
 	var si := _steps_sel
 	var rev := _steps_rev
-	var built := FieldWidgets.build(fd, val, func(v):
-		_set_step_field(si, key, v, rev), _resolve_options)
+	# R13：配对地图字段的现值注入 _mapKey——步骤字段的实例引用与摆放物同一语义。
+	var d := fd
+	if str(fd.get("mapField", "")) != "" and not siblings.is_empty():
+		var tk := RefFields.paired_map_value(fd, siblings, sfd)
+		if tk != "":
+			d = fd.duplicate(true)
+			d["_mapKey"] = tk
+	var built := FieldWidgets.build(d, val, func(v):
+		_set_step_field(si, key, v, rev), _resolve_options, "code")
 	if built.get("commit") is Callable and (built.commit as Callable).is_valid():
 		_pending_commits.append(built.commit)
 	var row := Kit.field_row(label, built.ctl, 96)

@@ -140,24 +140,25 @@ func _label_of(view: String) -> String:
 		return "资产"
 	return "项目"
 
-## Ctrl+S / 顶栏保存：按当前视图分派保存目标
+## Ctrl+S / 顶栏保存：按当前视图分派，两条路径的保证不同：
+##   内容视图 → commit_document（清单补码 → 暂存内容 → 脏地图，按依赖序 + 提交日志）。
+##   其余（资产视图） → 只写清单文件；不碰内容与地图。
+## 提示文案一律取自返回结果（written/error），失败时明说「未完成、待写项仍在」，
+## 不按「点了保存」猜成功。
 func save_current() -> void:
 	match _view:
 		"content":
-			# 先冲刷连续控件值，再把 staged 的新内容/新绑定写盘（A2 正式提交点）
-			var ok: bool = content_editor.commit()
-			# 加载清单时补发过执行码（D6）：内容文件此刻已带新码，清单也必须落盘，
-			# 否则磁盘上「内容里的码」在清单里查无对应，游戏侧重建映射直接断链。
-			if bool(manifest.get("_codes_issued", false)):
-				save_manifest.call()
-				_set_status("内容已保存；清单补发的新码已一并写回")
-			elif not ok:
-				_set_status("内容保存失败：暂存内容仍在，修好后重试")
+			# 统一提交（清单补码 → 暂存内容 → 脏地图），不再绕过提交日志与地图保存。
+			var res: Dictionary = await app._map_file_ctrl.commit_document("内容页保存")
+			var st := str(res.get("status", ""))
+			if st == "ok":
+				var wr: Array = res.get("written", []) as Array
+				_set_status("内容页提交完成%s" % ("：" + ", ".join(PackedStringArray(wr)) if not wr.is_empty() else "：无待写改动"))
 			else:
-				_set_status("内容已保存（改动即时写盘）")
+				_set_status(" 内容页提交未完成：%s；待写项仍在，修好后重试" % str(res.get("error", "未知原因")))
 		_:
-			save_manifest.call()
-			_set_status("资产清单已保存")
+			var ok: bool = await app._save_manifest_file_async()
+			_set_status("资产清单已保存" if ok else " 清单保存失败/取消：改动未落盘")
 
 ## E1：离开内容视图时记下定位（实例 + 展开的功能），回来按身份恢复。
 ## 调用点：_set_mode 切走前、选点会话开始时。

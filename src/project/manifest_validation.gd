@@ -14,7 +14,7 @@ const ContentStore := preload("res://src/content/content_store.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
 
 ## input 字段类型白名单（与 field_widgets 一一对应）：新增类型必须同时有控件分支。
-const INPUT_TYPES := ["string", "int", "float", "bool", "color", "vector2", "range", "asset_ref", "array"]
+const INPUT_TYPES := ["string", "int", "float", "bool", "color", "vector2", "range", "asset_ref", "array", "port_ref", "viewport_ref"]
 
 ## 资产 id 同时用作地图瓦片条目的第 3 位（磁盘引用）——必须存在且唯一。
 static func validate(data: Dictionary, project_dir := "") -> Array[Dictionary]:
@@ -85,6 +85,8 @@ static func _validate_top_level(data: Dictionary, issues: Array[Dictionary]) -> 
 		var cd := str(data["contentDir"])
 		if cd != "" and (cd.begins_with("/") or cd.begins_with("\\") or cd.contains("..")):
 			_add(issues, "error", "contentDir", "must be a relative path without '..'")
+	_validate_viewports(data, issues)
+	_validate_views(data, issues)
 	if data.has("screenSize"):
 		var ss = data["screenSize"]
 		if not (ss is Array) or (ss as Array).size() != 2 \
@@ -151,6 +153,8 @@ static func _validate_functions(data: Dictionary, issues: Array[Dictionary]) -> 
 				if not INPUT_TYPES.has(typ):
 					_add(issues, "error", "functions.%s.fields.%s" % [str(fid), field_id],
 						"input type must be one of: " + ", ".join(INPUT_TYPES))
+				elif typ == "array":
+					_validate_array_field(str(fid), field_id, fd, issues)
 		# 功能引用的条件：同清单内按 id 引用（同挂载模型），引用未声明的条件 = 错误
 		var conds = d.get("conditions", [])
 		if not (conds is Array):
@@ -509,6 +513,7 @@ static func _validate_assets(data: Dictionary, project_dir: String, issues: Arra
 		if kind != "scene" and kind != "entity":
 			_add(issues, "error", path + ".kind", "must be \"scene\" or \"entity\"")
 			continue
+		_validate_ports(ad, path, issues)
 		if kind == "scene":
 			_validate_scene_asset(ad, path, project_dir, issues)
 		else:
@@ -621,3 +626,146 @@ static func _is_positive_integer(v) -> bool:
 
 static func _add(issues: Array[Dictionary], severity: String, path: String, message: String) -> void:
 	issues.append({"severity": severity, "path": path, "message": message})
+
+## C1（§7.4）：array 字段声明校验。of: record 要求 fields 数组：子字段对象、id 非空唯一、
+## kind=input/choice、type 合法（input 的 type 走 INPUT_TYPES 白名单）；嵌套 record 递归（限深 4）。
+## 已有标量数组（of 缺省或标量/choice）不受影响——只新增 record 形的报错，不改旧声明语义。
+static func _validate_array_field(fid: String, field_id: String, fd: Dictionary,
+		issues: Array[Dictionary], depth := 0) -> void:
+	if depth > 4:
+		_add(issues, "error", "functions.%s.fields.%s" % [fid, field_id],
+			"record nesting too deep (max 4)")
+		return
+	var of := str(fd.get("of", ""))
+	if of != "record":
+		return
+	var fl = fd.get("fields", null)
+	if not (fl is Array) or (fl as Array).is_empty():
+		_add(issues, "error", "functions.%s.fields.%s" % [fid, field_id],
+			"of: record requires a non-empty fields array")
+		return
+	var seen := {}
+	for sub in (fl as Array):
+		if not (sub is Dictionary):
+			_add(issues, "error", "functions.%s.fields.%s" % [fid, field_id],
+				"record fields entries must be objects")
+			continue
+		var sid := str((sub as Dictionary).get("id", ""))
+		if sid == "" or seen.has(sid):
+			_add(issues, "error", "functions.%s.fields.%s" % [fid, field_id],
+				"record sub-field ids must be non-empty and unique (seen: %s)" % sid)
+		seen[sid] = true
+		var skind := str((sub as Dictionary).get("kind", ""))
+		if skind != "input" and skind != "choice":
+			_add(issues, "error", "functions.%s.fields.%s" % [fid, field_id],
+				"record sub-field kind must be input or choice (seen: %s)" % skind)
+		elif skind == "input":
+			var styp := str((sub as Dictionary).get("type", ""))
+			if styp == "array":
+				_validate_array_field(fid, field_id, sub as Dictionary, issues, depth + 1)
+			elif not INPUT_TYPES.has(styp):
+				_add(issues, "error", "functions.%s.fields.%s" % [fid, field_id],
+					"record sub-field type must be one of: " + ", ".join(INPUT_TYPES))
+## C3（§7.4）：assets[].ports 校验。端口 = {id, x, y, type?}：id 非空唯一、x/y 为数字
+## （锚点局部像素）、type 可选字符串。不校验其它未知键（游戏侧自定义原样保留）。
+static func _validate_ports(ad: Dictionary, path: String, issues: Array[Dictionary]) -> void:
+	var ps = ad.get("ports", null)
+	if ps == null:
+		return
+	if not (ps is Array):
+		_add(issues, "error", path + ".ports", "must be an array of {id, x, y, type?}")
+		return
+	var seen := {}
+	for j in (ps as Array).size():
+		var e = (ps as Array)[j]
+		var p := "%s.ports[%d]" % [path, j]
+		if not (e is Dictionary):
+			_add(issues, "error", p, "must be an object")
+			continue
+		var pid := str((e as Dictionary).get("id", ""))
+		if pid == "" or seen.has(pid):
+			_add(issues, "error", p + ".id", "must be non-empty and unique (seen: %s)" % pid)
+		seen[pid] = true
+		for k in ["x", "y"]:
+			var v = (e as Dictionary).get(k, null)
+			if v != null and not (v is int or v is float):
+				_add(issues, "error", p + "." + k, "must be a number (anchor local px)")
+		var pt = (e as Dictionary).get("type", null)
+		if pt != null and not (pt is String):
+			_add(issues, "error", p + ".type", "must be a string")
+
+## C5（§7.4）：具名参考画幅 viewports（[{id, w, h}]）：id 非空唯一、w/h 必填正数。
+static func _validate_viewports(data: Dictionary, issues: Array[Dictionary]) -> void:
+	var vs = data.get("viewports", null)
+	if vs == null:
+		return
+	if not (vs is Array):
+		_add(issues, "error", "viewports", "must be an array of {id, w, h}")
+		return
+	var seen := {}
+	for j in (vs as Array).size():
+		var e = (vs as Array)[j]
+		var p := "viewports[%d]" % j
+		if not (e is Dictionary):
+			_add(issues, "error", p, "must be an object")
+			continue
+		var vid := str((e as Dictionary).get("id", ""))
+		if vid == "" or seen.has(vid):
+			_add(issues, "error", p + ".id", "must be non-empty and unique (seen: %s)" % vid)
+		seen[vid] = true
+		for k in ["w", "h"]:
+			var v = (e as Dictionary).get(k, null)
+			if v == null or not (v is int or v is float):
+				_add(issues, "error", p + "." + k, "must be a positive number")
+			elif v <= 0:
+				_add(issues, "error", p + "." + k, "must be a positive number")
+## C5：只读参考 views（[{view_id, image, pixel_size, hotspots}]）：view_id 非空唯一、
+## image/pixel_size/hotspots 可选但类型必对（image 字符串、pixel_size 正数、hotspots 数组）。
+## hotspot = {rect: [nx, ny, nw, nh] 全部 0..1, target: 对象（目标身份，编辑器不解释）}。
+static func _validate_views(data: Dictionary, issues: Array[Dictionary]) -> void:
+	var vs = data.get("views", null)
+	if vs == null:
+		return
+	if not (vs is Array):
+		_add(issues, "error", "views", "must be an array of {view_id, image, pixel_size, hotspots}")
+		return
+	var seen := {}
+	for j in (vs as Array).size():
+		var e = (vs as Array)[j]
+		var p := "views[%d]" % j
+		if not (e is Dictionary):
+			_add(issues, "error", p, "must be an object")
+			continue
+		var vid := str((e as Dictionary).get("view_id", ""))
+		if vid == "" or seen.has(vid):
+			_add(issues, "error", p + ".view_id", "must be non-empty and unique (seen: %s)" % vid)
+		seen[vid] = true
+		var img = (e as Dictionary).get("image", null)
+		if img != null and not (img is String):
+			_add(issues, "error", p + ".image", "must be a string")
+		var psz = (e as Dictionary).get("pixel_size", null)
+		if psz != null and ((not (psz is int or psz is float)) or psz <= 0):
+			_add(issues, "error", p + ".pixel_size", "must be a positive number")
+		var hs = (e as Dictionary).get("hotspots", null)
+		if hs != null and not (hs is Array):
+			_add(issues, "error", p + ".hotspots", "must be an array")
+			continue
+		for h in (hs as Array) if hs is Array else []:
+			if not (h is Dictionary):
+				_add(issues, "error", p + ".hotspots", "must be objects")
+				continue
+			var r = (h as Dictionary).get("rect", null)
+			var rok: bool = r is Array and (r as Array).size() == 4 and ((r as Array)[0] is int or (r as Array)[0] is float) and ((r as Array)[1] is int or (r as Array)[1] is float) and ((r as Array)[2] is int or (r as Array)[2] is float) and ((r as Array)[3] is int or (r as Array)[3] is float)
+			if not rok:
+				_add(issues, "error", p + ".hotspots", "hotspot rect must be 4 numbers in 0..1")
+				continue
+			var r0: float = float((r as Array)[0])
+			var r1: float = float((r as Array)[1])
+			var r2: float = float((r as Array)[2])
+			var r3: float = float((r as Array)[3])
+			if r0 < 0.0 or r0 > 1.0 or r1 < 0.0 or r1 > 1.0 or r2 < 0.0 or r2 > 1.0 or r3 < 0.0 or r3 > 1.0:
+				_add(issues, "error", p + ".hotspots", "hotspot rect must be normalized 0..1")
+			var tgt = (h as Dictionary).get("target", null)
+			if tgt != null and not (tgt is Dictionary):
+				_add(issues, "error", p + ".hotspots", "hotspot target must be an object")
+	return

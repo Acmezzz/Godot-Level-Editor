@@ -681,9 +681,15 @@ func _toggle_sel_visible(v: bool) -> void:
 		app._set_status(" 实例所在图层已锁定：解锁后再切换显隐")
 		_sel_eye.set_pressed_no_signal((n as EntityNode).visible_flag)   # 静默回填，别连发信号
 		return
-	app.canvas._push_undo()
+	# §7.5 阶段二：显隐旗标是实例数据 → InstanceKey 差量（只记这一条）
+	var pre: Dictionary = app.canvas._undo_history_ctrl.inst_rows([n])
+	var via_delta := bool(pre.get("ok", false))
+	if not via_delta:
+		app.canvas.push_undo()
 	n.visible_flag = v
 	n.refresh_visual()
+	if via_delta:
+		app.canvas._undo_history_ctrl.inst_commit(pre.get("rows", {}))
 	app.canvas._mark()
 
 ## 图层面板已收进层下拉，保留下钻点供既有调用方（editor_state._sync_ui）使用。

@@ -31,6 +31,16 @@ func test_tri_uv_odd_half() -> void:
 		ok(uv.y >= -0.0001 and uv.y <= 1.0 + 0.0001, "奇半格 v 在整图内: %s" % str(uv))
 	ok(uvs[0] != uvs[1] and uvs[1] != uvs[2] and uvs[0] != uvs[2], "三点 UV 两两不同")
 
+## R18：alt 变换位参与 UV——翻转/转置在切片内生效，UV 仍不越出切片
+func test_tri_uv_alt() -> void:
+	var poly := PackedVector2Array([Vector2(0, 0), Vector2(16, 0), Vector2(0, 16)])
+	var uvs := func(alt: int) -> PackedVector2Array:
+		return TriTileViewScript.tri_uvs(poly, Vector2i.ZERO, Vector2i(16, 16), Vector2(16, 16), alt)
+	eq(uvs.call(1)[0], Vector2(1.0, 0.0), "水平翻转：包围盒左上取切片右上")
+	eq(uvs.call(2)[1], Vector2(1.0, 1.0), "垂直翻转：包围盒右上取切片右下")
+	eq(uvs.call(4)[1], Vector2(0.0, 1.0), "转置：包围盒右上取切片左下")
+	eq(uvs.call(5)[1], Vector2(1.0, 1.0), "90°：包围盒右上取切片右下")
+
 ## 退化输入不炸：空多边形/零尺寸纹理都返回空数组（调用方据此跳过绘制）
 func test_tri_uv_degenerate() -> void:
 	eq(TriTileViewScript.tri_uvs(PackedVector2Array(), Vector2i.ZERO, Vector2i(16, 16), Vector2(16, 16)).size(),

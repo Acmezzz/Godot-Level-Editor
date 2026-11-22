@@ -90,3 +90,21 @@ func test_render_direct_matches_geometry() -> void:
 	var img: Image = MapExport._render(d, _m(), geo, 16)
 	var sz: Vector2i = geo.size
 	eq(img.get_size(), sz, "直渲染尺寸 = 预算几何尺寸")
+
+## B3/§7.3：层 offset/scale 参与导出边界——层把内容推到根边界外时，边界必须跟着扩，
+## 否则导出的概览会把那部分裁掉。
+func test_layer_transform_expands_bounds() -> void:
+	var d := _map(4, 4)
+	d["meta"]["layers"] = [{"id": "L1", "offset": [32, 0], "scale": 1.0}]
+	var base := MapExport.output_geometry(_map(4, 4), _m(), 4)
+	var xf := MapExport.output_geometry(d, _m(), 4)
+	eq((base.bounds as Rect2).size, Vector2(64, 64), "根边界 4×4 @16 = 64×64（无层变换）")
+	eq((xf.bounds as Rect2).position, Vector2.ZERO, "合并后仍从 0 起")
+	eq((xf.bounds as Rect2).size, Vector2(96, 64), "层右移 32 = 边界宽 96")
+
+## 层缩放同理：2× 层让内容占两倍面积，边界必须覆盖
+func test_layer_scale_expands_bounds() -> void:
+	var d := _map(4, 4)
+	d["meta"]["layers"] = [{"id": "L1", "scale": 2.0}]
+	var xf := MapExport.output_geometry(d, _m(), 4)
+	eq((xf.bounds as Rect2).size, Vector2(128, 128), "2× 层 = 边界 128×128")

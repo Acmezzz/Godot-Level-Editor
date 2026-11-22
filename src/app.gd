@@ -352,6 +352,19 @@ func _shortcut_input(event: InputEvent) -> void:
 		if ctrl and k == KEY_S:
 			project_shell.save_current()
 			get_viewport().set_input_as_handled()
+			return
+		# 内容视图的 Ctrl+Z 只撤内容字段差量（ContentKey）：地图条目一条都不动。
+		# 输入框里让位给控件自己的文本撤销；栈顶不是内容改动就放行（不吞键）。
+		if ctrl and k == KEY_Z and not (focus is LineEdit or focus is TextEdit) \
+				and project_shell._view == "content" and canvas != null:
+			match canvas._undo_history_ctrl.undo_content_only():
+				"done":
+					_set_status(" 已撤销内容字段改动")
+				"refused":
+					_set_status(" 该内容文件已被外部修改：未回滚（请重开后再改）")
+				_:
+					return
+			get_viewport().set_input_as_handled()
 		return
 	# 编辑器 UI 未就绪（启动早期 / 切项目重建窗口期）：canvas 为 null，
 	# 下方所有分支都默认画布存在——统一拦住，不响应任何快捷键。
@@ -368,16 +381,28 @@ func _shortcut_input(event: InputEvent) -> void:
 	if ctrl and k == KEY_Z:
 		# Ctrl+Shift+Z = 重做别名（与 Ctrl+Y 等效，肌肉记忆兼容）
 		if (event as InputEventKey).shift_pressed:
-			_set_status(" 已重做" if await canvas.redo() else " 没有可重做的操作")
+			if await canvas.redo():
+				_set_status(" 已重做")
+			elif canvas._undo_history_ctrl.refused_external:
+				_set_status(" 该内容文件已被外部修改：未重做（请重开后再改）")
+			else:
+				_set_status(" 没有可重做的操作")
 		else:
 			if await canvas.undo():
-				_set_status(" 已撤销（剩余 %d 步）" % canvas.undo_stack.size())
+				_set_status(" 已撤销（剩余 %d 步）" % canvas.undo_step_count())
+			elif canvas._undo_history_ctrl.refused_external:
+				_set_status(" 该内容文件已被外部修改：未撤销（请重开后再改）")
 			else:
 				_set_status(" 没有可撤销的操作")
 		get_viewport().set_input_as_handled()
 		return
 	if ctrl and k == KEY_Y:
-		_set_status(" 已重做" if await canvas.redo() else " 没有可重做的操作")
+		if await canvas.redo():
+			_set_status(" 已重做")
+		elif canvas._undo_history_ctrl.refused_external:
+			_set_status(" 该内容文件已被外部修改：未重做（请重开后再改）")
+		else:
+			_set_status(" 没有可重做的操作")
 		get_viewport().set_input_as_handled()
 		return
 	# 复制 / 剪切 / 粘贴（按 place_kind 分发实体或区域；键盘入口在 app 级——画布收不到键盘）
@@ -415,13 +440,20 @@ func _shortcut_input(event: InputEvent) -> void:
 			var step := 4 if (event as InputEventKey).shift_pressed else 1
 			var delta := Vector2i(-step, 0) if k == KEY_LEFT else (Vector2i(step, 0) if k == KEY_RIGHT else (Vector2i(0, -step) if k == KEY_UP else Vector2i(0, step)))
 			var now := Time.get_ticks_msec()
-			if now - _nudge_undo_msec > 1000:
-				canvas._push_undo()
+			# 1 秒窗口内连续微调合成一个撤销步：差量条目按同一批实例码合并（merge=true）；
+			# 窗口首个按键才取 before，其余沿用起点状态。
+			var fresh := now - _nudge_undo_msec > 1000
 			_nudge_undo_msec = now
+			var pre: Dictionary = canvas._undo_history_ctrl.inst_rows(sel)
+			var via_delta := bool(pre.get("ok", false))
+			if not via_delta and fresh:
+				canvas.push_undo()
 			for s in sel:
 				var n := s as EntityNode
 				if n and is_instance_valid(n):
 					n.position += canvas.grid_dir_px(delta.x, delta.y)
+			if via_delta:
+				canvas._undo_history_ctrl.inst_commit(pre.get("rows", {}), not fresh)
 			canvas._mark()
 			get_viewport().set_input_as_handled()
 			return
@@ -717,7 +749,10 @@ func _end_canvas_pick(confirm: bool) -> void:
 	var back_view := str(sess.get("prev_view", ""))
 	# 确认时把相机对到目标：切回项目页看表单前，用户能先看到自己刚指的那一格
 	if confirm and code != "":
-		canvas.focus_entity_code(code)
+		if str(canvas.pick_mode_accept) == "cell":
+			canvas.focus_cell_id(code)
+		else:
+			canvas.focus_entity_code(code)
 	# 回原视图但不重建表单（静默恢复）：控件与焦点都还在，只有内容视图的
 	# 引用值真的变了才由宿主自己重建对应区块。
 	if back_view != "" and back_view != "map" and project_shell != null:
@@ -773,9 +808,15 @@ func _save_manifest_file_async() -> bool:
 	# C-20：清单同样做外部改动预警——手改细配置（palette 等）被编辑器覆盖是真实损失
 	var mt0 := int(manifest.get("_manifest_mtime", 0))
 	if mt0 > 0 and FileAccess.file_exists(p) and FileAccess.get_modified_time(p) != mt0:
+		# R05：确认绑定到「此刻这份内容」——先记下确认时的 mtime，确认后再复验一次，
+		# 确认期间又被外部改写就不覆盖（避免「确认的是 A、覆盖的是 B」）。
+		var seen_mt := FileAccess.get_modified_time(p)
 		if not await _confirm_action("外部改动",
 			"清单文件在编辑器打开后被外部修改过。\n覆盖保存将丢失外部改动。", "覆盖保存"):
 			_set_status(" 已取消保存（保留磁盘上的外部改动）")
+			return false
+		if FileAccess.get_modified_time(p) != seen_mt:
+			_set_status(" 清单保存中止：确认期间文件又被外部改写，请重新检查后再保存")
 			return false
 	# 清单写盘走 MapStore 原子写单入口
 	if not MapStore.write_text(p, txt):

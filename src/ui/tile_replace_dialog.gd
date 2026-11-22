@@ -137,7 +137,7 @@ func _apply(plan: Dictionary, dst_asset: String) -> void:
 	if src < 0:
 		app._set_status(" 替换失败：目标资产没有可用图集（图集文件缺失？）")
 		return
-	app.canvas._push_undo()
+	app.canvas.push_undo()
 	var n := 0
 	var missing := 0
 	for it in cells:

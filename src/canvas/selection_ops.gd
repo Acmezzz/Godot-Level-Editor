@@ -6,7 +6,6 @@ extends RefCounted
 
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
 const ClonePlan := preload("res://src/content/clone_plan.gd")
-const ContentStore := preload("res://src/content/content_store.gd")
 
 var cvs   # 宿主引用
 
@@ -194,11 +193,15 @@ func _finish_entity_drag() -> void:
 			if is_instance_valid(targets[i]):
 				(targets[i] as EntityNode).position = origins[i]
 		return
-	# 恢复原位再「撤销 + 吸附放置」，一次拖拽 = 一个撤销步
+	# 恢复原位再「记录 + 吸附放置」，一次拖拽 = 一个撤销步
 	for i in targets.size():
 		if is_instance_valid(targets[i]):
 			(targets[i] as EntityNode).position = origins[i]
-	cvs._push_undo()
+	# §7.5 阶段二：位置改动走 InstanceKey 差量（只记这几个实例）。
+	var pre: Dictionary = cvs._undo_history_ctrl.inst_rows(targets)
+	var via_delta := bool(pre.get("ok", false))
+	if not via_delta:
+		cvs.push_undo()   # 场景图片没有实例码：退回整图快照
 	for i in targets.size():
 		var n := targets[i] as EntityNode
 		if not is_instance_valid(n):
@@ -207,7 +210,9 @@ func _finish_entity_drag() -> void:
 		var li: int = cvs._layer_index_of(n.layer_id)
 		n.position = cvs.snap_point(preview[i], n) if li < 0 \
 			else cvs.snap_point_local(li, preview[i], n)
-	cvs._mark()
+	if via_delta:
+		cvs._undo_history_ctrl.inst_commit(pre.get("rows", {}))
+	cvs._mark_ents()
 	cvs.queue_redraw()
 	cvs._hint("已移动 %d 个实例（Ctrl+Z 撤销）" % targets.size())
 
@@ -288,15 +293,20 @@ func _finish_entity_resize() -> void:
 	var orig: Dictionary = cvs._resize_orig
 	var fw := int(n.props.get(str(orig.wf), 1))
 	var fh := int(n.props.get(str(orig.hf), 1))
-	# 恢复原值 → 压撤销 → 重写终值（与 _finish_entity_drag 同一纪律）
+	# 恢复原值 → 记录差量 → 重写终值（与 _finish_entity_drag 同一纪律）
 	n.props[str(orig.wf)] = int(orig.w)
 	n.props[str(orig.hf)] = int(orig.h)
 	n.refresh_visual()
-	cvs._push_undo()
+	var pre: Dictionary = cvs._undo_history_ctrl.inst_rows([n])
+	var via_delta := bool(pre.get("ok", false))
+	if not via_delta:
+		cvs.push_undo()
 	n.props[str(orig.wf)] = fw
 	n.props[str(orig.hf)] = fh
 	n.refresh_visual()
-	cvs._mark()
+	if via_delta:
+		cvs._undo_history_ctrl.inst_commit(pre.get("rows", {}))
+	cvs._mark_ents()
 	cvs._hint("实例尺寸 %dx%d（Ctrl+Z 撤销）" % [fw, fh])
 	cvs.queue_redraw()
 
@@ -509,10 +519,15 @@ func _finish_vertex_drag() -> void:
 	var fp: Vector2 = fin[idx] if idx < fin.size() else Vector2.ZERO
 	(n as EntityNode).points_write(orig)
 	(n as EntityNode).refresh_visual()
-	cvs._push_undo()
+	var pre: Dictionary = cvs._undo_history_ctrl.inst_rows([n])
+	var via_delta := bool(pre.get("ok", false))
+	if not via_delta:
+		cvs.push_undo()
 	(n as EntityNode).points_write(fin)
 	(n as EntityNode).refresh_visual()
-	cvs._mark()
+	if via_delta:
+		cvs._undo_history_ctrl.inst_commit(pre.get("rows", {}))
+	cvs._mark_ents()
 	cvs._hint("顶点已移动（Ctrl+Z 撤销）")
 	cvs.queue_redraw()
 
@@ -584,10 +599,15 @@ func _delete_vertex_at(pos: Vector2) -> bool:
 	npts.remove_at(idx)
 	(n as EntityNode).points_write(orig)
 	(n as EntityNode).refresh_visual()
-	cvs._push_undo()
+	var pre: Dictionary = cvs._undo_history_ctrl.inst_rows([n])
+	var via_delta := bool(pre.get("ok", false))
+	if not via_delta:
+		cvs.push_undo()
 	(n as EntityNode).points_write(npts)
 	(n as EntityNode).refresh_visual()
-	cvs._mark()
+	if via_delta:
+		cvs._undo_history_ctrl.inst_commit(pre.get("rows", {}))
+	cvs._mark_ents()
 	cvs._hint("已删顶点（Ctrl+Z 撤销）")
 	cvs.queue_redraw()
 	return true
@@ -600,12 +620,17 @@ func _vertex_commit(orig: Array, idx: int, lp: Vector2, hint: String) -> bool:
 	var en := n as EntityNode
 	en.points_write(orig)
 	en.refresh_visual()
-	cvs._push_undo()
+	var pre: Dictionary = cvs._undo_history_ctrl.inst_rows([en])
+	var via_delta := bool(pre.get("ok", false))
+	if not via_delta:
+		cvs.push_undo()
 	var npts: Array = orig.duplicate()
 	npts.insert(idx, lp)
 	en.points_write(npts)
 	en.refresh_visual()
-	cvs._mark()
+	if via_delta:
+		cvs._undo_history_ctrl.inst_commit(pre.get("rows", {}))
+	cvs._mark_ents()
 	cvs._hint(hint + "（Ctrl+Z 撤销）")
 	cvs.queue_redraw()
 	return true
@@ -671,16 +696,21 @@ func cut_selection() -> void:
 		return
 	# 复用复制逻辑生成剪贴板（它负责算中心与相对偏移）
 	copy_selection()
-	cvs._push_undo()
+	var pre: Dictionary = cvs._undo_history_ctrl.inst_rows(sel)
+	var via_delta := bool(pre.get("ok", false))
+	if not via_delta:
+		cvs.push_undo()
 	var n := 0
 	for s in sel:
 		if is_instance_valid(s):
 			(s.get_parent() as Node2D).remove_child(s)
 			s.free()
 			n += 1
+	if via_delta:
+		cvs._undo_history_ctrl.inst_commit(pre.get("rows", {}))
 	cvs.selected_multi.clear()
 	cvs.selected_entity = null
-	cvs._mark()
+	cvs._mark_ents()
 	cvs.queue_redraw()
 	cvs._hint("已剪切 %d 个实例（Ctrl+V 粘贴，Ctrl+Z 撤销）" % n)
 
@@ -707,21 +737,47 @@ func paste_at(pos: Vector2) -> void:
 			"props": (t.get("props", {}) as Dictionary).duplicate(true),
 			"functions": (t.get("functions", []) as Array).duplicate(true),
 		})
+	# R12：暂存内容一并复制——未落盘的新内容从会话暂存里读，不再把有效内容报成缺失。
+	var staged := {}
+	if cvs.app_host != null and cvs.app_host.project_shell != null \
+			and cvs.app_host.project_shell.content_editor != null:
+		for row in cvs.app_host.project_shell.content_editor.staged_rows_current_doc():
+			staged[str(row.cid)] = row.data
 	var plan: Dictionary = ClonePlan.build(
 		{"data": {"objects": rows}, "manifest": cvs.manifest},
-		{"data": cvs.map_data, "manifest": cvs.manifest})
+		{"data": cvs.map_data, "manifest": cvs.manifest},
+		PackedStringArray(), false, staged)
 	if str(plan.get("status", "")) != "ok":
 		cvs._hint("粘贴已取消：" + ClonePlan.conflicts_text(plan.get("conflicts", [])))
 		return
-	# 内容先落盘（A2 顺序：先内容后地图）；写失败不动画布
+	# R12：粘贴内容改暂存——不再当场写盘，新内容随正式提交（Ctrl+S/试玩）落盘；
+	# 撤销恢复地图后绑定消失，暂存复核就地丢弃，不再留下孤儿内容文件。
+	# ent 取拥有该内容的副本实例码（R02 复核用）；行与剪贴板条目一一对应。
+	var remapped: Array = (plan.get("map_patch", {}) as Dictionary).get("objects", [])
+	var ce = null
+	if cvs.app_host != null and cvs.app_host.project_shell != null \
+			and cvs.app_host.project_shell.content_editor != null:
+		ce = cvs.app_host.project_shell.content_editor
 	for pc in (plan.get("pending_contents", []) as Array):
 		var pd: Dictionary = pc
-		if not ContentStore.write(cvs.manifest, str(pd.get("fn_id", "")), str(pd.get("id", "")),
-				pd.get("data", {}) as Dictionary):
-			cvs._hint("粘贴已取消：新内容 %s 写入失败" % str(pd.get("id", "")))
-			return
-	var remapped: Array = (plan.get("map_patch", {}) as Dictionary).get("objects", [])
-	cvs._push_undo()
+		var owner := ""
+		for row in remapped:
+			var rf: Dictionary = row
+			for f in (rf.get("functions", []) as Array):
+				if f is Dictionary and str((f as Dictionary).get("content", "")) == str(pd.get("id", "")):
+					owner = str(rf.get("code", ""))
+		if ce != null:
+			ce.stage_clone(str(pd.get("fn_id", "")), str(pd.get("id", "")),
+				pd.get("data", {}) as Dictionary, owner)
+	# §7.5 阶段二：粘贴是纯新增——先建节点再按 InstanceKey 记一条差量；
+	# 有场景图片（无实例码）就退回整图快照（必须在动手前压）。
+	var can_delta := true
+	for t3 in cvs._clipboard:
+		if not AssetDecl.is_entity(cvs.manifest, str((t3 as Dictionary).get("asset", ""))):
+			can_delta = false
+			break
+	if not can_delta:
+		cvs.push_undo()
 	# 建副本：数据取自重映射后的行；位置/变换/显隐取剪贴板原模板
 	var built: Array = []
 	for i in cvs._clipboard.size():
@@ -758,11 +814,16 @@ func paste_at(pos: Vector2) -> void:
 		# 吸附：多选粘贴的相对偏移（center 是均值，可为半格）会骑在格线上，
 		# 保存再载入整体漂半格。吸附到格（或吸附关闭时保留原像素位）。
 		n2.position = cvs.snap_point(n2.position, n2)
-	cvs._mark()
+	if can_delta:
+		var added: Array = []
+		for b2 in built:
+			added.append(b2.node)
+		cvs._undo_history_ctrl.inst_commit_add(added)
+	cvs._mark_ents()
 	cvs.queue_redraw()
 	var n_contents: int = (plan.get("pending_contents", []) as Array).size()
 	cvs._hint("已粘贴 %d 个实例%s（Ctrl+Z 撤销）" % [
-		cvs._clipboard.size(), ("，复制内容 %d 条" % n_contents) if n_contents > 0 else ""])
+		cvs._clipboard.size(), ("，复制内容 %d 条（随保存落盘）" % n_contents) if n_contents > 0 else ""])
 
 
 ## 选区是否触碰锁定层（按**层码**判定，E04：重排后下标变了也挡得住）；
@@ -789,14 +850,20 @@ func delete_selection() -> void:
 	if _selection_touches_locked(victims):
 		cvs._hint("选中实例所在图层已锁定：解锁后再删除")
 		return
-	cvs._push_undo()
+	# §7.5 阶段二：删除走 InstanceKey 差量；只要有一个场景图片（无码）就整体退回快照。
+	var pre: Dictionary = cvs._undo_history_ctrl.inst_rows(victims)
+	var via_delta := bool(pre.get("ok", false))
+	if not via_delta:
+		cvs.push_undo()
 	for v in victims:
 		if is_instance_valid(v):
 			(v.get_parent() as Node2D).remove_child(v)
 			v.free()
+	if via_delta:
+		cvs._undo_history_ctrl.inst_commit(pre.get("rows", {}))
 	cvs.selected_multi.clear()
 	cvs.selected_entity = null
-	cvs._mark()
+	cvs._mark_ents()
 	cvs.queue_redraw()
 
 
@@ -813,10 +880,15 @@ func flip_selected() -> bool:
 	if _selection_touches_locked(targets):
 		cvs._hint("实例所在图层已锁定：解锁后再翻转")
 		return false
-	cvs._push_undo()
+	var pre: Dictionary = cvs._undo_history_ctrl.inst_rows(targets)
+	var via_delta := bool(pre.get("ok", false))
+	if not via_delta:
+		cvs.push_undo()
 	for s in targets:
 		(s as EntityNode).toggle_flip_h()
-	cvs._mark()
+	if via_delta:
+		cvs._undo_history_ctrl.inst_commit(pre.get("rows", {}))
+	cvs._mark_ents()
 	cvs.queue_redraw()
 	return true
 
@@ -833,10 +905,15 @@ func rotate_selected_90() -> bool:
 	if _selection_touches_locked(targets):
 		cvs._hint("实例所在图层已锁定：解锁后再旋转")
 		return false
-	cvs._push_undo()
+	var pre: Dictionary = cvs._undo_history_ctrl.inst_rows(targets)
+	var via_delta := bool(pre.get("ok", false))
+	if not via_delta:
+		cvs.push_undo()
 	for s in targets:
 		(s as EntityNode).rotate_90()
-	cvs._mark()
+	if via_delta:
+		cvs._undo_history_ctrl.inst_commit(pre.get("rows", {}))
+	cvs._mark_ents()
 	cvs.queue_redraw()
 	return true
 
@@ -852,10 +929,15 @@ func scale_selected(d: float) -> bool:
 	if _selection_touches_locked(targets):
 		cvs._hint("实例所在图层已锁定：解锁后再缩放")
 		return false
-	cvs._push_undo()
+	var pre: Dictionary = cvs._undo_history_ctrl.inst_rows(targets)
+	var via_delta := bool(pre.get("ok", false))
+	if not via_delta:
+		cvs.push_undo()
 	for s in targets:
 		(s as EntityNode).scale_step(d)
-	cvs._mark()
+	if via_delta:
+		cvs._undo_history_ctrl.inst_commit(pre.get("rows", {}))
+	cvs._mark_ents()
 	cvs.queue_redraw()
 	return true
 

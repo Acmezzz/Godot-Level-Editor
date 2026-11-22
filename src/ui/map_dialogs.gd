@@ -120,7 +120,7 @@ func apply_map_size(nw: int, nh: int, pop: PopupPanel, proj := "") -> void:
 			app._set_status("已取消调整尺寸")
 			return
 	# 一笔可撤销快照（D17）：先在改尺寸前入栈，撤销即恢复原尺寸与边缘数据
-	app.canvas._push_undo()
+	app.canvas.push_undo()
 	_crop_data(d, nw, nh)
 	d["meta"]["w"] = nw
 	d["meta"]["h"] = nh

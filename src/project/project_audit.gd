@@ -2,6 +2,17 @@ extends RefCounted
 ## 全项目一致性审计：清单校验 + 地图校验 + 引用悬空 + 内容文件（码漂移/损坏 JSON/孤立内容），
 ## 统一产出 {kind, severity, path, message, map, jump} 条目。
 ## 纯字典/文件扫描，不碰场景树——UI（问题抽屉/自检入口）只是它的呈现层。
+##
+## 与编辑期解析的**口径统一**（否则会出现「界面能选、自检说悬空」）：地图键一律走
+## ReferenceIndex.resolve_map，撞码/缺键都不猜；引用字段一律先过 RefFields.describe 的
+## is_ref 判据，不按字符串形状猜。
+## mapField 配对的可验证约束：
+##   - 配对字段未填 = 目标就是本图（合法，不报）；填了别的图 = 跨图引用（不报，只校验目标存在）。
+##   - 配对字段值既不是地图码也不是图名 = 悬空（报警告，路径指到配对字段本身）。
+##   - 一个 entity_ref 指向的实例在目标图里查不到 = 悬空；目标图读不出来时**只记「未扫描」，
+##     不判悬空**（读不到 ≠ 不存在，破坏性清理据 this 判断是否允许动手）。
+## 批量入边扫描（content_edges_bulk）走浏览缓存读盘一次，为内容库列表与详情共用；
+## 破坏性操作（如清空悬空）必须走 inbound_content / read_all_fresh，不吃旧缓存。
 
 const ManifestValidation := preload("res://src/project/manifest_validation.gd")
 const MapStore := preload("res://src/map/map_store.gd")
@@ -12,6 +23,7 @@ const ConditionDecls := preload("res://src/content/condition_decl.gd")
 const StepDecls := preload("res://src/content/step_decl.gd")
 const TriggerDecls := preload("res://src/content/trigger_decl.gd")
 const RefFields := preload("res://src/content/ref_fields.gd")
+const ReferenceIndex := preload("res://src/project/reference_index.gd")
 
 ## 审计全项目。manifest = 编辑器清单（含 _dir/_maps_dir）。
 ## 返回 [{kind, severity, path, message, map, jump}]；
@@ -305,6 +317,10 @@ static func _binding_checks(data: Dictionary, manifest: Dictionary, map_name: St
 ## 双重复验：① 现在重跑引用检查，该实例该字段仍是同一条悬空引用（目标域可能已补好）；
 ## ② 字段当前值仍等于报告里的预期旧值（期间可能已改指向）。
 ## 两项都过才擦键。返回 {changed, erased, skipped}，由调用方决定是否写盘与计数。
+##
+## §7.2 配对地图字段：擦掉一个引用字段后，如果它是某个 `mapField` 的消费方，
+## **只在没有别的引用字段还在用它时**才把配对地图字段一起擦掉；还有用途就保留
+## （否则会把仍然有效的图目标一起删掉，其它引用随之失义）。
 static func apply_ref_fixes(manifest: Dictionary, map_name: String, fix_list: Array,
 		d: Dictionary) -> Dictionary:
 	var fresh := {}
@@ -338,19 +354,72 @@ static func apply_ref_fixes(manifest: Dictionary, map_name: String, fix_list: Ar
 				skipped += 1
 				continue
 			props.erase(prop)
+			# 配对地图字段只在没人再用时才清（保留仍有用途的图目标）
+			var pair := _pair_field_of(manifest, str(od.get("asset", "")), prop)
+			if pair != "" and not _pair_still_used(manifest, str(od.get("asset", "")), pair, props):
+				props.erase(pair)
 			od["props"] = props
 			changed = true
 			erased += 1
 	return {"changed": changed, "erased": erased, "skipped": skipped}
 
+## 某资产里字段 `prop` 声明的 `mapField`（人类字段 id）；无声明/无配对返回 ""。
+static func _pair_field_of(manifest: Dictionary, asset_id: String, prop: String) -> String:
+	for fd in (_fields_of(manifest, asset_id) as Array):
+		if fd is Dictionary and str((fd as Dictionary).get("id", "")) == prop:
+			return str((fd as Dictionary).get("mapField", ""))
+	return ""
+
+## 配对地图字段 `pair` 是否还有别的引用字段在用：该资产下除 `skip_prop` 外
+## 任一声明 mapField == pair 的引用字段仍有非空值 = 有用途。
+static func _pair_still_used(manifest: Dictionary, asset_id: String, pair: String,
+		props: Dictionary, skip_prop := "") -> bool:
+	for fd in (_fields_of(manifest, asset_id) as Array):
+		if not (fd is Dictionary):
+			continue
+		var d2: Dictionary = fd
+		if str(d2.get("mapField", "")) != pair:
+			continue
+		var k := str(d2.get("id", ""))
+		if k == skip_prop:
+			continue
+		if str(props.get(k, "")) != "":
+			return true
+	return false
+
+## 资产声明里的字段表（停用条目也读——清理旧图仍要按它的声明判断配对）。
+static func _fields_of(manifest: Dictionary, asset_id: String) -> Array:
+	var a: Dictionary = AssetDecl.by_id(manifest, asset_id)
+	return (a.get("fields", []) as Array) if (a.get("fields", null) is Array) else []
+
 ## 内容使用统计（C3/E3）：扫全项目实例绑定，找引用某 (功能 id, 内容 ID) 的实例。
 ## 当前图可用画布内存的绑定覆盖（磁盘可能是旧的：未保存的新绑定必须在报告里）。
 ## 返回 {by_map: {地图名: [实例码]}, unreadable: [图名], bad_contents: [kind/id], incomplete: bool}。
+## content 类引用字段的值收集（decls 当前层声明；值键 = 码或 id）。
+static func _content_ref_values(decls: Array, values: Dictionary) -> Array:
+	var out: Array = []
+	for fd in decls:
+		if not (fd is Dictionary):
+			continue
+		var desc := RefFields.describe(fd)
+		if str(desc.get("kind", "")) != "content":
+			continue
+		var key := str((fd as Dictionary).get("code", ""))
+		if key == "":
+			key = str((fd as Dictionary).get("id", ""))
+		if not values.has(key):
+			continue
+		for v in _as_list(values[key]):
+			if str(v) != "":
+				out.append({"field": str((fd as Dictionary).get("id", key)), "value": str(v)})
+	return out
+
 static func content_usage(manifest: Dictionary, fn_id: String, cid: String,
 		current_map := "", current_codes: Array = []) -> Dictionary:
 	var by_map := {}
 	var bad: Array = []
-	var maps := MapStore.read_all(manifest, bad)
+	# R29：删除前引用图驱动破坏性动作，读磁盘实际内容（不走浏览缓存）
+	var maps := MapStore.read_all_fresh(manifest, bad)
 	var want_code := FunctionDecls.fn_code(manifest, fn_id)
 	for map_name in maps:
 		if current_map != "" and str(map_name) == current_map:
@@ -359,6 +428,7 @@ static func content_usage(manifest: Dictionary, fn_id: String, cid: String,
 		for obj in ((maps[map_name] as Dictionary).get("objects", []) as Array):
 			if not (obj is Dictionary):
 				continue
+
 			for f in ((obj as Dictionary).get("functions", []) as Array):
 				if not (f is Dictionary):
 					continue
@@ -406,6 +476,7 @@ static func content_inbound_refs(manifest: Dictionary, fn_id: String, cid: Strin
 			var cd := ConditionDecls.condition_decl(manifest, str(cond_id))
 			if cd.get("fields", []) is Array:
 				decls.append_array(cd.get("fields", []) as Array)
+
 		for oid in items:
 			var oid_s := str(oid)
 			if str(kind) == fn_id and oid_s == cid:
@@ -425,10 +496,52 @@ static func content_inbound_refs(manifest: Dictionary, fn_id: String, cid: Strin
 					out.append({"kind": str(kind), "id": oid_s, "field": str(f2)})
 	return out
 
+## R14：草稿（未落盘工作副本）的入边——快照绑定与待提交载荷里出现 cid。
+## 返回引用它的草稿键数组；读不出的草稿按「有入边」保守处理（不可假装没有）。
+## 载荷本体就是这条内容（pendingContents[].id == cid）不算入边：恢复会重写它。
+static func draft_inbound_refs(manifest: Dictionary, cid: String) -> Array:
+	var out: Array = []
+	var base := str(manifest.get("_dir", "")).path_join("editor/drafts")
+	var d := DirAccess.open(base)
+	if d == null:
+		return out
+	for f in d.get_files():
+		if not str(f).ends_with(".json"):
+			continue
+		var key := str(f).get_basename()
+		var parsed = JSON.parse_string(FileAccess.get_file_as_string(base.path_join(str(f))))
+		if not (parsed is Dictionary):
+			out.append(key)   # 读不出：保守报有入边
+			continue
+		var dd: Dictionary = parsed
+		var hit := false
+		var snap: Dictionary = dd.get("snapshot", {}) if dd.get("snapshot", {}) is Dictionary else {}
+		for o in (snap.get("objects", []) as Array):
+			if not (o is Dictionary):
+				continue
+			for fn in ((o as Dictionary).get("functions", []) as Array):
+				if fn is Dictionary and str((fn as Dictionary).get("content", "")) == cid:
+					hit = true
+		var pcs = dd.get("pendingContents", null)
+		if pcs is Array:
+			for pc in (pcs as Array):
+				if not (pc is Dictionary):
+					continue
+				var pd: Dictionary = pc
+				if str(pd.get("id", "")) == cid:
+					continue
+				var flds: Dictionary = pd.get("data", {}) as Dictionary if pd.get("data", {}) is Dictionary else {}
+				for k in flds.get("fields", {}) if flds.get("fields", {}) is Dictionary else {}:
+					if str((flds.get("fields", {}) as Dictionary).get(k, "")) == cid:
+						hit = true
+		if hit:
+			out.append(key)
+	return out
+
 ## 一组声明 + 值里，值为 content 类引用且指向 (fn_id, cid) 的字段 id 列表。
 ## 声明的 filter.fn 为空 = 不限功能；非空时必须等于 fn_id（引用别的功能目录不算）。
 static func _fields_pointing_to(manifest: Dictionary, fn_id: String, cid: String,
-		decls: Array, values) -> Array:
+		decls: Array, values, prefix := "") -> Array:
 	var out: Array = []
 	if not (values is Dictionary):
 		return out
@@ -451,6 +564,28 @@ static func _fields_pointing_to(manifest: Dictionary, fn_id: String, cid: String
 			if str(v) == cid:
 				out.append(str((fd as Dictionary).get("id", key)))
 				break
+	# C1：record 数组子字段的引用递归（行内键 = 码或 id；路径 = 字段id#行号.子字段）
+	for fd in decls:
+		if not (fd is Dictionary):
+			continue
+		var f: Dictionary = fd
+		if str(f.get("type", "")) != "array" or str(f.get("of", "")) != "record":
+			continue
+		var key0 := str(f.get("code", ""))
+		if key0 == "":
+			key0 = str(f.get("id", ""))
+		if not vals.has(key0):
+			continue
+		var rows = vals[key0]
+		if not (rows is Array):
+			continue
+		var subs: Array = f.get("fields", []) if f.get("fields", []) is Array else []
+		var ri := 0
+		for r in rows:
+			if r is Dictionary:
+				for sf in _fields_pointing_to(manifest, fn_id, cid, subs, r, prefix + str(f.get("id", key0)) + "#" + str(ri) + "."):
+					out.append(prefix + str(f.get("id", key0)) + "#" + str(ri) + "." + str(sf))
+			ri += 1
 	return out
 
 ## 资产使用统计（C3）：与引用自检同一批读盘结果（MapStore.read_all），
@@ -461,7 +596,8 @@ static func asset_usage(manifest: Dictionary, asset_id: String, current_map := "
 		current_rows: Array = []) -> Dictionary:
 	var by_map := {}
 	var bad: Array = []
-	var maps := MapStore.read_all(manifest, bad)
+	# R29：资产删除判定同样驱动破坏性动作，读磁盘实际内容
+	var maps := MapStore.read_all_fresh(manifest, bad)
 	for map_name in maps:
 		if current_map != "" and str(map_name) == current_map:
 			continue   # 当前图以画布为准，下面统一补
@@ -484,6 +620,99 @@ static func asset_usage(manifest: Dictionary, asset_id: String, current_map := "
 	for b in bad:
 		unreadable.append(str((b as Dictionary).get("name", "")))
 	return {"by_map": by_map, "unreadable": unreadable, "incomplete": not unreadable.is_empty()}
+
+## R15：资产在内容文件里的引用字段（asset_ref / source=asset: 声明，值 = 资产 id）。
+## 返回 [{kind, id, field}]，与 content_inbound_refs 同形；含 steps 段。
+static func asset_content_refs(manifest: Dictionary, asset_id: String) -> Array:
+	var out: Array = []
+	var root := ContentStore.root_dir(manifest)
+	if root == "" or not DirAccess.dir_exists_absolute(root):
+		return out
+	for kind in ContentStore.declared_kinds(manifest):
+		var items := ContentStore.read_all(manifest, kind)
+		var decls: Array = []
+		decls.append_array(FunctionDecls.function_fields(manifest, str(kind)))
+		var conds = FunctionDecls.function_decl(manifest, str(kind)).get("conditions", null)
+		for cond_id in (conds as Array) if conds is Array else []:
+			var cd := ConditionDecls.condition_decl(manifest, str(cond_id))
+			if cd.get("fields", []) is Array:
+				decls.append_array(cd.get("fields", []) as Array)
+		for oid in items:
+			var data: Dictionary = items[oid]
+			var oid_s := str(oid)
+			for f in _asset_fields_pointing(manifest, asset_id, decls, data.get("fields", null)):
+				out.append({"kind": str(kind), "id": oid_s, "field": str(f)})
+			var steps = data.get("steps", null)
+			for st in (steps as Array) if steps is Array else []:
+				if not (st is Dictionary):
+					continue
+				var sd := StepDecls.step_by_code(manifest, str((st as Dictionary).get("step", "")))
+				var sdecls: Array = sd.get("fields", []) if sd.get("fields", []) is Array else []
+				if sdecls.is_empty():
+					continue
+				for f2 in _asset_fields_pointing(manifest, asset_id, sdecls, (st as Dictionary).get("fields", null)):
+					out.append({"kind": str(kind), "id": oid_s, "field": str(f2)})
+	return out
+
+## 一组声明 + 值里，值为 asset 类引用且等于 asset_id 的字段 id 列表。
+static func _asset_fields_pointing(manifest: Dictionary, asset_id: String,
+		decls: Array, values) -> Array:
+	var out: Array = []
+	if not (values is Dictionary):
+		return out
+	var vals: Dictionary = values
+	for fd in decls:
+		if not (fd is Dictionary):
+			continue
+		var desc := RefFields.describe(fd)
+		if str(desc.get("kind", "")) != "asset":
+			continue
+		var key := str((fd as Dictionary).get("code", ""))
+		if key == "":
+			key = str((fd as Dictionary).get("id", ""))
+		if not vals.has(key):
+			continue
+		for v in _as_list(vals[key]):
+			if str(v) == asset_id:
+				out.append(str((fd as Dictionary).get("id", key)))
+				break
+	return out
+
+## R15：草稿里的资产使用（快照实例的 asset 键 + 待提交内容载荷的字段值）。
+## 返回引用它的草稿键数组；读不出的草稿按「有使用」保守处理。
+static func asset_draft_refs(manifest: Dictionary, asset_id: String) -> Array:
+	var out: Array = []
+	var base := str(manifest.get("_dir", "")).path_join("editor/drafts")
+	var d := DirAccess.open(base)
+	if d == null:
+		return out
+	for f in d.get_files():
+		if not str(f).ends_with(".json"):
+			continue
+		var key := str(f).get_basename()
+		var parsed = JSON.parse_string(FileAccess.get_file_as_string(base.path_join(str(f))))
+		if not (parsed is Dictionary):
+			out.append(key)   # 读不出：保守报有使用
+			continue
+		var dd: Dictionary = parsed
+		var hit := false
+		var snap: Dictionary = dd.get("snapshot", {}) if dd.get("snapshot", {}) is Dictionary else {}
+		for o in (snap.get("objects", []) as Array):
+			if o is Dictionary and str((o as Dictionary).get("asset", "")) == asset_id:
+				hit = true
+		var pcs = dd.get("pendingContents", null)
+		if pcs is Array:
+			for pc in (pcs as Array):
+				if not (pc is Dictionary):
+					continue
+				var pd: Dictionary = pc
+				var flds: Dictionary = pd.get("data", {}) as Dictionary if pd.get("data", {}) is Dictionary else {}
+				for k in flds.get("fields", {}) if flds.get("fields", {}) is Dictionary else {}:
+					if str((flds.get("fields", {}) as Dictionary).get(k, "")) == asset_id:
+						hit = true
+		if hit:
+			out.append(key)
+	return out
 
 ## 引用悬空检查：objects[].props 里 entity_ref/map_ref 声明字段的值指向不存在对象 = 警告。
 ## C1：声明了 mapField 的 entity_ref 目标是**配对地图**里的实例（(地图码, 实例码)），
@@ -595,11 +824,8 @@ static func _codes_of_map(manifest: Dictionary, map_key: String) -> Dictionary:
 
 ## 地图键（图名或地图码）→ 图名；未知/空返回 ""。码重复时拒绝猜测（code_map 已按重复剔除）。
 static func _map_name_of(manifest: Dictionary, map_key: String) -> String:
-	if map_key == "":
-		return ""
-	if MapStore.list_maps(manifest).has(map_key):
-		return map_key
-	return str(MapStore.code_map(manifest).get(map_key, ""))
+	# B2（§7.2）：统一走 ReferenceIndex.resolve_map（撞码返回 ""：不猜，冲突由审计单列）
+	return ReferenceIndex.map_name_of(manifest, map_key)
 
 ## 清单校验条目包装（带 kind 标记；清单级问题不可跳转）。
 static func _wrap(kind: String, e: Dictionary) -> Dictionary:
@@ -618,3 +844,89 @@ static func _wrap_map_issue(kind: String, e: Dictionary, map_name: String) -> Di
 		"map": map_name,
 		"jump": {"type": "map", "map": map_name},
 	}
+
+## C2：内容库批量引用扫描（一次读盘；浏览口径 = 缓存读取，破坏性检查仍走 inbound_content（R29））。
+## 返回 {refs: {cid: {instances: {图名: [实例码]}, contents: [{kind,id,field}], n: 总入边数}}, unreadable: [源名]}。
+## cids 非空 = 只收这些内容 ID 的边；live_binds = [{cid, code}] 活体绑定由调用方从画布收集。
+static func content_edges_bulk(manifest: Dictionary, fn_id: String, cids: Array,
+		cur_map := "", live_binds: Array = []) -> Dictionary:
+	var want := {}
+	for c in cids:
+		if str(c) != "":
+			want[str(c)] = true
+	var refs := {}
+	for c in cids:
+		if str(c) != "":
+			refs[str(c)] = {"instances": {}, "contents": [], "n": 0}
+	# 实例绑定：一次 read_all（浏览缓存口径），按功能码匹配（与 content_usage 同规则）
+	var want_code := FunctionDecls.fn_code(manifest, fn_id)
+	var bad: Array = []
+	var maps := MapStore.read_all(manifest, bad)
+	for map_name in maps:
+		for obj in ((maps[map_name] as Dictionary).get("objects", []) as Array):
+			if not (obj is Dictionary):
+				continue
+			for f in ((obj as Dictionary).get("functions", []) as Array):
+				if not (f is Dictionary):
+					continue
+				var ck := str((f as Dictionary).get("content", ""))
+				if ck == "" or not want.has(ck):
+					continue
+				if want_code != "" and str((f as Dictionary).get("fn", "")) != want_code:
+					continue
+				var ro: Dictionary = refs[ck]
+				var mn := str(map_name)
+				if not (ro.get("instances", {}) as Dictionary).has(mn):
+					(ro["instances"] as Dictionary)[mn] = []
+				var codes: Array = (ro["instances"] as Dictionary)[mn]
+				codes.append(str((obj as Dictionary).get("code", "")))
+				ro["n"] = int(ro["n"]) + 1
+	# 当前图活体绑定并入（磁盘是旧的）：live_binds = [{cid, code}] 由调用方从画布收集
+	for lb in live_binds:
+		var lbk := str((lb as Dictionary).get("cid", ""))
+		if lbk == "" or not want.has(lbk):
+			continue
+		var ro2: Dictionary = refs[lbk]
+		if not (ro2.get("instances", {}) as Dictionary).has(cur_map):
+			(ro2["instances"] as Dictionary)[cur_map] = []
+		((ro2["instances"] as Dictionary)[cur_map] as Array).append(str((lb as Dictionary).get("code", "")))
+		ro2["n"] = int(ro2["n"]) + 1
+	# 内容入边：一次 read_all per 池，按声明收集 content 类引用字段的**值**（值 = 内容 ID）
+	for kind in ContentStore.declared_kinds(manifest):
+		var decls: Array = []
+		decls.append_array(FunctionDecls.function_fields(manifest, str(kind)))
+		var conds = FunctionDecls.function_decl(manifest, str(kind)).get("conditions", null)
+		for cond_id in (conds as Array) if conds is Array else []:
+			var cd := ConditionDecls.condition_decl(manifest, str(cond_id))
+			if cd.get("fields", []) is Array:
+				decls.append_array(cd.get("fields", []) as Array)
+
+		var items := ContentStore.read_all(manifest, str(kind))
+		for oid in items:
+			var data: Dictionary = items[oid]
+			var fields_d: Dictionary = data.get("fields", {}) if data.get("fields", {}) is Dictionary else {}
+			for rv in _content_ref_values(decls, fields_d):
+				var tgt := str((rv as Dictionary).get("value", ""))
+				if tgt == "" or not want.has(tgt):
+					continue
+				var ro3: Dictionary = refs[tgt]
+				(ro3["contents"] as Array).append({"kind": str(kind), "id": str(oid), "field": str((rv as Dictionary).get("field", ""))})
+				ro3["n"] = int(ro3["n"]) + 1
+			var steps = data.get("steps", null)
+			for st in (steps as Array) if steps is Array else []:
+				if not (st is Dictionary):
+					continue
+				var sd := StepDecls.step_by_code(manifest, str((st as Dictionary).get("step", "")))
+				var sdecls: Array = sd.get("fields", []) if sd.get("fields", []) is Array else []
+				var sfields: Dictionary = (st as Dictionary).get("fields", {}) if (st as Dictionary).get("fields", {}) is Dictionary else {}
+				for rv2 in _content_ref_values(sdecls, sfields):
+					var tgt2 := str((rv2 as Dictionary).get("value", ""))
+					if tgt2 == "" or not want.has(tgt2):
+						continue
+					var ro4: Dictionary = refs[tgt2]
+					(ro4["contents"] as Array).append({"kind": str(kind), "id": str(oid), "field": str((rv2 as Dictionary).get("field", ""))})
+					ro4["n"] = int(ro4["n"]) + 1
+	var unreadable: Array = []
+	for b in bad:
+		unreadable.append("地图 %s 读不出来" % str(b))
+	return {"refs": refs, "unreadable": unreadable}

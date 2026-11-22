@@ -3,6 +3,7 @@ extends RefCounted
 ## 只做路径解析与 JSON 读写，不含业务校验；写盘复用 MapStore.write_json 的原子替换，
 ## 覆盖已有文件前先 Rotate 出 3 层 .history（与地图同权，误写可回滚）。
 ## 目录名 = 功能人类 id（给人读的），文件内 "function" 键 = 功能执行码（给代码执行的）。
+## 本模块管辖的文件集合与历史深度见 docs/EDITOR_FEATURES.md §7.3（各入口提交哪些文件 / 历史深度）。
 
 const Store := preload("res://src/map/map_store.gd")
 
@@ -243,12 +244,26 @@ static func rename(m: Dictionary, kind: String, old_id: String, new_id: String) 
 	return true
 
 ## 删除资源；文件不存在视为成功（幂等）。
-static func remove(m: Dictionary, kind: String, id: String) -> bool:
+## §7.2「删除前由提交器保存历史」：先轮转一份快照，**拿不到快照就拒绝删**
+## （删掉之后没有「当前」可再备份，事后无法找回）。返回 {ok, backed_up, error}：
+##   ok        = 目标文件已不存在（删成功或本来就没有）
+##   backed_up = 删除前是否真的留下了 .history/<name>.1
+## 部分成功按文件报：调用方逐条显示，不合并成一句「删除完成」。
+static func remove_ex(m: Dictionary, kind: String, id: String) -> Dictionary:
 	var path := path_for(m, kind, id)
 	if path == "":
-		return false
+		return {"ok": false, "backed_up": false, "error": "内容路径非法"}
 	if not FileAccess.file_exists(path):
-		return true
-	var ok := DirAccess.remove_absolute(path) == OK
+		_cache.erase(path)
+		return {"ok": true, "backed_up": false, "error": ""}
+	if not Store.rotate_history(path):
+		return {"ok": false, "backed_up": false,
+			"error": "删除前无法备份（.history 写不进去），已中止——文件原样保留"}
 	_cache.erase(path)   # D3：删除后失效
-	return ok
+	if DirAccess.remove_absolute(path) != OK:
+		return {"ok": false, "backed_up": true, "error": "文件不可删（可能被占用），备份已留"}
+	return {"ok": true, "backed_up": true, "error": ""}
+
+## 兼容旧调用点的布尔版（无引用检查的简单删除）。新代码请用 remove_ex 以便报告备份结果。
+static func remove(m: Dictionary, kind: String, id: String) -> bool:
+	return bool(remove_ex(m, kind, id).get("ok", false))

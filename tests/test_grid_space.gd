@@ -3,6 +3,7 @@ extends "res://tests/_suite_base.gd"
 
 const GridSpaceScript := preload("res://src/canvas/grid_space.gd")
 const CollisionTypes := preload("res://src/assets/collision_types.gd")
+const MapViewData := preload("res://src/map/map_view_data.gd")
 
 func test_grid_orthogonal() -> void:
 	var g = GridSpaceScript.new(Vector2i(16, 16), "orthogonal")
@@ -50,6 +51,9 @@ func test_grid_primitives_ortho() -> void:
 		if segs[k].x == segs[k + 1].x:
 			has_vert = true
 	ok(has_vert, "正交格线含竖线")
+	# R22：shift_cell 正交下与原始格号相加严格等价
+	eq(g.shift_cell(Vector2i(3, 4), Vector2i(2, -1)), Vector2i(5, 3), "正交 shift = 直接相加")
+	eq(g.shift_cell(Vector2i(-2, 0), Vector2i(1, 3)), Vector2i(-1, 3), "正交 shift 负格号也等价")
 
 func test_grid_primitives_iso() -> void:
 	var g = GridSpaceScript.new(Vector2i(16, 16), "isometric")
@@ -83,6 +87,10 @@ func test_grid_hex() -> void:
 	eq(gp, PackedVector2Array([Vector2(0, 0), Vector2(32, 0), Vector2(32, 16), Vector2(0, 16)]), "六边格矩形 = 四角 cell 包围盒")
 	var segs: PackedVector2Array = g.grid_lines(Rect2(0, 0, 48, 48), Rect2i(0, 0, 3, 3))
 	ok(segs.size() == 80, "六边格线 40 段 = 80 点")
+	# R22：shift_cell 经像素几何平移——odd-r 行错位在平移里保持（奇行跨奇数行数列 +1）
+	eq(g.shift_cell(Vector2i(0, 0), Vector2i(0, 1)), Vector2i(0, 1), "六边 shift (0,1) 命中 (0,1)")
+	eq(g.shift_cell(Vector2i(3, 1), Vector2i(0, 1)), Vector2i(4, 2), "六边奇行跨行平移列补偿 +1")
+	eq(g.shift_cell(Vector2i(3, 0), Vector2i(0, 1)), Vector2i(3, 1), "六边偶行跨行平移列不变")
 
 func test_grid_rect_cells() -> void:
 	var g = GridSpaceScript.new(Vector2i(32, 16), "orthogonal")
@@ -265,5 +273,29 @@ func test_parse_topology() -> void:
 	ok(str(bad1.get("why", "")) != "", "给出拒绝原因")
 	var bad2: Dictionary = GridSpaceScript.parse_topology({"gridTopology": "triangles"}, "hexagonal")
 	ok(not bool(bad2.get("ok", true)), "六边 + triangles 拒绝")
+
+## B3：MapViewData 的层变换按**数据层真实写法**取（offset 数组 + scale 标量，
+## 与 layer_ops.gd 写回、editor_canvas.gd 建层一致）；缺键 = 恒等，scale ≤ 0 当缺省。
+func test_map_view_layer_transform() -> void:
+	var d := {"meta": {"layers": [
+		{"id": "A", "offset": [64, -32], "scale": 2.0},
+		{"id": "B"},
+		{"id": "C", "scale": 0.0}]}}
+	eq(MapViewData.layer_transform(d, "A"), Transform2D(0.0, Vector2(2, 2), 0.0, Vector2(64, -32)),
+		"offset 数组 + scale 标量")
+	eq(MapViewData.layer_transform(d, "B"), Transform2D.IDENTITY, "缺键 = 恒等")
+	eq(MapViewData.layer_transform(d, "C"), Transform2D.IDENTITY, "scale ≤ 0 视为缺省（不放大成 0）")
+	eq(MapViewData.layer_transform(d, "不存在"), Transform2D.IDENTITY, "未知层 = 恒等")
+
+## B3：cell_poly / anchor_px 是「格空间 + 层变换」的合成口径；layer_id 为空 = 根空间。
+func test_map_view_cell_and_anchor() -> void:
+	var d := {"meta": {"w": 4, "h": 4, "gridProjection": "orthogonal",
+		"layers": [{"id": "A", "offset": [16, 0], "scale": 2.0}]}}
+	var m := {"tileSize": 16}
+	var root: PackedVector2Array = MapViewData.cell_poly(d, m, "", Vector2i(1, 0))
+	eq(root[0], Vector2(16, 0), "根空间格 (1,0) 左上 = (16,0)")
+	var xf: PackedVector2Array = MapViewData.cell_poly(d, m, "A", Vector2i(1, 0))
+	eq(xf[0], Vector2(48, 0), "层空间 = 根坐标 ×2 + offset(16,0)")
+	eq(MapViewData.anchor_px(d, m, "A", 0.5, 0.5), Vector2(32, 16), "锚点像素同走层变换")
 
 

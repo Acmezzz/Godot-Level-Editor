@@ -21,6 +21,7 @@ const RefFields := preload("res://src/content/ref_fields.gd")
 
 const KIND_INPUT := "input"
 const KIND_CHOICE := "choice"
+const KIND_RECORD := "record"   # C1：array of record 的行控件种类（仅作数组元素，不作顶层字段类型）
 
 ## 值是否「未填」：null 或空串（数组/字典不算未填——比较时要避开 Variant 类型错误）
 static func _is_unset(v) -> bool:
@@ -36,7 +37,14 @@ static func kind_of(decl: Dictionary) -> String:
 ## 在画布上点的是本图实例，两者不是同一个域。
 static func wants_canvas_pick(decl: Dictionary) -> bool:
 	var d := RefFields.describe(decl)
-	return str(d.get("kind", "")) == "entity_inst" and str(d.get("scope", "")) == "same_map"
+	if str(d.get("kind", "")) == "entity_inst" and str(d.get("scope", "")) == "same_map":
+		return true
+	# C4：有限格图 cell_id 字段——格是多边形，画布按多边形命中（accept="cell"）
+	return wants_cell_pick(decl)
+
+## C4：choice 来源是 `cell:` 的字段可在画布上按格图多边形点选。
+static func wants_cell_pick(decl: Dictionary) -> bool:
+	return type_of(decl) == "choice" and str(decl.get("source", "")).begins_with("cell:")
 
 ## 画布选点的候选类型白名单（声明的 of 过滤；空 = 不限实体类型）。
 static func canvas_pick_types(decl: Dictionary) -> Array:
@@ -60,6 +68,7 @@ static func default_for(decl: Dictionary) -> Variant:
 		"color": return "#ffffff"
 		"choice": return [] if bool(decl.get("multiple", false)) else ""
 		"array": return []
+		"record": return {}
 		_: return ""
 
 ## 声明里能读到的说明性信息（E1）：字段 id / 执行码 / 类型与范围 / 缺省值。
@@ -103,12 +112,14 @@ static func decl_tooltip(decl: Dictionary) -> String:
 ## option_resolver（可选）：Callable(decl) -> Array，元素为 {v, t} 或纯字符串，
 ## 供 choice 的 source（content:item / entity:portal,exit / map）动态取选项。
 static func build(decl: Dictionary, value, on_set: Callable,
-		option_resolver: Callable = Callable()) -> Dictionary:
+		option_resolver: Callable = Callable(), key_mode := "id") -> Dictionary:
 	var kind := kind_of(decl)
 	if kind == KIND_CHOICE:
-		return _build_choice(decl, value, on_set, option_resolver)
+		return _build_choice(decl, value, on_set, option_resolver, key_mode)
 	if kind == KIND_INPUT:
-		return _build_input(decl, value, on_set, option_resolver)
+		return _build_input(decl, value, on_set, option_resolver, key_mode)
+	if kind == KIND_RECORD:
+		return _build_record(decl, value, on_set, option_resolver, key_mode)
 	var why := "声明缺 kind（应写 \"input\" 或 \"choice\"）" if kind == "" \
 		else "未声明的字段种类「%s」" % kind
 	return _readonly(decl, value, why, "补全声明后重新加载清单即可恢复编辑")
@@ -116,7 +127,7 @@ static func build(decl: Dictionary, value, on_set: Callable,
 ## input：string（可 multiline）/ int / float / bool / color / vector2 / range / asset_ref。
 ## 连续控件（SpinBox、HScale、多行 TextEdit）拖动/输入期间只记内存，失焦或 commit() 才写盘。
 static func _build_input(decl: Dictionary, value, on_set: Callable,
-		option_resolver: Callable) -> Dictionary:
+		option_resolver: Callable, key_mode := "id") -> Dictionary:
 	var typ := type_of(decl)
 	match typ:
 		"bool":
@@ -268,7 +279,7 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 		"array":
 			# array.of ∈ 基础类型/choice（不嵌套 array）；非数组值只读展示——commit() 不能把坏值悄悄写成 []
 			var of := str(decl.get("of", ""))
-			var ok_of: Array = ["string", "int", "float", "bool", "color", "vector2", "range", "asset_ref", "choice"]
+			var ok_of: Array = ["string", "int", "float", "bool", "color", "vector2", "range", "asset_ref", "choice", "record"]
 			if not ok_of.has(of):
 				return _readonly(decl, value, "array.of 未声明（应写基础类型或 choice）",
 					"补全声明后重新加载清单即可恢复编辑")
@@ -276,7 +287,19 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 				return _readonly(decl, value, "值类型不符：声明 array，实际是 %s" % type_name(value),
 					"编辑器不会改写它，请游戏侧或手工修正")
 			var items: Array = value if value is Array else []
-			return _build_array(decl, items, on_set, option_resolver)
+			return _build_array(decl, items, on_set, option_resolver, key_mode)
+		"viewport_ref":
+			return _build_viewport_ref(decl, value, on_set, option_resolver)
+		"port_ref":
+			# C3：端口引用 = 对象值 {map, inst, port}；选项 = port: 解析器（配对图优先），写入值解码回对象。
+			# 值编码成 JSON 串走 choice 控件；值不在选项里时显示「(当前值)」，不静默改写。
+			var pd2: Dictionary = decl.duplicate(true)
+			pd2["kind"] = KIND_CHOICE
+			pd2["source"] = "port:" + str(decl.get("of", ""))
+			var enc := JSON.stringify(value) if value is Dictionary else ""
+			return _build_choice(pd2, enc, func(v2):
+				var pd = JSON.parse_string(str(v2))
+				on_set.call(pd if pd is Dictionary else {}), option_resolver)
 		"asset_ref":
 			# 资产引用走 choice 的同一套控件，只是选项来源由 asset: 解析器提供。
 			# 白名单两种写法：`of`（字段直写）或 `ids`（数组元素的同型声明——`of` 已被元素类型占用）。
@@ -287,7 +310,7 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 			if only == "" and decl.get("ids", null) is Array:
 				only = ",".join(PackedStringArray(decl.get("ids", [])))
 			d2["source"] = "asset:" + ak + (":" + only if only != "" else "")
-			return _build_choice(d2, value, on_set, option_resolver)
+			return _build_choice(d2, value, on_set, option_resolver, key_mode)
 		_:
 			var why := "声明缺 type（应写 string / int / float / bool / color / vector2 / range / asset_ref / array）" if typ == "" \
 				else "未声明的输入类型「%s」" % typ
@@ -305,6 +328,10 @@ static func _elem_decl(decl: Dictionary) -> Dictionary:
 				d[k] = (decl.get(k) as Variant).duplicate(true) if (decl.get(k) is Array or decl.get(k) is Dictionary) \
 					else decl.get(k)
 		return d
+	# C1：of: record —— 元素控件是记录表单（子字段声明在 fields 里，逐元素独立副本）
+	if of == "record":
+		return {"kind": KIND_RECORD, "type": "record",
+			"fields": (decl.get("fields", []) as Array).duplicate(true)}
 	var out := {"kind": KIND_INPUT, "type": of}
 	for k in ["min", "max", "step", "dims", "assetKind"]:
 		if decl.get(k, null) != null:
@@ -319,12 +346,18 @@ static func _elem_decl(decl: Dictionary) -> Dictionary:
 
 ## array：可增删行容器，每行一个元素控件；值 = 各行 state.v 按顺序收集。
 ## 行删除前先冲刷该行连续控件的待写值（commit），行序变动靠行字典引用而非闭包下标。
+## C1：of: record 行给 复制/上移/下移（rows 换位 + 容器子序同步）；key_mode 透传元素控件。
 static func _build_array(decl: Dictionary, items: Array, on_set: Callable,
-		option_resolver: Callable) -> Dictionary:
+		option_resolver: Callable, key_mode := "id") -> Dictionary:
 	var elem := _elem_decl(decl)
+	var rec := str(elem.get("type", "")) == "record"
 	var wrap := VBoxContainer.new()
 	wrap.add_theme_constant_override("separation", 4)
+	var rows_box := VBoxContainer.new()
+	rows_box.add_theme_constant_override("separation", 4)
+	wrap.add_child(rows_box)
 	var rows: Array = []
+	var ctx := {}
 	var collect := func() -> Array:
 		var out: Array = []
 		for r in rows:
@@ -333,13 +366,16 @@ static func _build_array(decl: Dictionary, items: Array, on_set: Callable,
 				c.call()
 			out.append((r.state as Dictionary).get("v"))
 		return out
-	var add_row := func(v) -> void:
-		var r := {"state": {"v": v}, "commit": Callable()}
+	var done := func(): on_set.call(collect.call())
+	var add_row := func(v, at := -1) -> void:
+		var r := {"state": {"v": v}, "commit": Callable(), "line": null}
 		var line := HBoxContainer.new()
 		line.add_theme_constant_override("separation", 4)
-		var built := build(elem, v, func(v2): (r.state as Dictionary)["v"] = v2, option_resolver)
+		var built := build(elem, v, func(v2): (r.state as Dictionary)["v"] = v2, option_resolver, key_mode)
 		r["commit"] = built.commit
 		line.add_child(built.ctl)
+		if rec:
+			line.add_child(_row_tools(ctx, r))
 		var del := Button.new()
 		del.text = "×"
 		del.focus_mode = Control.FOCUS_NONE
@@ -351,8 +387,15 @@ static func _build_array(decl: Dictionary, items: Array, on_set: Callable,
 			line.queue_free()
 			on_set.call(collect.call()))
 		line.add_child(del)
-		wrap.add_child(line)
-		rows.append(r)
+		# 行容器子序与 rows 数组一致：插行 = add_child + move_child 到目标行号
+		if at < 0 or at >= rows.size():
+			rows.append(r)
+			rows_box.add_child(line)
+		else:
+			rows.insert(at, r)
+			rows_box.add_child(line)
+			rows_box.move_child(line, at)
+		r["line"] = line
 	for v in items:
 		add_row.call(v)
 	var add := Button.new()
@@ -365,10 +408,95 @@ static func _build_array(decl: Dictionary, items: Array, on_set: Callable,
 	return {"ctl": wrap, "commit": func():
 		on_set.call(collect.call())}
 
+## C1：记录行工具组（复制/上移/下移）。ctx = {"rows", "box", "add", "done"}。
+## GDScript lambda 按值捕获局部变量，行操作需要共享可变状态，统一走 ctx 字典（字典按引用捕获）。
+static func _row_tools(ctx: Dictionary, r: Dictionary) -> Control:
+	var tools := HBoxContainer.new()
+	tools.add_theme_constant_override("separation", 2)
+	var rows: Array = ctx.get("rows", [])
+	var box: Control = ctx.get("box", null)
+	var done: Callable = ctx.get("done", Callable())
+	var up := Kit.button("↑", func(): _row_move(rows, box, r, -1, done))
+	var down := Kit.button("↓", func(): _row_move(rows, box, r, 1, done))
+	var cp := Kit.button("复制", func(): _row_dup(ctx, r, done))
+	tools.add_child(up)
+	tools.add_child(down)
+	tools.add_child(cp)
+	for b in [up, down, cp]:
+		(b as Button).focus_mode = Control.FOCUS_NONE
+	return tools
+
+## 行换位：rows 数组交换 + rows_box 子序同步（move_child 到目标行号）；完成后 done 写盘。
+static func _row_move(rows: Array, box: Control, r: Dictionary, dir: int, done: Callable) -> void:
+	var i: int = rows.find(r)
+	var j: int = i + dir
+	if i < 0 or j < 0 or j >= rows.size() or box == null:
+		return
+	rows[i] = rows[j]
+	rows[j] = r
+	box.move_child((r as Dictionary)["line"] as Control, j)
+	done.call()
+
+## 复制行：先 commit 该行连续控件，深拷贝当前值插到下一行（记录行字典深拷贝，脱离引用）。
+static func _row_dup(ctx: Dictionary, r: Dictionary, done: Callable) -> void:
+	var rows: Array = ctx.get("rows", [])
+	var i: int = rows.find(r)
+	if i < 0:
+		return
+	var c: Callable = (r as Dictionary).get("commit", Callable())
+	if c.is_valid():
+		c.call()
+	var v = (r as Dictionary).get("state", {}).get("v")
+	var copy = v.duplicate(true) if (v is Dictionary or v is Array) else v
+	(ctx.get("add", Callable()) as Callable).call(copy, i + 1)
+	done.call()
+
+## record（C1）：记录表单 = 子字段递归构建。值是字典；子字段存储键按宿主池规则
+## （key_mode："code" = 字段码，缺码退回 id）。兄弟配对字段作用域 = 当前记录行
+## （mapField 的 _mapKey 注入读行内值）。未知子键不碰（未知版本往返）；非字典值只读展示。
+static func _build_record(decl: Dictionary, value, on_set: Callable,
+		option_resolver: Callable, key_mode := "id") -> Dictionary:
+	if not (value is Dictionary):
+		return _readonly(decl, value, "记录值不是字典（实际 %s）" % type_name(value),
+			"已有值原样保留，不提供可写控件")
+	var panel := PanelContainer.new()
+	panel.add_theme_stylebox_override("panel", Th.box(Color(1, 1, 1, 0.04), Color(1, 1, 1, 0.16), Th.R_INNER, 6, 4))
+	var box := Kit.vbox(4)
+	panel.add_child(box)
+	var commits: Array = []
+	var fields_arr: Array = decl.get("fields", []) if decl.get("fields", null) is Array else []
+	for sub in fields_arr:
+		if not (sub is Dictionary):
+			continue
+		var sd: Dictionary = sub
+		var sub_key := str(sd.get("id", ""))
+		if key_mode == "code":
+			var c2 := str(sd.get("code", ""))
+			if c2 != "":
+				sub_key = c2
+		var sub_val = value.get(sub_key, sd.get("default", default_for(sd)))
+		var d2: Dictionary = sd
+		# 兄弟配对字段作用域 = 当前记录行：配对地图字段值从行内读
+		if str(sd.get("mapField", "")) != "":
+			var tk := RefFields.paired_map_value(sd, fields_arr, value)
+			if tk != "":
+				d2 = sd.duplicate(true)
+				d2["_mapKey"] = tk
+		var built := build(d2, sub_val, func(v2):
+			value[sub_key] = v2
+			on_set.call(value), option_resolver, key_mode)
+		box.add_child(Kit.field_row(str(sd.get("name", sub_key)), built.ctl, 96))
+		commits.append(built.commit)
+	return {"ctl": panel, "commit": func():
+		for c in commits:
+			if c is Callable and (c as Callable).is_valid():
+				(c as Callable).call()
+		on_set.call(value)}
+
 ## choice：options[] 声明（或 source 动态解析）→ 单选 OptionButton / multiple 勾选组。
 ## 值不在选项里时保留原值并额外插一条「(当前值)」——绝不静默改成第一项。
 static func _build_choice(decl: Dictionary, value, on_set: Callable,
-		option_resolver: Callable) -> Dictionary:
+		option_resolver: Callable, key_mode := "id") -> Dictionary:
 	if bool(decl.get("multiple", false)):
 		return _build_choice_multi(decl, value, on_set, option_resolver)
 	var opts: Array = []
@@ -496,3 +624,45 @@ static func type_name(v) -> String:
 	if v is Dictionary:
 		return "object"
 	return "unknown"
+
+## viewport_ref（C5）：视口归一化坐标域工作值 {viewport: id, point: [nx, ny] | rect: [nx, ny, nw, nh]}。
+## 视口 id 候选 = viewport: 解析器（清单 viewports 具名画幅）；rect: true 声明切矩形模式。
+## 非字典坏值只读展示；未知键不碰（未知版本往返）。
+static func _build_viewport_ref(decl: Dictionary, value, on_set: Callable, option_resolver: Callable) -> Dictionary:
+	var is_rect := bool(decl.get("rect", false))
+	if not (value is Dictionary) and not _is_unset(value):
+		return _readonly(decl, value, "值类型不符：声明 viewport_ref，实际是 %s" % type_name(value), "编辑器不会改写它")
+	if not (value is Dictionary):
+		value = {}
+	var cur: Dictionary = (value as Dictionary).duplicate(true)
+	var emit := func(): on_set.call(cur.duplicate(true))
+	var wrap := Kit.vbox(4)
+	var d2: Dictionary = decl.duplicate(true)
+	d2["kind"] = KIND_CHOICE
+	d2["source"] = "viewport:"
+	var vp_id := str(cur.get("viewport", ""))
+	var vpb := _build_choice(d2, vp_id, func(v2):
+		cur["viewport"] = str(v2)
+		emit.call(), option_resolver)
+	wrap.add_child(vpb.ctl)
+	# 归一化坐标 0..1：point 两轴 / rect 四轴（SpinBox 即改即写，幂等由下游保证）
+	var dims := 4 if is_rect else 2
+	var key := "rect" if is_rect else "point"
+	var arr: Array = (cur.get(key, [0.0, 0.0, 1.0, 1.0] if is_rect else [0.0, 0.0]) as Array)
+	var row := Kit.hbox(4)
+	for d in dims:
+		var sp := SpinBox.new()
+		sp.min_value = 0.0
+		sp.max_value = 1.0
+		sp.step = 0.01
+		sp.value = float(arr[d]) if d < arr.size() else 0.0
+		sp.value_changed.connect(func(v3):
+			var a2: Array = (cur.get(key, [0.0, 0.0, 1.0, 1.0] if is_rect else [0.0, 0.0]) as Array).duplicate()
+			while a2.size() <= d:
+				a2.append(0.0)
+			a2[d] = v3
+			cur[key] = a2
+			emit.call())
+		row.add_child(sp)
+	wrap.add_child(row)
+	return {"ctl": wrap, "commit": emit}

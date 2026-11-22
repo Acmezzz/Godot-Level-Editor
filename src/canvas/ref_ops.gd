@@ -38,7 +38,11 @@ func set_entity_ref(n: EntityNode, fd: Dictionary, value: String) -> Dictionary:
 		var msg := "改目标地图会清空 %d 个已填引用（旧落点属于原图）。继续？" % paired_refs.size()
 		if not await app._confirm_action("改目标地图", msg, "改并清空"):
 			return {"status": "cancelled", "cleared": []}
-	cvs._push_undo()
+	# §7.5 阶段二：引用值改的是这一条实例的 props → InstanceKey 差量。
+	var pre: Dictionary = cvs._undo_history_ctrl.inst_rows([n])
+	var via_delta := bool(pre.get("ok", false))
+	if not via_delta:
+		cvs.push_undo()
 	if value == "":
 		props.erase(fid)
 	else:
@@ -49,6 +53,8 @@ func set_entity_ref(n: EntityNode, fd: Dictionary, value: String) -> Dictionary:
 		props.erase(oid)
 		cleared.append(oid)
 	n.props = props
+	if via_delta:
+		cvs._undo_history_ctrl.inst_commit(pre.get("rows", {}))
 	cvs._mark()
 	# 指向预览：仅本图 entity_ref 高亮（跨图/地图引用在本图没有可亮对象）
 	var target := value if app.canvas.is_entity_code_local(value) else ""

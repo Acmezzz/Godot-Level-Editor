@@ -8,7 +8,7 @@
 
 **Tech Stack**　Godot 4.7.2、GDScript、TileMapLayer、JSON、现有原子文件写入和 headless 测试。
 
-**Spec**　[审查报告](../../EDITOR_AUDIT.md) 记录初版源码证据和问题编号。本文件是实施清单，负责目标行为、任务归属、依赖和验收。现有 [功能文档](../../EDITOR_FEATURES.md) 与 [游戏侧契约](../../GAME_SIDE_STANDARD.md) 的冲突列在审查 §4，按对应实现批次修订。
+**Spec**　[审查报告](V1-EDITOR_AUDIT.md) 记录初版源码证据和问题编号。本文件是实施清单，负责目标行为、任务归属、依赖和验收。现有 [功能文档](../EDITOR_FEATURES.md) 与 [游戏侧契约](../GAME_SIDE_STANDARD.md) 的冲突列在审查 §4，按对应实现批次修订。
 
 ## Global Constraints
 

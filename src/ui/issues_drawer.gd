@@ -54,7 +54,7 @@ func _build_issues_drawer() -> PanelContainer:
 	rerun.tooltip_text = "重新扫描全项目"  # 读回校验锚
 	head.add_child(rerun)
 	var clear_btn: Button = app.UiKitScript.button("清除悬空", func(): _clear_dangling(), "ghost")
-	clear_btn.tooltip_text = "把悬空引用字段的值清掉（字段留空=未填），可在 maps/.history 找回"  # 读回校验锚
+	clear_btn.tooltip_text = "把悬空引用字段的值清掉（字段留空=未填），写回前的快照在 editor/history/maps/<地图码>/"  # 读回校验锚
 	_clear_btn = clear_btn
 	head.add_child(clear_btn)
 	# 条目列表（展开时显示；行点击跳转；ScrollContainer 封顶防吞屏）
@@ -105,7 +105,7 @@ func _run_audit(open_after := true) -> void:
 	if _clear_btn:
 		_clear_btn.disabled = _audit_incomplete
 		_clear_btn.tooltip_text = "有地图读不出来，检查范围不完整：先修好地图文件再清除" \
-			if _audit_incomplete else "把悬空引用字段的值清掉（字段留空=未填），可在 maps/.history 找回"
+			if _audit_incomplete else "把悬空引用字段的值清掉（字段留空=未填），写回前的快照在 editor/history/maps/<地图码>/"
 	if _issues_btn:
 		_issues_btn.text = "问题 %d" % items.size()
 	_populate_issues()
@@ -218,6 +218,17 @@ func _clear_dangling() -> void:
 	if by_map.is_empty():
 		app._set_status(" 没有可清除的悬空引用（先重扫）")
 		return
+	# R16：批量清理是跨图写盘动作——先列作用范围让作者确认（保存边界：当前图脏改动
+	# 随后的提交里一并落盘），再动手。
+	var scope_lines: Array[String] = []
+	for mn2 in by_map:
+		scope_lines.append("%s × %d 项" % [str(mn2), (by_map[mn2] as Array).size()])
+	if not await app._confirm_action("清除悬空引用",
+		"将对 %d 张图写盘清除悬空引用：\n%s\n\n每张图重读文件并复验旧值，已失效的项会跳过。" % [
+			by_map.size(), "\n".join(scope_lines)],
+		"清除"):
+		app._set_status(" 已取消清除悬空引用")
+		return
 	# 当前图有未保存修改：先正式提交（A2），失败就整条操作不做
 	if app.map_loaded and app.canvas.modified_flag and by_map.has(app.cur_map_name):
 		var res: Dictionary = await app._map_file_ctrl.commit_document("清除悬空引用前提交")
@@ -228,22 +239,27 @@ func _clear_dangling() -> void:
 	var skipped := 0
 	var failed := 0
 	var cur_changed := false
+	var per_map: Array[String] = []   # R16：逐文件（逐图）结果，写完一并列出
 	for mn in by_map:
 		var fix_list: Array = by_map[mn]
 		var r: Dictionary = MapStore.read_path(MapStore.path_for(app.manifest, mn), app.manifest)
 		if not bool(r.get("ok", false)):
 			failed += 1
+			per_map.append("%s：读盘失败" % str(mn))
 			continue
 		var d: Dictionary = r.get("data", {}) as Dictionary
 		# 新鲜报告 = 目标作用域的唯一判据：字段现在仍声明为悬空引用才动
 		var res2: Dictionary = ProjectAudit.apply_ref_fixes(app.manifest, str(mn), fix_list, d)
 		skipped += int(res2.get("skipped", 0))
 		if not bool(res2.get("changed", false)):
+			per_map.append("%s：无改动（%d 项已不成立）" % [str(mn), int(res2.get("skipped", 0))])
 			continue
 		if not MapStore.write(app.manifest, mn, d):
 			failed += 1
+			per_map.append("%s：写入失败（磁盘未变）" % str(mn))
 			continue   # 写失败：不计数（磁盘未变）
 		total += int(res2.get("erased", 0))
+		per_map.append("%s：清除 %d 项" % [str(mn), int(res2.get("erased", 0))])
 		if mn == app.cur_map_name:
 			cur_changed = true
 	# 当前图被改过 → 重载画布让视图与磁盘一致（不过多扫描：只重开本图）
@@ -251,8 +267,12 @@ func _clear_dangling() -> void:
 		await app._open_map_by_name(app.cur_map_name)
 	_run_audit(false)
 	if total == 0:
-		app._set_status(" 没有清掉任何悬空引用（%d 项已不成立，%d 张图写入失败）" % [skipped, failed])
+		app._set_status(" 没有清掉任何悬空引用（%d 项已不成立，%d 张图写入失败）%s" % [
+			skipped, failed, ("：" + "；".join(per_map)) if not per_map.is_empty() else ""])
 		return
-	app._set_status(" 已清除 %d 个悬空引用%s%s" % [total,
+	# R16：逐文件结果列出（状态栏单条合并；地图多时列前 6 张，其余以「等 N 张」收尾）
+	var detail := "；".join(per_map.slice(0, 6)) \
+		+ ("等 %d 张图" % per_map.size() if per_map.size() > 6 else "")
+	app._set_status(" 已清除 %d 个悬空引用%s%s｜%s" % [total,
 		("，跳过 %d 项已失效报告" % skipped) if skipped > 0 else "",
-		("，%d 张图写入失败" % failed) if failed > 0 else ""])
+		("，%d 张图写入失败" % failed) if failed > 0 else "", detail])

@@ -46,10 +46,11 @@ func _brush_cells_multi(cells: Array) -> Array:
 	return out
 
 
-## 笔画内首个真实改动前压一次撤销快照（点击不动 = 零副作用）——涂/擦共用。
+## 瓦片/碰撞笔画不压整图快照（H01）：首个真实改动前 stroke_begin 开始差量记录。
+## 实例增删与全局操作仍走 push_undo 整图快照，不在这里。
 func _ensure_stroke_undo() -> void:
 	if not cvs._paint_pushed:
-		cvs._push_undo()
+		cvs._undo_history_ctrl.stroke_begin()
 		cvs._paint_pushed = true
 
 
@@ -71,6 +72,7 @@ func _paint(c: Vector2i) -> void:
 			var same: bool = had and ct == cvs.collision_type and cs == cvs.collision_shape
 			if not same:
 				_ensure_stroke_undo()
+				cvs._undo_history_ctrl.stroke_touch_collision(bc)
 				cvs.set_collision_cell(bc, true, cvs.collision_type, cvs.collision_shape)
 				changed = true
 		if changed:
@@ -89,10 +91,12 @@ func _paint(c: Vector2i) -> void:
 				or layer.get_cell_atlas_coords(bc) != cvs.paint_cell \
 				or MapFormat.alt_of_godot(layer.get_cell_alternative_tile(bc)) != cvs.tile_alt:
 			_ensure_stroke_undo()
+			cvs._undo_history_ctrl.stroke_touch_tile(cvs.layer_id(cvs.active_layer), bc)
 			TilesetCache.set_cell_alt(layer, bc, src, cvs.paint_cell, cvs.tile_alt)
 			changed = true
 	if changed:
-		cvs._mark_tiles()   # P01：只改瓦片层（三角拓扑下才需要重建自绘层）
+		# 阶段三：只失效这一笔写的那一层（三角自绘按层重画，其它层数据没动）
+		cvs._mark_tiles_layer(cvs.active_layer)
 
 
 ## 这一格到底有没有东西可擦——起手前先判，避免压空撤销快照。
@@ -118,7 +122,7 @@ func _erase_hits(pos: Vector2) -> bool:
 
 
 ## 按格批量擦除（瓦片/碰撞），返回是否有真实改动。路径补格与起手共用。
-## 撤销快照在首个真实改动前压一次（空擦 = 零副作用、不留空快照）。
+## 撤销覆盖在首个真实改动前接上（H01 差量记录；空擦 = 零副作用、不留空条目）。
 func erase_cells(cells: Array) -> bool:
 	var changed := false
 	var layer = null
@@ -133,15 +137,17 @@ func erase_cells(cells: Array) -> bool:
 			continue
 		_ensure_stroke_undo()
 		if layer == null:
+			cvs._undo_history_ctrl.stroke_touch_collision(bc)
 			cvs.set_collision_cell(bc, false)
 		else:
+			cvs._undo_history_ctrl.stroke_touch_tile(cvs.layer_id(cvs.active_layer), bc)
 			layer.erase_cell(bc)
 		changed = true
 	if changed:
 		if layer == null:
 			cvs._mark_collision()   # P01：擦的是碰撞层
 		else:
-			cvs._mark_tiles()       # P01：擦的是瓦片层
+			cvs._mark_tiles_layer(cvs.active_layer)   # 阶段三：只重画被擦的那一层
 	return changed
 
 
@@ -156,14 +162,24 @@ func _erase_at(pos: Vector2) -> void:
 	# 擦除只看当前层：命中本层实例删实例，否则擦本层瓦片/碰撞
 	var hit: EntityNode = cvs._entity_hit_on(cvs.active_layer, pos)
 	if hit:
+		# H01：拖动中扫过实例：先 stroke_end 定格已记格（差量两步各回半程：先回实例，再回瓦片）。
+		if cvs._undo_history_ctrl._stroke_open:
+			cvs._undo_history_ctrl.stroke_end()
+			cvs._paint_pushed = false
+		# §7.5 阶段二：实例删除走 InstanceKey 差量；场景图片（无码）回退整图快照。
+		var pre: Dictionary = cvs._undo_history_ctrl.inst_rows([hit])
+		if not bool(pre.get("ok", false)):
+			cvs.push_undo()
 		# B2b：释放统一为 remove_child + free——queue_free 帧末才消失，同帧擦除→保存会把刚删实体写进文件
 		if cvs.selected_entity == hit:
 			cvs.selected_entity = null
 		cvs.selected_multi.erase(hit)
 		(hit.get_parent() as Node2D).remove_child(hit)
 		hit.free()
+		if bool(pre.get("ok", false)):
+			cvs._undo_history_ctrl.inst_commit(pre.get("rows", {}))
 		cvs.commit_selection(cvs.selected_entity)
-		cvs._mark()
+		cvs._mark_ents()
 		return
 	# 碰撞元层擦除走统一入口（类型元数据一并清）——有真实改动才 _mark（热路径同 _paint）
 	erase_cells(_brush_cells(cvs.grid.pick_cell(cvs._active_local(pos))))
@@ -187,8 +203,12 @@ func _stamp(pos: Vector2) -> void:
 	if not cvs.is_placeable(cvs.stamp_asset):
 		cvs._hint("这个资产不能直接摆放（图集瓦片请用涂刷）")
 		return
-	cvs._push_undo()
 	var n: EntityNode = cvs.make_object(cvs.stamp_asset)
+	# §7.5 阶段二：实体新增走 InstanceKey 差量（只记录这一条）。场景图片没有实例码，
+	# 差量无从寻址——这类改动在动手前压整图快照。
+	var via_delta := n.is_entity()
+	if not via_delta:
+		cvs.push_undo()
 	# 带 sizeFields 的资产（事件区这类实例各自定尺寸）落下去要带默认尺寸，
 	# 否则就是个看不见的空实例；键名与缺省值都从声明/原字典取（E10），不写死 w/h。
 	var sf: Array = n.decl.get("sizeFields", []) if n.decl.get("sizeFields", null) is Array else []
@@ -221,7 +241,10 @@ func _stamp(pos: Vector2) -> void:
 			n.functions = fill.get("functions", [])
 	cvs._place_in_layer(n, cvs.active_layer)
 	cvs._ensure_code(n)
-	cvs._mark()
+	# 快照已在动手前压好（场景图片）；实体走差量，这里是唯一的撤销记账点。
+	if via_delta:
+		cvs._undo_history_ctrl.inst_commit_add([n])
+	cvs._mark_ents()
 	# 放置即选中（"放置→配置"不断档）；连放不受影响。
 	# 走选择提交入口（E09）：单选/多选/信息条一起更新，Del 不会再删到旧组。
 	cvs.commit_selection(n)
@@ -247,8 +270,6 @@ func _mark_tiles() -> void:
 	cvs._mark_tiles()
 func _mark_collision() -> void:
 	cvs._mark_collision()
-func _push_undo() -> void:
-	cvs._push_undo()
 func collision_index() -> int:
 	return cvs.collision_index()
 func is_layer_locked(i: int) -> bool:
@@ -276,7 +297,7 @@ func generate_collision(strategy := "full", replace := false, one_way_top := fal
 	if not replace and count_auto_collision(strategy, false, src_idx) == 0:
 		_hint("没有可生成的碰撞格（换策略或换层再试）")
 		return 0
-	_push_undo()
+	cvs.push_undo()
 	if replace:
 		for c in collision.get_used_cells():
 			set_collision_cell(c, false)

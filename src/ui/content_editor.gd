@@ -2,11 +2,17 @@ extends RefCounted
 ## 内容编辑器：左列本图实例列表 / 中列只读画布预览 / 右列实例引用 + 功能绑定与内容表单。
 ##
 ## 与其它控制器同形：RefCounted + _init(host)，样式统一走 Kit/Th。
-## 数据真相：实例绑定在画布 EntityNode 上（functions），功能内容在
-## content/<功能id>/<内容id>.json。连续控件（SpinBox/多行等）在失焦或 commit()
-## 时统一落盘（见 _pending_commits）；离散控件（勾选/下拉/行操作）当场写。
-## 注意：写盘给的是内容文件，实例绑定（functions 数组）仍在地图里、随地图保存。
 ## 中列是重绘式预览——同一节点不能两处上屏，不挂 app.canvas，按坐标重画。
+##
+## 三种写入时机（别混成一句「即时写盘」）：
+##   1) 已有内容文件的字段 → 控件失焦/回车/commit() 时**当场写那个内容文件**（不每击键）；
+##      写前比对磁盘摘要，被外部改过就拒写并提示。
+##   2) 还没创建的内容（新绑定第一次改字段）→ 先发行分层 ID，值进 **staged 暂存**
+##      （按内容 ID 查，不按功能码），正式提交（Ctrl+S/试玩）时 flush_staged 才落盘；
+##      绑定被撤销后暂存行作废，不留孤儿文件。
+##   3) 实例绑定本身（functions 数组、props 引用值）→ 只改地图内存态，随地图保存；
+##      改动走 _write_fns，进画布撤销栈。
+## 内容文件不是地图快照的一部分：撤销只回退地图，不回滚已写的内容文件。
 
 const Kit := preload("res://src/ui/ui_kit.gd")
 const Th := preload("res://src/ui/ui_theme.gd")
@@ -348,9 +354,10 @@ func commit_fields() -> void:
 			(cb as Callable).call()
 
 ## Ctrl+S / 正式提交：冲刷控件值后再把 staged 内容写盘（A2 正式提交点）。
-func commit() -> bool:
+## on_written(fn_id, cid)：每条成功写入即回调（提交日志逐文件登记，R04）。
+func commit(on_written: Callable = Callable()) -> bool:
 	commit_fields()
-	return _form.flush_staged()
+	return _form.flush_staged(on_written)
 
 ## 是否有尚未落盘的暂存内容（新 ID / 新绑定）；正式提交/试玩据此判定。
 func has_staged() -> bool:
@@ -424,13 +431,18 @@ func _content_id_for(n: EntityNode, fn_id: String) -> String:
 	var ent_code := str(AssetDecl.by_id(manifest, n.asset).get("code", ""))
 	return ContentId.content_id(map_code, ent_code, n.code, fn_id)
 
-## 写回附加功能：先撤销快照（改动前），再改 meta 并标脏。
+## 写回附加功能：改的是该实例的 functions 数组 → InstanceKey 差量（§7.5 阶段二）。
 ## 内容条目留在库里，删绑定不等于删内容。
 func _write_fns(n: EntityNode, fns: Array) -> void:
 	if n == null:
 		return
-	app.canvas._push_undo()
+	var pre: Dictionary = app.canvas._undo_history_ctrl.inst_rows([n])
+	var via_delta := bool(pre.get("ok", false))
+	if not via_delta:
+		app.canvas.push_undo()
 	n.functions = fns.duplicate(true)
+	if via_delta:
+		app.canvas._undo_history_ctrl.inst_commit(pre.get("rows", {}))
 	app.canvas._mark()
 
 # ──────────── 左列渲染 ────────────
@@ -536,8 +548,9 @@ func _is_view_visible() -> bool:
 func select_inst(code: String) -> void:
 	if code == "" or _find_ent(code) == null:
 		return
-	# 切实例前先落盘当前 SpinBox 的待提交值（旧下标只对旧实例有效）
-	commit()
+	# 切实例前只收集控件值（R01）：新绑定/新内容保持暂存，不跟切实例落盘——
+	# 落盘走正式提交（Ctrl+S / 试玩）。旧下标只对旧实例有效，冲刷必须先于换选中。
+	commit_fields()
 	_selected_ent = code
 	_selected_fn = -1
 	# E1：画布停靠态下点选了别的实例——演出面板编辑的已不是当前对象，先收起
@@ -600,18 +613,49 @@ func _clear_all_for_empty() -> void:
 
 # ──────────── 右列：渲染 ────────────
 
+## 阶段三：表单控件复用。右栏重建会销毁并重造全部字段控件（一行一个下拉/输入框，
+## 大功能几十行），而「重选同一实例」「问题抽屉定位后回填」这类重建其实没改表单内容。
+## 这里按身份+值算一个签名，签名没变就直接留用现有控件：输入焦点、滚动位置、待提交值都不动。
+var _form_block: Control = null
+var _form_sig := ""
+
+func _form_sig_of(spr: EntityNode) -> String:
+	if spr == null or not is_instance_valid(spr):
+		return ""
+	var fns := _current_fns()
+	var f: Dictionary = fns[_selected_fn] \
+		if _selected_fn >= 0 and _selected_fn < fns.size() and fns[_selected_fn] is Dictionary else {}
+	var fn_id := str(_form._resolve_fn(f).get("id", ""))
+	var cid := str(f.get("content", ""))
+	var data := {}
+	if cid != "":
+		var st = _form._staged.get(cid, null)
+		data = (st as Dictionary).get("data", {}) if st is Dictionary \
+			else (_form._content_read(fn_id, cid) if fn_id != "" else {})
+	# 只列影响表单呈现的量：实例身份/类型/字段值、绑定表、展开的功能、内容数据、定位高亮
+	return JSON.stringify([spr.code, spr.asset, spr.props, fns, _selected_fn, fn_id, cid, data, _field_focus])
+
 func _rebuild_right() -> void:
 	if _r_body == null:
 		return
 	# E1：右栏重建 = 可能换了实例/绑定。停靠的演出面板按身份复核，对不上就收起
 	_steps.revalidate_dock()
+	var spr0 := _current_spr()
+	var sig0 := _form_sig_of(spr0)
+	if spr0 != null and sig0 != "" and sig0 == _form_sig \
+			and _form_block != null and is_instance_valid(_form_block) \
+			and _form_block.get_parent() == _r_body:
+		# 阶段三：表单内容一个键都没变——不重建，保住焦点/滚动/未提交的连续控件值
+		return
 	# 右栏控件整片重建：待提交项绑定的是旧控件，重建后失效，直接清（提交发生在选择变更前）。
 	_pending_commits.clear()
 	for c in _r_body.get_children():
 		_r_body.remove_child(c)
 		c.queue_free()
+	_form_block = null
+	_form_sig = ""
 	_form_id_edit = null
-	var spr := _current_spr()
+	var spr := spr0
 	if spr == null:
 		_r_name.text = ""
 		_r_id.text = ""
@@ -631,7 +675,9 @@ func _rebuild_right() -> void:
 	_r_body.add_child(_build_fn_block())
 	if _selected_fn >= 0 and _selected_fn < _current_fns().size():
 		_r_body.add_child(Kit.divider())
-		_r_body.add_child(_build_form_block())
+		_form_block = _build_form_block()
+		_r_body.add_child(_form_block)
+		_form_sig = sig0
 
 ## 自带功能（挂载）——类型自带、实例不可删，与附加功能同一套绑定/内容模型：
 ## 值在 content/<功能id>/<内容ID>.json，未编辑过的实例 = 声明 default（游戏侧兜底）。
@@ -767,6 +813,24 @@ func _refresh_all() -> void:
 	_rebuild_right()
 	if _preview != null:
 		_preview.refresh()
+
+## 内容文件被编辑器自己改写（撤销/重做回滚内容字段）后同步界面。
+## 只在这份内容正开着时重建右栏——重建会丢输入焦点，别的条目不碰。
+func refresh_after_external_write(fn_id: String, cid: String) -> void:
+	var fns := _current_fns()
+	var i := _selected_fn
+	if i >= 0 and i < fns.size() and fns[i] is Dictionary:
+		var f: Dictionary = fns[i]
+		if str(f.get("content", "")) == cid and str(_resolve_fn(f).get("id", "")) == fn_id:
+			# 撤销已经把盘面写回旧值：控件里还没提交的值作废丢弃（重建后按盘面显示），
+			# 不能在这里 commit——那会把刚撤销的值又写回去。
+			_pending_commits.clear()
+			_rebuild_right()
+			if _preview != null:
+				_preview.refresh()
+			return
+	if _preview != null:
+		_preview.refresh()
 # ──────────── 右列：内容表单 ────────────
 
 
@@ -800,24 +864,40 @@ func _open_lib(i: int) -> void:
 func _ensure_content(i: int) -> String:
 	return _form._ensure_content(i)
 
-## 暂存内容是否还有未落盘的（project_shell 的 Ctrl+S 用它给 staged 反馈）
+## 暂存内容是否还有未落盘的（全部文档合计；正式提交/试玩据此判定）
 func has_staged_content() -> bool:
 	return _form.has_staged()
 
-## 正式提交：把暂存内容写盘（A2）。失败时返回 false 并保留暂存。
-func flush_staged_content() -> bool:
-	return _form.flush_staged()
+## 当前文档（地图）的暂存状态与目标（R02/R04：提交日志与草稿按文档冻结）。
+func staged_rows_current_doc() -> Array:
+	return _form.staged_rows_for_current_doc()
+func has_staged_for_current_doc() -> bool:
+	return _form.has_staged_for_current_doc()
+func drop_staged_for_current_doc() -> int:
+	return _form.drop_staged_for_current_doc()
+## 草稿恢复：把待提交内容载荷重新暂存（R03）；返回收下的条数。
+func restage_rows(rows: Array) -> int:
+	return _form.restage_rows(rows)
+## 复制粘贴产生的暂存（R12）：粘贴不落盘，随正式提交写入；撤销随绑定复核丢弃。
+func stage_clone(fn_id: String, cid: String, data: Dictionary, ent: String) -> void:
+	_form.stage_clone(fn_id, cid, data, ent)
 
-## 暂存快照（A3 草稿记录待提交文件用）：{content_id: {fn_id, data}}
-func staged_snapshot() -> Dictionary:
-	return _form.staged_snapshot()
+## 正式提交：把当前文档的暂存内容写盘（A2）。失败时返回 false 并保留剩余暂存。
+func flush_staged_content(on_written: Callable = Callable()) -> bool:
+	return _form.flush_staged(on_written)
+## B1：单条暂存内容的冲刷（DocumentCommit.apply 逐目标调用）；返回 {status: ok|dropped|failed}。
+func flush_one_content(cid: String, on_written: Callable = Callable()) -> Dictionary:
+	return _form.flush_one(cid, on_written)
+## B1：暂存表本体（与 DocumentSession 共享同一份工作副本，字典按引用传递）。
+func staged_table() -> Dictionary:
+	return _form.staged_table()
 
-## 暂存内容的目标文件绝对路径（A3 提交日志登记用）
-func pending_paths() -> Array:
+## 暂存内容的目标文件绝对路径（提交日志登记用）：[{fn_id, cid, path}]。
+func pending_targets() -> Array:
 	var out: Array = []
-	var snap: Dictionary = _form.staged_snapshot()
-	for cid in snap:
-		out.append(ContentStore.path_for(manifest, str((snap[cid] as Dictionary).get("fn_id", "")), str(cid)))
+	for row in staged_rows_current_doc():
+		out.append({"fn_id": str(row.fn_id), "cid": str(row.cid),
+			"path": ContentStore.path_for(manifest, str(row.fn_id), str(row.cid))})
 	return out
 
 ## 暂存感知的内容读写（steps_panel 用）：刚 staged 的新内容还没落盘，
@@ -825,8 +905,14 @@ func pending_paths() -> Array:
 func read_content_staged(fn_id: String, cid: String) -> Dictionary:
 	return _form._content_read(fn_id, cid)
 
-func write_content_staged(fn_id: String, cid: String, data: Dictionary) -> bool:
-	return _form._content_write(fn_id, cid, data) == "ok"
+## 暂存感知读取 + 磁盘摘要（R05 演出写回基线）：{data, digest}。
+func read_content_staged_ex(fn_id: String, cid: String) -> Dictionary:
+	return _form._content_read_ex(fn_id, cid)
+
+## 暂存感知写回（R05）：base_digest 非空时写前比对，磁盘被外部改过不覆盖。
+func write_content_staged(fn_id: String, cid: String, data: Dictionary, base_digest := "") -> bool:
+	return _form._content_write(fn_id, cid, data, base_digest)
+
 func _ensure_failed() -> void:
 	_form._ensure_failed()
 func _refresh_status_only() -> void:

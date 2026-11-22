@@ -35,8 +35,6 @@ var cur_map_name:
 ## 同名包装方法（真实实现经 cvs 转发）
 func _hint(t: String) -> void:
 	cvs._hint(t)
-func _push_undo() -> void:
-	cvs._push_undo()
 func extract() -> Dictionary:
 	return cvs.extract()
 func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty := false) -> void:
@@ -122,7 +120,8 @@ func _place_in_layer(n: EntityNode, li: int) -> void:
 	box.add_child(n)
 	# 同层混放提示（作者提示 ⑤ 前半）：层没开 ySort 但该层已有瓦片又有实例 → 状态栏提示一次
 	if str(root.get_meta("yhint", "")) == "":
-		var has_tiles: bool = (layer_tiles[li] as TileMapLayer).get_used_cells().size() > 0
+		# 阶段三：「这层有没有瓦片」走缓存（瓦片写入时失效），不再每次放置全层重扫
+		var has_tiles: bool = cvs.layer_has_tiles(li)
 		var others: Array = _layer_entities_of(root)
 		var mixed: bool = has_tiles and others.size() > 1
 		if mixed:
@@ -185,12 +184,12 @@ func is_layer_locked(i: int) -> bool:
 # —— 层管理：新建/删除/上下移（先 extract 快照 → 在快照上改 → load_data 重建） ——
 ## 顺序是硬约束：extract 按节点下标取瓦片、按声明序取层码，两者必须对齐——
 ## 不能「先改活体 meta 再 extract 反向同步」（会串层/丢瓦片）。
-## 撤销快照由 _push_undo 在改动前压栈；重建窗口期（extract 返回 {}）放弃操作。
+## 撤销快照由 push_undo 在改动前压栈；重建窗口期（extract 返回 {}）放弃操作。
 ## 新层默认插到栈顶之下——新建即可画前景遮挡。
 func layer_add(name: String) -> void:
 	if map_root == null or not is_instance_valid(map_root):
 		return
-	_push_undo()
+	cvs.push_undo()
 	var snap := extract()
 	if snap.is_empty():
 		return
@@ -212,7 +211,7 @@ func layer_del(i: int) -> void:
 		return
 	if layer_count() <= 1:
 		return
-	_push_undo()
+	cvs.push_undo()
 	var snap := extract()
 	if snap.is_empty():
 		return
@@ -240,7 +239,7 @@ func layer_rename(i: int, name: String) -> void:
 	if i < 0 or i >= L.size() or str(name) == "":
 		return
 	# 快照先行（契约 1）：只改 name 也走同一纪律，防止照抄成改 id/顺序时串层
-	_push_undo()
+	cvs.push_undo()
 	var snap := extract()
 	if snap.is_empty():
 		return
@@ -265,7 +264,7 @@ func layer_set_blend(i: int, blend: String) -> void:
 		return
 	if str(blend) == str((L[i] as Dictionary).get("blend", "mix")):
 		return
-	_push_undo()
+	cvs.push_undo()
 	var snap := extract()
 	if snap.is_empty():
 		return
@@ -288,7 +287,7 @@ func layer_move(i: int, dir: int) -> void:
 	var nj := i + dir
 	if i < 0 or i >= L.size() or nj < 0 or nj >= L.size():
 		return
-	_push_undo()
+	cvs.push_undo()
 	var snap := extract()
 	if snap.is_empty():
 		return
@@ -310,7 +309,7 @@ func layer_set_visible(i: int, v: bool) -> void:
 	if i < 0 or i >= L.size():
 		return
 	# 快照先行（同 layer_rename：只改 visible 也走同一纪律）
-	_push_undo()
+	cvs.push_undo()
 	var snap := extract()
 	if snap.is_empty():
 		return
@@ -335,7 +334,7 @@ func layer_set_param(i: int, key: String, v) -> void:
 		# 关掉 ySort 是合法操作（E11）：erase 键 = 回到缺省顺序，不能静默拒绝
 		pass
 	# 快照先行（同 layer_set_visible：改层参数走同一纪律）
-	_push_undo()
+	cvs.push_undo()
 	var snap := extract()
 	if snap.is_empty():
 		return

@@ -1,6 +1,13 @@
 extends RefCounted
-## 地图 JSON 数据层：名称校验后的读写、mtime+尺寸缓存、实体查找、改名/复制（纯文件操作，引用不迁移）。
+## 地图 JSON 数据层：名称校验后的读写、mtime+尺寸缓存、实体查找、改名、整图复制。
+## **改名与复制不是一回事**：rename_map 是**纯 rename**（只换文件名，不迁移任何引用——
+## 跨图引用写的是地图码，所以本来就不破）；duplicate_map 是**整图复制**，会发新实例码/内容 ID、
+## 重映射组内引用、为目标图重发地图码，并按 A2 顺序先写内容后写地图。
 ## 以静态函数为主，带少量静态状态：_cache（读缓存）与 project_rev（写盘版本号，派生缓存据此重扫）。
+## 写盘单入口 write_text/write_json：先写 .tmp 再原子替换。两种回滚保险别混：
+##   地图 —— write() 先把原文件暂存到 editor/history/maps/<地图码>/（替换成功才计入）；
+##   内容 —— ContentStore 覆盖前 rotate_history 出 3 层 .history（与地图同权，误写可回滚）。
+## 两者深度与各入口提交的文件集合由 docs/EDITOR_FEATURES.md §7.3 唯一规定，此处不复述数字。
 ## manifest 除取 _maps_dir 外，还随读取传入 map_data_validation 做结构校验（查实体类型/功能声明）。
 ## 注意：路径引用（preload）而非全局类名，避免 headless 首次扫描时的 class_name 缓存问题。
 
@@ -40,6 +47,11 @@ static func _file_size(path: String) -> int:
 	var n := f.get_length()
 	f.close()
 	return n
+
+## R29：人工刷新入口——外部工具同秒同长度改写地图时，浏览缓存（mtime+size）可能拿旧结构；
+## 正式写入路径各自失效或直读。需要看到磁盘最新结构时（脚本/诊断）调用它强制重扫。
+static func invalidate_read_cache() -> void:
+	_cache.clear()
 
 ## 统一文本解码、版本升级与结构校验；错误时不返回可编辑数据。
 ## 先跑原始文档检查（版本缺失/超前、退役键），再抬版本号并做结构校验（D11）。
@@ -248,10 +260,12 @@ static func validate_for_write(data: Dictionary, m: Dictionary) -> bool:
 
 ## 轮转 .3←.2←.1←当前（copy 当前而非 rename：备份失败绝不阻断保存本身）
 ## 内容文件也要同样的回滚保险（内容条目是可复用资产），所以开放成公开入口。
-static func rotate_history(path: String) -> void:
-	_rotate_history(path)
+## 返回值 = **当前文件的快照此刻确实存在**（`.1`）。保存路径可以忽略（备份失败不拦保存）；
+## 删除路径必须看它——删掉就没有「当前」可再备份，所以删除前要先确认拿到了这份快照。
+static func rotate_history(path: String) -> bool:
+	return _rotate_history(path)
 
-static func _rotate_history(path: String) -> void:
+static func _rotate_history(path: String) -> bool:
 	var dir := path.get_base_dir().path_join(".history")
 	DirAccess.make_dir_recursive_absolute(dir)
 	var base := path.get_file()
@@ -262,18 +276,19 @@ static func _rotate_history(path: String) -> void:
 			if FileAccess.file_exists(dst):
 				DirAccess.remove_absolute(dst)
 			DirAccess.rename_absolute(src, dst)
-	if not FileAccess.file_exists(path):
-		return
 	var h1 := dir.path_join(base + ".1")
+	if not FileAccess.file_exists(path):
+		return true   # 没有当前文件 = 无可备份（幂等路径）
 	if FileAccess.file_exists(h1):
 		DirAccess.remove_absolute(h1)
 	var f := FileAccess.open(path, FileAccess.READ)
 	if f == null:
-		return
+		return false
 	var buf := f.get_buffer(f.get_length())
 	f.close()
 	if not _write_bytes(h1, buf):
-		return  # 备份失败不阻断保存；下次保存再试
+		return false  # 备份失败不阻断保存；下次保存再试
+	return FileAccess.file_exists(h1)
 
 ## 地图域 JSON 写盘单入口——先写 .tmp 再原子替换，中途崩溃不会留下半截 JSON。
 ## save / autosave / 内容文件 / 导出清单等所有项目数据写盘都走这里。
@@ -353,13 +368,30 @@ static func rename_map(m: Dictionary, old_name: String, new_name: String) -> Str
 	if src == "" or not FileAccess.file_exists(src):
 		return "原图不存在"
 	var dst := path_for(m, new_name)
+	# R06：改名 = 一次多文件提交（写新 + 删旧）——进提交日志，中途失败可辨认可清理；
+	# 日志不可写时中止（与正式提交同一门槛）。
+	var entries: Array = [
+		{"path": dst, "baseline": "", "expect": "", "kind": "map", "id": new_name},
+		{"path": src, "baseline": Recovery.digest(src), "expect": "", "kind": "map", "id": old_name, "op": "delete"},
+	]
+	var log_path := Recovery.begin_pending(m, "地图改名 %s → %s" % [old_name, new_name], entries)
+	if log_path == "":
+		return "提交日志写入失败：改名已中止"
 	if DirAccess.rename_absolute(src, dst) != OK:
+		Recovery.clear_pending(m, log_path)   # 什么都没动：日志作废
 		return "文件系统重命名失败"
-	# 文件内 meta.name 同步改名（A3）：只改文件名会让重开/历史查询拿到旧名
+	# 文件内 meta.name 同步改名（A3）：只改文件名会让重开/历史查询拿到旧名。
+	# R06：回写失败不得报成功——文件已在新名下，显示名未更新要显式报告。
 	var renamed := read(m, new_name)
 	if not renamed.is_empty() and str((renamed.get("meta", {}) as Dictionary).get("name", "")) != new_name:
 		renamed.meta.name = new_name
-		write_json(dst, renamed)
+		if not write_json(dst, renamed):
+			return "改名后显示名回写失败（文件已在新名字下，显示名未更新）"
+	# R06：进度回填失败 = 日志已不可判读。改名本身已完成（文件已在新名下），
+	# 但不能再宣称「全程可追溯」——显式报告，让用户按 editor/pending 复核。
+	if not Recovery.mark_pending_written(m, log_path, 0, Recovery.digest(dst)) \
+			or not Recovery.mark_pending_written(m, log_path, 1, ""):
+		return "改名已完成但提交日志回填失败（文件在新名下；请在 editor/pending 复核）"
 	_cache.erase(src)
 	_cache.erase(dst)
 	invalidate_code_map()   # 改名换了文件：码表按图名做键，必须重算
@@ -370,6 +402,7 @@ static func rename_map(m: Dictionary, old_name: String, new_name: String) -> Str
 		var hp := hist_dir.path_join("%s.json.%d" % [old_name, i + 1])
 		if FileAccess.file_exists(hp):
 			DirAccess.remove_absolute(hp)
+	Recovery.clear_pending(m, log_path)
 	return ""
 
 ## 复制地图（C2）：整图走 ClonePlan——实例码与附属内容全部独立、组内引用重映射，
@@ -402,18 +435,38 @@ static func duplicate_map(m: Dictionary, old_name: String, new_name: String,
 	if str(plan.get("status", "")) != "ok":
 		conflicts_out.append_array(plan.get("conflicts", []))
 		return "复制计划有冲突（见问题列表）"
-	# A2 顺序：先写内容（失败即停，地图文件未动），再写地图
+	# R06：复制 = 一次多文件提交（内容 N 份 + 地图 1 份）——进提交日志；日志不可写时中止。
+	var jentries: Array = []
+	for pc in (plan.get("pending_contents", []) as Array):
+		var pd: Dictionary = pc
+		var cpath := ContentStore.path_for(m, str(pd.get("fn_id", "")), str(pd.get("id", "")))
+		jentries.append({"path": cpath, "baseline": "", "expect": "", "kind": "content", "id": str(pd.get("id", ""))})
+	var mpath := path_for(m, new_name)
+	jentries.append({"path": mpath, "baseline": "", "expect": "", "kind": "map", "id": new_name})
+	var log_path := Recovery.begin_pending(m, "整图复制 %s → %s" % [old_name, new_name], jentries)
+	if log_path == "":
+		return "提交日志写入失败：复制已中止"
+	# A2 顺序：先写内容（失败即停，地图文件未动），每份写成功即回填日志。
+	# 回填失败同样停：日志不可判读时继续写会留下「文件写了、日志说没写」的乱账。
+	var cidx := 0
 	for pc in (plan.get("pending_contents", []) as Array):
 		var pd: Dictionary = pc
 		if not ContentStore.write(m, str(pd.get("fn_id", "")), str(pd.get("id", "")),
 				pd.get("data", {}) as Dictionary):
 			return "新内容写入失败：%s" % str(pd.get("id", ""))
+		if not Recovery.mark_pending_written(m, log_path, cidx,
+				Recovery.digest(ContentStore.path_for(m, str(pd.get("fn_id", "")), str(pd.get("id", ""))))):
+			return "复制中止：提交日志回填失败（已写内容保留，请在 editor/pending 复核）"
+		cidx += 1
 	var doc: Dictionary = plan.get("document", {}) if plan.get("document", {}) is Dictionary else {}
 	if doc.is_empty():
 		return "复制文档组装失败"
 	# 走原子写单入口（tmp+rename）：写失败不留半截文件堵死同名重试
 	if not write_json(path_for(m, new_name), doc):
 		return "复制写盘失败"
+	if not Recovery.mark_pending_written(m, log_path, jentries.size() - 1, Recovery.digest(mpath)):
+		return "复制已完成但提交日志回填失败（请在 editor/pending 复核）"
+	Recovery.clear_pending(m, log_path)
 	return ""
 
 ## 读所有地图 → {地图名: data}。坏图（无法读取/JSON 解析失败/非对象）不进结果，
@@ -430,3 +483,10 @@ static func read_all(m: Dictionary, bad_out: Array = []) -> Dictionary:
 			continue
 		out[name] = data
 	return out
+
+## R29：审计/破坏性操作读磁盘实际内容——不走 mtime+size 浏览缓存。
+## 自检结果驱动「清除悬空引用」等写盘动作，旧结构会把好引用当悬空清掉。
+## 实现上直接清缓存后复用 read_all（浏览路径下次照常重建缓存）。
+static func read_all_fresh(m: Dictionary, bad_out: Array = []) -> Dictionary:
+	_cache.clear()
+	return read_all(m, bad_out)

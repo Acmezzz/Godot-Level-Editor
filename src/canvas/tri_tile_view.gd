@@ -4,11 +4,13 @@ extends Node2D
 ## 半格三角形；因此三角拓扑下瓦片数据仍住在 TileMapLayer（六元组原样读写），
 ## 由本节点按三角形轮廓自绘（以图集切片为源，按三角形做 UV 裁切）。
 ##
-## 显隐随所属层的 TileMapLayer 同步（图层接口只碰 TileMapLayer，本节点跟它走）；
-## 改动数据后由画布 refresh() 触发重绘。
+## 显隐与层参数由层控制器同步到本节点（图层接口只碰 TileMapLayer，本节点跟它走）；
+## refresh() 只是请求重绘（queue_redraw），真正的遍历在 _draw() 里——每次重绘都扫该层全部瓦片，
+## 不做逐格缓存。所以大图三角层重绘是 O(瓦片数)，别在每帧调用 refresh()。
 
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
 const TilesetCache := preload("res://src/canvas/tileset_cache.gd")
+const MapFormat := preload("res://src/map/map_format.gd")
 
 var layer: TileMapLayer
 var grid: GridSpace
@@ -59,16 +61,18 @@ func _draw() -> void:
 		var poly: PackedVector2Array = grid.tri_polygon(c.x, c.y)
 		if poly.size() < 3:
 			continue
-		draw_tri_texture(texs[src] as Texture2D, poly, atl, cs)
+		# R18：alt（编辑器变换位）参与自绘——翻转/转置不再被三角自绘吞掉
+		var alt := MapFormat.alt_of_godot(layer.get_cell_alternative_tile(c))
+		draw_tri_texture(texs[src] as Texture2D, poly, atl, cs, alt)
 
 ## 把一个图集切片贴到三角形内：UV 取切片在整张图集里的归一化矩形，
 ## 按三角形包围盒做仿射（切片左上对齐包围盒；等距/斜平面下三角形是旋转的，
 ## 包围盒映射会把贴图略微拉伸——与导出预览的 _blit_tile 同口径）。
-func draw_tri_texture(tex: Texture2D, poly: PackedVector2Array, atl: Vector2i, cs: Vector2i) -> void:
+func draw_tri_texture(tex: Texture2D, poly: PackedVector2Array, atl: Vector2i, cs: Vector2i, alt := 0) -> void:
 	var tsz := tex.get_size()
 	if tsz.x <= 0.0 or tsz.y <= 0.0:
 		return
-	var uvs := tri_uvs(poly, atl, cs, tsz)
+	var uvs := tri_uvs(poly, atl, cs, tsz, alt)
 	if uvs.size() != poly.size():
 		return
 	var cols := PackedColorArray()
@@ -77,7 +81,9 @@ func draw_tri_texture(tex: Texture2D, poly: PackedVector2Array, atl: Vector2i, c
 	draw_polygon(poly, cols, uvs, tex)
 
 ## 三角形三点 → 图集 UV（纯函数，绘制的几何口径；tests/test_tri_render.gd 直接验证）。
-static func tri_uvs(poly: PackedVector2Array, atl: Vector2i, cs: Vector2i, tex_size: Vector2) -> PackedVector2Array:
+## R18：alt（编辑器变换位 0-7，D4 口径见 map_format）在切片内部施加变换，
+## 与按键/吸管的旋转翻转动作同一套编号；alt=0 与旧口径逐点相同。
+static func tri_uvs(poly: PackedVector2Array, atl: Vector2i, cs: Vector2i, tex_size: Vector2, alt := 0) -> PackedVector2Array:
 	var out := PackedVector2Array()
 	if poly.is_empty() or tex_size.x <= 0.0 or tex_size.y <= 0.0:
 		return out
@@ -95,5 +101,29 @@ static func tri_uvs(poly: PackedVector2Array, atl: Vector2i, cs: Vector2i, tex_s
 	for p2: Vector2 in poly:
 		var lx := (p2.x - mn.x) / sx
 		var ly := (p2.y - mn.y) / sy
-		out.append(Vector2(lerpf(u0, u1, lx), lerpf(v0, v1, ly)))
+		# R18：按编辑器变换位在切片内部施加变换（D4 作用，见 map_format ALT_* 表）：
+		# 0 恒等 / 1 水平翻转 / 2 垂直翻转 / 3 180° / 4 转置 / 5 90° / 6 270° / 7 270°·翻转
+		var ux := lx
+		var uy := ly
+		var a := alt & 7
+		if a == 1:
+			ux = 1.0 - lx
+		elif a == 2:
+			uy = 1.0 - ly
+		elif a == 3:
+			ux = 1.0 - lx
+			uy = 1.0 - ly
+		elif a == 4:
+			ux = ly
+			uy = lx
+		elif a == 5:
+			ux = 1.0 - ly
+			uy = lx
+		elif a == 6:
+			ux = ly
+			uy = 1.0 - lx
+		elif a == 7:
+			ux = 1.0 - ly
+			uy = 1.0 - lx
+		out.append(Vector2(lerpf(u0, u1, ux), lerpf(v0, v1, uy)))
 	return out

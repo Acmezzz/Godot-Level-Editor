@@ -2,6 +2,7 @@ extends RefCounted
 ## 地图 JSON 结构校验，与场景树状态无关（纯字典操作，读图必经之路）。
 
 const MapFormat := preload("res://src/map/map_format.gd")
+const CellGraph := preload("res://src/map/cell_graph.gd")
 const GridSpaceScript := preload("res://src/canvas/grid_space.gd")
 
 ## 原始文档前置检查（D11）：必须在 upgrade() 抬版本号之前跑。
@@ -57,7 +58,9 @@ static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 				_add(issues, "error", "meta.gridBasis", str(bp.get("why", "invalid")))
 		# B3：可选格拓扑（quads / triangles）。三角格与 hex 投影互斥（六边没有平行四边形列）。
 		if meta.has("gridTopology"):
-			var tp: Dictionary = GridSpaceScript.parse_topology(meta, str(meta.get("gridProjection", "orthogonal")))
+			# R17：拓扑判据用**生效投影**（图缺投影键时取项目默认），不再一律按正交。
+			var eff_proj := str(meta.get("gridProjection", GridSpaceScript.project_projection(manifest)))
+			var tp: Dictionary = GridSpaceScript.parse_topology(meta, eff_proj)
 			if not bool(tp.get("ok", false)):
 				_add(issues, "error", "meta.gridTopology", str(tp.get("why", "invalid")))
 		layer_ids = _validate_layers(meta, issues)
@@ -66,6 +69,7 @@ static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 		_add(issues, "error", "tiles", "must be an object keyed by layer id")
 	elif tiles is Dictionary and not layer_ids.is_empty():
 		var known_assets := _asset_ids(manifest)
+		var tile_cells := {}   # R21：同层同坐标多瓦片 = 错误（编辑器读入会覆写）
 		for lid in tiles.keys():
 			if not layer_ids.has(str(lid)):
 				_add(issues, "error", "tiles." + str(lid), "unknown layer id")
@@ -77,19 +81,25 @@ static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 					var p := "tiles.%s[%d]" % [str(lid), j]
 					# 6 元（v7）：[x, y, 资产id, atlas_x, atlas_y, alt]——第 3 位是字符串资产 id，
 					# 第 6 位 = 变换位 0-7（bit0 水平翻转 / bit1 垂直翻转 / bit2 转置 90°），0 = 原样。
-					# JSON 数字一律是 float：alt 接受「有限且为整数」的值（5.0 合法、5.5 拒绝），
-					# 否则编辑器自己写出的 JSON 会被自己拒收（D01）。
+					# JSON 数字一律是 float：格号/图集号/alt 都要求「有限且为整数」（R21），
+					# 否则编辑器读入转整型或同格覆写时，导出/存储与编辑重建消费成不同结果。
 					if not (cell is Array) or (cell as Array).size() != 6 \
-							or not _is_number_prefix(cell, 2) or not (cell[2] is String) \
-							or not (((cell as Array)[3] is int or (cell as Array)[3] is float) \
-								and ((cell as Array)[4] is int or (cell as Array)[4] is float) \
-								and _is_integral_number((cell as Array)[5])):
-						_add(issues, "error", p, "must contain x, y, asset id, atlas_x, atlas_y, alt (v6 5-tuple retired: run tools/migrate_project.gd)")
+							or not _is_integral_number(cell[0]) or not _is_integral_number(cell[1]) \
+							or not (cell[2] is String) \
+							or not _is_integral_number(cell[3]) or not _is_integral_number(cell[4]) \
+							or not _is_integral_number(cell[5]):
+						_add(issues, "error", p, "must contain integral x, y, asset id, atlas_x, atlas_y, alt (v6 5-tuple retired: run tools/migrate_project.gd)")
 					elif int((cell as Array)[3]) < 0 or int((cell as Array)[4]) < 0 \
 							or int((cell as Array)[5]) < 0 or int((cell as Array)[5]) > 7:
 						_add(issues, "error", p, "atlas coords must be >= 0 and alt in 0..7")
 					elif not known_assets.is_empty() and not known_assets.has(str((cell as Array)[2])):
 						_add(issues, "warning", p, "asset id is not in the current manifest: " + str((cell as Array)[2]))
+					elif tile_cells.has("%s|%d|%d" % [str(lid), int((cell as Array)[0]), int((cell as Array)[1])]):
+						_add(issues, "error", p, "duplicate tile cell on layer %s: (%d,%d)" % [
+							str(lid), int((cell as Array)[0]), int((cell as Array)[1])])
+					else:
+						var ck := "%s|%d|%d" % [str(lid), int((cell as Array)[0]), int((cell as Array)[1])]
+						tile_cells[ck] = true
 	var spawn = data.get("spawn", [2, 2])
 	if not (spawn is Array) or spawn.size() != 2 or not _is_number_pair(spawn):
 		_add(issues, "error", "spawn", "must contain two numeric coordinates")
@@ -98,6 +108,7 @@ static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 	if data.get("objects", null) is Array:
 		_validate_objects(data.objects, manifest, layer_ids, issues)
 	if data.get("collision", null) is Array:
+		var coll_cells := {}   # R21：同格多碰撞 = 错误（命中判定会随数组序漂移）
 		for i in data.collision.size():
 			var cell = data.collision[i]
 			var p := "collision[%d]" % i
@@ -108,15 +119,29 @@ static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 			if not (cell.has("x") and (cell.x is int or cell.x is float) \
 					and cell.has("y") and (cell.y is int or cell.y is float)):
 				_add(issues, "error", p, "must contain numeric x, y")
+			elif not (_is_integral_number(cell.x) and _is_integral_number(cell.y)):
+				_add(issues, "error", p, "collision x, y must be integral numbers")
+			else:
+				var ck2 := "%d|%d" % [int(cell.x), int(cell.y)]
+				if coll_cells.has(ck2):
+					_add(issues, "error", p, "duplicate collision cell: (%d,%d)" % [int(cell.x), int(cell.y)])
+				else:
+					coll_cells[ck2] = true
 			if cell.has("type") and not (cell.type is String):
 				_add(issues, "error", p + ".type", "must be a collision type id string")
 			if cell.has("shape") and not (cell.shape is String):
 				_add(issues, "error", p + ".shape", "must be a shape id string")
+	# C4（§7.4）：有限格图声明校验（meta.cellGraph：{cells: [{id, polygon, neighbors}]}）——
+	# 无重复 id、有效多边形、邻接目标存在。格图是只读参考层，坏声明 = cell_id 引用落空。
+	for it in CellGraph.validate_graph((meta as Dictionary).get("cellGraph", {}) if (meta as Dictionary).get("cellGraph", {}) is Dictionary else {}):
+		_add(issues, "error", str((it as Dictionary).get("path", "")), str((it as Dictionary).get("message", "")))
+
 	return issues
 
 ## meta.layers 用户层栈校验：非空数组、条目 id 非空且唯一、name 非空。
 ## 返回合法层 id 集（供 tiles 键与 entities.layer 归属校验）；栈本身不合格时返回空集，
 ## 关联检查（tiles 键 ⊆ 层集、entity.layer ∈ 层集）随之跳过，避免连坐噪音。
+
 static func _validate_layers(meta: Dictionary, issues: Array[Dictionary]) -> Dictionary:
 	var ids := {}
 	if not meta.has("layers") or not (meta.layers is Array) or (meta.layers as Array).is_empty():

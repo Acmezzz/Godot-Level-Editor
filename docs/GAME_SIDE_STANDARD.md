@@ -20,16 +20,28 @@
 
 ```
 <游戏工程>/
-├── editor/editor_manifest.json      # 清单：图集 / 图层 / 实体类型 / 功能声明
+├── editor/editor_manifest.json      # 清单：图集 / 实体资产 / 功能与字段声明
 ├── editor/previews/*.png            # 实体缩略图（清单 thumb 指向这里）
-├── maps/<地图名>.json               # 地图（编辑器唯一的地图写盘产物）
-├── maps/<地图名>.autosave.json      # 编辑器自动草稿（游戏扫描时必须忽略）
-├── content/<功能id>/<内容ID>.json   # 内容条目
+├── maps/<地图名>.json               # **正式地图**（游戏侧唯一要读的地图来源）
+├── content/<功能id>/<内容ID>.json   # 内容条目（根目录可被清单 contentDir 改）
+├── editor/                          # 编辑器私有，游戏侧一律忽略
+    ├── drafts/<地图码>.json          # 自动草稿（崩溃后恢复用）
+    ├── history/maps/<地图码>/        # 保存前原文件快照（保留深度见 EDITOR_FEATURES §7.3）
+    ├── pending/pending-<时间戳>.json # 多文件提交日志（下次启动检查是否写全）
+    └── CODES.md                     # 人类名 ↔ 执行码对照表（每次保存清单重写）
 └── assets/                          # 资产目录（扫描制：目录约定 = 注册表）
     ├── tiles/                       # 图片 → 瓦片图集资产（递归；png/jpg/jpeg/webp/bmp/tga）
     ├── images/                      # 图片 → 图片摆放资产（递归；同上扩展名）
     └── entities/                    # .tscn → 实体资产（递归）
 ```
+
+旧版草稿曾写在 `maps/<地图名>.autosave.json`：**只有带 `_autosave_of` 键时**才是草稿，
+游戏扫描 `maps/` 时必须跳过；普通 `*.autosave.json` 后缀的地图仍可能被列出，按普通地图读。
+`maps/` 下不应再出现新的编辑器私有文件（现行草稿在 `editor/drafts/`）。
+
+本节只说明「游戏侧该读哪些目录」；**编辑器各入口一次会写哪些文件、按什么顺序写**由
+`EDITOR_FEATURES.md` §7.3「各入口提交哪些文件」唯一规定（含地图历史 20 份、
+内容历史 3 轮），此处不重复维护。
 
 地图名规则（`manifest.gd::is_valid_map_name`）：必须是纯文件名，不含 `/ \ : * ? " < > |`、
 不以 `.` 开头、不含 `..`、不以点或空格结尾、不是 Windows 保留设备名
@@ -74,6 +86,8 @@
 | `playtest` | object | 可选。试玩面板声明驱动：`flags: [{id, name, arg}]`（勾选后启动参数**原样追加** arg）、`params: [{id, name, arg(含 %d), def, min, max}]`（数字参数，值 ≠ def 才追加）。值只存编辑器本地 prefs，键 = `<项目根>|<地图码>`（A6：两项目同名地图不串）。未声明 = 面板空态提示 |
 | `playtest.executable` | string | 可选（A6）。结构化启动：可执行文件路径，支持 `%projectpath%`/`%mapfile%`；配置后编辑器用 `OS.create_process()` **直接启动**，退出状态代表游戏本体 |
 | `playtest.args` | string[] | 可选（A6）。参数字符串数组，逐项替换 `%mapfile%`、`%projectpath%`（**不加引号**，空格路径由数组分段保证）。Godot 项目示例：`['--path', '%projectpath%', '--', '--map=%mapfile%']`。未配 `executable` 时退回 `playCommand` 模板，状态栏会标明跟踪的是包装进程 |
+| `viewports` | array | 可选（C5）。具名参考画幅 `[{id, w, h}]`：宽屏/竖屏/分屏的坐标域身份，id 非空唯一、w/h 必填正数；`viewport_ref` 字段的下拉候选来自这里 |
+| `views` | array | 可选（C5）。只读参考 `[{view_id, image, pixel_size, hotspots}]`：hotspot = `{rect: [nx,ny,nw,nh] 全 0..1, target: 对象}`。编辑器只校验形态与展示，不解释 target 语义；没有热点映射时只展示，不猜世界位置 |
 
 清单校验把 `assets` 非 Array、`tileSize` 非正数、资产 id 空或重复、
 **实例码重复**、图集/图片路径含 `..` 或为空、palette 元素缺 `cell`、功能/步骤/音频**条目码池内重复**、
@@ -86,6 +100,10 @@
 判为**错误**（编辑器拒绝加载）。
 功能 id 与条件 id 重复都是错误
 （数组写法不查会静默后者覆盖前者）。
+新键同样校验（C1–C5）：`viewports` 的 id 非空唯一、w/h 正数；`views` 的 view_id 非空唯一、image 字符串、
+pixel_size 正数、hotspot rect 四个 0..1 数且 target 为对象；`assets[].ports` 的 id 非空唯一、x/y 数字；
+`of: "record"` 的数组字段要求非空 `fields`（子字段 id 唯一、kind input|choice、type 白名单、嵌套限深 4）；
+地图 `meta.cellGraph` 见 §3.1（坏格图 = 地图校验错误）。
 
 ### 2.2 场景资产（`kind: "scene"`）
 
@@ -120,9 +138,10 @@
 清单重排、插队、删除资产都不会让既有地图错位。
 游戏侧按资产 id 在启动时建立 `{资产 id → TileSet source_id}` 映射，再按映射落瓦片。
 
-游戏侧烘焙 TileSet 的源 0 里必须有 `(4,0)` 这个格子作为隐形碰撞占位瓦片
-（编辑器侧常量 `constants.gd::INVISIBLE_CELL`，带整格物理多边形）。游戏侧用它做
-solid+矩形碰撞：`col.set_cell(cell, 0, Vector2i(4,0))`。
+**碰撞不依赖任何图集**：`(4,0)` 隐形格只是编辑器内部碰撞层的载体（自建 5×1 切片源，
+常量 `constants.gd::INVISIBLE_CELL`），不是游戏侧契约。通用游戏工程可直接读 `collision[]`
+（§3.3）建 `CollisionShape2D`/物理多边形，无需烘焙占位瓦片、也无需固定图集名。
+只有你真的声明了图集资产（`shape: "tile"`）时，才需要为它配置对应的 TileSet 图源。
 
 ### 2.3 图层 `meta.layers`（地图级声明）
 
@@ -157,6 +176,10 @@ solid+矩形碰撞：`col.set_cell(cell, 0, Vector2i(4,0))`。
 | `blend` | 层混合模式：`mix`（缺省，省略）/ `add`（加法，发光类）/ `mul`（相乘，遮罩类）；编辑器层管理弹窗可改，画布与游戏侧渲染端挂对应材质 | 省略 = mix |
 | `offset` | `[x, y]` 像素，层的整体偏移 | `[0, 0]` |
 | `scale` | 层的整体缩放 | 1.0 |
+
+**录入方式**：层管理弹窗（图层栏的 ⚙）逐项可改——`blend` 是三项下拉（混合/加法/相乘），
+`ySort` 是勾选框，`parallax`/`offset.x`/`offset.y`/`scale` 是回车提交的数字框（`scale` 拒绝 ≤0）。
+每次提交都是一条撤销；空值/缺省值一律省略不写盘。
 
 **遮挡模型（3.7）**：层是硬边界——跨层只按栈序，任何对象都不能越过层；**全程不写 `z_index`**。
 同层内三个分段，树序保证顺序、段内 y-sort 保证交错：
@@ -211,6 +234,7 @@ solid+矩形碰撞：`col.set_cell(cell, 0, Vector2i(4,0))`。
 | `code` | 否 | 4 位实体身份码。缺省由编辑器补发并随清单写回；**不要手工改动** |
 | `functions` | 否 | **自带功能（挂载）**：声明池 functions 里功能 id 的数组，声明顺序 = 默认执行顺序；见 2.4.1 |
 | `fields` | 否 | 实例级「引用型」参数声明，见 2.4.2 |
+| `ports` | 否 | 端口声明（C3）`[{id, x, y, type?}]`：x/y 为锚点局部像素，id 资产内唯一、type 可选字符串；`port_ref` 字段据此出候选。见 2.4.2 |
 
 **`functions`（挂载）与 `fields` 的分工**：
 - `functions` = 类型自带、实例不可删的**功能**（如生命值/攻击/寻敌），声明本体在顶层 functions 池，
@@ -246,11 +270,20 @@ solid+矩形碰撞：`col.set_cell(cell, 0, Vector2i(4,0))`。
 {"id": "target_point", "name": "目标", "type": "entity_ref", "of": "spawn_point,portal"}
 ```
 
-编辑器消费 `fields` 的方式：
-1. **实体复制/粘贴**：`type == "entity_ref"` 的字段，若值命中块内某实例的旧 id，
-   自动替换成新码（声明驱动的重映射）；`functions` 数组里的实例码字符串则不看声明、全量重映射。
-2. **区域复制/粘贴**：props 与 functions 都不看声明，命中旧实例码的字符串按 id_map 盲替换。
-3. `fields[].id` 必须非空且同类型内唯一（校验规则）。
+编辑器消费 `fields` 的方式（**声明驱动，不做字符串盲扫**）：
+1. **只改声明为引用的字段**：`entity_ref`（实例码）、`port_ref`（端口引用）、
+   `choice.source` 为 `content:` / `entity_inst:` 的字段。未声明的字符串键一律原样保留，
+   哪怕它的值恰好等于某个旧实例码。
+2. **组内换新、组外保留**：值命中本次复制集合里的实例 → 换成新码；指向集合外的目标 → 原样保留
+   （不让副本错误地指回源对象）。引用属于源图以外的图时同样保留。
+3. **`mapField` 配对**：`entity_ref` 声明 `mapField: "<地图字段 id>"` 时，目标域 = 该地图字段的**当前行值**
+   （不是全局当前图）。组内引用把配对字段改写成副本所在图；组外跨图引用写成源图键（地图码优先、缺码用图名）。
+   无配对字段的组外跨图引用 = **冲突**，整次复制取消并列出原因，不做半套应用。
+4. **数组与 record**：`of: "record"` 的数组逐行递归同一套规则，行内兄弟字段就是配对作用域
+   （一行内的 `mapField` 只读本行值）；嵌套限深 4。
+5. **目标缺失**：引用值指向不存在的实例/内容时，复制不猜、不改写，保留原值；
+   引用完整性由项目自检（`ProjectAudit`）另行报告。
+6. `fields[].id` 必须非空且同类型内唯一（校验规则）。
 
 `of` 键在 `type: "entity_ref"` 时**被编辑器读取**（内容编辑器引用行）：限定实例下拉只列
 指定类型（逗号分隔类型 id，可多个）；不写 = 列全部实例。
@@ -258,6 +291,10 @@ solid+矩形碰撞：`col.set_cell(cell, 0, Vector2i(4,0))`。
 其余取值（`string` 等）编辑器按字符串对待。
 
 因此 `fields` 的本质是「**声明这个键里存的是别的实例的 id**」，好让块复制时能改指向。
+
+**端口（C3）**：资产可声明 `ports: [{id, x, y, type?}]`（`x`/`y` 为锚点局部像素），给开关/插槽/出入口这类
+「实例上的具名连接点」一个稳定身份。字段声明 `type: "port_ref"`、`of: "类型,类型"`（可选，按端口 `type` 过滤）时，
+值存 `{map: 地图码, inst: 实例码, port: 端口ID}`；块复制只改前两段，端口 id 不变。端口 id 在单个资产内非空唯一。
 
 ### 2.5 功能声明 `functions`
 
@@ -309,12 +346,17 @@ solid+矩形碰撞：`col.set_cell(cell, 0, Vector2i(4,0))`。
 | input | `range` | HSlider + SpinBox，`min`/`max`/`step` 可声明，值存数字 |
 | input | `asset_ref` | 资产下拉：`assetKind`（scene/entity）+ 可选 `of: "id,id"` 过滤，值存资产 id |
 | input | `array` | 可增删行容器，每行一个元素控件（`of` 指基础类型或 choice，不嵌套 array）；值存元素数组 |
+| input | `array` + `of: "record"` | 结构化行容器（C1）：`fields` 声明子字段（id/code/name/kind/type，可再嵌 array，限深 4）；每行带 ↑↓/复制/删除；值存对象数组 |
+| input | `port_ref` | 端口下拉（C3）：`of` = 端口类型过滤（可选），值存 `{map, inst, port}` |
+| input | `viewport_ref` | 视口下拉 + 归一化 SpinBox（C5）：值存 `{viewport, point: [nx, ny]}`；`rect: true` 则 `{viewport, rect: [nx, ny, nw, nh]}` |
 | choice | — | OptionButton：`options: ["a","b"]` 直给，或 `source` 动态取；`multiple: true` 切勾选组，值存字符串数组 |
 | input | 其他任意字符串 | 只读展示 + 黄字提示（编辑器不会把数组/对象塞进可写控件） |
 
 choice 的 `source` 取值：`content:<kind>`（列该目录内容条目）、`entity:<id,id>`（清单实体类型，
 空 = 不过滤）、`entity_inst:<id,id>`（当前图实例，显示"类型 · (x,y)"，值=实例码，空 = 全部）、
-`map`（地图列表）、`audio:`（音频池，值=音频码）、`asset:<kind>[:id,id]`（资产表，值=资产 id）。
+`map`（地图列表）、`audio:`（音频池，值=音频码）、`asset:<kind>[:id,id]`（资产表，值=资产 id）、
+`port:<类型,类型>`（配对图优先的实例端口，值=`{map, inst, port}`）、`cell:`（当前图 `meta.cellGraph` 的 cell_id，值=格 id）、
+`viewport:`（清单 `viewports` 的画幅 id，值=画幅 id）。
 值的 JSON 形态与声明不符时只读展示（vector2/range/int/float/choice 一律如此），
 **绝不自动改写**。
 
@@ -457,6 +499,17 @@ BGM 切换、环境音触发、音效播放在哪一步响起，都是功能代�
 编辑器据此提供**时间轴视图**（与列表视图同一份数据）：拖条块改 `at`、拖右缘改 `duration`、
 上下拖换轨（0.1 秒吸附，负值夹回 0）；落盘时剥掉等于缺省的 `duration/track/blocking` 键。
 `at` 为负、`duration` 为负、同轨重叠只在演出面板给 ⚠ 警告，不阻断、不改数据。
+**显式 `0` 是保留的**：`at: 0` 与省略等价但不剥除（那是「排在开头」的显式表达）；
+`duration`/`track`/`blocking` 等于缺省值时才剥。
+
+**`frames`/`beats` 的换算参数也从声明来**（`functions[].timePreview`，`TimelineClock.from_decl`）：
+`fpsField` / `offsetField` / `subdivisionsPerBeat` / `tempoStep` + `bpmField`（速度段 = 一个步骤填 BPM，
+`beat` 严格递增、BPM 有限正数）。声明里写**字段 id**，编辑器按功能字段声明转成字段码再读值。
+声明了但解析不到（缺字段码、BPM 段为空）→ 面板给具体缺项提示，按原单位继续编辑，不阻断。
+**速度段按区间两端换算**：跨段长音的秒数 = 各段 `Δbeat × 60 / bpm` 累加，不是单一 BPM 外推。
+
+**试听现状（缺口，别按想象实现）**：编辑器只解析并显示音频曲目身份（`source: "audio:"` 的值 = 音频码），
+**没有**编辑器内播放、波形或听觉对齐，也不回写 `at`。校对偏移只能在游戏侧做。
 
 ### 2.5.4 时机池 `triggers`（顶层声明池）
 
@@ -510,8 +563,8 @@ BGM 切换、环境音触发、音效播放在哪一步响起，都是功能代�
 ```
 
 它**没有 prefab、没有缩略图**，靠 `sizeFields: ["w", "h"]` 从实例 `props` 读尺寸（单位是**格**）。
-放置时编辑器写 `props: {"w": 2, "h": 2}`；`w/h` 没有编辑控件，
-要改只能直接改地图 JSON 或靠游戏工程声明自己的同名实体覆盖内置定义。
+放置时编辑器写 `props: {"w": 2, "h": 2}`。**改尺寸**：选中实例后拖右下角尺寸把手（一次拖动一条撤销），
+或在属性区直接填。带 `sizeFields` 声明的自建资产同样适用这套把手（键名取自声明）。
 
 `props.mode` / `props.event` / `props.once` 不是有效键：触发方式归功能代码，
 绑定哪个时机写 `functions[].trigger`（时机码），"只触发一次"由功能实现决定。
@@ -581,13 +634,14 @@ BGM 切换、环境音触发、音效播放在哪一步响起，都是功能代�
 | 键 | 必填 | 语义 |
 |---|---|---|
 | `version` | 是 | 当前为 7；高于 7 = 编辑器打不开（报错），低于 7 = 警告并按当前结构读（跑迁移脚本升级） |
-| `meta` | 否 | 对象。编辑器只读 `name`/`w`/`h`/`code`/`layers`；**其他键原样保留**（游戏侧自定义键安全） |
+| `meta` | 否 | 对象。编辑器读写 `name`/`w`/`h`/`code`/`layers` 与 `gridProjection`/`gridTopology`/`gridBasis`（格空间三件），只读参考 `cellGraph`；**其他键原样保留**（游戏侧自定义键安全） |
 | `meta.w` / `meta.h` | 否 | 地图格尺寸，缺省 120×56 |
 | `meta.code` | 否 | 4 位地图身份码，编辑器缺省补发。改名不改变它 |
 | `meta.layers` | 是 | **图层栈**，见 2.3；数组序 = 栈序（底→顶） |
 | `meta.gridProjection` | 否 | 逐图投影（B1）：`orthogonal`（缺省）/ `isometric` / `hexagonal`。缺键 = 沿用项目解析（清单任一瓦片资产声明非正交即整项目按它） |
 | `meta.gridTopology` | 否 | 格拓扑（B3）：`quads`（缺省）/ `triangles`。三角格 = 每列平行四边形切成两个半格，格号 `(i,row)` 的 `i` 是三角列（`c = floor(i/2)`，奇偶选半格）；六边投影 + 三角格 = 非法组合 |
 | `meta.gridBasis` | 否 | 斜平面双基 `[[ux,uy],[vx,vy]]`（B3）：`to_px = g.x·u + g.y·v`。非有限或不可逆（共线/零向量）校验报错 |
+| `meta.cellGraph` | 否 | 有限格图（C4）`{cells: [{id, polygon, neighbors}]}`：只读参考层，id 非空唯一、polygon ≥3 个 `[x, y]` 数字点、neighbors 目标必须已声明；内容字段用 `source: "cell:"` 枚举。第一版不进 v7 整数瓦片坐标 |
 | `spawn` | 否 | `[x, y]` 格坐标，缺省 `[2, 2]`；**给了就必须是两个数字**（否则校验报错） |
 | `tiles` | 否 | 对象 `{层id: [瓦片条目...]}`，见 3.2；**键缺失与 `{}` 等价** |
 | `collision[]` | 否 | 数组，见 3.3；**键缺失与 `[]` 等价**——编辑器没有任何由地形兜底生成碰撞的逻辑 |
@@ -627,6 +681,16 @@ TILE_W/TILE_H = 清单 `tileSize`（标量或 `[w,h]` 矩形格），取自清�
 > 再按 `c,row` 平移后过 `to_px`）。瓦片数据仍是同一份六元组——编辑器用自绘层按三角形轮廓贴图集切片
 > （切片按包围盒做 UV 映射），游戏侧同样要把一个图集切片贴进三角形；`TileMapLayer` 本身表达不了半格三角。
 > 拾取按对角线 `x+y=1` 分半格，邻接是共边三条（见 `GridSpace.neighbors_tri`）。
+> **`alt` 同样要消费**：编辑器三角自绘把第 6 位变换位施加在切片内部（`tri_tile_view.tri_uvs`，
+> 与方形瓦片的 alternative 位同义）。自绘三角却不处理 `alt` 会让翻转/转置的瓦片在运行时丢变换。
+
+**当前支持边界（照实写，不要按想象补）**：
+
+| 维度 | 已支持 | 已知边界 |
+|---|---|---|
+| 投影（`gridProjection`） | 正交/等距/六边 + `gridBasis` 任意平行四边形；拾取、几何、对象锚点同一套 | `gridBasis` 下**瓦片仍由预设布局的 TileMapLayer 画**——编辑器画布自绘按基向量铺，运行时若用 `TileMapLayer` 自动布局会与格线偏离（自己设 `tile_layout` 或自绘） |
+| 拓扑（`gridTopology`） | `quads` / `triangles`（半格拾取、共边邻接、自绘含 `alt`） | 三角层**没有逐瓦片 Y 交错**：整层一个绘制节点，`ySort` 只对实例生效 |
+| 显式投影键 | 新建图按用户选择原值落盘；缺键 = 沿用项目解析 | 显式「正交」与「继承项目默认」在磁盘上都能表现为缺键——要区分必须写 `"orthogonal"` |
 
 ### 3.3 碰撞条目 `collision[]`
 
@@ -812,7 +876,20 @@ main.gd
 
 其他编辑器会传的参数：`--abilities=dash,glide`、`--hp=N`、`--spawnx/--spawny`（格坐标）。
 
+**工作目录不可配置**（明确约定，不是遗漏）：`OS.create_process` 不设 cwd，子进程继承编辑器自身的工作目录，
+不保证是游戏工程根。游戏侧读相对路径必须靠显式参数（`--path`、`%projectpath%` 等，在清单 `playtest.args` 里写），
+不要依赖 cwd。
+
 ### 6.3 实例化 `objects[]`
+
+**四条呈现路径**（同一个 `objects[]` 条目，按资产声明分流）：
+
+| 资产形态 | 怎么读 | 说明 |
+|---|---|---|
+| `kind: "scene"`, `shape: "image"` | `texture` + `editorSize`，无 `code` | 背景/装饰图片，游戏侧按自己的美术需求摆放或忽略 |
+| `kind: "entity"` 有 `prefab` | `load(prefab).instantiate()` | 主路径；注入 metadata 见下 |
+| `kind: "entity"` 只有 `visual` | 没有场景可载入 | 编辑器只按 `visual` 画占位；游戏侧自行渲染（或跳过） |
+| 内置种类（如 `trigger_zone`） | 声明在清单里但 `builtin: true` | 游戏侧有自己的实现；尺寸走 `props.sizeFields`（§2.7） |
 
 ```gdscript
 # 游戏侧推荐模型：按 asset 查清单拿 prefab + 锚点，不要扫目录
@@ -878,6 +955,10 @@ func _apply_transform(inst: Node2D, t: Dictionary) -> void:
 骨架覆盖：投影解析 → 图集 source 建表 → 按 `meta.layers` 栈序建层 → 瓦片六元组（含 `alt`）→
 运行时层开关 → 碰撞对象（含类型/形状）→ 尺寸矩形。
 
+**验证状态**：这段骨架的**正交**路径按编辑器实现逐行核对过；等距/六边/三角与带 `gridBasis`
+的路径只给出公式，**没有**在真实工程里跑过（`grep` 得到的公式与 `grid_space.gd` 一致，但不等于
+渲染结果一致）。跨投影接入请自己先跑一遍对照样例再标为可用——别把「抄了公式」当成「验证过」。
+
 ```gdscript
 # 清单缺 tileSize 时的格尺寸（注意不是写死 16×16）
 const TILE_W := 16
@@ -918,19 +999,22 @@ static func cell_to_px_g(g: Vector2, proj: String, basis: Array) -> Vector2:
 ## 对象数据坐标 x/y 是**格**坐标（浮点），锚点换算见 §3.4 的表——
 ## 直接 (x,y) * TILE 只对 top_left 成立；center 要 +0.5，bottom_center 要 +0.5/+1。
 ## 非正交投影下格中心不是「格号 + 0.5」：六边是格中心系，等距是菱形顶点系平移半格。
+static func anchor_unit(anchor: String) -> Vector2:
+	match anchor:
+		"center":
+			return Vector2(0.5, 0.5)
+		"bottom_center":
+			return Vector2(0.5, 1.0)
+	return Vector2.ZERO       # top_left（含缺省）
+
 static func object_px(x: float, y: float, anchor: String, proj: String, basis: Array) -> Vector2:
 	var g := Vector2(x, y)
 	if proj == "hexagonal":
-		# 六边：to_px 直接给格中心（含奇偶行错位），锚点偏移只在格内做像素级平移
-		var c := cell_to_px_g(Vector2(floori(g.x), floori(g.y)), proj, basis)
-		return c + (g - Vector2(floori(g.x), floori(g.y))) * Vector2(TILE_W, TILE_H)
-	var off := Vector2.ZERO
-	match anchor:
-		"center":
-			off = Vector2(0.5, 0.5)
-		"bottom_center":
-			off = Vector2(0.5, 1.0)
-	return cell_to_px_g(g + off, proj, basis)
+		# 六边：to_px 已是格中心系且原生支持格内分数（行距 0.75），亚格位移**不能**按整格高算。
+		# 锚点换算成相对格中心的像素偏移：anchor_unit - (0.5,0.5) 再乘格尺寸。
+		return cell_to_px_g(g, proj, basis) + (anchor_unit(anchor) - Vector2(0.5, 0.5)) * Vector2(TILE_W, TILE_H)
+	# 正交/等距：锚点换算成格单位再加，过 to_px（等距仍是菱形顶点系平移半格）
+	return cell_to_px_g(g + anchor_unit(anchor), proj, basis)
 
 ## 2) 建层 + 瓦片（含 alt）；3) 碰撞对象
 static func build(root: Node2D, data: Dictionary, manifest: Dictionary) -> Dictionary:
@@ -946,6 +1030,15 @@ static func build(root: Node2D, data: Dictionary, manifest: Dictionary) -> Dicti
 		ts.tile_size = Vector2i(int((tw as Array)[0]), int((tw as Array)[1]))
 	else:
 		ts.tile_size = Vector2i(int(tw), int(tw))
+	# 非正交投影必须设 tile_shape，否则 TileMapLayer 按方形布局画（编辑器 tileset_cache 同口径）：
+	# 等距 = 菱形、六边 = 六角。正交保持缺省 TILE_SHAPE_SQUARE。
+	if proj == "isometric":
+		ts.tile_shape = TileSet.TILE_SHAPE_ISOMETRIC
+	elif proj == "hexagonal":
+		ts.tile_shape = TileSet.TILE_SHAPE_HEXAGON
+	# 注意：自定义 tile_layout 不是「跟着形状自动算」的。编辑器按自己画的格位置渲染，
+	# 运行时若依赖 TileMapLayer 的自动布局，等距/六边的格原点可能与编辑器差半个切片——
+	# 这种情况要么自己设 tile_layout（原点偏移 = 与编辑器 to_px 的差），要么按格自绘。
 	var src_of := {}
 	for a in manifest.get("assets", []):
 		if not (a is Dictionary) or str(a.get("kind", "")) != "scene" or str(a.get("shape", "")) != "tile":
@@ -1041,9 +1134,10 @@ static func build(root: Node2D, data: Dictionary, manifest: Dictionary) -> Dicti
 | 场景 | 需要做什么 |
 |---|---|
 | 三角格（`meta.gridTopology = "triangles"`） | `TileMapLayer` 表达不了半格三角；按 §3.2 的「三角格」说明自绘（顶点 + 图集切片按包围盒做 UV 映射）。格号 `(i,row)` 的 `i` 是三角列 |
-| 等距/六边的对象锚点 | 等距沿用 `cell_to_px_g`（菱形顶点系，`center` = 格号+0.5 即菱形中心）；六边由 `object_px` 的六边分支处理（格中心系 + 格内像素偏移） |
+| 等距/六边的对象锚点 | 等距沿用 `cell_to_px_g`（菱形顶点系，`center` = 格号+0.5 即菱形中心）；六边走 `object_px` 的六边分支（格中心系 + 连续亚格 + `(anchor_unit - 0.5) × 格尺寸` 的像素偏移），与编辑器 `entity_node.world_of_grid` 同口径 |
 | 碰撞形状 `r45`/`l45` | 按 §3.3 的多边形表建 CollisionPolygon2D；矩形格用整格 |
 | `props.sizeFields` 尺寸 | 带 `sizeFields` 声明的资产（事件区）宽高在 `props` 里，单位是格 |
+
 ## 7. 新增一个「功能」的标准流程
 
 以「开关门」为例，游戏侧需要动三处、编辑器侧一处。
@@ -1073,10 +1167,23 @@ static func build(root: Node2D, data: Dictionary, manifest: Dictionary) -> Dicti
 # 启动时从清单构建 码↔名 映射（这就是 CODES.md 的运行时等价物）：
 var fn_by_code := {}      # 功能码 -> 功能 id
 var field_by_code := {}   # 字段码 -> 字段 id
+## 清单允许 dict 与 array 两种写法（§2.5），两边都要处理——只写 dict 会在数组写法下静默空表。
 func _build_code_tables(manifest: Dictionary) -> void:
-	for fid in (manifest.get("functions", {}) as Dictionary):
-		var d := (manifest["functions"] as Dictionary)[fid] as Dictionary
-		fn_by_code[str(d.get("code", ""))] = str(fid)
+	var fns = manifest.get("functions", {})
+	var items: Array = []
+	if fns is Dictionary:
+		for fid in (fns as Dictionary):
+			var d = (fns as Dictionary)[fid]
+			if d is Dictionary:
+				items.append([str(fid), d])
+	elif fns is Array:
+		for d in (fns as Array):
+			if d is Dictionary:
+				items.append([str((d as Dictionary).get("id", "")), d])
+	for pair in items:
+		var fid := str(pair[0])
+		var d: Dictionary = pair[1]
+		fn_by_code[str(d.get("code", ""))] = fid
 		for fd in (d.get("fields", []) as Array):
 			field_by_code[str((fd as Dictionary).get("code", ""))] = str((fd as Dictionary).get("id", ""))
 
@@ -1089,10 +1196,11 @@ func _apply_door(inst: Node, fn: Dictionary) -> void:
 		push_warning("door_toggle 内容缺失: " + cid)
 		return
 	var f: Dictionary = data.get("fields", {})
-	# 内容 fields 的键是字段码 → 用映射表转回人类名再读
-	var flag := str(f.get(field_by_code.get("F1A2", ""), ""))
-	var once := bool(f.get(field_by_code.get("B3C4", ""), false))
-	var spd := float(f.get(field_by_code.get("E5D6", ""), 2.0))
+	# 内容 fields 的键就是**字段执行码**：直接按码读（§7.6 手算对照）。先用缺键夹具
+	# 校验默认值，再上真数据；不要经人类名映射表转一手——那查的是另一套键。
+	var flag := str(f.get("F1A2", ""))
+	var once := bool(f.get("B3C4", false))
+	var spd := float(f.get("E5D6", 2.0))
 	# 这里实现行为
 ```
 
@@ -1113,6 +1221,7 @@ func _apply_door(inst: Node, fn: Dictionary) -> void:
 {
   "id": "moving_platform",
   "name": "移动平台",
+  "kind": "entity",
   "prefab": "scenes/objects/moving_platform.tscn",
   "thumb": "editor/previews/moving_platform.png",
   "editorSize": [32, 16],
@@ -1125,7 +1234,7 @@ func _apply_door(inst: Node, fn: Dictionary) -> void:
 
 | 步骤 | 要求 |
 |---|---|
-| `id` | 全局唯一，且**用英文小写下划线**——它就是地图 `scene` 值，也是游戏侧查表的键 |
+| `id` | 全局唯一，且**用英文小写下划线**——它就是地图 `objects[].asset` 值，也是游戏侧查表的键 |
 | `prefab` | 相对工程根的 `.tscn`。**根节点必须是 `Node2D` 系**，否则 `position` 注入无效 |
 | `thumb` | 96×96 左右的 PNG 到 `editor/previews/`。没有它画布上是空白方块，但仍可放置 |
 | `editorSize` | 像素。省略则编辑器读 prefab 第一个碰撞形状；再省略按 1 格（tileSize 尺寸）画 |
@@ -1135,7 +1244,7 @@ func _apply_door(inst: Node, fn: Dictionary) -> void:
 ### 8.3 不要做的事
 
 - **不要手工编 `code`**。4 位实体身份码由编辑器补发并写回清单，手改会让既有内容 ID 前缀失配。
-- **不要删除已被引用的实体资产**。清单校验不拦，但地图里会留 `scene` 指向不存在资产的实体，
+- **不要删除已被引用的实体资产**。清单校验不拦，但地图里会留 `asset` 指向不存在资产的实例，
   游戏侧静默跳过、编辑器只警告。删资产前先扫全项目地图（资产目录的「实例分布」就是干这个的）。
 
 ## 9. 新增图集
@@ -1154,8 +1263,10 @@ func _apply_door(inst: Node, fn: Dictionary) -> void:
 
 ### 9.2 游戏侧要保证的
 
-1. **源 0 已烘焙**：`assets/tiles/terrain_tiles.tres` 必须存在且源 0 有 `(4,0)` 隐形碰撞格。
-   游戏侧按 `assets[]` 里的 `id` 建 `{id → source_id}` 映射，映射顺序由游戏侧自定。
+1. **按声明建源**：为每个声明的图集资产建一个 `TileSetAtlasSource`（`texture` = 清单 `atlas`，
+   `texture_region_size` = 该资产 `cell`）。游戏侧按 `assets[]` 里的 `id` 建 `{id → source_id}` 映射，
+   映射顺序与 source_id 编号由游戏侧自定。**没有固定图集名、没有必须占位的 `(4,0)` 格**——
+   碰撞走 `collision[]` 数据（§3.3），不靠隐形瓦片。
 2. **`TILE` 一致性**：运行时 `TileSet` 的 `tile_size` 必须等于清单 `tileSize`（标量 = 正方形，`[w,h]` = 矩形格）；
    每个 `TileSetAtlasSource.texture_region_size` 取该资产的 `cell`（可非正方形，缺省 = 清单 tileSize）。
 3. **PNG 必须在 `res://` 下且已导入**。游戏侧加载用 `load("res://" + rel)`，
@@ -1168,7 +1279,8 @@ func _apply_door(inst: Node, fn: Dictionary) -> void:
 
 ## 10. 游戏工程接入检查清单
 
-要让一个**现有** Godot 工程能被编辑器接管，缺一不可：
+要让一个**现有** Godot 工程能被编辑器接管，第 1、3、6、8 条缺一不可；
+其余按项目需要选（没有瓦片图集也能只用实体/内容；不想用试玩按钮就不配 `playCommand`）。
 
 | # | 项 | 验收方式 |
 |---|---|---|
@@ -1180,8 +1292,12 @@ func _apply_door(inst: Node, fn: Dictionary) -> void:
 | 6 | `maps/` 目录存在（可为空） | 新建地图能保存 |
 | 7 | `playCommand` 能拉起游戏并接收 `--map=` | 试玩按钮工作 |
 | 8 | 游戏侧 `MapLoader` 读 `meta.w/h`、`meta.layers`、`spawn`、`tiles`、`collision`、`objects` | 试玩画面与编辑画布一致 |
-| 9 | 游戏侧按 `scene` 实例化并注入 `code`/`props` | 传送门等按 props 行为正确 |
+| 9 | 游戏侧按 `objects[].asset` 查资产并实例化，注入 `code`/`props` | 传送门等按 props 行为正确 |
 | 10 | 若用功能系统：`functions` 已声明 + 游戏侧有对应消费代码 | 挂上功能后行为生效 |
+| 11 | 若用结构化行：字段 `kind: "input", type: "array", of: "record"` + 非空 `fields` | 清单校验通过，内容表单出行容器 |
+| 12 | 若用端口引用：先在该资产声明 `ports[]`，字段 `type: "port_ref"` | 内容表单端口下拉有候选 |
+| 13 | 若用有限格图：地图 `meta.cellGraph` + 字段 `source: "cell:"` | 地图校验通过，下拉列出格 id |
+| 14 | 若用视口参考：清单 `viewports[]` + 字段 `type: "viewport_ref"` | 下拉列出画幅，默认 `0,0` 归一化点 |
 
 ### 一次性验证命令
 
@@ -1193,7 +1309,8 @@ godot --path "<你的游戏工程>" -- --map=maps/<地图名>.json
 
 ## 11. 已知边界（照抄编辑器实现，不是待办）
 
-- **`trigger_zone`（事件）只有尺寸没有编辑 UI**。`props.w/h` 只能手改 JSON。见 2.7。
+- **`trigger_zone`（事件）没有专属属性表单**：它只有尺寸（画布把手可拖）和挂载功能，
+  没有独立的「事件属性」面板——触发方式与条件都在功能声明与内容里。见 §2.7。
 - **图层即遮挡层**。`meta.layers` 是纯 z 槽混合层栈，每层可摆瓦片+实体；碰撞是栈外元层。
 - **一个实体实例一个功能只挂一条绑定**。同一功能重复绑定只有「添加功能」菜单会过滤（校验不去重；手改 JSON 可造成重复绑定）。
 - **数值参数不走 props**。props 只剩几何/引用（§2.4.1）；值一律内容文件。
@@ -1203,7 +1320,14 @@ godot --path "<你的游戏工程>" -- --map=maps/<地图名>.json
 - **内容 ID 不可改**。改名只改 `name`；要换 ID 只能「复制成新 ID」，旧文件留在库里。
 - **跨图引用写地图码（v7）**。`target_map` / map_ref 字段值 = 目标图 `meta.code`（4 位码，保存/迁移时补发），图改名不再破坏引用；游戏侧读各图 meta.code 建码→文件映射解析落点。老数据存图名的，跑一次 tools/migrate_project.gd 重映射。
 - **地图 JSON 只有一个写入方**：编辑器 `extract()`。游戏侧回写会造成格式分叉。
-- **撤销是整图快照**，只覆盖地图内存态；内容文件改动不进撤销栈。
+- **撤销粒度是混合的**：瓦片/碰撞的涂刷与擦除存**笔画差量**（每手势一条，`kind: "delta"`），
+  实例增删与全局操作（尺寸/层/粘贴等）存**整图快照**。两种条目同栈、undo/redo 同路径；
+  只覆盖地图内存态，内容文件改动不进撤销栈。
+- **能力扩展是「数据 + 下拉」而不是新编辑器**（C1–C5）：结构化行、端口引用、格图引用、视口参考
+  都只做声明校验 + 候选 + 值读写；画布上的端口连线、格边描边、视口热点叠绘**没有**实现，
+  也不生成运行时行为（归游戏侧）。
+- **`cellGraph` 不进整数瓦片坐标**：它只提供 `cell_id` 字符串身份与多边形命中，
+  不改变 `tiles` 六元组的 `(x,y)` 口径，也不改变碰撞格。
 
 ## 12. 相关文档
 

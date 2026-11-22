@@ -1,6 +1,13 @@
 extends RefCounted
-## A3 恢复层：草稿（editor/drafts）、地图历史（editor/history/maps）、多文件提交日志（editor/pending）。
-## 只做路径解析与 JSON/字节读写，不解释业务；不 preload map_store（避免反向依赖成环）。
+## A3 恢复层，三个互不相同的保险：
+##   editor/drafts/<地图码>.json   —— 自动草稿：整图快照 + 目标路径 + 基线摘要 + 待提交内容/预留 ID。
+##                                   不自动载入，进项目时报数由用户选 恢复/查看正式图/丢弃。
+##   editor/history/maps/<码>/    —— 正式保存前的原文件快照，字典序 = 时间序（深度 HISTORY_KEEP）。
+##   editor/pending/pending-*.json —— 多文件提交日志：逐条记录「要写哪个文件 + 写前/写后摘要」，
+##                                   下次启动据此判每一条 written/pending/manual。
+## 旧版 maps/<名>.autosave.json 仅在带 _autosave_of 时视为草稿来源（见 is_legacy_draft 语义）。
+## 本模块只做路径解析与 JSON/字节读写，不解释业务；不 preload map_store（避免反向依赖成环）。
+## 各入口会提交哪些文件由 docs/EDITOR_FEATURES.md §7.3「各入口提交哪些文件」唯一规定。
 
 const DRAFT_DIR := "editor/drafts"
 const HISTORY_DIR := "editor/history/maps"
@@ -85,22 +92,25 @@ static func draft_path(m: Dictionary, map_code: String, map_name: String) -> Str
 		return ""
 	return dir.path_join(key + ".json")
 
-## 写草稿：记录目标路径、正式图基线、地图快照、待提交文件及原 ID（A3 恢复所需全部信息）。
+## 写草稿：记录目标路径、正式图基线、地图快照、待提交内容载荷（R03：数据本体进草稿，
+## 恢复时校验绑定后重新暂存，不再只有文件路径）、以及**清单补码是否待写**——
+## 地图里可能已经用了刚补发的资产码/功能码，漏了这项恢复后保存会先写地图再补清单。
 static func write_draft(m: Dictionary, map_code: String, map_name: String,
 		target_path: String, baseline: String, snapshot: Dictionary,
-		pending_files: Array = [], pending_ids: Array = []) -> String:
+		pending_contents: Array = [], codes_pending := false) -> String:
 	var path := draft_path(m, map_code, map_name)
 	if path == "":
 		return ""
 	var payload := {
 		"kind": "draft",
+		"key": draft_key(map_code, map_name),
 		"mapName": map_name,
 		"mapCode": map_code,
 		"targetPath": target_path,
 		"baseline": baseline,
 		"snapshot": snapshot,
-		"pendingFiles": pending_files,
-		"pendingIds": pending_ids,
+		"pendingContents": pending_contents,   # [{fn_id, id, data}]（R03）
+		"codesPending": codes_pending,
 		"savedAt": Time.get_unix_time_from_system(),
 	}
 	return path if write_json(path, payload) else ""
@@ -269,19 +279,22 @@ static func begin_pending(m: Dictionary, reason: String, entries: Array) -> Stri
 ## 每个文件写成功后把**实际结果摘要**记进日志（A3）：重启时逐条比对就能分清
 ## 已写（摘要相符）/ 未写（仍与基线相符）/ 已变（两者都不符 → 外部改过或写了一半 → 人工复核）。
 ## 只记摘要，不重放内容：同 ID 重试仍走各自的补写路径（内容页暂存 / 地图保存）。
-static func mark_pending_written(m: Dictionary, log_path: String, index: int, result_digest: String) -> void:
+## 回填某条目标的写后摘要（R04）。返回是否真的写进日志：
+## 日志被外部删掉/改写导致回填失败时，调用方必须停手——继续写下去会留下
+## 「文件已替换、日志却说没写」的不可判读状态。
+static func mark_pending_written(m: Dictionary, log_path: String, index: int, result_digest: String) -> bool:
 	if log_path == "":
-		return
+		return false
 	var d := read_json(log_path)
 	if d.is_empty():
-		return
+		return false
 	var entries: Array = d.get("entries", []) if d.get("entries", []) is Array else []
 	if index < 0 or index >= entries.size() or not (entries[index] is Dictionary):
-		return
+		return false
 	(entries[index] as Dictionary)["expect"] = result_digest
 	d["entries"] = entries
 	d["done"] = maxi(int(d.get("done", 0)), index + 1)
-	write_json(log_path, d)
+	return write_json(log_path, d)
 
 static func clear_pending(m: Dictionary, log_path: String) -> bool:
 	if log_path == "":
@@ -323,9 +336,14 @@ static func scan_pending(m: Dictionary) -> Array:
 			var tgt := str(entry.get("path", ""))
 			var expect := str(entry.get("expect", ""))
 			var base := str(entry.get("baseline", ""))
+			var op := str(entry.get("op", "write"))
 			var state := "pending"
 			if tgt == "":
 				state = "manual"   # 没记目标路径 = 日志本身不完整
+			elif op == "delete":
+				# R06 改名/复制的清理项：目标已消失 = 已完成（期望态 = absent）；
+				# 还在 = 改名没走完，仍是待办
+				state = "pending" if FileAccess.file_exists(tgt) else "written"
 			elif not FileAccess.file_exists(tgt):
 				state = "manual" if base != "" or expect != "" else "pending"
 			else:

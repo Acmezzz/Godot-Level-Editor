@@ -1,7 +1,10 @@
 extends VBoxContainer
-## 实体资产目录：左列图鉴列表 + 右侧详情（名称/缩略图、自带功能挂载、实例分布清点、删除）。
-## 清单对象与写回动作由 app.gd 注入：manifest 字典、save_manifest 回调。
-## 视觉统一走 UiTheme / UiKit。
+## 资产目录（工作台 →「资产」）：左列图鉴（图集 / 场景图片 / 实体三类都在），右侧详情。
+## 两种职责，读的时候别混：
+##   **只读清点** —— 缩略图/尺寸/实例分布（当前图读画布内存、其余图读磁盘），纯展示，不改任何数据。
+##   **写清单** —— 图鉴名称、自带功能挂载、删除资产；都通过 app.gd 注入的 save_manifest 回调走
+##                 清单保存路径（剥内部键 → 校验 → 写盘），本面板不自己写文件。
+## 写回动作由 app.gd 注入：manifest 字典、save_manifest 回调。视觉统一走 UiTheme / UiKit。
 
 const ImageProbe := preload("res://src/assets/image_probe.gd")
 const Kit := preload("res://src/ui/ui_kit.gd")
@@ -504,6 +507,11 @@ func _delete_asset_checked(sid: String) -> void:
 	var permanent: bool = bool(_edef.get("disabled", false))
 	var scanned_asset: bool = str(_edef.get("scanFingerprint", "")) != "" \
 		or str(_edef.get("retiredPath", "")) != ""
+	# R15：条目将被抹掉（永久删除或非扫描条目删除）时的全量扫描——
+	# 内容引用字段与草稿也算引用，删了它们就悬空；停用（保 ID）不需要。
+	var erase_will_dangle: bool = permanent or not scanned_asset
+	var c_refs: Array = ProjectAudit.asset_content_refs(manifest, sid) if erase_will_dangle else []
+	var d_refs: Array = ProjectAudit.asset_draft_refs(manifest, sid) if erase_will_dangle else []
 	var text := ""
 	if permanent:
 		text = "将永久删除已停用资产「%s」(%s)，不可恢复。" % [str(_edef.get("name", sid)), sid]
@@ -524,6 +532,16 @@ func _delete_asset_checked(sid: String) -> void:
 			else "删除后这些实体失去调色板/占位框/导出依据。"]
 	else:
 		text += "\n\n当前没有地图实例在用它。"
+	if erase_will_dangle and not c_refs.is_empty():
+		var crefs: Array[String] = []
+		for r in c_refs:
+			crefs.append("%s/%s.%s" % [str((r as Dictionary).get("kind", "")),
+				str((r as Dictionary).get("id", "")), str((r as Dictionary).get("field", ""))])
+		text += "\n\n有 %d 份内容的引用字段指向它（%s）：删除后这些字段悬空。" % [
+			c_refs.size(), ", ".join(PackedStringArray(crefs.slice(0, 5)))]
+	if erase_will_dangle and not d_refs.is_empty():
+		text += "\n\n草稿（%s）里也在用它：删除后恢复草稿会带回悬空引用。" % \
+			", ".join(PackedStringArray(d_refs.slice(0, 5)))
 	if not await host._confirm_action("删除资产", text, "删除"):
 		return
 	# 已停用的扫描条目：这一步是「永久删除」，真从清单里抹掉（用户已明确放弃）

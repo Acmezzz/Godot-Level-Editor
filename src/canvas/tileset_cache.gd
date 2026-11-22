@@ -21,7 +21,8 @@ static var _ids: Array = []        # source_id -> 资产 id
 ## `tile_assets` = [{id, atlas_abs, cell: Vector2i, ysort: {Vector2i: int}}]，
 ## 顺序即 source_id 顺序；`grid` = 地图格尺寸（TileSet.tile_size）。
 ## `proj` = "orthogonal"/"isometric"/"hexagonal"（等距=菱形 / 六边=六角 TileSet.tile_shape，TileMapLayer 按形状渲染）。
-## 返回 {ts, imgs, texs, ids}；任一图集读不到返回空字典（调用方保持在无图集状态）。
+## 返回 {ts, imgs, texs, ids}；坏源在结果里占位 null（R20 隔离：一个图集读不到
+## 不再让整次构建失败，调用方对 null 纹理按缺图处理，旧瓦片记录按未解析往返）。
 static func build(tile_assets: Array, grid: Vector2i, proj := "orthogonal") -> Dictionary:
 	# 缓存键 = 投影 + 资产 id / 图集路径 / 切片尺寸 / ysort 表 / 图集 mtime。
 	# mtime 是秒级粒度，外部改图集或 ySortOrigin 后同秒内可能命中旧缓存——可接受（重开图即重建）。
@@ -46,11 +47,19 @@ static func build(tile_assets: Array, grid: Vector2i, proj := "orthogonal") -> D
 	for a in tile_assets:
 		var d2: Dictionary = a
 		var p := str(d2.get("atlas_abs", ""))
+		# R20：隔离单个坏源——一个图集缺失/解码失败只让它自己的源缺位（占位 null，
+		# source_id 映射保持稳定），其余资产照常建源；该资产的旧瓦片记录按未解析往返。
 		if p == "" or not FileAccess.file_exists(p):
-			return {}
+			imgs.append(null)
+			texs.append(null)
+			ids.append(str(d2.get("id", "")))
+			continue
 		var img := Image.load_from_file(p)
 		if img == null:
-			return {}
+			imgs.append(null)
+			texs.append(null)
+			ids.append(str(d2.get("id", "")))
+			continue
 		var cell: Vector2i = d2.get("cell", grid)
 		if cell.x <= 0 or cell.y <= 0:
 			cell = grid

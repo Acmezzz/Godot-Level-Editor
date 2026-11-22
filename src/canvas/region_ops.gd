@@ -9,7 +9,6 @@ var cvs   # editor_canvas 宿主
 const MapFormat := preload("res://src/map/map_format.gd")
 const TilesetCache := preload("res://src/canvas/tileset_cache.gd")
 const ClonePlan := preload("res://src/content/clone_plan.gd")
-const ContentStore := preload("res://src/content/content_store.gd")
 
 func _init(c) -> void:
 	cvs = c
@@ -141,7 +140,7 @@ func _finish_region_move() -> void:
 	cvs._move_cell_delta = Vector2i.ZERO
 	if not active or delta == Vector2i.ZERO:
 		return
-	cvs._push_undo()
+	cvs.push_undo()
 	# 先清源（各层瓦片 + 碰撞），再写目标；实例按数据坐标平移（保持浮点位）
 	for lid in (snap.get("tiles", {}) as Dictionary):
 		var li: int = cvs._layer_index_of(str(lid))
@@ -155,21 +154,23 @@ func _finish_region_move() -> void:
 		var li2: int = cvs._layer_index_of(str(lid2))
 		if li2 < 0:
 			continue
-		for t2 in (snap.get("tiles", {})[lid2] as Array):
-			var src2: int = cvs.source_of_asset(str((t2 as Array)[2]))
-			if src2 < 0:
-				continue
-			var ta2 := t2 as Array
-			TilesetCache.set_cell_alt(cvs.layer_tiles[li2] as TileMapLayer,
-				Vector2i(int(ta2[0]), int(ta2[1])) + delta, src2,
-				Vector2i(int(ta2[3]), int(ta2[4])),
-				int(ta2[5]) if ta2.size() >= 6 else 0)
+			for t2 in (snap.get("tiles", {})[lid2] as Array):
+				var src2: int = cvs.source_of_asset(str((t2 as Array)[2]))
+				if src2 < 0:
+					continue
+				var ta2 := t2 as Array
+				# R22：格平移走投影几何（六边 odd-r 行错位、三角半格列），不再原始格号相加
+				TilesetCache.set_cell_alt(cvs.layer_tiles[li2] as TileMapLayer,
+					cvs.grid.shift_cell(Vector2i(int(ta2[0]), int(ta2[1])), delta), src2,
+					Vector2i(int(ta2[3]), int(ta2[4])),
+					int(ta2[5]) if ta2.size() >= 6 else 0)
 	for t in snap.get("collision", []):
 		var ta := t as Array
+		var cc2: Vector2i = cvs.grid.shift_cell(Vector2i(int(ta[0]), int(ta[1])), delta)
 		if ta.size() >= 4:
-			cvs.set_collision_cell(Vector2i(int(ta[0]), int(ta[1])) + delta, true, str(ta[2]), str(ta[3]))
+			cvs.set_collision_cell(cc2, true, str(ta[2]), str(ta[3]))
 		else:
-			cvs.set_collision_cell(Vector2i(int(ta[0]), int(ta[1])) + delta, true)
+			cvs.set_collision_cell(cc2, true)
 	# 实例：区块内的实例原地平移（保持身份码与层归属，不重建节点）。
 	# 平移量按各实例所在层逆变换（E02）：跨层组的层偏移/缩放不同，不能共用一个世界位移。
 	for e in cvs.ents_all():
@@ -188,7 +189,7 @@ func _finish_region_move() -> void:
 
 ## 按模板重建一个实例节点（层按模板里的层码找，找不到落最底层）。
 ## 区域拖动/区域粘贴共用这一个入口，避免两处各写一遍落层逻辑。
-func _instantiate(t: Dictionary, origin: Vector2i) -> EntityNode:
+func _instantiate(t: Dictionary, origin: Vector2i, lnames := {}, missed: Array = [], same_map := true) -> EntityNode:
 	var aid := str(t.get("asset", ""))
 	if aid == "":
 		return null
@@ -196,7 +197,9 @@ func _instantiate(t: Dictionary, origin: Vector2i) -> EntityNode:
 	if not cvs.is_placeable(aid):
 		n.queue_free()   # 目标项目没有这个资产（或不是可摆放类型）：跳过，不落空节点
 		return null
-	n.layer_id = cvs.layer_id(cvs._layer_index_of(str(t.get("layer", ""))))
+	# R11：实例落层与瓦片同一条规则——层码直配 → 唯一层名 → 记入 missed。
+	var li: int = _paste_layer_index(str(t.get("layer", "")), lnames, missed, same_map)
+	n.layer_id = cvs.layer_id(li)
 	if n.layer_id == "":
 		n.layer_id = cvs.layer_id(0)
 	n.props = (t.get("props", {}) as Dictionary).duplicate(true)
@@ -301,7 +304,7 @@ func cut_region() -> void:
 	copy_region()
 	if cvs._region_clip.is_empty():
 		return
-	cvs._push_undo()
+	cvs.push_undo()
 	# P05：擦源也只走实际存在的格（used_cells 过滤），空池不按面积空转
 	for tn in cvs.layer_tiles:
 		for c in _used_in_rect(tn as TileMapLayer, cvs._region_sel):
@@ -351,22 +354,41 @@ func _paste_region(origin: Vector2i) -> void:
 			"props": (t.get("props", {}) as Dictionary).duplicate(true),
 			"functions": (t.get("functions", []) as Array).duplicate(true),
 		})
+	# R12：暂存内容一并复制——未落盘的新内容从会话暂存里读，不再把有效内容报成缺失。
+	var staged := {}
+	if cvs.app_host != null and cvs.app_host.project_shell != null \
+			and cvs.app_host.project_shell.content_editor != null:
+		for row in cvs.app_host.project_shell.content_editor.staged_rows_current_doc():
+			staged[str(row.cid)] = row.data
 	var plan: Dictionary = ClonePlan.build(
 		{"data": {"meta": {"code": str(cvs._region_clip.get("map_code", ""))}, "objects": rows},
 			"manifest": cvs.manifest, "map": str(cvs._region_clip.get("map", ""))},
-		{"data": cvs.map_data, "manifest": cvs.manifest, "map": cvs.cur_map_name})
+		{"data": cvs.map_data, "manifest": cvs.manifest, "map": cvs.cur_map_name},
+		PackedStringArray(), false, staged)
 	if str(plan.get("status", "")) != "ok":
 		cvs._hint("区域粘贴已取消：" + ClonePlan.conflicts_text(plan.get("conflicts", [])))
 		return
-	# 内容先落盘（A2）：写失败整条粘贴放弃，画布未被改动
+	# R12：粘贴内容改暂存——不再当场写盘，新内容随正式提交（Ctrl+S/试玩）落盘；
+	# 撤销恢复地图后绑定消失，暂存复核就地丢弃，不再留下孤儿内容文件。
+	# ent 取拥有该内容的副本实例码（R02 复核用）；行与剪贴板条目一一对应。
+	var remapped: Array = (plan.get("map_patch", {}) as Dictionary).get("objects", [])
+	var ce = null
+	if cvs.app_host != null and cvs.app_host.project_shell != null \
+			and cvs.app_host.project_shell.content_editor != null:
+		ce = cvs.app_host.project_shell.content_editor
 	for pc in (plan.get("pending_contents", []) as Array):
 		var pd: Dictionary = pc
-		if not ContentStore.write(cvs.manifest, str(pd.get("fn_id", "")), str(pd.get("id", "")),
-				pd.get("data", {}) as Dictionary):
-			cvs._hint("区域粘贴已取消：新内容 %s 写入失败" % str(pd.get("id", "")))
-			return
+		var owner := ""
+		for row in remapped:
+			var rf: Dictionary = row
+			for f in (rf.get("functions", []) as Array):
+				if f is Dictionary and str((f as Dictionary).get("content", "")) == str(pd.get("id", "")):
+					owner = str(rf.get("code", ""))
+		if ce != null:
+			ce.stage_clone(str(pd.get("fn_id", "")), str(pd.get("id", "")),
+				pd.get("data", {}) as Dictionary, owner)
 	# 校验全过才动手：一条撤销步覆盖瓦片 + 碰撞 + 实例
-	cvs._push_undo()
+	cvs.push_undo()
 	# 粘贴按 层id 维度重建（tiles = {层id: [[dx,dy,资产id,ax,ay]...]}）
 	# 层重映射：同图按 id 直配，跨图按层名，都不匹配则落最底层（末尾黄字提示）
 	var lnames: Dictionary = cvs._region_clip.get("layer_names", {})
@@ -375,39 +397,34 @@ func _paste_region(origin: Vector2i) -> void:
 	var missed: Array = []
 	for lid in (cvs._region_clip.get("tiles", {}) as Dictionary):
 		var li: int = _paste_layer_index(str(lid), lnames, missed, same_map)
-		for t in (cvs._region_clip.get("tiles", {})[lid] as Array):
+		for t in ((cvs._region_clip.get("tiles", {}) as Dictionary)[lid]) as Array:
 			var ta := t as Array
 			var src: int = cvs.source_of_asset(str(ta[2]))
 			if src < 0:
 				continue   # 目标项目没有这个资产：跳过，不写坏格子
+			# R22：粘贴平移同样走投影几何（与区域移动同一空间规则）
 			TilesetCache.set_cell_alt(cvs.layer_tiles[li] as TileMapLayer,
-				origin + Vector2i(int(ta[0]), int(ta[1])), src,
+				cvs.grid.shift_cell(Vector2i(int(ta[0]), int(ta[1])), origin), src,
 				Vector2i(int(ta[3]), int(ta[4])),
 				int(ta[5]) if ta.size() >= 6 else 0)
 	for t in cvs._region_clip.get("collision", []):
-		var cc := origin + Vector2i(int(t[0]), int(t[1]))
+		var cc: Vector2i = cvs.grid.shift_cell(Vector2i(int(t[0]), int(t[1])), origin)
 		if (t as Array).size() >= 4:
 			cvs.set_collision_cell(cc, true, str(t[2]), str(t[3]))
 		else:
 			cvs.set_collision_cell(cc, true)
-	# 行与剪贴板条目一一对应（ClonePlan 不跳行）：按下标取重映射结果
-	var remapped: Array = (plan.get("map_patch", {}) as Dictionary).get("objects", [])
+	# 行与剪贴板条目一一对应（ClonePlan 不跳行）：对账下标按**剪贴板行序**推进（R11：跳过的实例不消费计划项）。
 	var pasted: Array = []
-	var idx := 0
+	var ridx := 0
 	for t in cvs._region_clip.get("ents", []):   # 键统一为 ents（预览也读 ents）
 		var tpl := t as Dictionary
-		var n := _instantiate(tpl, origin)
+		var n := _instantiate(tpl, origin, lnames, missed, same_map)
 		if n == null:
+			ridx += 1
 			continue
-		# 层重映射失败时 _instantiate 落最底层，但要记下哪几层没匹配上
-		var src_lid := str(tpl.get("layer", ""))
-		if src_lid != "" and cvs._layer_index_of(src_lid) < 0:
-			var nm: String = str((cvs._region_clip.get("layer_names", {}) as Dictionary).get(src_lid, ""))
-			if not missed.has(nm if nm != "" else src_lid):
-				missed.append(nm if nm != "" else src_lid)
 		# 重映射后的行覆盖身份/引用/绑定（位置与变换来自模板，已由 _instantiate 落好）
-		if idx < remapped.size():
-			var row: Dictionary = remapped[idx]
+		if ridx < remapped.size():
+			var row: Dictionary = remapped[ridx]
 			if str(row.get("code", "")) != "":
 				n.code = str(row.get("code", ""))
 			if row.get("props", null) is Dictionary:
@@ -416,13 +433,15 @@ func _paste_region(origin: Vector2i) -> void:
 				n.functions = (row.get("functions", []) as Array).duplicate(true)
 			n.refresh_visual()
 		pasted.append(n)
-		idx += 1
+		ridx += 1
 	cvs._mark()   # 区域粘贴含实体，保持索引置脏
 	cvs._paste_mode = false
+	var n_new: int = (plan.get("pending_contents", []) as Array).size()
 	if missed.is_empty():
-		cvs._hint("区域已粘贴")
+		cvs._hint("区域已粘贴%s" % (("；复制内容 %d 条（随保存落盘）" % n_new) if n_new > 0 else ""))
 	else:   # 层匹配失败提示合并进同一条（状态栏单条消息，分开发会被覆盖）
-		cvs._hint("区域已粘贴；有 %d 个层按名匹配失败，其内容落在最底层：%s" % [missed.size(), ", ".join(missed)])
+		cvs._hint("区域已粘贴%s；有 %d 个层按名匹配失败，其内容落在最底层：%s" % [
+			("；复制内容 %d 条（随保存落盘）" % n_new) if n_new > 0 else "", missed.size(), ", ".join(missed)])
 
 ## 区域粘贴的层重映射（C2）：同图按 id 直配；跨图按**唯一**层名匹配，
 ## 名字重复或不匹配落最底层并记入 missed（末尾黄字提示，绝不猜）。

@@ -1,7 +1,18 @@
 extends RefCounted
-## 内容表单 + 内容库（复制成新 ID）：从 content_editor.gd 拆出的控制器。宿主 = content_editor 实例（host 引用）。
-## 搬迁约定：函数体逐字节原样迁入；跨边界引用经 host 转发——
-## 同名 const 重声明 + 同名转发属性 + 同名包装方法，搬动文本零改动。
+## 内容表单 + 内容库：字段控件渲染、结构化行、内容库（复制/共享改绑/改名/删除）、
+## 批量改值与关系图入口。从 content_editor.gd 拆出的控制器，宿主 = content_editor（host 引用）。
+##
+## 三件必须分清的东西：
+##   **控件待收集值** —— LineEdit/SpinBox 里还没提交的文本；commit()/失焦/回车才转成值，
+##                          切面板时 _set_mode 先 commit() 冲刷，别让用户输入凭空消失。
+##   **已有文件的工作副本** —— 已落盘内容的字段改动直接写回该内容文件（_content_write，
+##                          带磁盘摘要基线，外部改过就 conflict）。
+##   **新绑定的暂存** —— _staged[内容ID] = {fn_id, data, ent, bind_index, doc}；
+##                          只改内存，flush_staged（正式提交时）才写盘；按内容 ID 寻址（不是功能码）。
+##
+## 落盘责任划分：本模块只管「把值写进内容数据 / 暂存」；真正的地图写盘、历史轮转和提交日志
+## 由 map_file.commit_document 与 MapStore/Recovery 负责——这里不直接写地图。
+## 跨边界引用经 host 转发（同名 const 重声明 + 同名转发属性 + 同名包装方法）。
 
 const Kit := preload("res://src/ui/ui_kit.gd")
 const Th := preload("res://src/ui/ui_theme.gd")
@@ -15,7 +26,9 @@ const AssetDecl := preload("res://src/assets/asset_decl.gd")
 const FieldWidgets := preload("res://src/ui/field_widgets.gd")
 const FunctionDecls := preload("res://src/content/function_decl.gd")
 const RefFields := preload("res://src/content/ref_fields.gd")
-const ProjectAudit := preload("res://src/project/project_audit.gd")   # E3：内容库删除前的引用检查
+const ProjectAudit := preload("res://src/project/project_audit.gd")
+const CellGraph := preload("res://src/map/cell_graph.gd")   # E3：内容库删除前的引用检查
+const ReferenceIndex := preload("res://src/project/reference_index.gd")   # B2：删除入边全景统一入口
 const BatchOps := preload("res://src/content/batch_ops.gd")   # E2：同功能批量改值
 const RelGraph := preload("res://src/content/rel_graph.gd")   # E2：关系图（纯数据 + 写回）
 const RelGraphView := preload("res://src/ui/rel_graph_view.gd")
@@ -178,7 +191,7 @@ func _build_form_block() -> Control:
 	for fd in fields:
 		if not (fd is Dictionary):
 			continue
-		box.add_child(_build_field_row(i, fn_id, fd, cur))
+		box.add_child(_build_field_row(i, fn_id, fd, cur, fields))
 	# 条件区：功能声明引用的条件库条目。条件参数是实例上填的——同一条件被不同
 	# 实例引用时参数各填各的；值与功能字段共存于同一份内容 fields（键=字段码）。
 	var cond_fds: Array = []
@@ -196,7 +209,7 @@ func _build_form_block() -> Control:
 			if not (fd2 is Dictionary):
 				continue
 			cond_fds.append(fd2)
-			box.add_child(_build_field_row(i, fn_id, fd2, cur))
+			box.add_child(_build_field_row(i, fn_id, fd2, cur, fields + cond_fds))
 	if content_id == "":
 		box.add_child(Kit.hint_label("首次修改任意字段即创建内容条目。", RIGHT_W - 40))
 	var undeclared := _undeclared_block(fields, cond_fds, cur)
@@ -241,13 +254,21 @@ func _undeclared_block(fields: Array, cond_fields: Array, cur: Dictionary) -> Co
 ## 内容文件里的键一律是字段码（ensure_codes 保证声明都有码，无回退）。
 ## E1：同图实例引用额外给「画布选…」——临时切回画布点目标，确认才写值
 ## （取消时原值/焦点都不动，控件也不重建）。
-func _build_field_row(i: int, fn_id: String, fd: Dictionary, cur: Dictionary) -> Control:
+func _build_field_row(i: int, fn_id: String, fd: Dictionary, cur: Dictionary, siblings: Array = []) -> Control:
 	var fid := str(fd.get("id", ""))
 	var key := str(fd.get("code", ""))
 	var val = cur.get(key, fd.get("default", FieldWidgets.default_for(fd)))
 	var label := str(fd.get("name", fid))
-	var built := FieldWidgets.build(fd, val, func(v):
-		_set_field(i, fn_id, key, v), _resolve_options)
+	# R13：配对地图字段的现值注入 _mapKey——功能/条件字段的实例引用与摆放物引用同一语义
+	# （缺省 = 本图；配对字段填了别的图就枚举那张图的实例）。
+	var d := fd
+	if str(fd.get("mapField", "")) != "" and not siblings.is_empty():
+		var tk := RefFields.paired_map_value(fd, siblings, cur)
+		if tk != "":
+			d = fd.duplicate(true)
+			d["_mapKey"] = tk
+	var built := FieldWidgets.build(d, val, func(v):
+		_set_field(i, fn_id, key, v), _resolve_options, "code")
 	if built.get("commit") is Callable and (built.commit as Callable).is_valid():
 		_pending_commits.append(built.commit)
 	var row := Kit.field_row(label, built.ctl, 96)
@@ -258,18 +279,23 @@ func _build_field_row(i: int, fn_id: String, fd: Dictionary, cur: Dictionary) ->
 	if FieldWidgets.wants_canvas_pick(fd):
 		var pick := Kit.button("画布选…", func():
 			_pick_entity_for(fd, key, func(code): _set_field(i, fn_id, key, code)), "ghost")
-		pick.tooltip_text = "临时切到画布点一个实例；确认才写入，取消不改当前值"
+		pick.tooltip_text = "临时切到画布点一个实例；确认才写入，取消不改当前值" \
+			if not FieldWidgets.wants_cell_pick(fd) else \
+			"临时切到画布点格图里的一格（按多边形命中）；确认才写入，取消不改当前值"
 		pick.add_theme_font_size_override("font_size", Th.FS_META)
 		row.add_child(pick)
 	return row
 
 ## E1：为一个实例引用字段开画布选点（宿主 = app，会话管理与确认条都在那边）。
 ## 确认回调只写字段值；字段写盘走与手选下拉同一条 _set_field。
+## C4：cell_id 字段走同一会话，accept="cell"（候选来自格图多边形，不走实例命中）。
 func _pick_entity_for(fd: Dictionary, key: String, commit: Callable) -> void:
 	var fname := str(fd.get("name", str(fd.get("id", ""))))
-	var label := "为「%s」选目标实例" % fname
+	var is_cell := FieldWidgets.wants_cell_pick(fd)
+	var hint := "为「%s」选一格（格图）" % fname if is_cell else "为「%s」选目标实例" % fname
 	var of := FieldWidgets.canvas_pick_types(fd)
-	var hint := label + ("（限定类型：%s）" % ",".join(PackedStringArray(of)) if not of.is_empty() else "")
+	if not is_cell and not of.is_empty():
+		hint += "（限定类型：%s）" % ",".join(PackedStringArray(of))
 	# 单独建回调再传：多行 lambda 直接塞进实参列表容易读错缩进边界
 	var on_ok := func(code: String):
 		if code == "":
@@ -277,7 +303,8 @@ func _pick_entity_for(fd: Dictionary, key: String, commit: Callable) -> void:
 		commit.call(code)
 		# 下拉控件还停在旧值：提交后重建右栏让新值上屏（用户主动确认的写盘）
 		_rebuild_right()
-	app._begin_canvas_pick("content", "entity", hint, on_ok, Callable(), of)
+	app._begin_canvas_pick("content", "cell" if is_cell else "entity", hint, on_ok, Callable(),
+		[] if is_cell else of)
 
 ## choice.source 的选项来源解析（由游戏侧声明，编辑器只查不解释）。
 ## 支持：content:<功能id>（内容库）、entity:<id,id>（清单实体类型）、
@@ -327,6 +354,30 @@ func _resolve_options(decl: Dictionary) -> Array:
 				out4.append({"v": c0, "t": "%s %s · (%d,%d)" % [
 					str(app._scene_name(sid0)), c0, cell.x, cell.y]})
 		return out4
+	if src.begins_with("port:"):
+		# C3：端口候选 = 配对图（_mapKey）优先，缺省本图；of 白名单 = 端口类型过滤。
+		var pk := src.substr(5).split(",", false)
+		var pmap := str(decl.get("_mapKey", ""))
+		if pmap == "" and _map_ready():
+			pmap = app.canvas.cur_map_name
+		var outp: Array = RefFields.port_candidates(manifest, pmap, Array(pk))
+		return outp
+	if src.begins_with("cell:"):
+		# C4：有限格图 cell_id 候选（只读参考层）：当前图 meta.cellGraph 的 cells。
+		if not _map_ready():
+			return []
+		var cg := CellGraph.graph_of(app.canvas.map_data.get("meta", {}) as Dictionary)
+		var outc: Array = []
+		for cid0 in CellGraph.cell_ids(cg):
+			outc.append({"v": str(cid0), "t": str(cid0)})
+		return outc
+	if src.begins_with("viewport:"):
+		# C5：具名参考画幅候选（清单 viewports：[{id, w, h}]）。缺声明 = 无候选（控件保留原值）。
+		var outv: Array = []
+		for vp in (manifest.get("viewports", []) as Array):
+			if vp is Dictionary and str((vp as Dictionary).get("id", "")) != "":
+				outv.append({"v": str((vp as Dictionary).get("id", "")), "t": "%s（%dx%d）" % [str((vp as Dictionary).get("id", "")), int((vp as Dictionary).get("w", 0)), int((vp as Dictionary).get("h", 0))]})
+		return outv
 	if src == "layer:":
 		var outl: Array = []
 		var li := 0
@@ -343,9 +394,12 @@ func _resolve_options(decl: Dictionary) -> Array:
 		return out5
 	if src.begins_with("asset:"):
 		# asset:<kind>[:<id,id>] —— 资产引用（asset_ref）的选项来源；值 = 资产 id。
-		var parts := src.substr(6).split(":", false)
-		var want_kind := str(parts[0]) if parts.size() > 0 else ""
-		var want_ids: Array = Array(str(parts[1]).split(",", false)) if parts.size() > 1 and str(parts[1]) != "" else []
+		# R13：保留空段（asset::AB23 = kind 空 + ID 白名单）——与 RefFields.describe 同一语义。
+		var rest := src.substr(6)
+		var cut := rest.find(":")
+		var want_kind := rest if cut < 0 else rest.substr(0, cut)
+		var ids_s := "" if cut < 0 else rest.substr(cut + 1)
+		var want_ids: Array = Array(ids_s.split(",", false))
 		var assets := AssetDecl.all(manifest)
 		var out6: Array = []
 		for a in assets:
@@ -406,8 +460,10 @@ func _content_conflict(cid: String) -> void:
 
 ## 字段改动：写内容文件。content 为空时生成 ID 并暂存（A2 staged）。
 ## 约定：字段值落在 content/<kind>/<id>.json，属「内容资产」而非地图快照——
-## 不进画布撤销栈（撤销恢复的是地图，内容文件不回滚）；改绑定的路径（_set_parallel 等）
-## 走 _write_fns 各自进撤销。连续控件只在失焦/回车提交。
+## 不走画布整图撤销（撤销一张 10 万格地图不该只为了回滚一个字段）；已落盘内容
+## 改走 ContentKey 差量（§7.5 阶段二）：记录改前/改后整份内容 + 两侧摘要，
+## undo 只写回那一个文件，盘上被外部改过则拒绝覆盖。
+## 连续控件只在失焦/回车提交。
 func _set_field(i: int, fn_id: String, key: String, value) -> void:
 	# 字符串字段统一 strip_edges——所有字符串值同一口径，避免同一字段
 	# 在两条编辑路径里一个被裁、一个带着首尾空格落盘。
@@ -421,6 +477,7 @@ func _set_field(i: int, fn_id: String, key: String, value) -> void:
 	var data: Dictionary = rd.data
 	if data.is_empty():
 		data = _blank_content(fn_id, cid)
+	var before: Dictionary = data.duplicate(true)
 	var fields: Dictionary = data.get("fields", {}) if data.get("fields", {}) is Dictionary else {}
 	if fields.get(key, null) == value:
 		return
@@ -433,8 +490,19 @@ func _set_field(i: int, fn_id: String, key: String, value) -> void:
 	if wr != "ok":
 		_ensure_failed()
 		return
+	_record_content_delta(fn_id, cid, before, data, str(rd.digest))
 	# P04：改字段值不动左列行的「类型名 + 实例码」，只刷预览
 	_refresh_value_only()
+
+## 内容差量记账（ContentKey = 功能 id + 内容 id）：只记已落盘的那份内容。
+## digest_before 为空（新建/staged）不记——这类内容撤销等于放弃暂存，由暂存复核处理。
+func _record_content_delta(fn_id: String, cid: String, before: Dictionary, after: Dictionary,
+		digest_before: String) -> void:
+	if digest_before == "" or app == null or app.canvas == null:
+		return
+	var path := ContentStore.path_for(manifest, fn_id, cid)
+	var digest_after := ContentStore.file_digest(path) if path != "" else ""
+	app.canvas._undo_history_ctrl.record_content(fn_id, cid, before, after, digest_before, digest_after)
 
 ## 显示名：内容条目的 name；改动写内容文件并同步实例绑定的 name（列表读的是绑定）。
 func _commit_name(i: int, text: String) -> void:
@@ -463,6 +531,7 @@ func _commit_name(i: int, text: String) -> void:
 		return
 	if str(data.get("name", "")) == nm:
 		return
+	var before: Dictionary = data.duplicate(true)
 	data["name"] = nm
 	var wr := _content_write(fn_id, cid, data, str(rd.digest))
 	if wr == "conflict":
@@ -471,6 +540,7 @@ func _commit_name(i: int, text: String) -> void:
 	if wr != "ok":
 		_ensure_failed()
 		return
+	_record_content_delta(fn_id, cid, before, data, str(rd.digest))
 	var spr := _current_spr()
 	fns = fns.duplicate(true)
 	(fns[i] as Dictionary)["name"] = nm
@@ -517,7 +587,7 @@ func _ensure_content(i: int) -> String:
 	var data := _blank_content(fn_id, new_id)
 	data["name"] = nm
 	# 暂存：只在内存登记，等正式提交再写（staged）
-	_staged[new_id] = {"fn_id": fn_id, "data": data, "ent": spr.code, "bind_index": i}
+	_staged[new_id] = {"fn_id": fn_id, "data": data, "ent": spr.code, "bind_index": i, "doc": _doc_key()}
 	app._set_status(" 新内容 %s 已暂存：Ctrl+S 或试玩时落盘" % new_id)
 	fns = fns.duplicate(true)
 	(fns[i] as Dictionary)["content"] = new_id
@@ -528,28 +598,159 @@ func _ensure_content(i: int) -> String:
 		_form_id_edit.text = new_id
 	return new_id
 
-## 暂存内容：{content_id: {fn_id, data, ent, bind_index}}。正式提交时 flush_staged 写入。
+## 暂存内容：{content_id: {fn_id, data, ent, bind_index, doc}}。正式提交时 flush_staged 写入。
+## doc（R02 工作副本归属）= 项目根|地图码：冲刷只写当前文档（地图）的条目，
+## 切图后旧图的暂存不跟新图落盘；绑定身份复核失败（撤销/删绑定）就地丢弃。
 var _staged := {}
 
-## 把暂存内容写盘（A2 正式提交调用）。全部成功返回 true；任一失败停下并保留剩余暂存。
-func flush_staged() -> bool:
+## 当前文档键（R02）：项目根 + 地图码（无码退回图名）。
+func _doc_key() -> String:
+	var root := str(app.manifest.get("_dir", ""))
+	var code := ""
+	if app.map_loaded and app.canvas != null and app.canvas.map_data.get("meta", null) is Dictionary:
+		code = str((app.canvas.map_data["meta"] as Dictionary).get("code", ""))
+	if code == "":
+		code = str(app.cur_map_name)
+	return root.path_join(code)
+
+## 绑定身份复核（R02）：暂存条目的实例与绑定行还在吗？
+## 返回 ""（在）/ "gone"（实例没了）/ "moved"（绑定行被撤销、换绑或重排）。
+func _staged_bind_state(st: Dictionary, cid: String) -> String:
+	var ent := str(st.get("ent", ""))
+	if ent == "":
+		return ""   # 无绑定身份的条目按在写处理
+	if not _map_ready():
+		return "gone"
+	var spr = host._find_ent(ent)
+	if spr == null:
+		return "gone"
+	var fcode := FunctionDecls.fn_code(manifest, str(st.get("fn_id", "")))
+	return "moved" if not _bind_holds(spr, fcode, cid) else ""
+
+## 绑定行还在吗：该实例的 functions 里仍有一条「同功能码 + 同内容 ID」的行。
+func _bind_holds(spr: EntityNode, fcode: String, cid: String) -> bool:
+	for f in spr.functions:
+		if not (f is Dictionary):
+			continue
+		if str((f as Dictionary).get("content", "")) == cid \
+				and (fcode == "" or str((f as Dictionary).get("fn", "")) == fcode):
+			return true
+	return false
+
+## 把暂存内容写盘（A2 正式提交入口调用）。全部成功返回 true；任一失败停下并保留剩余暂存。
+## 只写当前文档的条目（R02）：doc 不符的条目留在暂存表里，等各自文档保存时再写。
+## on_written(fn_id, cid)：每条成功写入即回调（R04 提交日志逐文件登记）。
+func flush_staged(on_written: Callable = Callable()) -> bool:
 	if _staged.is_empty():
 		return true
-	var ids: Array = _staged.keys()
-	for cid in ids:
-		var st: Dictionary = _staged[cid]
-		if not ContentStore.write(manifest, str(st.fn_id), str(cid), st.data):
-			_ensure_failed()
+	var doc := _doc_key()
+	for cid in _staged.keys():
+		var st: Dictionary = _staged.get(cid, {})
+		if str(st.get("doc", "")) != doc:
+			continue   # 别的文档的暂存：不写、不丢
+		if str(flush_one(str(cid), on_written).get("status", "")) == "failed":
 			return false
-		_staged.erase(cid)
 	return true
+
+## 单条暂存内容的冲刷（B1：DocumentCommit.apply 逐目标调用）。
+## 绑定复核失败就地丢弃并报告（R02）；写盘失败保留暂存。返回 {status: ok|dropped|failed}。
+func flush_one(cid: String, on_written: Callable = Callable()) -> Dictionary:
+	var st: Dictionary = _staged.get(cid, {})
+	if st.is_empty():
+		return {"status": "dropped"}
+	var state := _staged_bind_state(st, cid)
+	if state != "":
+		_staged.erase(cid)   # 绑定已撤销/实例已删：这条不再写盘（R02）
+		app._set_status(" 暂存内容 %s 的绑定已不在（撤销/切图放弃）：未写盘，已丢弃" % cid)
+		return {"status": "dropped"}
+	if not ContentStore.write(manifest, str(st.get("fn_id", "")), cid, st.get("data", {}) as Dictionary):
+		_ensure_failed()
+		return {"status": "failed"}
+	_staged.erase(cid)
+	if on_written is Callable and (on_written as Callable).is_valid():
+		(on_written as Callable).call(str(st.get("fn_id", "")), cid)
+	return {"status": "ok"}
+
+## 暂存表本体（B1：DocumentSession 经它共享同一份工作副本，字典按引用传递）。
+func staged_table() -> Dictionary:
+	return _staged
 
 func has_staged() -> bool:
 	return not _staged.is_empty()
 
-## 暂存内容快照（草稿记录用）：{cid: {fn_id, data}}，深拷贝避免外部改动。
-func staged_snapshot() -> Dictionary:
-	return _staged.duplicate(true)
+## 当前文档的暂存行 [{fn_id, cid, data}]（提交日志/草稿冻结目标用，R04）。
+func staged_rows_for_current_doc() -> Array:
+	var doc := _doc_key()
+	var out: Array = []
+	for cid in _staged:
+		var st: Dictionary = _staged[cid]
+		if str(st.get("doc", "")) != doc:
+			continue
+		out.append({"fn_id": str(st.get("fn_id", "")), "cid": str(cid),
+			"data": (st.get("data", {}) as Dictionary).duplicate(true)})
+	return out
+
+## 当前文档是否有暂存内容。
+func has_staged_for_current_doc() -> bool:
+	if _staged.is_empty():
+		return false
+	var doc := _doc_key()
+	for cid in _staged:
+		if str((_staged[cid] as Dictionary).get("doc", "")) == doc:
+			return true
+	return false
+
+## 放弃当前文档的暂存内容（R02 三种去向之一）：切换/放弃确认后调用。
+func drop_staged_for_current_doc() -> int:
+	var doc := _doc_key()
+	var dropped := 0
+	for cid in _staged.keys():
+		if str((_staged[cid] as Dictionary).get("doc", "")) == doc:
+			_staged.erase(cid)
+			dropped += 1
+	return dropped
+
+## 草稿恢复：把待提交内容载荷重新暂存（R03）。绑定还在的才收，返回收下的条数。
+func restage_rows(rows: Array) -> int:
+	var doc := _doc_key()
+	var n := 0
+	for row in rows:
+		if not (row is Dictionary):
+			continue
+		var r: Dictionary = row
+		var cid := str(r.get("cid", "")) if r.has("cid") else str(r.get("id", ""))
+		var fn_id := str(r.get("fn_id", ""))
+		var dat = r.get("data", null)
+		if cid == "" or fn_id == "" or not (dat is Dictionary):
+			continue
+		if _staged.has(cid):
+			continue
+		# 找回绑定身份：恢复后的画布上找 content==cid 的绑定行（复核用）
+		var ent := ""
+		if _map_ready():
+			for e0 in host._entities():
+				var r0: Dictionary = e0
+				for f0 in (r0.get("fns", []) as Array):
+					if f0 is Dictionary and str((f0 as Dictionary).get("content", "")) == cid:
+						ent = str(r0.get("code", ""))
+						break
+				if ent != "":
+					break
+		if ent == "" and _map_ready():
+			continue   # 绑定不在恢复后的画布上：这条不收（写盘只会造孤儿文件）
+		_staged[cid] = {"fn_id": fn_id, "data": (dat as Dictionary).duplicate(true),
+			"ent": ent, "bind_index": -1, "doc": doc}
+		n += 1
+	return n
+
+## 复制粘贴产生的暂存（R12）：粘贴路径不再当场写盘——新内容随正式提交
+## （Ctrl+S / 试玩）才落盘；撤销恢复地图后绑定消失，R02 的绑定复核就地丢弃，
+## 不再留下孤儿内容文件。ent = 拥有该内容的副本实例码（复核身份）。
+func stage_clone(fn_id: String, cid: String, data: Dictionary, ent: String) -> void:
+	if fn_id == "" or cid == "" or _staged.has(cid):
+		return
+	_staged[cid] = {"fn_id": fn_id, "data": data.duplicate(true),
+		"ent": ent, "bind_index": -1, "doc": _doc_key()}
 
 ## 写盘失败：状态栏 + 徽章双重提示（红色徽章在右栏顶部，不依赖状态栏可见性）
 ## 不再一律甩「目录权限」——真实失败原因多半是身份码没生成或 kind 不合法。
@@ -608,11 +809,34 @@ func _open_lib(i: int) -> void:
 		app._open_popup(pop)
 		return
 
-	# —— 名称筛选（E3）：按显示名或 id 过滤，不重建弹窗 ——
+	# —— 名称筛选（E3）+ 引用状态筛选（C2）——
 	var filter := LineEdit.new()
 	filter.placeholder_text = "筛选：名称或 id"
 	filter.clear_button_enabled = true
-	body.add_child(filter)
+	var state_opt := OptionButton.new()
+	state_opt.add_item("全部")
+	state_opt.add_item("被引用")
+	state_opt.add_item("未被引用")
+	state_opt.tooltip_text = "按入边数筛选：被引用 = 至少一条绑定或内容入边（◆n 后缀）"
+	var state_row := Kit.hbox(6)
+	state_row.add_child(filter)
+	state_row.add_child(state_opt)
+	body.add_child(state_row)
+
+	# C2：批量引用扫描（一次读盘）——筛选与行详情共用；活体绑定从画布收集
+	var live_binds: Array = []
+	if _map_ready():
+		var fcode := FunctionDecls.fn_code(manifest, fn_id)
+		for ent_row in host._entities():
+			for fb in ((ent_row as Dictionary).get("fns", []) as Array):
+				if not (fb is Dictionary):
+					continue
+				if str((fb as Dictionary).get("content", "")) == "":
+					continue
+				if fcode != "" and str((fb as Dictionary).get("fn", "")) != fcode:
+					continue
+				live_binds.append({"cid": str((fb as Dictionary).get("content", "")), "code": str((ent_row as Dictionary).get("code", ""))})
+	var bulk := ProjectAudit.content_edges_bulk(manifest, fn_id, ids, app.canvas.cur_map_name, live_binds)
 
 	var list := ItemList.new()
 	list.custom_minimum_size = Vector2(0, 200)
@@ -623,7 +847,9 @@ func _open_lib(i: int) -> void:
 	var rows: Array = []
 	for cid in ids:
 		var d := ContentStore.read(manifest, fn_id, str(cid))
-		rows.append({"cid": str(cid), "name": str(d.get("name", ""))})
+		var bulk_refs: Dictionary = bulk.get("refs", {})
+		var bref: Dictionary = (bulk_refs.get(str(cid), {}) if bulk_refs.has(str(cid)) else {"n": 0})
+		rows.append({"cid": str(cid), "name": str(d.get("name", "")), "n": int(bref.get("n", 0))})
 	body.add_child(list)
 
 	var refill := func():
@@ -634,7 +860,13 @@ func _open_lib(i: int) -> void:
 			var nm := str((r as Dictionary).get("name", ""))
 			if q != "" and not cid.to_lower().contains(q) and not nm.to_lower().contains(q):
 				continue
-			var it := list.add_item((nm + "  ·  " + cid) if nm != "" else cid)
+			# C2：引用状态筛选 + 入边数后缀（◆n = 绑定实例+内容入边总数）
+			var n: int = int((r as Dictionary).get("n", 0))
+			if state_opt.selected == 1 and n == 0:
+				continue
+			if state_opt.selected == 2 and n > 0:
+				continue
+			var it := list.add_item(((nm + "  ·  " + cid) if nm != "" else cid) + ("  ◆%d" % n if n > 0 else ""))
 			list.set_item_metadata(it, cid)
 			if nm == "":
 				list.set_item_custom_fg_color(it, Th.TEXT_MUTE)
@@ -678,14 +910,22 @@ func _open_lib(i: int) -> void:
 	del_btn.add_theme_color_override("font_color", Th.ERR)
 	del_btn.tooltip_text = "删除这条内容前先查实例与内容间引用；被引用时不会删"
 	rename_row.add_child(del_btn)
+	# C2：共享改绑——本实例改绑到选中的已有内容（沿用同一 ID），前显示受影响实例
+	var share_btn := Kit.button("共享改绑…", func(): _share_rebind(i, fn_id, picked[0]), "ghost")
+	share_btn.tooltip_text = "本实例改绑到选中内容（不再复制新 ID）；确认框列出正被谁引用"
+	rename_row.add_child(share_btn)
 	body.add_child(rename_row)
 
 	filter.text_changed.connect(func(_t: String): refill.call())
+	state_opt.item_selected.connect(func(_i: int): refill.call())
 	refill.call()
 
 	var name_edit := LineEdit.new()
 	name_edit.placeholder_text = "新内容显示名"
 	body.add_child(Kit.field_row("新名字", name_edit, 56))
+	# C2：行详情——选中条目的绑定实例与内容入边（bulk 一次读盘的结果）
+	var edges_lbl := Kit.hint_label("选中条目后这里显示绑定与入边。", RIGHT_W - 40)
+	body.add_child(edges_lbl)
 	list.item_selected.connect(func(idx: int):
 		var cid := str(list.get_item_metadata(idx))
 		picked[0] = cid
@@ -697,7 +937,8 @@ func _open_lib(i: int) -> void:
 		if nm == "":
 			nm = str(ContentStore.read(manifest, fn_id, cid).get("name", ""))
 		name_edit.text = (nm if nm != "" else cid) + " 副本"
-		rename_edit.text = nm)
+		rename_edit.text = nm
+		edges_lbl.text = _lib_edges_text(cid, bulk))
 
 	var on_ok := func():
 		if picked[0] == "":
@@ -1023,32 +1264,99 @@ func _rename_library_item(fn_id: String, cid: String, new_name: String) -> bool:
 ##   ③ 有未扫描/读不出的文件（地图或内容）→ 范围不完整，只提示不动手。
 ## 全部通过才走确认框并删文件（内容文件有 .history 备份可找回）。
 ## 返回是否真的删了（调用方据此从列表快照里去掉该行）。
-func _delete_library_item(fn_id: String, cid: String) -> bool:
-	# 当前画布的未保存绑定也算引用（磁盘是旧的）
+## C2：行详情文本：绑定实例与 content 入边（bulk 一次读盘的结果）。
+func _lib_edges_text(cid: String, bulk: Dictionary) -> String:
+	var bulk_refs: Dictionary = bulk.get("refs", {})
+	var refd: Dictionary = bulk_refs.get(cid, {}) if bulk_refs.has(cid) else {"instances": {}, "contents": [], "n": 0}
+	var inst: Dictionary = refd.get("instances", {})
+	var parts: Array[String] = []
+	for mn in inst:
+		parts.append("%s × %d" % [str(mn), (inst[mn] as Array).size()])
+	var out := "绑定：%s" % ("、".join(parts) if not parts.is_empty() else "无")
+	var cs: Array = refd.get("contents", [])
+	var clines: Array[String] = []
+	for c in cs:
+		clines.append("%s/%s.%s" % [str((c as Dictionary).get("kind", "")), str((c as Dictionary).get("id", "")), str((c as Dictionary).get("field", ""))])
+	if not clines.is_empty():
+		out += "
+入边：" + "、".join(clines)
+	if int(refd.get("n", 0)) == 0:
+		out += "
+（未被任何实例或内容引用）"
+	return out
+
+## C2：共享改绑：本实例改绑到已有内容 ID（沿用同一 ID），先弹确认框列受影响实例。
+func _share_rebind(i: int, fn_id: String, cid: String) -> void:
+	if cid == "":
+		app._set_status(" 先选一条内容")
+		return
+	if str(((_current_fns()[i] if i >= 0 and i < _current_fns().size() else {}) as Dictionary).get("content", "")) == cid:
+		return
+	var bulk := ProjectAudit.content_edges_bulk(manifest, fn_id, [cid], app.canvas.cur_map_name, [])
+	var inst: Dictionary = ((bulk.get("refs", {}) as Dictionary).get(cid, {}) as Dictionary).get("instances", {})
+	var parts: Array[String] = []
+	var total := 0
+	for mn in inst:
+		var codes: Array = inst[mn]
+		total += codes.size()
+		parts.append("%s × %d" % [str(mn), codes.size()])
+	var shell: Dictionary = app._popup_body("共享已有内容", "这条内容正被 %d 个实例绑定（%s）。改绑后它们与本实例共用同一内容 ID，字段改动一起生效。" % [total, "、".join(parts) if not parts.is_empty() else "无"])
+	var pop: PopupPanel = shell.pop
+	var body: VBoxContainer = shell.body
+	body.add_child(Kit.hint_label("目标内容：" + cid + "（沿用此 ID，不再复制）", RIGHT_W - 40))
+	# 确认 → 改绑：只改 bindings 的 content 键（地图改动，走 _write_fns 进撤销栈）
+	var go := func():
+		var fns := _current_fns()
+		if i < 0 or i >= fns.size():
+			return
+		var fns2 := fns.duplicate(true)
+		(fns2[i] as Dictionary)["content"] = cid
+		_write_fns(_current_spr(), fns2)
+		_rebuild_right()
+		app._set_status(" 已改绑到共享内容 " + cid)
+	body.add_child(Kit.popup_buttons(go, func(): pop.hide(), "改绑", "取消"))
+	app._open_popup(pop)
+
+## C2：纯逻辑辅助（测试用）：本实例改绑后的绑定行——只换 content 键，其余不动。
+func _rebound_fns(fns: Array, i: int, cid: String) -> Array:
+	var out: Array = (fns as Array).duplicate(true)
+	if i < 0 or i >= out.size():
+		return out
+	(out[i] as Dictionary)["content"] = cid
+	return out
+
+## R14：删除前的全部入边检查（活体绑定 / 暂存 / 草稿 / 内容间引用 / 范围完整性）。
+## 返回 "" = 可以删；非空 = 中止原因（可直接给状态栏）。确认弹窗前后各跑一次（复验）。
+func _delete_blocked_reason(fn_id: String, cid: String) -> String:
+	# 当前画布的**全部**活体绑定都算引用（磁盘是旧的）——不只当前选中实例。
 	var live_codes: Array = []
-	var spr := _current_spr()
-	if spr != null and is_instance_valid(spr):
-		for f in spr.functions:
-			if not (f is Dictionary):
-				continue
-			if str((f as Dictionary).get("content", "")) != cid:
-				continue
-			if str((f as Dictionary).get("fn", "")) == FunctionDecls.fn_code(manifest, fn_id):
-				live_codes.append(spr.code)
+	var fcode := FunctionDecls.fn_code(manifest, fn_id)
+	if _map_ready():
+		for row in host._entities():
+			for f in (row.get("fns", []) as Array):
+				if f is Dictionary and str((f as Dictionary).get("content", "")) == cid \
+						and (fcode == "" or str((f as Dictionary).get("fn", "")) == fcode):
+					live_codes.append(str(row.get("code", "")))
+					break
+	# R14：暂存内容的引用字段也指得到它（未落盘的入边）。
+	var staged_refs: Array = []
+	for row2 in staged_rows_for_current_doc():
+		var d2: Dictionary = row2.data
+		for k in (d2.get("fields", {}) as Dictionary):
+			var fv = (d2.get("fields", {}) as Dictionary)[k]
+			if fv is String and str(fv) == cid:
+				staged_refs.append(str(row2.cid))
 				break
 	var cur_map := str(app.cur_map_name) if app.map_loaded else ""
-	var usage: Dictionary = ProjectAudit.content_usage(manifest, fn_id, cid, cur_map, live_codes)
-	if bool(usage.get("incomplete", false)):
-		var why: Array[String] = []
-		var ur: Array = usage.get("unreadable", [])
-		if not ur.is_empty():
-			why.append("有地图读不出来（%s）" % ", ".join(PackedStringArray(ur)))
-		var bc: Array = usage.get("bad_contents", [])
-		if not bc.is_empty():
-			why.append("有内容文件读不出来（%s）" % ", ".join(PackedStringArray(bc)))
-		app._set_status(" 删除中止：检查范围不完整——" + "；".join(why) + "。先修好这些文件再试")
-		return false
-	var by_map: Dictionary = usage.get("by_map", {})
+	# B2（§7.2）：删除入边全景统一走 ReferenceIndex.inbound_content——
+	# 磁盘地图/内容/草稿三路入边 + 读不全源，审计与删除共用同一套解析结果。
+	var ref: Dictionary = ReferenceIndex.inbound_content(manifest, fn_id, cid, cur_map, live_codes)
+	if not bool(ref.get("complete", false)):
+		return " 删除中止：检查范围不完整——%s。先修好这些文件再试" % \
+			"；".join(PackedStringArray((ref.get("unreadable_sources", []) as Array).map(
+				func(x) -> String: return str(x))))
+	var edges: Dictionary = ref.get("edges", {})
+	var by_map: Dictionary = edges.get("instances", {})
 	if not by_map.is_empty():
 		var lines: Array[String] = []
 		var total := 0
@@ -1057,28 +1365,51 @@ func _delete_library_item(fn_id: String, cid: String) -> bool:
 			total += codes.size()
 			lines.append("%s × %d（%s）" % [str(mn), codes.size(),
 				", ".join(PackedStringArray(codes.slice(0, 4)))])
-		app._set_status(" 删除中止：%s 仍被 %d 个实例引用——%s。先改绑到别的内容或删掉那些绑定" % [
-			cid, total, "；".join(lines)])
-		return false
+		return " 删除中止：%s 仍被 %d 个实例引用——%s。先改绑到别的内容或删掉那些绑定" % [
+			cid, total, "；".join(lines)]
 	# ② 其它内容文件的引用型字段指向它（内容 → 内容的入边）：删了那些引用就悬空
-	var inbound: Array = ProjectAudit.content_inbound_refs(manifest, fn_id, cid)
+	var inbound: Array = edges.get("contents", [])
 	if not inbound.is_empty():
 		var refs: Array[String] = []
 		for r in inbound:
 			refs.append("%s/%s.%s" % [str((r as Dictionary).get("kind", "")),
 				str((r as Dictionary).get("id", "")), str((r as Dictionary).get("field", ""))])
-		app._set_status(" 删除中止：另有 %d 份内容的引用字段指向它（%s）。先清掉那些字段" % [
-			inbound.size(), ", ".join(PackedStringArray(refs.slice(0, 5)))])
+		return " 删除中止：另有 %d 份内容的引用字段指向它（%s）。先清掉那些字段" % [
+			inbound.size(), ", ".join(PackedStringArray(refs.slice(0, 5)))]
+	# R14：暂存内容（未落盘）的引用字段指向它也算入边——删了那些引用就悬空。
+	if not staged_refs.is_empty():
+		return " 删除中止：另有 %d 条暂存内容引用它（%s）。先清掉那些字段或落盘后再试" % [
+			staged_refs.size(), ", ".join(PackedStringArray(staged_refs.slice(0, 5)))]
+	# R14：草稿（未落盘工作副本）的入边——快照绑定/待提交载荷引用它，恢复草稿会带回悬空引用。
+	var draft_refs: Array = edges.get("drafts", [])
+	if not draft_refs.is_empty():
+		return " 删除中止：草稿（%s）里引用了它。先恢复或清掉那些草稿再试" % \
+			", ".join(PackedStringArray(draft_refs.slice(0, 5)))
+	return ""
+
+func _delete_library_item(fn_id: String, cid: String) -> bool:
+	var reason := _delete_blocked_reason(fn_id, cid)
+	if reason != "":
+		app._set_status(reason)
 		return false
 	var nm := str(_content_read(fn_id, cid).get("name", ""))
 	var text := "将删除内容「%s」(%s)。\n\n当前没有任何实例或内容引用它；文件会从 content/%s/ 移除（.history 有备份）。" % [
 		nm if nm != "" else cid, cid, fn_id]
 	if not await app._confirm_action("删除内容", text, "删除"):
 		return false
-	if not ContentStore.remove(manifest, fn_id, cid):
-		app._set_status(" 删除失败：内容文件不可删（可能被占用）")
+	# R14：确认后复验——对话框期间引用情况可能变化；变了就中止（重试会再报告原因）
+	var reason2 := _delete_blocked_reason(fn_id, cid)
+	if reason2 != "":
+		app._set_status(" 删除中止：确认后引用情况发生变化——%s" % reason2)
 		return false
-	app._set_status(" 已删除内容：%s/%s" % [fn_id, cid])
+	# §7.2：删除前由存储层先轮转历史快照；拿不到快照就拒绝删（不静默丢可回滚性）
+	var rm: Dictionary = ContentStore.remove_ex(manifest, fn_id, cid)
+	if not bool(rm.get("ok", false)):
+		app._set_status(" 删除失败：%s（%s/%s）" % [str(rm.get("error", "未知原因")), fn_id, cid])
+		return false
+	app._set_status(" 已删除内容：%s/%s%s" % [fn_id, cid,
+		"（快照在 content/%s/.history/%s.json.1）" % [fn_id, cid]
+		if bool(rm.get("backed_up", false)) else ""])
 	return true
 
 ## 复制成新 ID：深拷贝整份源内容（保留原文件不动），name 用弹窗里填的。
@@ -1115,12 +1446,12 @@ func _duplicate_from_lib(fn_id: String, old_id: String, new_name: String, bind_i
 	var fns := _current_fns().duplicate(true)
 	if bind_index >= 0 and bind_index < fns.size() and fns[bind_index] is Dictionary:
 		# 继承行复用：内容填进原行，行身份（mounted 标记/时机/并行）原样保留
-		_staged[new_id] = {"fn_id": fn_id, "data": data, "ent": spr.code, "bind_index": bind_index}
+		_staged[new_id] = {"fn_id": fn_id, "data": data, "ent": spr.code, "bind_index": bind_index, "doc": _doc_key()}
 		(fns[bind_index] as Dictionary)["content"] = new_id
 		(fns[bind_index] as Dictionary)["name"] = nm
 		_selected_fn = bind_index
 	else:
-		_staged[new_id] = {"fn_id": fn_id, "data": data, "ent": spr.code, "bind_index": -1}
+		_staged[new_id] = {"fn_id": fn_id, "data": data, "ent": spr.code, "bind_index": -1, "doc": _doc_key()}
 		# 绑定里写执行码；码由 ensure_codes 保证非空
 		fns.append({"fn": FunctionDecls.fn_code(manifest, fn_id), "content": new_id, "name": nm,
 			"order": fns.size() + 1, "parallel": false})
