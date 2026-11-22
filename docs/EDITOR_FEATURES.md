@@ -25,27 +25,30 @@ src/
 │   ├── manifest_validation.gd  清单校验：资产/功能/条件/步骤/音频声明/挂载，坏清单给出错误列表
 │   ├── asset_scan.gd       资产零登记扫描：约定目录新文件补条目发码、改名 md5 重链、消失标缺失
 │   ├── project_audit.gd    全项目自检：清单+地图校验汇总、引用悬空（纯数据收集器）
-│   └── playtest.gd         试玩：按清单命令模板拉起游戏进程并跟踪
+│   └── playtest.gd         试玩：清单结构化 executable+args 直启 / 退回命令模板，跟踪进程
 ├── map/                    —— 地图数据域 ——
-│   ├── map_format.gd       地图格式版本常量
-│   ├── map_store.gd        地图 JSON 读写：原子写、3 层历史备份、缓存、多文件事务
+│   ├── map_format.gd       地图格式版本常量 + alt 变换位↔Godot alternative 位互转
+│   ├── map_store.gd        地图 JSON 读写：原子写、3 层历史备份、缓存、单文件替换
 │   ├── map_data_validation.gd  地图 JSON 校验：打开地图时的读入防线（含实例功能绑定结构）
 │   ├── map_export.gd       导出：PNG 俯视预览图 + 文本统计
-│   └── side_actions.gd     地图改名/复制、按名开图
+│   ├── recovery.gd         恢复层：草稿（editor/drafts）、地图历史、多文件提交日志（editor/pending）
+│   └── side_actions.gd     按名开图 + 资产显示名（改名/复制在 map_file）
 ├── canvas/                 —— 画布（关卡编辑器主体） ——
 │   ├── editor_canvas.gd    画布宿主：装载地图、三段遮挡容器层栈（meta.layers 逐图声明）、相机、序列化
-│   ├── grid_space.gd       格↔像素转换层：正交/等距/六边形三套 + 格对齐绘制原语（等距/六边 = Godot 原生 tile_shape）
+│   ├── grid_space.gd       格↔像素转换层：正交/等距/六边形 + 三角格拓扑 + 双基斜平面（meta.gridBasis）
 │   ├── entity_node.gd      一个摆放物的唯一运行时表示（场景图片实例与实体实例共用，anchors/transform/尺寸）
 │   ├── entity_poly_view.gd poly/path 几何呈现子节点（R-02）：props.points 点集自绘，随实例 transform
 │   ├── canvas_draw.gd      画布上画什么：网格、幽灵预览、连线、占位框、visual:rect 实体、选区
 │   ├── canvas_input.gd     鼠标事件分派：缩放平移、涂/擦、框选、拖拽
 │   ├── tool_ops.gd         左键/右键语义执行：涂刷、放置、擦除、盖章 + 碰撞自动生成
 │   ├── editor_state.gd     画布状态的唯一写入口：选了什么层/资产，改完自动刷新界面（core 拆出）
-│   ├── selection_ops.gd    单选/框选/组拖、实体剪贴板（复制/剪切/粘贴/翻转）
+│   ├── selection_ops.gd    单选/框选/组拖、实体剪贴板、引用连线把手与顶点把手（E2）
 │   ├── region_ops.gd       区域操作：快照/复制/剪切/粘贴/拖动搬迁 + 层与引用重映射
 │   ├── layer_ops.gd        层栈运行时与管理：三段容器/显隐锁定/增删改名移（editor_canvas 拆出）
 │   ├── entity_factory.gd   实体工厂：建节点/实例码发号/占位尺寸（editor_canvas 拆出）
 │   ├── collision_view.gd   碰撞格可视化：把隐形碰撞格画成半透明色块（按类型分色）
+│   ├── tri_tile_view.gd    B3 三角格自绘瓦片层：按三角形轮廓贴图集切片（TileMapLayer 表达不了半格）
+│   ├── tile_replace.gd     E2 批量替换瓦片的纯数据层：选区扫描 + 目标图集冲突计划
 │   └── tileset_cache.gd    TileSet 构建缓存：按资产建源（cell 可为非正方形），同一图集不重复读 PNG/重建
 ├── assets/                 —— 资产表 assets[] 的声明域 ——
 │   ├── asset_decl.gd       资产归一化：kind/shape 分派、palette 展平、cell 尺寸、编辑期原件入口
@@ -59,6 +62,11 @@ src/
 │   ├── trigger_decl.gd     时机声明域：triggers 池归一化、执行码补发、时机码表段（无字段）
 │   ├── step_decl.gd        步骤声明域：steps 池归一化、条目/字段码补发（三池同码空间）、码表段
 │   ├── step_timeline.gd    步骤时间轴：at/duration/track/blocking 缺省计算、回写净化、重叠/负值警告
+│   ├── timeline_clock.gd   时间参考时钟（D2）：帧/拍↔秒换算、timePreview 声明解析
+│   ├── clone_plan.gd       复制计划（C2）：新身份映射、组内引用重映射、冲突列表
+│   ├── batch_ops.gd        E2 批量改值计划：同功能同码字段的命中/跳过/冲突
+│   ├── rel_graph.gd        E2 关系图数据层：按声明内容引用建点边、写回/断开同一字段
+│   ├── ref_fields.gd       引用字段描述（C1）：entity_ref/map_ref/mapField 配对与作用域解析
 │   ├── content_id.gd       五段身份数：地图/实体/实例 4 位 + 内容 6 位的生成与拼装
 │   └── content_store.gd    内容文件读写：content/<功能id>/<内容ID>.json，原子写
 └── ui/                     —— 界面（每个面板一个控制器） ——
@@ -68,16 +76,19 @@ src/
 	├── layer_panel.gd      层下拉 + 层管理弹窗（editor_layout 拆出）
 	├── issues_drawer.gd    问题抽屉 + 全项目自检（editor_layout 拆出）
 	├── popups.gd           主题构建/徽章/统一弹窗外壳/快捷键速查（editor_layout 拆出）
+	├── session_context.gd  E1 会话记忆：视图切换时的地图/层/实例/步骤身份恢复
 	├── project_shell.gd    项目工作台外壳：内容、资产两个全屏视图共用
 	├── top_bar_nav.gd      共享顶栏片段：地图 ▾ + 关卡/内容/资产三个按钮
 	├── palette_panel.gd    瓦片调色板（类别 → 图集两级导航）+ 实体列表
-	├── map_file.gd         地图文件生命周期：新建/打开/保存/改名/自动保存/试玩
+	├── map_file.gd         地图文件生命周期：新建/打开/保存/改名/复制/草稿/历史/试玩
 	├── map_dialogs.gd      地图尺寸 / 导出弹窗（map_file 拆出）
+	├── tile_replace_dialog.gd  E2 批量替换瓦片弹窗：源/目标资产与切片、冲突预览、一笔撤销
 	├── project_picker.gd   项目选择页 + 项目记忆（app.gd 拆出）
 	├── props_panel.gd      只剩「从地形生成碰撞」弹窗
-	├── content_editor.gd   内容编辑器骨架：实例列表/画布预览/选中与挂载补齐
+	├── content_editor.gd   内容编辑器骨架：实例列表（含筛选）/画布预览/选中与挂载补齐
 	├── fn_bind.gd          功能绑定行：添加/↑↓排序/并行/时机/启用/删除（content_editor 拆出）
-	├── content_form.gd     内容表单 + 内容库复制成新 ID（content_editor 拆出）
+	├── content_form.gd     内容表单 + 批量改值 + 关系图弹窗（content_editor 拆出）
+	├── rel_graph_view.gd   E2 关系图画布：分层布局、节点/边命中、点击与改接回调
 	├── steps_panel.gd      演出子面板：列表/时间轴双视图 + 步骤表单（content_editor 拆出）
 	├── timeline_view.gd    演出时间轴视图：横轴时间纵轴轨道，拖块改 at/duration/轨道，重叠描红
 	├── content_preview.gd  内容编辑器的中列只读地图预览（自绘缩放/平移/点选）
@@ -363,7 +374,7 @@ src/
 | 帧动画预览 | 类型声明 `frames[]`（贴图路径数组）时画布按 8fps 循环预览（只确认帧序，播放节奏归游戏侧） |
 | 放置 | 实体放置模式下左键点格 → 落一个 `EntityNode` 到**当前层**，位置吸附到锚点所在格；关掉状态栏「吸附」后按像素落位（存浮点格坐标） |
 | 放置即选中 | 放下后立刻发 `entity_selected`，「放置 → 配置」不断档；连放不受影响 |
-| 实例身份 | 每个实例一个 4 位**实例码**（出生即定、永不回收，无需防复用扫描）；唯一身份，引用/重映射/连线全用它 |
+| 实例身份 | 每个实例一个 4 位**实例码**（放置/粘贴时在本图活跃实例内查重发放，撞码重摇；复制产生新码、已有码不重编）。唯一身份，引用/重映射/连线全用它 |
 | **引用编辑** | 内容编辑器右栏「引用」区：实体类型声明了 entity_ref/map_ref 字段就出下拉——entity_ref 列当前图实例（`of` 限定类型，未声明列全部，显示"类型 实例码 · (x,y)"，同类型同格的叠放实例靠实例码区分），map_ref 列地图（值 = 地图码）；值写实例 props，进撤销栈；选中即**指向预览**（画布/预览高亮被指实例） |
 | **实例级来源** | 功能字段 `kind: choice` + `source: "entity_inst:类型id,..."`：下拉列当前图实例，值=实例码；类型列表空 = 全部实例 |
 | **音频来源** | 功能/条件字段 `source: "audio:"`：下拉列清单 `audio` 池（值=音频码）；编辑器不播放音频，播放归游戏侧功能代码 |
@@ -791,8 +802,9 @@ godot --headless --path "<编辑器工程>" --script res://tools/migrate_project
   碰撞自动生成不区分声明形状（按整格矩形推）。
 - 排序点（`sortAnchor`）实例选中时画排序点十字（锚点 + sortAnchor 像素偏移，紫十字 + 连线；无覆盖不画）。
 - 资产零登记扫描制：文件放进约定目录（`assets/tiles|images|entities`，递归；图片 png/jpg/jpeg/webp/bmp/tga、
-  实体 .tscn）即资产，打开项目扫描自动补条目 + 发 4 位资产码（id=码、name=文件名 stem，出生定永不回收）；
-  改名同 md5 重链原条目，消失标缺失不删条目，约定外手写条目不碰；
+  实体 .tscn）即资产，打开项目扫描自动补条目 + 发 4 位资产码（id=码、name=文件名 stem）；
+  改名按持久化指纹（`scanFingerprint`）一对一重链原条目（候选歧义进待确认，不猜）；消失标停用不删条目
+  （可恢复），约定外手写条目不碰；
   细配置（palette/cell/锚点/挂载）仍走清单条目覆盖，扫描只补骨架不改写已有条目。
 - 几何段（R-02）：实体声明 `visual: {type: "poly"|"path", color, alpha, closed, width, points}` 即几何对象——
   画布按声明画填充多边形/折线，顶点拖拽/双击加点/右键删点写 `props.points`

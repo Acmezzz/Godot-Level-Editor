@@ -42,9 +42,10 @@
 - **目录**：`assets/tiles/` 图片→瓦片图集资产、`assets/images/` 图片→图片摆放资产、
   `assets/entities/` .tscn→实体资产；子目录递归；约定目录之外的文件扫描不碰。
 - **扩展名**：图片 = png/jpg/jpeg/webp/bmp/tga（`Image.load_from_file` 原生可读）；实体 = .tscn。
-- **身份**：资产 id = 4 位资产码（`ContentId.new_asset_code`，出生定永不回收）；`name` = 文件名 stem（出生定）。
-  **文件名只是显示壳**：改名后老路径消失，扫描按 md5 指纹重链原条目，码与地图引用全部不破。
-- **消失 / 约定外**：文件消失 → 条目保留 + 校验警告「atlas/texture file not found on disk」；
+- **身份**：资产 id = 4 位资产码（`ContentId.new_asset_code`；已发放的码不重编）；`name` = 文件名 stem。
+  **文件名只是显示壳**：改名后老路径消失，扫描按持久化指纹 `scanFingerprint`（md5）一对一重链原条目，
+  码与地图引用全部不破；有多个同指纹候选时记 `relinkCandidates` 待用户确认，不猜。
+- **消失 / 约定外**：文件消失 → 条目保留 + 标 `retired`（停用，可恢复）+ 校验警告；
   条目指向约定目录之外的文件 → 扫描完全不碰（手写条目零兼容）。
 - **细配置仍走清单条目**：palette/cell/锚点/挂载功能/editorSize 等写进 `assets[]` 条目覆盖缺省，
   扫描只补骨架条目，已存在的条目从不改写。
@@ -674,7 +675,7 @@ v5 的定长数组条目校验报错（跑 `tools/migrate_project.gd`）。
 | 键 | 必填 | 语义 |
 |---|---|---|
 | `asset` | 是 | 资产 id。`kind: "entity"` → 实体实例；`kind: "scene"` + `shape: "image"` → 场景图片实例。**编辑器校验：空 → 错误；不在清单 → 仅警告；图集场景（`shape: "tile"`）不能当摆放物 → 错误** |
-| `code` | 仅 entity | 图内唯一实例码（4 位身份码）。**唯一身份**：引用（props 里的 entity_ref 值）、复制重映射、画布连线全靠它。码出生即定、永不回收。**场景实例写 `code` = 校验错误**（`scene` 键非法） |
+| `code` | 仅 entity | 图内唯一实例码（4 位身份码）。**唯一身份**：引用（props 里的 entity_ref 值）、复制重映射、画布连线全靠它。码在本图活跃实例内唯一、不随复制重编（见下方分配规则）。**场景实例写 `code` = 校验错误**（`scene` 键非法） |
 | `layer` | 否 | 4 位**层码**（= `meta.layers[].id`），摆在哪一层。缺省 = 最底层 |
 | `x` / `y` | 否 | **浮点格坐标**，不是像素。锚点换算见下 |
 | `transform` | 否 | `{scale: [sx, sy], rotation: 弧度, flip_h: bool, flip_v: bool}`。**缺省整键省略**——读不到就等于 `scale 1/1、rotation 0、不翻转` |
@@ -699,10 +700,10 @@ v5 的定长数组条目校验报错（跑 `tools/migrate_project.gd`）。
 其余（包括编辑器完全不认识的键、嵌套字典、数组）原样保留。
 所以游戏侧可以往 `props` 里塞自己的数据，但要接受「空值会被清掉」。
 
-**实例码分配规则**（`_ensure_code`，entity_factory.gd）：实例码出生即定、**永不回收**——
-放置/粘贴时生成一个本图未占用的 4 位码；粘贴/复制产生的是新实例、发新码，
-旧实例码无论被复制、引用多少次都不会被复用或重编。
-所以 `target_point` 指向某个码是永久安全的，不需要任何引用扫描来保护号段。
+**实例码分配规则**（`_ensure_code`，entity_factory.gd）：放置/粘贴时生成一个**本图活跃实例集内未占用**的
+4 位码（撞码重摇，最多 64 次）；粘贴/复制产生的是新实例、发新码，已有实例的码不会被重编。
+码空间 32⁴ ≈ 100 万，同图活跃实例远小于碰撞概率——但「不回收」是编辑流程约定，
+**不是全工程历史扫描保证**（已删除实例的码理论上仍可能被新实例抽到）。
 
 > 注意：实例间的指向关系都应放在实体 `props` 里（建议同时声明 `type: "entity_ref"`，
 > 编辑器才有下拉编辑入口，复制粘贴时才会跟着重映射）。
@@ -888,6 +889,8 @@ static func build(root: Node2D, data: Dictionary, manifest: Dictionary) -> Dicti
 		if not (a is Dictionary) or str(a.get("kind", "")) != "scene" or str(a.get("shape", "")) != "tile":
 			continue
 		var src := TileSetAtlasSource.new()
+		# 清单里的 atlas 是**项目相对路径**（游戏工程里 = res:// 下的路径）；
+		# 编辑器另存一份 atlas_abs（绝对路径，只给编辑器读写），游戏侧不要读它。
 		src.texture = load("res://" + str(a.get("atlas", "")))
 		var cell: Dictionary = a.get("cell", {})
 		src.texture_region_size = Vector2i(int(cell.get("w", ts.tile_size.x)), int(cell.get("h", ts.tile_size.y)))
