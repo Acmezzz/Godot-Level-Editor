@@ -21,8 +21,8 @@ static func launch_tracked(m: Dictionary, map_path: String, extra_args: PackedSt
 		if not FileAccess.file_exists(exe):
 			return {"ok": false, "error": "找不到试玩可执行文件: " + exe,
 				"pid": -1, "program": exe, "args": spec_args, "tracked": true, "kind": "direct"}
-		# 项目根作工作目录：游戏侧相对路径/%projectpath% 语义一致
-		# （create_process 的第 3 参不是 cwd；需要时由 args 显式传 --path 等）
+		# 注意：OS.create_process 不设工作目录（第 3 参不是 cwd）——子进程继承编辑器自身 cwd，
+		# 不保证是项目根。游戏侧读相对路径必须靠显式参数（--path 等，清单 args 里写）。
 		var pid := OS.create_process(exe, spec_args)
 		if pid == -1:
 			return {"ok": false, "error": "进程启动失败: " + exe,

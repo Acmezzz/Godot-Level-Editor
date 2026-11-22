@@ -269,7 +269,7 @@ static func _rotate_history(path: String) -> void:
 		return  # 备份失败不阻断保存；下次保存再试
 
 ## 地图域 JSON 写盘单入口——先写 .tmp 再原子替换，中途崩溃不会留下半截 JSON。
-## save / autosave / levels.json / 清单导出等所有项目数据写盘都走这里。
+## save / autosave / 内容文件 / 导出清单等所有项目数据写盘都走这里。
 static func write_json(path: String, data: Dictionary) -> bool:
 	return write_text(path, JSON.stringify(data, "\t"))
 
@@ -287,8 +287,9 @@ static func write_text(path: String, text: String) -> bool:
 	project_rev += 1
 	return true
 
-## 多地图协调写入：先暂存所有新内容和原文件备份，再逐个替换。
-## OS 不提供跨文件原子提交；任一替换失败时尽力恢复已提交文件并报告回滚结果。
+## 多文件提交（地图 + 内容 + 清单）的协调写入与崩溃恢复不在这里，走
+## Recovery.begin_pending / mark_pending_done（editor/pending 提交日志，见 ui/map_file.gd
+## 的 commit_document）；本函数只负责把一段字节写进一个文件。
 static func _write_bytes(path: String, bytes: PackedByteArray) -> bool:
 	var file := FileAccess.open(path, FileAccess.WRITE)
 	if file == null:

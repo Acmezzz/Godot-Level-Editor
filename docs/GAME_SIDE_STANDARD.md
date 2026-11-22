@@ -579,6 +579,9 @@ BGM 切换、环境音触发、音效播放在哪一步响起，都是功能代�
 | `meta.w` / `meta.h` | 否 | 地图格尺寸，缺省 120×56 |
 | `meta.code` | 否 | 4 位地图身份码，编辑器缺省补发。改名不改变它 |
 | `meta.layers` | 是 | **图层栈**，见 2.3；数组序 = 栈序（底→顶） |
+| `meta.gridProjection` | 否 | 逐图投影（B1）：`orthogonal`（缺省）/ `isometric` / `hexagonal`。缺键 = 沿用项目解析（清单任一瓦片资产声明非正交即整项目按它） |
+| `meta.gridTopology` | 否 | 格拓扑（B3）：`quads`（缺省）/ `triangles`。三角格 = 每列平行四边形切成两个半格，格号 `(i,row)` 的 `i` 是三角列（`c = floor(i/2)`，奇偶选半格）；六边投影 + 三角格 = 非法组合 |
+| `meta.gridBasis` | 否 | 斜平面双基 `[[ux,uy],[vx,vy]]`（B3）：`to_px = g.x·u + g.y·v`。非有限或不可逆（共线/零向量）校验报错 |
 | `spawn` | 否 | `[x, y]` 格坐标，缺省 `[2, 2]`；**给了就必须是两个数字**（否则校验报错） |
 | `tiles` | 否 | 对象 `{层id: [瓦片条目...]}`，见 3.2；**键缺失与 `{}` 等价** |
 | `collision[]` | 否 | 数组，见 3.3；**键缺失与 `[]` 等价**——编辑器没有任何由地形兜底生成碰撞的逻辑 |
@@ -606,6 +609,18 @@ BGM 切换、环境音触发、音效播放在哪一步响起，都是功能代�
 TILE_W/TILE_H = 清单 `tileSize`（标量或 `[w,h]` 矩形格），取自清单，不是地图。
 **游戏侧的瓦片像素常量必须与清单 `tileSize` 一致，否则整体错位**
 （建议游戏侧也从清单读 `tileSize`，而不是写死 16）。
+
+> **非正交投影的格原语**：上面的矩形公式只对 `orthogonal` 成立。等距（`isometric`）格是 2:1 菱形，
+> 六边（`hexagonal`）是 odd-r 错行尖顶六角，斜平面（`gridBasis`）是任意平行四边形——
+> 这三类都按「格号 → 多边形/中心」换算，口径与编辑器 `src/canvas/grid_space.gd` 完全一致
+> （`to_px`/`to_grid`/`cell_polygon`/`cell_center_px`）。游戏侧要么直接复用该脚本，
+> 要么按 §3.1 的三个 meta 键实现同一套公式，否则编辑器与运行时不会选中同一格。
+>
+> **三角格（`gridTopology: "triangles"`）**：格号 `(i,row)` 的 `i` 是三角列，
+> `c = floor(i/2)`、奇偶选半格；偶半格顶点 `(0,0),(1,0),(0,1)`，奇半格 `(1,1),(0,1),(1,0)`（单位基，
+> 再按 `c,row` 平移后过 `to_px`）。瓦片数据仍是同一份六元组——编辑器用自绘层按三角形轮廓贴图集切片
+> （切片按包围盒做 UV 映射），游戏侧同样要把一个图集切片贴进三角形；`TileMapLayer` 本身表达不了半格三角。
+> 拾取按对角线 `x+y=1` 分半格，邻接是共边三条（见 `GridSpace.neighbors_tri`）。
 
 ### 3.3 碰撞条目 `collision[]`
 
@@ -891,11 +906,28 @@ static func build(root: Node2D, data: Dictionary, manifest: Dictionary) -> Dicti
 			continue
 		for c in (data.get("tiles", {})[lid] as Array):
 			var a := c as Array
-			if a.size() >= 5:
-				# 第 3 位是资产 id → 查 source_id；查不到 = 资产不在清单，跳过
-				var sid: int = int(src_of.get(str(a[2]), -1))
-				if sid >= 0:
-					tn.set_cell(Vector2i(int(a[0]), int(a[1])), sid, Vector2i(int(a[3]), int(a[4])))
+			if a.size() < 5:
+				continue
+			# 第 3 位是资产 id → 查 source_id；查不到 = 资产不在清单，跳过
+			var sid: int = int(src_of.get(str(a[2]), -1))
+			if sid < 0:
+				continue
+			var atlas := Vector2i(int(a[3]), int(a[4]))
+			var src2 := ts.get_source(sid) as TileSetAtlasSource
+			if not src2.has_tile(atlas):
+				src2.create_tile(atlas)      # 按需注册：只建图里实际用到的格
+			# 第 6 位 alt（编辑器口径 0-7）→ Godot alternative 位
+			var alt := int(a[5]) if a.size() >= 6 else 0
+			var galt := 0
+			if alt & 1:
+				galt |= 4096                 # h flip
+			if alt & 2:
+				galt |= 8192                 # v flip
+			if alt & 4:
+				galt |= 16384                # 转置 90°
+			if galt != 0 and not src2.get_alternative_tiles(atlas).has(galt):
+				src2.create_alternative_tile(atlas, galt)
+			tn.set_cell(Vector2i(int(a[0]), int(a[1])), sid, atlas, galt)
 	# 运行时层开关：meta.layers[].visible 先应用（差分视图/BOSS 换景，§2.3）
 	for li2 in layers.size():
 		var lm: Dictionary = layers[li2]
@@ -904,7 +936,8 @@ static func build(root: Node2D, data: Dictionary, manifest: Dictionary) -> Dicti
 			continue
 		tn2.visible = bool(lm.get("visible", true))
 	# collision / objects / spawn 见 §3.3 / §3.4 / 6.3
-	return {"tiles": tile_nodes, "rect": Rect2(Vector2.ZERO, Vector2(mw * TILE, mh * TILE))}
+	var px := Vector2(mw * ts.tile_size.x, mh * ts.tile_size.y)   # 矩形格两个分量都要用
+	return {"tiles": tile_nodes, "rect": Rect2(Vector2.ZERO, px)}
 ```
 
 **不要照抄别人的工程**。上面这段只覆盖分层的瓦片渲染 + 运行时层开关；碰撞类型、实体实例化、

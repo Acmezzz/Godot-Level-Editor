@@ -868,10 +868,6 @@ func _build_project_view() -> void:
 	_layout_ctrl._build_project_view()
 ## —— 拆到 src/map/side_actions.gd 的委托（调用点保持不变） ——
 
-## 地图改名——委托 side_actions 控制器
-func _rename_map_by_name(old_name: String, new_name: String) -> void:
-	_side_actions_ctrl._rename_map_by_name(old_name, new_name)
-
 func _scene_name(sid: String) -> String:
 	return _side_actions_ctrl._scene_name(sid)
 
