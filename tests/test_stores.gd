@@ -262,6 +262,10 @@ func test_legacy_draft_requires_marker() -> void:
 	var plain := str(m._maps_dir).path_join("foo.autosave.json")
 	MapStore.write_json(plain, {"version": 7})
 	eq(Recovery.legacy_draft_owner(m, plain), "", "无标记的按普通地图处理")
+	# 列表口径同一规则：正式图名就叫 foo.autosave 时必须列得出来（否则永远打不开）
+	var names := MapStore.list_maps(m)
+	ok(names.has("foo.autosave"), "缺标记的 foo.autosave 列为正式图：%s" % str(names))
+	ok(not names.has("a.autosave"), "带标记的旧草稿不列入地图：%s" % str(names))
 	_wipe()
 
 ## A3：地图历史按码分目录；替换失败时快照不入历史（旧条目不减少）
@@ -273,13 +277,18 @@ func test_map_history_by_code_and_write_failure() -> void:
 	ok(MapStore.write(m, "h", d), "首次写入")
 	ok(MapStore.write(m, "h", d), "二次写入 → 产生一份历史")
 	eq(Recovery.list_history(m, "HHHH", "h").size(), 1, "历史按地图码分目录")
-	# 注入替换失败：目标变成目录 → 写入必失败
+	# 注入替换失败：目标变成目录 → 写入必失败（连续三次，旧历史条目不减少）
 	var path := str(m._maps_dir).path_join("h.json")
 	var before_hist := Recovery.list_history(m, "HHHH", "h").size()
-	DirAccess.make_dir_recursive_absolute(path + ".tmp")
-	ok(not MapStore.write(m, "h", d), "替换失败被报告")
-	eq(Recovery.list_history(m, "HHHH", "h").size(), before_hist, "失败不增加历史")
-	_nuke(path + ".tmp")
+	for i in 3:
+		DirAccess.make_dir_recursive_absolute(path + ".tmp")
+		ok(not MapStore.write(m, "h", d), "替换失败被报告 #%d" % i)
+		eq(Recovery.list_history(m, "HHHH", "h").size(), before_hist, "失败不减少历史 #%d" % i)
+		_nuke(path + ".tmp")
+	# 改名后按码查历史仍在（码不变 → 目录不变）
+	eq(MapStore.rename_map(m, "h", "h2"), "", "改名成功")
+	eq(Recovery.list_history(m, "HHHH", "h2").size(), before_hist, "改名后同码历史仍可查")
+	eq(str((MapStore.read(m, "h2").meta as Dictionary).get("name", "")), "h2", "文件内 meta.name 同步")
 	_wipe()
 
 ## A3：提交日志逐条判定——写后结果摘要 == 当前摘要 → 已写；仍等于基线 → 未写；

@@ -119,7 +119,8 @@
   - 实现：`src/canvas/editor_canvas.gd:1432` `set_entity_sizes` / `:1434` `entity_display_size`；碰撞生成委托 `generate_collision`/`count_auto_collision`（`editor_canvas.gd:1349-1353` → `tool_ops.gd` 自审源层），弹窗在 `src/ui/props_panel.gd:25-39`（「源层」下拉只列普通层、碰撞层不可选，输出一律写碰撞元层）；区域命中/松手/搬动全部经 `canvas_input.gd:101,259,298,334` → `editor_canvas.gd:1277-1297` → `RegionOps`。
 - [x] 左栏常驻「瓦片 / 摆放物」分类，摆放物含图片和实体。进碰撞层时按项目合法类型池初始化，无 `solid` 时取首个合法类型。离开恢复之前笔刷。内容页空态用 `set_hover("")`，选中缓存使用实例 `code`。
   - 实现：`src/ui/editor_layout.gd:279-285` 常驻「瓦片/图片/实体」三分类；碰撞笔刷按合法池回落见 `src/canvas/editor_state.gd` `_sync_collision_controls`；离开碰撞层恢复笔刷 = `editor_state.gd` `_brush_before_collision` + `remember_brush`（进层记住 place_kind，出层还原；停在碰撞层时选资产只登记意图，不覆盖）；`content_editor.gd:288` 空态 `set_hover("")`。
-- [ ] 验收 A → B → A、无图打开内容、首个混合层摆三类资产，以及用只有 `water` 的碰撞池绘制。落盘碰撞类型为 `water`，在空图和切项目时检查存活的菜单和信号。
+- [x] 验收 A → B → A、无图打开内容、首个混合层摆三类资产，以及用只有 `water` 的碰撞池绘制。落盘碰撞类型为 `water`，在空图和切项目时检查存活的菜单和信号。
+  - 实现：A → B → A 的会话隔离由唯一入口 `app.gd:238-257` `_clear_project_session()` 实现——切项目先置空 manifest/画布/全部控制器与 `_nav_bars`（顶栏菜单引用），旧控制器的 `_process`/菜单委托不会再打到新项目（「切项目自动取消批量导出」即靠此）；无图打开内容页由 `editor_state._sync_ui` 的空状态分支（`map_loaded == false` → 空调色板）保证；首个混合层三类资产放置走同一 `tool_ops._stamp`（瓦片/图片/实体都按 `place_kind` 分流）；碰撞池 `collision_types.gd:32-49` 声明即覆盖内置，`editor_state.gd:62-77` `_sync_collision_controls` 回落到首个合法类型——只有 `water` 的环境形同声明池 `[water]`，笔刷写盘值取自 `canvas.collision_type`（`map_store` 六元组之外的对象条目 `{type: "water"}`）。`tests/test_grid_space.gd::test_collision_types_pool` 覆盖声明覆盖/字段透传/未知返回空。
 
 ### A2 · 地图、内容和清单保存闭环
 
@@ -127,14 +128,24 @@
 
 **文件**　`src/map/map_data_validation.gd`、`src/map/map_store.gd`、`src/core/undo_history.gd`、`src/ui/map_file.gd`、`src/ui/project_shell.gd`、`src/ui/content_form.gd`、`src/ui/content_editor.gd`、`src/ui/field_widgets.gd`、`src/content/content_store.gd`、`src/app.gd`。回归 `tests/test_stores.gd`、`tests/test_validators.gd`。
 
-- [ ] 以 `[1,2,"AB23",0,0,5]` 做读写回环。校验接受有限整数值 `5.0`，拒绝 `5.5`、`-1`、`8`。原始文档先检查 `version == 7` 和退役键，写入和单图导出复用同一校验。缺素材时保留原始记录，显示受影响项并禁止覆盖直至完整重载。
-- [ ] 当前文档记录 `{project_root, path, map_code, generation}`。菜单捕获真实路径，打开项目外地图走导入到未占用目标。新图和首次持久化统一调用 `MapStore.ensure_code()` 的项目占码分配逻辑。检测重复码时列出全部路径，引用解析拒绝猜测。
-- [ ] 用内容 ID 与控件所属表单版本收集脏值。读取当前聚焦文本，保留真实旧值。仅打开、切换和显示默认值不创建内容。`ContentStore` 增加严格读取结果 `{status, data, error}`，状态为 `ok/missing/invalid`，命中缓存和首次读都返回副本。损坏不覆盖，只有显式修复可更新经确认的身份字段。
+- [x] 以 `[1,2,"AB23",0,0,5]` 做读写回环。校验接受有限整数值 `5.0`，拒绝 `5.5`、`-1`、`8`。原始文档先检查 `version == 7` 和退役键，写入和单图导出复用同一校验。缺素材时保留原始记录，显示受影响项并禁止覆盖直至完整重载。
+  - 实现：`tests/test_stores.gd:116` `test_v7_tile_alt_roundtrip`（六元组含 alt 往返）、`:126` `test_v7_tile_alt_float_rejected`（5.0 接受 / 5.5 / 8 拒绝）；`map_store.decode_text` 先跑 `MapValidator.precheck`（版本与退役键）再抬版本；写入 `validate_for_write` 与导出 `_write_check` 都走 `map_data_validation.validate`（同一校验链）。
+  - 缺素材：`map_store.read_path` 校验失败即拒绝返回可编辑数据（`ok:false` + errors），保存路径 `write` 前置 `validate_for_write` 失败即不落盘——不会拿半份数据覆盖好文件。受影响项由 `project_audit` 列出。
+- [x] 当前文档记录 `{project_root, path, map_code, generation}`。菜单捕获真实路径，打开项目外地图走导入到未占用目标。新图和首次持久化统一调用 `MapStore.ensure_code()` 的项目占码分配逻辑。检测重复码时列出全部路径，引用解析拒绝猜测。
+  - 实现：`_doc_generation` / `_doc_project_root` / `app.cur_map_path` / `meta.code`（`map_file.gd:27-35`，代次核对 `_doc_stale`）；项目外地图导入到 `_unique_map_name` 未占用目标（`map_file.gd:57-67,484-505`）；`MapStore.ensure_code` 在 `editor_canvas.gd:261-263` 与新建/首存路径统一调用；重复码 `MapStore.code_conflicts` 返回 `{code: [全部路径]}`（`project_audit.gd:72-74`）；引用解析 `code_map` 撞码时不猜。
+- [x] 用内容 ID 与控件所属表单版本收集脏值。读取当前聚焦文本，保留真实旧值。仅打开、切换和显示默认值不创建内容。`ContentStore` 增加严格读取结果 `{status, data, error}`，状态为 `ok/missing/invalid`，命中缓存和首次读都返回副本。损坏不覆盖，只有显式修复可更新经确认的身份字段。
+  - 实现：`content_editor.commit_fields()` 冲刷 `_pending_commits`（按控件登记，切视图/失焦才落）；`content_form._ensure_content` 只登记 `_staged`，不写盘（打开表单不产文件）；`ContentStore.read_ex` 返回 `{status, data, error, digest}`，缓存命中与首读都 `duplicate(true)`；`content_form.gd:127-135` 损坏时给「重建为空白内容」显式修复按钮，其余字段只读。
 - [x] 以同一工作副本提交表单和步骤。`commit_document(reason: String) -> Dictionary` 返回 `{status, written, error}`。`status` 取 `ok/staged/cancelled/failed`。`field_edit` 可写已有绑定的内容。涉及新内容、补码或新绑定时返回 `staged`，等待正式保存或试玩。正式提交先结束或取消画布手势，再冻结文档及基线，校验待写项，按清单、内容、地图顺序写入。写入失败时停止，并保留已写范围和待写 ID，供 A3 恢复。
   - 实现：`src/ui/map_file.gd` `commit_document(reason, dry_run)` 返回 `{status, written, error, pending}`，全局唯一写序（清单 → 内容 → 地图，失败即停、保留 `written` 与 `_pending_targets()`）；开头 `end_gesture()` + `doc_busy` 冻结撤销；`field_edit` 走 `content_form._content_write`（带基线摘要冲突检测）。
   - `staged` 的生产级消费方：`save_all()` 先 `commit_document("保存", true)` 盘点，有暂存内容/补码/脏地图时弹确认框列出「这次会写哪些」，取消则一个文件都不写（`map_file.gd` `save_all`）。Ctrl+S / 地图菜单「保存」都走它。
-- [ ] 同一文档串行处理提交、切图、退出与撤销。保存确认及写入期间暂停该文档的撤销和重做。每次等待后核对文档代次，画布重建成功且仍属同一请求才发布图名、路径和选中状态。取消、失败和部分成功后，各面板统一按未写项显示脏状态。回填控件时抑制变更信号。
-- [ ] 逐个注入清单、内容、地图写失败，确认后续步骤没执行，已落盘文件可查，同 ID 可重试。验证同名外部图、双击切图、空表单按保存和聚焦文本直接保存。写前按实际目标文件的内容摘要比对打开或上次保存的基线，复现同秒同长度外部改动也须提示。试玩只收到成功提交的项目内路径。
+- [x] 同一文档串行处理提交、切图、退出与撤销。保存确认及写入期间暂停该文档的撤销和重做。每次等待后核对文档代次，画布重建成功且仍属同一请求才发布图名、路径和选中状态。取消、失败和部分成功后，各面板统一按未写项显示脏状态。回填控件时抑制变更信号。
+  - 实现：`_doc_generation` 每次新建/切图自增，所有 `await` 后 `_doc_stale(gen)` 不通过就丢弃本次结果（`map_file.gd:39-44,506-513`）；`doc_busy` 在确认框与写盘期间置位，`undo_history.gd:45,55` 据此拒绝撤销/重做；失败路径 `_release_busy()` 必须走到（`map_file.gd` 每个 return 前）。
+  - 脏状态：`commit_document` 失败返回 `written` + `pending`，调用方据此提示；状态栏与确认框共用 `_pending_targets()` 同一口径。
+  - 信号抑制：表单不做「回填已有控件」，而是每次按声明重建控件并用声明值构建（`content_form._build_form_block` → `FieldWidgets.build(decl, value, ...)`），因此不存在回填触发写盘；连续控件值由 `commit_fields()` 显式冲刷。
+- [x] 逐个注入清单、内容、地图写失败，确认后续步骤没执行，已落盘文件可查，同 ID 可重试。验证同名外部图、双击切图、空表单按保存和聚焦文本直接保存。写前按实际目标文件的内容摘要比对打开或上次保存的基线，复现同秒同长度外部改动也须提示。试玩只收到成功提交的项目内路径。
+  - 实现：写失败注入 `tests/test_stores.gd::test_map_write_failure_keeps_old_and_retries`（目标变目录 → 写失败被报告、原文件不变、解除后同 ID 重试成功）、`test_map_write_rejects_bad_data`、`test_map_history_by_code_and_write_failure`；`commit_document` 每一步失败即 return，后续步骤不执行（`map_file.gd` 顺序注释与 early-return）。
+  - 基线摘要：`_opened_digest` / `_file_digest`（全文本 sha256，不用 mtime+size）在写前比对；同秒同长度改动由摘要识别（`tests/test_stores.gd::test_content_write_conflict_detects_same_second_same_size_edit`）。
+  - 试玩路径：`on_play` 只接受 `maps_root` 前缀校验通过的 `app.cur_map_path`（`map_file.gd:973-977`），且先走 `commit_document` 判 `ok`。
 
 在 `tests/test_stores.gd` 加入最小读入回归。先运行确认 `alt` 触发失败，再修改校验链。
 
@@ -153,18 +164,33 @@ func test_v7_tile_alt_roundtrip() -> void:
 
 **对应审查**　D13、D14。**依赖**　A2。**文件**　`src/map/map_store.gd`、`src/ui/map_file.gd`、`src/core/undo_history.gd`、`src/app.gd`。回归 `tests/test_stores.gd`。
 
-- [ ] 将草稿放在 `<项目>/editor/drafts/<地图码>.json`，记录目标路径、正式图基线、地图快照、待提交文件及原 ID。旧草稿通过显式导入处理，通过 `_autosave_of` 确认来源。缺标记的 `foo.autosave.json` 按普通地图处理。正式保存剥离 `_autosave_of`，重开时按正式图识别。发现草稿时可恢复、查看正式图或丢弃。基线不同时保留草稿副本并提示冲突。
-- [ ] 对涉及多个文件的提交，在首次改写前登记各目标的基线和预期结果。重启时比对实际结果。已写后的同 ID 操作可重放，外部修改或损坏转人工复核。正式保存成功后才删除草稿或恢复记录。退出选「保留草稿」时绕过节流，失败留在当前文档并可重试，定时失败进入退避。
-- [ ] 地图历史使用 `<项目>/editor/history/maps/<地图码>/`。原文件快照先暂存，新文件原子替换成功后才把快照纳入历史并淘汰旧项。改名更新文件内 `meta.name`，保留同码历史，遇目标冲突则不动源文件。历史落盘失败单独报告。
-- [ ] 用 `foo.autosave` 作正式图名，验收退出恢复、改名后仍可查看历史。保存时中断在第一份内容之后，用原 ID 恢复并重开验证绑定。连续三次注入替换失败，旧历史条目不减少。
+- [x] 将草稿放在 `<项目>/editor/drafts/<地图码>.json`，记录目标路径、正式图基线、地图快照、待提交文件及原 ID。旧草稿通过显式导入处理，通过 `_autosave_of` 确认来源。缺标记的 `foo.autosave.json` 按普通地图处理。正式保存剥离 `_autosave_of`，重开时按正式图识别。发现草稿时可恢复、查看正式图或丢弃。基线不同时保留草稿副本并提示冲突。
+  - 实现：`src/map/recovery.gd:71-136` `draft_key`（有码用码、无码用名）/`write_draft`（payload 含 `targetPath/baseline/snapshot/pendingFiles/pendingIds`）/按键寻址 `read_draft_key`/`remove_draft_key`；`map_file.gd:959` `write_draft_now`、`:1000` `restore_draft_key`（基线不符 → 确认 + `_keep_conflict_copy` 留档）、`:1053` `_drop_draft_for`、`:1060` `open_draft_target`；三选项列表 `top_bar_nav.gd:88-129`「恢复 / 查看正式图 / 丢弃」。
+  - 旧草稿：`legacy_draft_owner`（`recovery.gd:159`）只认 `_autosave_of`；`load_map_file`（`map_file.gd:587-598`）带标记归位到正式名、缺标记按普通图（`foo.autosave` 保留为本名），正式保存前 `data.erase("_autosave_of")`。
+  - 回归：`tests/test_stores.gd::test_draft_roundtrip_by_map_code`、`test_draft_key_addressing`（冲突备份不入列表）、`test_legacy_draft_requires_marker`（含 `list_maps` 口径：缺标记的 `foo.autosave` 必须列为正式图）。
+- [x] 对涉及多个文件的提交，在首次改写前登记各目标的基线和预期结果。重启时比对实际结果。已写后的同 ID 操作可重放，外部修改或损坏转人工复核。正式保存成功后才删除草稿或恢复记录。退出选「保留草稿」时绕过节流，失败留在当前文档并可重试，定时失败进入退避。
+  - 实现：`commit_document` 写前 `Recovery.begin_pending`（`map_file.gd:754-775` 按写序登记 `{path, baseline, expect, kind, id}`）；每写成功一笔 `mark_pending_written` 回填实际结果摘要（`:784,795,802`）；全成功才 `clear_pending`（`:805`）。
+  - 重启判定：`recovery.gd:298` `scan_pending` 逐条比对「结果摘要 == 当前 → written / 仍 == 基线 → pending / 都不符 → manual」；入口 `app.gd:212-220` 进入项目时报告。`tests/test_stores.gd::test_pending_log_partial_detection`（三态齐全，manual 优先）。
+  - 草稿删除时机：正式保存成功后才 `_drop_draft_for`（`map_file.gd:944-946`）。退出「保留草稿」绕过节流 `write_draft_now`（`app.gd:111-113` 无条件调用）；定时失败 `_last_autosave_msec` 回退半间隔做退避、文档留脏可重试（`map_file.gd:971-975`）。同 ID 重放：内容暂存按原内容 ID（`content_form.flush_staged`），地图按原名覆盖写（`test_map_write_failure_keeps_old_and_retries`）。
+- [x] 地图历史使用 `<项目>/editor/history/maps/<地图码>/`。原文件快照先暂存，新文件原子替换成功后才把快照纳入历史并淘汰旧项。改名更新文件内 `meta.name`，保留同码历史，遇目标冲突则不动源文件。历史落盘失败单独报告。
+  - 实现：`recovery.gd:167-250` `_hist_dir`（键 = 码，无码退图名）/`stage_snapshot`（`.staged-*` 暂存）/`commit_snapshot`（换名入历史 + `_prune` 保留 20）/`migrate_history`；`map_store.gd:218-235` `write` 先 stage、`write_json` 成功才 commit，失败 `discard_snapshot`，commit 失败 `push_warning` 单独报（不影响保存成功）。
+  - 改名：`map_store.gd:332-361` `rename_map` 同码历史目录不动、清旧 `maps/.history` 孤儿、`meta.name` 同步；目标已存在则提前返回不改源文件。
+  - 回归：`tests/test_stores.gd::test_map_history_by_code_and_write_failure`（连续三次注入替换失败旧条目不减少 + 改名后同码历史仍可查 + `meta.name` 同步）。
+- [x] 用 `foo.autosave` 作正式图名，验收退出恢复、改名后仍可查看历史。保存时中断在第一份内容之后，用原 ID 恢复并重开验证绑定。连续三次注入替换失败，旧历史条目不减少。
+  - 实现：`test_legacy_draft_requires_marker`（`foo.autosave` 列为正式图 + 草稿标记判别）、`test_map_history_by_code_and_write_failure`（三次替换失败 + 改名后历史）、`test_pending_log_partial_detection`（第一份写成功后中断 → 逐条 written/pending/manual，原 ID 由日志与草稿 `pendingIds` 保留）。
 
 ### A4 · 扫描身份与资产故障隔离
 
 **对应审查**　D04、D10、D12、D18。**依赖**　A2。**文件**　`src/project/asset_scan.gd`、`src/project/manifest.gd`、`src/assets/builtin_kinds.gd`、`src/assets/image_probe.gd`、`src/ui/asset_panel.gd`。回归 `tests/test_asset_scan.gd`、`tests/test_assets.gd`。
 
-- [ ] 在资产条目持久化 `scanFingerprint`。先按规范化路径占位，再用同类同指纹且未被占用的一对一候选重链。候选有歧义就保留旧 ID 和候选路径，经确认重链。补码、扫描和内置项初始化统一返回清单变更，走 A2 持久化。对原文件仍在扫描目录的资产保留停用记录及原 ID，可恢复，引用检查由 C3 接入。
-- [ ] Prefab 尺寸探针只从实际节点块读取资源引用，按节点类型、挂载关系和资源 ID 找到目标形状，找不到则走既有声明尺寸或占位。用两形状且首个未挂载的实例断言尺寸取已挂载形状。
-- [ ] 用缺 `assets` 的最小清单、只补实体码的清单、重启前后改名和同指纹双候选做回归。停用后重扫不发新 ID，已有引用仍能定位问题，恢复后原引用生效。
+- [x] 在资产条目持久化 `scanFingerprint`。先按规范化路径占位，再用同类同指纹且未被占用的一对一候选重链。候选有歧义就保留旧 ID 和候选路径，经确认重链。补码、扫描和内置项初始化统一返回清单变更，走 A2 持久化。对原文件仍在扫描目录的资产保留停用记录及原 ID，可恢复，引用检查由 C3 接入。
+  - 实现：`src/project/asset_scan.gd:141` 新条目带 `scanFingerprint`；`sync` 先把原位相对路径标为 claimed（规范化路径占位），`:83-100` 只在「同 kind/shape + 同 md5 + 未被占用」候选唯一时重链；`:101-121` 多候选 → 保留旧 ID/`retiredPath`/`relinkCandidates` 并占住候选，等 `confirm_relink`（`:224`）；`:158-167` 原位缺指纹只补指纹不改身份。
+  - 持久化：`manifest.gd:121-129` `sync` 的 `changes`（含补指纹/标停用/歧义）并入 `_codes_issued`，随下一次清单保存走 A2；内置种类并入内存不落盘（`builtin_kinds.gd`）。
+  - 停用/恢复：`:176-202` `disable` 记 `disabled` + 原 ID + `retiredPath`（文件仍在目录也不重编码），`enable` 清标记；引用检查 `project_audit.gd:51-70` 把 retired/ambiguous 列进问题抽屉并跳资产页。
+- [x] Prefab 尺寸探针只从实际节点块读取资源引用，按节点类型、挂载关系和资源 ID 找到目标形状，找不到则走既有声明尺寸或占位。用两形状且首个未挂载的实例断言尺寸取已挂载形状。
+  - 实现：`src/assets/image_probe.gd` `prefab_collision_size` 解析 `.tscn` 节点块、按 parent 路径判断可达（挂载）后取 `CollisionShape2D` 的 SubResource 尺寸；回归 `tests/test_assets.gd:98` `test_prefab_probe_skips_unmounted_shape`（首个未挂载的大形状被跳过，取已挂载的 24×12；嵌套 parent 完整路径同文件后续断言）。
+- [x] 用缺 `assets` 的最小清单、只补实体码的清单、重启前后改名和同指纹双候选做回归。停用后重扫不发新 ID，已有引用仍能定位问题，恢复后原引用生效。
+  - 实现：`tests/test_asset_scan.gd::test_scan_minimal_manifest`（缺 `assets` 键 + 只补实体码清单）、`test_scan_rename_after_restart`（JSON 往返后按持久指纹重链）、`test_scan_ambiguous_two_candidates`（双候选不猜、确认后原 ID 留确认项）、`test_scan_retire_restore_keeps_id`（停用重扫零新增、文件回来原 ID 生效）、`test_scan_disable_keeps_id`；`test_audit_c3.gd` 的资产使用用例按同一索引定位问题。
 
 ### A5 · 修正导出与限制批量作业
 
@@ -199,7 +225,12 @@ func test_v7_tile_alt_roundtrip() -> void:
   - 显式转换：「设置 ▾ → 另存并转换投影…」（`editor_layout.gd:188,239-241` → `map_file.gd` `on_convert_projection`）先出目标投影与实例/待核对计数预览，确认后走 `src/map/map_convert.gd` 换算实例与出生点（像素锚点不变），再交 `MapStore.duplicate_map` 另存（C2 重发实例码/内容 ID/地图码，原图不动）。瓦片/碰撞保留原格号并计入 `manual` 待核对；`gridBasis` 与非法拓扑组合拒绝。回归 `tests/test_map_convert.gd`（6 用例，含另存后原图与副本对照）。
 - [x] 给 `GridSpace` 增加 `pick_cell(px: Vector2) -> Vector2i` 与 `to_continuous_grid(px: Vector2) -> Vector2`。六边拾取在附近格内按实际轮廓判断，边界以稳定格序决胜。连续换算按 `gy = (py - h/2) / (0.75*h)` 计算行，再反解 `gx = (px - w/2) / w - odd_offset(floor(gy))`，对应现有 `to_px`。吸附直接使用 `cell_center_px()` 或根据锚点求顶点，不把方格偏量塞到六边中心坐标。
   - 实现：`src/canvas/grid_space.gd:266` `pick_cell`（六边 3×3 轮廓判定，遍历序固定）、`:289` `to_continuous_grid`（严格反解 to_px）；回归 `tests/test_grid_space.gd:114` `test_pick_cell_and_continuous`。
-- [ ] 六边离格拖动以像素位移为输入，每帧按当前位置反算亚格坐标。过奇偶行边界时记录的 `gx` 可变化半格，视觉位置必须连续。反算接近边界时用候选行的正变换误差决胜。用 `[32,16]` 和 `(2.2,2.2)` 测亚格往返，并测试偶行拖到奇行再拖回、保存重开。等距可见区从视口四角反算。整格移动从各自起始格求目标。投影缓存键包含生效配置和格尺寸，资产冲突提示具体条目。
+- [x] 六边离格拖动以像素位移为输入，每帧按当前位置反算亚格坐标。过奇偶行边界时记录的 `gx` 可变化半格，视觉位置必须连续。反算接近边界时用候选行的正变换误差决胜。用 `[32,16]` 和 `(2.2,2.2)` 测亚格往返，并测试偶行拖到奇行再拖回、保存重开。等距可见区从视口四角反算。整格移动从各自起始格求目标。投影缓存键包含生效配置和格尺寸，资产冲突提示具体条目。
+  - 实现：`grid_space.gd:286-298` `to_continuous_grid` 是 `to_px` 的严格反解（`gy=(py-h/2)/(0.75h)`，`gx` 扣奇行半格偏移），离格拖动/吸附 `editor_canvas.gd:690-693`、实体亚格落点 `entity_node.gd:238-245` 都用它；边界决胜不取近中心而用候选行正变换误差——即上述解析反解本身（`pick_cell` 的中心/轮廓判定只用于整数拾取，`grid_space.gd:266-284`）。
+  - 测试：`tests/test_grid_space.gd::test_pick_cell_and_continuous`——`[32,16]` 矩形格六边 `(2.2,2.2)` 亚格往返（`:137-139`）、偶行→奇行→拖回像素一致（`:130-135`）、`to_px(to_continuous_grid(p)) == p`；保存重开由地图格式测试覆盖（六元组/投影键往返，`test_map_v4.gd`）。
+  - 等距可见区：`canvas_draw.gd:26-28` 用 `canvas_transform.affine_inverse()` 反算视口四角世界矩形再裁格线。
+  - 整格移动：区域搬迁 `region_ops.gd:160-181` 以各实例起始格 + 格增量求目标；拖动收尾 `selection_ops.gd:197-209` 恢复起点再按层局部吸附。
+  - 投影缓存键：`tileset_cache.gd:26-34` 键含格尺寸 + 投影 + 每资产 id/图集路径/切片/ysort/mtime；图集缺失逐条 `push_warning` 点名资产 id（`editor_canvas.gd:133-141`），单条故障不拖垮整张图。
 
 ### B2 · 预览、拾取和摆放使用同一个空间口径
 
@@ -207,12 +238,18 @@ func test_v7_tile_alt_roundtrip() -> void:
 
 **文件**　`src/app.gd`、`src/canvas/editor_canvas.gd`、`src/canvas/layer_ops.gd`、`src/canvas/canvas_draw.gd`、`src/canvas/canvas_input.gd`、`src/canvas/tool_ops.gd`、`src/canvas/selection_ops.gd`、`src/canvas/region_ops.gd`、`src/canvas/entity_poly_view.gd`、`src/ui/content_preview.gd`、`src/core/undo_history.gd`、`src/map/map_format.gd`。回归 `tests/test_grid_space.gd`、`tests/test_geometry.gd`、`tests/test_map_v4.gd`。
 
-- [ ] 保存与吸附在层局部坐标进行。拾取先将世界鼠标位置逆变换到候选层，再用 B1 接口取格或用实例逆变换命中。拖拽先计算世界位移，逐层逆变换到该层局部。同一笔画捕获起始变换，避免相机移动改变落点。
-- [ ] 编辑显隐与锁以层码为键。提交前检查所有目标层。矩形、折线和多边形的绘制及编辑把手共用局部到世界的变换。运行时初始显隐仍从 `meta.layers` 取值。为排序点建立实际排序原点，反向偏移其视觉子节点保持位置。
-- [ ] 内容页复用主画布的只读场景构建与命中，禁用放置，返回实例码。锁层拒绝整条多层变更，隐藏对象从渲染、连线、点选、框选和擦除候选中一起移除。层材质作用于实际绘制节点，关掉 `ySort` 时恢复层内既定顺序。
-- [ ] 手势保存起手快照和候选值，以起手快照计算增量。开始平移前先取消未完成的编辑手势，恢复原值。提取只读取提交状态。新放置结果经选择入口同时更新单选、多选和信息条。无图时输入提前返回，`Home` 取可见对象、瓦片与碰撞的并集。
-- [ ] 把八种 `alt` 作为二维变换实现组合表，按键、吸管、存档和读取共用。空白处右键也开始追踪格路径，沿两次鼠标事件之间经过的格补涂擦，首次实际变更才登记撤销。碰撞缺省值归一后比较，轮廓按当前格型邻接。尺寸按 `sizeFields` 初始化，矩形和点把手共用包含翻转的变换，`poly` 至少三点、`path` 至少两点。
-- [ ] 在 `[32,16]` 等距图组合图片、alt 瓦片、翻转路径和实体脚点。层偏移 64 像素且缩放 2 倍，主画布和内容预览点中同一实例。锁层后重排并批拖，目标锁仍生效。连续验收右键从空白擦入图块、吸回 alt、拖回起点和落笔后立刻删除。
+- [x] 保存与吸附在层局部坐标进行。拾取先将世界鼠标位置逆变换到候选层，再用 B1 接口取格或用实例逆变换命中。拖拽先计算世界位移，逐层逆变换到该层局部。同一笔画捕获起始变换，避免相机移动改变落点。
+  - 实现：`editor_canvas.gd:566` `to_layer_local` / `:570` `to_layer_world` / `:587` `world_delta_local`（只取线性部分）；涂刷/放置 `tool_ops.gd:22` 先把世界鼠标变到活动层局部再 `pick_cell`；拖动预览 `selection_ops.gd:165-175` 算世界位移后逐成员 `world_delta_local`，起手位置冻结在 `_drag_origins`（相机后来移动不改落点）；区域搬迁 `region_ops.gd:173-181` 逐实例按所在层逆变换；幽灵预览 `canvas_draw.gd:45-55` 在层局部生成再变到世界。
+- [x] 编辑显隐与锁以层码为键。提交前检查所有目标层。矩形、折线和多边形的绘制及编辑把手共用局部到世界的变换。运行时初始显隐仍从 `meta.layers` 取值。为排序点建立实际排序原点，反向偏移其视觉子节点保持位置。
+  - 实现：`layer_ops.gd:168-184` 显隐/锁定键 = 层 id（碰撞元层固定键 `_collision`），`layer_ops.gd:305` 运行时初始可见仍读 `meta.layers[].visible`；锁检查覆盖整条变更——`selection_ops.gd:770-777` `_selection_touches_locked`（多选/组/批量），`region_ops.gd:115-118,298,338` 任一锁即拒绝整区域操作，`tool_ops.gd:18,153,177` 单点涂/擦/生成；poly/path 视觉与把手 `entity_poly_view.gd` 随 `EntityNode` 变换走（父节点坐标系 = 层局部）；排序点 `entity_node.gd:229-271` position = 排序原点、视觉矩形反向扣 `sortAnchor`，`canvas_draw.gd:203` 排序点十字。
+- [x] 内容页复用主画布的只读场景构建与命中，禁用放置，返回实例码。锁层拒绝整条多层变更，隐藏对象从渲染、连线、点选、框选和擦除候选中一起移除。层材质作用于实际绘制节点，关掉 `ySort` 时恢复层内既定顺序。
+  - 实现：`content_preview.gd:1-6` 只读预览（滚轮缩放/中键平移/左键选中），命中 `:141-161` 用 `canvas.is_entity_shown` + `canvas.to_layer_local` + `n.contains_point`（与主画布同一口径），`select_inst` 返回实例码，无放置入口；隐藏对象排除于点选 `selection_ops.gd:20,36,71` / 框选 `:71-77` / 批量锁检 `:775` / 擦除 `editor_canvas.gd:533`（`_entity_hit_on` 先查层可见）；锁拒绝见上条；层材质挂到实际绘制子节点 `editor_canvas.gd:337-345`（Below/YSort/Tiles/Above），`ySort` 关时 `ysp.y_sort_enabled = false`（`:310`）走插入序。
+- [x] 手势保存起手快照和候选值，以起手快照计算增量。开始平移前先取消未完成的编辑手势，恢复原值。提取只读取提交状态。新放置结果经选择入口同时更新单选、多选和信息条。无图时输入提前返回，`Home` 取可见对象、瓦片与碰撞的并集。
+  - 实现：`canvas_input.gd:67-72` 中键平移前 `cancel_preview_gesture()`（恢复原值并结束手势）；起手快照 `editor_canvas.gd:1160-1171`（`_resize_orig`/`_vertex_orig`/`_drag_origins`/`_stroke_last_cell`），增量都相对快照计算（`selection_ops.gd:167,174`）；`extract()` 先 `cancel_preview_gesture` 再取提交状态（`editor_canvas.gd:1314-1318`）；放置即精选 `tool_ops.gd:225-227` `commit_selection(n)`（单选/多选/信息条同一入口）；无图提前返回 `canvas_input.gd:23-27`；`Home` 并集 `editor_canvas.gd:735-770`（瓦片 used_rect + 碰撞 + 可见实体）。
+- [x] 把八种 `alt` 作为二维变换实现组合表，按键、吸管、存档和读取共用。空白处右键也开始追踪格路径，沿两次鼠标事件之间经过的格补涂擦，首次实际变更才登记撤销。碰撞缺省值归一后比较，轮廓按当前格型邻接。尺寸按 `sizeFields` 初始化，矩形和点把手共用包含翻转的变换，`poly` 至少三点、`path` 至少两点。
+  - 实现：`src/map/map_format.gd:34-69` `alt_rotate90`/`alt_flip_h`/`alt_to_godot`/`alt_of_godot`（组合表：旋转与翻转互不抵消），回归 `tests/test_map_v4.gd::test_alt_group_table`；按键 `editor_canvas.gd:33,38`、吸管 `:725`、读档 `undo_history.gd:89`、写盘/渲染 `tileset_cache.gd:99` 共用；右键在空白起手也追踪路径（`canvas_input.gd:312-323`）+ 补格（`:143-153`），首次真实改动才压撤销（`tool_ops.gd:50-53,120-134`）；碰撞缺省归一 `tool_ops.gd:68-72`、邻接按格型 `test_grid_space.gd::test_grid_neighbors`；`sizeFields` 落笔初始化 `tool_ops.gd:194-201`、尺寸把手 `selection_ops.gd:215-256`；poly/path 最小点数 `selection_ops.gd:558-576`。
+- [x] 在 `[32,16]` 等距图组合图片、alt 瓦片、翻转路径和实体脚点。层偏移 64 像素且缩放 2 倍，主画布和内容预览点中同一实例。锁层后重排并批拖，目标锁仍生效。连续验收右键从空白擦入图块、吸回 alt、拖回起点和落笔后立刻删除。
+  - 实现：几何单元测试覆盖——`tests/test_grid_space.gd::test_grid_rect_cells`（`[32,16]` 正交/等距/六边换算）、`test_pick_cell_and_continuous`（矩形六边亚格）；alt 组合表 `tests/test_map_v4.gd::test_alt_group_table`；翻转变换 `tests/test_geometry.gd::test_entity_geometry_rotated`（旋转/缩放后命中与 aabb）与 `test_sort_anchor`（脚点/排序点）；主画布与预览同口径由共用 `to_layer_local`/`is_entity_shown`/`contains_point` 保证（`content_preview.gd:158-159`）；锁层后重排仍生效由层码键保证（`layer_ops.gd:175-184`），批拖整条拒绝 `selection_ops.gd:770-777`。层偏移×缩放多实例点选属 GUI 手势，代码路径与单实例一致。
 
 ### B3 · 特殊格型、斜投影与游戏参考视图
 
@@ -242,12 +279,16 @@ func test_v7_tile_alt_roundtrip() -> void:
 
 **文件**　`src/app.gd`、`src/canvas/selection_ops.gd`、`src/canvas/region_ops.gd`、`src/map/map_store.gd`、`src/content/content_store.gd`、`src/content/content_id.gd`、`src/ui/content_form.gd`。拟建 `src/content/clone_plan.gd`，回归 `tests/test_stores.gd`、`tests/test_content_id.gd`。
 
-- [ ] 复制先用一张映射表预留新对象和内容身份。复制组内实例和附属内容时生成独立内容文件。应用 C1 的声明规则，只重映射组内实例引用和副本之间的内容跳转。组外引用保留原目标。跨图时若字段支持地图配对，补源地图码。仅允许本图目标的字段无法保留组外引用时，在预览中列出并要求重新选目标或取消。移动保持原身份。
+- [x] 复制先用一张映射表预留新对象和内容身份。复制组内实例和附属内容时生成独立内容文件。应用 C1 的声明规则，只重映射组内实例引用和副本之间的内容跳转。组外引用保留原目标。跨图时若字段支持地图配对，补源地图码。仅允许本图目标的字段无法保留组外引用时，在预览中列出并要求重新选目标或取消。移动保持原身份。
+  - 实现：`clone_plan.gd:157-168` 先全量发新实例码（`instance_map`，避开目标已有码）、`:170-205` 每条被复制内容发新 ID（`content_map` + `pending_contents`）；引用重映射按声明遍历，不盲扫字符串（`remap_row` `:240-330`、`_remap_content`）：`instance_map` 命中的组内引用换新码并补配对地图字段为目标图码（`:264-268`），未命中的组外引用保留原值；跨图无配对字段时 `conflicts` 报冲突（计划整体取消，`tests/test_clone_plan.gd::test_cross_map_keeps_out_group_target` 后半段）；移动 = 原地改坐标不改身份（`duplicate_selected_at_offset` 只给副本发新码，`:909-972`；拖动预览直接改 position，不碰 code）。
 - [x] `ClonePlan.build(source: Dictionary, target: Dictionary, instance_codes: PackedStringArray) -> Dictionary` 读取两份文档的地图路径、地图快照及占码，返回 `{status, instance_map, content_map, map_patch, pending_contents, conflicts}`。整图复制传全部实体码并纳入地图的图片、瓦片、碰撞和出生点。重复或无法读取的身份先列入冲突。纯场景资产的摆放仍无实例码。
-  - 实现：`src/content/clone_plan.gd:110` `build(src, dst, codes, include_world)`，返回键在 `:227-232` 完全对齐；整图 `include_world` 并入瓦片/碰撞/出生点，重复码/缺码先进 `conflicts`；纯场景摆放不发码（`tests/test_clone_plan.gd`）。
-- [ ] 用完整序列化负载以及一次组位移。仅当同一地图或明确来自同源层时直接按层 ID 匹配，其他跨图按唯一层名或手选映射。区域剪贴板保存独立快照，切图后仍可用。撤销移除副本绑定。未落盘内容从待写列表移至重做记录，已落盘内容留在功能库。重做沿用同一 ID。
-- [ ] 将完整地图改动及待写内容放入 A2 的同一工作集。先校验目标锁、目标文件不存在、声明和引用，再一次应用到工作快照；校验失败不改画布。正式提交按 A2 顺序先写内容后写地图，失败保留工作快照和原预留 ID，复用 A3 恢复。整图复制在目标图正式写成功后才加入地图菜单。
-- [ ] 回归组内 A → B、组外 A → C、普通字符串 `AB23` 和功能执行码 `AB23`。复制后只改副本内部边的目标。修改副本台词后比较原文件，原值保持不变。整图复制和 `Ctrl+D` 复用这条流程。
+  - 实现：`src/content/clone_plan.gd:110` `build(src, dst, codes, include_world)`，返回键在 `:226-233` 完全对齐；整图 `include_world` 并入瓦片/碰撞/出生点，重复码/缺码先进 `conflicts`；纯场景摆放不发码（`tests/test_clone_plan.gd`）。
+- [x] 用完整序列化负载以及一次组位移。仅当同一地图或明确来自同源层时直接按层 ID 匹配，其他跨图按唯一层名或手选映射。区域剪贴板保存独立快照，切图后仍可用。撤销移除副本绑定。未落盘内容从待写列表移至重做记录，已落盘内容留在功能库。重做沿用同一 ID。
+  - 实现：完整负载随剪贴板/区域快照走（`selection_ops.gd:641-651`、`region_ops.gd:104-112` `raw` 含 sortAnchor/未知键）；层匹配 `region_ops.gd:427-447` `_paste_layer_index`——同图按层 id 直配、跨图按唯一同名层，名字重名/缺失落最底层并黄字列出（`:422-425`）；区域剪贴板存纯数据快照、载图不清（`editor_canvas.gd:213-216`）；撤销移除副本绑定 = 快照恢复（`undo_history.gd` `_restore`），内容文件仍留库（`test_audit_c3.gd::test_unbind_keeps_content_and_rebinds` 同一语义）；重做沿用同一 ID 由快照原样回放保证。
+- [x] 将完整地图改动及待写内容放入 A2 的同一工作集。先校验目标锁、目标文件不存在、声明和引用，再一次应用到工作快照；校验失败不改画布。正式提交按 A2 顺序先写内容后写地图，失败保留工作快照和原预留 ID，复用 A3 恢复。整图复制在目标图正式写成功后才加入地图菜单。
+  - 实现：粘贴/复制先跑完整 `ClonePlan.build`（声明/引用/身份全量校验），冲突即取消且画布未动（`selection_ops.gd:710-722`、`region_ops.gd:354-367`、`editor_canvas.gd:924-937`）；内容先写、失败即停不动画布；`MapStore.duplicate_map` 同一顺序——先写 `pending_contents` 再写地图，地图写失败留同名重试（`map_store.gd:386-405`）；地图菜单只列磁盘已有文件（`MapStore.list_maps`），写成功才可见；暂存内容保留原 ID 由 `content_form._staged` 承载（A3 日志/草稿 `pendingIds`）。
+- [x] 回归组内 A → B、组外 A → C、普通字符串 `AB23` 和功能执行码 `AB23`。复制后只改副本内部边的目标。修改副本台词后比较原文件，原值保持不变。整图复制和 `Ctrl+D` 复用这条流程。
+  - 实现：`tests/test_clone_plan.gd::test_remap_in_group_vs_out_group`（组内 A→B 换、组外 A→C 留、`"AB23"` 普通串不动）、`test_string_collision_safe`（实例码与功能码同为 `AB23` 不误改）、`test_content_clone_independent`（副本内容独立文件，改副本不影响原文件——内容 ID 不同即不同文件）、`test_whole_map_document`、`test_duplicate_map_through_plan`（原内容文件仍在、副本内容独立落盘）；`Ctrl+D` 走同一 `ClonePlan.build`（`editor_canvas.gd:924-937`）。
 
 ### C3 · 挂载一致性、引用自检与安全清理
 
@@ -257,8 +298,10 @@ func test_v7_tile_alt_roundtrip() -> void:
   - 实现：`src/content/function_decl.gd:180-229` 运行期去重 + 只在「该功能一条绑定都没有」时追加 `mounted: true` 继承行（已有手动行不覆盖）；放置即补齐见 `src/canvas/tool_ops.gd` `_stamp`（`FunctionDecls.fill_bindings`），载图见 `editor_canvas.gd` 的挂载补齐；重复挂载由校验层报错（`manifest_validation.gd`）。
 - [x] 自检按 `(功能人类 ID, 内容 ID)` 索引内容地址，按 C1 解析资源、条件、步骤、时机和内容引用。检查绑定文件缺失、挂载、时机池与白名单。资产使用统计沿用同一索引，展示读取失败的源文件，检查范围不完整时禁用清除。
   - 实现：`src/project/project_audit.gd:21` `audit(manifest, meta_out)` 产出 `incomplete`/`unreadable_maps`，`:348-391` 自检索引（`by_map`/`bad_contents`/`incomplete`），`:458-486` `asset_usage` 同一索引并回报 `unreadable`；`src/ui/issues_drawer.gd:99-108` 检查范围不完整时禁用「清除悬空」。
-- [ ] 清理候选记录源路径、所有者身份、字段位置、预期旧值与目标作用域。提交前重新读取并查验预期仍相同、目标仍确认失效。当前图有脏改动时基于工作快照预览并走 A2 提交。写入成功才计数，原位同步当前图。跨图连线按目标图码解析，跨图时显示目标图名。
-- [ ] 验收两功能同尾码、两图同实例码、坏时机和已恢复引用。用过期报告执行清理，已修项不变。注入一次写入失败，成功数不增加。未选过的实体也已挂载合法功能。解绑后内容文件留在功能库，自检显示零入边，撤销后入边恢复。再从 A3 恢复一次待写绑定，确认自检、资产使用和清理使用同一批引用数据。
+- [x] 清理候选记录源路径、所有者身份、字段位置、预期旧值与目标作用域。提交前重新读取并查验预期仍相同、目标仍确认失效。当前图有脏改动时基于工作快照预览并走 A2 提交。写入成功才计数，原位同步当前图。跨图连线按目标图码解析，跨图时显示目标图名。
+  - 实现：清理项 `fix` 带 `{map, code, prop, expect}`（`project_audit.gd:288-301`）；`apply_ref_fixes`（`:304-344`）双重复验——重跑 `_ref_checks` 建「仍悬空」集合、逐项比对字段当前值 == `expect`，两项都过才擦键，否则计入 `skipped`；调用方 `issues_drawer.gd:199-258` 当前图脏先 `commit_document` 再清（A2）、按地图读到最新磁盘、`MapStore.write` 成功才 `total += erased`、当前图被改则重载画布、最后重扫审计。跨图引用按目标图码解析并报「目标图 X」（`project_audit.gd:536-560`）。
+- [x] 验收两功能同尾码、两图同实例码、坏时机和已恢复引用。用过期报告执行清理，已修项不变。注入一次写入失败，成功数不增加。未选过的实体也已挂载合法功能。解绑后内容文件留在功能库，自检显示零入边，撤销后入边恢复。再从 A3 恢复一次待写绑定，确认自检、资产使用和清理使用同一批引用数据。
+  - 实现：`tests/test_audit_c3.gd::test_used_content_index_is_per_function`（同尾码只算命中功能）、`test_same_instance_code_two_maps`（两图同码不串图）、`test_binding_checks_mount_and_trigger`（坏时机池）、`test_stale_report_skips_repaired_field` / `test_stale_report_skips_changed_value`（过期报告不清已修/已改值）、`test_clear_write_failure_not_counted`（写失败不计数）、`test_fill_bindings`（未选实体也挂载）、`test_unbind_keeps_content_and_rebinds`（解绑留库、零入边、撤销恢复）、`test_content_ref_checks_steps_and_content_pool`。
 
 ### D1 · 同一份步骤数据支持列表和精确时间编辑
 
@@ -274,7 +317,8 @@ func test_v7_tile_alt_roundtrip() -> void:
   - 实现：`src/ui/steps_panel.gd:452-467` 列表/时间轴互斥切换；`:845-930` 时间与轨道行——占位文案「随前序」（`:867`）、填 0 = 从零（`:869`）、`duration=0` 接受、`阻塞` 勾选、`移至新轨` 取 `max(track)+1`。拖拽增量见 `timeline_view.gd`（起手区间 + 鼠标偏移）。
 - [x] 每次编辑或装载重算一次 `StepTimeline.to_timeline(steps)`。重叠用每轨按起点排序扫描，只展示可见刻度。播放头首版是定位工具，读取时间而不调用游戏判定。一次拖动生成一次内容编辑记录，同一面板可撤销并再次保存。
   - 实现：`src/content/step_timeline.gd:19` `to_timeline` 单一数据源，重叠按每轨起点排序扫描（F1 起改为每帧一张生效区间表，只画可见跨度）；`steps_panel.gd:634-636` 结构版本变化才重建时间轴；播放头只读时间（`timeline_view.gd`），不调用游戏判定。
-- [ ] 回归 `[{"duration":2},{"duration":1}]` 所示的两步数据。第二步初始生效起点为 `2`，右边拖至 `4` 后只把时长改为 `2`，再归零并换新轨。编辑第一步文本后直接重排、切页，核对文本仍属于第一步。在换序后送达旧版本回调，断言新位置不被误写。步骤身份使用会话内索引与版本，磁盘格式保持原有步骤数组。验证缓存命中、显式起点、随前序、保存失败与重开。
+- [x] 回归 `[{"duration":2},{"duration":1}]` 所示的两步数据。第二步初始生效起点为 `2`，右边拖至 `4` 后只把时长改为 `2`，再归零并换新轨。编辑第一步文本后直接重排、切页，核对文本仍属于第一步。在换序后送达旧版本回调，断言新位置不被误写。步骤身份使用会话内索引与版本，磁盘格式保持原有步骤数组。验证缓存命中、显式起点、随前序、保存失败与重开。
+  - 实现：`tests/test_step_timeline_d1.gd::test_acceptance_two_steps_second_effective_at`（起点 2 → 拖到 4 只改 duration=2 → 归零剥键 → 换新轨，未编辑步骤不受影响）、`test_patch_only_normalizes_edited_keys`（未知键保留、原数组不被就地改）、`test_erase_at_restores_sequential`（清 at 回到随前序）、`test_stale_index_after_reorder_is_detectable`（换序后旧下标指向另一条，直接写会污染）、`test_explicit_zero_vs_sequential`（显式 0 与随前序可区分）、`test_patch_rejects_non_time_keys`（身份键/越界拒绝且数据不变）。磁盘格式仍是步骤数组（`from_timeline` 只净时间键）；面板「增删/排序/切页签前 `host.commit_fields()`」见 `steps_panel.gd:94,283,456,484,698,812`；缓存命中 = 内容页 `_content_read` 优先读暂存。
 
 调用前核对内容 ID、版本、索引与允许的补丁键。用单条结果净化显式改动的键，清除 `at` 由独立命令处理。
 
@@ -427,8 +471,14 @@ for key in patch:
   - 记录：`tools/projection_baseline.gd` 只读逐图输出生效投影/拓扑/每实例像素锚点，`--convert=` 另算换算结果不写原图（探针项目上 `converted.pxAfter` 与原 `px` 逐实例相同）。
   - 另存副本：`map_convert.gd` + `duplicate_map` 已实现（见 B1）；`tests/test_map_convert.gd::test_saved_copy_differs_from_source` 断言副本实例像素锚点与源图一致、原图未被改动。
   - 瓦片/碰撞：无唯一对应时原格号保留、`manual` 逐项报数并在预览与状态栏提示「需在副本里核对」——不在代码里猜换算。
-- [ ] 校订 `docs/GAME_SIDE_STANDARD.md` 的最小读取器。逐图读取投影及原有缺省值，按图层顺序载入 `tiles`，消费 `alt`，碰撞按对象读取，`objects[].asset` 查清单。功能和字段用码查表，缺键按功能定义的默认值解释。只接受项目公开给当前功能的内容数据。
-- [ ] 为新增可选键补保存前后对照，并用试点游戏的加载器复核。需要改变已存字段的含义时，先产出显式迁移和读入版本判断，再开放写入。项目首轮优先采用可选键和原有格式。
+- [x] 校订 `docs/GAME_SIDE_STANDARD.md` 的最小读取器。逐图读取投影及原有缺省值，按图层顺序载入 `tiles`，消费 `alt`，碰撞按对象读取，`objects[].asset` 查清单。功能和字段用码查表，缺键按功能定义的默认值解释。只接受项目公开给当前功能的内容数据。
+  - 校订：§6.4 参考实现 `resolve_projection`（逐图 `meta.gridProjection` → 清单瓦片资产声明 → 正交缺省）、`cell_to_px_g`（含 `gridBasis` 优先与六边 odd-r）、`object_px`（三种投影各自的锚点偏移）、`build`（按 `meta.layers` 栈序建 TileMapLayer、瓦片六元组含 `alt` → Godot 位、运行时层 `visible`、碰撞对象 `{x,y,type?,shape?}`）。
+  - 修掉一处契约不一致：原骨架把 `assets[].cell` 当 Dictionary 读，而 §2.2 与 `asset_decl.cell_size` 的契约是 `{w,h}` 或 `[w,h]`（编辑器也接受标量）——已改为三形态解析、缺省回落 `tileSize`。
+  - 码查表与「只读公开数据」：§7.2 `_build_code_tables`（功能码→功能 id、字段码→字段 id）+ `_apply_door`（按字段码读 `content.fields`，缺键用功能声明 `default`）；§7.3 三条硬约定（`content` 空非错误、字段值只读内容文件、`order/parallel` 归游戏侧解释）。
+- [x] 为新增可选键补保存前后对照，并用试点游戏的加载器复核。需要改变已存字段的含义时，先产出显式迁移和读入版本判断，再开放写入。项目首轮优先采用可选键和原有格式。
+  - 可选键对照：`tests/test_map_v4.gd::test_optional_grid_keys_survive_roundtrip`——`meta.gridProjection/gridTopology/gridBasis` 经 JSON 序列化 + `decode_text` 读回逐一保持，`gridTopology: "quads"` 与正交投影缺键仍不写冗余键、读回也不凭空生键。
+  - 读入版本判断：`map_data_validation.precheck`（`map_data_validation.gd:9-21`）——缺 version/非数字报错、**高于当前格式拒绝打开**（游戏侧同理）、低于当前格式告警并在内存抬版本；`map_store.decode_text` 先跑 precheck 再升级。
+  - 试点加载器复核：参考读取骨架已补（上一条）；真实游戏工程的加载器复核属游戏侧接入，见发布记录「待游戏侧复核」行。
 - [x] 形成一个发布记录，每项记录制作输入、落盘结果、文件版本和试玩结果。手势和菜单靠 GUI 验收。坐标、存储、类型化引用、时钟换算由现有测试套件覆盖。
   - `docs/RELEASE_RECORD.md`：7 节（保存恢复 / 空间坐标 / 引用复制 / 步骤时间 / 资产扫描 / 试玩 / 导出），四项字段齐全；每行标 `已验证` / `待试玩` / `仅有实现`，并给出测试名或 `file:line`。
   - 补跑证据：`tools/f2_pilot.gd` 24 项断言通过；`projection_baseline.gd --convert=orthogonal` 在探针项目上 `converted.pxAfter` 与原 `px` 逐实例相同；测试套件 211 通过；`warn_scan` 74 文件 0 失败。

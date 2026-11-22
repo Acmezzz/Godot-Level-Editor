@@ -756,7 +756,7 @@ godot --headless --path "<编辑器工程>" --script res://tests/run_tests.gd
 
 约定：套件 `extends "res://tests/_suite_base.gd"`，方法名 `test_` 开头即被发现；
 `ok()` / `eq()` 收集失败；**每个用例至少一条断言**（崩溃中断的用例断言数不增长，
-runner 判 FAIL——防止半路崩掉变成假 PASS）。退出码非 0 = 有失败。当前 23 套件 211 用例。
+runner 判 FAIL——防止半路崩掉变成假 PASS）。退出码非 0 = 有失败。当前 23 套件 212 用例。
 
 截图辅助 `tools/screenshot.gd`（模式清单见文件头注释）、警告扫描 `tools/warn_scan.gd`
 （headless 全量加载 src/ 校验可加载性）、接入自检 `tools/f2_pilot.gd`（在 user:// 临时工程里

@@ -82,7 +82,7 @@
 ```
 godot --headless --path . --script res://tools/f2_pilot.gd        # §3 刷怪片段端到端，24 项断言，跑完自清
 godot --headless --path . --script res://tools/projection_baseline.gd -- <项目目录> [--out=<文件>]
-godot --headless --path . --script res://tests/run_tests.gd       # 23 套件 211 用例
+godot --headless --path . --script res://tests/run_tests.gd       # 23 套件 212 用例
 godot --headless --path . --script res://tools/warn_scan.gd       # 全量加载 + 警告扫描
 ```
 

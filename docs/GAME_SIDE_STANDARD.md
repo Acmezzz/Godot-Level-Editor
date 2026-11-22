@@ -949,8 +949,23 @@ static func build(root: Node2D, data: Dictionary, manifest: Dictionary) -> Dicti
 		# 清单里的 atlas 是**项目相对路径**（游戏工程里 = res:// 下的路径）；
 		# 编辑器另存一份 atlas_abs（绝对路径，只给编辑器读写），游戏侧不要读它。
 		src.texture = load("res://" + str(a.get("atlas", "")))
-		var cell: Dictionary = a.get("cell", {})
-		src.texture_region_size = Vector2i(int(cell.get("w", ts.tile_size.x)), int(cell.get("h", ts.tile_size.y)))
+		# 资产切片尺寸：cell 是 {w,h} 或 [w,h]（§2.2，编辑器 asset_decl.cell_size 同口径）；
+		# 标量 16 也接受；缺省 = 地图格尺寸。切片可非正方形、可大于地图格。
+		var cell = a.get("cell", null)
+		var csz := ts.tile_size
+		if cell is Dictionary:
+			var cw := int((cell as Dictionary).get("w", 0))
+			var ch := int((cell as Dictionary).get("h", 0))
+			if cw > 0 and ch > 0:
+				csz = Vector2i(cw, ch)
+		elif cell is Array and (cell as Array).size() >= 2:
+			var aw := int((cell as Array)[0])
+			var ah := int((cell as Array)[1])
+			if aw > 0 and ah > 0:
+				csz = Vector2i(aw, ah)
+		elif cell is int or cell is float:
+			csz = Vector2i(int(cell), int(cell))
+		src.texture_region_size = csz
 		src_of[str(a.get("id", ""))] = ts.add_source(src, src_of.size())
 	# meta.layers 栈序 = z 序（底→顶）：每层一个瓦片容器（实体节点夹层见 §3.4）
 	var layers: Array = meta.get("layers", [])

@@ -315,17 +315,29 @@ static func find_entity(data: Dictionary, ent_id: String) -> Dictionary:
 			return obj
 	return {}
 
-## 已有地图名列表（不含扩展名，排序）
+## 已有地图名列表（不含扩展名，排序）。
+## `foo.autosave.json` 只有在带 `_autosave_of` 时才是旧式草稿（跳过）；
+## 缺标记的是普通地图（图名就叫 foo.autosave），必须列出（A3）。
 static func list_maps(m: Dictionary) -> Array:
 	var out := []
 	var dir := DirAccess.open(str(m.get("_maps_dir", "")))
 	if dir == null:
 		return out
 	for f in dir.get_files():
-		if f.ends_with(".json") and not f.ends_with(".autosave.json"):
-			out.append(f.get_basename())
+		if not f.ends_with(".json"):
+			continue
+		if f.ends_with(".autosave.json") and _is_legacy_draft(str(m.get("_maps_dir", "")).path_join(f)):
+			continue
+		out.append(f.get_basename())
 	out.sort()
 	return out
+
+static func _is_legacy_draft(path: String) -> bool:
+	var text := FileAccess.get_file_as_string(path)
+	if text == "":
+		return false   # 读不出就别猜：按普通地图处理，交给读取路径报错
+	var data = JSON.parse_string(text)
+	return data is Dictionary and str((data as Dictionary).get("_autosave_of", "")) != ""
 
 ## 纯 rename——只改文件名，不迁移引用（拍板：改名不迁移）。
 ## 返回错误信息；"" = 成功。
