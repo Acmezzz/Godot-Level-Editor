@@ -141,15 +141,16 @@ func _on_map_selected(id: int) -> void:
 	var at := id
 	var nm := ""
 	var p := ""
-	if at >= 0 and at < _menu_binds.size():
+	var exists := false
+	if at >= 0 and at < _menu_binds.size() and _menu_binds[at] is Dictionary:
 		nm = str((_menu_binds[at] as Dictionary).get("name", ""))
-		p = EditorManifest.map_path(app.manifest, nm)
+		p = EditorManifest.map_path(app.manifest, nm) if nm != "" else ""
+		exists = p != "" and FileAccess.file_exists(p)
 	# 身份校验：文件还在但地图码变了 = 同一个名字现在指着另一张图（重新生成/替换过）
 	var cur_code := ""
-	if nm != "" and p != "" and FileAccess.file_exists(p):
+	if exists:
 		cur_code = str((app.MapStore.read(app.manifest, nm).get("meta", {}) as Dictionary).get("code", ""))
-	var res: Dictionary = MapMenuIdentity.resolve(_menu_binds, at,
-		p != "" and FileAccess.file_exists(p), cur_code, str(app.cur_map_name))
+	var res: Dictionary = MapMenuIdentity.resolve(_menu_binds, at, exists, cur_code, str(app.cur_map_name))
 	match str(res.get("status", "")):
 		MapMenuIdentity.STALE:
 			_refresh_map_menu()
