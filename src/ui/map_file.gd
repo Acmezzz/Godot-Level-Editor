@@ -577,7 +577,9 @@ func rename_map_now(old_name: String, new_name: String, allow_write_unsaved := f
 				return "暂存内容写盘失败：改名已中止（未写地图文件）"
 		if not app.MapStore.write(app.manifest, nn, data):
 			return "无法写入 " + new_path
-		Recovery.mark_pending_written(app.manifest, log_path, jentries.size() - 1, Recovery.digest(new_path))
+		# V4 P0-3：回填失败 = 日志已不可判读；保留日志并明确报告，不能静默清除。
+		if not Recovery.mark_pending_written(app.manifest, log_path, jentries.size() - 1, Recovery.digest(new_path)):
+			return "改名已写入新文件，但提交日志回填失败（请在 editor/pending 复核）"
 		Recovery.clear_pending(app.manifest, log_path)
 	else:
 		return "原图不存在（先保存该地图）"
@@ -609,7 +611,12 @@ func on_open() -> void:
 	fd.access = FileDialog.ACCESS_FILESYSTEM
 	fd.current_dir = str(app.manifest.get("_maps_dir", ""))
 	fd.add_filter("*.json")
-	fd.file_selected.connect(load_map_file)
+	# 生命周期：选完/取消都释放对话框。以前只接 file_selected 不释放，
+	# 每按一次「打开」就在 app 下堆一个隐藏 FileDialog（V4 P1）。
+	fd.file_selected.connect(func(p: String):
+		fd.queue_free()
+		load_map_file(p))
+	fd.canceled.connect(func(): fd.queue_free())
 	app.add_child(fd)
 	fd.popup_centered(Vector2i(700, 500))
 
@@ -970,6 +977,20 @@ func _save_now() -> bool:
 	# R05：确认绑定到「此刻这份内容」——确认前抓的摘要，确认后仍须一致才写。
 	var baseline := _opened_digest
 	if FileAccess.file_exists(path):
+		if _opened_digest == "" and _opened_mtime == 0:
+			# V4 P0-1：本会话里这张图从未落过盘，磁盘上却出现了同名文件
+			# （期间别的编辑器/脚本建了图）：按「新文件」覆盖等于删掉别人的图，
+			# 必须确认，且确认后复验摘要没再变。
+			var appeared := _file_digest(path)
+			if not await app._confirm_action("目标文件已存在",
+				"这张图还没有保存过，但磁盘上已出现同名文件：\n%s\n\n继续保存会覆盖它。" % path,
+				"覆盖保存"):
+				app._set_status(" 已取消保存（磁盘上的同名地图保持不变）")
+				return false
+			if _file_digest(path) != appeared:
+				app._set_status(" 保存中止：确认期间文件又被外部改写，请重新检查后再保存")
+				return false
+			baseline = appeared
 		var cur_digest := _file_digest(path)
 		var ext_changed := false
 		if _opened_digest != "" and cur_digest != "":
@@ -1092,6 +1113,14 @@ func restore_draft_key(draft_key: String) -> bool:
 			"仍然恢复"):
 			return false
 		_keep_conflict_copy(draft_key)
+	# V4 P0-2：草稿记录的预留码必须在装载画布**之前**合回清单。
+	# 装载会做 C09 挂载补齐、实例码生成与引用解析——这些都以当前清单码为准；
+	# 先装载再合并，画布上的绑定/字段键已经按启动时临时补发的新码算好了。
+	var draft_codes = draft.get("codesMap", null)
+	if draft_codes is Dictionary and not (draft_codes as Dictionary).is_empty():
+		EditorManifest.merge_issued_codes(app.manifest, draft_codes as Dictionary, true)
+	if bool(draft.get("codesPending", false)):
+		app.manifest["_codes_issued"] = true
 	var gen := _begin_doc_op()
 	app.canvas.set_thumbs(app._entity_thumbs())
 	await app.canvas.load_data((snap as Dictionary).duplicate(true), map_name, false, true)
@@ -1109,13 +1138,6 @@ func restore_draft_key(draft_key: String) -> bool:
 	app.canvas.modified_flag = true   # 草稿内容与磁盘不同：必须显式保存
 	# R03：待提交内容载荷重新暂存（绑定在恢复后的画布上才收，其余逐条报告）。
 	var pend: Array = draft.get("pendingContents", []) if draft.get("pendingContents", null) is Array else []
-	# 草稿里记了「清单补码待写」：先按草稿记录的已发码合并回内存清单（R07），
-	# 再重新挂上标记——否则重启补发的新码与草稿里的引用对不上。
-	var draft_codes = draft.get("codesMap", null)
-	if draft_codes is Dictionary and not (draft_codes as Dictionary).is_empty():
-		EditorManifest.merge_issued_codes(app.manifest, draft_codes as Dictionary)
-	if bool(draft.get("codesPending", false)):
-		app.manifest["_codes_issued"] = true
 	if not pend.is_empty() and app.project_shell != null and app.project_shell.content_editor != null:
 		var got: int = app.project_shell.content_editor.restage_rows(pend)
 		if got < pend.size():

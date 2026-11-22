@@ -103,7 +103,7 @@ func _build_form_block() -> Control:
 	var content_id := str(f.get("content", ""))
 	var fn_label := str(FunctionDecls.function_name(manifest, fn_id)) if bool(ref.get("known", false)) \
 		else "(未声明的功能) " + str(f.get("fn", ""))
-	var st0 = _staged.get(content_id, null)
+	var st0 = _staged_get(fn_id, content_id)
 	var cres: Dictionary = {"status": "ok", "data": (st0.data as Dictionary).duplicate(true), "error": ""} \
 		if st0 is Dictionary and content_id != "" \
 		else (ContentStore.read_ex(manifest, fn_id, content_id) if content_id != "" and fn_id != "" \
@@ -442,7 +442,7 @@ func _resolve_options(decl: Dictionary) -> Array:
 
 ## 读内容：暂存中的条目优先（还没落盘），否则读盘。
 func _content_read(fn_id: String, cid: String) -> Dictionary:
-	var st = _staged.get(cid, null)
+	var st = _staged_get(fn_id, cid)
 	if st is Dictionary:
 		return (st.data as Dictionary).duplicate(true)
 	return ContentStore.read(manifest, fn_id, cid)
@@ -450,7 +450,7 @@ func _content_read(fn_id: String, cid: String) -> Dictionary:
 ## 读内容并带出磁盘文本摘要（F1/P04 写前基线）：{data, digest}。
 ## 暂存条目没有磁盘基线（digest 为空 = 不比对，写盘时只落在 flushed 之后）。
 func _content_read_ex(fn_id: String, cid: String) -> Dictionary:
-	var st = _staged.get(cid, null)
+	var st = _staged_get(fn_id, cid)
 	if st is Dictionary:
 		return {"data": (st.data as Dictionary).duplicate(true), "digest": ""}
 	var res := ContentStore.read_ex(manifest, fn_id, cid)
@@ -461,7 +461,7 @@ func _content_read_ex(fn_id: String, cid: String) -> Dictionary:
 ## base_digest = 读到内容时的磁盘摘要；非空时写前比对，磁盘被外部改过就不覆盖（P04）。
 ## 返回 "ok" / "conflict" / "fail"。
 func _content_write(fn_id: String, cid: String, data: Dictionary, base_digest := "") -> String:
-	var st = _staged.get(cid, null)
+	var st = _staged_get(fn_id, cid)
 	if st is Dictionary:
 		(st as Dictionary)["data"] = data.duplicate(true)
 		return "ok"
@@ -604,7 +604,7 @@ func _ensure_content(i: int) -> String:
 	var data := _blank_content(fn_id, new_id)
 	data["name"] = nm
 	# 暂存：只在内存登记，等正式提交再写（staged）
-	_staged[new_id] = {"fn_id": fn_id, "data": data, "ent": spr.code, "bind_index": i, "doc": _doc_key()}
+	_staged_put(fn_id, new_id, {"fn_id": fn_id, "data": data, "ent": spr.code, "bind_index": i, "doc": _doc_key()})
 	app._set_status(" 新内容 %s 已暂存：Ctrl+S 或试玩时落盘" % new_id)
 	fns = fns.duplicate(true)
 	(fns[i] as Dictionary)["content"] = new_id
@@ -615,10 +615,43 @@ func _ensure_content(i: int) -> String:
 		_form_id_edit.text = new_id
 	return new_id
 
-## 暂存内容：{content_id: {fn_id, data, ent, bind_index, doc}}。正式提交时 flush_staged 写入。
+## 暂存内容：{"fn_id\u0001content_id": {fn_id, cid, data, ent, bind_index, doc}}。
+## 正式提交时 flush_staged 写入。键必须含功能 ID——多个功能目录下可以存在同名 cid，
+## 只按裸 cid 索引会读到/覆盖另一份内容（V4 P0-6）。
 ## doc（R02 工作副本归属）= 项目根|地图码：冲刷只写当前文档（地图）的条目，
 ## 切图后旧图的暂存不跟新图落盘；绑定身份复核失败（撤销/删绑定）就地丢弃。
 var _staged := {}
+
+## 暂存键：功能 ID 与内容 ID 联合唯一。
+func _staged_key(fn_id: String, cid: String) -> String:
+	return str(fn_id) + "\u0001" + str(cid)
+
+## 读暂存条目（兼容旧格式：外部旧代码/旧草稿可能仍以裸 cid 为键，且 fn_id 需校验）。
+func _staged_get(fn_id: String, cid: String) -> Variant:
+	if cid == "":
+		return null
+	var st = _staged.get(_staged_key(fn_id, cid), null)
+	if st is Dictionary:
+		return st
+	# 旧键兜底：裸 cid 只在该条目功能一致（或旧条目缺 fn_id）时才认
+	var legacy = _staged.get(cid, null)
+	if legacy is Dictionary and (fn_id == "" or str((legacy as Dictionary).get("fn_id", "")) == fn_id):
+		return legacy
+	return null
+
+## 写暂存条目（自动补 cid 键，避免调用点各自拼键）。
+func _staged_put(fn_id: String, cid: String, st: Dictionary) -> void:
+	var s := st.duplicate(true)
+	s["fn_id"] = fn_id
+	s["cid"] = cid
+	_staged[_staged_key(fn_id, cid)] = s
+
+## 删除暂存条目（同时清掉可能存在的旧裸键）。
+func _staged_erase(fn_id: String, cid: String) -> void:
+	_staged.erase(_staged_key(fn_id, cid))
+	var legacy = _staged.get(cid, null)
+	if legacy is Dictionary and (fn_id == "" or str((legacy as Dictionary).get("fn_id", "")) == fn_id):
+		_staged.erase(cid)
 
 ## 当前文档键（R02）：项目根 + 地图码（无码退回图名）。
 func _doc_key() -> String:
@@ -634,15 +667,21 @@ func _doc_key() -> String:
 ## 返回 ""（在）/ "gone"（实例没了）/ "moved"（绑定行被撤销、换绑或重排）。
 func _staged_bind_state(st: Dictionary, cid: String) -> String:
 	var ent := str(st.get("ent", ""))
-	if ent == "":
-		return ""   # 无绑定身份的条目按在写处理
 	if not _map_ready():
-		return "gone"
-	var spr = host._find_ent(ent)
-	if spr == null:
-		return "gone"
-	var fcode := FunctionDecls.fn_code(manifest, str(st.get("fn_id", "")))
-	return "moved" if not _bind_holds(spr, fcode, cid) else ""
+		return ""
+	# V4 P0-6：只要有**任一**实例仍绑定这条内容，就必须写盘。
+	# 共享绑定场景：A 创建内容、B 共享引用、A 解绑时，原实现只查最初挂靠的 A 就把条目丢掉。
+	var fn_id := str(st.get("fn_id", ""))
+	for row in host._entities():
+		for f in ((row as Dictionary).get("fns", []) as Array):
+			if not (f is Dictionary):
+				continue
+			if str((f as Dictionary).get("content", "")) != cid:
+				continue
+			if fn_id != "" and str((f as Dictionary).get("fn", "")) != FunctionDecls.fn_code(manifest, fn_id):
+				continue
+			return ""   # 任一同功能绑定仍在：这条内容仍被使用
+	return "gone"
 
 ## 绑定行还在吗：该实例的 functions 里仍有一条「同功能码 + 同内容 ID」的行。
 func _bind_holds(spr: EntityNode, fcode: String, cid: String) -> bool:
@@ -661,11 +700,15 @@ func flush_staged(on_written: Callable = Callable()) -> bool:
 	if _staged.is_empty():
 		return true
 	var doc := _doc_key()
-	for cid in _staged.keys():
-		var st: Dictionary = _staged.get(cid, {})
+	for key in _staged.keys():
+		var st: Dictionary = _staged.get(key, {})
 		if str(st.get("doc", "")) != doc:
 			continue   # 别的文档的暂存：不写、不丢
-		if str(flush_one(str(cid), {}, on_written).get("status", "")) == "failed":
+		var fn_id := str(st.get("fn_id", ""))
+		var cid := str(st.get("cid", ""))
+		if cid == "":
+			cid = str(key) if not str(key).contains("\u0001") else str(key).split("\u0001")[1]
+		if str(flush_one(cid, {"fn_id": fn_id, "cid": cid}, on_written).get("status", "")) == "failed":
 			return false
 	return true
 
@@ -674,25 +717,35 @@ func flush_staged(on_written: Callable = Callable()) -> bool:
 ## payload（B1）：提交计划冻结的 {fn_id, cid, data}——非空时写计划里那份，不再回读当前表单
 ## （避免 prepare 与 apply 之间控件/选中变化导致「写出去的不是确认过的那份」）。
 func flush_one(cid: String, payload := {}, on_written: Callable = Callable()) -> Dictionary:
-	var st: Dictionary = _staged.get(cid, {})
-	if st.is_empty():
+	var pfn := str((payload as Dictionary).get("fn_id", "")) if payload is Dictionary else ""
+	var st = _staged_get(pfn, cid)
+	if not (st is Dictionary):
 		return {"status": "dropped"}
-	var state := _staged_bind_state(st, cid)
+	var fn_id := str((st as Dictionary).get("fn_id", ""))
+	var data: Dictionary = (st as Dictionary).get("data", {}) as Dictionary
+	if payload is Dictionary and not (payload as Dictionary).is_empty():
+		fn_id = pfn if pfn != "" else fn_id
+		data = (payload as Dictionary).get("data", data) as Dictionary
+	var state := _staged_bind_state(st as Dictionary, cid)
 	if state != "":
-		_staged.erase(cid)   # 绑定已撤销/实例已删：这条不再写盘（R02）
+		_staged_erase(fn_id, cid)   # 绑定已撤销/实例已删：这条不再写盘（R02）
 		app._set_status(" 暂存内容 %s 的绑定已不在（撤销/切图放弃）：未写盘，已丢弃" % cid)
 		return {"status": "dropped"}
-	var fn_id := str(st.get("fn_id", ""))
-	var data: Dictionary = st.get("data", {}) as Dictionary
-	if payload is Dictionary and not (payload as Dictionary).is_empty():
-		fn_id = str((payload as Dictionary).get("fn_id", fn_id))
-		data = (payload as Dictionary).get("data", data) as Dictionary
-	if not ContentStore.write(manifest, fn_id, cid, data):
+	# V4 P0-1：写前记录目标是否已存在。新内容（无磁盘基线）必须是 create-only，
+	# 不能把提交期间出现的同路径文件当成合法现状覆盖。计划若冻结了 expect_absent 以其为准。
+	var expect_absent := not FileAccess.file_exists(ContentStore.path_for(manifest, fn_id, cid))
+	if payload is Dictionary and (payload as Dictionary).has("expect_absent"):
+		expect_absent = bool((payload as Dictionary).get("expect_absent", expect_absent))
+	var wr := ContentStore.write_ex(manifest, fn_id, cid, data, "", false, expect_absent)
+	if bool(wr.get("conflict", false)):
+		app._set_status(" 内容 %s 的目标文件在提交期间被创建/改动：未写入（先复核再试）" % cid)
+		return {"status": "conflict"}
+	if not bool(wr.get("ok", false)):
 		_ensure_failed()
 		return {"status": "failed"}
-	_staged.erase(cid)
+	_staged_erase(fn_id, cid)
 	if on_written is Callable and (on_written as Callable).is_valid():
-		(on_written as Callable).call(str(st.get("fn_id", "")), cid)
+		(on_written as Callable).call(fn_id, cid)
 	return {"status": "ok"}
 
 ## 暂存表本体（B1：DocumentSession 经它共享同一份工作副本，字典按引用传递）。
@@ -706,11 +759,14 @@ func has_staged() -> bool:
 func staged_rows_for_current_doc() -> Array:
 	var doc := _doc_key()
 	var out: Array = []
-	for cid in _staged:
-		var st: Dictionary = _staged[cid]
+	for key in _staged:
+		var st: Dictionary = _staged[key]
 		if str(st.get("doc", "")) != doc:
 			continue
-		out.append({"fn_id": str(st.get("fn_id", "")), "cid": str(cid),
+		var cid := str(st.get("cid", ""))
+		if cid == "":
+			cid = str(key) if not str(key).contains("\u0001") else str(key).split("\u0001")[1]
+		out.append({"fn_id": str(st.get("fn_id", "")), "cid": cid,
 			"data": (st.get("data", {}) as Dictionary).duplicate(true)})
 	return out
 
@@ -719,8 +775,8 @@ func has_staged_for_current_doc() -> bool:
 	if _staged.is_empty():
 		return false
 	var doc := _doc_key()
-	for cid in _staged:
-		if str((_staged[cid] as Dictionary).get("doc", "")) == doc:
+	for key in _staged:
+		if str((_staged[key] as Dictionary).get("doc", "")) == doc:
 			return true
 	return false
 
@@ -728,9 +784,9 @@ func has_staged_for_current_doc() -> bool:
 func drop_staged_for_current_doc() -> int:
 	var doc := _doc_key()
 	var dropped := 0
-	for cid in _staged.keys():
-		if str((_staged[cid] as Dictionary).get("doc", "")) == doc:
-			_staged.erase(cid)
+	for key in _staged.keys():
+		if str((_staged[key] as Dictionary).get("doc", "")) == doc:
+			_staged.erase(key)
 			dropped += 1
 	return dropped
 
@@ -747,7 +803,7 @@ func restage_rows(rows: Array) -> int:
 		var dat = r.get("data", null)
 		if cid == "" or fn_id == "" or not (dat is Dictionary):
 			continue
-		if _staged.has(cid):
+		if _staged_get(fn_id, cid) != null:
 			continue
 		# 找回绑定身份：恢复后的画布上找 content==cid 的绑定行（复核用）
 		var ent := ""
@@ -762,8 +818,8 @@ func restage_rows(rows: Array) -> int:
 					break
 		if ent == "" and _map_ready():
 			continue   # 绑定不在恢复后的画布上：这条不收（写盘只会造孤儿文件）
-		_staged[cid] = {"fn_id": fn_id, "data": (dat as Dictionary).duplicate(true),
-			"ent": ent, "bind_index": -1, "doc": doc}
+		_staged_put(fn_id, cid, {"fn_id": fn_id, "data": (dat as Dictionary).duplicate(true),
+			"ent": ent, "bind_index": -1, "doc": doc})
 		n += 1
 	return n
 
@@ -771,10 +827,10 @@ func restage_rows(rows: Array) -> int:
 ## （Ctrl+S / 试玩）才落盘；撤销恢复地图后绑定消失，R02 的绑定复核就地丢弃，
 ## 不再留下孤儿内容文件。ent = 拥有该内容的副本实例码（复核身份）。
 func stage_clone(fn_id: String, cid: String, data: Dictionary, ent: String) -> void:
-	if fn_id == "" or cid == "" or _staged.has(cid):
+	if fn_id == "" or cid == "" or _staged_get(fn_id, cid) != null:
 		return
-	_staged[cid] = {"fn_id": fn_id, "data": data.duplicate(true),
-		"ent": ent, "bind_index": -1, "doc": _doc_key()}
+	_staged_put(fn_id, cid, {"fn_id": fn_id, "data": data.duplicate(true),
+		"ent": ent, "bind_index": -1, "doc": _doc_key()})
 
 ## 写盘失败：状态栏 + 徽章双重提示（红色徽章在右栏顶部，不依赖状态栏可见性）
 ## 不再一律甩「目录权限」——真实失败原因多半是身份码没生成或 kind 不合法。
@@ -823,8 +879,10 @@ func _open_lib(i: int) -> void:
 	var body: VBoxContainer = shell.body
 	var ids := ContentStore.list_ids(manifest, fn_id)
 	# 暂存中的新内容也列进来（还没落盘，但用户可以复用）
-	for sid in _staged:
-		if str((_staged[sid] as Dictionary).get("fn_id", "")) == fn_id and not ids.has(sid):
+	for key in _staged:
+		var st_l: Dictionary = _staged[key] if _staged[key] is Dictionary else {}
+		var sid := str(st_l.get("cid", key))
+		if str(st_l.get("fn_id", "")) == fn_id and not ids.has(sid):
 			ids.append(sid)
 	if ids.is_empty():
 		body.add_child(Kit.empty_state("◌", "这个功能还没有已有内容",
@@ -1023,7 +1081,8 @@ func _open_batch(fn_id: String) -> void:
 	body.add_child(plan_lbl)
 	var apply_btn: Button = Kit.button("应用", func(): pass, "primary")
 	apply_btn.disabled = true
-	var cur_plan := {}
+	# lambda 按值捕获局部变量：计划与控件 commit 必须放字典里，预览写、应用读才是同一份
+	var cur := {"plan": {}, "commit": Callable()}
 	# 读控件值 → {v} 或 {err}
 	var value_of := func(fd: Dictionary, ctl: Control, commit: Callable) -> Dictionary:
 		commit.call()
@@ -1048,7 +1107,8 @@ func _open_batch(fn_id: String) -> void:
 			c.queue_free()
 		var code := str(field_opt.get_item_metadata(field_opt.selected)) if field_opt.selected >= 0 else ""
 		apply_btn.disabled = true
-		cur_plan = {}
+		cur["plan"] = {}
+		cur["commit"] = Callable()
 		if code == "":
 			return
 		var fd: Dictionary = {}
@@ -1059,6 +1119,7 @@ func _open_batch(fn_id: String) -> void:
 		var init = FieldWidgets.default_for(fd)
 		var built: Dictionary = FieldWidgets.build(fd, init, func(_v): pass)
 		var ctl: Control = built.ctl
+		cur["commit"] = built.commit
 		ctl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		value_slot.add_child(Kit.field_row("目标值", ctl, 48))
 		plan_lbl.text = "选字段并填写目标值后点「预览」。"
@@ -1078,17 +1139,18 @@ func _open_batch(fn_id: String) -> void:
 			var row: Control = value_slot.get_child(0)
 			for ch in row.get_children():
 				if ch is Control and not (ch is Label):
-					got = value_of.call(fd, ch, Callable())
+					# 连续控件（LineEdit）的待写值先冲刷，否则预览读到的是上一个值
+					got = value_of.call(fd, ch, cur["commit"] as Callable)
 					break
 		if str(got.get("err", "")) != "":
 			plan_lbl.text = "⚠ " + str(got.get("err", ""))
 			apply_btn.disabled = true
 			return
-		cur_plan = BatchOps.plan_field(manifest, fn_id, cand, code, got.get("v"))
-		var txt := BatchOps.plan_text(cur_plan)
+		cur["plan"] = BatchOps.plan_field(manifest, fn_id, cand, code, got.get("v"))
+		var txt := BatchOps.plan_text(cur["plan"])
 		plan_lbl.text = txt
-		apply_btn.disabled = str(cur_plan.get("status", "")) != "ok" \
-			or (cur_plan.get("targets", []) as Array).is_empty()
+		apply_btn.disabled = str((cur["plan"] as Dictionary).get("status", "")) != "ok" \
+			or ((cur["plan"] as Dictionary).get("targets", []) as Array).is_empty()
 	field_opt.item_selected.connect(func(_i: int): rebuild.call())
 	var btn_row := Kit.hbox(8)
 	btn_row.add_child(Kit.spacer())
@@ -1097,9 +1159,10 @@ func _open_batch(fn_id: String) -> void:
 	body.add_child(btn_row)
 	# 应用：逐条写（内容编辑器提供 staged 感知读写，不让内存里的新内容被覆盖）
 	apply_btn.pressed.connect(func():
-		if str(cur_plan.get("status", "")) != "ok":
+		var plan_now: Dictionary = cur["plan"]
+		if str(plan_now.get("status", "")) != "ok":
 			return
-		var plan := cur_plan.duplicate(true)
+		var plan := plan_now.duplicate(true)
 		pop.hide()
 		var res := BatchOps.apply_field(manifest, fn_id, plan,
 			func(fid: String, cid: String) -> Dictionary: return _content_read(fid, cid),
@@ -1122,8 +1185,8 @@ func _open_batch(fn_id: String) -> void:
 ## E2：本功能里尚未落盘的内容条数（关系图入口的出现条件用）。
 func _staged_count(fn_id: String) -> int:
 	var n := 0
-	for cid in _staged:
-		if str((_staged[cid] as Dictionary).get("fn_id", "")) == fn_id:
+	for key in _staged:
+		if str((_staged[key] as Dictionary).get("fn_id", "")) == fn_id:
 			n += 1
 	return n
 
@@ -1174,10 +1237,10 @@ func _open_rel_graph(fn_id: String) -> void:
 ## 本功能尚未落盘的内容 {cid: data}（关系图建图时覆盖同名盘上条目）。
 func _staged_for(fn_id: String) -> Dictionary:
 	var out := {}
-	for cid in _staged:
-		var st: Dictionary = _staged[cid] if _staged[cid] is Dictionary else {}
+	for key in _staged:
+		var st: Dictionary = _staged[key] if _staged[key] is Dictionary else {}
 		if str(st.get("fn_id", "")) == fn_id and st.get("data", null) is Dictionary:
-			out[str(cid)] = st.get("data", {})
+			out[str(st.get("cid", key))] = st.get("data", {})
 	return out
 
 func _rel_graph_hint(g: Dictionary) -> String:
@@ -1470,12 +1533,12 @@ func _duplicate_from_lib(fn_id: String, old_id: String, new_name: String, bind_i
 	var fns := _current_fns().duplicate(true)
 	if bind_index >= 0 and bind_index < fns.size() and fns[bind_index] is Dictionary:
 		# 继承行复用：内容填进原行，行身份（mounted 标记/时机/并行）原样保留
-		_staged[new_id] = {"fn_id": fn_id, "data": data, "ent": spr.code, "bind_index": bind_index, "doc": _doc_key()}
+		_staged_put(fn_id, new_id, {"fn_id": fn_id, "data": data, "ent": spr.code, "bind_index": bind_index, "doc": _doc_key()})
 		(fns[bind_index] as Dictionary)["content"] = new_id
 		(fns[bind_index] as Dictionary)["name"] = nm
 		_selected_fn = bind_index
 	else:
-		_staged[new_id] = {"fn_id": fn_id, "data": data, "ent": spr.code, "bind_index": -1, "doc": _doc_key()}
+		_staged_put(fn_id, new_id, {"fn_id": fn_id, "data": data, "ent": spr.code, "bind_index": -1, "doc": _doc_key()})
 		# 绑定里写执行码；码由 ensure_codes 保证非空
 		fns.append({"fn": FunctionDecls.fn_code(manifest, fn_id), "content": new_id, "name": nm,
 			"order": fns.size() + 1, "parallel": false})

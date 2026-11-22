@@ -25,11 +25,8 @@ func open() -> void:
 		app._set_status(" 先框选一块区域（瓦片层左键拖动或 Ctrl+拖动），再替换瓦片")
 		return
 	# 选区里出现过的瓦片资产 = 源候选（只替换用户看得到的那一类，不误伤其它瓦片）
-	var src_ids: Array = []
-	for it in TileReplace.collect(app.canvas, sel, ""):
-		var aid: String = str(app.canvas.asset_of_source(int((it as Dictionary).get("src", -1))))
-		if aid != "" and not src_ids.has(aid):
-			src_ids.append(aid)
+	# 用 sources_in：collect 在 src 为空时按契约返回空表（以前的入口因此永远空手，V4 P1）
+	var src_ids: Array = TileReplace.sources_in(app.canvas, sel)
 	if src_ids.is_empty():
 		app._set_status(" 选区里没有瓦片可替换（只对瓦片层生效）")
 		return
@@ -58,10 +55,13 @@ func open() -> void:
 	body.add_child(Kit.field_row("目标切片", cell_opt, 56))
 	var info: Label = Kit.hint_label("", 320)
 	body.add_child(info)
-	var apply_btn: Button = Kit.button("替换", Callable(), "primary")
-	apply_btn.disabled = true
 	# 当前计划与目标资产（应用时一并取走；计划本身不塞 UI 上下文）
+	# 字典按引用捕获：lambda 里只能改它的内容，不能重新赋值局部变量（V4 P1）
 	var cur := {"plan": {}, "dst": ""}
+	var apply_btn: Button = Kit.button("替换", func():
+		pop.hide()
+		_apply(cur["plan"] as Dictionary, str(cur["dst"])), "primary")
+	apply_btn.disabled = true
 
 	# 目标切片选项重建：palette 条目；未配 palette = 「与源同坐标」（由 keep_src 决定）
 	var rebuild_cells := func(dst_id: String):
@@ -81,7 +81,8 @@ func open() -> void:
 	var refresh := func():
 		var src_id := str(src_opt.get_item_metadata(src_opt.selected)) if src_opt.selected >= 0 else ""
 		var dst_id := str(dst_opt.get_item_metadata(dst_opt.selected)) if dst_opt.selected >= 0 else ""
-		cur = {"plan": {}, "dst": ""}
+		cur["plan"] = {}
+		cur["dst"] = ""
 		apply_btn.disabled = true
 		if src_id == "" or dst_id == "" or src_id == dst_id:
 			info.text = "选源与目标资产（不能相同）。" if src_id == dst_id else "选源与目标资产。"
@@ -93,7 +94,8 @@ func open() -> void:
 				dst_cell = md
 		var cells: Array = TileReplace.collect(app.canvas, sel, src_id)
 		var plan: Dictionary = TileReplace.plan(app.manifest, cells, dst_id, dst_cell)
-		cur = {"plan": plan, "dst": dst_id}
+		cur["plan"] = plan
+		cur["dst"] = dst_id
 		var ok_n: int = (plan.get("cells", []) as Array).size()
 		var conflicts: Array = plan.get("conflicts", [])
 		info.text = "可替换 %d 格" % ok_n
@@ -116,9 +118,12 @@ func open() -> void:
 	keep_src.toggled.connect(func(_v: bool):
 		cell_opt.disabled = keep_src.button_pressed
 		refresh.call())
-	body.add_child(Kit.popup_buttons(func():
-		pop.hide()
-		_apply(cur.plan, str(cur.dst)), func(): pop.hide(), "替换", "取消"))
+	# 单一应用入口（底部按钮）：以前这里再挂一组「替换/取消」，与上方按钮重复
+	var btn_row := Kit.hbox(8)
+	btn_row.add_child(Kit.spacer())
+	btn_row.add_child(Kit.button("取消", func(): pop.hide(), "ghost"))
+	btn_row.add_child(apply_btn)
+	body.add_child(btn_row)
 	rebuild_cells.call(str(dst_opt.get_item_metadata(dst_opt.selected)))
 	refresh.call()
 	app._open_popup(pop)

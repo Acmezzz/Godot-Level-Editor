@@ -422,9 +422,11 @@ static func content_usage(manifest: Dictionary, fn_id: String, cid: String,
 	# R29：删除前引用图驱动破坏性动作，读磁盘实际内容（不走浏览缓存）
 	var maps := MapStore.read_all_fresh(manifest, bad)
 	var want_code := FunctionDecls.fn_code(manifest, fn_id)
+	# V4 P0-4：当前图不能整张跳过。画布上的活体绑定可能已被解除，而磁盘正式文件里
+	# 仍有绑定——永久删除后放弃地图改动，正式图就会恢复成悬空引用。因此当前图的
+	# 磁盘命中与活体命中取并集。
 	for map_name in maps:
-		if current_map != "" and str(map_name) == current_map:
-			continue   # 当前图以画布为准，下面统一补
+		var is_current := current_map != "" and str(map_name) == current_map
 		var rows: Array = []
 		for obj in ((maps[map_name] as Dictionary).get("objects", []) as Array):
 			if not (obj is Dictionary):
@@ -439,15 +441,21 @@ static func content_usage(manifest: Dictionary, fn_id: String, cid: String,
 					continue
 				rows.append(str((obj as Dictionary).get("code", "")))
 				break
+		if is_current:
+			# 活体绑定也并入（磁盘是旧的：未保存的新绑定同样必须在报告里）
+			for c in current_codes:
+				if str(c) != "" and not rows.has(str(c)):
+					rows.append(str(c))
 		if not rows.is_empty():
 			by_map[str(map_name)] = rows
-	if current_map != "":
-		var cur_rows: Array = []
+	# 新建未保存的图不在磁盘列表里：活体命中仍要计入（否则删除检查看不到它）
+	if current_map != "" and not by_map.has(current_map):
+		var lone: Array = []
 		for c in current_codes:
 			if str(c) != "":
-				cur_rows.append(str(c))
-		if not cur_rows.is_empty():
-			by_map[current_map] = cur_rows
+				lone.append(str(c))
+		if not lone.is_empty():
+			by_map[current_map] = lone
 	var unreadable: Array = []
 	for b in bad:
 		unreadable.append(str((b as Dictionary).get("name", "")))
@@ -600,8 +608,9 @@ static func asset_usage(manifest: Dictionary, asset_id: String, current_map := "
 	# R29：资产删除判定同样驱动破坏性动作，读磁盘实际内容
 	var maps := MapStore.read_all_fresh(manifest, bad)
 	for map_name in maps:
-		if current_map != "" and str(map_name) == current_map:
-			continue   # 当前图以画布为准，下面统一补
+		# V4 P0-4：当前图不能整张跳过（解绑后放弃改动会恢复正式文件里的绑定），
+		# 磁盘命中与活体命中取并集，见 content_usage 同名注释。
+		var is_current := current_map != "" and str(map_name) == current_map
 		var rows: Array = []
 		for obj in ((maps[map_name] as Dictionary).get("objects", []) as Array):
 			if not (obj is Dictionary):
@@ -613,10 +622,17 @@ static func asset_usage(manifest: Dictionary, asset_id: String, current_map := "
 				"x": floori(float((obj as Dictionary).get("x", 0))),
 				"y": floori(float((obj as Dictionary).get("y", 0))),
 			})
+		if is_current:
+			var have := {}
+			for r in rows:
+				have[str((r as Dictionary).get("id", ""))] = true
+			for r2 in current_rows:
+				if r2 is Dictionary and not have.has(str((r2 as Dictionary).get("id", ""))):
+					rows.append(r2)
 		if not rows.is_empty():
 			by_map[str(map_name)] = rows
-	if current_map != "" and not current_rows.is_empty():
-		by_map[current_map] = current_rows
+	if current_map != "" and not by_map.has(current_map) and not current_rows.is_empty():
+		by_map[current_map] = current_rows   # 新建未保存的图不在磁盘列表里
 	var unreadable: Array = []
 	for b in bad:
 		unreadable.append(str((b as Dictionary).get("name", "")))
@@ -763,7 +779,11 @@ static func _ref_checks(data: Dictionary, manifest: Dictionary, map_name: String
 			var typ := str(f.get("type", ""))
 			# map_ref 值 = 地图码（v7）：码表判定为主；图名兜底（老图兼容值）/ maps_dir 未配放行
 			var map_key := str(val)
-			var ok_target: bool = map_codes.has(map_key) \
+			var rstat := str(ReferenceIndex.resolve_map(manifest, map_key).get("status", ""))
+			# V4 P0-5：歧义（一码多图/名字与码互撞）不参与悬空判定，也不产生自动清理项——
+			# 审计的码冲突条目才是唯一出处，按引用再猜一次就会清掉合法值。
+			var ref_fixable := rstat != "ambiguous"
+			var ok_target: bool = map_codes.has(map_key) or rstat == "ambiguous" \
 				or (maps_dir == "" or FileAccess.file_exists(maps_dir.path_join(map_key + ".json")))
 			# 配对地图（C1）：目标码必须在目标图的 objects 里；未配对 = 本图
 			var target_codes := codes
@@ -780,9 +800,11 @@ static func _ref_checks(data: Dictionary, manifest: Dictionary, map_name: String
 					target_map = str(props.get(pair, "")) if not paired.is_empty() else ""
 					# 配对地图未填 = 取所属图（C1）：本图码集就是目标域，不去猜磁盘上的图码
 					if target_map != "":
-						target_codes = _codes_of_map(manifest, target_map)
-						# 目标图本身解析不出来 → 由 map_ref 字段报一条；这里不再逐引用重复报
-						target_unknown = _map_name_of(manifest, target_map) == ""
+						# V4 P0-5：解析不出（缺失/歧义）或目标图读不出来 = 判定范围不完整，
+						# 不逐引用报悬空（歧义已由码冲突条目单列），否则会产出清空项。
+						var tinfo := _codes_of_map_ex(manifest, target_map)
+						target_codes = tinfo.get("codes", {}) as Dictionary
+						target_unknown = not bool(tinfo.get("ok", false))
 			if typ == "entity_ref" and not target_unknown and not target_codes.has(str(val)):
 				var where := ("目标图 %s" % target_map) if target_map != "" else "本图"
 				out.append({
@@ -797,6 +819,8 @@ static func _ref_checks(data: Dictionary, manifest: Dictionary, map_name: String
 						"prop": key, "expect": str(val)},
 				})
 			elif typ == "map_ref" and not ok_target:
+				if not ref_fixable:
+					continue
 				out.append({
 					"kind": "ref", "severity": "warning",
 					"path": "%s · %s(%s).%s" % [map_name, aid, str(o.get("code", "?")), key],
@@ -809,49 +833,57 @@ static func _ref_checks(data: Dictionary, manifest: Dictionary, map_name: String
 				})
 			elif typ == "edge_ref":
 				var bad := _edge_ref_problem(manifest, data, val)
-				if bad != "":
-					out.append({
+				if str(bad.get("message", "")) != "":
+					var issue: Dictionary = {
 						"kind": "ref", "severity": "warning",
 						"path": "%s · %s(%s).%s" % [map_name, aid, str(o.get("code", "?")), key],
-						"message": bad,
+						"message": str(bad.get("message", "")),
 						"map": map_name,
 						"jump": {"type": "entity", "map": map_name, "code": str(o.get("code", "")),
 							"prop": key},
-						"fix": {"op": "clear_prop", "map": map_name, "code": str(o.get("code", "")),
-							"prop": key, "expect": _val_str(val)},
-					})
+					}
+					# V4 P0-5：只有「值本身确证不合法 / 目标确证缺失且读得到拓扑」才给清空项
+					if bool(bad.get("fixable", false)):
+						issue["fix"] = {"op": "clear_prop", "map": map_name,
+							"code": str(o.get("code", "")), "prop": key, "expect": _val_str(val)}
+					out.append(issue)
 	return out
 
 ## edge_ref 悬空判定（§7.4）：边身份由格拓扑推导，因此只验「目标图存在 + 两格确实相邻 + cell 自洽」。
 ## 目标图本图/跨图取法与 map_ref 一致；图读不出来时比对双方拓扑会误报，故只按「读不到不判悬空」放行。
-static func _edge_ref_problem(manifest: Dictionary, data: Dictionary, val) -> String:
+## 返回 {message, fixable}：fixable=false 表示判定范围不完整（目标图歧义/读不出），不可自动清除。
+static func _edge_ref_problem(manifest: Dictionary, data: Dictionary, val) -> Dictionary:
 	if not (val is Dictionary):
-		return "格边引用值不是 {map, cell, edge} 字典"
+		return {"message": "格边引用值不是 {map, cell, edge} 字典", "fixable": true}
 	var v: Dictionary = val
 	var e_code := str(v.get("edge", ""))
 	var ends := EdgeRef.parse_edge(e_code)
 	if ends.size() != 2:
-		return "格边引用格式不合法: %s" % e_code
+		return {"message": "格边引用格式不合法: %s" % e_code, "fixable": true}
 	var e_map := str(v.get("map", ""))
 	var tgt_meta: Dictionary = data.get("meta", {}) if data.get("meta", {}) is Dictionary else {}
 	if e_map != "" and e_map != str(tgt_meta.get("code", "")):
-		var tgt_name := _map_name_of(manifest, e_map)
-		if tgt_name == "":
-			return "格边引用的目标地图不存在: %s" % e_map
-		var td: Dictionary = MapStore.read(manifest, tgt_name)
+		var rstat := str(ReferenceIndex.resolve_map(manifest, e_map).get("status", ""))
+		if rstat == "ambiguous":
+			# 一码多图：不知道指的是哪张图，比对邻接没有意义（由码冲突条目单列）
+			return {"message": "", "fixable": false}
+		if rstat != "ok":
+			return {"message": "格边引用的目标地图不存在: %s" % e_map, "fixable": true}
+		var td: Dictionary = MapStore.read(manifest, str(ReferenceIndex.map_name_of(manifest, e_map)))
 		if td.is_empty():
-			return ""
+			# 目标图存在但读不出来：拓扑不可比，不判悬空
+			return {"message": "", "fixable": false}
 		tgt_meta = td.get("meta", {}) if td.get("meta", {}) is Dictionary else {}
 	var g: GridSpace = GridSpace.resolve(tgt_meta, manifest).get("grid") as GridSpace
 	var ea := Vector2i(int(ends[0][0]), int(ends[0][1]))
 	var eb := Vector2i(int(ends[1][0]), int(ends[1][1]))
 	if not g.neighbors_any(ea).has(eb):
-		return "格边引用的两格在地图里不相邻: %s" % e_code
+		return {"message": "格边引用的两格在地图里不相邻: %s" % e_code, "fixable": true}
 	var cell = v.get("cell", null)
 	if cell is Array and (cell as Array).size() == 2:
 		if int((cell as Array)[0]) != ea.x or int((cell as Array)[1]) != ea.y:
-			return "格边引用的 cell 与 edge 不自洽: %s" % e_code
-	return ""
+			return {"message": "格边引用的 cell 与 edge 不自洽: %s" % e_code, "fixable": true}
+	return {"message": "", "fixable": false}
 
 ## 清空比对用的值串：字典（edge_ref）走 JSON，保持键序稳定；其余走 str()。
 static func _val_str(v) -> String:
@@ -859,19 +891,23 @@ static func _val_str(v) -> String:
 		return JSON.stringify(v)
 	return str(v)
 
-## 目标地图键（地图码或图名）→ 该图实例码集合。读不到/未知键返回空集合（引用因此报悬空）。
-static func _codes_of_map(manifest: Dictionary, map_key: String) -> Dictionary:
-	var out := {}
-	var name := _map_name_of(manifest, map_key)
-	if name == "":
+## 目标地图键（地图码或图名）→ {ok, codes}。ok=false（未知键/歧义/读不出来）表示
+## 判定范围不完整：调用方不得据此判悬空（V4 P0-5）。
+static func _codes_of_map_ex(manifest: Dictionary, map_key: String) -> Dictionary:
+	var out := {"ok": false, "codes": {}}
+	var rm := ReferenceIndex.resolve_map(manifest, map_key)
+	if str(rm.get("status", "")) != "ok":
 		return out
-	var d: Dictionary = MapStore.read(manifest, name)
+	var d: Dictionary = MapStore.read(manifest, str(rm.get("key", "")))
+	if d.is_empty():
+		return out
+	var codes := {}
 	for o in (d.get("objects", []) as Array):
 		if o is Dictionary:
 			var c := str((o as Dictionary).get("code", ""))
 			if c != "":
-				out[c] = true
-	return out
+				codes[c] = true
+	return {"ok": true, "codes": codes}
 
 ## 地图键（图名或地图码）→ 图名；未知/空返回 ""。码重复时拒绝猜测（code_map 已按重复剔除）。
 static func _map_name_of(manifest: Dictionary, map_key: String) -> String:

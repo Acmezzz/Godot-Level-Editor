@@ -39,7 +39,9 @@ static func write_text(path: String, text: String) -> bool:
 	var dir := path.get_base_dir()
 	if dir != "":
 		DirAccess.make_dir_recursive_absolute(dir)
-	var tmp := path + ".tmp"
+	# V4 P0-3：每次写入用唯一临时名。固定 ".tmp" 会让并发/重入写入互相覆盖，
+	# 而提交日志正是用来在崩溃后判读「哪些文件写过」的唯一依据。
+	var tmp := path + ".tmp-" + str(Time.get_ticks_usec()) + "-" + str(randi() % 100000)
 	var f := FileAccess.open(tmp, FileAccess.WRITE)
 	if f == null:
 		return false
@@ -348,6 +350,8 @@ static func scan_pending(m: Dictionary) -> Array:
 				# 还在 = 改名没走完，仍是待办
 				state = "pending" if FileAccess.file_exists(tgt) else "written"
 			elif not FileAccess.file_exists(tgt):
+				# V4 P0-3：写入意图在替换前登记，因此「基线非空、目标却不在」意味着计划开始后
+				# 目标被外部删除或写了一半——不能当成「本来就该新建」的 pending。
 				state = "manual" if base != "" or expect != "" else "pending"
 			else:
 				var cur := digest(tgt)

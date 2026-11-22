@@ -78,7 +78,10 @@ static func load_from(project_dir: String) -> Dictionary:
 		return {"_error": "清单 JSON 解析失败: " + p}
 	data["_dir"] = project_dir
 	# C-20：记录加载时的 mtime——保存前对比，磁盘被外部改过先确认再覆盖
+	# V4 P0-1：mtime 在粗粒度文件系统上可能同秒不变（改了两份不同内容仍是同一个数），
+	# 摘要才是准的基线；mtime 只在摘要不可得时兜底。
 	data["_manifest_mtime"] = FileAccess.get_modified_time(p)
+	data["_manifest_digest"] = preload("res://src/map/recovery.gd").digest(p)
 	# 清单 version——缺省补 1，结构演进时有迁移锚点。
 	# JSON 把数字解析成 float，不能按 `is int` 判断：那样每次加载都会把版本重置成 1。
 	if not data.has("version") or not (data["version"] is int or data["version"] is float):
@@ -101,6 +104,8 @@ static func load_from(project_dir: String) -> Dictionary:
 	data["_warnings"] = warnings
 	# 内置种类（如 trigger_zone）由编辑器提供，不需要游戏工程声明
 	preload("res://src/assets/builtin_kinds.gd").merge_into(data)
+	# V4 P0-2：补码前的码快照——装载结束后与补码后的差集 = 本次会话临时发码。
+	var codes_before := issued_codes(data)
 	# 功能段 / 字段段：同样补发（保存清单时随 functions写回）。
 	# 磁盘上的执行引用一律用码，人类名零兼容、无回退——查不到就是数据漂移。
 	var issued := false
@@ -132,6 +137,15 @@ static func load_from(project_dir: String) -> Dictionary:
 	# 留标记让「内容视图 Ctrl+S」顺手把清单也写回（D6），否则新码在磁盘上无对应对照。
 	if issued:
 		data["_codes_issued"] = true
+		# V4 P0-2：记录本次会话补发的码键（装载前 → 装载后差集）。草稿恢复只在
+		# 磁盘本来没有该码时才允许覆盖；分不清「磁盘原有」与「临时补发」，
+		# 旧草稿的预留码就永远合不回来。
+		var after := issued_codes(data)
+		var fresh := {}
+		for k in after:
+			if str(codes_before.get(k, "")) != str(after[k]):
+				fresh[k] = true
+		data["_codes_issued_now"] = fresh
 	return data
 
 ## 本次会话已发出的声明身份（id → code）：草稿保存它，重启恢复时按基线合并，
@@ -159,6 +173,23 @@ static func issued_codes(m: Dictionary) -> Dictionary:
 		var c5 := str((TriggerDecls.triggers(m)[tid] as Dictionary).get("code", ""))
 		if c5 != "":
 			out["trigger:" + str(tid)] = c5
+	# V4 P0-2：字段码也是执行引用（内容 fields 的键、步骤值键）。只记池条目码会让
+	# 草稿恢复后字段键对不上：旧草稿里按旧字段码存的值全部变成未知键。
+	for fid2 in FunctionDecls.functions(m):
+		var fd2: Dictionary = FunctionDecls.functions(m)[fid2]
+		for f in (fd2.get("fields", []) as Array):
+			if f is Dictionary and str((f as Dictionary).get("code", "")) != "":
+				out["fnf:" + str(fid2) + ":" + str((f as Dictionary).get("id", ""))] = str((f as Dictionary).get("code", ""))
+	for cid3 in ConditionDecls.conditions(m):
+		var cd3: Dictionary = ConditionDecls.conditions(m)[cid3]
+		for f2 in (cd3.get("fields", []) as Array):
+			if f2 is Dictionary and str((f2 as Dictionary).get("code", "")) != "":
+				out["condf:" + str(cid3) + ":" + str((f2 as Dictionary).get("id", ""))] = str((f2 as Dictionary).get("code", ""))
+	for sid2 in StepDecls.steps(m):
+		var sd2: Dictionary = StepDecls.steps(m)[sid2]
+		for f3 in (sd2.get("fields", []) as Array):
+			if f3 is Dictionary and str((f3 as Dictionary).get("code", "")) != "":
+				out["stepf:" + str(sid2) + ":" + str((f3 as Dictionary).get("id", ""))] = str((f3 as Dictionary).get("code", ""))
 	for a in (m.get("assets", []) as Array):
 		if a is Dictionary and str((a as Dictionary).get("kind", "")) == "entity":
 			var aid2 := str((a as Dictionary).get("id", ""))
@@ -170,25 +201,54 @@ static func issued_codes(m: Dictionary) -> Dictionary:
 ## 草稿恢复：把草稿记录的已发码合并回内存清单（只补空码，不覆盖现有声明）。
 ## 返回补回的条数；草稿来自另一个项目形态时会静默跳过不存在的声明。
 ## 直接改清单原始结构（dict/array 两种写法），不走归一化视图——那是缓存副本。
-static func merge_issued_codes(m: Dictionary, codes: Dictionary) -> int:
+## V4 P0-2：restore_reserved=true 时允许覆盖「本次会话刚补发」的码。
+## 原因：启动装载先给缺码声明发了新码，草稿里保存的是上次会话的预留码；
+## 只填空码的规则会把新码当成既有身份，草稿里的引用（内容字段键/步骤键/实例绑定）
+## 全部对不上。`_codes_issued_now` 精确记录本次会话补发的键，磁盘上原有的码不动。
+static func merge_issued_codes(m: Dictionary, codes: Dictionary, restore_reserved := false) -> int:
 	if codes.is_empty():
 		return 0
 	var n := 0
+	var issued_now: Dictionary = m.get("_codes_issued_now", {}) if m.get("_codes_issued_now", null) is Dictionary else {}
 	for key in codes:
 		var k := str(key)
 		var code := str(codes[key])
 		if code == "":
 			continue
 		var parts := k.split(":", false)
-		if parts.size() != 2:
+		if parts.size() < 2:
 			continue
 		var scope := str(parts[0])
 		var id := str(parts[1])
+		# 字段码作用域：键 = 作用域:池条目 id:字段 id（三段的池条目码是两段，分开放行）
+		if scope in ["fnf", "condf", "stepf"]:
+			if parts.size() != 3:
+				continue
+			var owner := str(parts[1])
+			var field_id := str(parts[2])
+			var items: Array = []
+			match scope:
+				"fnf": items = FunctionDecls._decl_items(m.get("functions", null))
+				"condf": items = ConditionDecls._decl_items(m.get("conditions", null))
+				"stepf": items = StepDecls._decl_items(m.get("steps", null))
+			for pair in items:
+				if str((pair.body as Dictionary).get("id", "")) != owner:
+					continue
+				for fd in ((pair.body as Dictionary).get("fields", []) as Array):
+					if fd is Dictionary and str((fd as Dictionary).get("id", "")) == field_id:
+						var cur := str((fd as Dictionary).get("code", ""))
+						if cur == "" or (restore_reserved and issued_now.has(k)):
+							(fd as Dictionary)["code"] = code
+							n += 1
+			continue
+		if parts.size() != 2:
+			continue
 		if scope == "asset":
 			for ae in (m.get("assets", []) as Array):
 				if ae is Dictionary and str((ae as Dictionary).get("id", "")) == id \
 						and str((ae as Dictionary).get("kind", "")) == "entity" \
-						and str((ae as Dictionary).get("code", "")) == "":
+						and (str((ae as Dictionary).get("code", "")) == "" \
+							or (restore_reserved and issued_now.has(k))):
 					(ae as Dictionary)["code"] = code
 					n += 1
 			continue
@@ -204,14 +264,16 @@ static func merge_issued_codes(m: Dictionary, codes: Dictionary) -> int:
 		var decl = m.get(pool_key, null)
 		if decl is Dictionary:
 			var body = (decl as Dictionary).get(id, null)
-			if body is Dictionary and str((body as Dictionary).get("code", "")) == "" \
+			if body is Dictionary and (str((body as Dictionary).get("code", "")) == "" \
+					or (restore_reserved and issued_now.has(k))) \
 					and str((body as Dictionary).get("id", id)) == id:
 				(body as Dictionary)["code"] = code
 				n += 1
 		elif decl is Array:
 			for item in (decl as Array):
 				if item is Dictionary and str((item as Dictionary).get("id", "")) == id \
-						and str((item as Dictionary).get("code", "")) == "":
+						and (str((item as Dictionary).get("code", "")) == "" \
+							or (restore_reserved and issued_now.has(k))):
 					(item as Dictionary)["code"] = code
 					n += 1
 					break

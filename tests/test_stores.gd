@@ -177,14 +177,14 @@ func test_map_write_failure_keeps_old_and_retries() -> void:
 	ok(MapStore.write(m, "w", d), "首次写入成功")
 	var path := str(m._maps_dir).path_join("w.json")
 	var before := FileAccess.get_file_as_string(path)
-	# 注入失败：目标路径变成目录 → .tmp 换名必失败
-	var blocked := str(m._maps_dir).path_join("w.json.tmp")
-	DirAccess.make_dir_recursive_absolute(blocked)
+	# 注入失败：写盘注入口命中该图路径（唯一临时名之后无法再靠占用 .tmp 路径）
+	var blocked := str(m._maps_dir).path_join("w.json")
+	MapStore.test_fail_prefix = blocked
 	d.meta.name = "w2"
 	ok(not MapStore.write(m, "w", d), "写失败被报告（不是静默成功）")
 	eq(FileAccess.get_file_as_string(path), before, "失败后原文件内容不变")
 	# 解除阻塞后同 ID 重试
-	_nuke(blocked)
+	MapStore.test_fail_prefix = ""
 	d.meta.name = "w"
 	ok(MapStore.write(m, "w", d), "解除阻塞后同 ID 重试成功")
 	_wipe()
@@ -313,14 +313,14 @@ func test_map_history_by_code_and_write_failure() -> void:
 	ok(MapStore.write(m, "h", d), "首次写入")
 	ok(MapStore.write(m, "h", d), "二次写入 → 产生一份历史")
 	eq(Recovery.list_history(m, "HHHH", "h").size(), 1, "历史按地图码分目录")
-	# 注入替换失败：目标变成目录 → 写入必失败（连续三次，旧历史条目不减少）
+	# 注入替换失败：写盘注入口（连续三次，旧历史条目不减少）
 	var path := str(m._maps_dir).path_join("h.json")
 	var before_hist := Recovery.list_history(m, "HHHH", "h").size()
+	MapStore.test_fail_prefix = path
 	for i in 3:
-		DirAccess.make_dir_recursive_absolute(path + ".tmp")
 		ok(not MapStore.write(m, "h", d), "替换失败被报告 #%d" % i)
 		eq(Recovery.list_history(m, "HHHH", "h").size(), before_hist, "失败不减少历史 #%d" % i)
-		_nuke(path + ".tmp")
+	MapStore.test_fail_prefix = ""
 	# 改名后按码查历史仍在（码不变 → 目录不变）
 	eq(MapStore.rename_map(m, "h", "h2"), "", "改名成功")
 	eq(Recovery.list_history(m, "HHHH", "h2").size(), before_hist, "改名后同码历史仍可查")

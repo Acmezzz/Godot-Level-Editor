@@ -819,8 +819,21 @@ func _save_manifest_file_async() -> bool:
 		return false
 	var p: String = str(manifest.get("_dir", "")).path_join("editor/editor_manifest.json")
 	# C-20：清单同样做外部改动预警——手改细配置（palette 等）被编辑器覆盖是真实损失
+	# V4 P0-1：摘要优先（mtime 同秒粒度会漏判），mtime 只在无摘要基线时兜底。
 	var mt0 := int(manifest.get("_manifest_mtime", 0))
-	if mt0 > 0 and FileAccess.file_exists(p) and FileAccess.get_modified_time(p) != mt0:
+	var base_digest := str(manifest.get("_manifest_digest", ""))
+	if base_digest != "" and FileAccess.file_exists(p) \
+			and preload("res://src/map/recovery.gd").digest(p) != base_digest:
+		if not await _confirm_action("外部改动",
+			"清单文件在编辑器打开后被外部修改过。\n覆盖保存将丢失外部改动。", "覆盖保存"):
+			_set_status(" 已取消保存（保留磁盘上的外部改动）")
+			return false
+		# 确认期间又被外部改写：比对的是确认那一刻的摘要，不再相信旧基线
+		if preload("res://src/map/recovery.gd").digest(p) != base_digest:
+			_set_status(" 清单保存中止：确认期间文件又被外部改写，请重新检查后再保存")
+			return false
+	elif base_digest == "" and mt0 > 0 and FileAccess.file_exists(p) \
+			and FileAccess.get_modified_time(p) != mt0:
 		# R05：确认绑定到「此刻这份内容」——先记下确认时的 mtime，确认后再复验一次，
 		# 确认期间又被外部改写就不覆盖（避免「确认的是 A、覆盖的是 B」）。
 		var seen_mt := FileAccess.get_modified_time(p)
@@ -838,6 +851,7 @@ func _save_manifest_file_async() -> bool:
 	# 新补发的执行码已经随清单落盘，标记清掉（D6：避免每次内容视图 Ctrl+S 都重写清单）
 	manifest.erase("_codes_issued")
 	manifest["_manifest_mtime"] = FileAccess.get_modified_time(p)
+	manifest["_manifest_digest"] = preload("res://src/map/recovery.gd").digest(p)
 	# 人类名 ↔ 执行码对照表随清单一起刷新（游戏侧重建映射、人工 diff 均用）；
 	# 只在清单落盘成功后写，码表写失败不影响清单本身，状态栏单独报。
 	var cp: String = str(manifest.get("_dir", "")).path_join("editor/CODES.md")

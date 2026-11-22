@@ -46,7 +46,16 @@ static func validate_graph(g: Dictionary) -> Array[Dictionary]:
 		var c2 = (cells as Array)[j2]
 		if not (c2 is Dictionary):
 			continue
-		for nb in ((c2 as Dictionary).get("neighbors", []) as Array):
+		# 第二遍读 neighbors 必须重新判型：上面只报错不停手，坏值（字符串/字典）留在这里，
+		# 直接 `as Array` 会得到 null 并在 for 上炸（V4 P1）。
+		var nbs2 = (c2 as Dictionary).get("neighbors", null)
+		if not (nbs2 is Array):
+			continue
+		for nb in (nbs2 as Array):
+			if not (nb is String or nb is StringName or nb is int or nb is float):
+				issues.append({"path": "meta.cellGraph.cells[%d].neighbors" % j2,
+					"message": "neighbor entries must be cell id strings (got %s)" % type_string(typeof(nb))})
+				continue
 			if str(nb) != "" and not known.has(str(nb)):
 				issues.append({"path": "meta.cellGraph.cells[%d].neighbors" % j2, "message": "neighbor cell id not declared: %s" % str(nb)})
 	return issues

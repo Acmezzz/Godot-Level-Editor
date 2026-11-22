@@ -274,6 +274,8 @@ func _draw() -> void:
 	# 每层瓦片在自己的层局部格里，预览按层变换到世界（E02）。
 	if cvs._move_active and not cvs._move_snap.is_empty():
 		var md: Vector2i = cvs._move_cell_delta
+		# 区域原点按投影几何平移（与 _finish_region_move 同一原语）
+		var morg: Vector2i = cvs.grid.shift_cell(cvs._region_sel.position, md)
 		# tiles = {层id: [[x,y,资产id,ax,ay]...]}——按条目所属层变换到世界
 		for lid2 in (cvs._move_snap.get("tiles", {}) as Dictionary):
 			var lli2: int = cvs._layer_index_of(str(lid2))
@@ -285,13 +287,14 @@ func _draw() -> void:
 					if ai2 >= 0 and ai2 < (cvs.atlas_texs as Array).size() else null
 				if tex2 != null:
 					var cs2: Vector2i = cvs.asset_cell(aid2)
+					# 幽灵落点与真实搬移同一原语（六边行错位/三角半格列）：不能格号直接相加
 					var dst2: Rect2 = cvs.grid.cell_tex_rect(
-						Vector2i(int((t as Array)[0]), int((t as Array)[1])) + md, cs2)
+						cvs.grid.shift_cell(Vector2i(int((t as Array)[0]), int((t as Array)[1])), md), cs2)
 					cvs.draw_texture_rect_region(tex2, _wrect_local(dst2, lli2),
 						Rect2(Vector2(int((t as Array)[3]), int((t as Array)[4])) * Vector2(cs2), Vector2(cs2)),
 						Color(1, 1, 1, 0.6))
 		for t in cvs._move_snap.get("collision", []):
-			var mc: Vector2i = Vector2i(int(t[0]), int(t[1])) + md
+			var mc: Vector2i = cvs.grid.shift_cell(Vector2i(int(t[0]), int(t[1])), md)
 			cvs.draw_colored_polygon(cvs.grid.cell_polygon(mc), Color(1.0, 0.25, 0.25, 0.45))
 		for e0 in cvs._move_snap.get("ents", []):
 			# 快照条目 {dx,dy,asset,...}：按区域原点 + 偏移画（快照只存数据，不存节点）
@@ -299,7 +302,7 @@ func _draw() -> void:
 			var gaid := str(d0.get("asset", ""))
 			var gprops0: Dictionary = d0.get("props", {}) if d0.get("props", {}) is Dictionary else {}
 			var gsz0: Vector2 = AssetDecl.instance_size(cvs.manifest, gaid, gprops0, Vector2(cvs.grid.tile))
-			var ep: Vector2 = Vector2(cvs._region_sel.position + md) \
+			var ep: Vector2 = Vector2(morg) \
 				+ Vector2(float(d0.get("dx", 0.0)), float(d0.get("dy", 0.0)))
 			var gu := EntityNode.anchor_unit_of(AssetDecl.by_id(cvs.manifest, gaid))
 			var gr := Rect2(cvs.grid.to_px(ep + gu) - EntityNode.anchor_off_of(gu, gsz0), gsz0)
@@ -311,7 +314,7 @@ func _draw() -> void:
 				cvs.draw_texture_rect(gtex0, gr, false, Color(1, 1, 1, 0.6))
 			else:
 				cvs.draw_rect(gr, Color(0.6, 1.0, 0.6, 0.35), true)
-		var mpoly = cvs.grid.grid_polygon(cvs._region_sel.position + md, cvs._region_sel.end + md)
+		var mpoly = cvs.grid.grid_polygon(morg, morg + cvs._region_sel.size)
 		cvs.draw_polyline(mpoly + PackedVector2Array([mpoly[0]]), Color(0.45, 1.0, 0.75, 0.9), 2.0, true)
 	# 区域粘贴预览：各层幽灵跟随鼠标，左键落位
 	if cvs._paste_mode and not cvs._region_clip.is_empty():
@@ -319,7 +322,8 @@ func _draw() -> void:
 		# tiles = {层id: [[dx,dy,资产id,ax,ay]...]}——预览不区分层，统一原色
 		for cells2 in (cvs._region_clip.get("tiles", {}) as Dictionary).values():
 			for t in cells2:
-				var tc = org + Vector2i(int((t as Array)[0]), int((t as Array)[1]))
+				# 落点与真实粘贴同一原语（六边行错位/三角半格列）
+				var tc = cvs.grid.shift_cell(org, Vector2i(int((t as Array)[0]), int((t as Array)[1])))
 				# 按条目自己的资产 id 取纹理与切片尺寸（同上）
 				var aid3 := str((t as Array)[2])
 				var ai3: int = cvs.source_of_asset(aid3)
@@ -332,7 +336,7 @@ func _draw() -> void:
 						Rect2(Vector2(int((t as Array)[3]), int((t as Array)[4])) * Vector2(cs3), Vector2(cs3)),
 						Color(1, 1, 1, 0.5))
 		for t in cvs._region_clip.get("collision", []):
-			var cc = org + Vector2i(t[0], t[1])
+			var cc = cvs.grid.shift_cell(org, Vector2i(int(t[0]), int(t[1])))
 			cvs.draw_colored_polygon(cvs.grid.cell_polygon(cc), Color(1.0, 0.25, 0.25, 0.35))
 	# 实例幽灵：区域碎片里的实例也预览（按资产声明的实例尺寸，不只是 1 格）
 		for t in cvs._region_clip.get("ents", []):

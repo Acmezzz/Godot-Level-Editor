@@ -488,15 +488,28 @@ func neighbors(c: Vector2i) -> Array:
 	if not is_hex():
 		return [c + Vector2i(1, 0), c + Vector2i(-1, 0), c + Vector2i(0, 1), c + Vector2i(0, -1)]
 	var odd := posmod(c.y, 2) == 1
-	# odd-r：奇行整体右移半格，两行之间的邻格对随奇偶切换
+	# odd-r：奇行整体右移半格，两行之间的邻格对随奇偶切换：
+	# 奇行上/下邻 = (+1,∓1) 与 (0,∓1)；偶行 = (0,∓1) 与 (-1,∓1)。
+	# 这里必须写成「同行两格 + 斜向两对」共 6 个，不能拿 (0,±1) 顶替斜向那对（会重复且漏边）。
+	var d := 1 if odd else -1
 	return [
 		c + Vector2i(1, 0), c + Vector2i(-1, 0),
 		c + Vector2i(0, -1), c + Vector2i(0, 1),
-		c + Vector2i(1 if odd else 0, -1), c + Vector2i(1 if odd else 0, 1),
+		c + Vector2i(d, -1), c + Vector2i(d, 1),
 	]
 
-## 「上邻」（顶面策略用）：正交/等距 = (0,-1)；六边 = 视觉上方两格（奇偶各一）
+## 「上邻」（顶面策略用）：正交/等距 = (0,-1)；六边 = 视觉上方两格（奇偶各一）；
+## 三角 = 真实邻格里行号更小的那些（三角没有 (0,-1) 这种邻居，不能用假邻接判顶面）。
 func up_neighbors(c: Vector2i) -> Array:
+	if is_tri():
+		var up: Array = []
+		var same: Array = []
+		for nb: Vector2i in neighbors_tri(c.x, c.y):
+			if nb.y < c.y:
+				up.append(nb)
+			elif nb.y == c.y and nb.x > c.x:
+				same.append(nb)
+		return up if not up.is_empty() else same
 	if not is_hex():
 		return [c + Vector2i(0, -1)]
 	var odd := posmod(c.y, 2) == 1

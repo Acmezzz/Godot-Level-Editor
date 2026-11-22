@@ -174,8 +174,12 @@ static func _validate_layers(meta: Dictionary, issues: Array[Dictionary]) -> Dic
 				and ((loff as Array)[0] is int or (loff as Array)[0] is float) \
 				and ((loff as Array)[1] is int or (loff as Array)[1] is float)):
 			_add(issues, "error", p + ".offset", "must be [x, y] numbers")
-		if ldef.has("scale") and not (ldef.scale is int or ldef.scale is float):
-			_add(issues, "error", p + ".scale", "must be a number")
+		if ldef.has("scale"):
+			if not (ldef.scale is int or ldef.scale is float):
+				_add(issues, "error", p + ".scale", "must be a number")
+			elif float(ldef.scale) <= 0.0:
+				# 非正缩放 = 层塌成点/镜像翻转：坐标换算的逆变换退化（除零），必须拦
+				_add(issues, "error", p + ".scale", "must be > 0")
 		# 层混合模式（v7）：缺省 mix（省略）；add/mul 写盘
 		if ldef.has("blend") and not (str(ldef.blend) in ["mix", "add", "mul"]):
 			_add(issues, "error", p + ".blend", "must be \"mix\" / \"add\" / \"mul\"")

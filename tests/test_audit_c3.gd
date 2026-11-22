@@ -297,11 +297,12 @@ func test_clear_write_failure_not_counted() -> void:
 	var fixes: Array = []
 	for e in ProjectAudit._ref_checks(d, m, "m1"):
 		fixes.append((e as Dictionary).get("fix"))
-	# 注入写失败：目标 .tmp 变成目录 → 原子替换必失败
-	DirAccess.make_dir_recursive_absolute(str(m._maps_dir).path_join("m1.json.tmp"))
+	# 注入写失败：写盘注入口命中该图（唯一临时名之后无法再靠占用 .tmp 路径）
+	MapStore.test_fail_prefix = str(m._maps_dir).path_join("m1.json")
 	var res := ProjectAudit.apply_ref_fixes(m, "m1", fixes, d)
 	eq(int(res.get("erased", 0)), 2, "内存里两条都清")
 	ok(not MapStore.write(m, "m1", d), "写盘被注入失败")
+	MapStore.test_fail_prefix = ""
 	var disk := MapStore.read(m, "m1")
 	for o in (disk.objects as Array):
 		if str((o as Dictionary).get("code", "")) == "A1":
@@ -405,9 +406,14 @@ func test_asset_usage_reports_unreadable() -> void:
 	eq((u.get("by_map", {}) as Dictionary).size(), 1, "统计到一张图")
 	eq(((u.get("by_map", {}) as Dictionary)["m1"] as Array).size(), 1, "统计到一个实例")
 	ok(not bool(u.get("incomplete", false)), "全部可读 = 完整")
-	# 当前图用画布行覆盖磁盘
+	# 当前图 = 磁盘行 ∪ 画布行（V4 P0-4：磁盘正式文件里的绑定不能因画布解绑而消失）
 	u = ProjectAudit.asset_usage(m, "door", "m1", [{"id": "D9", "x": 9, "y": 9}])
-	eq(str(((u.get("by_map", {}) as Dictionary)["m1"] as Array)[0].get("id", "")), "D9", "当前图以画布为准")
+	var cur_rows: Array = (u.get("by_map", {}) as Dictionary)["m1"]
+	var ids: Array = []
+	for r in cur_rows:
+		ids.append(str((r as Dictionary).get("id", "")))
+	ok(ids.has("D1"), "当前图磁盘行保留：%s" % str(ids))
+	ok(ids.has("D9"), "当前图画布行并入：%s" % str(ids))
 	# 注入坏图
 	var f := FileAccess.open(str(m._maps_dir).path_join("bad.json"), FileAccess.WRITE)
 	f.store_string("{oops")

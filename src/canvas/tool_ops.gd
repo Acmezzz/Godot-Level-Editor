@@ -342,8 +342,8 @@ func _collision_wanted(c: Vector2i, strategy: String, src_idx: int) -> bool:
 					return false
 			return true
 		"outline":
-			# 轮廓 = 任一真实邻格为空（六边按六邻，E16）
-			for nb: Vector2i in cvs.grid.neighbors(c):
+			# 轮廓 = 任一真实邻格为空（六边按六邻、三角按三邻；E16/B3）
+			for nb: Vector2i in cvs.grid.neighbors_any(c):
 				if not cvs._has_terrain_in(nb, src_idx):
 					return true
 			return false

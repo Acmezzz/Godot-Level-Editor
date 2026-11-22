@@ -126,11 +126,10 @@ func apply_map_size(nw: int, nh: int, pop: PopupPanel, proj := "") -> void:
 	d["meta"]["h"] = nh
 	# 逐图投影（B1）：空图可直接选；带内容的地图投影已冻结（弹窗里也禁用），
 	# 这里再加一道守卫——数据路径不允许绕过内容检查。
+	# 显式写入（含 orthogonal）：删键会让解析回落到项目缺省投影，
+	# 项目里有 isometric/hexagonal 资产时「正交」就丢了（V4 P1）。
 	if proj != "" and not app.canvas.has_content():
-		if proj == "orthogonal":
-			d["meta"].erase("gridProjection")
-		else:
-			d["meta"]["gridProjection"] = proj
+		d["meta"]["gridProjection"] = proj
 	await app.canvas.load_data(d, app.cur_map_name, true)
 	app.canvas._mark()
 	pop.hide()
@@ -266,6 +265,8 @@ func _run_batch_export(label: Label, btn: Button, px_per_tile: int) -> void:
 		btn.text = "取消批量导出"
 		btn.pressed.connect(cancel_cb)
 	var proj_dir := str(app.manifest.get("_dir", ""))
+	# 项目身份以 app.cur_project_dir 为准（清单 _dir 可能被同目录另一项目覆盖）
+	var proj_identity := str(app.cur_project_dir)
 	var names: Array = MapStore.list_maps(app.manifest)
 	var dir := _export_dir()
 	DirAccess.make_dir_recursive_absolute(dir)
@@ -283,7 +284,7 @@ func _run_batch_export(label: Label, btn: Button, px_per_tile: int) -> void:
 		if app == null or not is_instance_valid(app) or not is_instance_valid(label):
 			cancelled = true
 			break
-		if str(app.manifest.get("_dir", "")) != proj_dir:
+		if str(app.manifest.get("_dir", "")) != proj_dir or str(app.cur_project_dir) != proj_identity:
 			cancelled = true
 			break
 		var nm := str(names[i])
@@ -291,7 +292,15 @@ func _run_batch_export(label: Label, btn: Button, px_per_tile: int) -> void:
 			int(MapStore.project_rev)]
 		app._set_status(label.text)
 		await app.get_tree().process_frame
+		# await 之后一切外部状态都可能变：取消、窗口、项目身份逐项复验再落盘
 		if cancel.on:
+			cancelled = true
+			break
+		if app == null or not is_instance_valid(app) or not is_instance_valid(label):
+			cancelled = true
+			break
+		if app.manifest != null and (str(app.manifest.get("_dir", "")) != proj_dir \
+				or str(app.cur_project_dir) != proj_identity):
 			cancelled = true
 			break
 		var res: Dictionary = MapStore.read_path(MapStore.path_for(app.manifest, nm), app.manifest)

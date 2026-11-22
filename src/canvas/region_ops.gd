@@ -171,13 +171,12 @@ func _finish_region_move() -> void:
 		var ta := t as Array
 		var cc2: Vector2i = cvs.grid.shift_cell(Vector2i(int(ta[0]), int(ta[1])), delta)
 		if ta.size() >= 4:
-			cvs.set_collision_cell(cc2, true, str(ta[2]), str(ta[3]))
-			# 碰撞行里的游戏侧扩展键随区域一起搬：原样挂回 raw，不丢自定义字段
-			if ta.size() >= 5 and ta[4] is Dictionary and not (ta[4] as Dictionary).is_empty() \
-					and cvs._collision_meta.get(cc2, null) is Dictionary:
-				(cvs._collision_meta[cc2] as Dictionary)["raw"] = (ta[4] as Dictionary).duplicate(true)
+			# 整行搬移：raw 以源行为准（空字典也显式传入），目标格原有扩展键不保留
+			var raw_m: Dictionary = (ta[4] as Dictionary).duplicate(true) \
+				if ta.size() >= 5 and ta[4] is Dictionary else {}
+			cvs.set_collision_cell(cc2, true, str(ta[2]), str(ta[3]), raw_m)
 		else:
-			cvs.set_collision_cell(cc2, true)
+			cvs.set_collision_cell(cc2, true, "solid", "", {})
 	# 实例：区块内的实例原地平移（保持身份码与层归属，不重建节点）。
 	# 平移量按各实例所在层逆变换（E02）：跨层组的层偏移/缩放不同，不能共用一个世界位移。
 	for e in cvs.ents_all():
@@ -419,13 +418,12 @@ func _paste_region(origin: Vector2i) -> void:
 	for t in cvs._region_clip.get("collision", []):
 		var cc: Vector2i = cvs.grid.shift_cell(Vector2i(int(t[0]), int(t[1])), origin)
 		if (t as Array).size() >= 4:
-			cvs.set_collision_cell(cc, true, str(t[2]), str(t[3]))
-			# 剪贴板第 5 位 raw（游戏侧扩展键）：粘贴沿用，不靠类型/形状白名单重建
-			if (t as Array).size() >= 5 and t[4] is Dictionary and not (t[4] as Dictionary).is_empty() \
-					and cvs._collision_meta.get(cc, null) is Dictionary:
-				(cvs._collision_meta[cc] as Dictionary)["raw"] = (t[4] as Dictionary).duplicate(true)
+			# 整行粘贴：扩展键以剪贴板行为准（第 5 位，缺省 = 无扩展键）
+			var raw_p: Dictionary = (t[4] as Dictionary).duplicate(true) \
+				if (t as Array).size() >= 5 and t[4] is Dictionary else {}
+			cvs.set_collision_cell(cc, true, str(t[2]), str(t[3]), raw_p)
 		else:
-			cvs.set_collision_cell(cc, true)
+			cvs.set_collision_cell(cc, true, "solid", "", {})
 	# 行与剪贴板条目一一对应（ClonePlan 不跳行）：对账下标按**剪贴板行序**推进（R11：跳过的实例不消费计划项）。
 	var pasted: Array = []
 	var ridx := 0

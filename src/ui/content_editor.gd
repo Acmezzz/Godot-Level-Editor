@@ -629,7 +629,7 @@ func _form_sig_of(spr: EntityNode) -> String:
 	var cid := str(f.get("content", ""))
 	var data := {}
 	if cid != "":
-		var st = _form._staged.get(cid, null)
+		var st = _form._staged_get(fn_id, cid)
 		data = (st as Dictionary).get("data", {}) if st is Dictionary \
 			else (_form._content_read(fn_id, cid) if fn_id != "" else {})
 	# 只列影响表单呈现的量：实例身份/类型/字段值、绑定表、展开的功能、内容数据、定位高亮

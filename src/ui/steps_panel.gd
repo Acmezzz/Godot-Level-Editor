@@ -32,11 +32,21 @@ func _init(h) -> void:
 ## 同名转发属性（读写穿透到宿主，保住搬动文本零改动）
 var manifest: Dictionary:
 	get: return host.manifest
-var _pending_commits: Array:
-	get: return host._pending_commits
+## 本面板自己的待提交控件（步骤字段）。不能转发到宿主数组：换步骤/重建表单时清空
+## 本面板的待提交项，会把主表单还没冲刷的连续控件值一起丢掉（V4 P1）。
+var _pending_commits: Array = []
+
+## 冲刷本面板待提交值（换步骤/切时间轴点选前调用；控件闭包绑定的是当时的下标）。
+func _flush_pending() -> void:
+	var pend := _pending_commits.duplicate()
+	_pending_commits.clear()
+	for cb in pend:
+		if cb is Callable and (cb as Callable).is_valid():
+			(cb as Callable).call()
 
 ## 同名包装方法（真实实现经 host 转发）
 func commit() -> bool:
+	_flush_pending()
 	return host.commit()
 func _current_fns() -> Array:
 	return host._current_fns()
@@ -493,7 +503,7 @@ func _steps_timebase() -> String:
 func _steps_pick_tl(idx: int) -> void:
 	# 换选中前提交旧步骤的待提交控件值（同 _steps_pick）
 	host.commit_fields()
-	_pending_commits.clear()
+	_flush_pending()
 	_steps_sel = idx
 	if _steps_tl != null and is_instance_valid(_steps_tl):
 		_steps_tl.sel = idx
@@ -722,7 +732,7 @@ func _steps_row(si: int, st: Dictionary, _pool: Dictionary) -> Control:
 func _steps_pick(si: int) -> void:
 	# 换选中前先提交当前表单控件：SpinBox 之类的待提交值属于旧步骤下标
 	host.commit_fields()
-	_pending_commits.clear()
+	_flush_pending()
 	_steps_sel = si
 	_rebuild_steps_all()
 

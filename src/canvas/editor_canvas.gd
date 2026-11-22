@@ -500,12 +500,14 @@ func set_thumbs(t: Dictionary) -> void:
 
 ## 出生点：画布上的可拖对象。
 ## 命中容差 0.6 格——它只有一个绿十字那么大，严格点中几乎不可能。
+## 只按出生点的**实际位置**判命中：不能再拿「光标所在格的中心」当出生点比较，
+## 那样碰撞层上任何地方都算点中（V4 P1）。
 func _on_spawn(pos: Vector2) -> bool:
 	if spawn == null or not is_instance_valid(spawn):
 		return false
-	var lp := root_cell(pos)
-	return pos.distance_to(to_layer_world(collision_index(), grid.cell_center_px(lp))) <= grid.cell_max() * 0.6 \
-		or pos.distance_to(spawn.get_global_position()) <= grid.cell_max() * 0.6
+	if not is_layer_visible(collision_index()):
+		return false   # 碰撞层隐藏时出生点不可见，也不该被拖动
+	return pos.distance_to(spawn.get_global_position()) <= grid.cell_max() * 0.6
 
 ## 拖动出生点：位置对齐到格中心（数据只存格坐标，浮点位置保存会被取整回去）
 func _drag_spawn_to(pos: Vector2) -> void:
@@ -591,6 +593,8 @@ func _map_projection() -> String:
 
 ## 旧图冻结投影（B1）：地图缺 meta.gridProjection 时，把当前生效投影写进内存 meta。
 ## 只改内存（随首次保存落盘），不标脏——打开旧图不应该因为读一眼就变脏。
+## 正交只在项目缺省也是正交时才算冗余：项目按 isometric/hexagonal 解析时，
+## 「这张图是正交」必须显式写下来，否则下次解析又回落到项目投影（V4 P1）。
 func _freeze_projection() -> void:
 	if not (map_data is Dictionary):
 		return
@@ -598,8 +602,8 @@ func _freeze_projection() -> void:
 	if meta.has("gridProjection"):
 		return
 	var proj := _map_projection()
-	if proj == "orthogonal":
-		return   # 正交是缺省，不写冗余键
+	if proj == "orthogonal" and GridSpaceScript.project_projection(manifest) == "orthogonal":
+		return   # 与缺省解析一致，不写冗余键
 	meta["gridProjection"] = proj
 	map_data["meta"] = meta
 
@@ -701,13 +705,19 @@ signal tool_requested(tool: String, layer: int)
 
 ## 吸管：从顶层向下取光标格瓦片为当前笔刷；吸到哪层就切到哪层。
 ## 经 tool_requested 信号走 app._apply_state 单一写入口切层，保持左栏与状态同步。
+## V4 P1：拾取格按**各层自己的**局部空间换算（层偏移/缩放不同），隐藏层不参与，
+## 并真正切到「涂刷」工具——传出的工具名以前被忽略，吸管状态会留在原地。
 func _pick_tile(pos: Vector2) -> void:
 	if map_root == null or not is_instance_valid(map_root) or layer_tiles.is_empty():
 		_hint("无地图：先新建或打开一张地图")
 		return
-	var c := _cell_of(pos)
 	for li in range(layer_count() - 1, -1, -1):
+		if not is_layer_visible(li):
+			continue
 		var tn: TileMapLayer = layer_tiles[li]
+		if tn == null or not is_instance_valid(tn):
+			continue
+		var c: Vector2i = grid.pick_cell(to_layer_local(li, pos))
 		var ac := tn.get_cell_atlas_coords(c)
 		if ac == Vector2i(-1, -1):
 			continue
@@ -729,14 +739,14 @@ func _fit_view() -> void:
 		_hint("无地图：先新建或打开一张地图")
 		return
 	# 用第一个非空矩形做种子再合并——Rect2i() 以 (0,0) 为种子会让 union 恒含原点，
-	# 内容不贴原点时 Home 的中心与缩放全错
-	var used := Rect2i()
-	var seed_set := {"has": false}
+	# 内容不贴原点时 Home 的中心与缩放全错。
+	# 累加器放字典里：lambda 按值捕获局部变量，直接写 used 不会回传给外层（Home 恒拟合空范围）。
+	var acc := {"has": false, "rect": Rect2i()}
 	var take := func(r: Rect2i):
 		if r.size == Vector2i.ZERO:
 			return
-		used = r if not (seed_set.has as bool) else used.merge(r)
-		seed_set["has"] = true
+		acc["rect"] = r if not bool(acc["has"]) else (acc["rect"] as Rect2i).merge(r)
+		acc["has"] = true
 	for li in layer_tiles.size():
 		if is_layer_visible(li):
 			take.call((layer_tiles[li] as TileMapLayer).get_used_rect())
@@ -752,8 +762,7 @@ func _fit_view() -> void:
 			r = layer_xform(li) * r
 		take.call(Rect2i(floori(r.position.x / float(maxi(tile_w, 1))), floori(r.position.y / float(maxi(tile_h, 1))),
 			maxi(1, ceili(r.size.x / float(maxi(tile_w, 1)))), maxi(1, ceili(r.size.y / float(maxi(tile_h, 1))))))
-	if not seed_set.has:
-		used = Rect2i(0, 0, 10, 10)
+	var used: Rect2i = (acc["rect"] as Rect2i) if bool(acc["has"]) else Rect2i(0, 0, 10, 10)
 	cam_pos = grid.cell_center_px(Vector2i(used.get_center()))
 	var vp := get_viewport_rect().size
 	# 视野拟合用地图像素包围盒（等距/六边 = 多边形包围盒，不是格子数×格宽）
@@ -1148,12 +1157,18 @@ func _collision_tileset() -> TileSet:
 ## 碰撞格统一写入口——涂刷/擦除/矩形/粘贴/自动生成全走这里，类型元数据跟着走。
 ## solid+矩形不记 meta（缺省值零冗余）；其余记 {type, shape}；擦除连 meta 一起清。
 ## R21：磁盘碰撞行里的未知键（游戏侧自定义）挂在 raw 上，重涂不清、重建时原样带回。
-func set_collision_cell(c: Vector2i, on: bool, type := "solid", shape := "") -> void:
+## raw = null（缺省）= 重涂语义，保留本格原有扩展键；raw 为字典 = 整行搬移/粘贴语义，
+## 目标格扩展键以传入值为准（空字典 = 该行本来就没有扩展键）。V4 P0-7。
+func set_collision_cell(c: Vector2i, on: bool, type := "solid", shape := "", raw = null) -> void:
 	if on:
 		collision.set_cell(c, 0, INVISIBLE_CELL)
-		var prev = _collision_meta.get(c, null)
-		var keep_raw: Dictionary = (prev as Dictionary).get("raw", {}) \
-			if prev is Dictionary and ((prev as Dictionary).get("raw", null) is Dictionary) else {}
+		var keep_raw: Dictionary = {}
+		if raw is Dictionary:
+			keep_raw = (raw as Dictionary).duplicate(true)
+		else:
+			var prev = _collision_meta.get(c, null)
+			if prev is Dictionary and (prev as Dictionary).get("raw", null) is Dictionary:
+				keep_raw = (prev as Dictionary)["raw"]
 		if type != "solid" or shape != "" or not keep_raw.is_empty():
 			_collision_meta[c] = {"type": type, "shape": shape}
 			if not keep_raw.is_empty():
@@ -1293,6 +1308,10 @@ var gesture: int = Gesture.NONE
 var gesture_button := 0
 
 func begin_gesture(g: int, button := 0) -> void:
+	# 起手前结算未结束的笔画（V4 P1）：中键平移/框选/拖实例会在涂刷笔画中途顶掉手势，
+	# 不结算的话已涂的格既不在撤销栈里、也不再属于任何笔画，Ctrl+Z 撤不回去。
+	if g != Gesture.PAINT and g != Gesture.ERASE:
+		_undo_history_ctrl.stroke_end()
 	gesture = g
 	gesture_button = button
 

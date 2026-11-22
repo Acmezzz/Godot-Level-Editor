@@ -297,8 +297,16 @@ static func _rotate_history(path: String) -> bool:
 static func write_json(path: String, data: Dictionary) -> bool:
 	return write_text(path, JSON.stringify(data, "\t"))
 
+## 测试注入（生产恒为空）：命中前缀的写盘直接失败。唯一临时名上线后，
+## 「占用固定 .tmp 路径」已无法稳定注入写失败，写失败用例改走这里。
+static var test_fail_prefix := ""
+
 static func write_text(path: String, text: String) -> bool:
-	var tmp := path + ".tmp"
+	if test_fail_prefix != "" and path.begins_with(test_fail_prefix):
+		return false
+	# V4 P0-3：唯一临时名。固定后缀会让地图/清单/内容/历史同时写同目录时互相截断，
+	# 且残留的旧 .tmp 可能被当成合法中间态。
+	var tmp := path + ".tmp-" + str(Time.get_ticks_usec()) + "-" + str(randi() % 100000)
 	if not _write_bytes(tmp, text.to_utf8_buffer()):
 		return false
 	var err := DirAccess.rename_absolute(tmp, path)

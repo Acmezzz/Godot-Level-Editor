@@ -10,6 +10,26 @@ extends RefCounted
 ##      TilesetCache.set_cell_alt 会自动补建，所以这里只在「目标图集没有该切片」时判冲突）。
 ## 通过后由调用方一次撤销 + 逐格写（写盘走既有 extract/撤销栈）。
 
+## 选区里出现过的瓦片资产 id（去重，按首见顺序）。入口用它列出「源资产」候选——
+## 不能再用 collect(cvs, sel, "") 反推：collect 的 src_asset 为空时按契约返回空表。
+static func sources_in(cvs, sel: Rect2i) -> Array:
+	var out: Array = []
+	if sel.size.x <= 0 or sel.size.y <= 0:
+		return out
+	var seen := {}
+	for li in cvs.layer_tiles.size():
+		var layer: TileMapLayer = cvs.layer_tiles[li]
+		if layer == null or not is_instance_valid(layer):
+			continue
+		for c in layer.get_used_cells():
+			if not sel.has_point(c):
+				continue
+			var aid := str(cvs.asset_of_source(layer.get_cell_source_id(c)))
+			if aid != "" and not seen.has(aid):
+				seen[aid] = true
+				out.append(aid)
+	return out
+
 ## 扫描选区：只收匹配 src_asset（且给定 src_cell 时匹配该切片）的瓦片格。
 ## 返回 [{c, layer: 层id, src: TileSet source_id, atlas, alt}]——供计划与预览共用。
 static func collect(cvs, sel: Rect2i, src_asset: String, src_cell := Vector2i(-1, -1)) -> Array:

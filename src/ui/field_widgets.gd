@@ -372,6 +372,8 @@ static func _build_array(decl: Dictionary, items: Array, on_set: Callable,
 	rows_box.add_theme_constant_override("separation", 4)
 	wrap.add_child(rows_box)
 	var rows: Array = []
+	# 行工具共享可变状态（字典按引用捕获）；必须在这里**填好**再建行——
+	# 以前是空字典，↑/↓/复制 拿到空 rows/box，全部静默无效（V4 P1）。
 	var ctx := {}
 	var collect := func() -> Array:
 		var out: Array = []
@@ -411,6 +413,10 @@ static func _build_array(decl: Dictionary, items: Array, on_set: Callable,
 			rows_box.add_child(line)
 			rows_box.move_child(line, at)
 		r["line"] = line
+	ctx["rows"] = rows
+	ctx["box"] = rows_box
+	ctx["done"] = done
+	ctx["add"] = add_row
 	for v in items:
 		add_row.call(v)
 	var add := Button.new()

@@ -75,7 +75,7 @@ func undo() -> bool:
 	if cvs.doc_busy or _restoring or cvs.map_root == null or not is_instance_valid(cvs.map_root) or undo_stack.is_empty():
 		return false
 	if _stroke_open:
-		stroke_cancel()   # 笔画进行中撤销：未定格的记录作废，只撤销已入栈条目
+		stroke_end()   # 笔画进行中撤销：先把已涂格定格成差量条目，再由下面的 undo 一并回滚
 	# 手势中途撤销（拖实例时按 Ctrl+Z）：先把预览值归位，否则差量写回后松手会把预览值再写上去
 	cvs.cancel_preview_gesture()
 	_restoring = true
@@ -435,20 +435,9 @@ func _restore_delta(entry: Dictionary, forward: bool) -> void:
 				cvs.set_collision_cell(c, false)
 			else:
 				var vd: Dictionary = v
-				cvs.set_collision_cell(c, true, str(vd.get("type", "solid")), str(vd.get("shape", "")))
-				# raw 精确覆写：恢复态的 raw 可能为空，不能沿用当前格上的旧 raw
+				# raw 精确覆写：恢复态的 raw 可能为空，不能沿用当前格上的旧 raw（P0-7 新签名）
 				var raw: Dictionary = vd.get("raw", {}) if vd.get("raw", null) is Dictionary else {}
-				if raw.is_empty():
-					if cvs._collision_meta.get(c, null) is Dictionary:
-						var md: Dictionary = cvs._collision_meta[c]
-						md.erase("raw")
-						if md.is_empty():
-							cvs._collision_meta.erase(c)
-				else:
-					if cvs._collision_meta.get(c, null) is Dictionary:
-						(cvs._collision_meta[c] as Dictionary)["raw"] = raw
-					else:
-						cvs._collision_meta[c] = {"raw": raw}
+				cvs.set_collision_cell(c, true, str(vd.get("type", "solid")), str(vd.get("shape", "")), raw)
 	# 差量恢复不走 load_data 重建：P01 精细重画标记按改动种类逐项打（瓦片/碰撞）。
 	# 阶段三：按层失效——只重画真正被改到的那些层（一笔只画一层是常态），
 	# 也不再补一刀全量 _mark：窄入口各自已抬 map_rev / emit modified。

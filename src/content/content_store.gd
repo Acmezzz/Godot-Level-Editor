@@ -169,10 +169,14 @@ static func write(m: Dictionary, kind: String, id: String, data: Dictionary, all
 ## 只看 mtime+size 会漏掉同秒同长度的外部编辑，摘要不会。
 ## base_digest 为空（新建/无基线）时行为与 write 相同。
 static func write_ex(m: Dictionary, kind: String, id: String, data: Dictionary,
-		base_digest: String, allow_repair := false) -> Dictionary:
+		base_digest: String, allow_repair := false, expect_absent := false) -> Dictionary:
 	var path := path_for(m, kind, id)
 	if path == "":
 		return {"ok": false, "conflict": false}
+	# V4 P0-1：create-only 写。新建内容在发号时目标本不存在；若提交期间别处创建了同路径
+	# 文件，必须报冲突而不是覆盖（base_digest 为空只能表达「无基线」，不能表达「应不存在」）。
+	if expect_absent and FileAccess.file_exists(path):
+		return {"ok": false, "conflict": true, "reason": "target appeared"}
 	if base_digest != "" and FileAccess.file_exists(path):
 		if file_digest(path) != base_digest:
 			return {"ok": false, "conflict": true}
@@ -186,6 +190,7 @@ static func write_ex(m: Dictionary, kind: String, id: String, data: Dictionary,
 		Store.rotate_history(path)
 	var payload := data.duplicate(true)
 	payload["id"] = id
+	# 基线存在（替换已存在文件）的写入失败要可诊断；新建按 create-only 语义已在上面拦截。
 	_cache.erase(path)   # D3：写后失效（同秒重写也不吃脏缓存）
 	return {"ok": Store.write_json(path, payload), "conflict": false}
 

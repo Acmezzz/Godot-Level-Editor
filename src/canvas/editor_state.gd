@@ -8,9 +8,10 @@ var _brush_before_collision := ""   # 进碰撞层前的 place_kind；"" = 还�
 
 func _init(host) -> void:
 	app = host
-## 唯一写入口。没有工具概念——place_kind（瓦片/实体）即画笔语义。
-## 第一个参数保留只为兼容吸管的 tool_requested(tool, layer) 信号，值被忽略。
-func _apply_state(_tool := "", layer := -1) -> void:
+## 唯一写入口。place_kind（瓦片/实体）即画笔语义。
+## tool 只为吸管服务：吸到瓦片后必须真正回到「涂刷」语义（以前 tool 被忽略，
+## 吸管停在碰撞层/摆放语义里，吸到的笔刷落不下去）。层切换规则与 _on_tile_pick 一致。
+func _apply_state(tool := "", layer := -1) -> void:
 	if layer >= 0 and layer != app.canvas.active_layer:
 		var ci: int = app.canvas.collision_index()
 		if layer == ci:
@@ -21,6 +22,11 @@ func _apply_state(_tool := "", layer := -1) -> void:
 			_brush_before_collision = ""
 		app.canvas.active_layer = layer
 		app._set_status("已切到「%s」图层：%s" % [app._layer_label(layer), _gesture_hint(layer)])
+	if tool == "paint" and app.map_loaded:
+		if app.canvas.active_layer == app.canvas.collision_index():
+			remember_brush("tiles")   # 停在碰撞层：只登记待恢复笔刷（A1）
+		else:
+			app.canvas.place_kind = "tiles"
 	_sync_ui()
 
 ## 记住「离开碰撞层后该恢复的笔刷」（左栏在碰撞层里点了资产类别时调用）。

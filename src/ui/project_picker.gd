@@ -182,7 +182,11 @@ func _pick_project() -> void:
 	var fd := FileDialog.new()
 	fd.file_mode = FileDialog.FILE_MODE_OPEN_DIR
 	fd.access = FileDialog.ACCESS_FILESYSTEM
-	fd.dir_selected.connect(_on_project_picked)
+	# 选完/取消都释放：否则每次点「打开项目」都会留下一个隐藏对话框
+	fd.dir_selected.connect(func(dir: String):
+		fd.queue_free()
+		_on_project_picked(dir))
+	fd.canceled.connect(func(): fd.queue_free())
 	add_child(fd)
 	fd.popup_centered(Vector2i(700, 500))
 

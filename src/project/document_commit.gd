@@ -20,6 +20,8 @@ func prepare(operation: Dictionary, snap: Dictionary) -> Dictionary:
 		targets.append({"op": "write", "kind": "manifest", "id": "",
 			"path": mpath, "baseline": Recovery.digest(mpath), "expected": ""})
 	# 2) 内容目标：prepare 时抓基线摘要，apply 逐条写前复验（§7.1 accepted_state）
+	#    V4 P0-1：新内容的目标必须声明「预期不存在」——不能只靠空摘要表达，
+	#    否则提交期间出现的同路径文件会被当成合法基线并被覆盖。
 	for row in (snap.get("contents", []) as Array):
 		var r: Dictionary = row
 		var cp := ContentStore.path_for(m, str(r.get("fn_id", "")), str(r.get("cid", "")))
@@ -27,7 +29,8 @@ func prepare(operation: Dictionary, snap: Dictionary) -> Dictionary:
 		targets.append({"op": "write", "kind": "content", "id": str(r.get("cid", "")),
 			"path": cp, "baseline": Recovery.digest(cp) if exists else "", "expected": "",
 			"expect_absent": not exists,
-			"payload": {"fn_id": str(r.get("fn_id", "")), "cid": str(r.get("cid", "")), "data": r.get("data", {})}})
+			"payload": {"fn_id": str(r.get("fn_id", "")), "cid": str(r.get("cid", "")),
+				"data": r.get("data", {}), "expect_absent": not exists}})
 	# 3) 地图（只脏图入计划：干净图没有待写项；写前外部改动确认在 hooks.save_map 里）
 	if bool(operation.get("map_dirty", false)) and str(operation.get("map_path", "")) != "":
 		targets.append({"op": "write", "kind": "map", "id": str(operation.get("map_name", "")),
@@ -73,7 +76,10 @@ func apply(plan: Dictionary, hooks: Dictionary) -> Dictionary:
 			var conflict := false
 			if bool(tgt.get("expect_absent", false)):
 				conflict = exists_now
-			elif exists_now:
+			elif not exists_now:
+				# 计划时存在的目标在提交期间消失：不能按新文件静默重建（原内容已不由本计划拥有）
+				conflict = str(tgt.get("baseline", "")) != ""
+			else:
 				conflict = Recovery.digest(path) != str(tgt.get("baseline", ""))
 			if conflict:
 				conflicts.append({"path": path, "kind": kind,
@@ -93,6 +99,10 @@ func apply(plan: Dictionary, hooks: Dictionary) -> Dictionary:
 			if st == "failed":
 				return {"status": "failed", "written": written, "conflicts": [],
 					"error": "暂存内容写盘失败：%s" % str(tgt.get("id", "")), "journal": log_path}
+			if st == "conflict":
+				return {"status": "conflict", "written": written, "conflicts": [{"path": path,
+					"kind": kind, "message": "内容目标在提交期间被创建或改动：%s" % path}],
+					"receipt": {}, "journal": log_path}
 			if st == "dropped":
 				continue   # 绑定复核丢弃：不写盘、不回填日志（R02），提交继续
 			ok = true
