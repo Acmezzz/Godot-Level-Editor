@@ -130,10 +130,9 @@
 - [ ] 以 `[1,2,"AB23",0,0,5]` 做读写回环。校验接受有限整数值 `5.0`，拒绝 `5.5`、`-1`、`8`。原始文档先检查 `version == 7` 和退役键，写入和单图导出复用同一校验。缺素材时保留原始记录，显示受影响项并禁止覆盖直至完整重载。
 - [ ] 当前文档记录 `{project_root, path, map_code, generation}`。菜单捕获真实路径，打开项目外地图走导入到未占用目标。新图和首次持久化统一调用 `MapStore.ensure_code()` 的项目占码分配逻辑。检测重复码时列出全部路径，引用解析拒绝猜测。
 - [ ] 用内容 ID 与控件所属表单版本收集脏值。读取当前聚焦文本，保留真实旧值。仅打开、切换和显示默认值不创建内容。`ContentStore` 增加严格读取结果 `{status, data, error}`，状态为 `ok/missing/invalid`，命中缓存和首次读都返回副本。损坏不覆盖，只有显式修复可更新经确认的身份字段。
-- [ ] 以同一工作副本提交表单和步骤。`commit_document(reason: String) -> Dictionary` 返回 `{status, written, error}`。`status` 取 `ok/staged/cancelled/failed`。`field_edit` 可写已有绑定的内容。涉及新内容、补码或新绑定时返回 `staged`，等待正式保存或试玩。正式提交先结束或取消画布手势，再冻结文档及基线，校验待写项，按清单、内容、地图顺序写入。写入失败时停止，并保留已写范围和待写 ID，供 A3 恢复。
-  - 已有：`src/ui/map_file.gd:637` `commit_document(reason, dry_run)` 返回 `{status, written, error, pending}`，全局唯一写序（清单 → 内容 → 地图，失败即停、保留 `written` 与 `_pending_targets()`）；`dry_run=true` 返回 `staged` 且不写盘；`field_edit` 走 `content_form._content_write`（带 `base_digest` 冲突检测）。
-  - 本次补：Ctrl+S / 地图菜单「保存」原来只调 `on_save()` 直接写地图——有暂存内容时地图会先落盘并带着尚未写出的内容 ID。新增 `map_file.save_all()`（内部走 `commit_document("保存")`），`app._on_save` 改用它；无地图时仍保留原提示。
-  - 缺：`staged` 目前只在 `dry_run` 下产生，没有「表单改动后先问要不要正式保存」的界面消费方。
+- [x] 以同一工作副本提交表单和步骤。`commit_document(reason: String) -> Dictionary` 返回 `{status, written, error}`。`status` 取 `ok/staged/cancelled/failed`。`field_edit` 可写已有绑定的内容。涉及新内容、补码或新绑定时返回 `staged`，等待正式保存或试玩。正式提交先结束或取消画布手势，再冻结文档及基线，校验待写项，按清单、内容、地图顺序写入。写入失败时停止，并保留已写范围和待写 ID，供 A3 恢复。
+  - 实现：`src/ui/map_file.gd` `commit_document(reason, dry_run)` 返回 `{status, written, error, pending}`，全局唯一写序（清单 → 内容 → 地图，失败即停、保留 `written` 与 `_pending_targets()`）；开头 `end_gesture()` + `doc_busy` 冻结撤销；`field_edit` 走 `content_form._content_write`（带基线摘要冲突检测）。
+  - `staged` 的生产级消费方：`save_all()` 先 `commit_document("保存", true)` 盘点，有暂存内容/补码/脏地图时弹确认框列出「这次会写哪些」，取消则一个文件都不写（`map_file.gd` `save_all`）。Ctrl+S / 地图菜单「保存」都走它。
 - [ ] 同一文档串行处理提交、切图、退出与撤销。保存确认及写入期间暂停该文档的撤销和重做。每次等待后核对文档代次，画布重建成功且仍属同一请求才发布图名、路径和选中状态。取消、失败和部分成功后，各面板统一按未写项显示脏状态。回填控件时抑制变更信号。
 - [ ] 逐个注入清单、内容、地图写失败，确认后续步骤没执行，已落盘文件可查，同 ID 可重试。验证同名外部图、双击切图、空表单按保存和聚焦文本直接保存。写前按实际目标文件的内容摘要比对打开或上次保存的基线，复现同秒同长度外部改动也须提示。试玩只收到成功提交的项目内路径。
 

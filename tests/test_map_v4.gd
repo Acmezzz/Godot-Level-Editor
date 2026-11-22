@@ -187,3 +187,30 @@ func test_grid_projection_key() -> void:
 	d3.meta["gridProjection"] = "isometric"
 	eq(_errs(d3).size(), 0, "等距投影合法")
 	ok(_errs(d3).size() == 0, "缺键不报错（沿用项目解析）")
+
+## 可选键保存前后对照（§4）：gridProjection / gridTopology / gridBasis 经
+## JSON 序列化 + 写盘 + 读回后逐字节保持；缺键仍缺省；非法值在读入侧被拒。
+func test_optional_grid_keys_survive_roundtrip() -> void:
+	var d := Store.new_map("opt", 20, 12, "isometric", "triangles")
+	d.meta["gridBasis"] = [[32, 8], [0, 24]]
+	var text := JSON.stringify(d)
+	var back: Dictionary = Store.decode_text(text)
+	ok(bool(back.get("ok", false)), "带三个可选键的文档可读回")
+	var bd: Dictionary = back.get("data", {})
+	eq(str((bd.meta as Dictionary).get("gridProjection", "")), "isometric", "gridProjection 读回一致")
+	eq(str((bd.meta as Dictionary).get("gridTopology", "")), "triangles", "gridTopology 读回一致")
+	# JSON 数字都是 float：等值即可（与瓦片 alt 的 5.0 同一约定）
+	var basis_back: Array = (bd.meta as Dictionary).get("gridBasis", [])
+	eq(basis_back.size(), 2, "gridBasis 两行读回")
+	ok(absf(float((basis_back[0] as Array)[0]) - 32.0) < 0.001
+		and absf(float((basis_back[0] as Array)[1]) - 8.0) < 0.001, "u = (32,8) 读回一致")
+	ok(absf(float((basis_back[1] as Array)[0])) < 0.001
+		and absf(float((basis_back[1] as Array)[1]) - 24.0) < 0.001, "v = (0,24) 读回一致")
+	# 落盘再读：序列化结果必须与内存一致（写盘不丢可选键）
+	var plain := Store.new_map("plain", 20, 12)
+	ok(not (plain.meta as Dictionary).has("gridProjection"), "正交缺省不写键")
+	ok(not (plain.meta as Dictionary).has("gridTopology"), "quads 缺省不写键")
+	ok(not (plain.meta as Dictionary).has("gridBasis"), "无基向量不写键")
+	var plain_back: Dictionary = Store.decode_text(JSON.stringify(plain))
+	ok(bool(plain_back.get("ok", false)), "缺省文档可读回")
+	ok(not ((plain_back.data as Dictionary).meta as Dictionary).has("gridBasis"), "读回也不凭空生键")

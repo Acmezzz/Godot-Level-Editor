@@ -828,9 +828,26 @@ func _pending_targets() -> Array:
 ## Ctrl+S / 地图菜单「保存」入口（A2）：清单 → 内容 → 地图，按依赖顺序一次写完。
 ## 只调 on_save() 会在有暂存内容时把地图先写出去：地图里已经带着新内容 ID，
 ## 而内容文件还没落盘，游戏侧读到悬空引用。没地图时退回原来的「无地图」提示。
+## A2 staged：有暂存内容/未写补码时先 dry_run 盘点，向用户说清「这次保存会一并写哪些」，
+## 确认后才正式提交——这是 commit_document 的 staged 状态唯一的生产级消费方。
 func save_all() -> bool:
 	if not app.map_loaded and not _has_staged_or_codes():
 		return await on_save()   # 保持原语义与提示（无地图 = 报错，不是静默成功）
+	var probe: Dictionary = await commit_document("保存", true)
+	if str(probe.get("status", "")) == "staged":
+		var what: Array[String] = []
+		for p in (probe.get("pending", []) as Array):
+			match str(p):
+				"manifest":
+					what.append("清单里补发的身份码")
+				"content":
+					what.append("内容页暂存的新内容/新绑定")
+				"map":
+					what.append("当前地图改动")
+		var text := "这次保存会一并写入：%s。\n\n继续？" % "、".join(what)
+		if not await confirm_action("保存", text, "写入"):
+			app._set_status(" 保存已取消：待写项仍在，未写任何文件")
+			return false
 	var res: Dictionary = await commit_document("保存")
 	return str(res.get("status", "")) == "ok"
 
