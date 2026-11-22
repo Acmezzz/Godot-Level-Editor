@@ -251,14 +251,35 @@ func on_new() -> void:
 	var err_label := UiKitScript.text_label("", UiThemeScript.WARN, UiThemeScript.FS_SMALL)
 	err_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	err_label.custom_minimum_size = Vector2(app.POPUP_BODY_W, 0)
+	# B3：格拓扑（三角格 = 每个平行四边形切成两个半格）。六边投影没有平行四边形列，
+	# 选六边时这一项回落缺省——判据与校验/画布同一份（GridSpace.parse_topology）。
+	var topo_sel := OptionButton.new()
+	topo_sel.add_item("平行四边形（缺省）")
+	topo_sel.set_item_metadata(0, "")
+	topo_sel.add_item("三角形（每列两半格）")
+	topo_sel.set_item_metadata(1, "triangles")
+	body.add_child(UiKitScript.field_row("格拓扑", topo_sel, UiKitScript.LABEL_W_LONG))
+	proj_sel.item_selected.connect(func(_i: int):
+		var pj := str(proj_sel.get_item_metadata(proj_sel.selected))
+		if pj == "hexagonal" and str(topo_sel.get_item_metadata(topo_sel.selected)) == "triangles":
+			topo_sel.select(0)
+			err_label.text = "六边形投影没有平行四边形列，不能改成三角格"
+		elif str(topo_sel.get_item_metadata(topo_sel.selected)) == "triangles":
+			err_label.text = "三角格：瓦片按半格三角形绘制，每格仍是原六元组"
+		else:
+			err_label.text = "")
 	body.add_child(err_label)
 	var btn_row := UiKitScript.hbox(8)
 	btn_row.alignment = BoxContainer.ALIGNMENT_END
 	btn_row.add_child(UiKitScript.button("取消", func(): pop.hide(), "ghost"))
 	btn_row.add_child(UiKitScript.button("确定",
-		func(): create_map_from_dialog(name_edit, err_label, pop, str(proj_sel.get_item_metadata(proj_sel.selected))), "primary"))
+		func(): create_map_from_dialog(name_edit, err_label, pop,
+			str(proj_sel.get_item_metadata(proj_sel.selected)),
+			str(topo_sel.get_item_metadata(topo_sel.selected))), "primary"))
 	name_edit.text_submitted.connect(func(_t: String):
-		create_map_from_dialog(name_edit, err_label, pop, str(proj_sel.get_item_metadata(proj_sel.selected))))
+		create_map_from_dialog(name_edit, err_label, pop,
+			str(proj_sel.get_item_metadata(proj_sel.selected)),
+			str(topo_sel.get_item_metadata(topo_sel.selected))))
 	body.add_child(btn_row)
 	app._open_popup(pop)
 
@@ -271,7 +292,8 @@ func _proj_label(p: String) -> String:
 	return "正交"
 
 ## 新建弹窗确定：校验 → 未保存确认 → 载入空图
-func create_map_from_dialog(name_edit: LineEdit, err_label: Label, pop: PopupPanel, proj := "") -> void:
+func create_map_from_dialog(name_edit: LineEdit, err_label: Label, pop: PopupPanel,
+		proj := "", topo := "") -> void:
 	var n: String = name_edit.text.strip_edges()
 	if n == "":
 		err_label.text = "先填地图名"
@@ -291,7 +313,7 @@ func create_map_from_dialog(name_edit: LineEdit, err_label: Label, pop: PopupPan
 		return
 	var gen := _begin_doc_op()
 	app.canvas.set_thumbs(app._entity_thumbs())
-	await app.canvas.load_data(MapStore.new_map(n, K.DEFAULT_MAP_W, K.DEFAULT_MAP_H, proj), n)
+	await app.canvas.load_data(MapStore.new_map(n, K.DEFAULT_MAP_W, K.DEFAULT_MAP_H, proj, topo), n)
 	if _doc_stale(gen):
 		return   # 期间又切了别的图：本次载入结果已被更新的一次重建取代
 	app.cur_map_name = n

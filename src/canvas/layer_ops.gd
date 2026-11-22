@@ -154,7 +154,11 @@ func _apply_layer_shown(i: int) -> void:
 			coll_view.visible = vis
 		return
 	if i >= 0 and i < layer_tiles.size():
-		(layer_tiles[i] as TileMapLayer).visible = vis
+		# B3 三角拓扑：数据节点常隐，可见性由自绘视图表达（同一 vis）
+		var tri: bool = i < cvs.tri_views.size() and cvs.tri_views[i] != null
+		(layer_tiles[i] as TileMapLayer).visible = vis and not tri
+		if tri:
+			(cvs.tri_views[i] as Node2D).visible = vis
 		if i < layer_ents.size():
 			(layer_ents[i] as Node2D).visible = vis
 

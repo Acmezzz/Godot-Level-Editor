@@ -84,7 +84,8 @@ static func upgrade(data: Dictionary) -> bool:
 ## 新建地图模板：两层用户层栈（「资产层」+「FL」，底→顶，层码用 ContentId 发放），
 ## tiles/collision/objects 均空。新建地图入口用它组装，保证 meta.layers 从出生就是当前契约。
 ## `proj` = 逐图格投影（B1）：正交缺省不写键；等距/六边写 meta.gridProjection。
-static func new_map(name: String, w: int, h: int, proj := "orthogonal") -> Dictionary:
+## `topo` = 格拓扑（B3）：triangles 写 meta.gridTopology；quads 缺省不写键。
+static func new_map(name: String, w: int, h: int, proj := "orthogonal", topo := "") -> Dictionary:
 	var meta := {
 		"code": ContentId.new_inst_code(),
 		"name": name,
@@ -97,6 +98,9 @@ static func new_map(name: String, w: int, h: int, proj := "orthogonal") -> Dicti
 	}
 	if proj == "isometric" or proj == "hexagonal":
 		meta["gridProjection"] = proj
+	# B3：三角拓扑（缺省 quads 不写冗余键）；hex 没有平行四边形列，组合不成立
+	if topo == "triangles" and proj != "hexagonal":
+		meta["gridTopology"] = "triangles"
 	return {
 		"version": FORMAT_VERSION,
 		"meta": meta,

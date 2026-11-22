@@ -29,9 +29,8 @@ func refresh() -> void:
 	queue_redraw()
 
 func _process(_dt: float) -> void:
-	# 图层显隐与 TileMapLayer 同步（显隐只有一条真来源：layer.visible）
-	if layer != null and is_instance_valid(layer) and visible != layer.visible:
-		visible = layer.visible
+	# 图层显隐由 layer_ops._apply_layer_shown 直接设置（数据节点常隐，这里不反向跟随）
+	pass
 
 func _draw() -> void:
 	if layer == null or not is_instance_valid(layer) or grid == null or cvs == null:
