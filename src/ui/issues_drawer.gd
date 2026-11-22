@@ -71,19 +71,29 @@ func _build_issues_drawer() -> PanelContainer:
 	scroll.add_child(body)
 	box.add_child(col)
 	body.visible = false
+	scroll.visible = false   # E3：折叠态连滚动容器一起收（只藏 body 外层仍占最小高度）
 	box.visible = false
 	return box
 
 ## —— 全项目自检（REFACTOR_PLAN 4.6-3）：project_audit 的呈现层 ——
 
 ## 展开/收起条目列表。展开时先重扫再显示——条目永远新鲜（C-20 配套）。
+## E3：折叠要把 ScrollContainer 一起收起——只藏内层 body 时外层仍按
+## custom_minimum_size 占着最高 160px 的空白（U05）。
 func _toggle_issues_drawer() -> void:
 	if not _issues_list:
 		return
 	var expanding: bool = not _issues_list.visible
 	if expanding:
 		_run_audit(false)
-	_issues_list.visible = expanding
+	_set_issues_open(expanding)
+
+## 展开态 = 列表与滚动容器同时可见（两处状态只在这一处写）。
+func _set_issues_open(open: bool) -> void:
+	if _issues_list != null:
+		_issues_list.visible = open
+	if _issues_scroll != null:
+		_issues_scroll.visible = open
 
 ## 跑全项目审计并刷新抽屉。open_after=自检菜单入口（跑完自动展开列表）。
 ## 有图读不出来时检查范围不完整 → 禁用「清除悬空」（D07：范围不明只提示不动手）。
@@ -101,8 +111,8 @@ func _run_audit(open_after := true) -> void:
 	_populate_issues()
 	if _issues_scroll:
 		_issues_scroll.custom_minimum_size.y = minf(items.size() * 26.0 + 6.0, 160.0)
-	if open_after and _issues_list:
-		_issues_list.visible = true
+	if open_after:
+		_set_issues_open(true)
 	if _issues_drawer:
 		_issues_drawer.visible = true
 	if items.is_empty():

@@ -15,6 +15,7 @@ const AssetDecl := preload("res://src/assets/asset_decl.gd")
 const FieldWidgets := preload("res://src/ui/field_widgets.gd")
 const FunctionDecls := preload("res://src/content/function_decl.gd")
 const RefFields := preload("res://src/content/ref_fields.gd")
+const ProjectAudit := preload("res://src/project/project_audit.gd")   # E3：内容库删除前的引用检查
 const RIGHT_W := 360
 
 var host   # content_editor 宿主
@@ -513,6 +514,7 @@ func _refresh_status_only() -> void:
 
 ## 列同功能的全部内容条目；选中一条 → 复制成新 ID 追加到当前实例末尾。
 ## 跨功能不列：字段声明不同，复用没有意义。
+## E3：名称筛选 + 改显示名（保 ID）+ 删除（先跑 C3 引用检查，仍被引用时停住）。
 func _open_lib(i: int) -> void:
 	var fns := _current_fns()
 	if i < 0 or i >= fns.size():
@@ -523,7 +525,7 @@ func _open_lib(i: int) -> void:
 		return
 	var fn_label := str(FunctionDecls.function_name(manifest, fn_id))
 	var shell: Dictionary = app._popup_body("选择已有%s内容" % fn_label,
-		"选中即复制进当前实例，生成新 ID")
+		"选中即复制进当前实例，生成新 ID。改显示名不改 ID；删除前先查引用。")
 	var pop: PopupPanel = shell.pop
 	var body: VBoxContainer = shell.body
 	var ids := ContentStore.list_ids(manifest, fn_id)
@@ -538,19 +540,80 @@ func _open_lib(i: int) -> void:
 		app._open_popup(pop)
 		return
 
+	# —— 名称筛选（E3）：按显示名或 id 过滤，不重建弹窗 ——
+	var filter := LineEdit.new()
+	filter.placeholder_text = "筛选：名称或 id"
+	filter.clear_button_enabled = true
+	body.add_child(filter)
+
 	var list := ItemList.new()
 	list.custom_minimum_size = Vector2(0, 200)
 	list.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	list.max_columns = 1
 	var picked := [""]
+	# 每行的 {cid, name}：筛选重填时名字从这份快照取（不逐项重读盘）
+	var rows: Array = []
 	for cid in ids:
 		var d := ContentStore.read(manifest, fn_id, str(cid))
-		var nm := str(d.get("name", ""))
-		var it := list.add_item((nm + "  ·  " + str(cid)) if nm != "" else str(cid))
-		list.set_item_metadata(it, str(cid))
-		if nm == "":
-			list.set_item_custom_fg_color(it, Th.TEXT_MUTE)
+		rows.append({"cid": str(cid), "name": str(d.get("name", ""))})
 	body.add_child(list)
+
+	var refill := func():
+		var q := str(filter.text).strip_edges().to_lower()
+		list.clear()
+		for r in rows:
+			var cid := str((r as Dictionary).get("cid", ""))
+			var nm := str((r as Dictionary).get("name", ""))
+			if q != "" and not cid.to_lower().contains(q) and not nm.to_lower().contains(q):
+				continue
+			var it := list.add_item((nm + "  ·  " + cid) if nm != "" else cid)
+			list.set_item_metadata(it, cid)
+			if nm == "":
+				list.set_item_custom_fg_color(it, Th.TEXT_MUTE)
+
+	# —— 改显示名（E3）：只改内容文件的 name，ID 与所有引用不动 ——
+	var rename_row := Kit.hbox(6)
+	var rename_edit := LineEdit.new()
+	rename_edit.placeholder_text = "新显示名（选中条目后可改）"
+	rename_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	rename_row.add_child(rename_edit)
+	var on_rename := func():
+		if picked[0] == "":
+			app._set_status(" 先选一条内容")
+			return
+		var nm := rename_edit.text.strip_edges()
+		if _rename_library_item(fn_id, picked[0], nm):
+			for r in rows:
+				if str((r as Dictionary).get("cid", "")) == picked[0]:
+					(r as Dictionary)["name"] = nm
+			refill.call()
+	var rename_btn := Kit.button("改显示名", on_rename, "ghost")
+	rename_btn.tooltip_text = "只改显示名；内容 ID 不变，已有引用照常解析"
+	rename_row.add_child(rename_btn)
+	# —— 删除（E3）：先跑 C3 引用检查；仍被引用或有未扫描文件时停在报告 ——
+	var on_del := func():
+		if picked[0] == "":
+			app._set_status(" 先选一条内容")
+			return
+		var gone: String = picked[0]
+		if not await _delete_library_item(fn_id, gone):
+			return
+		var keep: Array = []
+		for r in rows:
+			if str((r as Dictionary).get("cid", "")) != gone:
+				keep.append(r)
+		rows.clear()
+		rows.append_array(keep)
+		picked[0] = ""
+		refill.call()
+	var del_btn := Kit.button("删除…", on_del, "ghost")
+	del_btn.add_theme_color_override("font_color", Th.ERR)
+	del_btn.tooltip_text = "删除这条内容前先查实例与内容间引用；被引用时不会删"
+	rename_row.add_child(del_btn)
+	body.add_child(rename_row)
+
+	filter.text_changed.connect(func(_t: String): refill.call())
+	refill.call()
 
 	var name_edit := LineEdit.new()
 	name_edit.placeholder_text = "新内容显示名"
@@ -558,8 +621,15 @@ func _open_lib(i: int) -> void:
 	list.item_selected.connect(func(idx: int):
 		var cid := str(list.get_item_metadata(idx))
 		picked[0] = cid
-		var nm := str(ContentStore.read(manifest, fn_id, cid).get("name", ""))
-		name_edit.text = (nm if nm != "" else cid) + " 副本")
+		var nm := ""
+		for r in rows:
+			if str((r as Dictionary).get("cid", "")) == cid:
+				nm = str((r as Dictionary).get("name", ""))
+				break
+		if nm == "":
+			nm = str(ContentStore.read(manifest, fn_id, cid).get("name", ""))
+		name_edit.text = (nm if nm != "" else cid) + " 副本"
+		rename_edit.text = nm)
 
 	var on_ok := func():
 		if picked[0] == "":
@@ -569,6 +639,92 @@ func _open_lib(i: int) -> void:
 		_duplicate_from_lib(fn_id, picked[0], name_edit.text, i)
 	body.add_child(Kit.popup_buttons(on_ok, func(): pop.hide(), "复用", "取消"))
 	app._open_popup(pop)
+
+## E3：库内改显示名——只写内容文件 name（ID / function / fields 不动）。
+## 返回是否真的改了（调用方据此刷新列表快照）。
+func _rename_library_item(fn_id: String, cid: String, new_name: String) -> bool:
+	var nm := new_name.strip_edges()
+	if nm == "":
+		app._set_status(" 先填新显示名")
+		return false
+	var data := _content_read(fn_id, cid)
+	if data.is_empty():
+		app._set_status(" 读不到内容 %s（文件缺失或损坏）" % cid)
+		return false
+	if str(data.get("name", "")) == nm:
+		return false
+	data["name"] = nm
+	if not _content_write(fn_id, cid, data):
+		app._set_status(" 改显示名失败：内容文件不可写")
+		return false
+	# 绑定里冗余的 name 只影响列表显示：引用字段是 content ID，改名不动它
+	app._set_status(" 已改显示名：%s → %s（ID 与引用不变）" % [cid, nm])
+	_refresh_status_only()
+	return true
+
+## E3：库内删除——先跑 C3 引用检查。三条拦截线：
+##   ① 有地图/实例仍引用该内容（含当前画布的未保存绑定）→ 列出后停住；
+##   ② 其它内容的引用字段指向它（内容间入边）→ 删除会让那些引用悬空；
+##   ③ 有未扫描/读不出的文件（地图或内容）→ 范围不完整，只提示不动手。
+## 全部通过才走确认框并删文件（内容文件有 .history 备份可找回）。
+## 返回是否真的删了（调用方据此从列表快照里去掉该行）。
+func _delete_library_item(fn_id: String, cid: String) -> bool:
+	# 当前画布的未保存绑定也算引用（磁盘是旧的）
+	var live_codes: Array = []
+	var spr := _current_spr()
+	if spr != null and is_instance_valid(spr):
+		for f in spr.functions:
+			if not (f is Dictionary):
+				continue
+			if str((f as Dictionary).get("content", "")) != cid:
+				continue
+			if str((f as Dictionary).get("fn", "")) == FunctionDecls.fn_code(manifest, fn_id):
+				live_codes.append(spr.code)
+				break
+	var cur_map := str(app.cur_map_name) if app.map_loaded else ""
+	var usage: Dictionary = ProjectAudit.content_usage(manifest, fn_id, cid, cur_map, live_codes)
+	if bool(usage.get("incomplete", false)):
+		var why: Array[String] = []
+		var ur: Array = usage.get("unreadable", [])
+		if not ur.is_empty():
+			why.append("有地图读不出来（%s）" % ", ".join(PackedStringArray(ur)))
+		var bc: Array = usage.get("bad_contents", [])
+		if not bc.is_empty():
+			why.append("有内容文件读不出来（%s）" % ", ".join(PackedStringArray(bc)))
+		app._set_status(" 删除中止：检查范围不完整——" + "；".join(why) + "。先修好这些文件再试")
+		return false
+	var by_map: Dictionary = usage.get("by_map", {})
+	if not by_map.is_empty():
+		var lines: Array[String] = []
+		var total := 0
+		for mn in by_map:
+			var codes: Array = by_map[mn]
+			total += codes.size()
+			lines.append("%s × %d（%s）" % [str(mn), codes.size(),
+				", ".join(PackedStringArray(codes.slice(0, 4)))])
+		app._set_status(" 删除中止：%s 仍被 %d 个实例引用——%s。先改绑到别的内容或删掉那些绑定" % [
+			cid, total, "；".join(lines)])
+		return false
+	# ② 其它内容文件的引用型字段指向它（内容 → 内容的入边）：删了那些引用就悬空
+	var inbound: Array = ProjectAudit.content_inbound_refs(manifest, fn_id, cid)
+	if not inbound.is_empty():
+		var refs: Array[String] = []
+		for r in inbound:
+			refs.append("%s/%s.%s" % [str((r as Dictionary).get("kind", "")),
+				str((r as Dictionary).get("id", "")), str((r as Dictionary).get("field", ""))])
+		app._set_status(" 删除中止：另有 %d 份内容的引用字段指向它（%s）。先清掉那些字段" % [
+			inbound.size(), ", ".join(PackedStringArray(refs.slice(0, 5)))])
+		return false
+	var nm := str(_content_read(fn_id, cid).get("name", ""))
+	var text := "将删除内容「%s」(%s)。\n\n当前没有任何实例或内容引用它；文件会从 content/%s/ 移除（.history 有备份）。" % [
+		nm if nm != "" else cid, cid, fn_id]
+	if not await app._confirm_action("删除内容", text, "删除"):
+		return false
+	if not ContentStore.remove(manifest, fn_id, cid):
+		app._set_status(" 删除失败：内容文件不可删（可能被占用）")
+		return false
+	app._set_status(" 已删除内容：%s/%s" % [fn_id, cid])
+	return true
 
 ## 复制成新 ID：深拷贝整份源内容（保留原文件不动），name 用弹窗里填的。
 ## 继承行（类型挂载行）复用 = 把副本填进**这一行**，不追加同码第二条

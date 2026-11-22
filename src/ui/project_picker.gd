@@ -110,9 +110,18 @@ func _show_picker(err := "") -> void:
 		el.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		v.add_child(el)
 	if not project_dirs.is_empty():
+		# E3：项目多的长列表要有滚动路径（U05）。选择页整列铺满窗口、内容居中，
+		# 列表占据剩余高度并在其中滚动，不会把按钮顶出可视区。
+		var scroll := ScrollContainer.new()
+		scroll.custom_minimum_size = Vector2(520, 0)
+		scroll.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+		v.add_child(scroll)
 		var list := VBoxContainer.new()
 		list.custom_minimum_size = Vector2(520, 0)
-		v.add_child(list)
+		list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		scroll.add_child(list)
 		for dir in project_dirs:
 			list.add_child(_project_row(str(dir)))
 		var row := HBoxContainer.new()

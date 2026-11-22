@@ -239,7 +239,9 @@ func fill_placeables(cat: String) -> void:
 				tex = thumbs.get(eid, null)
 			if tex == null:
 				tex = _visual_icon(d)
-			var ie := el.add_item(str(d.get("name", eid)), tex)
+			# E3：显示名与类别取共用查询（AssetDecl.label），与资产图鉴同一口径
+			var ie := el.add_item(AssetDecl.label(app.manifest, eid), tex)
+			el.set_item_tooltip(ie, "%s · %s" % [AssetDecl.category_of(app.manifest, eid), eid])
 			el.set_item_metadata(ie, eid)
 			shown += 1
 	else:
@@ -249,9 +251,12 @@ func fill_placeables(cat: String) -> void:
 			var tex: Texture2D = thumbs.get(eid, null)
 			if tex == null:
 				tex = _visual_icon(ad)
-			var ie := el.add_item(str(ad.get("name", eid)), tex)
+			# E3：显示名与类别取共用查询（AssetDecl.label），与资产图鉴同一口径
+			var ie := el.add_item(AssetDecl.label(app.manifest, eid), tex)
+			var tip := "%s · %s" % [AssetDecl.category_of(app.manifest, eid), eid]
 			if bool(ad.get("builtin", false)):
-				el.set_item_tooltip(ie, "内置种类：画布上按 visual 声明呈现")
+				tip += "\n内置种类：画布上按 visual 声明呈现"
+			el.set_item_tooltip(ie, tip)
 			el.set_item_metadata(ie, eid)
 			shown += 1
 	if shown == 0:
@@ -294,6 +299,8 @@ func _visual_icon(ad: Dictionary) -> Texture2D:
 	return tex
 
 ## 列表空状态覆盖（遮罩挂在列表上层，连接一次防重复）
+## E3：连接的回调读**当前**登记的遮罩（不是建连接时闭包里的那个节点）——
+## 每次 fill 都会换新遮罩，旧闭包会抱着已释放的节点（U05）。
 func _show_empty(list: ItemList, title: String, hint := "") -> void:
 	var holder := list.get_parent()
 	if list.has_meta("_empty_node"):
@@ -304,10 +311,16 @@ func _show_empty(list: ItemList, title: String, hint := "") -> void:
 	es.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	holder.add_child(es)
 	es.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	es.visible = list.is_visible_in_tree()
 	list.set_meta("_empty_node", es)
-	# D8：连接一次并打标——每次 fill 重复连接会越积越多
 	if not list.has_meta("_empty_connected"):
 		list.set_meta("_empty_connected", true)
-		list.visibility_changed.connect(func():
-			if is_instance_valid(es):
-				es.visible = list.is_visible_in_tree())
+		list.visibility_changed.connect(func(): _sync_empty_overlay(list))
+
+## 空态遮罩的显隐跟随所属列表的可见性（按当前登记的遮罩节点取值）。
+func _sync_empty_overlay(list: ItemList) -> void:
+	if list == null or not is_instance_valid(list) or not list.has_meta("_empty_node"):
+		return
+	var es = list.get_meta("_empty_node")
+	if is_instance_valid(es):
+		es.visible = list.is_visible_in_tree()

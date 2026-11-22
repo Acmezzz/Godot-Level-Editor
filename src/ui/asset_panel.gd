@@ -159,8 +159,9 @@ func refresh_list(focus_sid := "") -> void:
 		if not _matches_filter(sid, edef as Dictionary):
 			continue
 		asset_list.add_item(_list_label(sid, edef as Dictionary), _asset_texture(edef))
-		# tooltip 露出 id 与停用状态——地图数据引用的是它，界面上看不到就没法排查
-		var tip := sid + "  ·  " + str((edef as Dictionary).get("name", sid))
+		# tooltip 露出 id、类别与停用状态——地图数据引用的是 id，界面上看不到就没法排查
+		var tip := "%s · %s · %s" % [AssetDecl.category_of(manifest, sid), sid,
+			str((edef as Dictionary).get("name", sid))]
 		if bool((edef as Dictionary).get("disabled", false)):
 			tip += "\n已停用：不进调色板，原 ID 保留"
 		elif bool((edef as Dictionary).get("retired", false)):
@@ -185,7 +186,8 @@ func refresh_list(focus_sid := "") -> void:
 
 ## 列表显示名：停用/待确认的资产带前缀，扫一眼就知道哪些需要处理（A4）
 func _list_label(sid: String, edef: Dictionary) -> String:
-	var nm := str(edef.get("name", sid))
+	# E3：显示名走共用查询（AssetDecl.label），与画布选材同一口径
+	var nm := AssetDecl.label(manifest, sid)
 	if bool(edef.get("disabled", false)):
 		return "⊗ " + nm + "（已停用）"
 	if bool(edef.get("retired", false)):
@@ -194,12 +196,13 @@ func _list_label(sid: String, edef: Dictionary) -> String:
 		return "⊘ " + nm + "（停用）"
 	return nm
 
-## 过滤视图：名称或 id 任一包含关键字（大小写不敏感）
-func _matches_filter(sid: String, edef: Dictionary) -> bool:
+## 过滤视图：名称/id 任一包含关键字（大小写不敏感）。
+## 名称查询同走 AssetDecl.label：未填 name 的资产按 id 也能被搜到。
+func _matches_filter(sid: String, _edef: Dictionary) -> bool:
 	var q := str(_filter_edit.text).strip_edges().to_lower()
 	if q == "":
 		return true
-	return sid.to_lower().contains(q) or str(edef.get("name", "")).to_lower().contains(q)
+	return sid.to_lower().contains(q) or AssetDecl.label(manifest, sid).to_lower().contains(q)
 
 func _on_asset_pick(idx: int, _at: Vector2 = Vector2.ZERO, mb: int = 0) -> void:
 	# 只认左键（与实体大纲列表同一约定）
@@ -239,6 +242,7 @@ func _show_detail(sid: String) -> void:
 	for child in extra.get_children():
 		extra.remove_child(child)
 		child.queue_free()
+	_add_config_section(sid)
 	_add_scan_section(sid)
 	_add_distribution_section(sid)
 	var already: bool = bool(_edef.get("disabled", false))
@@ -248,6 +252,96 @@ func _show_detail(sid: String) -> void:
 	del.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
 	extra.add_child(del)
 	_loading = false
+
+## E3：生效配置 + 声明位置（审查 §3.6 / D17）：切片尺寸、分类、锚点、图集路径与
+## 声明在清单里的位置——游戏侧配置出问题时，设计者能一眼定位到改哪儿。
+## 源素材与图集切片仍由游戏侧维护，这里只读。
+func _add_config_section(sid: String) -> void:
+	var d := AssetDecl.by_id(manifest, sid)
+	if d.is_empty():
+		return
+	extra.add_child(Kit.section_label("生效配置"))
+	var box := Kit.vbox(2)
+	extra.add_child(box)
+	box.add_child(Kit.text_label("类别：%s · kind=%s%s" % [
+		AssetDecl.category_of(manifest, sid), str(d.get("kind", "")),
+		(" · shape=" + str(d.get("shape", ""))) if str(d.get("kind", "")) == "scene" else ""],
+		Th.TEXT_SOFT, Th.FS_SMALL))
+	box.add_child(Kit.text_label("锚点：%s" % str(d.get("anchor", "center")), Th.TEXT_SOFT, Th.FS_SMALL))
+	var kind := str(d.get("kind", ""))
+	if kind == "scene" and str(d.get("shape", "")) == "tile":
+		var cs := AssetDecl.cell_size(manifest, sid)
+		box.add_child(Kit.text_label("切片：%d×%d px" % [cs.x, cs.y], Th.TEXT_SOFT, Th.FS_SMALL))
+		var pal: Array = AssetDecl.palette_of(manifest, sid)
+		var cats: Array = []
+		var seen := {}
+		for p in pal:
+			var cn := str((p as Dictionary).get("cat", ""))
+			if cn != "" and not seen.has(cn):
+				seen[cn] = true
+				cats.append(cn)
+		box.add_child(Kit.text_label("图集切片：%d 条%s" % [pal.size(),
+			(" · 分类 " + ", ".join(PackedStringArray(cats))) if not cats.is_empty() else "（未配 palette = 整图平铺）"],
+			Th.TEXT_SOFT, Th.FS_SMALL))
+		var atlas := str(d.get("atlas", ""))
+		if atlas != "":
+			box.add_child(Kit.text_label("图集：%s%s" % [atlas,
+				"" if FileAccess.file_exists(str(d.get("atlas_abs", ""))) else "（文件缺失）"],
+				Th.TEXT_SOFT if FileAccess.file_exists(str(d.get("atlas_abs", ""))) else Th.WARN, Th.FS_META))
+	elif kind == "scene":
+		var es := AssetDecl.editor_size(manifest, sid)
+		if es != Vector2.ZERO:
+			box.add_child(Kit.text_label("编辑尺寸：%d×%d px" % [int(es.x), int(es.y)], Th.TEXT_SOFT, Th.FS_SMALL))
+	else:
+		var sizes := AssetDecl.size_fields(manifest, sid)
+		if not sizes.is_empty():
+			box.add_child(Kit.text_label("尺寸字段：%s" % ", ".join(PackedStringArray(sizes)),
+				Th.TEXT_SOFT, Th.FS_SMALL))
+	# 声明位置：assets[] 里的下标 + 键路径（清单是数组或 {id: body} 两种写法）
+	var at := -1
+	var raw = manifest.get("assets", null)
+	if raw is Array:
+		for i in (raw as Array).size():
+			var it = (raw as Array)[i]
+			if it is Dictionary and str((it as Dictionary).get("id", "")) == sid:
+				at = i
+				break
+	elif raw is Dictionary:
+		at = -1
+	var where := "assets[%d]" % at if at >= 0 else "assets[\"%s\"]" % sid
+	box.add_child(Kit.text_label("声明位置：editor_manifest.json · %s" % where, Th.TEXT_MUTE, Th.FS_META))
+	# E3：图鉴 → 回画布保持所选资产（可直接开摆）
+	if AssetDecl.placeable(manifest, sid) and not bool(d.get("disabled", false)):
+		var row := Kit.hbox(6)
+		var go := Kit.button("回画布用这个资产", func(): _use_on_canvas(sid), "ghost")
+		go.tooltip_text = "切回关卡视图并把画布笔刷设成这个资产"
+		row.add_child(go)
+		box.add_child(row)
+
+## E3：图鉴回画布——把所选资产设成画布笔刷（瓦片取第一条 palette 切片；实体/图片进入摆放模式）。
+func _use_on_canvas(sid: String) -> void:
+	if host == null or host.canvas == null:
+		return
+	var d := AssetDecl.by_id(manifest, sid)
+	var kind := str(d.get("kind", ""))
+	if kind == "scene" and str(d.get("shape", "")) == "tile":
+		var pal := AssetDecl.palette_of(manifest, sid)
+		var cell := Vector2i.ZERO
+		if not pal.is_empty():
+			cell = (pal[0] as Dictionary).get("cell", Vector2i.ZERO)
+		host.canvas.paint_cell = cell
+		host.canvas.paint_asset = sid
+		host.canvas.stamp_thumb = null
+		host.canvas.place_kind = "tiles"
+		host._apply_state("paint")
+		host._set_status("画布笔刷已设为瓦片资产 %s（切片 %d,%d）" % [AssetDecl.label(manifest, sid), cell.x, cell.y])
+	else:
+		host.canvas.stamp_asset = sid
+		host.canvas.stamp_thumb = _asset_texture(d)
+		host.canvas.place_kind = "object"
+		host._apply_state("stamp")
+		host._set_status("画布笔刷已设为 %s：在画布上点一下即可摆放" % AssetDecl.label(manifest, sid))
+	host._set_mode("map")
 
 ## 扫描状态（A4）：停用条目给恢复按钮；改名歧义给候选路径按钮（确认重链）。
 func _add_scan_section(sid: String) -> void:

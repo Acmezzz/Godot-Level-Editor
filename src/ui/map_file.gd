@@ -83,17 +83,73 @@ func on_duplicate() -> void:
 	name_edit.text = _unique_map_name(old_name + "_copy")
 	name_edit.placeholder_text = "新地图名"
 	body.add_child(UiKitScript.field_row("新名字", name_edit))
+	# E3：先预览 C2 计划（会复制多少实例/内容/瓦片、有哪些冲突），确认再落盘
+	var plan_lbl := UiKitScript.hint_label("", 460)
+	body.add_child(plan_lbl)
 	var err_label := UiKitScript.text_label("", UiThemeScript.WARN, UiThemeScript.FS_SMALL)
 	err_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	err_label.custom_minimum_size = Vector2(app.POPUP_BODY_W, 0)
 	body.add_child(err_label)
+	var copy_btn: Button = UiKitScript.button("复制",
+		func(): duplicate_current_from_dialog(old_name, name_edit, err_label, pop), "primary")
+	var refresh_plan := func():
+		var nn: String = name_edit.text.strip_edges()
+		var prev := _plan_preview(old_name, nn)
+		var p: Dictionary = prev.get("plan", {})
+		if str(prev.get("err", "")) != "":
+			plan_lbl.text = "预览：" + str(prev.get("err"))
+			copy_btn.disabled = true
+			return
+		var inst: int = (p.get("instance_map", {}) as Dictionary).size()
+		var contents: int = (p.get("content_map", {}) as Dictionary).size()
+		var c := _counts((p.get("map_patch", {}) as Dictionary))
+		var conflicts: Array = p.get("conflicts", [])
+		var head := "计划：实例 %d（新码）· 内容 %d（新 ID）· 瓦片 %d · 碰撞 %d · 摆放物 %d" % [
+			inst, contents, int(c.tiles), int(c.collision), int(c.objects)]
+		if conflicts.is_empty():
+			plan_lbl.text = head
+		else:
+			plan_lbl.text = head + "\n⚠ 冲突 %d 条（复制会被拒绝）：\n%s" % [
+				conflicts.size(), ClonePlan.conflicts_text(conflicts)]
+		copy_btn.disabled = not conflicts.is_empty()
+	name_edit.text_changed.connect(func(_t: String): refresh_plan.call())
+	refresh_plan.call()
 	var btn_row := UiKitScript.hbox(8)
 	btn_row.alignment = BoxContainer.ALIGNMENT_END
 	btn_row.add_child(UiKitScript.button("取消", func(): pop.hide(), "ghost"))
-	btn_row.add_child(UiKitScript.button("复制",
-		func(): duplicate_current_from_dialog(old_name, name_edit, err_label, pop), "primary"))
+	btn_row.add_child(copy_btn)
 	body.add_child(btn_row)
 	app._open_popup(pop)
+
+## C2 计划预览（不写盘）：源 = 画布当前提交状态，目标 = 新图名。
+## 返回 {plan: <ClonePlan.build 结果>, err: ""}；名字非法时 err 给原因、plan 为空。
+func _plan_preview(old_name: String, nn: String) -> Dictionary:
+	if nn == "":
+		return {"plan": {}, "err": "先填新图名"}
+	if not EditorManifest.is_valid_map_name(nn):
+		return {"plan": {}, "err": "地图名不合法：不能含 / \\ : * ? \" < > | 或以 . 开头"}
+	if FileAccess.file_exists(EditorManifest.map_path(app.manifest, nn)):
+		return {"plan": {}, "err": "同名地图已存在：换个名字"}
+	var data: Dictionary = app.canvas.extract()
+	if data.is_empty():
+		return {"plan": {}, "err": "地图重建中，请稍后再试"}
+	# 预览只需要一份可解析的计划：目标码用占位（真正的新码由 duplicate_map 发行）
+	return {"plan": ClonePlan.whole_map_document(
+		{"data": data, "manifest": app.manifest, "map": old_name}, nn, "PREV"), "err": ""}
+
+## 段计数（计划里的 map_patch 或整份文档都适用）
+func _counts(d: Dictionary) -> Dictionary:
+	var tiles := 0
+	var tseg = d.get("tiles", null)
+	if tseg is Dictionary:
+		for lid in (tseg as Dictionary):
+			var cells = (tseg as Dictionary)[lid]
+			if cells is Array:
+				tiles += (cells as Array).size()
+	var coll = d.get("collision", null)
+	var objs = d.get("objects", null)
+	return {"tiles": tiles, "collision": (coll as Array).size() if coll is Array else 0,
+		"objects": (objs as Array).size() if objs is Array else 0}
 
 func duplicate_current_from_dialog(old_name: String, name_edit: LineEdit, err_label: Label, pop: PopupPanel) -> void:
 	var nn: String = name_edit.text.strip_edges()
@@ -441,6 +497,77 @@ func _format_issues(issues: Array) -> String:
 	for issue in issues:
 		lines.append("%s: %s" % [str(issue.get("path", "map")), str(issue.get("message", "invalid data"))])
 	return "; ".join(lines)
+
+## A3/E3：地图历史入口（editor/history/maps/<地图码>/，每次正式保存前的快照）。
+## 列出版本 → 载入某个版本到画布（磁盘正式文件不动，Ctrl+S 才写回）。
+func on_history() -> void:
+	if not app.map_loaded:
+		app._set_status("无地图：先新建或打开一张地图")
+		return
+	var name := _effective_map_name()
+	var code := str((app.canvas.map_data.get("meta", {}) as Dictionary).get("code", ""))
+	var snaps: Array = Recovery.list_history(app.manifest, code, name)
+	var shell: Dictionary = app._popup_body("地图历史 —— %s" % name,
+		"每次正式保存前自动留一份快照（最多 20 份，最新的在前）。恢复只改画布，Ctrl+S 才写回正式图。")
+	var pop: PopupPanel = shell.pop
+	var body: VBoxContainer = shell.body
+	if snaps.is_empty():
+		body.add_child(UiKitScript.hint_label(
+			"还没有历史快照：正式保存过一次之后才会出现。草稿在「地图 ▾ → 恢复草稿…」。", 460))
+		body.add_child(UiKitScript.button("关闭", func(): pop.hide(), "ghost"))
+		app._open_popup(pop)
+		return
+	var list := ItemList.new()
+	list.custom_minimum_size = Vector2(0, 220)
+	list.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	list.max_columns = 1
+	var hs_dir := str(app.manifest.get("_dir", "")).path_join("editor/history/maps").path_join(
+		Recovery.draft_key(code, name))
+	for f in snaps:
+		list.add_item(str(f))
+	body.add_child(list)
+	var hint := UiKitScript.hint_label("", 460)
+	body.add_child(hint)
+	var restore_btn := UiKitScript.button("恢复选中版本", Callable(), "primary")
+	restore_btn.disabled = true
+	list.item_selected.connect(func(idx: int):
+		restore_btn.disabled = false
+		hint.text = "将载入 %s（磁盘文件不动）" % str(list.get_item_text(idx)))
+	restore_btn.pressed.connect(func():
+		var sel := list.get_selected_items()
+		if sel.is_empty():
+			return
+		var fname := str(list.get_item_text(sel[0]))
+		pop.hide()
+		_restore_history_snapshot(name, hs_dir.path_join(fname)))
+	body.add_child(restore_btn)
+	body.add_child(UiKitScript.button("关闭", func(): pop.hide(), "ghost"))
+	app._open_popup(pop)
+
+## 历史快照载入画布：按草稿恢复同一条路径（keep_dirty=true，正式文件不动）。
+func _restore_history_snapshot(map_name: String, snapshot_path: String) -> void:
+	var snap := Recovery.read_json(snapshot_path)
+	if snap.is_empty():
+		app._set_status(" 历史快照读取失败：" + snapshot_path.get_file())
+		return
+	if not await app._confirm_action("恢复历史版本",
+		"把 %s 载入画布。\n\n正式文件不会被改动；Ctrl+S 才会写回（当前未保存的改动会先被替换）。" % snapshot_path.get_file(),
+		"载入"):
+		return
+	var gen := _begin_doc_op()
+	app.canvas.set_thumbs(app._entity_thumbs())
+	# 快照里记的是当时的 meta.name（改名前的旧名）：以当前图名为准，保存才不会写回旧名
+	if snap.get("meta", null) is Dictionary:
+		(snap["meta"] as Dictionary)["name"] = map_name
+	await app.canvas.load_data(snap, map_name, false, true)
+	if _doc_stale(gen):
+		return
+	app.cur_map_name = map_name
+	app.cur_map_path = EditorManifest.map_path(app.manifest, map_name)
+	app._sync_play_cfg_to_map()
+	app._set_map_loaded(true)
+	app.canvas.modified_flag = true   # 历史内容与磁盘不同：必须显式保存
+	app._set_status(" 已载入历史版本 %s（Ctrl+S 写回 %s）" % [snapshot_path.get_file(), map_name])
 
 ## 当前地图名的兜底对齐：app.cur_map_name 与 canvas.cur_map_name 两处记录，以 canvas 为准
 func _effective_map_name() -> String:

@@ -79,6 +79,11 @@ func _refresh_layer_panel() -> void:
 		lock_btn.tooltip_text = "锁定 / 解锁本层（🔒 已锁定 · · 可编辑）"
 		row.add_child(lock_btn)
 		_layer_menu_body.add_child(row)
+	# E3：滚动容器按行数给最小高度（ScrollContainer 自带最小高度是 0，弹窗会塌）。
+	# 超过 420px 才滚动，长列表因此有可达路径（U05）。
+	var mscroll := _layer_menu_body.get_parent() as ScrollContainer
+	if mscroll != null:
+		mscroll.custom_minimum_size.y = minf(float(app.canvas.layer_count() + 1) * 26.0 + 6.0, 420.0)
 
 ## 展开层下拉：定位在按钮正下方
 func _toggle_layer_menu() -> void:
@@ -100,8 +105,16 @@ func _open_layer_manager() -> void:
 		"新建 / 改名（回车提交）/ 上下排序 / 删除；「运行时」= 游戏开局该层是否显示")
 	_layer_mgr = shell.pop
 	_layer_mgr_body = shell.body
+	# E3：层多时要有滚动路径（U05）——列表最高 360px，超出滚动，输入行与关闭钮常驻
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size = Vector2(0, 0)
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.max_size.y = 360.0
+	_layer_mgr_body.add_child(scroll)
 	_layer_mgr_rows = app.UiKitScript.vbox(2)
-	_layer_mgr_body.add_child(_layer_mgr_rows)
+	_layer_mgr_rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(_layer_mgr_rows)
 	var row = app.UiKitScript.hbox(6)
 	var input := LineEdit.new()
 	input.placeholder_text = "新层名"

@@ -12,13 +12,18 @@ var app   # app 宿主
 func _init(a) -> void:
 	app = a
 
-# —— 地图尺寸编辑：扩展或裁剪 meta.w/h（裁剪不删数据，只改边界） ——
+# —— 地图尺寸编辑：扩展或裁剪 meta.w/h（缩小裁掉边界外数据，可撤销） ——
 func open_size_dialog() -> void:
 	if not app.map_loaded:
 		app._set_status("无地图：先新建或打开一张地图")
 		return
 	var meta: Dictionary = app.canvas.map_data.get("meta", {})
-	var shell: Dictionary = app._popup_body("地图尺寸", "以格为单位。裁剪只改边界，不删除已画内容。")
+	var base: Dictionary = app.canvas.extract()
+	if base.is_empty():   # 重建窗口哨兵：此刻读不到可裁剪的数据，别让预览数字是假的
+		app._set_status(" 地图重建中，请稍后再试")
+		return
+	var shell: Dictionary = app._popup_body("地图尺寸",
+		"以格为单位。缩小会裁掉边界外的瓦片 / 碰撞 / 摆放物，确认框里先列数量；应用是一次可撤销操作。")
 	var pop: PopupPanel = shell.pop
 	var body: VBoxContainer = shell.body
 	var row := UiKitScript.hbox(12)
@@ -35,6 +40,24 @@ func open_size_dialog() -> void:
 	h_edit.step = 1
 	h_edit.value = int(meta.get("h", K.DEFAULT_MAP_H))
 	row.add_child(UiKitScript.field_row("高", h_edit))
+	# E3：裁剪前先列数量（当前总量 + 目标尺寸会裁掉多少），别让人盲着按应用
+	var counts_lbl := UiKitScript.hint_label("", 460)
+	body.add_child(counts_lbl)
+	var refresh_counts := func():
+		var cur := _counts(base)
+		var crop := _crop_counts(base, int(w_edit.value), int(h_edit.value))
+		var cut: int = int(crop.tiles) + int(crop.collision) + int(crop.objects)
+		var head := "当前 %d×%d：瓦片 %d · 碰撞 %d · 摆放物 %d" % [
+			int(meta.get("w", K.DEFAULT_MAP_W)), int(meta.get("h", K.DEFAULT_MAP_H)),
+			int(cur.tiles), int(cur.collision), int(cur.objects)]
+		if cut > 0:
+			counts_lbl.text = head + "\n缩到 %d×%d 将裁掉：瓦片 %d · 碰撞 %d · 摆放物 %d（可撤销）" % [
+				int(w_edit.value), int(h_edit.value), int(crop.tiles), int(crop.collision), int(crop.objects)]
+		else:
+			counts_lbl.text = head + "\n目标尺寸不会裁掉数据"
+	w_edit.value_changed.connect(func(_v: float): refresh_counts.call())
+	h_edit.value_changed.connect(func(_v: float): refresh_counts.call())
+	refresh_counts.call()
 	# 逐图投影（B1）：空图才允许在普通设置里改；带内容的地图必须先做显式转换
 	# （转换另作操作：先展示目标并保存副本），否则已摆内容的空间口径会被静默改写。
 	var proj_sel := OptionButton.new()
@@ -64,11 +87,108 @@ func open_size_dialog() -> void:
 	body.add_child(btn_row)
 	app._open_popup(pop)
 
+## 现有条目计数：{tiles, collision, objects}（与 extract() 的段形状一致）。
+func _counts(d: Dictionary) -> Dictionary:
+	var tiles := 0
+	for lid in (d.get("tiles", {}) as Dictionary):
+		var cells = (d.get("tiles", {}) as Dictionary)[lid]
+		if cells is Array:
+			tiles += (cells as Array).size()
+	return {"tiles": tiles, "collision": (d.get("collision", []) as Array).size(),
+		"objects": (d.get("objects", []) as Array).size()}
+
+## 目标尺寸会裁掉的条目数（缩小才非零；扩大恒为零）。
+func _crop_counts(d: Dictionary, nw: int, nh: int) -> Dictionary:
+	var out := {"tiles": 0, "collision": 0, "objects": 0}
+	for lid in (d.get("tiles", {}) as Dictionary):
+		var cells = (d.get("tiles", {}) as Dictionary)[lid]
+		if not (cells is Array):
+			continue
+		for c in (cells as Array):
+			if not (c is Array) or (c as Array).size() < 2:
+				continue
+			if _outside(int((c as Array)[0]), int((c as Array)[1]), nw, nh):
+				out.tiles = int(out.tiles) + 1
+	for ce in (d.get("collision", []) as Array):
+		if ce is Dictionary:
+			if _outside(int((ce as Dictionary).get("x", 0)), int((ce as Dictionary).get("y", 0)), nw, nh):
+				out.collision = int(out.collision) + 1
+		elif ce is Array and (ce as Array).size() >= 2:
+			if _outside(int((ce as Array)[0]), int((ce as Array)[1]), nw, nh):
+				out.collision = int(out.collision) + 1
+	for o in (d.get("objects", []) as Array):
+		if o is Dictionary and _outside_float(float((o as Dictionary).get("x", 0.0)),
+				float((o as Dictionary).get("y", 0.0)), nw, nh):
+			out.objects = int(out.objects) + 1
+	return out
+
+func _outside(x: int, y: int, nw: int, nh: int) -> bool:
+	return x < 0 or y < 0 or x >= nw or y >= nh
+
+func _outside_float(x: float, y: float, nw: int, nh: int) -> bool:
+	return x < 0.0 or y < 0.0 or x >= float(nw) or y >= float(nh)
+
+## 就地裁掉边界外条目（层栈与 meta 其它键不动）。与 _crop_counts 同一判据。
+func _crop_data(d: Dictionary, nw: int, nh: int) -> void:
+	var tiles_in = d.get("tiles", null)
+	if tiles_in is Dictionary:
+		for lid in (tiles_in as Dictionary):
+			var cells = (tiles_in as Dictionary)[lid]
+			if not (cells is Array):
+				continue
+			var keep: Array = []
+			for c in (cells as Array):
+				if c is Array and (c as Array).size() >= 2 \
+						and not _outside(int((c as Array)[0]), int((c as Array)[1]), nw, nh):
+					keep.append(c)
+			(tiles_in as Dictionary)[lid] = keep
+	var coll_in = d.get("collision", null)
+	if coll_in is Array:
+		var keep2: Array = []
+		for ce in (coll_in as Array):
+			var cx := 0
+			var cy := 0
+			var ok_shape := false
+			if ce is Dictionary:
+				cx = int((ce as Dictionary).get("x", 0))
+				cy = int((ce as Dictionary).get("y", 0))
+				ok_shape = true
+			elif ce is Array and (ce as Array).size() >= 2:
+				cx = int((ce as Array)[0])
+				cy = int((ce as Array)[1])
+				ok_shape = true
+			if ok_shape and not _outside(cx, cy, nw, nh):
+				keep2.append(ce)
+		d["collision"] = keep2
+	var objs_in = d.get("objects", null)
+	if objs_in is Array:
+		var keep3: Array = []
+		for o in (objs_in as Array):
+			if not (o is Dictionary):
+				continue
+			if not _outside_float(float((o as Dictionary).get("x", 0.0)),
+					float((o as Dictionary).get("y", 0.0)), nw, nh):
+				keep3.append(o)
+		d["objects"] = keep3
+
 func apply_map_size(nw: int, nh: int, pop: PopupPanel, proj := "") -> void:
 	var d: Dictionary = app.canvas.extract()
 	if d.is_empty():   # 重建窗口哨兵：空快照过 load_data = 清空整图
 		app._set_status(" 地图重建中，请稍后再试")
 		return
+	# 缩小先确认裁剪范围（E3：裁掉多少瓦片/碰撞/摆放物，应用前可见）
+	var crop := _crop_counts(d, nw, nh)
+	var cut: int = int(crop.tiles) + int(crop.collision) + int(crop.objects)
+	if cut > 0:
+		var msg := "缩到 %d×%d 会裁掉边界外的数据：\n瓦片 %d · 碰撞 %d · 摆放物 %d\n\n应用后可用 Ctrl+Z 撤销（连同原尺寸恢复）。" % [
+			nw, nh, int(crop.tiles), int(crop.collision), int(crop.objects)]
+		if not await app._confirm_action("裁剪地图边界", msg, "裁剪"):
+			pop.hide()
+			app._set_status("已取消调整尺寸")
+			return
+	# 一笔可撤销快照（D17）：先在改尺寸前入栈，撤销即恢复原尺寸与边缘数据
+	app.canvas._push_undo()
+	_crop_data(d, nw, nh)
 	d["meta"]["w"] = nw
 	d["meta"]["h"] = nh
 	# 逐图投影（B1）：空图可直接选；带内容的地图投影已冻结（弹窗里也禁用），
@@ -79,11 +199,13 @@ func apply_map_size(nw: int, nh: int, pop: PopupPanel, proj := "") -> void:
 		else:
 			d["meta"]["gridProjection"] = proj
 	await app.canvas.load_data(d, app.cur_map_name, true)
-	app.canvas.undo_stack.clear()
-	app.canvas.redo_stack.clear()
 	app.canvas._mark()
 	pop.hide()
-	app._set_status("尺寸已改为 %d×%d（记得保存）" % [nw, nh])
+	if cut > 0:
+		app._set_status("尺寸已改为 %d×%d，裁掉瓦片 %d / 碰撞 %d / 摆放物 %d（Ctrl+Z 可撤销）" % [
+			nw, nh, int(crop.tiles), int(crop.collision), int(crop.objects)])
+	else:
+		app._set_status("尺寸已改为 %d×%d（记得保存）" % [nw, nh])
 
 
 # —— 导出：预览图 PNG + 统计文本 ——

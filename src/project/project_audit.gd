@@ -343,6 +343,116 @@ static func apply_ref_fixes(manifest: Dictionary, map_name: String, fix_list: Ar
 			erased += 1
 	return {"changed": changed, "erased": erased, "skipped": skipped}
 
+## 内容使用统计（C3/E3）：扫全项目实例绑定，找引用某 (功能 id, 内容 ID) 的实例。
+## 当前图可用画布内存的绑定覆盖（磁盘可能是旧的：未保存的新绑定必须在报告里）。
+## 返回 {by_map: {地图名: [实例码]}, unreadable: [图名], bad_contents: [kind/id], incomplete: bool}。
+static func content_usage(manifest: Dictionary, fn_id: String, cid: String,
+		current_map := "", current_codes: Array = []) -> Dictionary:
+	var by_map := {}
+	var bad: Array = []
+	var maps := MapStore.read_all(manifest, bad)
+	var want_code := FunctionDecls.fn_code(manifest, fn_id)
+	for map_name in maps:
+		if current_map != "" and str(map_name) == current_map:
+			continue   # 当前图以画布为准，下面统一补
+		var rows: Array = []
+		for obj in ((maps[map_name] as Dictionary).get("objects", []) as Array):
+			if not (obj is Dictionary):
+				continue
+			for f in ((obj as Dictionary).get("functions", []) as Array):
+				if not (f is Dictionary):
+					continue
+				if str((f as Dictionary).get("content", "")) != cid:
+					continue
+				if want_code != "" and str((f as Dictionary).get("fn", "")) != want_code:
+					continue
+				rows.append(str((obj as Dictionary).get("code", "")))
+				break
+		if not rows.is_empty():
+			by_map[str(map_name)] = rows
+	if current_map != "":
+		var cur_rows: Array = []
+		for c in current_codes:
+			if str(c) != "":
+				cur_rows.append(str(c))
+		if not cur_rows.is_empty():
+			by_map[current_map] = cur_rows
+	var unreadable: Array = []
+	for b in bad:
+		unreadable.append(str((b as Dictionary).get("name", "")))
+	# 内容文件自身读不出来时「有没有内容引用它」同样不可判定
+	var bad_contents: Array = []
+	for kind in ContentStore.declared_kinds(manifest):
+		var bad2: Array = []
+		ContentStore.read_all(manifest, kind, bad2)
+		for b2 in bad2:
+			bad_contents.append("%s/%s" % [kind, str((b2 as Dictionary).get("name", ""))])
+	return {"by_map": by_map, "unreadable": unreadable, "bad_contents": bad_contents,
+		"incomplete": not unreadable.is_empty() or not bad_contents.is_empty()}
+
+## 反查「哪些内容文件引用了 (fn_id, cid)」（E3 删除前检查）：
+## 只认声明为 content 类引用（RefFields kind=content）的字段；返回 [{kind, id, field}]。
+static func content_inbound_refs(manifest: Dictionary, fn_id: String, cid: String) -> Array:
+	var out: Array = []
+	var root := ContentStore.root_dir(manifest)
+	if root == "" or not DirAccess.dir_exists_absolute(root):
+		return out
+	for kind in ContentStore.declared_kinds(manifest):
+		var items := ContentStore.read_all(manifest, kind)
+		var decls: Array = []
+		decls.append_array(FunctionDecls.function_fields(manifest, str(kind)))
+		var conds = FunctionDecls.function_decl(manifest, str(kind)).get("conditions", null)
+		for cond_id in (conds as Array) if conds is Array else []:
+			var cd := ConditionDecls.condition_decl(manifest, str(cond_id))
+			if cd.get("fields", []) is Array:
+				decls.append_array(cd.get("fields", []) as Array)
+		for oid in items:
+			var oid_s := str(oid)
+			if str(kind) == fn_id and oid_s == cid:
+				continue
+			var data: Dictionary = items[oid]
+			for f in _fields_pointing_to(manifest, fn_id, cid, decls, data.get("fields", null)):
+				out.append({"kind": str(kind), "id": oid_s, "field": str(f)})
+			var steps = data.get("steps", null)
+			for st in (steps as Array) if steps is Array else []:
+				if not (st is Dictionary):
+					continue
+				var sd := StepDecls.step_by_code(manifest, str((st as Dictionary).get("step", "")))
+				var sdecls: Array = sd.get("fields", []) if sd.get("fields", []) is Array else []
+				if sdecls.is_empty():
+					continue
+				for f2 in _fields_pointing_to(manifest, fn_id, cid, sdecls, (st as Dictionary).get("fields", null)):
+					out.append({"kind": str(kind), "id": oid_s, "field": str(f2)})
+	return out
+
+## 一组声明 + 值里，值为 content 类引用且指向 (fn_id, cid) 的字段 id 列表。
+## 声明的 filter.fn 为空 = 不限功能；非空时必须等于 fn_id（引用别的功能目录不算）。
+static func _fields_pointing_to(manifest: Dictionary, fn_id: String, cid: String,
+		decls: Array, values) -> Array:
+	var out: Array = []
+	if not (values is Dictionary):
+		return out
+	var vals: Dictionary = values
+	for fd in decls:
+		if not (fd is Dictionary):
+			continue
+		var desc := RefFields.describe(fd)
+		if str(desc.get("kind", "")) != "content":
+			continue
+		var want_fn := str((desc.get("filter", {}) as Dictionary).get("fn", ""))
+		if want_fn != "" and want_fn != fn_id:
+			continue
+		var key := str((fd as Dictionary).get("code", ""))
+		if key == "":
+			key = str((fd as Dictionary).get("id", ""))
+		if not vals.has(key):
+			continue
+		for v in _as_list(vals[key]):
+			if str(v) == cid:
+				out.append(str((fd as Dictionary).get("id", key)))
+				break
+	return out
+
 ## 资产使用统计（C3）：与引用自检同一批读盘结果（MapStore.read_all），
 ## 当前图可用画布内存覆盖（磁盘可能是旧的）。返回
 ## {by_map: {地图名: [{id,x,y}]}, unreadable: [图名], incomplete: bool}。

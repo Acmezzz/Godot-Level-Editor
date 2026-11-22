@@ -7,6 +7,7 @@ const ContentStore := preload("res://src/content/content_store.gd")
 const FunctionDecls := preload("res://src/content/function_decl.gd")
 const V := preload("res://src/project/manifest_validation.gd")
 const ContentId := preload("res://src/content/content_id.gd")
+const AssetDecl := preload("res://src/assets/asset_decl.gd")
 
 const TMP := "user://test_audit_c3_tmp"
 
@@ -306,6 +307,55 @@ func test_paired_map_unknown_reports_once() -> void:
 		ok(str((e as Dictionary).get("message", "")).contains("目标地图不存在"), "只有 map_ref 条目")
 
 # ──────────── 使用统计（C3） ────────────
+
+## E3 内容库删除前的引用检查：实例引用（含当前图未保存绑定）与内容间引用都显形
+func test_content_usage_and_inbound_refs() -> void:
+	_wipe()
+	var m := _fake_manifest()
+	m["functions"] = {
+		"f1": {"name": "F1", "code": "F111", "fields": [
+			{"id": "next", "code": "N111", "kind": "choice", "type": "string", "source": "content:f1"}]},
+		"f2": {"name": "F2", "code": "F222", "fields": []},
+	}
+	ok(ContentStore.write(m, "f1", "AAA1", {"name": "a", "function": "F111", "fields": {}}), "内容写入")
+	ok(ContentStore.write(m, "f1", "BBB2", {"name": "b", "function": "F111", "fields": {"N111": "AAA1"}}),
+		"引用 AAA1 的内容写入")
+	var d := MapStore.new_map("m1", 8, 8)
+	(d.objects as Array).append({"asset": "door", "code": "E1", "layer": str(d.meta.layers[0].id),
+		"x": 0, "y": 0, "functions": [{"fn": "F111", "content": "AAA1"}]})
+	(d.objects as Array).append({"asset": "door", "code": "E2", "layer": str(d.meta.layers[0].id),
+		"x": 1, "y": 0, "functions": [{"fn": "F222", "content": "AAA1"}]})
+	MapStore.write(m, "m1", d)
+	var u := ProjectAudit.content_usage(m, "f1", "AAA1")
+	var by_map: Dictionary = u.get("by_map", {})
+	eq(by_map.size(), 1, "统计到一张图")
+	eq((by_map["m1"] as Array).size(), 1, "只算功能码匹配的那个实例（同内容 ID 的另一功能不算）")
+	ok((by_map["m1"] as Array).has("E1"), "实例码正确")
+	# 当前图以画布为准：磁盘上没引用、画布上新绑的也算
+	var u2 := ProjectAudit.content_usage(m, "f1", "AAA1", "m1", ["E9"])
+	ok(((u2.get("by_map", {}) as Dictionary)["m1"] as Array).has("E9"), "当前画布未保存绑定计入")
+	# 内容间引用：BBB2 的字段指向 AAA1
+	var inbound := ProjectAudit.content_inbound_refs(m, "f1", "AAA1")
+	eq(inbound.size(), 1, "内容间入边一条")
+	eq(str((inbound[0] as Dictionary).get("id", "")), "BBB2", "入边来源内容正确")
+	eq(str((inbound[0] as Dictionary).get("field", "")), "next", "入边字段是字段 id")
+	_wipe()
+
+## E3：共享显示名/类别查询——声明名空时回落 id，类别三分类与图鉴一致
+func test_asset_label_and_category() -> void:
+	var m := _fake_manifest()
+	m["assets"] = [
+		{"id": "T1", "kind": "scene", "shape": "tile", "name": "草地"},
+		{"id": "I1", "kind": "scene", "shape": "image", "name": "背景"},
+		{"id": "E1", "kind": "entity", "name": ""},
+	]
+	eq(AssetDecl.label(m, "T1"), "草地", "声明名优先")
+	eq(AssetDecl.label(m, "E1"), "E1", "空名回落 id")
+	eq(AssetDecl.category_of(m, "T1"), "瓦片", "图集归瓦片")
+	eq(AssetDecl.category_of(m, "I1"), "图片", "图片单列")
+	eq(AssetDecl.category_of(m, "E1"), "实体", "实体单列")
+	ok(AssetDecl.placeable(m, "I1"), "图片可摆放")
+	ok(not AssetDecl.placeable(m, "nope"), "未知资产不可摆放")
 
 ## 使用统计与引用自检同源：坏图显形为 incomplete，不假装零引用
 func test_asset_usage_reports_unreadable() -> void:

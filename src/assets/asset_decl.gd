@@ -58,6 +58,20 @@ static func live_by_id(m: Dictionary, aid: String) -> Dictionary:
 static func name_of(m: Dictionary, aid: String) -> String:
 	return str(by_id(m, aid).get("name", aid))
 
+## 共用显示名（E3）：画布选材与资产图鉴同一口径——声明名为空时回落 id，不各写一份。
+static func label(m: Dictionary, aid: String) -> String:
+	var nm := str(by_id(m, aid).get("name", ""))
+	return nm if nm != "" else aid
+
+## 共用显示类别（E3）：瓦片 / 图片 / 实体。列表、筛选提示与详情都用这一处。
+static func category_of(m: Dictionary, aid: String) -> String:
+	var d := by_id(m, aid)
+	if str(d.get("kind", "")) == "entity":
+		return "实体"
+	if str(d.get("shape", "")) == "image":
+		return "图片"
+	return "瓦片"
+
 static func kind_of(m: Dictionary, aid: String) -> String:
 	return str(by_id(m, aid).get("kind", ""))
 
@@ -169,6 +183,15 @@ static func instance_size(m: Dictionary, aid: String, props: Dictionary, cell: V
 		return Vector2(w, h) * cell
 	var sz := editor_size(m, aid)
 	return sz if sz != Vector2.ZERO else cell
+
+## 是否可放进画布（图集瓦片 / 图片 / 实体都算；停用条目不参与）。
+static func placeable(m: Dictionary, aid: String) -> bool:
+	var d := by_id(m, aid)
+	if d.is_empty() or bool(d.get("disabled", false)):
+		return false
+	if str(d.get("kind", "")) == "entity":
+		return true
+	return str(d.get("kind", "")) == "scene"
 
 ## 资产类型的连接语义（role: portal/exit/landing/trigger）；未声明返回空串。
 static func role_of(m: Dictionary, aid: String) -> String:

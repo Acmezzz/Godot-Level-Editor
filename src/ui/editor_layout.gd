@@ -183,6 +183,7 @@ func _build_global_bar() -> PanelContainer:
 	map_menu.add_separator()
 	map_menu.add_item("重命名地图…", 10)
 	map_menu.add_item("复制整张地图…", 11)
+	map_menu.add_item("地图历史…", 12)
 	map_menu.add_item("导出当前地图", 4)
 	map_menu.add_item("调整地图尺寸", 5)
 	map_menu.add_separator()
@@ -228,6 +229,9 @@ func _on_map_menu_id(id: int) -> void:
 		11:
 			# 整图复制（C2）：先填新名，计划预览失败留在弹窗里
 			app._on_duplicate_map()
+		12:
+			# 历史版本（A3）：列出正式保存前的快照，载入只改画布
+			app._on_map_history()
 		20:
 			app._switch_project()
 		30:
@@ -277,9 +281,14 @@ func _build_palette_column() -> PanelContainer:
 	# 弹层内容按清单重建：每层一行 = 层名 + 👁 + 🔒，显隐/锁定内联在项里（不占额外高度）。
 	# 本控制器是 RefCounted（没有 add_child），弹层挂到窗口根——和所有其他弹窗一致。
 	_layer_menu = PopupPanel.new()
+	# E3：层多时下拉要有滚动路径（U05）——最高 420px，超出滚动而不是把菜单顶出屏幕
+	var layer_scroll := ScrollContainer.new()
+	layer_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	layer_scroll.max_size.y = 420.0
 	_layer_menu_body = app.UiKitScript.vbox(2)
 	_layer_menu_body.custom_minimum_size = Vector2(196, 0)
-	_layer_menu.add_child(_layer_menu_body)
+	layer_scroll.add_child(_layer_menu_body)
+	_layer_menu.add_child(layer_scroll)
 	app.add_child(_layer_menu)
 
 	var holder := Control.new()
