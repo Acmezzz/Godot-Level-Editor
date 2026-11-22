@@ -40,11 +40,16 @@ static func wants_canvas_pick(decl: Dictionary) -> bool:
 	if str(d.get("kind", "")) == "entity_inst" and str(d.get("scope", "")) == "same_map":
 		return true
 	# C4：有限格图 cell_id 字段——格是多边形，画布按多边形命中（accept="cell"）
-	return wants_cell_pick(decl)
+	# §7.4：格边字段——画布按最近共边命中（accept="edge"）
+	return wants_cell_pick(decl) or wants_edge_pick(decl)
 
 ## C4：choice 来源是 `cell:` 的字段可在画布上按格图多边形点选。
 static func wants_cell_pick(decl: Dictionary) -> bool:
 	return type_of(decl) == "choice" and str(decl.get("source", "")).begins_with("cell:")
+
+## §7.4：edge_ref 字段可在画布上按「最近的共边」点选（边身份由格拓扑推导）。
+static func wants_edge_pick(decl: Dictionary) -> bool:
+	return type_of(decl) == "edge_ref"
 
 ## 画布选点的候选类型白名单（声明的 of 过滤；空 = 不限实体类型）。
 static func canvas_pick_types(decl: Dictionary) -> Array:
@@ -300,6 +305,16 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 			return _build_choice(pd2, enc, func(v2):
 				var pd = JSON.parse_string(str(v2))
 				on_set.call(pd if pd is Dictionary else {}), option_resolver)
+		"edge_ref":
+			# §7.4 格边引用 = 对象值 {map, cell, edge}；候选 = edge: 解析器（本图/配对图的共边）。
+			# 与 port_ref 同口径：JSON 串走 choice 控件，值不在候选里显示「(当前值)」。
+			var ed2: Dictionary = decl.duplicate(true)
+			ed2["kind"] = KIND_CHOICE
+			ed2["source"] = "edge:"
+			var eenc := JSON.stringify(value) if value is Dictionary else ""
+			return _build_choice(ed2, eenc, func(v3):
+				var ed = JSON.parse_string(str(v3))
+				on_set.call(ed if ed is Dictionary else {}), option_resolver)
 		"asset_ref":
 			# 资产引用走 choice 的同一套控件，只是选项来源由 asset: 解析器提供。
 			# 白名单两种写法：`of`（字段直写）或 `ids`（数组元素的同型声明——`of` 已被元素类型占用）。

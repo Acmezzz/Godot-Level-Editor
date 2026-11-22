@@ -292,19 +292,28 @@ func _build_field_row(i: int, fn_id: String, fd: Dictionary, cur: Dictionary, si
 func _pick_entity_for(fd: Dictionary, key: String, commit: Callable) -> void:
 	var fname := str(fd.get("name", str(fd.get("id", ""))))
 	var is_cell := FieldWidgets.wants_cell_pick(fd)
-	var hint := "为「%s」选一格（格图）" % fname if is_cell else "为「%s」选目标实例" % fname
+	var is_edge := FieldWidgets.wants_edge_pick(fd)
+	var hint := "为「%s」选一格（格图）" % fname if is_cell \
+		else ("为「%s」选一条格边（靠近格边点）" % fname if is_edge else "为「%s」选目标实例" % fname)
 	var of := FieldWidgets.canvas_pick_types(fd)
-	if not is_cell and not of.is_empty():
+	if not is_cell and not is_edge and not of.is_empty():
 		hint += "（限定类型：%s）" % ",".join(PackedStringArray(of))
 	# 单独建回调再传：多行 lambda 直接塞进实参列表容易读错缩进边界
+	# 边字段的值是对象 {map, cell, edge}，画布给的是它的 JSON 串——与端口引用同一编码，
+	# 这里解码回对象再写，保证落盘形状一致（choice 控件也按同一编码显示）。
 	var on_ok := func(code: String):
 		if code == "":
 			return
-		commit.call(code)
+		if is_edge:
+			var ev = JSON.parse_string(code)
+			commit.call(ev if ev is Dictionary else {})
+		else:
+			commit.call(code)
 		# 下拉控件还停在旧值：提交后重建右栏让新值上屏（用户主动确认的写盘）
 		_rebuild_right()
-	app._begin_canvas_pick("content", "cell" if is_cell else "entity", hint, on_ok, Callable(),
-		[] if is_cell else of)
+	var accept := "cell" if is_cell else ("edge" if is_edge else "entity")
+	app._begin_canvas_pick("content", accept, hint, on_ok, Callable(),
+		[] if (is_cell or is_edge) else of)
 
 ## choice.source 的选项来源解析（由游戏侧声明，编辑器只查不解释）。
 ## 支持：content:<功能id>（内容库）、entity:<id,id>（清单实体类型）、
@@ -371,6 +380,14 @@ func _resolve_options(decl: Dictionary) -> Array:
 		for cid0 in CellGraph.cell_ids(cg):
 			outc.append({"v": str(cid0), "t": str(cid0)})
 		return outc
+	if src.begins_with("edge:"):
+		# §7.4：格边候选 = 两侧都有瓦片的相邻格对（按规范代表边去重）。
+		# 配对图（_mapKey）指向别的图时读那张图的文档；否则直接用画布活体瓦片层（未保存也能选）。
+		var emap := str(decl.get("_mapKey", ""))
+		if emap == "" or not _map_ready() or emap == app.canvas.cur_map_code() \
+				or emap == app.canvas.cur_map_name:
+			return app.canvas._edge_candidates()
+		return RefFields.edge_candidates(manifest, emap)
 	if src.begins_with("viewport:"):
 		# C5：具名参考画幅候选（清单 viewports：[{id, w, h}]）。缺声明 = 无候选（控件保留原值）。
 		var outv: Array = []

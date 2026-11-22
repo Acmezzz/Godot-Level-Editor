@@ -8,6 +8,7 @@ const ManifestScript := preload("res://src/project/manifest.gd")   # 出口 role
 const MapStoreRef := preload("res://src/map/map_store.gd")   # 地图码→名解析（出口角标）
 const K := preload("res://src/core/constants.gd")
 const CellGraphRef := preload("res://src/map/cell_graph.gd")   # C4：格图多边形高亮
+const EdgeRefRef := preload("res://src/map/edge_ref.gd")   # §7.4：格边高亮/取值
 
 func _init(host) -> void:
 	cvs = host
@@ -460,11 +461,13 @@ func _draw_pick_mode() -> void:
 	var hover: String = str(cvs.pick_mode_hover)
 	if cvs.pick_mode_accept == "cell":
 		_draw_pick_cells(hover)
+	elif cvs.pick_mode_accept == "edge":
+		_draw_pick_edges(hover)
 	elif hover != "" and hover != str(cvs.pick_mode_code):
 		var hn = cvs._ent_by_code_index().get(hover, null)
 		if hn != null and is_instance_valid(hn):
 			cvs.draw_rect(_wr(hn as EntityNode).grow(2.0), Color(0.55, 0.95, 1.0, 0.55), false, 1.0)
-	if cvs.pick_mode_accept != "cell" and cvs.pick_mode_code != "":
+	if cvs.pick_mode_accept != "cell" and cvs.pick_mode_accept != "edge" and cvs.pick_mode_code != "":
 		var hs = cvs._ent_by_code_index().get(cvs.pick_mode_code, null)
 		if hs != null and is_instance_valid(hs):
 			var r: Rect2 = _wr(hs as EntityNode).grow(4.0)
@@ -478,9 +481,14 @@ func _draw_pick_mode() -> void:
 		at = vp.get_canvas_transform().affine_inverse() * at
 	var text: String = cvs.pick_mode_hint
 	if cvs.pick_mode_code != "":
-		text += "　已点：%s（左键可换，Enter/确认提交）" % cvs.pick_mode_code
+		var shown: String = cvs.pick_mode_code
+		if cvs.pick_mode_accept == "edge":
+			shown = str(EdgeRefRef.edge_of(JSON.parse_string(cvs.pick_mode_code)))
+		text += "　已点：%s（左键可换，Enter/确认提交）" % shown
 	elif cvs.pick_mode_accept == "cell":
 		text += "　左键点格图里的格子，Esc 取消"
+	elif cvs.pick_mode_accept == "edge":
+		text += "　左键点格边（靠近两格分界），Esc 取消"
 	else:
 		text += "　左键点实例，Esc 取消"
 	var font: Font = ThemeDB.fallback_font
@@ -517,4 +525,28 @@ func _draw_cell_poly(g: Dictionary, id: String, xf: Transform2D, col: Color, fil
 	var closed := world.duplicate()
 	closed.append(world[0])
 	cvs.draw_polyline(closed, col, width)
+
+## §7.4：格边选点高亮（边 ID → 两格中心连线，画成世界空间短线）。
+## 悬停青色细线，已选粗线 + 两端点方块，便于看清到底指的是哪条分界。
+func _draw_pick_edges(hover: String) -> void:
+	if hover != "" and hover != str(cvs.pick_mode_code):
+		_draw_edge_line(hover, Color(0.55, 0.95, 1.0, 0.75), 1.5, false)
+	if str(cvs.pick_mode_code) != "":
+		_draw_edge_line(str(cvs.pick_mode_code), Color(0.2, 1.0, 0.9, 0.95), 3.0, true)
+
+func _draw_edge_line(json_or_id: String, col: Color, width: float, marks: bool) -> void:
+	# 值是 {map, cell, edge} 的 JSON 串（选点候选编码）；也接受裸边 ID（保守兜底）
+	var e := json_or_id
+	if json_or_id.begins_with("{"):
+		e = str(EdgeRefRef.edge_of(JSON.parse_string(json_or_id)))
+	var seg: PackedVector2Array = cvs.edge_segment_world(e)
+	if seg.size() != 2:
+		return
+	cvs.draw_line(seg[0], seg[1], col, width, true)
+	if not marks:
+		return
+	var side := maxf(cvs.grid.cell_max() * 0.22, 4.0)
+	for p in seg:
+		var r := Rect2(p - Vector2.ONE * side * 0.5, Vector2.ONE * side)
+		cvs.draw_rect(r, Color(col, 0.9), true)
 

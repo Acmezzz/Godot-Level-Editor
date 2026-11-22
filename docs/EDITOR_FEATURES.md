@@ -36,6 +36,7 @@ src/
 │   ├── map_export.gd       导出：PNG 俯视预览图 + 文本统计
 │   ├── map_view_data.gd    只读视图数据（B3）：生效格空间、层变换、格多边形、锚点像素，预览/导出共用
 │   ├── cell_graph.gd       C4 有限格图：meta.cellGraph 校验、cell_id 枚举、多边形命中
+│   ├── edge_ref.gd         §7.4 格边身份：规范代表边（无向去重）、解析、字段值、共边判定
 │   ├── recovery.gd         恢复层：草稿（editor/drafts）、地图历史、多文件提交日志（editor/pending）
 │   └── side_actions.gd     按名开图 + 资产显示名（改名/复制在 map_file）
 ├── canvas/                 —— 画布（关卡编辑器主体） ——
@@ -395,6 +396,7 @@ src/
 | **音频来源** | 功能/条件字段 `source: "audio:"`：下拉列清单 `audio` 池（值=音频码）；编辑器不播放音频，播放归游戏侧功能代码 |
 | **端口引用（C3）** | 字段 `type: "port_ref"`、`of` = 端口类型过滤（可空）：下拉列**配对图优先**的实例端口（显示「类型码 · 端口id」），值存 `{map: 地图码, inst: 实例码, port: 端口ID}`；复制时只改前两段。端口本身在资产条目 `ports[]` 里声明（`x/y` 为锚点局部像素） |
 | **格 id 引用（C4）** | `choice` + `source: "cell:"`：下拉列当前图 `meta.cellGraph` 的 `cell_id`；值 = 格 id 字符串。可点「画布选…」按多边形命中。格图是只读参考层，编辑器校验多边形/邻接但不改它 |
+| **格边引用（§7.4）** | 字段 `type: "edge_ref"`：下拉列地图里「两侧都有瓦片」的相邻格对（按规范代表边去重，显示 `(x,y)-(x,y)`），也可「画布选…」在格边附近点选（就近取垂距最小的共边并高亮）；值存 `{map: 地图码, cell: [x,y], edge: "x1,y1|x2,y2"}`。边身份由格拓扑推导（无向边取排序后的代表边，`EdgeRef.canonical_edge`），不依赖游戏侧声明键 |
 | **视口引用（C5）** | 字段 `type: "viewport_ref"`：画幅下拉（清单 `viewports`）+ 归一化 0..1 的坐标 SpinBox；值存 `{viewport, point: [nx,ny]}`，声明 `rect: true` 时存 `{viewport, rect: [nx,ny,nw,nh]}` |
 | 实例身份码 | 每个实例带 4 位 `code`（存在于实体 meta，随地图保存），改名/换 id 不变 |
 | 单选 | 点实体 → 选中并在画布下沿出信息条 |
@@ -466,7 +468,7 @@ src/
 
 - **功能由项目侧实现**，编辑器只暴露「可编辑内容」接口。
 - 功能在清单顶层 `functions` 声明：`{fnId: {name, code, fields:[...], triggers:[...], timing:{mode}, view:{}}}`。
-  字段按 `kind` 两分支：`input`（string/int/float/bool/color/vector2/range/asset_ref/array/port_ref/viewport_ref；
+  字段按 `kind` 两分支：`input`（string/int/float/bool/color/vector2/range/asset_ref/array/port_ref/viewport_ref/edge_ref；
   string 可 `multiline`；array 用 `of` 指元素类型、可增删行，`of: "record"` + `fields` 声明子字段即**结构化行**
   ——每行带 ↑↓/复制/删除，子字段可再嵌 array，限深 4）
   与 `choice`（`options[]` 或 `source` 动态选项，`multiple: true` 切勾选组）；认不出的声明只读展示，绝不提供可写控件。
@@ -496,7 +498,7 @@ src/
   **共享改绑**（C2，本实例直接指向已有内容；确认框先列出还有谁在用同一条，改了会一起变）。
 - **码表**：保存清单时自动生成 `editor/CODES.md`（人类名 ↔ 执行码对照）；游戏侧启动读清单
   重建同款映射，改名不破引用。
-- **引用类字段的取数域（C1）**：声明了 `mapField` 的 `entity_ref`/`port_ref`，候选来自**同一行/同一内容里
+- **引用类字段的取数域（C1）**：声明了 `mapField` 的 `entity_ref`/`port_ref`/`edge_ref`，候选来自**同一行/同一内容里
   那个地图字段的当前值**（不是「当前打开的地图」）；没配对字段就是本图。结构化行里作用域收窄到**本行**。
 
 ### 7.2 分层身份码
@@ -839,10 +841,11 @@ godot --headless --path "<编辑器工程>" --script res://tests/run_tests.gd
 | `test_c1_records.gd` | C1/C3/C5 声明层：record 数组校验（含嵌套限深）、`ref_fields_deep` 路径、record 行内 clone 重映射、`ports` 校验与 `port_ref` 描述/候选/重映射、`viewports`/`views` 校验 |
 | `test_c2_lib.gd` | C2 内容库批量入边扫描（磁盘夹具）：绑定实例 + 内容入边计数、活体绑定并入、不可读图标记 |
 | `test_c4_cell.gd` | C4 有限格图：id 重复/多边形点数/邻接目标校验、多边形命中（含回绕边）、地图校验钩子与写入拦截 |
+| `test_edge_ref.gd` | §7.4 格边引用：规范代表边无向去重、解析合法/非法串、`value_of` 的 cell↔edge 自洽、quad/tri 拓扑共边判定、`edge_ref` 描述与清单合法、候选只列两侧有瓦片的相邻格对、公共顶点数=共边判据（三投影+三角）、复制只钉地图分量、审计悬空三类 |
 
 约定：套件 `extends "res://tests/_suite_base.gd"`，方法名 `test_` 开头即被发现；
 `ok()` / `eq()` 收集失败；**每个用例至少一条断言**（崩溃中断的用例断言数不增长，
-runner 判 FAIL——防止半路崩掉变成假 PASS）。退出码非 0 = 有失败。当前 **28 套件 253 用例**。
+runner 判 FAIL——防止半路崩掉变成假 PASS）。退出码非 0 = 有失败。当前 **29 套件 262 用例**。
 
 截图辅助 `tools/screenshot.gd`（模式清单见文件头注释）、警告扫描 `tools/warn_scan.gd`
 （headless 全量加载 src/ 校验可加载性）、接入自检 `tools/f2_pilot.gd`（在 user:// 临时工程里

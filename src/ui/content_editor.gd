@@ -712,7 +712,7 @@ func _build_refs_block() -> Control:
 	for fd in fdecls:
 		if fd is Dictionary:
 			var t := str(fd.get("type", ""))
-			if t == "entity_ref" or t == "map_ref":
+			if t == "entity_ref" or t == "map_ref" or t == "edge_ref":
 				rows.append(fd)
 				if t == "map_ref":
 					map_rows.append(fd)
@@ -734,12 +734,18 @@ func _build_refs_block() -> Control:
 ## 配对地图未填时取所属图（本图）。值不在选项里时由 FieldWidgets 保留原值。
 func _build_ref_row(fd: Dictionary, props: Dictionary, fdecls: Array = []) -> Control:
 	var fid := str(fd.get("id", ""))
-	var cur := str(props.get(fid, ""))
+	var is_edge := str(fd.get("type", "")) == "edge_ref"
+	var cur = props.get(fid, null) if is_edge else str(props.get(fid, ""))
 	var built: Dictionary
 	var d := fd.duplicate(true)
 	if str(fd.get("type", "")) == "map_ref":
 		d["kind"] = "choice"
 		d["source"] = "map"
+	elif is_edge:
+		# §7.4：格边引用 = 对象值 {map, cell, edge}，FieldWidgets 的 edge_ref 分支统一编码成 JSON 走下拉
+		var emap := RefFields.paired_map_value(fd, fdecls, props)
+		if emap != "":
+			d["_mapKey"] = emap
 	else:
 		d["kind"] = "choice"
 		d["source"] = "entity_inst:" + str(fd.get("of", ""))
@@ -773,22 +779,30 @@ func highlight_field(fid: String) -> void:
 		app._set_status("已定位到实例 %s 的字段 %s（问题抽屉）" % [_selected_ent, fid])
 
 ## E1：实例 props 引用字段的画布选点。确认后与手选下拉同一写入口（撤销/配对清空规则一致）。
+## accept 按字段种类走：entity_ref = 实例；§7.4 edge_ref = 格边（值解码回 {map, cell, edge}）。
 func _pick_prop_ref(fd: Dictionary) -> void:
 	var fname := str(fd.get("name", str(fd.get("id", ""))))
+	var is_edge := FieldWidgets.wants_edge_pick(fd)
 	var of := FieldWidgets.canvas_pick_types(fd)
-	var hint := "为「%s」选目标实例" % fname + \
-		("（限定类型：%s）" % ",".join(PackedStringArray(of)) if not of.is_empty() else "")
+	var hint := ("为「%s」选一条格边（靠近格边点）" % fname) if is_edge else ("为「%s」选目标实例" % fname)
+	if not is_edge and not of.is_empty():
+		hint += "（限定类型：%s）" % ",".join(PackedStringArray(of))
 	var on_ok := func(code: String):
 		if code == "":
 			return
-		_set_prop_ref(fd, code)
+		if is_edge:
+			var ev = JSON.parse_string(code)
+			_set_prop_ref(fd, ev if ev is Dictionary else {})
+		else:
+			_set_prop_ref(fd, code)
 		_rebuild_right()
-	app._begin_canvas_pick("content", "entity", hint, on_ok, Callable(), of)
+	app._begin_canvas_pick("content", "edge" if is_edge else "entity", hint, on_ok, Callable(),
+		[] if is_edge else of)
 
 ## 写实例 props 的引用字段：props 是地图数据，改动进撤销栈；并做指向预览高亮。
 ## E2：与画布连线把手走同一写入口（ref_ops.set_entity_ref）——改配对地图字段时
 ## 旧落点会指向别的图的实例码（C1），确认与「一起清空」的规则只写在一处。
-func _set_prop_ref(fd: Dictionary, value: String) -> void:
+func _set_prop_ref(fd: Dictionary, value) -> void:
 	var spr := _current_spr()
 	if spr == null or not is_instance_valid(spr) or not app.map_loaded:
 		return
@@ -799,10 +813,11 @@ func _set_prop_ref(fd: Dictionary, value: String) -> void:
 		return
 	if str(res.get("status", "")) != "ok":
 		return
-	# 指向预览：高亮被指实例（仅当前图 entity_ref；跨图/地图引用不高亮）——
+	# 指向预览：高亮被指实例（仅当前图 entity_ref；跨图/地图/格边引用不高亮）——
 	# RefOps 已在画布上写好 ref_highlight，这里同步只读预览列
 	var target := ""
-	if str(fd.get("type", "")) == "entity_ref" and app.canvas.is_entity_code_local(value):
+	if str(fd.get("type", "")) == "entity_ref" and value is String \
+			and app.canvas.is_entity_code_local(value):
 		target = value
 	if _preview != null:
 		_preview.set_highlight(target)

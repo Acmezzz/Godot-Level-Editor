@@ -825,22 +825,30 @@ func _step_field_row(fd: Dictionary, sfd: Dictionary, siblings: Array = []) -> C
 		row.tooltip_text = tip
 	if FieldWidgets.wants_canvas_pick(fd):
 		var pick := Kit.button("画布选…", func(): _pick_step_ref(fd, key, si, rev), "ghost")
-		pick.tooltip_text = "临时切到画布点一个实例；确认才写入这一步，取消不改当前值"
+		pick.tooltip_text = "临时切到画布点一个实例；确认才写入这一步，取消不改当前值" \
+			if not FieldWidgets.wants_edge_pick(fd) else "临时切到画布点一条格边；确认才写入这一步，取消不改当前值"
 		pick.add_theme_font_size_override("font_size", Th.FS_META)
 		row.add_child(pick)
 	return row
 
 ## E1：步骤字段的画布选点。确认后按起手时的步骤下标 + 版本写回：
 ## 期间步骤被增删/换序则丢弃（与拖拽同一套过期校验）。
+## accept 按字段种类走：entity_ref = 实例；§7.4 edge_ref = 格边（值解码回 {map, cell, edge}）。
 func _pick_step_ref(fd: Dictionary, key: String, si: int, rev: int) -> void:
 	var fname := str(fd.get("name", str(fd.get("id", ""))))
+	var is_edge := FieldWidgets.wants_edge_pick(fd)
 	var of := FieldWidgets.canvas_pick_types(fd)
-	var hint := "第 %d 步「%s」选目标实例" % [si + 1, fname] + \
-		("（限定类型：%s）" % ",".join(PackedStringArray(of)) if not of.is_empty() else "")
+	var hint := ("第 %d 步「%s」选一条格边（靠近格边点）" % [si + 1, fname]) if is_edge \
+		else ("第 %d 步「%s」选目标实例" % [si + 1, fname] + \
+			("（限定类型：%s）" % ",".join(PackedStringArray(of)) if not of.is_empty() else ""))
 	var on_ok := func(code: String):
 		if code == "":
 			return
-		_set_step_field(si, key, code, rev)
+		if is_edge:
+			var ev = JSON.parse_string(code)
+			_set_step_field(si, key, ev if ev is Dictionary else {}, rev)
+		else:
+			_set_step_field(si, key, code, rev)
 		_reopen_after_pick()
 	var on_cancel := func(_code: String):
 		_reopen_after_pick()
@@ -854,7 +862,8 @@ func _pick_step_ref(fd: Dictionary, key: String, si: int, rev: int) -> void:
 	_steps_pop = null
 	if old != null and is_instance_valid(old):
 		old.hide()
-	app._begin_canvas_pick("steps", "entity", hint, on_ok, on_cancel, of)
+	app._begin_canvas_pick("steps", "edge" if is_edge else "entity", hint, on_ok, on_cancel,
+		[] if is_edge else of)
 
 ## 选点归来：重开同一个绑定行的演出面板（步骤/视图/播放头由 _steps_mem 恢复）。
 ## 期间实例/绑定换了（身份校验失败）就不重开——对着另一条绑定弹出旧面板更糟。

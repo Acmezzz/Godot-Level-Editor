@@ -275,6 +275,8 @@ static func remap_row(row: Dictionary, instance_map: Dictionary, content_map: Di
 	_remap_entity_ref_fields(props, fdecls, str(out.get("code", "")), instance_map, cross_code, source_codes, conflicts, target_data, target_map, source_key, source_name)
 	# C3：port_ref 重映射（props 键 = 字段 id，code 兜底）
 	_remap_port_refs(props, fdecls, instance_map, target_data, target_map, cross_code, source_codes, source_key, source_name)
+	# §7.4：edge_ref 只改「所属图」分量（边身份来自格拓扑，与实例码无关）
+	_remap_edge_refs(props, fdecls, cross_code, source_key, source_name)
 	# 功能绑定：内容跳转换成副本；未知键原样保留
 	var fns: Array = out.get("functions", []) if out.get("functions", []) is Array else []
 	for i in fns.size():
@@ -328,6 +330,8 @@ static func _remap_field_map(values, decls: Array, instance_map: Dictionary,
 	_remap_record_rows(vals, decls, instance_map, content_map, cross_code, source_codes, conflicts, owner, target_data, target_map, source_key, source_name)
 	# C3：port_ref 重映射（内容字段键 = 码优先，id 兜底）
 	_remap_port_refs(vals, decls, instance_map, target_data, target_map, cross_code, source_codes, source_key, source_name)
+	# §7.4：edge_ref 只改所属图分量（键 = 字段码优先，id 兜底）
+	_remap_edge_refs(vals, decls, cross_code, source_key, source_name)
 	var pairs_to_fill := {}
 	for fd in decls:
 		if not (fd is Dictionary):
@@ -550,3 +554,29 @@ static func _remap_port_refs(vals: Dictionary, fdecls: Array, instance_map: Dict
 		if not source_codes.is_empty() and not source_codes.has(inst):
 			continue
 		vd["map"] = cross_code
+
+## §7.4：edge_ref 字段的重映射：值 = {map, cell, edge}。边身份由格拓扑推导，与实例码无关，
+## 唯一会变的是**所属图**分量：值指向源图（空 = 本图）且跨图复制 → 钉源图码；指向第三图原样保留。
+## 同图复制（cross_code 空）不动：空 = 仍指本图。
+static func _remap_edge_refs(vals: Dictionary, fdecls: Array, cross_code: String,
+		source_key := "", source_name := "") -> void:
+	if cross_code == "":
+		return
+	for fd in fdecls:
+		if not (fd is Dictionary):
+			continue
+		var f: Dictionary = fd
+		if str(f.get("type", "")) != "edge_ref":
+			continue
+		var key := str(f.get("id", ""))
+		if key == "" or not vals.has(key):
+			key = str(f.get("code", ""))
+		if key == "" or not vals.has(key):
+			continue
+		var v = vals[key]
+		if not (v is Dictionary):
+			continue
+		var vd: Dictionary = v
+		var mcmp := str(vd.get("map", ""))
+		if mcmp == "" or mcmp == source_key or mcmp == source_name:
+			vd["map"] = cross_code

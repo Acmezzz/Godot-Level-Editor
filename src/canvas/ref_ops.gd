@@ -15,17 +15,18 @@ func _init(a) -> void:
 	app = a
 	cvs = a.canvas
 
-## 写 entity_ref 字段。返回 {status: "ok"/"cancelled"/"failed", cleared: 清空的配对字段 id[]}。
+## 写引用字段（entity_ref 的实例码字符串；§7.4 edge_ref 的 {map, cell, edge} 对象）。
+## 返回 {status: "ok"/"cancelled"/"failed", cleared: 清空的配对字段 id[]}。
 ## 幂等：值未变直接 ok（不压撤销）。配对清空需要确认时会等待用户选择；
 ## 取消返回 cancelled 且数据一点没动（调用方把控件回填旧值）。
-func set_entity_ref(n: EntityNode, fd: Dictionary, value: String) -> Dictionary:
+func set_entity_ref(n: EntityNode, fd: Dictionary, value) -> Dictionary:
 	if n == null or not is_instance_valid(n) or not app.map_loaded:
 		return {"status": "failed", "cleared": []}
 	var fid := str(fd.get("id", ""))
 	if fid == "":
 		return {"status": "failed", "cleared": []}
 	var props: Dictionary = n.props.duplicate(true)
-	if str(props.get(fid, "")) == value:
+	if props.get(fid, null) == value:
 		return {"status": "ok", "cleared": []}
 	# 该字段是否被其它 entity_ref 的 mapField 配对（改目标图 → 旧落点跨图失效）
 	var edef: Dictionary = AssetDecl.by_id(app.manifest, n.asset)
@@ -45,6 +46,8 @@ func set_entity_ref(n: EntityNode, fd: Dictionary, value: String) -> Dictionary:
 		cvs.push_undo()
 	if value == "":
 		props.erase(fid)
+	elif value is Dictionary and (value as Dictionary).is_empty():
+		props.erase(fid)   # §7.4：「未设置」的 edge_ref 也是空对象，落盘按缺键
 	else:
 		props[fid] = value
 	var cleared: Array = []
@@ -55,15 +58,18 @@ func set_entity_ref(n: EntityNode, fd: Dictionary, value: String) -> Dictionary:
 	n.props = props
 	if via_delta:
 		cvs._undo_history_ctrl.inst_commit(pre.get("rows", {}))
-	cvs._mark()
+	cvs._mark_ents()   # 阶段三：只改实例 props，瓦片/碰撞镜像不动
 	# 指向预览：仅本图 entity_ref 高亮（跨图/地图引用在本图没有可亮对象）
-	var target := value if app.canvas.is_entity_code_local(value) else ""
+	var target := str(value) if value is String and app.canvas.is_entity_code_local(value) else ""
 	cvs.ref_highlight = target
 	cvs.queue_redraw()
-	if value == "":
+	if value == "" or (value is Dictionary and (value as Dictionary).is_empty()):
 		app._set_status("已清空引用「%s」" % str(fd.get("name", fid)))
+	elif value is Dictionary:
+		app._set_status("引用「%s」→ %s（Ctrl+Z 撤销）" % [
+			str(fd.get("name", fid)), str((value as Dictionary).get("edge", ""))])
 	else:
-		app._set_status("引用「%s」→ %s（Ctrl+Z 撤销）" % [str(fd.get("name", fid)), value])
+		app._set_status("引用「%s」→ %s（Ctrl+Z 撤销）" % [str(fd.get("name", fid)), str(value)])
 	return {"status": "ok", "cleared": cleared}
 
 ## 目标实例是否满足字段的 of 白名单（空 = 不限）。拖连线/画布选点共用。

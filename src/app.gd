@@ -17,6 +17,7 @@ const ConditionDecls := preload("res://src/content/condition_decl.gd")
 const StepDecls := preload("res://src/content/step_decl.gd")
 const AudioDecls := preload("res://src/content/audio_decl.gd")
 const TriggerDecls := preload("res://src/content/trigger_decl.gd")
+const EdgeRef := preload("res://src/map/edge_ref.gd")   # §7.4：格边身份（选点确认后对准）
 
 var manifest := {}
 var canvas: EditorCanvas
@@ -733,7 +734,8 @@ func _begin_canvas_pick(owner: String, accept: String, hint: String,
 	_set_mode("map")
 	canvas.begin_pick_mode(owner, accept, hint, want_types)
 	_layout_ctrl._refresh_pick_bar()
-	_set_status(hint + "：左键点实例，确认提交；Esc 取消")
+	var what := "一条格边" if accept == "edge" else ("一格" if accept == "cell" else "实例")
+	_set_status(hint + "：左键点%s，确认提交；Esc 取消" % what)
 	return true
 
 ## 确认/取消选点：清理模式，回调各调一次；取消时回到原视图（表单已由宿主保留）。
@@ -751,6 +753,8 @@ func _end_canvas_pick(confirm: bool) -> void:
 	if confirm and code != "":
 		if str(canvas.pick_mode_accept) == "cell":
 			canvas.focus_cell_id(code)
+		elif str(canvas.pick_mode_accept) == "edge":
+			canvas.focus_edge(str(EdgeRef.edge_of(JSON.parse_string(code))))
 		else:
 			canvas.focus_entity_code(code)
 	# 回原视图但不重建表单（静默恢复）：控件与焦点都还在，只有内容视图的
@@ -763,14 +767,23 @@ func _end_canvas_pick(confirm: bool) -> void:
 	var pf = sess.get("prev_focus", null)
 	if pf is Control and is_instance_valid(pf) and (pf as Control).is_inside_tree():
 		(pf as Control).grab_focus()
-	_set_status(("已选目标 " + code) if confirm else "已取消选点")
+	_set_status(("已选目标 " + _pick_label(code)) if confirm else "已取消选点")
+
+## 选点结果显示：格边给「(x,y)-(x,y)」，其余原样（至少别把整串 JSON 糊在状态栏）。
+func _pick_label(code: String) -> String:
+	if str(canvas.pick_mode_accept) != "edge":
+		return code
+	var e := str(EdgeRef.edge_of(JSON.parse_string(code)))
+	if e == "":
+		return code
+	return e.replace("|", "-")
 
 ## 画布点选候选时刷新确认条（只改候选，不提交）。
 func _on_pick_candidate(code: String) -> void:
 	_layout_ctrl._refresh_pick_bar()
 	if code != "" and canvas != null:
 		# 点中即把这条高亮告诉用户（状态栏），但值仍等「确认」才写
-		_set_status("%s：已点 %s，按确认提交" % [str(canvas.pick_mode_hint), code])
+		_set_status("%s：已点 %s，按确认提交" % [str(canvas.pick_mode_hint), _pick_label(code)])
 
 ## 画布右键 = 取消选点
 func _on_pick_cancelled() -> void:

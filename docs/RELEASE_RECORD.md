@@ -113,7 +113,7 @@
 ```
 godot --headless --path . --script res://tools/f2_pilot.gd        # §3 刷怪片段端到端，24 项断言，跑完自清
 godot --headless --path . --script res://tools/projection_baseline.gd -- <项目目录> [--out=<文件>]
-godot --headless --path . --script res://tests/run_tests.gd       # 全套件 253 用例
+godot --headless --path . --script res://tests/run_tests.gd       # 全套件 262 用例
 godot --headless --path . --script res://tools/warn_scan.gd       # 全量加载 + 警告扫描
 godot --headless --path . --script res://tools/perf_sample.gd     # §7.5 性能采样（数字见上）
 ```
@@ -137,7 +137,6 @@ godot --headless --path . --script res://tools/perf_sample.gd     # §7.5 性能
 
 | 项 | 排除原因 |
 |---|---|
-| 格边引用（地图码 + 规范格号 + 拓扑边 ID、无向边取排序代表） | 缺项目侧「拓扑边身份」声明键；端口引用（`assets[].ports`）已做 |
 | 参考视图热点点选回填 | `views[].hotspots` 校验已完成；从画布点热点回填目标身份需 GUI 选点会话 |
 | 音频试听与波形 | 缺项目侧「音频可播放路径」约定（`audio[].path` 的解释权在游戏侧），编辑器只做名称+时间显示 |
 | 实例 `InstanceKey` / 内容 `ContentKey` 差量撤销 | **已实现**（`undo_history.gd` 的 `{kind:"ents"}` / `{kind:"content"}`，见 §9.4）：实例增删改与内容字段只写受影响数据。仍走整图快照的只有**无实例码的场景图片**与全局操作（区域/层/尺寸/转换/批量替换/自动碰撞）。逐项见 `tests/test_undo_delta.gd` |
@@ -153,8 +152,8 @@ godot --headless --path . --script res://tools/perf_sample.gd     # §7.5 性能
 
 ## 9. 第二轮审查修复（2026-11-22，[V2-EDITOR_REAUDIT.md](reviews/V2-EDITOR_REAUDIT.md)）
 
-> 覆盖 R01–R29 与 §7.1–§7.4（B/C 系列能力扩展）中的下列条目；纯逻辑断言 **253/253** 通过、
-> `warn_scan` **81 文件 0 失败**；GUI 手势、试玩与「第二个文件写失败」等中断回归仍按审查报告 §6 待验收。
+> 覆盖 R01–R29 与 §7.1–§7.4（B/C 系列能力扩展）中的下列条目；纯逻辑断言 **262/262** 通过、
+> `warn_scan` **82 文件 0 失败**；GUI 手势、试玩与「第二个文件写失败」等中断回归仍按审查报告 §6 待验收。
 
 | 审查项 | 修复落点 | 证据 |
 |---|---|---|
@@ -188,5 +187,6 @@ godot --headless --path . --script res://tools/perf_sample.gd     # §7.5 性能
 | C3 端口引用 | `assets[].ports = [{id, x, y, type?}]`；字段 `type: "port_ref"`、值 `{map, inst, port}`；复制只改 map/inst；候选走配对图优先 | `tests/test_c1_records.gd` 的 ports/port_ref 用例 |
 | C4 有限格图 | 地图 `meta.cellGraph` 只读参考层：id/多边形/邻接校验 + 多边形命中；字段 `source: "cell:"` 枚举，且可「画布选…」按多边形点选（选点 accept=`"cell"`，多边形高亮） | `tests/test_c4_cell.gd`（含 polygon/centroid/命中一致性 2 例）；画布点选手感待 GUI 验收 |
 | C5 坐标域/视口 | 清单 `viewports` + `views` 校验与展示；字段 `type: "viewport_ref"` 存 `{viewport, point|rect}`，归一化 0..1 | `tests/test_c1_records.gd` 的 viewports/views 用例 |
+| §7.4 格边引用 | 字段 `type: "edge_ref"`，值 `{map, cell, edge}`；`EdgeRef.canonical_edge` 由格拓扑推导排序代表边（无向去重），`cell` = 代表边首端点；画布点选 `accept="edge"`（垂距就近）+ 下拉候选（两侧有瓦片的相邻格对）；复制只钉地图分量；审计报格式非法/不相邻/cell 不自洽 | `tests/test_edge_ref.gd`（9 例）；画布点选手感待 GUI 验收 |
 | D1/D2/D3 文档 | 游戏侧规范删去固定图集名与 `(4,0)` 占位瓦片要求、补新键与支持边界；功能文档改历史/草稿/撤销/写入时机四处旧说法；15 个模块头注释按其真实职责收敛 | 逐条静态核对 |
 

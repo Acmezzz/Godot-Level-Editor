@@ -23,6 +23,7 @@ const ConditionDecls := preload("res://src/content/condition_decl.gd")
 const StepDecls := preload("res://src/content/step_decl.gd")
 const TriggerDecls := preload("res://src/content/trigger_decl.gd")
 const RefFields := preload("res://src/content/ref_fields.gd")
+const EdgeRef := preload("res://src/map/edge_ref.gd")
 const ReferenceIndex := preload("res://src/project/reference_index.gd")
 
 ## 审计全项目。manifest = 编辑器清单（含 _dir/_maps_dir）。
@@ -350,7 +351,7 @@ static func apply_ref_fixes(manifest: Dictionary, map_name: String, fix_list: Ar
 			if str(od.get("code", "")) != code:
 				continue
 			var props: Dictionary = od.get("props", {}) if od.get("props", {}) is Dictionary else {}
-			if str(props.get(prop, "")) != expect:
+			if _val_str(props.get(prop, "")) != expect:
 				skipped += 1
 				continue
 			props.erase(prop)
@@ -739,7 +740,7 @@ static func _ref_checks(data: Dictionary, manifest: Dictionary, map_name: String
 			if not (fd is Dictionary):
 				continue
 			fld_all.append(fd)
-			if str((fd as Dictionary).get("type", "")) in ["entity_ref", "map_ref"]:
+			if str((fd as Dictionary).get("type", "")) in ["entity_ref", "map_ref", "edge_ref"]:
 				flds.append(fd)
 		if not flds.is_empty():
 			refs[str(ad.get("id", ""))] = flds
@@ -806,7 +807,57 @@ static func _ref_checks(data: Dictionary, manifest: Dictionary, map_name: String
 					"fix": {"op": "clear_prop", "map": map_name, "code": str(o.get("code", "")),
 						"prop": key, "expect": str(val)},
 				})
+			elif typ == "edge_ref":
+				var bad := _edge_ref_problem(manifest, data, val)
+				if bad != "":
+					out.append({
+						"kind": "ref", "severity": "warning",
+						"path": "%s · %s(%s).%s" % [map_name, aid, str(o.get("code", "?")), key],
+						"message": bad,
+						"map": map_name,
+						"jump": {"type": "entity", "map": map_name, "code": str(o.get("code", "")),
+							"prop": key},
+						"fix": {"op": "clear_prop", "map": map_name, "code": str(o.get("code", "")),
+							"prop": key, "expect": _val_str(val)},
+					})
 	return out
+
+## edge_ref 悬空判定（§7.4）：边身份由格拓扑推导，因此只验「目标图存在 + 两格确实相邻 + cell 自洽」。
+## 目标图本图/跨图取法与 map_ref 一致；图读不出来时比对双方拓扑会误报，故只按「读不到不判悬空」放行。
+static func _edge_ref_problem(manifest: Dictionary, data: Dictionary, val) -> String:
+	if not (val is Dictionary):
+		return "格边引用值不是 {map, cell, edge} 字典"
+	var v: Dictionary = val
+	var e_code := str(v.get("edge", ""))
+	var ends := EdgeRef.parse_edge(e_code)
+	if ends.size() != 2:
+		return "格边引用格式不合法: %s" % e_code
+	var e_map := str(v.get("map", ""))
+	var tgt_meta: Dictionary = data.get("meta", {}) if data.get("meta", {}) is Dictionary else {}
+	if e_map != "" and e_map != str(tgt_meta.get("code", "")):
+		var tgt_name := _map_name_of(manifest, e_map)
+		if tgt_name == "":
+			return "格边引用的目标地图不存在: %s" % e_map
+		var td: Dictionary = MapStore.read(manifest, tgt_name)
+		if td.is_empty():
+			return ""
+		tgt_meta = td.get("meta", {}) if td.get("meta", {}) is Dictionary else {}
+	var g: GridSpace = GridSpace.resolve(tgt_meta, manifest).get("grid") as GridSpace
+	var ea := Vector2i(int(ends[0][0]), int(ends[0][1]))
+	var eb := Vector2i(int(ends[1][0]), int(ends[1][1]))
+	if not g.neighbors_any(ea).has(eb):
+		return "格边引用的两格在地图里不相邻: %s" % e_code
+	var cell = v.get("cell", null)
+	if cell is Array and (cell as Array).size() == 2:
+		if int((cell as Array)[0]) != ea.x or int((cell as Array)[1]) != ea.y:
+			return "格边引用的 cell 与 edge 不自洽: %s" % e_code
+	return ""
+
+## 清空比对用的值串：字典（edge_ref）走 JSON，保持键序稳定；其余走 str()。
+static func _val_str(v) -> String:
+	if v is Dictionary or v is Array:
+		return JSON.stringify(v)
+	return str(v)
 
 ## 目标地图键（地图码或图名）→ 该图实例码集合。读不到/未知键返回空集合（引用因此报悬空）。
 static func _codes_of_map(manifest: Dictionary, map_key: String) -> Dictionary:

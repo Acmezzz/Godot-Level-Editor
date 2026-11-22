@@ -21,6 +21,8 @@ const TriTileViewScript := preload("res://src/canvas/tri_tile_view.gd")   # B3�
 const MapFormat := preload("res://src/map/map_format.gd")   # 格式版本/瓦片变换位（v7）
 const FunctionDeclsRef := preload("res://src/content/function_decl.gd")   # 挂载补齐（C09）
 const CellGraphScript := preload("res://src/map/cell_graph.gd")   # C4：有限格图（多边形命中）
+const EdgeRefScript := preload("res://src/map/edge_ref.gd")   # §7.4：格边身份（规范代表边）
+const RefFieldsScript := preload("res://src/content/ref_fields.gd")   # §7.4：边候选与内容表单共用口径
 
 var active_layer := 0          # 0..N-1 = 层栈下标，N = 碰撞元层
 var place_kind := "tiles"      # 放置语义跟资产走："tiles"=涂瓦片 / "object"=摆实例（左栏驱动）
@@ -791,7 +793,7 @@ var pick_mode_active := false
 var pick_mode_code := ""       # 已点中的候选实例码（"" = 还没点；确认提交的就是它）
 var pick_mode_hover := ""      # 光标下的候选（只做高亮预览，不参与提交）
 var pick_mode_hint := ""       # 确认条文字（由宿主设定：字段名 + 操作说明）
-var pick_mode_accept := "entity"  # "entity" = 只认实体；"any" = 实体与场景实例都可选
+var pick_mode_accept := "entity"  # "entity" = 只认实体；"any" = 实体与场景实例都可选；"cell"/"edge" = 格图/格边
 var pick_mode_owner := ""      # 发起方标记（"content" / "steps"），归宿主管
 var pick_mode_types: Array = []  # E2：声明的 of 白名单（空 = 不限资产类型）
 @warning_ignore("unused_private_class_variable")
@@ -847,7 +849,7 @@ func commit_selection(n: EntityNode, multi: Array = []) -> void:
 func begin_pick_mode(owner: String, accept: String, hint: String, want_types: Array = []) -> void:
 	pick_mode_active = true
 	pick_mode_owner = owner
-	pick_mode_accept = accept if accept in ["any", "cell"] else "entity"
+	pick_mode_accept = accept if accept in ["any", "cell", "edge"] else "entity"
 	pick_mode_code = ""
 	pick_mode_hover = ""
 	pick_mode_hint = hint
@@ -869,6 +871,12 @@ func end_pick_mode() -> void:
 func pick_candidate_at(pos: Vector2) -> String:
 	if pick_mode_accept == "cell":
 		return pick_cell_id_at(pos)
+	if pick_mode_accept == "edge":
+		var pe := pick_edge_at(pos)
+		if pe.is_empty():
+			return ""
+		return JSON.stringify(EdgeRefScript.value_of(cur_map_code(),
+			pe.get("cell", Vector2i.ZERO) as Vector2i, pe.get("other", Vector2i.ZERO) as Vector2i))
 	var n := _entity_at(pos)
 	if n == null or not is_instance_valid(n):
 		return ""
@@ -915,6 +923,106 @@ func focus_cell_id(id: String) -> bool:
 	_update_cam()
 	queue_redraw()
 	return true
+
+## —— §7.4 格边引用（edge_ref）接入画布 ——
+## 边身份由格拓扑推导（EdgeRef.canonical_edge：两端点排序后的代表边），不需要游戏侧声明键。
+## 命中：光标所在格 + 该格共边邻格里距离最近、且在阈值内的一条边。
+## 值 = {map, cell: [规范格号], edge: "x1,y1|x2,y2"}；画布只读，不写拓扑。
+
+## 光标世界坐标 → 最近的共边（返回 {cell: Vector2i, edge: String, other: Vector2i}，无则空）。
+## tol = 像素阈值（缺省 0.35 格）：按**到真实分界线段的距离**判定，四邻/六边/三角同一口径。
+func pick_edge_at(world: Vector2, tol := 0.0) -> Dictionary:
+	if not is_map_ready() or grid == null:
+		return {}
+	# 与 edge_segment_world 同一坐标系（根空间）：层 offset/scale 只是显示变换，不进格的拓扑身份
+	var lp := map_root.get_global_transform().affine_inverse() * world
+	var c: Vector2i = grid.pick_cell(lp)
+	var limit: float = tol if tol > 0.0 else grid.cell_max() * 0.35
+	var best := {}
+	var best_d := INF
+	for nb: Vector2i in grid.neighbors_any(c):
+		var seg := _edge_segment_local(EdgeRefScript.canonical_edge(c, nb))
+		if seg.size() != 2:
+			continue
+		var d := _dist_to_seg(lp, seg[0], seg[1])
+		if d <= limit and d < best_d:
+			best_d = d
+			best = {"cell": c, "other": nb, "edge": EdgeRefScript.canonical_edge(c, nb)}
+	return best
+
+## 点到线段距离（世界坐标系；投影参数夹在 [0,1]）。
+static func _dist_to_seg(p: Vector2, a: Vector2, b: Vector2) -> float:
+	var ab := b - a
+	var l2 := ab.length_squared()
+	if l2 <= 0.0001:
+		return p.distance_to(a)
+	var t := clampf((p - a).dot(ab) / l2, 0.0, 1.0)
+	return p.distance_to(a + ab * t)
+
+## 边 ID → 世界空间线段（画布高亮用）：取两格多边形的**公共顶点**（真正的分界线）。
+## 退化/取不到公共边（坏格号）时退回两格中心连线。无效边返回空数组。
+func edge_segment_world(edge: String) -> PackedVector2Array:
+	var loc := _edge_segment_local(edge)
+	if loc.size() != 2:
+		return loc
+	var xf: Transform2D = map_root.get_global_transform() if is_map_ready() else Transform2D.IDENTITY
+	return PackedVector2Array([xf * loc[0], xf * loc[1]])
+
+## 边 ID → 根空间（= grid 空间）线段。命中判定与高亮共用这一份几何。
+func _edge_segment_local(edge: String) -> PackedVector2Array:
+	var ends := EdgeRefScript.parse_edge(edge)
+	if ends.size() != 2 or grid == null:
+		return PackedVector2Array()
+	var a := Vector2i(int(ends[0][0]), int(ends[0][1]))
+	var b := Vector2i(int(ends[1][0]), int(ends[1][1]))
+	var pa: PackedVector2Array = grid.cell_polygon(a)
+	var pb: PackedVector2Array = grid.cell_polygon(b)
+	var shared := PackedVector2Array()
+	for p in pa:
+		for q in pb:
+			if p.distance_squared_to(q) < 0.01:
+				shared.append(p)
+				break
+	if shared.size() == 2:
+		return shared
+	return PackedVector2Array([grid.cell_center_px(a), grid.cell_center_px(b)])
+
+## 该边当前是否仍成立（两端格在声明地图里仍是共边）。声明地图 = 本图时查本图 grid。
+func edge_is_live(edge: String, map_code := "") -> bool:
+	if edge == "":
+		return false
+	var ends := EdgeRefScript.parse_edge(edge)
+	if ends.size() != 2:
+		return false
+	if map_code != "" and map_code != cur_map_code():
+		return true   # 跨图边：本图拓扑无从判定，交给项目自检
+	var a := Vector2i(int(ends[0][0]), int(ends[0][1]))
+	var b := Vector2i(int(ends[1][0]), int(ends[1][1]))
+	return EdgeRefScript.is_real_edge(edge, a, grid.neighbors_any(a)) \
+		and grid.neighbors_any(b).has(a)
+
+## 本图地图码（meta.code；老图可能为空）。
+func cur_map_code() -> String:
+	return str((map_data.get("meta", {}) as Dictionary).get("code", "")) \
+		if map_data is Dictionary else ""
+
+## 把相机对准某条边（选点确认后）。
+func focus_edge(edge: String) -> bool:
+	var seg := edge_segment_world(edge)
+	if seg.size() != 2:
+		return false
+	cam_pos = (seg[0] + seg[1]) * 0.5
+	_update_cam()
+	queue_redraw()
+	return true
+
+## 本图可引用的边候选（§7.4）：委托 RefFields.edge_candidates_of 对**内存文档**求值——
+## 未保存的涂改也算，且与内容表单下拉（配对图时读盘）共用同一套口径。
+## 返回 [{v: JSON({map, cell, edge}), t: "(x,y)-(x,y)"}]，与 edge: 选项来源同形。
+func _edge_candidates() -> Array:
+	if not is_map_ready():
+		return []
+	return RefFieldsScript.edge_candidates_of(map_data, manifest)
 
 ## 框选集合提交：首成员作单选，整组进多选，一次 emit
 func commit_multi(multi: Array) -> void:

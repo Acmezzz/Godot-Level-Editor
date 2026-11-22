@@ -271,7 +271,7 @@ pixel_size 正数、hotspot rect 四个 0..1 数且 target 为对象；`assets[]
 ```
 
 编辑器消费 `fields` 的方式（**声明驱动，不做字符串盲扫**）：
-1. **只改声明为引用的字段**：`entity_ref`（实例码）、`port_ref`（端口引用）、
+1. **只改声明为引用的字段**：`entity_ref`（实例码）、`port_ref`（端口引用）、`edge_ref`（只改所属图分量）、
    `choice.source` 为 `content:` / `entity_inst:` 的字段。未声明的字符串键一律原样保留，
    哪怕它的值恰好等于某个旧实例码。
 2. **组内换新、组外保留**：值命中本次复制集合里的实例 → 换成新码；指向集合外的目标 → 原样保留
@@ -287,7 +287,8 @@ pixel_size 正数、hotspot rect 四个 0..1 数且 target 为对象；`assets[]
 
 `of` 键在 `type: "entity_ref"` 时**被编辑器读取**（内容编辑器引用行）：限定实例下拉只列
 指定类型（逗号分隔类型 id，可多个）；不写 = 列全部实例。
-引用类取值都有专用编辑入口：`entity_ref`（实例下拉，`of` 限定类型）、`map_ref`（地图下拉，值 = 地图码）；
+引用类取值都有专用编辑入口：`entity_ref`（实例下拉，`of` 限定类型）、`map_ref`（地图下拉，值 = 地图码）、
+`edge_ref`（格边下拉/画布点选，值 = `{map, cell, edge}`）；
 其余取值（`string` 等）编辑器按字符串对待。
 
 因此 `fields` 的本质是「**声明这个键里存的是别的实例的 id**」，好让块复制时能改指向。
@@ -295,6 +296,13 @@ pixel_size 正数、hotspot rect 四个 0..1 数且 target 为对象；`assets[]
 **端口（C3）**：资产可声明 `ports: [{id, x, y, type?}]`（`x`/`y` 为锚点局部像素），给开关/插槽/出入口这类
 「实例上的具名连接点」一个稳定身份。字段声明 `type: "port_ref"`、`of: "类型,类型"`（可选，按端口 `type` 过滤）时，
 值存 `{map: 地图码, inst: 实例码, port: 端口ID}`；块复制只改前两段，端口 id 不变。端口 id 在单个资产内非空唯一。
+
+**格边（§7.4）**：字段声明 `type: "edge_ref"` 时存 `{map: 地图码, cell: [x, y], edge: "x1,y1|x2,y2"}`——
+「某个格拓扑里的一条边」的稳定身份，用于「同一个对象的不同端点」这类选择。边身份**完全由编辑器从格拓扑推导**，
+游戏侧不需要额外声明键：一条边 = 两个共边格，无向边取排序后的代表边（两端点按 (y, x) 字典序排列），
+因此 `edge(a,b)` 与 `edge(b,a)` 是同一串；`cell` 恒为该代表边的第一个端点（自洽，不存两套口径）。
+邻接口径跟地图拓扑走（quad 四邻 / hex 六邻 / triangles 三邻，`GridSpace.neighbors_any`）。
+`map` 为空 = 本图；块复制只改 `map` 分量（跨图时钉源图码），`edge`/`cell` 不动。
 
 ### 2.5 功能声明 `functions`
 
@@ -349,6 +357,7 @@ pixel_size 正数、hotspot rect 四个 0..1 数且 target 为对象；`assets[]
 | input | `array` + `of: "record"` | 结构化行容器（C1）：`fields` 声明子字段（id/code/name/kind/type，可再嵌 array，限深 4）；每行带 ↑↓/复制/删除；值存对象数组 |
 | input | `port_ref` | 端口下拉（C3）：`of` = 端口类型过滤（可选），值存 `{map, inst, port}` |
 | input | `viewport_ref` | 视口下拉 + 归一化 SpinBox（C5）：值存 `{viewport, point: [nx, ny]}`；`rect: true` 则 `{viewport, rect: [nx, ny, nw, nh]}` |
+| input | `edge_ref` | 格边下拉 + 画布点选（§7.4）：候选 = 地图里两侧都有瓦片的相邻格对（按规范代表边去重），值存 `{map, cell, edge}`；`mapField` 可配对目标图 |
 | choice | — | OptionButton：`options: ["a","b"]` 直给，或 `source` 动态取；`multiple: true` 切勾选组，值存字符串数组 |
 | input | 其他任意字符串 | 只读展示 + 黄字提示（编辑器不会把数组/对象塞进可写控件） |
 
@@ -1298,6 +1307,7 @@ func _apply_door(inst: Node, fn: Dictionary) -> void:
 | 12 | 若用端口引用：先在该资产声明 `ports[]`，字段 `type: "port_ref"` | 内容表单端口下拉有候选 |
 | 13 | 若用有限格图：地图 `meta.cellGraph` + 字段 `source: "cell:"` | 地图校验通过，下拉列出格 id |
 | 14 | 若用视口参考：清单 `viewports[]` + 字段 `type: "viewport_ref"` | 下拉列出画幅，默认 `0,0` 归一化点 |
+| 15 | 若用格边：字段 `type: "edge_ref"`（无需额外声明——边身份从格拓扑推导） | 下拉/画布点选能取到边，值存 `{map, cell, edge}` |
 
 ### 一次性验证命令
 

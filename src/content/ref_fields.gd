@@ -34,6 +34,7 @@ const CONTENT_PREFIX := "content:"
 const MapStore := preload("res://src/map/map_store.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
 const ReferenceIndex := preload("res://src/project/reference_index.gd")
+const EdgeRef := preload("res://src/map/edge_ref.gd")
 
 ## 逗号分隔 id 白名单（空 = 不限）
 static func _ids(s: String) -> Array:
@@ -82,6 +83,13 @@ static func describe(decl: Dictionary) -> Dictionary:
 	if typ == "map_ref":
 		out.kind = "map"
 		out.scope = "pool"
+		out.is_ref = true
+		out.allow_empty = true
+		return out
+	if typ == "edge_ref":
+		# §7.4 格边引用：值 = {map, cell, edge}；边身份由格拓扑推导（EdgeRef 规范代表边）。
+		out.kind = "edge"
+		out.scope = "map_ref" if out.map_field != "" else "same_map"
 		out.is_ref = true
 		out.allow_empty = true
 		return out
@@ -201,6 +209,56 @@ static func port_candidates(manifest: Dictionary, map_key: String, want_types: A
 				continue
 			var val := {"map": map_code if map_code != "" else name, "inst": code, "port": pid}
 			out.append({"v": JSON.stringify(val), "t": "%s · %s" % [code, pid]})
+	return out
+
+## §7.4：格边候选（`edge:` 选项来源）：地图 tiles 里「两侧都有瓦片」的相邻格对，
+## 按规范代表边（EdgeRef.canonical_edge）去重排序。返回 [{v: JSON({map, cell, edge}), t: "(x,y)-(x,y)"}]。
+## 地图解析失败 / 读不到返回空（控件保留原值，不静默改写）。
+static func edge_candidates(manifest: Dictionary, map_key: String) -> Array:
+	var rm: Dictionary = ReferenceIndex.resolve_map(manifest, map_key)
+	if str(rm.get("status", "")) != "ok":
+		return []
+	var name := str(rm.get("key", ""))
+	if name == "":
+		return []
+	return edge_candidates_of(MapStore.read(manifest, name), manifest)
+
+## 已读地图文档 → 边候选（画布对内存文档直接调，避免再读盘）。瓦片格号按生效拓扑解析。
+static func edge_candidates_of(data: Dictionary, manifest: Dictionary) -> Array:
+	if data.is_empty():
+		return []
+	var meta: Dictionary = data.get("meta", {}) if data.get("meta", {}) is Dictionary else {}
+	var grid: GridSpace = GridSpace.resolve(meta, manifest).get("grid") as GridSpace
+	var occ := {}
+	var tiles_data = data.get("tiles", null)
+	if tiles_data is Dictionary:
+		for lid in (tiles_data as Dictionary):
+			var cells = (tiles_data as Dictionary)[lid]
+			if not (cells is Array):
+				continue
+			for c0 in (cells as Array):
+				if c0 is Array and (c0 as Array).size() >= 2:
+					occ[Vector2i(int(c0[0]), int(c0[1]))] = true
+	var seen := {}
+	var edges: Array = []
+	for c: Vector2i in occ:
+		for nb: Vector2i in grid.neighbors_any(c):
+			if not occ.has(nb):
+				continue
+			var e := EdgeRef.canonical_edge(c, nb)
+			if seen.has(e):
+				continue
+			seen[e] = true
+			edges.append(e)
+	edges.sort()
+	var code := str(meta.get("code", ""))
+	var out: Array = []
+	for e2 in edges:
+		var ends := EdgeRef.parse_edge(str(e2))
+		var a := Vector2i(int(ends[0][0]), int(ends[0][1]))
+		var b := Vector2i(int(ends[1][0]), int(ends[1][1]))
+		out.append({"v": JSON.stringify(EdgeRef.value_of(code, a, b)),
+			"t": "(%d,%d)-(%d,%d)" % [a.x, a.y, b.x, b.y]})
 	return out
 
 ## E2：配对地图值是否指向当前图（C1：未填配对地图 = 本图；v7 写地图码，老数据存图名）。
