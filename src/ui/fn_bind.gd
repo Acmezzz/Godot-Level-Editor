@@ -1,7 +1,6 @@
 extends RefCounted
 ## 功能绑定块（附加功能行 + 添加菜单 + 行操作）：从 content_editor.gd 拆出的控制器。宿主 = content_editor 实例（host 引用）。
-## 搬迁约定：函数体逐字节原样迁入；跨边界引用经 host 转发——
-## 同名 const 重声明 + 同名转发属性 + 同名包装方法，搬动文本零改动。
+## 「添加」菜单只滤掉已绑定的功能（方便选择），数据层不强制唯一——手改 JSON 仍可造成重复绑定。
 
 const Kit := preload("res://src/ui/ui_kit.gd")
 const Th := preload("res://src/ui/ui_theme.gd")
@@ -199,7 +198,8 @@ func _build_add_row() -> Control:
 	return btn
 
 ## 添加功能弹层的内容每次弹出前重建：清单可能在会话中被编辑（清单视图）。
-## 已绑定（含挂载自动生成的）与已挂载的功能不再出现在菜单里——同一个功能一个实例只挂一条。
+## 已绑定（含挂载自动生成的）的功能不再出现在菜单里——界面层的便利过滤；
+## 数据层不强制唯一（手改 JSON 仍可造出重复绑定，自检不报这条）。
 func _populate_add_menu() -> void:
 	_add_menu.clear()
 	var all := _function_index()

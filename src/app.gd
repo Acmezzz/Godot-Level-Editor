@@ -814,8 +814,15 @@ func _build_editor_ui() -> void:
 func _set_palette_page(which: String) -> void:
 	_layout_ctrl._set_palette_page(which)
 
+## 状态栏唯一写入口：按当前视图分派——项目页（内容/资产）有自己的状态栏，
+## 只写关卡那条会让内容页里「实例已不存在」这类提示看不见（标签此时是隐藏的）。
+## 界面尚未建好/已释放（切项目的过渡窗口）时静默丢弃。
 func _set_status(msg: String) -> void:
-	_layout_ctrl._set_status(msg)
+	if _in_project_view():
+		project_shell._set_status(msg)
+		return
+	if _layout_ctrl != null:
+		_layout_ctrl._set_status(msg)
 
 func _on_cursor(t: String) -> void:
 	_layout_ctrl._on_cursor(t)

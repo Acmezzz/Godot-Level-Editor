@@ -6,7 +6,7 @@ extends RefCounted
 ## choice —— options[] 直给，或 source 从内容库 / 清单实体 / 地图列表动态取；multiple: true 切勾选组
 ##
 ## string 可加 multiline: true 切 TextEdit；range 读 min/max/step（无 min/max 时退到 HSlider 默认）；
-## asset_ref 读 kind（按 kind 过滤资产）与可选 of（逗号分隔 id 白名单）。
+## asset_ref 读 `assetKind`（按资产 kind 过滤）与可选 `of`（逗号分隔 id 白名单）。
 ## array 读 of（基础类型或 choice，不嵌套 array）与可选 min/max（数字元素界限，透传给行控件）。
 ## 认不出的声明一律只读展示 + 黄色提示，绝不提供可写控件。
 ## 旧实现把未知类型落进 LineEdit：数组 [1,2,3] 被 str() 成 "[1, 2, 3]"，用户一碰

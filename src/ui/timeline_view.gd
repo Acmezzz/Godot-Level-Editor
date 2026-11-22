@@ -4,7 +4,8 @@ class_name TimelineView
 ## 只负责呈现与拖拽；数据与写盘归 content_editor（视图直接读写同一份 steps 数组）。
 ##
 ## 交互：点条块选中（发 picked）；拖条块左右改 at、拖右缘改 duration、上下拖换轨；
-## 落定（松手）发一次 changed，由宿主净化回写盘。0.1 秒吸附，0 起步不为负。
+## 落定（松手）发一次 changed，由宿主净化回写盘。吸附件随功能声明 timebase
+## （seconds 0.1 / frames 1 / beats 1/subdivisionsPerBeat），负值夹回 0。
 
 const Th := preload("res://src/ui/ui_theme.gd")
 const StepTimeline := preload("res://src/content/step_timeline.gd")
