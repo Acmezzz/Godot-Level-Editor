@@ -296,7 +296,7 @@ static func write_text(path: String, text: String) -> bool:
 	return true
 
 ## 多文件提交（地图 + 内容 + 清单）的协调写入与崩溃恢复不在这里，走
-## Recovery.begin_pending / mark_pending_done（editor/pending 提交日志，见 ui/map_file.gd
+## Recovery.begin_pending / mark_pending_written（editor/pending 提交日志，见 ui/map_file.gd
 ## 的 commit_document）；本函数只负责把一段字节写进一个文件。
 static func _write_bytes(path: String, bytes: PackedByteArray) -> bool:
 	var file := FileAccess.open(path, FileAccess.WRITE)

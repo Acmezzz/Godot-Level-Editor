@@ -636,18 +636,27 @@ func commit_document(reason := "", dry_run := false) -> Dictionary:
 	if app.canvas != null:
 		app.canvas.doc_busy = true   # 确认/写入期间冻结撤销与重做
 	var written: Array = []
-	# 0) 多文件提交日志（A3）：首次改写前登记各目标基线/预期；成功全部写完后清除。
-	#    崩溃或中途失败时，下次启动 scan_pending 能判断哪些已写、哪些可同 ID 重试。
+	# 0) 多文件提交日志（A3）：按**写序**登记各目标基线；每个文件写成功后回填实际结果摘要。
+	#    崩溃/中途失败后，下次启动 scan_pending 逐条比对「基线 / 结果 / 当前摘要」，
+	#    分得出「已写 / 未写 / 被外部改过（转人工复核）」，而不是只知道日志存在。
 	var log_entries: Array = []
-	if app.map_loaded and app.cur_map_path != "" and FileAccess.file_exists(app.cur_map_path):
-		log_entries.append({"path": app.cur_map_path, "baseline": _opened_digest,
-			"expect": "", "kind": "map", "id": app.cur_map_name})
+	var idx_manifest := -1
+	var manifest_path := ""
+	var idx_content: Array = []
+	var idx_map := -1
 	if bool(app.manifest.get("_codes_issued", false)):
-		log_entries.append({"path": str(app.manifest.get("_dir", "")).path_join("editor/editor_manifest.json"),
-			"baseline": "", "expect": "", "kind": "manifest", "id": ""})
+		manifest_path = str(app.manifest.get("_dir", "")).path_join("editor/editor_manifest.json")
+		idx_manifest = log_entries.size()
+		log_entries.append({"path": manifest_path, "baseline": Recovery.digest(manifest_path),
+			"expect": "", "kind": "manifest", "id": ""})
 	if app.project_shell != null and app.project_shell.content_editor != null:
 		for pf in app.project_shell.content_editor.pending_paths():
-			log_entries.append({"path": pf, "baseline": "", "expect": "", "kind": "content", "id": ""})
+			idx_content.append(log_entries.size())
+			log_entries.append({"path": pf, "baseline": Recovery.digest(pf), "expect": "", "kind": "content", "id": ""})
+	if app.map_loaded and app.cur_map_path != "":
+		idx_map = log_entries.size()
+		log_entries.append({"path": app.cur_map_path, "baseline": _opened_digest,
+			"expect": "", "kind": "map", "id": app.cur_map_name})
 	var log_path := Recovery.begin_pending(app.manifest, reason, log_entries) if not log_entries.is_empty() else ""
 	# 1) 清单补发的身份码（内容/地图引用它们之前必须落盘）：顺序不能和内容对调——
 	# 内容文件里带的是执行码，清单没写成功就写内容会留下查无对应的码。
@@ -657,7 +666,7 @@ func commit_document(reason := "", dry_run := false) -> Dictionary:
 			# 日志保留：下次启动能看出「清单未写/内容未写」，按同 ID 重试（A3）
 			return {"status": "cancelled", "written": written, "error": "清单补码保存被取消或失败", "pending": _pending_targets()}
 		written.append("manifest")
-		Recovery.mark_pending_done(app.manifest, log_path, 0)
+		Recovery.mark_pending_written(app.manifest, log_path, idx_manifest, Recovery.digest(manifest_path))
 	# 2) 内容页正在编辑的连续控件值 + 暂存内容（新 ID/新绑定）
 	if app.project_shell != null and app.project_shell.content_editor != null:
 		var staged_before: bool = app.project_shell.content_editor.has_staged_content()
@@ -666,12 +675,16 @@ func commit_document(reason := "", dry_run := false) -> Dictionary:
 			return {"status": "failed", "written": written, "error": "暂存内容写盘失败", "pending": _pending_targets()}
 		if staged_before:
 			written.append("content")
+		for ci in idx_content:
+			var cp := str((log_entries[ci] as Dictionary).get("path", ""))
+			Recovery.mark_pending_written(app.manifest, log_path, ci, Recovery.digest(cp))
 	# 3) 地图
 	if app.map_loaded and app.canvas != null and app.canvas.modified_flag:
 		if not await on_save():
 			_release_busy()
 			return {"status": "failed", "written": written, "error": "地图保存失败", "pending": _pending_targets()}
 		written.append("map")
+		Recovery.mark_pending_written(app.manifest, log_path, idx_map, Recovery.digest(app.cur_map_path))
 	_release_busy()
 	# 全部写成功：提交日志完成使命（A3）
 	Recovery.clear_pending(app.manifest, log_path)

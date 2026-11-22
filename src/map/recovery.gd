@@ -266,13 +266,20 @@ static func begin_pending(m: Dictionary, reason: String, entries: Array) -> Stri
 	}
 	return path if write_json(path, payload) else ""
 
-## 每成功写一个文件就前移进度（崩溃后据此判断「已写/未写」）。
-static func mark_pending_done(m: Dictionary, log_path: String, index: int) -> void:
+## 每个文件写成功后把**实际结果摘要**记进日志（A3）：重启时逐条比对就能分清
+## 已写（摘要相符）/ 未写（仍与基线相符）/ 已变（两者都不符 → 外部改过或写了一半 → 人工复核）。
+## 只记摘要，不重放内容：同 ID 重试仍走各自的补写路径（内容页暂存 / 地图保存）。
+static func mark_pending_written(m: Dictionary, log_path: String, index: int, result_digest: String) -> void:
 	if log_path == "":
 		return
 	var d := read_json(log_path)
 	if d.is_empty():
 		return
+	var entries: Array = d.get("entries", []) if d.get("entries", []) is Array else []
+	if index < 0 or index >= entries.size() or not (entries[index] is Dictionary):
+		return
+	(entries[index] as Dictionary)["expect"] = result_digest
+	d["entries"] = entries
 	d["done"] = maxi(int(d.get("done", 0)), index + 1)
 	write_json(log_path, d)
 
@@ -283,8 +290,11 @@ static func clear_pending(m: Dictionary, log_path: String) -> bool:
 		return true
 	return DirAccess.remove_absolute(log_path) == OK
 
-## 启动时找未完成提交日志；返回 [{path, data, status}]。
-## status: done（全部已写）/ partial（部分已写）/ stale（一个都没写）。
+## 启动时找未完成提交日志；返回 [{path, data, status, written, pending, manual, entries}]。
+## 每条按「当前文件摘要 vs 登记的预期/基线」判定（A3）：
+##   written 已写（摘要 == 写后预期）/ pending 未写（摘要仍 == 提交前基线）/
+##   manual 两边都不符（外部改过或写了一半）→ 不能自动重放，交人工复核。
+## status 汇总：done（全 written）/ partial（有写有没写）/ stale（全没写）/ manual（有对不上的）。
 static func scan_pending(m: Dictionary) -> Array:
 	var dir := _dir(m, PENDING_DIR)
 	var out: Array = []
@@ -303,21 +313,45 @@ static func scan_pending(m: Dictionary) -> Array:
 			continue
 		var entries: Array = data.get("entries", []) if data.get("entries", []) is Array else []
 		var written := 0
+		var pending := 0
+		var manual := 0
+		var judged: Array = []
 		for e in entries:
 			if not (e is Dictionary):
 				continue
-			var tgt := str((e as Dictionary).get("path", ""))
-			var expect := str((e as Dictionary).get("expect", ""))
+			var entry := e as Dictionary
+			var tgt := str(entry.get("path", ""))
+			var expect := str(entry.get("expect", ""))
+			var base := str(entry.get("baseline", ""))
+			var state := "pending"
 			if tgt == "":
-				continue
-			if expect != "" and FileAccess.file_exists(tgt) and digest(tgt) == expect:
-				written += 1
+				state = "manual"   # 没记目标路径 = 日志本身不完整
+			elif not FileAccess.file_exists(tgt):
+				state = "manual" if base != "" or expect != "" else "pending"
+			else:
+				var cur := digest(tgt)
+				if expect != "" and cur == expect:
+					state = "written"
+				elif base != "" and cur == base:
+					state = "pending"
+				else:
+					state = "manual"
+			match state:
+				"written": written += 1
+				"pending": pending += 1
+				"manual": manual += 1
+			var copy := entry.duplicate()
+			copy["state"] = state
+			judged.append(copy)
 		var status := "stale"
-		if written == entries.size() and not entries.is_empty():
+		if manual > 0:
+			status = "manual"
+		elif written == entries.size() and not entries.is_empty():
 			status = "done"
 		elif written > 0:
 			status = "partial"
-		out.append({"path": p, "data": data, "status": status, "written": written})
+		out.append({"path": p, "data": data, "status": status, "written": written,
+			"pending": pending, "manual": manual, "entries": judged})
 	out.sort_custom(func(a, b): return str(a.path) < str(b.path))
 	return out
 

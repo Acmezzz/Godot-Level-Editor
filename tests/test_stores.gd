@@ -282,23 +282,39 @@ func test_map_history_by_code_and_write_failure() -> void:
 	_nuke(path + ".tmp")
 	_wipe()
 
-## A3：提交日志登记 → 部分写入的判定 → 清除
+## A3：提交日志逐条判定——写后结果摘要 == 当前摘要 → 已写；仍等于基线 → 未写；
+## 两边都不符（外部改过/写了一半）→ 转人工复核，不自动重放。
 func test_pending_log_partial_detection() -> void:
 	_wipe()
 	var m := _fake_manifest()
 	DirAccess.make_dir_recursive_absolute(str(m._maps_dir))
 	var a := str(m._maps_dir).path_join("a.json")
 	var b := str(m._maps_dir).path_join("b.json")
+	var c := str(m._maps_dir).path_join("c.json")
 	MapStore.write_json(a, {"v": 1})
 	MapStore.write_json(b, {"v": 1})
+	MapStore.write_json(c, {"v": 1})
 	var log := Recovery.begin_pending(m, "test", [
-		{"path": a, "baseline": "", "expect": Recovery.digest(a), "kind": "map"},
-		{"path": b, "baseline": "", "expect": "not-yet", "kind": "content"},
+		{"path": a, "baseline": Recovery.digest(a), "expect": "", "kind": "map"},
+		{"path": b, "baseline": Recovery.digest(b), "expect": "", "kind": "content"},
+		{"path": c, "baseline": Recovery.digest(c), "expect": "", "kind": "manifest"},
 	])
 	ok(log != "", "登记成功")
+	# a 写成功 → 回填结果摘要；b 保持原样（未写）；c 被外部改动
+	MapStore.write_json(a, {"v": 2})
+	Recovery.mark_pending_written(m, log, 0, Recovery.digest(a))
+	MapStore.write_json(c, {"v": 9})
 	var scan := Recovery.scan_pending(m)
 	eq(scan.size(), 1, "扫到一条日志")
-	eq(str((scan[0] as Dictionary).get("status")), "partial", "判定为部分写入")
+	var rec: Dictionary = scan[0]
+	eq(str(rec.get("status")), "manual", "有对不上的文件 → 人工复核优先于 partial")
+	eq(int(rec.get("written")), 1, "一条已写")
+	eq(int(rec.get("pending")), 1, "一条未写")
+	eq(int(rec.get("manual")), 1, "一条对不上")
+	var states: Array = []
+	for e in (rec.get("entries", []) as Array):
+		states.append(str((e as Dictionary).get("state", "")))
+	eq(states, ["written", "pending", "manual"], "逐条状态按摘要判定")
 	ok(Recovery.clear_pending(m, log), "清除日志")
 	ok(Recovery.scan_pending(m).is_empty(), "清除后扫不到")
 	_wipe()

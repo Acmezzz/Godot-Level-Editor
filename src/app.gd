@@ -213,11 +213,17 @@ func _report_recovery_items() -> void:
 		parts.append("%d 份草稿（地图菜单可恢复）" % drafts.size())
 	var pending: Array = preload("res://src/map/recovery.gd").scan_pending(manifest)
 	var partial := 0
+	var manual := 0
 	for p in pending:
-		if str((p as Dictionary).get("status", "")) != "done":
+		var st := str((p as Dictionary).get("status", ""))
+		if st == "manual":
+			manual += 1
+		elif st != "done":
 			partial += 1
 	if partial > 0:
 		parts.append("%d 次未完成提交（已写文件保留，可同 ID 重试）" % partial)
+	if manual > 0:
+		parts.append("%d 次提交有文件对不上（外部改过或写了一半，需人工复核 editor/pending）" % manual)
 	if parts.is_empty():
 		return
 	_set_status(" 上次会话有 %s" % "；".join(PackedStringArray(parts)))
