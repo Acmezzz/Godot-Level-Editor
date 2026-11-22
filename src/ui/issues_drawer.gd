@@ -135,7 +135,8 @@ func _issue_row(it: Dictionary) -> Control:
 	b.tooltip_text = txt
 	return b
 
-## 行点击跳转：地图问题开图；实例问题开图后选中；资产问题开资产页；清单问题不可跳转
+## 行点击跳转：地图问题开图；实例问题开图后选中；资产问题开资产页；清单问题不可跳转。
+## E1：实例问题落到**内容页**并展开对应实例的引用区（字段级定位）。
 func _jump_to(it: Dictionary) -> void:
 	var j := it.get("jump", {}) as Dictionary
 	var typ := str(j.get("type", ""))
@@ -147,17 +148,28 @@ func _jump_to(it: Dictionary) -> void:
 		return
 	var map := str(j.get("map", ""))
 	if typ == "entity":
-		if map != "" and (map != app.cur_map_name or not app.map_loaded):
-			await app._open_map_by_name(map)
-		if app.map_loaded and map == app.cur_map_name:
-			_select_by_code(str(j.get("code", "")))
+		var want_map: String = map if map != "" else str(app.cur_map_name)
+		if want_map != "" and (want_map != app.cur_map_name or not app.map_loaded):
+			await app._open_map_by_name(want_map)
+			# 开图失败/用户取消：保留抽屉条目和输入，给出文件与重试动作
+			if not app.map_loaded or want_map != app.cur_map_name:
+				app._set_status("跳到实例失败：%s 未打开（可重试，或先修好这个地图文件）" % want_map)
+				return
+		var code := str(j.get("code", ""))
+		if code != "" and not _select_by_code(code):
+			app._set_status("跳到实例失败：%s 里没有实例 %s（可能已删除）" % [app.cur_map_name, code])
+			return
+		# 内容页并定位到该实例（focus = 实例码）；有 prop 时把对应引用行标出来
+		app._set_mode("content", code)
+		if app.project_shell != null and app.project_shell.content_editor != null:
+			app.project_shell.content_editor.highlight_field(str(j.get("prop", "")))
 	elif map != "" and (map != app.cur_map_name or not app.map_loaded):
 		app._open_map_by_name(map)
 
-## 选中本图指定实例码的节点（找不到给状态提示）
-func _select_by_code(code: String) -> void:
+## 选中本图指定实例码的节点（找不到返回 false，调用方给失败反馈）
+func _select_by_code(code: String) -> bool:
 	if code == "" or app.canvas == null:
-		return
+		return false
 	var n: Node = null
 	for e in app.canvas.ents_all():
 		var en := e as EntityNodeScript
@@ -165,9 +177,9 @@ func _select_by_code(code: String) -> void:
 			n = en
 			break
 	if n == null:
-		app._set_status("未找到实例 %s" % code)
-		return
+		return false
 	app.canvas.commit_selection(n as EntityNode)
+	return true
 
 ## 一键清除悬空引用（D07）：把 audit 报出的 fix 项落地——按地图分组，逐图重读文件、
 ## **重跑引用检查并复验字段当前值仍是报告里的坏值**（报告可能过期：期间可能已修好/

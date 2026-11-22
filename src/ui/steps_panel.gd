@@ -14,6 +14,7 @@ const TimelineClock := preload("res://src/content/timeline_clock.gd")
 const AudioDecls := preload("res://src/content/audio_decl.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
 const EntityNodeRef := preload("res://src/canvas/entity_node.gd")
+const SessionContext := preload("res://src/ui/session_context.gd")
 
 var host   # content_editor 宿主
 var app    # 根应用（= host.app）
@@ -47,11 +48,20 @@ func _rebuild_right() -> void:
 	host._rebuild_right()
 
 var _steps_pop: PopupPanel = null
+## E1：可复用容器形态——"popup" 独立窗口 / "content" 内容页下方 / "canvas" 画布下方。
+## 三种形态共用同一控制器状态与工作副本，切换只换宿主容器，不重建数据。
+var _steps_dock_where := "popup"
+var _steps_dock: PanelContainer = null
 var _steps_i := -1            # 正在编辑的绑定行下标
 var _steps_fn_id := ""        # 该绑定的功能 id
+## E1：所属实例码。停靠面板会长时间占屏，换实例后身份校验必须能发现（空绑定尤甚）
+var _steps_ent := ""
 var _steps_cid := ""          # 该绑定的内容 ID（身份校验：绑定换内容 = 数据源失效）
 var _steps_rev := 0           # 结构版本：增删/排序后递增，过期控件回调据此丢弃（D1）
 var _steps_sel := -1          # 当前选中步骤下标；-1 = 无
+## E1：恢复记忆下标时校验「还是同一步」——期间步骤被增删/换序就回落到无选中，
+## 不把下标悄悄挪到另一条步骤上（与 D1 的过期回调同一套身份原则）。
+var _steps_sel_expect := ""
 var _steps_list: VBoxContainer = null
 var _steps_form: VBoxContainer = null
 var _steps_warn_box: VBoxContainer = null
@@ -70,8 +80,16 @@ var _steps_preview_idx := -1            # 当前预览帧（播放头所在帧�
 var _steps_audio := ""                  # audioField 解析出的音频码（只显示，不播放）
 var _steps_frame_holder: Control = null  # 参考帧预览行（播放头移动时只刷这一行）
 var _steps_playhead_label: Label = null  # 播放头读数（原始单位 → 秒；负秒 = 音频起点前）
+## E1：按 (功能码, 内容 ID) 记住上次的步骤下标/视图/播放头——关掉再开回到原处。
+## 只在同一份内容上恢复：换内容 = 另一份步骤数组，旧下标没有意义。
+var _steps_mem := {}
+
+static func _mem_key(fn_code: String, cid: String) -> String:
+	return fn_code + "\u0001" + cid
 
 ## 打开演出子面板：绑定已有内容就地编辑；空绑定**首次实际改动才预留内容 ID**（D1/A2）。
+## E1：默认弹出独立窗口；可停靠到内容页底部或画布下方，也可随时独立展开。
+## 三种形态共用同一控制器/工作副本/结构版本，切换只换宿主容器，不重建数据。
 func _open_steps_editor(i: int) -> void:
 	host.commit_fields()   # 主表单待提交值先落盘：子面板写盘不该挤掉未提交值
 	var fns := _current_fns()
@@ -79,10 +97,17 @@ func _open_steps_editor(i: int) -> void:
 	var fn_id := str(_resolve_fn(f).get("id", ""))
 	if fn_id == "":
 		return
+	# 缺 steps 声明就不该有演出入口（从旧版本/脚本调用来的也挡掉）
+	if not FunctionDecls.fn_has_steps(manifest, fn_id):
+		return
 	_steps_i = i
 	_steps_fn_id = fn_id
+	_steps_ent = str(host._selected_ent)
 	_steps_cid = str(f.get("content", ""))
 	_steps_rev = 0
+	# 时间轴视图对象每次开面板都是新建的：版本缓存必须同样归零，
+	# 否则「0 == 0」会跳过 set_steps，再开一次时间轴页签就是空白。
+	_steps_tl_rev = -1
 	_steps_sel = -1
 	_steps_view = "list"
 	_steps_clock = null
@@ -91,14 +116,54 @@ func _open_steps_editor(i: int) -> void:
 	_steps_preview_frames = []
 	_steps_preview_idx = -1
 	_steps_audio = ""
-	var shell: Dictionary = app._popup_body("演出编辑：%s" % FunctionDecls.function_name(manifest, fn_id),
-		"步骤按 at/duration/track 排布；列表保序、时间轴可拖")
-	var pop: PopupPanel = shell.pop
-	var body: VBoxContainer = shell.body
-	_steps_pop = pop
+	# E1：同一份内容再开 → 恢复步骤/视图/播放头（下标在 _rebuild 里按当前步数收敛）
+	var mem: Dictionary = _steps_mem.get(_mem_key(FunctionDecls.fn_code(manifest, fn_id), _steps_cid), {})
+	_steps_sel_expect = ""
+	if not mem.is_empty():
+		_steps_sel = int(mem.get("sel", -1))
+		_steps_view = str(mem.get("view", "list"))
+		# 记下记忆里那一步的步骤码：复盘时若下标已指向别的步骤，宁可无选中
+		_steps_sel_expect = str(mem.get("step", ""))
+	# 停靠形态按当前视图落位：在内容页开就得落在内容页（画布停靠位此刻是隐藏的）
+	if _steps_dock_where != "popup":
+		_steps_dock_where = "content" if host._is_view_visible() else "canvas"
+	# 旧宿主先拆干净：停靠形态下重复打开会往同一容器里再叠一份控件
+	_teardown_steps_host()
+	_steps_mount(mem)
+
+## 按当前宿主形态（弹窗 / 内容下方 / 画布下方）建造面板内容。mem 非空时回填播放头。
+func _steps_mount(mem: Dictionary) -> void:
+	var body: VBoxContainer = null
+	var head: HBoxContainer = null
+	if _steps_dock_where != "popup":
+		# 防御：旧弹窗若还开着（上次没走 teardown 的路径），先收掉——同一时刻只留一个宿主
+		if _steps_pop != null and is_instance_valid(_steps_pop):
+			var stale: PopupPanel = _steps_pop
+			_steps_pop = null
+			stale.hide()
+		var d := _ensure_dock(_steps_dock_where)
+		body = d.get("body", null)
+		head = d.get("head", null)
+		if body == null or head == null:
+			# 停靠位没建好（宿主骨架缺失）：退回弹窗，别让入口点了没反应
+			_steps_dock_where = "popup"
+			body = null
+			head = null
+	if _steps_dock_where == "popup":
+		var shell: Dictionary = app._popup_body(
+			"演出编辑：%s" % FunctionDecls.function_name(manifest, _steps_fn_id),
+			"步骤按 at/duration/track 排布；列表保序、时间轴可拖")
+		_steps_pop = shell.pop
+		body = shell.body
+	# 搬家会换 TimelineView 实例：版本缓存必须归零，否则新视图跳过 set_steps 显示空白
+	_steps_tl_rev = -1
 	_steps_list = Kit.vbox(4)
 	_steps_tl_box = Kit.vbox(4)
 	_steps_form = Kit.vbox(6)
+	if head != null:
+		_build_steps_head(head)
+	else:
+		_build_steps_popup_head(body)
 	_build_steps_tabs(body)
 	body.add_child(_steps_list)
 	body.add_child(_steps_tl_box)
@@ -116,9 +181,261 @@ func _open_steps_editor(i: int) -> void:
 	_steps_scroll.custom_minimum_size = Vector2(0, 120)
 	_steps_scroll.add_child(_steps_tl)
 	_steps_tl_box.add_child(_steps_scroll)
-	pop.popup_hide.connect(func(): _rebuild_right())
+	if _steps_dock_where != "popup":
+		var slot := _steps_dock.get_parent() as Control
+		if slot != null:
+			slot.visible = true
+	else:
+		_steps_pop.popup_hide.connect(func():
+			# E1：关面板前记下定位，下次打开同一份内容时回到原处
+			_steps_remember()
+			if host._is_view_visible():
+				_rebuild_right())
 	_rebuild_steps_all()
-	app._open_popup(pop)
+	if not mem.is_empty():
+		# 播放头随视图恢复：set_steps 会清拖拽但不动 playhead，这里显式回填后重画
+		var ph := float(mem.get("playhead", 0.0))
+		if _steps_tl != null and is_instance_valid(_steps_tl):
+			_steps_tl.playhead = ph
+			_steps_tl.queue_redraw()
+		_on_playhead_changed(ph)
+	if _steps_dock_where == "popup":
+		app._open_popup(_steps_pop)
+
+## 弹窗形态的头部行：标题右侧挂「停靠下方」（搬进内容页底部，同一控制器）
+func _build_steps_popup_head(body: VBoxContainer) -> void:
+	var row := Kit.hbox(8)
+	var dock_btn := Kit.button("停靠下方", func(): _dock_and_show("content"), "ghost")
+	dock_btn.tooltip_text = "把演出面板停靠到内容页底部：表单和步骤同屏对照（步骤与播放头不变）"
+	dock_btn.add_theme_font_size_override("font_size", Th.FS_META)
+	row.add_child(Kit.spacer())
+	row.add_child(dock_btn)
+	body.add_child(row)
+
+## 停靠形态的头部：标题 + 形态切换 + 收起（同一控制器，搬动不改数据）
+## 三个去处常驻显示，当前所在项置灰——切换不重建头部，搬动只是换个父容器。
+func _build_steps_head(head: HBoxContainer) -> void:
+	head.add_child(Kit.section_header("演出编辑：%s" %
+		FunctionDecls.function_name(manifest, _steps_fn_id)))
+	head.add_child(Kit.spacer())
+	var cv_btn := Kit.button("停靠画布", func(): _dock_and_show("canvas"), "ghost")
+	cv_btn.tooltip_text = "搬动画布下方并切到关卡视图：边看实例边对步骤（内容表单让位，数据不变）"
+	cv_btn.add_theme_font_size_override("font_size", Th.FS_META)
+	cv_btn.set_meta("where", "canvas")
+	head.add_child(cv_btn)
+	var ct_btn := Kit.button("停靠内容", func(): _dock_and_show("content"), "ghost")
+	ct_btn.tooltip_text = "搬回内容页底部并切到内容视图（步骤与播放头不变）"
+	ct_btn.add_theme_font_size_override("font_size", Th.FS_META)
+	ct_btn.set_meta("where", "content")
+	head.add_child(ct_btn)
+	var pop_btn := Kit.button("独立展开", func(): _steps_set_dock_where("popup"), "ghost")
+	pop_btn.tooltip_text = "把演出面板搬回独立窗口（步骤与播放头不变）"
+	pop_btn.add_theme_font_size_override("font_size", Th.FS_META)
+	head.add_child(pop_btn)
+	head.add_child(Kit.button("收起", func(): _steps_close_dock(), "ghost"))
+	_sync_steps_head()
+
+## 当前所在项置灰（停靠形态下头部不重建，只同步可用态）
+func _sync_steps_head() -> void:
+	if _steps_dock == null or not is_instance_valid(_steps_dock):
+		return
+	var h: Variant = _steps_dock.get_meta("_head", null)
+	if not (h is HBoxContainer) or not is_instance_valid(h):
+		return
+	for c in (h as HBoxContainer).get_children():
+		var b := c as Button
+		if b != null and b.has_meta("where"):
+			b.disabled = str(b.get_meta("where", "")) == _steps_dock_where
+
+## 停靠位：内容页底部 / 画布下方（两处都由宿主骨架预建）
+func _dock_slot_for(where: String) -> PanelContainer:
+	if where == "content":
+		return host.steps_dock_slot
+	if where == "canvas":
+		return app._canvas_dock_slot
+	return null
+
+## 停靠 ↔ 停靠：只把容器搬到另一个槽（控件、滚动位置、焦点、播放头原样保留）。
+## 目标槽不可用（宿主没建）时留在原处，形态标记也跟着回退——不留「说是画布、其实在内容」。
+func _attach_dock_to_slot() -> void:
+	var slot := _dock_slot_for(_steps_dock_where)
+	if _steps_dock == null or not is_instance_valid(_steps_dock):
+		return
+	if slot == null:
+		# 目标槽不可用（宿主没建）：形态标记回退到容器当前所在的槽
+		var cur := _steps_dock.get_parent() as Control
+		_steps_dock_where = "canvas" if cur == app._canvas_dock_slot else "content"
+		return
+	var old := _steps_dock.get_parent() as Control
+	if old != null and old != slot:
+		old.visible = false
+		old.remove_child(_steps_dock)
+		slot.add_child(_steps_dock)
+	slot.visible = true
+	_sync_steps_head()
+
+## 形态切换：记下当前输入与播放头 → 换宿主 → 复原（索引/版本保持一致）
+func _steps_set_dock_where(where: String) -> void:
+	if where != "popup" and where != "content" and where != "canvas":
+		return
+	if _steps_dock_where == where:
+		return
+	host.commit_fields()
+	_steps_remember()
+	if where != "popup" and _steps_dock_where != "popup" \
+			and _steps_dock != null and is_instance_valid(_steps_dock):
+		# 停靠之间互搬：不拆控件，直接换槽（保住滚动位置与正在编辑的焦点）
+		_steps_dock_where = where
+		_attach_dock_to_slot()
+		return
+	var mem := {
+		"sel": _steps_sel, "view": _steps_view,
+		"playhead": float(_steps_tl.playhead) if _steps_tl != null and is_instance_valid(_steps_tl) else 0.0,
+	}
+	_teardown_steps_host()
+	_steps_dock_where = where
+	_steps_mount(mem)
+
+## 停靠形态跟着当前视图走：切到关卡就停在画布下方，切回内容就停在三列下方。
+## 搬动同样先记输入与播放头，新宿主复原后步骤索引与版本保持一致；弹窗形态不动。
+## 收起后（_steps_list 为空）也不动，否则会把空面板重新亮出来。
+func sync_dock_to_view(view: String) -> void:
+	if _steps_dock_where == "popup":
+		return
+	# 只跟关卡/内容两个视图走；资产视图没有停靠位，保持现状（内容页隐藏时自然不可见）
+	if view != "map" and view != "content":
+		return
+	if _steps_dock == null or not is_instance_valid(_steps_dock):
+		return
+	if _steps_list == null or not is_instance_valid(_steps_list):
+		return
+	var where := "canvas" if view == "map" else "content"
+	if where == _steps_dock_where:
+		return
+	_steps_set_dock_where(where)
+
+## 头部入口：切到目标停靠位并让对应视图上屏（否则控件搬进了看不见的容器）。
+## 已经在目标视图上就不重复切——_set_mode 会重建内容表单，白丢展开项与输入焦点。
+func _dock_and_show(where: String) -> void:
+	_steps_set_dock_where(where)
+	if where == "canvas":
+		if app._map_view == null or not app._map_view.visible:
+			app._set_mode("map")
+	elif where == "content":
+		var sh = app.project_shell
+		if sh == null or not sh.visible or str(sh._view) != "content":
+			app._set_mode("content")
+
+## 拆掉当前宿主里的内容（控件归宿主所有；控制器状态不动）
+func _teardown_steps_host() -> void:
+	if _steps_pop != null and is_instance_valid(_steps_pop):
+		var old_pop: PopupPanel = _steps_pop
+		_steps_pop = null
+		old_pop.hide()   # popup_hide → queue_free（_open_popup 挂的）
+	if _steps_dock != null and is_instance_valid(_steps_dock):
+		var slot := _steps_dock.get_parent() as Control
+		if slot != null:
+			slot.visible = false
+		var b: Variant = _steps_dock.get_meta("_body", null)
+		if b is VBoxContainer and is_instance_valid(b):
+			for c in (b as VBoxContainer).get_children():
+				(b as VBoxContainer).remove_child(c)
+				c.queue_free()
+			var h: Variant = _steps_dock.get_meta("_head", null)
+			if h is HBoxContainer and is_instance_valid(h):
+				for c2 in (h as HBoxContainer).get_children():
+					(h as HBoxContainer).remove_child(c2)
+					c2.queue_free()
+	_steps_list = null
+	_steps_tl_box = null
+	_steps_form = null
+	_steps_tabs = null
+	_steps_tl = null
+	_steps_scroll = null
+
+## 收起停靠面板（相当于关弹窗：先记定位）。形态记忆保留——下次「编辑演出」仍停靠。
+## 只有内容页在屏上才重建右栏（刷新「演出步骤」摘要）；在画布上收起不该动表单。
+func _steps_close_dock() -> void:
+	_steps_remember()
+	_teardown_steps_host()
+	if host._is_view_visible():
+		_rebuild_right()
+
+## 宿主重建右栏后调用：停靠面板挂在内容页底部，身份失效就得一起收掉——
+## 换实例/换绑定后脚下还摊着上一份演出，会让人把值填进另一条内容。
+## 形态记忆（_steps_dock_where）不动：下次打开同一份内容仍回到原停靠位。
+func revalidate_dock() -> void:
+	if _steps_dock_where == "popup" or _steps_list == null:
+		return
+	if _steps_identity_ok():
+		return
+	_steps_remember()
+	_teardown_steps_host()
+	app._set_status("演出面板已收起：当前选中/绑定已不是它编辑的那份内容")
+
+## 惰性建停靠容器：挂进内容页 / 画布底部预留的停靠位（让出高度，不覆盖表单）。
+func _ensure_dock(where: String) -> Dictionary:
+	var slot: PanelContainer = host.steps_dock_slot if where == "content" else app._canvas_dock_slot
+	if slot == null:
+		return {}
+	# 停靠位有主：若已有容器却是给另一处建的，先拆掉（同一时刻只存在一个停靠容器）
+	if _steps_dock != null and is_instance_valid(_steps_dock) and _steps_dock.get_parent() != slot:
+		var old_slot := _steps_dock.get_parent() as Control
+		if old_slot != null:
+			old_slot.visible = false   # 别留一条空的面板横在旧位置
+		_steps_dock.queue_free()
+		_steps_dock = null
+	if _steps_dock != null and is_instance_valid(_steps_dock):
+		return {"body": _steps_dock.get_meta("_body", null), "head": _steps_dock.get_meta("_head", null)}
+	var outer := PanelContainer.new()
+	var sb := Th.box(Th.BG_PANEL, Th.BORDER, 0, 10, 8)
+	sb.set_border_width_all(0)
+	sb.border_width_top = 1
+	outer.add_theme_stylebox_override("panel", sb)
+	outer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	outer.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	outer.mouse_filter = Control.MOUSE_FILTER_STOP
+	var col := Kit.vbox(6)
+	outer.add_child(col)
+	var head := Kit.hbox(8)
+	col.add_child(head)
+	var scroll := ScrollContainer.new()
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	var body := Kit.vbox(6)
+	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(body)
+	col.add_child(scroll)
+	slot.add_child(outer)
+	outer.set_meta("_body", body)
+	outer.set_meta("_head", head)
+	_steps_dock = outer
+	return {"body": body, "head": head}
+
+## E1：把子面板的定位写进会话记忆（按功能码 + 内容 ID 分桶）。
+## 空绑定（还没内容 ID）也记：首次改动预留 ID 后同一会话内再开还是同一处。
+func _steps_remember() -> void:
+	if _steps_i < 0:
+		return
+	var cid := _steps_cid
+	if cid == "":
+		# 空绑定：本次会话里可能已被 _steps_write 预留 ID
+		var fns := _current_fns()
+		if _steps_i >= 0 and _steps_i < fns.size() and fns[_steps_i] is Dictionary:
+			cid = str((fns[_steps_i] as Dictionary).get("content", ""))
+	var ph: float = _steps_tl.playhead if _steps_tl != null and is_instance_valid(_steps_tl) else 0.0
+	_steps_mem[_mem_key(FunctionDecls.fn_code(manifest, _steps_fn_id), cid)] = {
+		"sel": _steps_sel, "view": _steps_view, "playhead": ph,
+		"step": _steps_step_code_at(_steps_sel),
+	}
+
+## 某下标的步骤码（恢复时用来认「还是同一步」；越界/无选中返回空串）
+func _steps_step_code_at(si: int) -> String:
+	var data := _steps_data()
+	var arr: Array = data.get("steps", []) if data.get("steps", []) is Array else []
+	if si < 0 or si >= arr.size() or not (arr[si] is Dictionary):
+		return ""
+	return str((arr[si] as Dictionary).get("step", ""))
 
 ## 页签：列表 / 时间轴。同一份数据，两种呈现。
 func _build_steps_tabs(parent: Control) -> void:
@@ -172,8 +489,12 @@ func _steps_pick_tl(idx: int) -> void:
 		_steps_tl.queue_redraw()
 	_rebuild_steps_form_from_data()
 
-## 身份校验：绑定行还在、功能 id 与内容 ID 都还是开面板时的那个（换内容 = 数据源失效）。
+## 身份校验：还是同一个实例、绑定行还在、功能 id 与内容 ID 都还是开面板时的那个
+## （换实例/换内容 = 数据源失效）。空绑定也必须过实例这一关：下标 i 在另一个实例上
+## 可能照样合法，只比下标会把值写进别人的内容。
 func _steps_identity_ok() -> bool:
+	if _steps_ent != "" and str(host._selected_ent) != _steps_ent:
+		return false
 	var fns := _current_fns()
 	if _steps_i < 0 or _steps_i >= fns.size() or not (fns[_steps_i] is Dictionary):
 		return false
@@ -220,6 +541,16 @@ func _rebuild_steps_all() -> void:
 	_sync_steps_tabs()
 	var data := _steps_data()
 	var arr: Array = data.get("steps", []) if data.get("steps", []) is Array else []
+	# E1：恢复的记忆下标可能超出当前步数（步骤被删过）——按当前数据收敛，不留悬空选中。
+	# 下标还在但已指向另一条步骤（期间增删/换序）时也清掉选中：记的是「那一步」，不是「那个号」。
+	_steps_sel = SessionContext.step_index(_steps_sel, arr.size())
+	if _steps_sel_expect != "":
+		var now_code := ""
+		if _steps_sel >= 0 and _steps_sel < arr.size() and arr[_steps_sel] is Dictionary:
+			now_code = str((arr[_steps_sel] as Dictionary).get("step", ""))
+		if now_code != _steps_sel_expect:
+			_steps_sel = -1
+		_steps_sel_expect = ""
 	_sync_steps_clock(data)
 	if _steps_view == "timeline":
 		_steps_list.visible = false
@@ -444,6 +775,7 @@ func _rebuild_steps_form(arr: Array) -> void:
 
 ## 步骤字段行：复用 field_widgets，值取自步骤自己的 fields（键=字段码）。
 ## 回调捕获**步骤下标 + 结构版本 + 绑定身份**（D1）：换序/切页签后迟到的回调按版本丢弃。
+## E1：同图实例引用给「画布选…」——选点会话写回走同一版本校验入口。
 func _step_field_row(fd: Dictionary, sfd: Dictionary) -> Control:
 	var key := str(fd.get("code", ""))
 	var val = sfd.get(key, fd.get("default", FieldWidgets.default_for(fd)))
@@ -454,7 +786,50 @@ func _step_field_row(fd: Dictionary, sfd: Dictionary) -> Control:
 		_set_step_field(si, key, v, rev), _resolve_options)
 	if built.get("commit") is Callable and (built.commit as Callable).is_valid():
 		_pending_commits.append(built.commit)
-	return Kit.field_row(label, built.ctl, 96)
+	var row := Kit.field_row(label, built.ctl, 96)
+	if FieldWidgets.wants_canvas_pick(fd):
+		var pick := Kit.button("画布选…", func(): _pick_step_ref(fd, key, si, rev), "ghost")
+		pick.tooltip_text = "临时切到画布点一个实例；确认才写入这一步，取消不改当前值"
+		pick.add_theme_font_size_override("font_size", Th.FS_META)
+		row.add_child(pick)
+	return row
+
+## E1：步骤字段的画布选点。确认后按起手时的步骤下标 + 版本写回：
+## 期间步骤被增删/换序则丢弃（与拖拽同一套过期校验）。
+func _pick_step_ref(fd: Dictionary, key: String, si: int, rev: int) -> void:
+	var fname := str(fd.get("name", str(fd.get("id", ""))))
+	var of := FieldWidgets.canvas_pick_types(fd)
+	var hint := "第 %d 步「%s」选目标实例" % [si + 1, fname] + \
+		("（限定类型：%s）" % ",".join(PackedStringArray(of)) if not of.is_empty() else "")
+	var on_ok := func(code: String):
+		if code == "":
+			return
+		_set_step_field(si, key, code, rev)
+		_reopen_after_pick()
+	var on_cancel := func(_code: String):
+		_reopen_after_pick()
+	# 收起子面板前先冲刷连续控件（写回的是本步当前值；面板重建后旧控件失效）
+	host.commit_fields()
+	# 弹窗形态：切到画布前先收起（否则弹窗悬在画布上），返回时按记忆重建。
+	# hide() 会走 _open_popup 挂的 popup_hide → queue_free，不留隐形弹窗。
+	# 停靠形态不需要收：选点开始时宿主会把面板整体搬到画布下方，回来再搬回原处。
+	_steps_remember()
+	var old := _steps_pop
+	_steps_pop = null
+	if old != null and is_instance_valid(old):
+		old.hide()
+	app._begin_canvas_pick("steps", "entity", hint, on_ok, on_cancel)
+
+## 选点归来：重开同一个绑定行的演出面板（步骤/视图/播放头由 _steps_mem 恢复）。
+## 期间实例/绑定换了（身份校验失败）就不重开——对着另一条绑定弹出旧面板更糟。
+## 停靠形态面板一直在屏上：只刷新数据，不拆宿主（保住滚动位置与焦点）。
+func _reopen_after_pick() -> void:
+	if _steps_i < 0 or not _steps_identity_ok():
+		return
+	if _steps_dock_where != "popup" and _steps_list != null and is_instance_valid(_steps_list):
+		_rebuild_steps_all()
+		return
+	_open_steps_editor(_steps_i)
 
 ## 时间换算读数（D2）：非秒基下显示「= 起 .. 止 s」，秒基返回空串。
 ## 只做对齐参考；缺项（时钟不可用）时不显示，避免给出假秒数。

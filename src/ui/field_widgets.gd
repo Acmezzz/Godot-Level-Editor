@@ -31,6 +31,19 @@ static func _is_unset(v) -> bool:
 static func kind_of(decl: Dictionary) -> String:
 	return str(decl.get("kind", ""))
 
+## E1：该字段是否适合提供「画布选…」——同图实例引用（entity_ref / entity_inst 来源）。
+## 配对地图字段（scope=map_ref）不给：目标图不一定是当前图，下拉列的是目标图实例，
+## 在画布上点的是本图实例，两者不是同一个域。
+static func wants_canvas_pick(decl: Dictionary) -> bool:
+	var d := RefFields.describe(decl)
+	return str(d.get("kind", "")) == "entity_inst" and str(d.get("scope", "")) == "same_map"
+
+## 画布选点的候选类型白名单（声明的 of 过滤；空 = 不限实体类型）。
+static func canvas_pick_types(decl: Dictionary) -> Array:
+	var d := RefFields.describe(decl)
+	return Array((d.get("filter", {}) as Dictionary).get("ids", []))
+
+
 static func type_of(decl: Dictionary) -> String:
 	return str(decl.get("type", ""))
 

@@ -103,6 +103,8 @@ func show_view(view: String, focus := "") -> void:
 	# 按下态由 app 统一同步到两个顶栏导航条（_set_mode 是唯一真相，
 	# 这里补一次是为了 show_view 被直接调用时按钮也不脱节）
 	app._sync_panel_buttons(view)
+	# E1：停靠的演出面板跟着视图搬到对应停靠位（资产视图保持原位）
+	app._sync_steps_dock(view)
 	asset_panel.visible = view == "asset"
 	content_editor.root.visible = view == "content"
 	_title.text = "项目 · %s" % _label_of(view)
@@ -115,6 +117,21 @@ func show_view(view: String, focus := "") -> void:
 			# focus 语义在此视图 = 实例 id（右栏定位），空则保留上次选中
 			content_editor.refresh_list(focus)
 			_set_status("点实例挂功能、填内容；改动即时写盘（Esc 回关卡编辑器）")
+
+## 静默切视图（E1 选点归来）：不重建内容表单/不动焦点——表单值在离开时已保留，
+## 参考值的提交由宿主自己就地更新。只切可见性与按下态。
+func show_view_quiet(view: String) -> void:
+	_view = view
+	app._sync_panel_buttons(view)
+	# E1：停靠的演出面板跟着视图搬家（画布停靠位 ↔ 内容页停靠位）
+	app._sync_steps_dock(view)
+	# 从画布切回项目页：画布层必须一起让位，否则两套视图同时上屏
+	if app._map_view != null:
+		app._map_view.visible = view == "map"
+	visible = view != "map"
+	asset_panel.visible = view == "asset"
+	content_editor.root.visible = view == "content"
+	_title.text = "项目 · %s" % _label_of(view)
 
 func _label_of(view: String) -> String:
 	if view == "content":
@@ -141,6 +158,12 @@ func save_current() -> void:
 		_:
 			save_manifest.call()
 			_set_status("资产清单已保存")
+
+## E1：离开内容视图时记下定位（实例 + 展开的功能），回来按身份恢复。
+## 调用点：_set_mode 切走前、选点会话开始时。
+func remember_content_context() -> void:
+	if content_editor != null:
+		content_editor.remember_context()
 
 func _set_status(msg: String) -> void:
 	if _status != null:

@@ -25,6 +25,7 @@ const Preview := preload("res://src/ui/content_preview.gd")
 const ContentForm := preload("res://src/ui/content_form.gd")
 const FnBind := preload("res://src/ui/fn_bind.gd")
 const StepsPanel := preload("res://src/ui/steps_panel.gd")
+const SessionContext := preload("res://src/ui/session_context.gd")
 const K := preload("res://src/core/constants.gd")
 
 ## 序号圈字符；超出后回落到数字
@@ -40,9 +41,19 @@ var _steps   # steps_panel.gd：演出子面板
 var manifest := {}
 ## 本控制器是 RefCounted：由 project_shell 把这个根 Control 挂进 _holder
 var root: Control = null
+## E1：演出面板的停靠位（三列下方，占位不覆盖表单；内容页构建时创建）
+var steps_dock_slot: PanelContainer = null
 
 var _selected_ent := ""
 var _selected_fn := -1
+## E1：上次展开的功能（执行码）+ 所属实例——切到资产/关卡再回来时按身份恢复展开项。
+## 只记身份不记节点：实例被删/换绑时自然回落为空。
+var _remembered_fn_code := ""
+var _remembered_fn_ent := ""
+## 当前定位所属地图（切图即忘掉上一张图的选中与记忆）
+var _selected_map := ""
+## E1：问题抽屉定位的字段 id（引用区行高亮一次；下次普通重建清空）
+var _field_focus := ""
 
 # 左列
 var _left_title: Label = null
@@ -80,9 +91,20 @@ func build() -> Control:
 	bg.add_theme_stylebox_override("panel", Th.flat(Th.BG_BASE, 0))
 	root.add_child(bg)
 
+	# E1 演出停靠位：竖排「三列 + 底部演出面板」。停靠时三列让出高度，
+	# 而不是把面板浮在表单上（浮动会盖住正在填的字段）。
+	var stack := Kit.vbox(0)
+	stack.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	bg.add_child(stack)
 	var cols := Kit.hbox(0)
-	cols.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	bg.add_child(cols)
+	cols.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	stack.add_child(cols)
+	steps_dock_slot = PanelContainer.new()
+	steps_dock_slot.custom_minimum_size = Vector2(0, 340)
+	steps_dock_slot.visible = false
+	# 槽本身不画框也不留内边距：面板自带描边与留白，叠两层会显脏
+	steps_dock_slot.add_theme_stylebox_override("panel", Th.flat(Th.BG_BASE, 0))
+	stack.add_child(steps_dock_slot)
 	cols.add_child(_build_left())
 	cols.add_child(_build_middle())
 	cols.add_child(_build_right())
@@ -188,25 +210,68 @@ func refresh_list(focus := "") -> void:
 		_preview_map = str(app.cur_map_name)
 		_preview.reset_view()
 	var ents := _entities()
+	# 切图：旧图的选中/记忆实例对这张图没有意义，直接忘掉（否则会被误判成「已删除」）
+	var map_key := str(app.canvas.cur_map_name) if app.canvas != null else ""
+	var map_changed := _selected_map != map_key
+	if map_changed:
+		_selected_map = map_key
+		_selected_ent = ""
+		_remembered_fn_ent = ""
+		_remembered_fn_code = ""
 	# 悬停 id 随切图/删实体失效：留着会指向不存在的实例，清干净
 	if _preview.hover_ent != "" and _find_ent(_preview.hover_ent) == null:
 		_preview.set_hover("")
-	# 选中项失效（切图/删实体）时回到第一行：右栏不该对着已不存在的实例
+	# 选中项解析顺序：显式 focus → 画布当前选中 → 上次记着的实例 → 第一行。
+	# 目标在同图内已删除时显示空态——不落到第一行冒充「恢复成功」（E1 身份校验）。
+	var prev_ent := _selected_ent
 	if focus != "" and _find_ent(focus) != null:
 		_selected_ent = focus
-	elif _find_ent(_selected_ent) == null:
-		# 没有显式 focus 时落在画布当前选中实体上——关卡编辑器「在工作台编辑 →」
-		# 不带参数过来，用户期望看到的就是刚才选中的那个实例。
+	else:
+		var canvas_sel := ""
 		var sel = app.canvas.selected_entity if app.canvas != null else null
 		if sel is EntityNode and is_instance_valid(sel) and (sel as EntityNode).code != "":
-			_selected_ent = (sel as EntityNode).code
-		if _find_ent(_selected_ent) == null:
+			canvas_sel = (sel as EntityNode).code
+		if canvas_sel != "":
+			_selected_ent = canvas_sel
+		elif _remembered_fn_ent != "" and _find_ent(_remembered_fn_ent) != null:
+			_selected_ent = _remembered_fn_ent
+		elif prev_ent != "" and _find_ent(prev_ent) == null:
+			# 同图内上次选中的实例已不存在：明确空态，保留「请重选」的提示
+			_selected_ent = ""
+			_remembered_fn_ent = ""
+			_remembered_fn_code = ""
+			_selected_fn = -1
+			_rebuild_rows()
+			_rebuild_right()
+			if _preview != null:
+				_preview.refresh()
+			app._set_status("上次编辑的实例 %s 已不存在：请重新选一个实例" % prev_ent)
+			return
+		elif _find_ent(_selected_ent) == null:
 			_selected_ent = str((ents[0] as Dictionary).get("code", "")) if not ents.is_empty() else ""
-	_selected_fn = -1
+	_selected_fn = _restore_fn_index()
 	_rebuild_rows()
 	_rebuild_right()
 	if _preview != null:
 		_preview.refresh()
+
+## E1：按记住的（实例码, 功能执行码）恢复展开的功能下标；身份对不上返回 -1。
+## 同一实例被换绑/删功能时退回「未展开」，不猜一个邻近下标。
+func _restore_fn_index() -> int:
+	if _remembered_fn_ent == "" or _remembered_fn_ent != _selected_ent:
+		return -1
+	return SessionContext.fn_index_of(_current_fns(), _remembered_fn_code)
+
+## E1：记下当前内容页的定位（实例码 + 展开的功能执行码），供切走再回来恢复。
+func remember_context() -> void:
+	if _selected_ent == "":
+		return
+	_remembered_fn_ent = _selected_ent
+	var fns := _current_fns()
+	if _selected_fn >= 0 and _selected_fn < fns.size() and fns[_selected_fn] is Dictionary:
+		_remembered_fn_code = str((fns[_selected_fn] as Dictionary).get("fn", ""))
+	else:
+		_remembered_fn_code = ""
 
 ## 只冲刷连续控件值（切视图/离开内容页）：不落 staged 新内容——新 ID/新绑定
 ## 必须等正式保存或试玩（A2），否则来回切视图就凭空生成内容文件。
@@ -375,6 +440,8 @@ func select_inst(code: String) -> void:
 	commit()
 	_selected_ent = code
 	_selected_fn = -1
+	# E1：画布停靠态下点选了别的实例——演出面板编辑的已不是当前对象，先收起
+	_steps.revalidate_dock()
 	# 切实例清指向预览：高亮属于上一个实例的引用编辑，不带走
 	app.canvas.ref_highlight = ""
 	app.canvas.queue_redraw()
@@ -436,6 +503,8 @@ func _clear_all_for_empty() -> void:
 func _rebuild_right() -> void:
 	if _r_body == null:
 		return
+	# E1：右栏重建 = 可能换了实例/绑定。停靠的演出面板按身份复核，对不上就收起
+	_steps.revalidate_dock()
 	# 右栏控件整片重建：待提交项绑定的是旧控件，重建后失效，直接清（提交发生在选择变更前）。
 	_pending_commits.clear()
 	for c in _r_body.get_children():
@@ -532,7 +601,40 @@ func _build_ref_row(fd: Dictionary, props: Dictionary, fdecls: Array = []) -> Co
 		if target_map != "":
 			d["_mapKey"] = target_map   # _resolve_options 据此枚举目标图实例
 	built = FieldWidgets.build(d, cur, func(v): _set_prop_ref(fd, v), _resolve_options)
-	return Kit.field_row(str(fd.get("name", fid)), built.ctl, 96)
+	var row := Kit.field_row(str(fd.get("name", fid)), built.ctl, 96)
+	# E1：同图实例引用给画布选点（跨图配对字段不给：画布点的是本图实例）
+	if FieldWidgets.wants_canvas_pick(fd):
+		var pick := Kit.button("画布选…", func(): _pick_prop_ref(fd), "ghost")
+		pick.tooltip_text = "临时切到画布点一个实例；确认才写入，取消不改当前值"
+		pick.add_theme_font_size_override("font_size", Th.FS_META)
+		row.add_child(pick)
+	# E1：问题抽屉跳「某字段悬空」——对应行加一次醒目标记（重建后即消失）
+	if fid == _field_focus:
+		row.add_theme_stylebox_override("panel", Th.box(Color(Th.WARN, 0.14), Th.WARN, Th.R_INNER, 6, 3))
+		row.tooltip_text = "问题定位：这个引用字段需要处理"
+	return row
+
+## E1：问题抽屉定位到某字段。选中实例后调用；字段行在重建时按 _field_focus 高亮一次
+## （重建完立刻清空：后续普通刷新不再带这块高亮）。
+func highlight_field(fid: String) -> void:
+	_field_focus = fid
+	_rebuild_right()
+	_field_focus = ""
+	if fid != "":
+		app._set_status("已定位到实例 %s 的字段 %s（问题抽屉）" % [_selected_ent, fid])
+
+## E1：实例 props 引用字段的画布选点。确认后与手选下拉同一写入口（撤销/配对清空规则一致）。
+func _pick_prop_ref(fd: Dictionary) -> void:
+	var fname := str(fd.get("name", str(fd.get("id", ""))))
+	var of := FieldWidgets.canvas_pick_types(fd)
+	var hint := "为「%s」选目标实例" % fname + \
+		("（限定类型：%s）" % ",".join(PackedStringArray(of)) if not of.is_empty() else "")
+	var on_ok := func(code: String):
+		if code == "":
+			return
+		_set_prop_ref(fd, code)
+		_rebuild_right()
+	app._begin_canvas_pick("content", "entity", hint, on_ok, Callable())
 
 ## 写实例 props 的引用字段：props 是地图数据，改动进撤销栈；并做指向预览高亮。
 ## 改「配对地图字段」时旧落点会指向别的图的实例码（C1）：先确认，再把配对引用一起清空——
@@ -648,3 +750,6 @@ func _refresh_status_only() -> void:
 	_form._refresh_status_only()
 func _open_steps_editor(i: int) -> void:
 	_steps._open_steps_editor(i)
+## E1：停靠的演出面板跟随视图搬家（内容=三列下方 / 关卡=画布下方）
+func sync_steps_dock(view: String) -> void:
+	_steps.sync_dock_to_view(view)

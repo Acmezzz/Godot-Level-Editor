@@ -214,6 +214,8 @@ func _undeclared_block(fields: Array, cond_fields: Array, cur: Dictionary) -> Co
 
 ## 单个声明字段：交给 field_widgets 按 kind（input / choice）建控件。
 ## 内容文件里的键一律是字段码（ensure_codes 保证声明都有码，无回退）。
+## E1：同图实例引用额外给「画布选…」——临时切回画布点目标，确认才写值
+## （取消时原值/焦点都不动，控件也不重建）。
 func _build_field_row(i: int, fn_id: String, fd: Dictionary, cur: Dictionary) -> Control:
 	var fid := str(fd.get("id", ""))
 	var key := str(fd.get("code", ""))
@@ -223,7 +225,30 @@ func _build_field_row(i: int, fn_id: String, fd: Dictionary, cur: Dictionary) ->
 		_set_field(i, fn_id, key, v), _resolve_options)
 	if built.get("commit") is Callable and (built.commit as Callable).is_valid():
 		_pending_commits.append(built.commit)
-	return Kit.field_row(label, built.ctl, 96)
+	var row := Kit.field_row(label, built.ctl, 96)
+	if FieldWidgets.wants_canvas_pick(fd):
+		var pick := Kit.button("画布选…", func():
+			_pick_entity_for(fd, key, func(code): _set_field(i, fn_id, key, code)), "ghost")
+		pick.tooltip_text = "临时切到画布点一个实例；确认才写入，取消不改当前值"
+		pick.add_theme_font_size_override("font_size", Th.FS_META)
+		row.add_child(pick)
+	return row
+
+## E1：为一个实例引用字段开画布选点（宿主 = app，会话管理与确认条都在那边）。
+## 确认回调只写字段值；字段写盘走与手选下拉同一条 _set_field。
+func _pick_entity_for(fd: Dictionary, key: String, commit: Callable) -> void:
+	var fname := str(fd.get("name", str(fd.get("id", ""))))
+	var label := "为「%s」选目标实例" % fname
+	var of := FieldWidgets.canvas_pick_types(fd)
+	var hint := label + ("（限定类型：%s）" % ",".join(PackedStringArray(of)) if not of.is_empty() else "")
+	# 单独建回调再传：多行 lambda 直接塞进实参列表容易读错缩进边界
+	var on_ok := func(code: String):
+		if code == "":
+			return
+		commit.call(code)
+		# 下拉控件还停在旧值：提交后重建右栏让新值上屏（用户主动确认的写盘）
+		_rebuild_right()
+	app._begin_canvas_pick("content", "entity", hint, on_ok, Callable())
 
 ## choice.source 的选项来源解析（由游戏侧声明，编辑器只查不解释）。
 ## 支持：content:<功能id>（内容库）、entity:<id,id>（清单实体类型）、

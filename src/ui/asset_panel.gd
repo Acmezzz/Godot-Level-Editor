@@ -141,7 +141,14 @@ func show_detail(sid: String) -> void:
 	refresh_list(sid)
 
 # —— 图鉴列表 ——
+## 图鉴列表：focus_sid 显式定位；空 = 保留当前选中（E1：切去内容/关卡再回来
+## 仍停在同一份资产上，不悄悄跳回第一项）。选中项已不存在时才落到第一项。
 func refresh_list(focus_sid := "") -> void:
+	var keep := focus_sid
+	if keep == "":
+		var at := asset_list.get_selected_items()
+		if not at.is_empty():
+			keep = str(asset_list.get_item_metadata(at[0]))
 	asset_list.clear()
 	var focus_idx := -1
 	var idx := 0
@@ -163,7 +170,7 @@ func refresh_list(focus_sid := "") -> void:
 				tip += "\n停用：" + str((edef as Dictionary).get("retiredPath", "")) + " 已不在磁盘上"
 		asset_list.set_item_tooltip(idx, tip)
 		asset_list.set_item_metadata(idx, sid)
-		if sid == focus_sid:
+		if sid == keep:
 			focus_idx = idx
 		idx += 1
 	if focus_idx < 0 and asset_list.item_count > 0:

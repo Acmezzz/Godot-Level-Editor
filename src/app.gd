@@ -217,6 +217,7 @@ func _clear_project_session() -> void:
 	map_loaded = false
 	canvas = null
 	_map_view = null
+	_canvas_dock_slot = null
 	project_shell = null
 	asset_panel = null
 	# 控制器由 editor_layout 建界面时赋值，界面已释放就必须全部置空，
@@ -303,6 +304,18 @@ func _shortcut_input(event: InputEvent) -> void:
 	var focus := get_viewport().gui_get_focus_owner()
 	var k := (event as InputEventKey).keycode
 	var ctrl := (event as InputEventKey).ctrl_pressed
+	# E1 选点会话独占 Esc/Enter：画布在 SubViewport 里收不到键盘，只能在这里接。
+	# Esc = 取消（不提交、回原视图）；Enter = 确认当前候选（没候选时不响应）。
+	if canvas != null and canvas.pick_mode_active:
+		if k == KEY_ESCAPE:
+			_end_canvas_pick(false)
+			get_viewport().set_input_as_handled()
+			return
+		if k == KEY_ENTER or k == KEY_KP_ENTER:
+			if str(canvas.pick_mode_code) != "":
+				_end_canvas_pick(true)
+				get_viewport().set_input_as_handled()
+			return
 	# —— 项目页（资产/内容/清单）接管：Esc 返回画布，Ctrl+S 保存当前视图 ——
 	# 放在输入框守卫之前：项目页的 Esc 语义是「离开项目页」，输入框也不该吞掉它；
 	# 其余键全部放行给视图内部的控件（表单/列表/搜索框）。
@@ -588,18 +601,34 @@ func _set_map_loaded(loaded: bool) -> void:
 
 # —— 模式切换：关卡 / 内容 / 资产 三个平级面板 + 旧的项目页外壳 ——
 var _map_view: VBoxContainer = null
+## E1：演出面板的画布停靠位（editor_layout 建在画布下方；停靠画布时控件搬进来）
+var _canvas_dock_slot: PanelContainer = null
 var project_shell = null        # ProjectShell（项目页外壳，含三个视图）
 # 视图面板由 project_shell 持有；这里保留别名方便既有调用点
 var asset_panel = null
 
 ## 模式切换：mode = map（关卡编辑器）/ content（内容编辑器）/ asset（资产目录）。
 ## 三个面板是平级关系，顶栏三个入口直接切，Esc 回关卡编辑器。
+## E1：离开画布/内容时记快照，归来按身份校验恢复（目标已删则显示空态）。
 func _set_mode(mode: String, focus_sid := "") -> void:
+	# 选点会话只属于画布：切模式即中止（不提交、不回原视图、不触发取消回调——
+	# 用户已经明确要去的那个视图才是落点）
+	if mode != "map" and canvas != null and canvas.pick_mode_active:
+		_pick_session = {}
+		canvas.end_pick_mode()
+		_layout_ctrl._refresh_pick_bar()
 	# 离开内容页前提交待提交的 SpinBox 值（连续控件失焦才写盘，直接 Esc 切走会丢）；
 	# 只冲刷控件值，暂存的新内容留到正式保存/试玩（A2）。
 	if mode != "content" and project_shell != null and project_shell.content_editor != null:
 		project_shell.content_editor.commit_fields()
+		# E1：记下定位（实例 + 展开的功能），回内容页时按身份恢复
+		if str(project_shell._view) == "content":
+			project_shell.remember_content_context()
 	var on_map := mode == "map"
+	# E1：停靠的演出面板跟着视图搬家。关卡视图不走 show_view（画布层直接上屏），
+	# 这里补一次；内容/资产由 project_shell.show_view 统一同步。
+	if on_map:
+		_sync_steps_dock(mode)
 	if _map_view:
 		_map_view.visible = on_map
 	_sync_panel_buttons(mode)
@@ -613,6 +642,78 @@ func _set_mode(mode: String, focus_sid := "") -> void:
 ## 当前是否在项目页（非画布）
 func _in_project_view() -> bool:
 	return project_shell != null and project_shell.visible
+
+## E1：停靠形态的演出面板跟随视图（画布 / 内容各有一套停靠位）。
+## 没有打开中的停靠面板时是空操作。
+func _sync_steps_dock(view: String) -> void:
+	if project_shell == null or project_shell.content_editor == null:
+		return
+	project_shell.content_editor.sync_steps_dock(view)
+
+# —— E1 临时选点会话：为引用字段在画布挑目标，确认才提交 ——
+# 状态：{owner, accept, hint, on_confirm: Callable, on_cancel: Callable, prev_view, prev_focus}
+var _pick_session := {}
+
+## 开始选点：切回画布、进入选点模式；回调只在确认/取消时各调一次。
+## prev_view/prev_focus 用于「取消后回到原视图与原表单焦点」。
+func _begin_canvas_pick(owner: String, accept: String, hint: String,
+		on_confirm: Callable, on_cancel: Callable) -> bool:
+	if canvas == null or not map_loaded:
+		_set_status("选点需要先打开一张地图")
+		return false
+	if canvas.pick_mode_active:
+		_set_status("已经在选点：先确认或取消当前选择")
+		return false
+	var prev_view := str(project_shell._view) if project_shell != null else ""
+	# 画布停靠形态直接在关卡视图里发起选点：归来落点应是画布，不是把面板拽回内容页
+	if _map_view != null and _map_view.visible:
+		prev_view = "map"
+	# 焦点：取消后要回到「发起选点前正在输入的那个控件」（返回时恢复原表单与焦点）
+	var prev_focus: Control = get_viewport().gui_get_focus_owner()
+	_pick_session = {"owner": owner, "on_confirm": on_confirm, "on_cancel": on_cancel,
+		"prev_view": prev_view, "prev_focus": prev_focus}
+	_set_mode("map")
+	canvas.begin_pick_mode(owner, accept, hint)
+	_layout_ctrl._refresh_pick_bar()
+	_set_status(hint + "：左键点实例，确认提交；Esc 取消")
+	return true
+
+## 确认/取消选点：清理模式，回调各调一次；取消时回到原视图（表单已由宿主保留）。
+func _end_canvas_pick(confirm: bool) -> void:
+	if canvas == null or not canvas.pick_mode_active:
+		return
+	var code: String = str(canvas.pick_mode_code)
+	var sess := _pick_session.duplicate()
+	_pick_session = {}
+	canvas.end_pick_mode()
+	_layout_ctrl._refresh_pick_bar()
+	var cb = sess.get("on_confirm" if confirm else "on_cancel", null)
+	var back_view := str(sess.get("prev_view", ""))
+	# 确认时把相机对到目标：切回项目页看表单前，用户能先看到自己刚指的那一格
+	if confirm and code != "":
+		canvas.focus_entity_code(code)
+	# 回原视图但不重建表单（静默恢复）：控件与焦点都还在，只有内容视图的
+	# 引用值真的变了才由宿主自己重建对应区块。
+	if back_view != "" and back_view != "map" and project_shell != null:
+		project_shell.show_view_quiet(back_view)
+	if cb is Callable and (cb as Callable).is_valid():
+		(cb as Callable).call(code if confirm else "")
+	# 焦点回到发起时的控件（取消路径尤其重要：用户回来接着输入，不该重新点一遍）
+	var pf = sess.get("prev_focus", null)
+	if pf is Control and is_instance_valid(pf) and (pf as Control).is_inside_tree():
+		(pf as Control).grab_focus()
+	_set_status(("已选目标 " + code) if confirm else "已取消选点")
+
+## 画布点选候选时刷新确认条（只改候选，不提交）。
+func _on_pick_candidate(code: String) -> void:
+	_layout_ctrl._refresh_pick_bar()
+	if code != "" and canvas != null:
+		# 点中即把这条高亮告诉用户（状态栏），但值仍等「确认」才写
+		_set_status("%s：已点 %s，按确认提交" % [str(canvas.pick_mode_hint), code])
+
+## 画布右键 = 取消选点
+func _on_pick_cancelled() -> void:
+	_end_canvas_pick(false)
 
 ## 顶栏三个面板入口的按下态：单一真相是 _set_mode 的入参，
 ## 不依赖按钮自己记状态（点 Esc 返回、点地图菜单的路径都要同步）。

@@ -120,6 +120,17 @@ func _build_editor_ui() -> void:
 	# 选中实体信息条：浮在画布下沿，只给「类型 / 内容状态 / 去内容编辑器」。
 	# 不做属性表单——参数属内容，归内容编辑器与资产目录。
 	canvas_wrap.add_child(_build_sel_bar())
+	# E1 临时选点确认条：选点模式期间浮在画布上沿，只有「确认 / 取消」两个出口
+	canvas_wrap.add_child(_build_pick_bar())
+
+	# E1 演出面板的画布停靠位：停靠形态下在画布下方占一条（控件原样搬过来，
+	# 选中步骤/播放头跟手），返回内容页时再搬回三列下方。
+	app._canvas_dock_slot = PanelContainer.new()
+	app._canvas_dock_slot.custom_minimum_size = Vector2(0, 300)
+	app._canvas_dock_slot.visible = false
+	# 槽本身不画框（面板自带描边），只铺画布底色
+	app._canvas_dock_slot.add_theme_stylebox_override("panel", app.UiThemeScript.flat(app.UiThemeScript.BG_BASE, 0))
+	mid_col.add_child(app._canvas_dock_slot)
 
 	root.add_child(_build_issues_drawer())
 	root.add_child(_build_status_bar())
@@ -127,6 +138,10 @@ func _build_editor_ui() -> void:
 	app.canvas.cursor_info.connect(_on_cursor)
 	app.canvas.modified.connect(_on_modified)
 	app.canvas.entity_selected.connect(app._on_entity_selected)
+	# E1 临时选点：画布点中候选 → 刷新确认条；确认按钮才提交
+	app.canvas.pick_mode_picked.connect(app._on_pick_candidate)
+	app.canvas.pick_mode_cancelled.connect(app._on_pick_cancelled)
+	_pick_ok.pressed.connect(func(): app._end_canvas_pick(true))
 	# 吸管：画布请求切工具/层，统一走 _apply_state 单一写入口
 	app.canvas.tool_requested.connect(app._apply_state)
 	app._fill_palettes()
@@ -552,6 +567,49 @@ func _build_sel_bar() -> PanelContainer:
 	h.add_child(go)
 	_sel_bar.visible = false
 	return _sel_bar
+
+# —— E1 临时选点确认条（画布上沿） ——
+var _pick_bar: PanelContainer = null
+var _pick_label: Label = null
+var _pick_ok: Button = null
+
+## 选点模式确认条：显示宿主给的字段提示与当前候选，确认才提交目标，
+## 取消 = 恢复原表单与焦点（宿主负责）。没有候选时确认禁用。
+func _build_pick_bar() -> PanelContainer:
+	_pick_bar = PanelContainer.new()
+	var sb = app.UiThemeScript.box(Color(app.UiThemeScript.BG_PANEL, 0.96),
+		app.UiThemeScript.ACCENT, app.UiThemeScript.R_INNER, 8, 5)
+	_pick_bar.add_theme_stylebox_override("panel", sb)
+	_pick_bar.anchor_right = 1.0
+	_pick_bar.offset_left = 10
+	_pick_bar.offset_top = 10
+	_pick_bar.offset_right = -10
+	_pick_bar.offset_bottom = 42
+	_pick_bar.mouse_filter = Control.MOUSE_FILTER_STOP
+	var h = app.UiKitScript.hbox(8)
+	_pick_bar.add_child(h)
+	_pick_label = app.UiKitScript.text_label("", app.UiThemeScript.TEXT, app.UiThemeScript.FS_SMALL)
+	_pick_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_pick_label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	h.add_child(_pick_label)
+	_pick_ok = app.UiKitScript.button("确认", Callable(), "primary")
+	_pick_ok.disabled = true
+	h.add_child(_pick_ok)
+	h.add_child(app.UiKitScript.button("取消", func(): app._end_canvas_pick(false), "ghost"))
+	_pick_bar.visible = false
+	return _pick_bar
+
+## 刷新选点确认条（画布发 pick_mode_picked / 进入模式时由 app 调用）
+func _refresh_pick_bar() -> void:
+	if _pick_bar == null or app.canvas == null:
+		return
+	var on: bool = app.canvas.pick_mode_active
+	_pick_bar.visible = on
+	if not on:
+		return
+	var code: String = app.canvas.pick_mode_code
+	_pick_ok.disabled = code == ""
+	_pick_label.text = str(app.canvas.pick_mode_hint) + ("　→  %s" % code if code != "" else "　→  （还没点）")
 
 ## 信息条内容：随选中实例刷新；没选中就整条隐藏（不占画布视线）
 func _refresh_sel_bar() -> void:

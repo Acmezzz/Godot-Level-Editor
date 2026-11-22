@@ -450,7 +450,8 @@ static func _ref_checks(data: Dictionary, manifest: Dictionary, map_name: String
 					"path": "%s · %s(%s).%s" % [map_name, aid, str(o.get("code", "?")), key],
 					"message": "引用的实例码在%s不存在: %s" % [where, str(val)],
 					"map": map_name,
-					"jump": {"type": "entity", "map": map_name, "code": str(o.get("code", ""))},
+					"jump": {"type": "entity", "map": map_name, "code": str(o.get("code", "")),
+						"prop": key},
 					# expect = 报告时的坏值（D07）：清除前复验当前值仍相同才动手
 					"fix": {"op": "clear_prop", "map": map_name, "code": str(o.get("code", "")),
 						"prop": key, "expect": str(val)},
@@ -461,7 +462,8 @@ static func _ref_checks(data: Dictionary, manifest: Dictionary, map_name: String
 					"path": "%s · %s(%s).%s" % [map_name, aid, str(o.get("code", "?")), key],
 					"message": "目标地图不存在: %s" % str(val),
 					"map": map_name,
-					"jump": {"type": "entity", "map": map_name, "code": str(o.get("code", ""))},
+					"jump": {"type": "entity", "map": map_name, "code": str(o.get("code", "")),
+						"prop": key},
 					"fix": {"op": "clear_prop", "map": map_name, "code": str(o.get("code", "")),
 						"prop": key, "expect": str(val)},
 				})

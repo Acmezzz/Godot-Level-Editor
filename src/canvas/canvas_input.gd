@@ -26,6 +26,30 @@ func _unhandled_input(event: InputEvent) -> void:
 	if not cvs.is_map_ready():
 		return
 	var pos = cvs.get_global_mouse_position()
+	# E1 临时选点：模式独占左键命中与悬停候选，其余手势（中键平移/滚轮缩放）照常
+	if cvs.pick_mode_active:
+		if event is InputEventMouseMotion:
+			var hov: String = cvs.pick_candidate_at(pos)
+			if hov != cvs.pick_mode_hover:
+				cvs.pick_mode_hover = hov
+				cvs.queue_redraw()
+			return
+		if event is InputEventMouseButton:
+			var pb := event as InputEventMouseButton
+			if pb.pressed and pb.button_index == MOUSE_BUTTON_LEFT:
+				var cand: String = cvs.pick_candidate_at(pos)
+				cvs.pick_mode_code = cand
+				cvs.pick_mode_hover = cand
+				if cand != "":
+					cvs.pick_mode_picked.emit(cand)
+				else:
+					cvs._hint("这里没有可选实例：只有实体有实例码，能进引用字段")
+				cvs.queue_redraw()
+				return
+			if pb.pressed and pb.button_index == MOUSE_BUTTON_RIGHT:
+				# 右键 = 取消（空码是合法提交值，不能和取消混用）
+				cvs.pick_mode_cancelled.emit()
+				return
 	if event is InputEventMouseButton:
 		var b := event as InputEventMouseButton
 		if b.pressed:

@@ -175,8 +175,16 @@ func asset_of_source(sid: int) -> String:
 func asset_cell(aid: String) -> Vector2i:
 	return AssetDecl.cell_size(manifest, aid)
 
+## E1：同图重建（undo/尺寸调整）时按层码找回原激活层。空串 = 不恢复。
+var _active_lid_before := ""
+
 # —— 装载地图数据 ——
 func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty := false) -> void:
+	# E1：同图重建（撤销恢复/尺寸调整）按层码找回原激活层——必须在换掉 map_data
+	# **之前**取层码，否则读到的是新图的层栈配旧下标。
+	var same_map_reload := str(cur_map_name) == map_name and keep_cam
+	_active_lid_before = layer_id(active_layer) \
+		if same_map_reload and active_layer >= 0 and active_layer < layer_count() else ""
 	# 进入即抬代数；await 恢复后比对——过期 = 期间又有更新的重建进入，本协程退出
 	_rebuild_gen += 1
 	var gen := _rebuild_gen
@@ -435,7 +443,15 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	modified_flag = keep_dirty or mount_filled
 	if mount_filled:
 		_hint("已给实例补齐类型自带功能（挂载）——保存后写入地图")
-	# 换图后层数可能变少：激活层钳回合法区间（0..层栈数，含碰撞元层下标）
+	# 换图后层数可能变少：激活层钳回合法区间（0..层栈数，含碰撞元层下标）。
+	# E1：同图重建（撤销恢复/尺寸调整）按**层码**找回原激活层——层栈增删后
+	# 下标会漂，沿用下标会悄悄切到邻居层。
+	var want_lid := _active_lid_before
+	if want_lid != "":
+		var li2: int = _layer_index_of(want_lid)
+		if li2 >= 0:
+			active_layer = li2
+	_active_lid_before = ""
 	active_layer = clampi(active_layer, 0, layer_count())
 	_ent_by_id_dirty = true   # 整图载入（含撤销恢复）索引置脏
 	map_rev += 1              # 整图替换后下游缓存必须重扫
@@ -721,6 +737,33 @@ var selected_entity: EntityNode = null
 var selected_multi: Array = []   # 框选集合（Del / 复制粘贴用）
 ## 引用指向预览：内容编辑器里编辑引用字段时，画布高亮被指实例（存实例码）
 var ref_highlight := ""
+## E1：把相机对到某实例（选点确认后切回视图时，目标必须真的出现在视野里；
+## 否则「已选目标」只存在于数据里，用户看不到自己刚指的那一格）。
+func focus_entity_code(code: String) -> bool:
+	var n = _ent_by_code_index().get(code, null)
+	if n == null or not is_instance_valid(n):
+		return false
+	cam_pos = _w_for(n as EntityNode)
+	_update_cam()
+	queue_redraw()
+	return true
+
+## 实例世界位置（视觉锚点，扣 sortAnchor）；与 canvas_draw._w 同口径
+func _w_for(n: EntityNode) -> Vector2:
+	var li: int = _layer_index_of(n.layer_id)
+	var lp := n.position - n.sort_anchor()
+	return lp if li < 0 else to_layer_world(li, lp)
+## E1 临时选点：非空 = 画布处于「为引用字段挑目标」模式，只高亮不写数据。
+## 目标码只在宿主点「确认」时才提交；取消/Esc 什么都不改（选中也不动）。
+signal pick_mode_picked(code: String)
+## E1：右键在选点模式里 = 取消（单独一条信号：空码是合法提交值，不能和取消混用）
+signal pick_mode_cancelled
+var pick_mode_active := false
+var pick_mode_code := ""       # 已点中的候选实例码（"" = 还没点；确认提交的就是它）
+var pick_mode_hover := ""      # 光标下的候选（只做高亮预览，不参与提交）
+var pick_mode_hint := ""       # 确认条文字（由宿主设定：字段名 + 操作说明）
+var pick_mode_accept := "entity"  # "entity" = 只认实体；"any" = 实体与场景实例都可选
+var pick_mode_owner := ""      # 发起方标记（"content" / "steps"），归宿主管
 @warning_ignore("unused_private_class_variable")
 var _clipboard: Array = []       # 实例复制模板 [{asset, code, dx, dy, transform, functions, props}]
 var _region_sel := Rect2i(-1, 0, 0, 0)  # 区域框选结果（瓦片层 Ctrl+C 用）
@@ -752,6 +795,39 @@ func commit_selection(n: EntityNode, multi: Array = []) -> void:
 	selected_multi = multi.filter(func(x): return is_instance_valid(x))
 	entity_selected.emit(n)
 	queue_redraw()
+
+# —— E1 临时选点：为引用字段在画布上挑目标（确认才提交） ——
+
+## 进入选点模式：不碰选中/数据；候选高亮画在画布层，宿主负责确认条与提交。
+func begin_pick_mode(owner: String, accept: String, hint: String) -> void:
+	pick_mode_active = true
+	pick_mode_owner = owner
+	pick_mode_accept = accept if accept == "any" else "entity"
+	pick_mode_code = ""
+	pick_mode_hover = ""
+	pick_mode_hint = hint
+	queue_redraw()
+
+## 退出选点模式（确认/取消都走这里）：只清模式状态，不动选中与字段值。
+func end_pick_mode() -> void:
+	pick_mode_active = false
+	pick_mode_code = ""
+	pick_mode_hover = ""
+	pick_mode_hint = ""
+	pick_mode_owner = ""
+	queue_redraw()
+
+## 选点模式下光标处的候选实例码（"" = 不可选）。命中口径与普通选择一致；
+## accept=entity 时跳过场景实例（它们没有实例码，不能进引用字段）。
+func pick_candidate_at(pos: Vector2) -> String:
+	var n := _entity_at(pos)
+	if n == null or not is_instance_valid(n):
+		return ""
+	if n.code == "":
+		return ""
+	if pick_mode_accept == "entity" and not n.is_entity():
+		return ""
+	return n.code
 
 ## 框选集合提交：首成员作单选，整组进多选，一次 emit
 func commit_multi(multi: Array) -> void:

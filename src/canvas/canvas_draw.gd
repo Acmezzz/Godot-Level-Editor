@@ -349,6 +349,9 @@ func _draw() -> void:
 				cvs.draw_rect(er, Color(0.6, 1.0, 0.6, 0.4), true)
 		var ppoly = cvs.grid.grid_polygon(org, org + Vector2i(cvs._region_clip.get("size", Vector2i.ONE)))
 		cvs.draw_polyline(ppoly + PackedVector2Array([ppoly[0]]), Color(1.0, 0.85, 0.3, 0.9), 2.0, true)
+	# E1 临时选点覆盖层（候选高亮 + 提示条）最后画：必须压在其它叠加之上
+	_draw_pick_mode()
+
 ## 幽灵点集归一化：[[x,y],...] → Vector2 数组（R-02）
 func _gpts_vec(raw: Array) -> Array:
 	var out := []
@@ -399,3 +402,41 @@ func _draw_visual_rects(nodes: Array) -> void:
 		var rect := n.rect()
 		cvs.draw_rect(rect, Color(col, alpha), true)
 		cvs.draw_rect(rect, Color(col, minf(1.0, alpha + 0.5)), false, 1.5)
+
+## E1 临时选点覆盖层：候选实例高亮 + 顶部提示条（提示条用屏幕坐标，画在最上层）。
+## 已点中的候选实线粗框，悬停预览虚线细框——两者可同时存在（悬停下一个看效果）。
+func _draw_pick_mode() -> void:
+	if not cvs.pick_mode_active:
+		return
+	var hover: String = str(cvs.pick_mode_hover)
+	if hover != "" and hover != str(cvs.pick_mode_code):
+		var hn = cvs._ent_by_code_index().get(hover, null)
+		if hn != null and is_instance_valid(hn):
+			cvs.draw_rect(_wr(hn as EntityNode).grow(2.0), Color(0.55, 0.95, 1.0, 0.55), false, 1.0)
+	if cvs.pick_mode_code != "":
+		var hs = cvs._ent_by_code_index().get(cvs.pick_mode_code, null)
+		if hs != null and is_instance_valid(hs):
+			var r: Rect2 = _wr(hs as EntityNode).grow(4.0)
+			cvs.draw_rect(r, Color(0.2, 1.0, 0.9, 0.15), true)
+			cvs.draw_rect(r, Color(0.2, 1.0, 0.9, 0.95), false, 2.5)
+	# 提示条贴在视口左上：把屏幕坐标换算回画布坐标（画布在 SubViewport 里，
+	# 相机变换作用于世界层；自绘层的文本直接用 canvas_transform 的逆）
+	var vp: Viewport = cvs.get_viewport()
+	var at := Vector2(12, 12)
+	if vp != null:
+		at = vp.get_canvas_transform().affine_inverse() * at
+	var text: String = cvs.pick_mode_hint
+	if cvs.pick_mode_code != "":
+		text += "　已点：%s（左键可换，Enter/确认提交）" % cvs.pick_mode_code
+	else:
+		text += "　左键点实例，Esc 取消"
+	var font: Font = ThemeDB.fallback_font
+	if font == null:
+		return
+	var w: float = font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, 12).x
+	var box := Rect2(at - Vector2(6, 4), Vector2(w + 12, 22))
+	cvs.draw_rect(box, Color(0.06, 0.1, 0.14, 0.92), true)
+	cvs.draw_rect(box, Color(0.2, 1.0, 0.9, 0.8), false, 1.0)
+	cvs.draw_string(font, at + Vector2(0, 12), text, HORIZONTAL_ALIGNMENT_LEFT, -1, 12,
+		Color(0.75, 1.0, 0.95, 0.95))
+
