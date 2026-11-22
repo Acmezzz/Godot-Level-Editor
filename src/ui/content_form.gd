@@ -319,7 +319,9 @@ func _resolve_options(decl: Dictionary) -> Array:
 				if c0 == "":
 					continue
 				var cell: Vector2i = spr.cell()
-				out4.append({"v": c0, "t": "%s · (%d,%d)" % [str(app._scene_name(sid0)), cell.x, cell.y]})
+				# 标签带实例码：同类型同格的多个实例（多楼层/叠放）靠码区分，否则下拉项完全同名
+				out4.append({"v": c0, "t": "%s %s · (%d,%d)" % [
+					str(app._scene_name(sid0)), c0, cell.x, cell.y]})
 		return out4
 	if src == "layer:":
 		var outl: Array = []
