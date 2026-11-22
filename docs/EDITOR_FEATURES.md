@@ -737,7 +737,7 @@ godot --headless --path "<编辑器工程>" --script res://tests/run_tests.gd
 | `test_audit.gd` | 全项目审计：清单/地图条目包装（kind/map/jump 可跳转性）、引用悬空（entity_ref/map_ref → 警告，未填合法不报） |
 | `test_assets.gd` | `assets[]` 归一化：kind 分派、未知键保留、palette 展平、非正方形 `cell`、`editorSize`/`sizeFields` 尺寸、编辑期原件入口、挂载过滤 |
 | `test_entity_node.gd` | `EntityNode` 锚点↔格坐标换算（center/top_left/bottom_center 正反算）、浮点坐标与所在格、`sizeFields` 尺寸覆盖、`transform` 缺省判定（1/0/false 算缺省、翻转 toggle 后键被删掉） |
-| `test_stores.gd` | MapStore v7 写读回环 + 复制图重发码、ContentStore 写读回环（user:// 临时目录，跑完自清） |
+| `test_stores.gd` | MapStore v7 写读回环 + 复制图重发码、`code_map` 写后缓存失效、ContentStore 写读回环、写前摘要基线冲突检出（同秒同长度外部改写）、历史按码分目录与失败不入历史（user:// 临时目录，跑完自清） |
 | `test_asset_scan.gd` | 资产零登记扫描制：新文件补条目发码 / 改名 md5 重链 / 消失标缺失 / 约定外条目不碰 |
 | `test_audit_c3.gd` | 挂载去重与补齐、按 `(功能 id, 内容 ID)` 索引的引用自检、过期报告的安全清理 |
 | `test_batch_e2.gd` | 批量改值计划、瓦片替换计划（源过滤/切片边界/冲突不写） |
@@ -745,20 +745,22 @@ godot --headless --path "<编辑器工程>" --script res://tests/run_tests.gd
 | `test_geometry.gd` | 几何段：`visual_type` / `points_local` / `points_write` 与 PolyView 装配（不进树） |
 | `test_map_export_a5.gd` | 导出几何/像素预算/碰撞对象口径/统计文本（PNG 概览的纯数据部分） |
 | `test_ref_fields.gd` | 引用字段描述、类型严格性、配对地图字段与地图目录校验（C06/C07/C10）、同格多目标按地图/实例码区分（B3-3） |
-| `test_rel_graph.gd` | E2-3 关系图纯数据层：节点/边生成、写回同一字段、断开删键、staged 并入、循环保留 |
+| `test_rel_graph.gd` | E2-3 关系图纯数据层：节点/边生成、写回同一字段、断开删键、staged 并入、循环保留、写回状态串（`"ok"`/`"conflict"`/`"fail"`）判成功 |
 | `test_session_context_e1.gd` | E1 视图切换的身份校验与会话记忆（纯逻辑，无 UI） |
-| `test_step_timeline_d1.gd` | D1 步骤时间轴单一数据源：补丁合并、净化、生效区间、结构版本与警告 |
+| `test_step_timeline_d1.gd` | D1 步骤时间轴单一数据源：补丁合并、净化、生效区间、结构版本与警告、全重叠告警截断（`MAX_WARNINGS` + 「另有 M 条」） |
 | `test_timeline_clock_d2.gd` | D2 帧/拍换算、`timePreview` 声明解析、小数帧标记与量化 |
 | `test_tri_render.gd` | B3 三角格 UV 口径纯函数：切片包围盒映射、不越出切片、退化输入不炸 |
 
 约定：套件 `extends "res://tests/_suite_base.gd"`，方法名 `test_` 开头即被发现；
 `ok()` / `eq()` 收集失败；**每个用例至少一条断言**（崩溃中断的用例断言数不增长，
-runner 判 FAIL——防止半路崩掉变成假 PASS）。退出码非 0 = 有失败。当前 22 套件 198 用例。
+runner 判 FAIL——防止半路崩掉变成假 PASS）。退出码非 0 = 有失败。当前 22 套件 202 用例。
 
 截图辅助 `tools/screenshot.gd`（模式清单见文件头注释）、警告扫描 `tools/warn_scan.gd`
 （headless 全量加载 src/ 校验可加载性）、接入自检 `tools/f2_pilot.gd`（在 user:// 临时工程里
 用 §3 的刷怪片段跑完整加载链：清单补码 → 建图摆实例 → 写内容 → 重读核对码/ID/字段/时间，
-跑完自清，24 项断言）；`tools/migrate_project.gd` 是一次性迁移脚本
+跑完自清，24 项断言）、F1 性能抽样 `tools/f1_bench.gd`（临时工程造 1000 资产/20 图/1000 步 8 轨/
+1 万瓦片，打印 `AssetDecl.by_id`、`code_map`、时间轴区间、整图 JSON、区域扫描与保存前摘要耗时，
+跑完自清）；`tools/migrate_project.gd` 是一次性迁移脚本
 （清单 `tiles[]`/`entities[]` → `assets[]`、瓦片索引 → 资产 id 并补变换位、`entities[]` → `objects[]`、全图补发地图码并把跨图引用的图名重映射成码，抬到当前版本，幂等）：
 
 ```

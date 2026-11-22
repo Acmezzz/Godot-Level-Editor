@@ -4,12 +4,15 @@ class_name FunctionDecl
 ## 码↔名双向查找、CODES.md 生成。声明域只依赖 manifest 字典本身，全部静态函数。
 
 ## 归一化结果缓存：content_editor 重建右栏时逐字段调用 function_fields 等，
-## 全量重扫是纯浪费。指纹 = 项目目录 + functions 声明的 JSON 串（清单保存后必变，天然失效）。
+## 全量重扫是纯浪费。指纹 = 项目目录 + functions 池的递归结构哈希（F1/P03：
+## 原先 JSON.stringify 整池是每次访问的成本，池越大越慢；见 pool_fingerprint.gd）。
+const PoolPrint := preload("res://src/core/pool_fingerprint.gd")
+
 static var _cache: Dictionary = {}
 static var _cache_key := ""
 
 static func _key(m: Dictionary) -> String:
-	return str(m.get("_dir", "")) + "\u0001" + JSON.stringify(m.get("functions", null))
+	return PoolPrint.of(m, "functions")
 
 ## 把两种写法统一成 [{id, body}] 对，便于就地补码。
 ## 只读视图：不往 body 里写 id（dict 形式本来就不存 id，凭空加键会让「加载+保存」多出噪音）。

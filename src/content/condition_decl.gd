@@ -7,13 +7,14 @@ extends RefCounted
 ## 条件参数与功能参数共存于同一份内容 fields（键=字段码），编辑器只渲染填参，不解释语义。
 
 const ContentId := preload("res://src/content/content_id.gd")
+const PoolPrint := preload("res://src/core/pool_fingerprint.gd")
 
-## 归一化结果缓存：指纹 = 项目目录 + conditions 声明的 JSON 串（清单保存后必变，天然失效）。
+## 归一化结果缓存：指纹 = 项目目录 + conditions 池的递归结构哈希（F1/P03：避免每次访问重扫整池）。
 static var _cache: Dictionary = {}
 static var _cache_key := ""
 
 static func _key(m: Dictionary) -> String:
-	return str(m.get("_dir", "")) + "\u0001" + JSON.stringify(m.get("conditions", null))
+	return PoolPrint.of(m, "conditions")
 
 ## 把两种写法统一成 [{id, body}] 对，便于就地补码（与 function_decl 同构）。
 static func _decl_items(decl) -> Array:

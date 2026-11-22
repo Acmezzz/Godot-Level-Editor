@@ -823,7 +823,7 @@ func read_content_staged(fn_id: String, cid: String) -> Dictionary:
 	return _form._content_read(fn_id, cid)
 
 func write_content_staged(fn_id: String, cid: String, data: Dictionary) -> bool:
-	return _form._content_write(fn_id, cid, data)
+	return _form._content_write(fn_id, cid, data) == "ok"
 func _ensure_failed() -> void:
 	_form._ensure_failed()
 func _refresh_status_only() -> void:

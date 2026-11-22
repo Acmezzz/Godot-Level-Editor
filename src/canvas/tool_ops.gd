@@ -74,7 +74,7 @@ func _paint(c: Vector2i) -> void:
 				cvs.set_collision_cell(bc, true, cvs.collision_type, cvs.collision_shape)
 				changed = true
 		if changed:
-			cvs._mark(false)   # 只改碰撞，实体集没动
+			cvs._mark_collision()   # P01：只改碰撞，红块镜像重画；瓦片/实体都没动
 		return
 	var layer = cvs._layer_node(cvs.active_layer)
 	if layer == null:
@@ -92,7 +92,7 @@ func _paint(c: Vector2i) -> void:
 			TilesetCache.set_cell_alt(layer, bc, src, cvs.paint_cell, cvs.tile_alt)
 			changed = true
 	if changed:
-		cvs._mark(false)   # 只改瓦片层
+		cvs._mark_tiles()   # P01：只改瓦片层（三角拓扑下才需要重建自绘层）
 
 
 ## 这一格到底有没有东西可擦——起手前先判，避免压空撤销快照。
@@ -138,7 +138,10 @@ func erase_cells(cells: Array) -> bool:
 			layer.erase_cell(bc)
 		changed = true
 	if changed:
-		cvs._mark(false)   # 纯瓦片/碰撞擦除，实体集不变
+		if layer == null:
+			cvs._mark_collision()   # P01：擦的是碰撞层
+		else:
+			cvs._mark_tiles()       # P01：擦的是瓦片层
 	return changed
 
 
@@ -240,6 +243,10 @@ func _layer_node(i: int) -> TileMapLayer:
 	return cvs._layer_node(i)
 func _mark(ents_changed := true) -> void:
 	cvs._mark(ents_changed)
+func _mark_tiles() -> void:
+	cvs._mark_tiles()
+func _mark_collision() -> void:
+	cvs._mark_collision()
 func _push_undo() -> void:
 	cvs._push_undo()
 func collision_index() -> int:
@@ -283,7 +290,7 @@ func generate_collision(strategy := "full", replace := false, one_way_top := fal
 		var typ := "one_way" if (strategy == "top" and one_way_top) else "solid"
 		set_collision_cell(c, true, typ)
 		added += 1
-	_mark(false)   # 自动碰撞只写碰撞层
+	_mark_collision()   # P01：自动碰撞只写碰撞层，红块重画即可
 	cvs.queue_redraw()
 	return added
 

@@ -7,13 +7,14 @@ extends RefCounted
 ## 步骤字段与功能/条件字段共用一个码空间。运行时游戏侧按序解释执行。
 
 const ContentId := preload("res://src/content/content_id.gd")
+const PoolPrint := preload("res://src/core/pool_fingerprint.gd")
 
-## 归一化结果缓存：指纹 = 项目目录 + steps 声明的 JSON 串（清单保存后必变，天然失效）。
+## 归一化结果缓存：指纹 = 项目目录 + steps 池的递归结构哈希（F1/P03：避免每次访问重扫整池）。
 static var _cache: Dictionary = {}
 static var _cache_key := ""
 
 static func _key(m: Dictionary) -> String:
-	return str(m.get("_dir", "")) + "\u0001" + JSON.stringify(m.get("steps", null))
+	return PoolPrint.of(m, "steps")
 
 ## 把两种写法统一成 [{id, body}] 对，便于就地补码（与 function_decl 同构）。
 static func _decl_items(decl) -> Array:

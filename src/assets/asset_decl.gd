@@ -10,15 +10,17 @@ extends RefCounted
 ## 归一化**以声明原件为底**：游戏侧自定义键原样保留，编辑器只规范化自己认识的键
 ## （与第 0 批对四个声明池的纪律一致）。
 ##
-## 缓存指纹 = 项目目录 + assets 的 JSON 串；清单保存后必然变化，天然失效。
+## 缓存指纹 = 项目目录 + assets 池的递归结构哈希（F1/P03：原先每次访问都
+## JSON.stringify 整个池，1000 条资产约 3 ms/次；绘制热路径按实例取声明，等于每帧几秒）。
 
 const FnDecl := preload("res://src/content/function_decl.gd")
+const PoolPrint := preload("res://src/core/pool_fingerprint.gd")
 
 static var _cache := {}
 static var _cache_key := ""
 
 static func _key(m: Dictionary) -> String:
-	return str(m.get("_dir", "")) + "\u0001" + JSON.stringify(m.get("assets", null))
+	return PoolPrint.of(m, "assets")
 
 ## 归一化视图 {id: 声明}，按声明顺序。
 static func all(m: Dictionary) -> Dictionary:
@@ -60,12 +62,19 @@ static func name_of(m: Dictionary, aid: String) -> String:
 
 ## 共用显示名（E3）：画布选材与资产图鉴同一口径——声明名为空时回落 id，不各写一份。
 static func label(m: Dictionary, aid: String) -> String:
-	var nm := str(by_id(m, aid).get("name", ""))
+	return label_of_decl(by_id(m, aid), aid)
+
+## 已有归一化声明时用这个（P03：列表逐项循环免去按 id 再取整表）。
+static func label_of_decl(d: Dictionary, aid: String) -> String:
+	var nm := str(d.get("name", ""))
 	return nm if nm != "" else aid
 
 ## 共用显示类别（E3）：瓦片 / 图片 / 实体。列表、筛选提示与详情都用这一处。
+## 已有归一化声明时用 category_of_decl（P03：列表逐项查询免去按 id 再取整表）。
 static func category_of(m: Dictionary, aid: String) -> String:
-	var d := by_id(m, aid)
+	return category_of_decl(by_id(m, aid))
+
+static func category_of_decl(d: Dictionary) -> String:
 	if str(d.get("kind", "")) == "entity":
 		return "实体"
 	if str(d.get("shape", "")) == "image":

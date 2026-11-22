@@ -92,9 +92,21 @@ static func path_for(m: Dictionary, kind: String, id: String) -> String:
 		return ""
 	return dir.path_join(id + ".json").simplify_path()
 
-## 读缓存：path -> {mtime, size, data}，命中要求 mtime+size 双双相同。
+## 读缓存：path -> {digest, data}。
+## 命中判据用**全文摘要**而不是 mtime+size（F1/P04）：Windows 的 mtime 是秒级、
+## 长度也可能不变，同秒同长度的外部改写会被 mtime+size 当作未改，缓存与基线一起骗人。
+## 代价是每次读都要读一遍文本做哈希——内容文件都很小，省下的是 JSON.parse。
 ## read_ex 命中时返回深拷贝（调用方拿不到缓存原件）；write/rename/remove 显式失效。
-static var _cache := {}   # path -> {mtime: int, size: int, data: Dictionary}
+static var _cache := {}   # path -> {digest: String, data: Dictionary}
+
+## 整体文本摘要（项目内统一算法：sha256）。
+static func file_digest(path: String) -> String:
+	var f := FileAccess.open(path, FileAccess.READ)
+	if f == null:
+		return ""
+	var t := f.get_as_text()
+	f.close()
+	return t.sha256_text()
 
 ## 严格读取：区分「缺失」「损坏」「可写」（C04）。
 ## status: ok / missing / invalid；invalid 时 data 为空、error 说明原因，调用方不得覆盖原文件。
@@ -104,16 +116,16 @@ static func read_ex(m: Dictionary, kind: String, id: String) -> Dictionary:
 		return {"status": "invalid", "data": {}, "error": "内容目录或 id 非法"}
 	if not FileAccess.file_exists(path):
 		return {"status": "missing", "data": {}, "error": "内容文件不存在"}
-	var mt := FileAccess.get_modified_time(path)
-	var sz := _file_size(path)
-	var hit = _cache.get(path, null)
-	if hit != null and int(hit.get("mtime", -1)) == mt and int(hit.get("size", -1)) == sz:
-		return {"status": "ok", "data": (hit.get("data", {}) as Dictionary).duplicate(true), "error": ""}
 	var f := FileAccess.open(path, FileAccess.READ)
 	if f == null:
 		return {"status": "invalid", "data": {}, "error": "内容文件无法打开"}
 	var text := f.get_as_text()
 	f.close()
+	var digest := text.sha256_text()
+	var hit = _cache.get(path, null)
+	if hit != null and str(hit.get("digest", "")) == digest:
+		return {"status": "ok", "data": (hit.get("data", {}) as Dictionary).duplicate(true),
+			"digest": digest, "error": ""}
 	var json := JSON.new()
 	if json.parse(text) != OK:
 		return {"status": "invalid", "data": {}, "error": "JSON 解析失败: " + json.get_error_message()}
@@ -122,21 +134,13 @@ static func read_ex(m: Dictionary, kind: String, id: String) -> Dictionary:
 	var data: Dictionary = json.data
 	if str(data.get("id", "")) == "":
 		data["id"] = id
-	_cache[path] = {"mtime": mt, "size": sz, "data": data}
-	return {"status": "ok", "data": data.duplicate(true), "error": ""}
+	_cache[path] = {"digest": digest, "data": data}
+	return {"status": "ok", "data": data.duplicate(true), "digest": digest, "error": ""}
 
 ## 读单个资源；缺失/损坏/非法一律返回 {}（旧调用兼容；需要区分状态请用 read_ex）。
 static func read(m: Dictionary, kind: String, id: String) -> Dictionary:
 	var res := read_ex(m, kind, id)
 	return res.data if str(res.status) == "ok" else {}
-
-static func _file_size(path: String) -> int:
-	var f := FileAccess.open(path, FileAccess.READ)
-	if f == null:
-		return -1
-	var n := f.get_length()
-	f.close()
-	return n
 
 ## 静默解析：JSON.parse_string 遇到坏文件会向引擎打 ERROR 日志，
 ## 校验页扫描大量资源时会被噪声淹没；JSON.new().parse() 只返回错误码。
@@ -156,13 +160,25 @@ static func _decode(text: String, id: String) -> Dictionary:
 ## 写单个资源；目录不存在时自动创建。
 ## 已有文件损坏时拒绝静默覆盖（C04）：除非调用方显式传 allow_repair=true。
 static func write(m: Dictionary, kind: String, id: String, data: Dictionary, allow_repair := false) -> bool:
+	var res := write_ex(m, kind, id, data, "", allow_repair)
+	return bool(res.get("ok", false))
+
+## 带基线的写入（F1/P04）：base_digest = 调用方读到内容时的文本摘要。
+## 磁盘现状与基线不同 = 打开后被外部改过，不写、返回 conflict——
+## 只看 mtime+size 会漏掉同秒同长度的外部编辑，摘要不会。
+## base_digest 为空（新建/无基线）时行为与 write 相同。
+static func write_ex(m: Dictionary, kind: String, id: String, data: Dictionary,
+		base_digest: String, allow_repair := false) -> Dictionary:
 	var path := path_for(m, kind, id)
 	if path == "":
-		return false
+		return {"ok": false, "conflict": false}
+	if base_digest != "" and FileAccess.file_exists(path):
+		if file_digest(path) != base_digest:
+			return {"ok": false, "conflict": true}
 	if FileAccess.file_exists(path) and not allow_repair:
 		var cur := read_ex(m, kind, id)
 		if str(cur.status) == "invalid":
-			return false
+			return {"ok": false, "conflict": false}
 	DirAccess.make_dir_recursive_absolute(path.get_base_dir())
 	if FileAccess.file_exists(path):
 		# 内容文件与地图同权——误写可回滚（3 层 .history，最新 .1）
@@ -170,7 +186,7 @@ static func write(m: Dictionary, kind: String, id: String, data: Dictionary, all
 	var payload := data.duplicate(true)
 	payload["id"] = id
 	_cache.erase(path)   # D3：写后失效（同秒重写也不吃脏缓存）
-	return Store.write_json(path, payload)
+	return {"ok": Store.write_json(path, payload), "conflict": false}
 
 ## 列出某类资源的 id（不含扩展名，排序）。
 ## D3 修订：目录 mtime 在 Windows 上不可靠——list 不缓存（DirAccess 扫描本身很便宜），

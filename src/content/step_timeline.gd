@@ -131,20 +131,35 @@ static func effective(steps: Array, index: int) -> Dictionary:
 	return tl[index]
 
 ## 汇总警告（只警告不阻断）：负 at/duration（手改 JSON 才会出现）+ 同轨重叠。
-static func warnings(steps: Array) -> Array:
+## 全重叠时冲突对是平方级（1000 步全压同一区间 = 约 50 万条），默认最多回报
+## MAX_WARNINGS 条、末尾注明剩余数量——面板要的是「有问题，去改」，不是逐对清单。
+const MAX_WARNINGS := 12
+
+static func warnings(steps: Array, limit := MAX_WARNINGS) -> Array:
 	var out: Array = []
 	var tl := to_timeline(steps)
+	var total := 0
 	for i in tl.size():
 		if not (steps[i] is Dictionary):
 			continue
 		var st: Dictionary = steps[i]
 		if st.has("at") and float(st.get("at", 0.0)) < 0.0:
-			out.append("第 %d 步 at 为负（时间轴里拖回 0 起）" % (i + 1))
+			total += 1
+			if limit <= 0 or out.size() < limit:
+				out.append("第 %d 步 at 为负（时间轴里拖回 0 起）" % (i + 1))
 		if st.has("duration") and float(st.get("duration", 0.0)) < 0.0:
-			out.append("第 %d 步 duration 为负（拖右缘改回非负）" % (i + 1))
-	for pair in conflicts(steps):
+			total += 1
+			if limit <= 0 or out.size() < limit:
+				out.append("第 %d 步 duration 为负（拖右缘改回非负）" % (i + 1))
+	var pairs := conflicts_of(tl)
+	total += pairs.size()
+	for pair in pairs:
+		if limit > 0 and out.size() >= limit:
+			break
 		out.append("第 %d / %d 步同轨重叠（改 at 或换轨）" % [
 			int((pair as Dictionary).get("a", 0)) + 1,
 			int((pair as Dictionary).get("b", 0)) + 1,
 		])
+	if total > out.size():
+		out.append("…另有 %d 条未列出（先修上面的，再重看）" % (total - out.size()))
 	return out

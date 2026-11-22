@@ -156,11 +156,12 @@ func _draw() -> void:
 		# ① 旧约定：role=exit 且 props.target_map 已填；
 		# ② 声明驱动：类型声明的 map_ref 字段（含被 entity_ref 配对用的）已填。
 		# 两者同一呈现：↗ + 目标图名，让人一眼看到「这条引用跨图了」。
+		# P01：声明读实例自带的 decl（创建时归一化好的那份），不在每帧按 id 重查声明池。
+		var edecl: Dictionary = n.decl
 		var tmap := str(props.get("target_map", "")) \
-			if ManifestScript.has_role(cvs.manifest, sid, "exit") else ""
+			if str(edecl.get("role", "")) == "exit" else ""
 		if tmap == "":
-			var ad0 := AssetDecl.by_id(cvs.manifest, sid)
-			for fd in (ad0.get("fields", []) as Array):
+			for fd in (edecl.get("fields", []) as Array):
 				if not (fd is Dictionary):
 					continue
 				if str((fd as Dictionary).get("type", "")) != "map_ref":
@@ -172,12 +173,12 @@ func _draw() -> void:
 		if tmap != "":
 			exits.append([wp, tmap])
 		# 传送落点（青色描边）与出生 marker（绿十字）拉开色系
-		if ManifestScript.has_role(cvs.manifest, sid, "landing"):
+		if str(edecl.get("role", "")) == "landing":
 			landings.append(n)
 		# 实例实际占位（清单 editorSize 或 prefab 碰撞尺寸）：青色实框
 		boxes.append(_wr(n))
 		# 无贴图的 visual:rect 资产（内置事件区等）：按声明画彩色矩形，不再认 props.event/mode/once。
-		var vis = AssetDecl.by_id(cvs.manifest, sid).get("visual", null)
+		var vis = edecl.get("visual", null)
 		if n.texture == null and vis is Dictionary and str((vis as Dictionary).get("mode", "")) == "rect":
 			zones.append(n)
 	if not exits.is_empty():
@@ -398,7 +399,7 @@ func _draw_visual_rects(nodes: Array) -> void:
 		var n := node as EntityNode
 		if n == null or not is_instance_valid(n):
 			continue
-		var vis: Dictionary = AssetDecl.by_id(cvs.manifest, n.asset).get("visual", {})
+		var vis: Dictionary = (n.decl.get("visual", {}) as Dictionary) if n.decl.get("visual", null) is Dictionary else {}
 		var col := Color(str(vis.get("color", "#4fc3f7")))
 		var alpha := float(vis.get("alpha", 0.35))
 		var rect := n.rect()

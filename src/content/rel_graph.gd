@@ -133,7 +133,8 @@ static func _add_target_nodes(manifest: Dictionary, fn_id: String, nodes: Array,
 			"fields": 0, "other_fn": tf != fn_id})
 
 ## 写一条边：把 from 内容的 field（step < 0 = 顶层 fields；否则 steps[step].fields）设成 to_cid。
-## read_fn(fn_id, cid) → 内容字典；write_fn(fn_id, cid, data) → bool（表单的 staged 感知实现）。
+## read_fn(fn_id, cid) → 内容字典；write_fn(fn_id, cid, data) → bool 或 "ok"/"conflict"/"fail"
+## （表单的 staged 感知实现，F1/P04 起返回状态串）。
 ## multi 字段（值是数组）：old_cid 指出要替换/移除的元素，其余值原样保留。
 ## 返回 {status: ok/noop/missing/failed}。
 static func set_edge(read_fn: Callable, write_fn: Callable, fn_id: String, cid: String,
@@ -175,9 +176,16 @@ static func set_edge(read_fn: Callable, write_fn: Callable, fn_id: String, cid: 
 		else:
 			fields[field] = to_cid
 	holder["fields"] = fields
-	if not bool(write_fn.call(fn_id, cid, data)):
+	if not _write_ok(write_fn.call(fn_id, cid, data)):
 		return {"status": "failed"}
 	return {"status": "ok"}
+
+## 写回结果归一：老回调返回 bool；表单 _content_write 返回 "ok"/"conflict"/"fail"。
+## 字符串非空即真会漏判失败，必须显式认 "ok"（F1/P04）。
+static func _write_ok(v) -> bool:
+	if v is String:
+		return (v as String) == "ok"
+	return bool(v)
 
 static func _as_list(v) -> Array:
 	if v is Array:

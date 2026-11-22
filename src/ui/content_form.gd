@@ -372,13 +372,33 @@ func _content_read(fn_id: String, cid: String) -> Dictionary:
 		return (st.data as Dictionary).duplicate(true)
 	return ContentStore.read(manifest, fn_id, cid)
 
+## 读内容并带出磁盘文本摘要（F1/P04 写前基线）：{data, digest}。
+## 暂存条目没有磁盘基线（digest 为空 = 不比对，写盘时只落在 flushed 之后）。
+func _content_read_ex(fn_id: String, cid: String) -> Dictionary:
+	var st = _staged.get(cid, null)
+	if st is Dictionary:
+		return {"data": (st.data as Dictionary).duplicate(true), "digest": ""}
+	var res := ContentStore.read_ex(manifest, fn_id, cid)
+	return {"data": res.data if str(res.status) == "ok" else {},
+		"digest": str(res.get("digest", "")) if str(res.status) == "ok" else ""}
+
 ## 写内容：暂存中的条目只更新内存（staged），已落盘的条目照旧即时写盘（field_edit 允许）。
-func _content_write(fn_id: String, cid: String, data: Dictionary) -> bool:
+## base_digest = 读到内容时的磁盘摘要；非空时写前比对，磁盘被外部改过就不覆盖（P04）。
+## 返回 "ok" / "conflict" / "fail"。
+func _content_write(fn_id: String, cid: String, data: Dictionary, base_digest := "") -> String:
 	var st = _staged.get(cid, null)
 	if st is Dictionary:
 		(st as Dictionary)["data"] = data.duplicate(true)
-		return true
-	return ContentStore.write(manifest, fn_id, cid, data)
+		return "ok"
+	var res := ContentStore.write_ex(manifest, fn_id, cid, data, base_digest)
+	if bool(res.get("conflict", false)):
+		return "conflict"
+	return "ok" if bool(res.get("ok", false)) else "fail"
+
+## 写前发现磁盘内容被外部改过（F1/P04）：不覆盖、不改画布，只提示去重开。
+## 内容文件每次保存都有 .history 备份，但外部改动是别人的工作，静默吞掉比报错更糟。
+func _content_conflict(cid: String) -> void:
+	app._set_status(" 内容 %s 已被外部修改，本次未写入：重开该实例内容后再改" % cid)
 
 ## 字段改动：写内容文件。content 为空时生成 ID 并暂存（A2 staged）。
 ## 约定：字段值落在 content/<kind>/<id>.json，属「内容资产」而非地图快照——
@@ -393,7 +413,8 @@ func _set_field(i: int, fn_id: String, key: String, value) -> void:
 	if cid == "":
 		_ensure_failed()
 		return
-	var data: Dictionary = _content_read(fn_id, cid)
+	var rd := _content_read_ex(fn_id, cid)
+	var data: Dictionary = rd.data
 	if data.is_empty():
 		data = _blank_content(fn_id, cid)
 	var fields: Dictionary = data.get("fields", {}) if data.get("fields", {}) is Dictionary else {}
@@ -401,10 +422,15 @@ func _set_field(i: int, fn_id: String, key: String, value) -> void:
 		return
 	fields[key] = value
 	data["fields"] = fields
-	if not _content_write(fn_id, cid, data):
+	var wr := _content_write(fn_id, cid, data, str(rd.digest))
+	if wr == "conflict":
+		_content_conflict(cid)
+		return
+	if wr != "ok":
 		_ensure_failed()
 		return
-	_refresh_status_only()
+	# P04：改字段值不动左列行的「类型名 + 实例码」，只刷预览
+	_refresh_value_only()
 
 ## 显示名：内容条目的 name；改动写内容文件并同步实例绑定的 name（列表读的是绑定）。
 func _commit_name(i: int, text: String) -> void:
@@ -427,13 +453,18 @@ func _commit_name(i: int, text: String) -> void:
 		_write_fns(spr0, fns)
 		_refresh_status_only()
 		return
-	var data: Dictionary = _content_read(fn_id, cid)
+	var rd := _content_read_ex(fn_id, cid)
+	var data: Dictionary = rd.data
 	if data.is_empty():
 		return
 	if str(data.get("name", "")) == nm:
 		return
 	data["name"] = nm
-	if not _content_write(fn_id, cid, data):
+	var wr := _content_write(fn_id, cid, data, str(rd.digest))
+	if wr == "conflict":
+		_content_conflict(cid)
+		return
+	if wr != "ok":
 		_ensure_failed()
 		return
 	var spr := _current_spr()
@@ -531,8 +562,15 @@ func _ensure_failed() -> void:
 		Kit.set_badge(_r_badge, "写盘失败", Th.ERR)
 
 ## 只刷左列/预览，不重建右栏——表单重建会丢输入焦点，改一个字段就跳走无法连续输入。
+## 名字进左列标签，改名后必须重建行；只改字段值时行内容没变，走 _refresh_value_only。
 func _refresh_status_only() -> void:
 	_rebuild_rows()
+	if _preview != null:
+		_preview.refresh()
+
+## F1/P04：改字段值只影响内容文件，左列行显示的是「类型名 + 实例码」，一个都不变。
+## 原实现每次改值都重建整列控件（满图时几百行 × 每行五个控件），输入大字段时明显卡。
+func _refresh_value_only() -> void:
 	if _preview != null:
 		_preview.refresh()
 
@@ -796,7 +834,8 @@ func _open_batch(fn_id: String) -> void:
 		pop.hide()
 		var res := BatchOps.apply_field(manifest, fn_id, plan,
 			func(fid: String, cid: String) -> Dictionary: return _content_read(fid, cid),
-			func(fid: String, cid: String, data: Dictionary) -> bool: return _content_write(fid, cid, data))
+			func(fid: String, cid: String, data: Dictionary) -> bool:
+				return _content_write(fid, cid, data) == "ok")
 		var failed := (res.get("failed", []) as Array)
 		var msg := "批量改值：写入 %d 条" % int(res.get("written", 0))
 		if not failed.is_empty():
@@ -954,14 +993,19 @@ func _rename_library_item(fn_id: String, cid: String, new_name: String) -> bool:
 	if nm == "":
 		app._set_status(" 先填新显示名")
 		return false
-	var data := _content_read(fn_id, cid)
+	var rd := _content_read_ex(fn_id, cid)
+	var data: Dictionary = rd.data
 	if data.is_empty():
 		app._set_status(" 读不到内容 %s（文件缺失或损坏）" % cid)
 		return false
 	if str(data.get("name", "")) == nm:
 		return false
 	data["name"] = nm
-	if not _content_write(fn_id, cid, data):
+	var wr := _content_write(fn_id, cid, data, str(rd.digest))
+	if wr == "conflict":
+		app._set_status(" 内容 %s 已被外部修改，改显示名未写入" % cid)
+		return false
+	if wr != "ok":
 		app._set_status(" 改显示名失败：内容文件不可写")
 		return false
 	# 绑定里冗余的 name 只影响列表显示：引用字段是 content ID，改名不动它

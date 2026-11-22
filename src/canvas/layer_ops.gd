@@ -144,6 +144,7 @@ func _layer_display_node(i: int) -> Node2D:
 func set_layer_hidden(i: int, now_hidden: bool) -> void:
 	layer_hidden[_layer_key(i)] = now_hidden
 	_apply_layer_shown(i)
+	cvs.vis_rev += 1   # 可见集合变了：ents_shown() 的缓存必须重算（P01）
 	cvs.queue_redraw()
 
 ## 真节点显隐：数据节点 + 实体容器 + 碰撞可视（单点应用，载入/重排复用）

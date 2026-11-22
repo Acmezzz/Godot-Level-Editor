@@ -114,24 +114,20 @@ static func new_map(name: String, w: int, h: int, proj := "orthogonal", topo := 
 ## 改名（文件名/显示名）不再破坏引用——与实例码/功能码同一身份原则，地图不再是「以名为身份」的例外。
 
 ## 全项目地图码表 {code: 图名}；老图缺码不进表（由保存/迁移补发）。
-## 带缓存：签名 = 各图「文件长度@mtime」+ maps 目录——任一图写盘即失效（mtime 秒级粒度
-## 用长度兜同秒写，见缓存粒度教训）。
+## 带缓存（F1/P03）：签名 = 目录列举清单 + 各图 mtime，不再每图 open 取长度——
+## 20 图 × 每次调用曾要约 3 ms（打开 20 个文件），而绘制出口角标每帧都要这张表。
+## 目录列举能看见新增/删除/改名（文件系统的时间戳精度在目录项上比文件内容可靠），
+## mtime 能看见内容改动；写盘路径另调 invalidate_code_map() 显式失效兜住同秒写。
 static var _cm_cache := {}
 static var _cm_key := "__never__"
 
+## 写盘/改名/删除后调用：下次 code_map 必重算（不依赖 mtime 粒度）。
+static func invalidate_code_map() -> void:
+	_cm_key = "__never__"
+
 static func code_map(m: Dictionary) -> Dictionary:
 	var names := list_maps(m)
-	var parts: Array = []
-	for mn in names:
-		var p := path_for(m, str(mn))
-		var sig := str(mn) + ":0"
-		if FileAccess.file_exists(p):
-			var f := FileAccess.open(p, FileAccess.READ)
-			if f != null:
-				sig = str(mn) + ":" + str(f.get_length()) + "@" + str(FileAccess.get_modified_time(p))
-				f.close()
-		parts.append(sig)
-	var key := "|".join(PackedStringArray(parts)) + "@" + str(m.get("_maps_dir", ""))
+	var key := _cm_signature(m, names)
 	if _cm_key == key:
 		return _cm_cache
 	var out := {}
@@ -143,6 +139,17 @@ static func code_map(m: Dictionary) -> Dictionary:
 	_cm_cache = out
 	_cm_key = key
 	return out
+
+## 签名：图名清单 + 每图 mtime（不 open 文件）。图名清单抓新增/删除/改名，
+## mtime 抓内容改动；同秒内的原地改写由写路径的 invalidate_code_map 兜住。
+static func _cm_signature(m: Dictionary, names: Array) -> String:
+	var parts := PackedStringArray()
+	parts.append(str(m.get("_maps_dir", "")))
+	parts.append(str(names.size()))
+	for mn in names:
+		var p := path_for(m, str(mn))
+		parts.append("%s@%d" % [str(mn), FileAccess.get_modified_time(p)])
+	return "|".join(parts)
 
 ## 图名 → 地图码表（code_map 的反向视图；复用同一签名缓存，O(n) 反转一次）
 static func name_to_code(m: Dictionary) -> Dictionary:
@@ -282,6 +289,7 @@ static func write_text(path: String, text: String) -> bool:
 		DirAccess.remove_absolute(tmp)
 		return false
 	_cache.erase(path)   # 写后失效，下次读回源
+	invalidate_code_map()   # 码表签名依赖 mtime，同秒改写也可能撞上——写路径直接置失效
 	# 任何项目数据落盘都可能改变实体 id 引用（地图 props / 内容步骤）：
 	# 版本号 +1；画布的引用集缓存以 project_rev 为失效锚点（经参数传入，避免循环 preload）。
 	project_rev += 1
@@ -342,6 +350,7 @@ static func rename_map(m: Dictionary, old_name: String, new_name: String) -> Str
 		write_json(dst, renamed)
 	_cache.erase(src)
 	_cache.erase(dst)
+	invalidate_code_map()   # 改名换了文件：码表按图名做键，必须重算
 	# 旧位置历史（maps/.history/<旧名>.json.N）清掉不留孤儿；
 	# 新的按码历史（editor/history/maps/<码>/）不动——码不变，改名后可继续查
 	var hist_dir := str(m.get("_maps_dir", "")).path_join(".history")

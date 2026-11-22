@@ -84,6 +84,35 @@ func test_content_write_read_roundtrip() -> void:
 	ok(ids.has("X1Y2Z3"), "id 正确")
 	_wipe()
 
+## F1/P04：写前冲突检查读实际内容摘要。同秒 + 同长度（mtime 与 size 都看不出来）
+## 的外部改动用摘要必须能认出来；用新基线重写则成功。
+func test_content_write_conflict_detects_same_second_same_size_edit() -> void:
+	_wipe()
+	var m := _fake_manifest()
+	ok(ContentStore.write(m, "f1", "C1D2E3", {"name": "aaaa", "fields": {}}), "初始内容写入")
+	var path := ContentStore.path_for(m, "f1", "C1D2E3")
+	var rd := ContentStore.read_ex(m, "f1", "C1D2E3")
+	eq(str(rd.status), "ok", "初始读取成功")
+	var base := str(rd.digest)
+	ok(base != "", "读取带出磁盘摘要")
+	# 外部改写：长度不变、同一秒内完成——mtime+size 校验会当作未改
+	var old := FileAccess.get_file_as_string(path)
+	var ext := old.replace("aaaa", "bbbb")
+	eq(ext.length(), old.length(), "外部改写长度不变")
+	var wf := FileAccess.open(path, FileAccess.WRITE)
+	wf.store_string(ext)
+	wf.close()
+	var res := ContentStore.write_ex(m, "f1", "C1D2E3", {"name": "mine"}, base)
+	eq(bool(res.get("conflict", false)), true, "同秒同长度的外部修改被摘要检出")
+	eq(bool(res.get("ok", false)), false, "冲突时不写盘")
+	ok(FileAccess.get_file_as_string(path).contains("bbbb"), "外部内容未被覆盖")
+	# 用最新摘要作基线可以正常写入（用户重读后继续编辑）
+	var fresh := ContentStore.read_ex(m, "f1", "C1D2E3")
+	var res2 := ContentStore.write_ex(m, "f1", "C1D2E3", {"name": "mine"}, str(fresh.digest))
+	eq(bool(res2.get("ok", false)), true, "以最新摘要为基线可写入")
+	eq(bool(res2.get("conflict", false)), false, "无冲突")
+	_wipe()
+
 func test_v7_tile_alt_roundtrip() -> void:
 	var data := MapStore.new_map("alt", 8, 8)
 	var layer_id := str((data.meta.layers[0] as Dictionary).get("id"))
@@ -139,6 +168,30 @@ func test_map_write_rejects_bad_data() -> void:
 	ok(not MapStore.write(m, "v", d), "非法数据拒绝写入")
 	ok(not FileAccess.file_exists(path), "拒绝时不生成目标文件")
 	ok(MapStore.write_error(m, d) != "", "给出首个错误原因")
+	_wipe()
+
+## F1/P03：code_map 带签名缓存，写盘路径必须显式失效——否则保存后同秒内
+## 这张表的角标/引用解析还停在旧码上。
+func test_code_map_cache_invalidated_on_write() -> void:
+	_wipe()
+	var m := _fake_manifest()
+	var d := MapStore.new_map("cm", 8, 8)
+	d.meta["code"] = "AAA1"
+	ok(MapStore.write(m, "cm", d), "首写")
+	eq(str(MapStore.code_map(m).get("AAA1", "")), "cm", "码表可查到")
+	var cm2 := MapStore.code_map(m)
+	ok(cm2.has("AAA1") and not cm2.has("BBB2"), "初次码表")
+	# 同秒改码重写：签名里的 mtime 可能不变，靠写路径 invalidate_code_map 兜住
+	d.meta["code"] = "BBB2"
+	ok(MapStore.write(m, "cm", d), "改码重写")
+	var cm3 := MapStore.code_map(m)
+	eq(str(cm3.get("BBB2", "")), "cm", "写后码表立刻反映新码")
+	ok(not cm3.has("AAA1"), "旧码已被移除（不是叠着两份）")
+	# 改名同样换键
+	eq(MapStore.rename_map(m, "cm", "cm2"), "", "改名成功")
+	var cm4 := MapStore.code_map(m)
+	eq(str(cm4.get("BBB2", "")), "cm2", "改名后码表跟到新图名")
+	ok(not cm4.has("AAA1"), "旧码不残留")
 	_wipe()
 
 ## A2/D08：撞码时列出全部路径（引用解析不能靠 code_map 的最后写入者猜）

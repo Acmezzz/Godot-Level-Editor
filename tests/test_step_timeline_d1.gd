@@ -99,6 +99,18 @@ func test_conflicts_sorted_per_track() -> void:
 	var ok2 := [{"step": "A", "duration": 2}, {"step": "B", "duration": 2, "track": 1}]
 	eq(StepTimeline.conflicts(ok2).size(), 0, "不同轨同区间不算冲突")
 
+## P02：全重叠是平方级警告——面板只收前 N 条 + 一行「另有 M 条」，不刷爆列表。
+func test_warnings_cap_quadratic_overlap() -> void:
+	var steps := []
+	for i in 40:
+		steps.append({"step": "A", "duration": 5, "at": 0, "track": 0})
+	var w := StepTimeline.warnings(steps)
+	eq(w.size(), StepTimeline.MAX_WARNINGS + 1, "截断到上限 + 1 条汇总行")
+	ok(str(w[w.size() - 1]).contains("另有"), "末行说明剩余数量：%s" % str(w[w.size() - 1]))
+	var all := StepTimeline.warnings(steps, 0)
+	eq(all.size(), 40 * 39 / 2, "limit=0 时不截断（40 步全重叠 = 780 对）")
+	eq(StepTimeline.warnings([{"step": "A", "duration": 1}]).size(), 0, "单步无警告")
+
 ## 净化：from_timeline 剥缺省键，未知键与 fields 不动
 func test_from_timeline_strips_defaults() -> void:
 	var steps := [{"step": "A", "duration": 0.0, "track": 0, "blocking": true,

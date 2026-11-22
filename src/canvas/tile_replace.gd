@@ -21,19 +21,20 @@ static func collect(cvs, sel: Rect2i, src_asset: String, src_cell := Vector2i(-1
 		if lid == "":
 			continue
 		var layer: TileMapLayer = cvs.layer_tiles[li]
-		for y in range(sel.position.y, sel.end.y):
-			for x in range(sel.position.x, sel.end.x):
-				var c := Vector2i(x, y)
-				var sid := layer.get_cell_source_id(c)
-				if sid < 0:
-					continue
-				if str(cvs.asset_of_source(sid)) != src_asset:
-					continue
-				var ac := layer.get_cell_atlas_coords(c)
-				if src_cell.x >= 0 and ac != src_cell:
-					continue
-				out.append({"c": c, "layer": lid, "src": sid, "atlas": ac,
-					"alt": MapFormat.alt_of_godot(layer.get_cell_alternative_tile(c))})
+		# P05：只走该层实际存在的格再按选区过滤，不按面积 × 层数扫描
+		for c in layer.get_used_cells():
+			if not sel.has_point(c):
+				continue
+			var sid := layer.get_cell_source_id(c)
+			if sid < 0:
+				continue
+			if str(cvs.asset_of_source(sid)) != src_asset:
+				continue
+			var ac := layer.get_cell_atlas_coords(c)
+			if src_cell.x >= 0 and ac != src_cell:
+				continue
+			out.append({"c": c, "layer": lid, "src": sid, "atlas": ac,
+				"alt": MapFormat.alt_of_godot(layer.get_cell_alternative_tile(c))})
 	return out
 
 ## 计划：把 cells 换成 dst_asset 的 dst_cell（同一格位，保留 alt）。

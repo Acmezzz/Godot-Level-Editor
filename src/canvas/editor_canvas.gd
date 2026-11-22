@@ -479,6 +479,7 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	_ent_by_id_dirty = true   # 整图载入（含撤销恢复）索引置脏
 	map_rev += 1              # 整图替换后下游缓存必须重扫
 	ents_rev += 1
+	vis_rev += 1              # 层栈重建：可见集合缓存作废（P01）
 	modified.emit()
 	# 载入后选区引用已失效——发 null 让属性面板/侧栏同步清空，悬空引用不再滞留
 	entity_selected.emit(null)
@@ -643,13 +644,20 @@ func is_entity_shown(n: EntityNode) -> bool:
 	var li := _layer_index_of(n.layer_id)
 	return li < 0 or is_layer_visible(li)
 
-## 可见实例合集（绘制连线/出口/框选候选的公共入口）
+## 可见实例合集（绘制连线/出口/框选候选的公共入口）。
+## P01：按 (ents_rev, vis_rev, 层栈) 缓存——鼠标每动一像素都调它，
+## 原实现每次全量遍历 + 逐实例 _layer_index_of 线性查层。
 func ents_shown() -> Array:
+	var key := "%d:%d:%d" % [ents_rev, vis_rev, layer_count()]
+	if key == _shown_key:
+		return _shown_cache
 	var out := []
 	for e in ents_all():
 		var n := e as EntityNode
 		if n != null and is_entity_shown(n):
 			out.append(n)
+	_shown_cache = out
+	_shown_key = key
 	return out
 
 ## 层码是否可编辑（锁定）：未知层码不阻止（数据兜底落在 0 层）
@@ -992,6 +1000,8 @@ var map_rev := 0
 var ents_rev := 0
 
 ## ents_changed=false：只改了地形/装饰/碰撞，实体集没动——不必让实体索引失效。
+## 镜像视图刷新范围也按数据来源拆（P01）：普通瓦片涂改不该重建碰撞全层，
+## 碰撞涂改也不该重画三角瓦片自绘。窄入口见 _mark_tiles / _mark_collision。
 func _mark(ents_changed := true) -> void:
 	modified_flag = true
 	map_rev += 1
@@ -1007,6 +1017,33 @@ func _mark(ents_changed := true) -> void:
 		if tv != null and is_instance_valid(tv):
 			(tv as Node).refresh()
 	modified.emit()
+
+## P01：只改瓦片（地形/装饰）——碰撞数据没动，红块不必重建。
+## 方形瓦片由 TileMapLayer 自己在 set_cell/erase_cell 后重绘；
+## 三角拓扑下叠的自绘层仍需重建（数据住在 TileMapLayer 里，自绘层读不到变更通知）。
+func _mark_tiles() -> void:
+	modified_flag = true
+	map_rev += 1
+	for tv in tri_views:
+		if tv != null and is_instance_valid(tv):
+			(tv as Node).refresh()
+	modified.emit()
+
+## P01：只改碰撞层——实体与瓦片都没动，只刷红块镜像。
+func _mark_collision() -> void:
+	modified_flag = true
+	map_rev += 1
+	if coll_view and is_instance_valid(coll_view):
+		coll_view.refresh()
+	modified.emit()
+
+## 图层显隐版本号：ents_shown() 的可见集合缓存以它为键之一（层隐藏改变可见性
+## 但不改实体集，ents_rev 抓不到）。实例眼睛开关走 visible_flag → 调用方照常 _mark()。
+var vis_rev := 0
+
+## 可见实例合集缓存：绘制每帧都取（P01 前是每帧全量遍历 + 逐实例查层）。
+var _shown_cache: Array = []
+var _shown_key := ""
 
 ## 实例 {code: EntityNode} 索引——绘制连线 O(n) 复用；置脏后首次取用重建。
 ## 场景实例没有 code，不进索引（引用/连线只认实体）。

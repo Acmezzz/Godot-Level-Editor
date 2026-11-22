@@ -150,7 +150,7 @@ func _apply(plan: Dictionary, dst_asset: String) -> void:
 			e.get("c", Vector2i.ZERO) as Vector2i, src,
 			e.get("atlas", Vector2i.ZERO) as Vector2i, int(e.get("alt", 0)))
 		n += 1
-	app.canvas._mark(false)   # 只动地形瓦片：实体集没变，不必让实体索引失效
+	app.canvas._mark_tiles()   # P01：只动地形瓦片，碰撞/实体集都没变
 	app.canvas.queue_redraw()
 	app._set_status("已替换 %d 格瓦片%s（Ctrl+Z 撤销）" % [n,
 		("，%d 格因图层缺失跳过" % missing) if missing > 0 else ""])

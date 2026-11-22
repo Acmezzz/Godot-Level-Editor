@@ -240,8 +240,10 @@ func fill_placeables(cat: String) -> void:
 			if tex == null:
 				tex = _visual_icon(d)
 			# E3：显示名与类别取共用查询（AssetDecl.label），与资产图鉴同一口径
-			var ie := el.add_item(AssetDecl.label(app.manifest, eid), tex)
-			el.set_item_tooltip(ie, "%s · %s" % [AssetDecl.category_of(app.manifest, eid), eid])
+			# P03：循环里已握着归一化声明 d，别再按 id 回查整表两次
+			var nm1 := str(d.get("name", ""))
+			var ie := el.add_item(nm1 if nm1 != "" else eid, tex)
+			el.set_item_tooltip(ie, "%s · %s" % [AssetDecl.category_of_decl(d), eid])
 			el.set_item_metadata(ie, eid)
 			shown += 1
 	else:
@@ -252,8 +254,10 @@ func fill_placeables(cat: String) -> void:
 			if tex == null:
 				tex = _visual_icon(ad)
 			# E3：显示名与类别取共用查询（AssetDecl.label），与资产图鉴同一口径
-			var ie := el.add_item(AssetDecl.label(app.manifest, eid), tex)
-			var tip := "%s · %s" % [AssetDecl.category_of(app.manifest, eid), eid]
+			# P03：循环里已握着归一化声明 ad，别再按 id 回查整表两次
+			var nm2 := str(ad.get("name", ""))
+			var ie := el.add_item(nm2 if nm2 != "" else eid, tex)
+			var tip := "%s · %s" % [AssetDecl.category_of_decl(ad), eid]
 			if bool(ad.get("builtin", false)):
 				tip += "\n内置种类：画布上按 visual 声明呈现"
 			el.set_item_tooltip(ie, tip)

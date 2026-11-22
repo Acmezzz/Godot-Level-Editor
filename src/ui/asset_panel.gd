@@ -160,7 +160,8 @@ func refresh_list(focus_sid := "") -> void:
 			continue
 		asset_list.add_item(_list_label(sid, edef as Dictionary), _asset_texture(edef))
 		# tooltip 露出 id、类别与停用状态——地图数据引用的是 id，界面上看不到就没法排查
-		var tip := "%s · %s · %s" % [AssetDecl.category_of(manifest, sid), sid,
+		# P03：循环里已握着归一化声明，类别直接取，不再按 id 回查整表
+		var tip := "%s · %s · %s" % [AssetDecl.category_of_decl(edef as Dictionary), sid,
 			str((edef as Dictionary).get("name", sid))]
 		if bool((edef as Dictionary).get("disabled", false)):
 			tip += "\n已停用：不进调色板，原 ID 保留"
@@ -187,7 +188,8 @@ func refresh_list(focus_sid := "") -> void:
 ## 列表显示名：停用/待确认的资产带前缀，扫一眼就知道哪些需要处理（A4）
 func _list_label(sid: String, edef: Dictionary) -> String:
 	# E3：显示名走共用查询（AssetDecl.label），与画布选材同一口径
-	var nm := AssetDecl.label(manifest, sid)
+	# P03：循环里已握着归一化声明，直接取，不再按 id 回查整表
+	var nm := AssetDecl.label_of_decl(edef, sid)
 	if bool(edef.get("disabled", false)):
 		return "⊗ " + nm + "（已停用）"
 	if bool(edef.get("retired", false)):
@@ -198,11 +200,11 @@ func _list_label(sid: String, edef: Dictionary) -> String:
 
 ## 过滤视图：名称/id 任一包含关键字（大小写不敏感）。
 ## 名称查询同走 AssetDecl.label：未填 name 的资产按 id 也能被搜到。
-func _matches_filter(sid: String, _edef: Dictionary) -> bool:
+func _matches_filter(sid: String, edef: Dictionary) -> bool:
 	var q := str(_filter_edit.text).strip_edges().to_lower()
 	if q == "":
 		return true
-	return sid.to_lower().contains(q) or AssetDecl.label(manifest, sid).to_lower().contains(q)
+	return sid.to_lower().contains(q) or AssetDecl.label_of_decl(edef, sid).to_lower().contains(q)
 
 func _on_asset_pick(idx: int, _at: Vector2 = Vector2.ZERO, mb: int = 0) -> void:
 	# 只认左键（与实体大纲列表同一约定）

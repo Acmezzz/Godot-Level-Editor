@@ -154,13 +154,24 @@ static func create(m: Dictionary, aid: String, size: Vector2, tile: int,
 ## 图片资产的贴图按绝对路径缓存（同一张图被多个实例复用，不重复读盘）
 static var _img_cache := {}
 
+## 清空贴图缓存：项目重开/资产重扫后调用，路径或文件可能已变。
+static func clear_texture_cache() -> void:
+	_img_cache.clear()
+
 static func texture_of(m: Dictionary, rel: String) -> Texture2D:
 	if rel == "":
 		return null
 	var base := str(m.get("_dir", ""))
 	var p: String = base.path_join(rel) if base != "" else rel
 	if _img_cache.has(p):
-		return _img_cache[p]
+		var hit = _img_cache[p]
+		# 负缓存（加载失败/文件缺失）不能永久钉住：文件后来出现了就得当次读到
+		# （F1/P03：重扫后原本缺失的纹理当次可见）。正缓存直接返回，不碰盘。
+		if hit != null:
+			return hit as Texture2D
+		if not FileAccess.file_exists(p):
+			return null
+		_img_cache.erase(p)
 	var tex: Texture2D = null
 	if FileAccess.file_exists(p):
 		var img := Image.load_from_file(p)

@@ -146,3 +146,25 @@ func test_set_edge_step_scope_and_multi() -> void:
 	var arr: Array = ContentStore.read(m, "dialog", "a").get("fields", {}).get("N100", [])
 	eq(str(arr), str(["b", "b"]), "原位替换，其余元素保留")
 	_cleanup()
+
+## F1/P04：表单的写回回调返回状态串（"ok"/"conflict"/"fail"），
+## 非 "ok" 必须判失败——字符串非空在 GDScript 里为真，不能当成功吞掉。
+func test_set_edge_string_write_status() -> void:
+	_cleanup()
+	var m := _manifest()
+	_write(m, "dialog", "a", {"N100": "b"})
+	_write(m, "dialog", "c", {})
+	var rd := func(fid: String, cid: String) -> Dictionary: return ContentStore.read(m, fid, cid)
+	var wr_ok := func(_fid: String, _cid: String, data: Dictionary) -> String:
+		return "ok" if not data.is_empty() else "fail"
+	var r1 := RelGraph.set_edge(rd, wr_ok, "dialog", "a", -1, "N100", "c", false)
+	eq(str(r1.get("status", "")), "ok", "写回回调返回 \"ok\" 视为成功")
+	var wr_conflict := func(_fid: String, _cid: String, _data: Dictionary) -> String:
+		return "conflict"
+	var r2 := RelGraph.set_edge(rd, wr_conflict, "dialog", "a", -1, "N100", "c", false)
+	eq(str(r2.get("status", "")), "failed", "写回返回 \"conflict\" 判失败")
+	var wr_fail := func(_fid: String, _cid: String, _data: Dictionary) -> String:
+		return "fail"
+	var r3 := RelGraph.set_edge(rd, wr_fail, "dialog", "a", -1, "N100", "c", false)
+	eq(str(r3.get("status", "")), "failed", "写回返回 \"fail\" 判失败")
+	_cleanup()
