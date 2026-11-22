@@ -68,11 +68,23 @@ func draw_tri_texture(tex: Texture2D, poly: PackedVector2Array, atl: Vector2i, c
 	var tsz := tex.get_size()
 	if tsz.x <= 0.0 or tsz.y <= 0.0:
 		return
-	var u0 := float(atl.x * cs.x) / tsz.x
-	var v0 := float(atl.y * cs.y) / tsz.y
-	var u1 := float((atl.x + 1) * cs.x) / tsz.x
-	var v1 := float((atl.y + 1) * cs.y) / tsz.y
-	# 三角形三点在包围盒里的归一化位置 → 图集 UV（包围盒左上 = 切片左上）
+	var uvs := tri_uvs(poly, atl, cs, tsz)
+	if uvs.size() != poly.size():
+		return
+	var cols := PackedColorArray()
+	for i in poly.size():
+		cols.append(Color.WHITE)
+	draw_polygon(poly, cols, uvs, tex)
+
+## 三角形三点 → 图集 UV（纯函数，绘制的几何口径；tests/test_tri_render.gd 直接验证）。
+static func tri_uvs(poly: PackedVector2Array, atl: Vector2i, cs: Vector2i, tex_size: Vector2) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	if poly.is_empty() or tex_size.x <= 0.0 or tex_size.y <= 0.0:
+		return out
+	var u0 := float(atl.x * cs.x) / tex_size.x
+	var v0 := float(atl.y * cs.y) / tex_size.y
+	var u1 := float((atl.x + 1) * cs.x) / tex_size.x
+	var v1 := float((atl.y + 1) * cs.y) / tex_size.y
 	var mn := poly[0]
 	var mx := poly[0]
 	for p: Vector2 in poly:
@@ -80,10 +92,8 @@ func draw_tri_texture(tex: Texture2D, poly: PackedVector2Array, atl: Vector2i, c
 		mx = mx.max(p)
 	var sx := maxf(mx.x - mn.x, 0.0001)
 	var sy := maxf(mx.y - mn.y, 0.0001)
-	var uvs := PackedVector2Array()
 	for p2: Vector2 in poly:
 		var lx := (p2.x - mn.x) / sx
 		var ly := (p2.y - mn.y) / sy
-		uvs.append(Vector2(lerpf(u0, u1, lx), lerpf(v0, v1, ly)))
-	var cols := PackedColorArray([Color.WHITE, Color.WHITE, Color.WHITE])
-	draw_polygon(poly, cols, uvs, tex)
+		out.append(Vector2(lerpf(u0, u1, lx), lerpf(v0, v1, ly)))
+	return out
