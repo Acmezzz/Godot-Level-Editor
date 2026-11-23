@@ -148,3 +148,64 @@
   `commit_fields()` 的 false 结果——控件值写失败即中止提交/改名并给出原因，不再让地图
   带着没落盘的字段值写出去。
 - 测试：`test_grid_space` 增加三角列折算断言（位移/所在格/范围/边界）。全套 262 用例通过。
+
+## 9. 第三轮：§4 四项遗留方案收口 + §5 热点
+
+### 9.1 内容与身份（§4.1-4）
+- 功能绑定行改用**稳定令牌** `{code, nth}`（与 `steps_panel._step_token` 同一口径）：并行/时机/启用
+  三个控件迟到回调按令牌重定位，那条绑定已删（`_fn_index_of` 返回 -1）就放弃写入，绝不落到同列表的别人身上。
+  令牌在 `_build_fn_block` 里算好传入 `_build_fn_row`（行构建处没有 `fns` 变量）。
+
+### 9.2 格边（§4.2）
+- 1：`GridSpace.edge_between(a, b)` 给出两格**真实共边线段**（公共顶点；退化时退回中心连线）。
+  画布点选、边高亮、下拉候选、审计全部走它，不再各处自算。
+- 2：`RefFields.describe` 认 `source: cell:` 为引用（kind = `cell`，scoped 到配对图）；
+  审计新增 `_cell_ref_problem`——合法性**只由目标图 `meta.cellGraph` 的 cell_id 决定**，
+  不按整数格坐标推导。目标图歧义/读不出、或目标图没有格图声明 = 判定范围不完整，只报诊断不给清空项。
+- 3：整图复制传 `self_copy`——副本是源图的新身份，`map: ""` 随副本解释，
+  不再被 `cross_code` 钉回源图；显式指向第三图的引用仍原样保留。
+  `MapConvert` 新增 `_count_stale_edges`：换投影后两格在目标拓扑下不再相邻的 edge_ref 逐条报数
+  （边身份由拓扑推导，改写成什么都是猜，只报不改）。
+- 4：`resolve_map` 状态从 4 种扩到 6 种：`ok / unset / missing / ambiguous / unreadable / invalid`。
+  `unreadable` = 文件在但读不出（坏 JSON / 结构校验不过），`invalid` = 键根本不能当地图名。
+  审计侧 `ref_fixable` / `ok_target` / `_edge_ref_problem` 都按新状态分支：读不出的目标图
+  既不报悬空也不产出清空项。
+
+### 9.3 gridBasis / 渲染 / 取景（§4.3）
+- 2：新增 `GridSpace.is_hex_geom()`（= `projection == "hexagonal" and not has_basis`）作为唯一判据，
+  替换 `pick_cell` / `to_continuous_grid` / `cell_center_px` / `cell_polygon` / `map_rect_polygon` /
+  `grid_polygon` / `cell_tex_rect` / `grid_lines` / `neighbors` / `up_neighbors` / `map_bounds` /
+  `EntityNode` 锚点换算 / `MapConvert` 锚点换算里的 `is_hex()`：basis 优先于投影预设，
+  同一张图不再有两套口径。
+
+### 9.4 提交与日志（§4.4）
+- 4：`Recovery.scan_pending` 从三态扩到**五态**：新增 `corrupt`（日志本身读不出，不再静默隐身），
+  并把 `manual` 再分成 `skipped`（目标已不在且无基线 → 计划失效，可直接清理）与
+  `external`（目标在但内容对不上 → 需人工复核）。`app` 启动摘要按四类分别报数。
+
+### 9.5 性能（§5）
+- 笔画去重：`_stroke_keys` 字典登记 `(layer, cell)`，查询 O(1)；顺序仍按 `_stroke_cells`。
+- 可见区裁剪：`CollisionView._draw` 与 `TriTileView._draw` 按可见世界矩形裁格；两处都改成
+  每格只算一次多边形（原先裁剪算一次、绘制再算一次）。
+- 地图码索引：`MapStore.code_index` 单次扫描给出 `by_name / by_code / map / unreadable / names`
+  五张视图，`code_map` / `code_conflicts` / `resolve_map` 共用同一份缓存签名
+  （原先每个引用要读全部地图文件两次）。
+- 声明查询：`AssetDecl.of_kind` 把池查询提到循环外。
+- 导出预算：`MapExport.budget` 的候选档按 `size ∝ px/格` 的算术推算，不再每档重跑
+  `output_geometry`（那会重建 GridSpace 并重算层边界）。
+- 试玩：`Playtest.is_alive` 改 `OS.is_process_running`（纯系统调用），不再每次 spawn `tasklist`
+  子进程；`tracking_available` 相应改为「除 web 外都可跟踪」。
+- 日志尾部：`Playtest.log_tail` 只读末尾 64 KB 并丢弃可能被截断的首行。
+- 引用扫描：见上面的 `code_index`。
+
+### 9.6 本轮未取的口径（有意保留）
+- 版本化块缓存（按可见块缓存图元、按层修订失效）：`TriTileView` 已有 `_rev`/`_dirty` 框架但
+  目前只在 `refresh()` 时置脏；进一步做块缓存需要先定义「块」的粒度与失效边界，
+  与 §4.3-3 的「按可见块缓存」同一条，留待下一步。
+- `DocumentSession` 抽象（§4.4-2）与逐目标收据（§4.4-3）：现有提交路径已逐目标回填日志摘要
+  并在失败时停手，但没有抽出独立的会话对象与收据结构体。
+- 导出「画面一致 vs 布局示意」两档（§4.3-4）：当前只有一档预览，预算已提到分配前；
+  两档需要先定「画面一致」要复刻哪些画布行为（裁剪/遮挡/混合）。
+
+- 测试：新增 `test_resolve_map_states`（六态 + 读不出的目标不产清空项）、
+  `test_whole_map_copy_keeps_edge_local`（整图复制保留本图边 + 第三图原样）。全套 264 用例通过。
