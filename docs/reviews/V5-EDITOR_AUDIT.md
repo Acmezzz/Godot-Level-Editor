@@ -20,7 +20,7 @@
 - [ ] B8 整图、实例、区域复制统一内容复合键及源工作副本（`clone_plan.gd`、`selection_ops.gd`、`region_ops.gd`）。
 - [ ] B9 资产删除扫描完整性与清单改动发布边界（`asset_panel.gd`、`project_audit.gd`）。
 - [ ] B10 扫描双向唯一重链、指纹刷新、候选复验与发号查重（`asset_scan.gd`）。
-- [ ] B11 拓扑感知裁剪与确认后修订复验（`map_resize.gd`、`map_dialogs.gd`）。
+- [x] B11 预览与裁剪使用同一拓扑列数，摆放物仍按连续基坐标判界。纯扩图保留已有数据。应用前和确认后复验文档身份及修订；三角边界回归通过。
 - [ ] B12 未解析实例、变换和字段往返，未解析瓦片参与编辑及撤销（`entity_factory.gd`、`undo_history.gd`、`tool_ops.gd`）。
 - [ ] B13 碰撞手势分流与瓦片替换切片复验（`canvas_input.gd`、`tile_replace.gd`）。
 - [ ] B14 导出和内容预览的显隐、图层、格形、变换及排序口径（`map_export.gd`、`content_preview.gd`）。

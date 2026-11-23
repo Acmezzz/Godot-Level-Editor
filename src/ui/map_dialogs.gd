@@ -7,6 +7,7 @@ const UiKitScript := preload("res://src/ui/ui_kit.gd")
 const K := preload("res://src/core/constants.gd")
 const MapStore := preload("res://src/map/map_store.gd")
 const MapResize := preload("res://src/ui/map_resize.gd")
+const DocumentSession := preload("res://src/project/document_session.gd")
 
 var app   # app 宿主
 
@@ -23,6 +24,16 @@ func open_size_dialog() -> void:
 	if base.is_empty():   # 重建窗口哨兵：此刻读不到可裁剪的数据，别让预览数字是假的
 		app._set_status(" 地图重建中，请稍后再试")
 		return
+	var controller = app._map_file_ctrl
+	var sess: DocumentSession = controller.sess
+	var gen := sess.generation
+	var revision := sess.revision
+	var live_map: Dictionary = app.canvas.map_data
+	var triangular: bool = app.canvas.grid.is_tri()
+	var guard := func() -> bool:
+		return app.map_loaded and app._map_file_ctrl == controller \
+			and not sess.stale(gen) and sess.revision == revision \
+			and is_same(app.canvas.map_data, live_map)
 	var shell: Dictionary = app._popup_body("地图尺寸",
 		"以格为单位。缩小会裁掉边界外的瓦片 / 碰撞 / 摆放物，确认框里先列数量；应用是一次可撤销操作。")
 	var pop: PopupPanel = shell.pop
@@ -45,8 +56,8 @@ func open_size_dialog() -> void:
 	var counts_lbl := UiKitScript.hint_label("", 460)
 	body.add_child(counts_lbl)
 	var refresh_counts := func():
-		var cur := _counts(base)
-		var crop := _crop_counts(base, int(w_edit.value), int(h_edit.value))
+		var cur := MapResize.counts(base)
+		var crop := MapResize.crop_counts(base, int(w_edit.value), int(h_edit.value), triangular)
 		var cut: int = int(crop.tiles) + int(crop.collision) + int(crop.objects)
 		var head := "当前 %d×%d：瓦片 %d · 碰撞 %d · 摆放物 %d" % [
 			int(meta.get("w", K.DEFAULT_MAP_W)), int(meta.get("h", K.DEFAULT_MAP_H)),
@@ -80,48 +91,44 @@ func open_size_dialog() -> void:
 			"已有内容的投影已冻结。要换投影请复制这张图，在副本上转换并核对游戏加载器。", 460))
 	var btn_row := UiKitScript.hbox(8)
 	btn_row.alignment = BoxContainer.ALIGNMENT_END
-	# apply 回调改走方法：lambda 里不能 await，而 load_data 是协程——
-	# 不 await 就 _mark()，置脏会被 load_data 收尾覆盖（撤销恢复路径的脏标记）
 	btn_row.add_child(UiKitScript.button("取消", func(): pop.hide(), "ghost"))
-	btn_row.add_child(UiKitScript.button("应用", func(): apply_map_size(int(w_edit.value), int(h_edit.value), pop,
-		str(proj_sel.get_item_metadata(proj_sel.selected))), "primary"))
+	btn_row.add_child(UiKitScript.button("应用", func():
+		await apply_map_size(int(w_edit.value), int(h_edit.value), pop,
+			str(proj_sel.get_item_metadata(proj_sel.selected)), triangular, guard), "primary"))
 	body.add_child(btn_row)
 	app._open_popup(pop)
 
-## 现有条目计数 / 裁剪范围 / 就地裁剪：纯逻辑在 map_resize.gd（同一判据，可单测）。
-func _counts(d: Dictionary) -> Dictionary:
-	return MapResize.counts(d)
-
-func _crop_counts(d: Dictionary, nw: int, nh: int) -> Dictionary:
-	return MapResize.crop_counts(d, nw, nh)
-
-func _outside(x: int, y: int, nw: int, nh: int) -> bool:
-	return MapResize.outside(x, y, nw, nh)
-
-func _outside_float(x: float, y: float, nw: int, nh: int) -> bool:
-	return MapResize.outside_float(x, y, nw, nh)
-
-func _crop_data(d: Dictionary, nw: int, nh: int) -> void:
-	MapResize.crop_data(d, nw, nh)
-
-func apply_map_size(nw: int, nh: int, pop: PopupPanel, proj := "") -> void:
+func apply_map_size(nw: int, nh: int, pop: PopupPanel, proj: String, triangular: bool,
+		guard: Callable) -> void:
+	if not guard.call():
+		pop.hide()
+		app._set_status("地图已变更，请重新打开尺寸设置")
+		return
 	var d: Dictionary = app.canvas.extract()
 	if d.is_empty():   # 重建窗口哨兵：空快照过 load_data = 清空整图
 		app._set_status(" 地图重建中，请稍后再试")
 		return
 	# 缩小先确认裁剪范围（E3：裁掉多少瓦片/碰撞/摆放物，应用前可见）
-	var crop := _crop_counts(d, nw, nh)
+	var crop := MapResize.crop_counts(d, nw, nh, triangular)
 	var cut: int = int(crop.tiles) + int(crop.collision) + int(crop.objects)
 	if cut > 0:
 		var msg := "缩到 %d×%d 会裁掉边界外的数据：\n瓦片 %d · 碰撞 %d · 摆放物 %d\n\n应用后可用 Ctrl+Z 撤销（连同原尺寸恢复）。" % [
 			nw, nh, int(crop.tiles), int(crop.collision), int(crop.objects)]
-		if not await app._confirm_action("裁剪地图边界", msg, "裁剪"):
+		var accepted: bool = await app._confirm_action("裁剪地图边界", msg, "裁剪")
+		if not is_instance_valid(pop):
+			return
+		if not accepted:
 			pop.hide()
 			app._set_status("已取消调整尺寸")
 			return
-	# 一笔可撤销快照（D17）：先在改尺寸前入栈，撤销即恢复原尺寸与边缘数据
+	if not guard.call():
+		pop.hide()
+		app._set_status("确认期间地图已变更，请重新打开尺寸设置")
+		return
+	pop.hide()
+	# 一笔可撤销快照：恢复原尺寸与边缘数据。
 	app.canvas.push_undo()
-	_crop_data(d, nw, nh)
+	MapResize.crop_data(d, nw, nh, triangular)
 	d["meta"]["w"] = nw
 	d["meta"]["h"] = nh
 	# 逐图投影（B1）：空图可直接选；带内容的地图投影已冻结（弹窗里也禁用），
@@ -130,9 +137,11 @@ func apply_map_size(nw: int, nh: int, pop: PopupPanel, proj := "") -> void:
 	# 项目里有 isometric/hexagonal 资产时「正交」就丢了（V4 P1）。
 	if proj != "" and not app.canvas.has_content():
 		d["meta"]["gridProjection"] = proj
+	var controller_before_load = app._map_file_ctrl
 	await app.canvas.load_data(d, app.cur_map_name, true)
+	if app._map_file_ctrl != controller_before_load or not is_same(app.canvas.map_data, d):
+		return
 	app.canvas._mark()
-	pop.hide()
 	if cut > 0:
 		app._set_status("尺寸已改为 %d×%d，裁掉瓦片 %d / 碰撞 %d / 摆放物 %d（Ctrl+Z 可撤销）" % [
 			nw, nh, int(crop.tiles), int(crop.collision), int(crop.objects)])

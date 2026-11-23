@@ -57,3 +57,16 @@ func test_map_resize_crop() -> void:
 	eq((d.collision as Array).size(), 1, "碰撞只剩界内 1 条")
 	eq((d.objects as Array).size(), 1, "摆放物只剩界内 1 条")
 	eq(str((d.objects[0] as Dictionary).get("code")), "K1", "保留的是界内那条")
+
+func test_triangular_resize_boundaries() -> void:
+	var d := {"meta": {"w": 12, "h": 8}, "tiles": {"L": [[15, 7], [16, 7], [90, 0]]},
+		"collision": [{"x": 15, "y": 7}, [16, 7]], "objects": [{"x": 7.9, "y": 7}, {"x": 8.0, "y": 7}]}
+	var before := d.duplicate(true)
+	eq(MapResize.crop_counts(d, 13, 8, true), {"tiles": 0, "collision": 0, "objects": 0}, "扩大不裁")
+	MapResize.crop_data(d, 13, 8, true)
+	eq(d, before, "扩大保留已有界外数据")
+	eq(MapResize.crop_counts(d, 8, 8, true), {"tiles": 2, "collision": 1, "objects": 1}, "三角列与连续坐标判界")
+	MapResize.crop_data(d, 8, 8, true)
+	eq(d.tiles.L, [[15, 7]], "保留最右三角瓦片")
+	eq(d.collision, [{"x": 15, "y": 7}], "保留最右三角碰撞")
+	eq(d.objects, [{"x": 7.9, "y": 7}], "摆放物仍用连续坐标")

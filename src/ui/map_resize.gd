@@ -13,10 +13,18 @@ static func counts(d: Dictionary) -> Dictionary:
 	return {"tiles": tiles, "collision": (d.get("collision", []) as Array).size(),
 		"objects": (d.get("objects", []) as Array).size()}
 
-## 目标尺寸会裁掉的条目数（缩小才非零；扩大恒为零）。
-## 瓦片/碰撞按整格判界，摆放物按浮点格坐标判界（半格也算在界内）。
-static func crop_counts(d: Dictionary, nw: int, nh: int) -> Dictionary:
+const GridSpaceScript := preload("res://src/canvas/grid_space.gd")
+
+static func _keeps_extent(d: Dictionary, nw: int, nh: int) -> bool:
+	var meta: Dictionary = d.get("meta", {})
+	return meta.has("w") and meta.has("h") and nw >= int(meta.w) and nh >= int(meta.h)
+
+## 扩大时保留原数据。瓦片/碰撞使用拓扑列数，摆放物使用连续基坐标。
+static func crop_counts(d: Dictionary, nw: int, nh: int, triangular := false) -> Dictionary:
 	var out := {"tiles": 0, "collision": 0, "objects": 0}
+	if _keeps_extent(d, nw, nh):
+		return out
+	var columns := GridSpaceScript.cell_columns(nw, triangular)
 	for lid in (d.get("tiles", {}) as Dictionary):
 		var cells = (d.get("tiles", {}) as Dictionary)[lid]
 		if not (cells is Array):
@@ -24,14 +32,14 @@ static func crop_counts(d: Dictionary, nw: int, nh: int) -> Dictionary:
 		for c in (cells as Array):
 			if not (c is Array) or (c as Array).size() < 2:
 				continue
-			if outside(int((c as Array)[0]), int((c as Array)[1]), nw, nh):
+			if outside(int((c as Array)[0]), int((c as Array)[1]), columns, nh):
 				out.tiles = int(out.tiles) + 1
 	for ce in (d.get("collision", []) as Array):
 		if ce is Dictionary:
-			if outside(int((ce as Dictionary).get("x", 0)), int((ce as Dictionary).get("y", 0)), nw, nh):
+			if outside(int((ce as Dictionary).get("x", 0)), int((ce as Dictionary).get("y", 0)), columns, nh):
 				out.collision = int(out.collision) + 1
 		elif ce is Array and (ce as Array).size() >= 2:
-			if outside(int((ce as Array)[0]), int((ce as Array)[1]), nw, nh):
+			if outside(int((ce as Array)[0]), int((ce as Array)[1]), columns, nh):
 				out.collision = int(out.collision) + 1
 	for o in (d.get("objects", []) as Array):
 		if o is Dictionary and outside_float(float((o as Dictionary).get("x", 0.0)),
@@ -46,7 +54,10 @@ static func outside_float(x: float, y: float, nw: int, nh: int) -> bool:
 	return x < 0.0 or y < 0.0 or x >= float(nw) or y >= float(nh)
 
 ## 就地裁掉边界外条目（层栈与 meta 其它键不动）。与 crop_counts 同一判据。
-static func crop_data(d: Dictionary, nw: int, nh: int) -> void:
+static func crop_data(d: Dictionary, nw: int, nh: int, triangular := false) -> void:
+	if _keeps_extent(d, nw, nh):
+		return
+	var columns := GridSpaceScript.cell_columns(nw, triangular)
 	var tiles_in = d.get("tiles", null)
 	if tiles_in is Dictionary:
 		for lid in (tiles_in as Dictionary):
@@ -56,7 +67,7 @@ static func crop_data(d: Dictionary, nw: int, nh: int) -> void:
 			var keep: Array = []
 			for c in (cells as Array):
 				if c is Array and (c as Array).size() >= 2 \
-						and not outside(int((c as Array)[0]), int((c as Array)[1]), nw, nh):
+						and not outside(int((c as Array)[0]), int((c as Array)[1]), columns, nh):
 					keep.append(c)
 			(tiles_in as Dictionary)[lid] = keep
 	var coll_in = d.get("collision", null)
@@ -74,7 +85,7 @@ static func crop_data(d: Dictionary, nw: int, nh: int) -> void:
 				cx = int((ce as Array)[0])
 				cy = int((ce as Array)[1])
 				ok_shape = true
-			if ok_shape and not outside(cx, cy, nw, nh):
+			if ok_shape and not outside(cx, cy, columns, nh):
 				keep2.append(ce)
 		d["collision"] = keep2
 	var objs_in = d.get("objects", null)

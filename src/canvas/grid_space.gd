@@ -158,15 +158,12 @@ func cell_origin_continuous(c: Vector2i) -> Vector2:
 		return Vector2(float(tri_col(c.x).c), float(c.y))
 	return Vector2(c)
 
-## 格号是否落在地图 [0,w)×[0,h) 内。三角拓扑的 x 是三角列（0..2w-1），
-## 直接和 w 比会把图外半个地图当成图内（V4 P1）。
+static func cell_columns(w: int, triangular: bool) -> int:
+	return 2 * w if triangular else w
+
+## 三角拓扑的 x 是三角列（0..2w-1）。
 func cell_in_map(c: Vector2i, w: int, h: int) -> bool:
-	if c.y < 0 or c.y >= h:
-		return false
-	if is_tri():
-		var cc := int(tri_col(c.x).c)
-		return cc >= 0 and cc < w
-	return c.x >= 0 and c.x < w
+	return c.y >= 0 and c.y < h and c.x >= 0 and c.x < cell_columns(w, is_tri())
 
 static func parse_basis(meta: Dictionary) -> Dictionary:
 	if not meta.has("gridBasis"):
