@@ -106,9 +106,10 @@ func _draw() -> void:
 				_draw_tile_ghost(gtex, c, cvs.asset_cell(cvs.paint_asset), cvs.paint_cell,
 					cvs.tile_alt, clampi(cvs.active_layer, -1, cvs.layer_count() - 1), 0.5)
 	# 碰撞叠加由 CollisionView 节点绘制（图层接口控制显隐），这里不再特例绘制。
-	# 地图边界（meta w×h，关卡的实际范围）
+	# 地图边界（meta w×h，关卡的实际范围）。w/h 是**列数**：三角拓扑下不能用
+	# grid_polygon（它吃三角列号，会把边界折半），走列号口径的 map_rect_polygon
 	var meta: Dictionary = cvs.map_data.get("meta", {})
-	var bpoly = cvs.grid.grid_polygon(Vector2i.ZERO,
+	var bpoly = cvs.grid.map_rect_polygon(Vector2i.ZERO,
 		Vector2i(int(meta.get("w", K.DEFAULT_MAP_W)), int(meta.get("h", K.DEFAULT_MAP_H))))
 	cvs.draw_polyline(bpoly + PackedVector2Array([bpoly[0]]), Color(1, 1, 1, 0.35), 2.0, true)
 	# 游玩视野预览（跟随鼠标）：鼠标在哪 = 假设玩家在那，屏幕里能看到什么
@@ -386,6 +387,7 @@ func _wr(n: EntityNode) -> Rect2:
 	return n.aabb() if li < 0 else cvs.layer_xform(li) * n.aabb()
 
 ## 层局部矩形/多边形 → 世界（区域轮廓/预览共用）
+## 区域选区是**格号**矩形（三角拓扑 = 三角列），所以走 grid_polygon（会折算）。
 func _lpoly_rect(r: Rect2i, li: int) -> PackedVector2Array:
 	var poly: PackedVector2Array = cvs.grid.grid_polygon(r.position, r.end)
 	if li < 0:

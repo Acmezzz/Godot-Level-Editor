@@ -789,8 +789,13 @@ func _fit_view() -> void:
 	var used: Rect2i = (acc["rect"] as Rect2i) if bool(acc["has"]) else Rect2i(0, 0, 10, 10)
 	cam_pos = grid.cell_center_px(Vector2i(used.get_center()))
 	var vp := get_viewport_rect().size
-	# 视野拟合用地图像素包围盒（等距/六边 = 多边形包围盒，不是格子数×格宽）
-	var pb = grid.map_bounds(used)
+	# 视野拟合用地图像素包围盒（等距/六边/斜基 = 多边形包围盒，不是格子数×格宽）。
+	# used 是**格号**（三角拓扑 = 三角列），包围盒要按列号算，先折回平行四边形列。
+	var used_cols := Rect2i(used)
+	if grid.is_tri():
+		used_cols = Rect2i(int(floorf(used.position.x / 2.0)), used.position.y,
+			maxi(1, ceili(used.size.x / 2.0)), used.size.y)
+	var pb = grid.map_bounds(used_cols)
 	zoom = clampf(minf(vp.x / maxf(pb.size.x, 1.0), vp.y / maxf(pb.size.y, 1.0)) * 0.9, 0.5, 6.0)
 	_update_cam()
 

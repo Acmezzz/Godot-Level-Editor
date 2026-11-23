@@ -396,9 +396,34 @@ func cell_polygon(c: Vector2i) -> PackedVector2Array:
 		to_px(g0), to_px(g0 + Vector2(1, 0)),
 		to_px(g0 + Vector2(1, 1)), to_px(g0 + Vector2(0, 1))])
 
-## 格空间矩形 [a, b) 的像素多边形（区域选区/笔刷块/地图边界统一口径；六边 = 四角 cell 包围盒近似）
+## **平行四边形列**矩形 [a, b) 的像素多边形——地图边界/包围盒专用：这里的 a/b 是
+## 连续格坐标（三角拓扑的 w 也是列数，不是三角列），所以不做 tri 折算。
+## 与 grid_polygon 分工：那个吃「格号」（三角拓扑 = 三角列），这个吃「列号」。
+func map_rect_polygon(a: Vector2i, b: Vector2i) -> PackedVector2Array:
+	if is_hex():
+		return grid_polygon_hex_bbox(a, b)
+	var g0 := Vector2(a)
+	var g1 := Vector2(b)
+	return PackedVector2Array([
+		to_px(g0), to_px(Vector2(g1.x, g0.y)),
+		to_px(g1), to_px(Vector2(g0.x, g1.y))])
+
+## 六边：四角 cell 的六角外接矩形（与 grid_polygon 的六边分支同一口径）
+func grid_polygon_hex_bbox(a: Vector2i, b: Vector2i) -> PackedVector2Array:
+	var pts := cell_polygon(a)
+	pts += cell_polygon(Vector2i(b.x - 1, a.y))
+	pts += cell_polygon(Vector2i(b.x - 1, b.y - 1))
+	pts += cell_polygon(Vector2i(a.x, b.y - 1))
+	var lo := pts[0]
+	var hi := pts[0]
+	for p: Vector2 in pts:
+		lo = Vector2(minf(lo.x, p.x), minf(lo.y, p.y))
+		hi = Vector2(maxf(hi.x, p.x), maxf(hi.y, p.y))
+	return PackedVector2Array([lo, Vector2(hi.x, lo.y), hi, Vector2(lo.x, hi.y)])
+
+## 格空间矩形 [a, b) 的像素多边形（区域选区/笔刷块统一口径；六边 = 四角 cell 包围盒近似）
 ## 三角拓扑的 a/b 是**三角列**（两列 = 一个平行四边形列）：按 x/2 折算，否则选区轮廓
-## 与真实覆盖范围差一倍（V4 P1）。半列起止也照实算（奇列起点 = 平行四边形列的中点）。
+## 与真实覆盖范围差一倍（V4 P1）。地图边界不要用这个（那是列号，见 map_rect_polygon）。
 func grid_polygon(a: Vector2i, b: Vector2i) -> PackedVector2Array:
 	if is_tri():
 		var t0 := Vector2(float(a.x) * 0.5, float(a.y))
@@ -406,23 +431,8 @@ func grid_polygon(a: Vector2i, b: Vector2i) -> PackedVector2Array:
 		return PackedVector2Array([
 			to_px(t0), to_px(Vector2(t1.x, t0.y)),
 			to_px(t1), to_px(Vector2(t0.x, t1.y))])
-	if has_basis:
-		var g0b := Vector2(a)
-		var g1b := Vector2(b)
-		return PackedVector2Array([
-			to_px(g0b), to_px(Vector2(g1b.x, g0b.y)),
-			to_px(g1b), to_px(Vector2(g0b.x, g1b.y))])
 	if is_hex():
-		var pts := cell_polygon(a)
-		pts += cell_polygon(Vector2i(b.x - 1, a.y))
-		pts += cell_polygon(Vector2i(b.x - 1, b.y - 1))
-		pts += cell_polygon(Vector2i(a.x, b.y - 1))
-		var lo := pts[0]
-		var hi := pts[0]
-		for p: Vector2 in pts:
-			lo = Vector2(minf(lo.x, p.x), minf(lo.y, p.y))
-			hi = Vector2(maxf(hi.x, p.x), maxf(hi.y, p.y))
-		return PackedVector2Array([lo, Vector2(hi.x, lo.y), hi, Vector2(lo.x, hi.y)])
+		return grid_polygon_hex_bbox(a, b)
 	var g0 := Vector2(a)
 	var g1 := Vector2(b)
 	return PackedVector2Array([
@@ -587,23 +597,15 @@ func cells_between(a: Vector2i, b: Vector2i) -> Array:
 	return out
 
 ## 地图像素包围盒（背景/视野拟合/界内判定的统一口径）。
-## 正交 = 精确矩形；等距 = 菱形网格多边形包围盒（精确）；六边 = 四角 cell 包围盒（近似）。
+## 正交 = 精确矩形；等距/斜基 = 网格多边形包围盒（精确）；六边 = 四角 cell 包围盒（近似）；
+## 三角 = 整列平行四边形（地图范围 w×h 是**列数**，不是三角列数，V4 P1）。
 func map_bounds(map_rect: Rect2i) -> Rect2:
-	if is_iso() or is_hex() or is_tri():
-		var pts := grid_polygon(map_rect.position, map_rect.end)
+	if is_iso() or is_hex() or is_tri() or has_basis:
+		var pts := map_rect_polygon(map_rect.position, map_rect.end)
 		var mn := pts[0]
 		var mx := pts[0]
 		for p: Vector2 in pts:
 			mn = mn.min(p)
 			mx = mx.max(p)
 		return Rect2(mn, mx - mn)
-	if has_basis:
-		# 斜平面：四角像素的轴对齐包围盒（不是 size·tile——那是正交专用）
-		var q := grid_polygon(map_rect.position, map_rect.end)
-		var mn2 := q[0]
-		var mx2 := q[0]
-		for p2: Vector2 in q:
-			mn2 = mn2.min(p2)
-			mx2 = mx2.max(p2)
-		return Rect2(mn2, mx2 - mn2)
 	return Rect2(Vector2(map_rect.position) * Vector2(tile), Vector2(map_rect.size) * Vector2(tile))

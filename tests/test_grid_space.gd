@@ -268,6 +268,11 @@ func test_grid_triangles() -> void:
 	var gp2: PackedVector2Array = g.grid_polygon(Vector2i(0, 0), Vector2i(4, 1))
 	eq(gp2, PackedVector2Array([Vector2(0, 0), Vector2(32, 0), Vector2(32, 16), Vector2(0, 16)]),
 		"三角范围 4 个三角列 = 2 个平行四边列宽")
+	# 地图边界用列号口径：w×h 是列数，不能被折半
+	eq(g.map_rect_polygon(Vector2i(0, 0), Vector2i(2, 1)),
+		PackedVector2Array([Vector2(0, 0), Vector2(32, 0), Vector2(32, 16), Vector2(0, 16)]),
+		"三角 map_rect_polygon 按列号不折算")
+	eq(g.map_bounds(Rect2i(0, 0, 2, 1)), Rect2(0, 0, 32, 16), "三角地图包围盒 = 2 列宽")
 	var hexg = GridSpaceScript.new(Vector2i(16, 16), "hexagonal")
 	hexg.set_topology("triangles")
 	ok(not hexg.is_tri(), "六边投影拒绝三角拓扑（保持 quads）")
