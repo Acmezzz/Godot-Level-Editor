@@ -1266,16 +1266,17 @@ func on_play(spawn_tiles: Vector2i = Vector2i(-1, -1)) -> void:
 		track_note,
 		("；日志: " + tail) if tail != "" else ""])
 
-## 试玩进程跟踪：退出后回报一次（Windows tasklist 轮询）
+## 试玩进程跟踪：退出后回报一次（OS.is_process_running，无子进程）
 
 func poll_playtest() -> void:
-	# is_alive 是阻塞的 tasklist 调用，每帧轮询会卡主线程——1s 节流
+	# §5：查询本身已是系统调用（原 tasklist 子进程已移除），但仍按 1s 节流——
+	# 退出回报不需要帧级精度，留着省一次每帧系统调用。
 	if Time.get_ticks_msec() - _last_alive_poll < 1000:
 		return
 	_last_alive_poll = Time.get_ticks_msec()
 	if _play_pid <= 0:
 		return
-	# 刚启动的头几秒 tasklist 可能还查不到，先跳过
+	# 刚启动的头几秒可能还查不到（进程尚未建好），先跳过
 	if Time.get_ticks_msec() - _play_started_msec < 4000:
 		return
 	if Playtest.is_alive(_play_pid):

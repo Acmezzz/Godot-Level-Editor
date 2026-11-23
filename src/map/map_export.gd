@@ -79,6 +79,8 @@ static func _xf_rect(xf: Transform2D, r: Rect2) -> Rect2:
 	return Rect2(mn, mx - mn)
 
 ## 分配前的预算检查。ok = false 时 suggested 是能压进上限的最大整数 px/格（0 = 1px 也放不下）。
+## §5：候选档位按算术推算，不再每档重跑 output_geometry（那会重建 GridSpace 并重算层边界）。
+## 尺寸与 px/格 成正比：size(p) = ceil(bounds.size × p / cell)，bounds/cell 一次求出即可。
 static func budget(data: Dictionary, manifest: Dictionary, px_per_tile := 4,
 		grid_fallback = 16) -> Dictionary:
 	var geo := output_geometry(data, manifest, px_per_tile, grid_fallback)
@@ -87,10 +89,13 @@ static func budget(data: Dictionary, manifest: Dictionary, px_per_tile := 4,
 	if px <= MAX_PIXELS:
 		return {"ok": true, "size": size, "pixels": px,
 			"suggested": clampi(int(px_per_tile), 1, MAX_PX_PER_TILE), "error": ""}
+	var bounds: Rect2 = geo.bounds
+	var cell := maxf(float((geo.grid as GridSpace).tile.x), float((geo.grid as GridSpace).tile.y))
+	cell = maxf(cell, 1.0)
 	var sug := 0
 	for p in range(mini(int(px_per_tile), MAX_PX_PER_TILE) - 1, 0, -1):
-		var g2 := output_geometry(data, manifest, p, grid_fallback)
-		var s2: Vector2i = g2.size
+		var sc := float(p) / cell
+		var s2 := Vector2i(maxi(1, ceili(bounds.size.x * sc)), maxi(1, ceili(bounds.size.y * sc)))
 		if s2.x * s2.y <= MAX_PIXELS:
 			sug = p
 			break

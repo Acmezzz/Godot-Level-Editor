@@ -136,6 +136,13 @@ static func describe(decl: Dictionary) -> Dictionary:
 		out.kind = "layer"
 		out.scope = "same_map"
 		out.is_ref = true
+	elif src.begins_with("cell:"):
+		# C4/§4.2-2：有限格图 cell_id 引用。合法性以格图声明（cell_id + 显式邻接）为准，
+		# 不由整数格坐标推导——审计据此查「引用的 cell_id 是否还在格图里」。
+		out.kind = "cell"
+		out.scope = "map_ref" if out.map_field != "" else "same_map"
+		out.is_ref = true
+		out.allow_empty = true
 	return out
 
 ## 选项来源是否是引用（用于「未设置」空项与数组元素声明复制）。

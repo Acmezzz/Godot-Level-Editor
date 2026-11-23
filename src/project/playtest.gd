@@ -58,21 +58,21 @@ static func launch_tracked(m: Dictionary, map_path: String, extra_args: PackedSt
 		"args": PackedStringArray(), "tracked": false, "kind": "shell"}
 
 ## 此平台能否跟踪进程退出（R24）：查不了就明说，不给假的「仍在运行」。
+## §5：存活查询改用 OS.is_process_running（纯系统调用，不再 spawn tasklist 子进程），
+## 桌面平台都能跟踪；只有 web 导出没有进程可见性。
 static func tracking_available() -> bool:
-	return OS.get_name().begins_with("Windows")
+	return not OS.has_feature("web")
 
-## 轮询某个 pid 是否还活着（Windows: tasklist；其它平台返回 true = 假定运行中）
+## 轮询某个 pid 是否还活着。
+## §5「进程查询移出交互路径」：原实现每次 OS.execute("tasklist") 同步开子进程（~几十 ms，
+## 主线程卡顿），改为 OS.is_process_running——一次系统调用，无子进程、无输出解析。
+## web 平台无法查询：返回 true = 假定运行中（tracking_available 已让 UI 说明）。
 static func is_alive(pid: int) -> bool:
 	if pid <= 0:
 		return false
-	if not OS.get_name().begins_with("Windows"):
+	if OS.has_feature("web"):
 		return true
-	var out: Array = []
-	var code := OS.execute("tasklist", ["/FI", "PID eq %d" % pid, "/NH"], out, true)
-	if code != 0:
-		return true   # 查询失败时不误判为退出
-	var text := "\n".join(PackedStringArray(out))
-	return text.contains(str(pid))
+	return OS.is_process_running(pid)
 
 ## 取命令首个参数（支持双引号包裹的路径）
 static func _first_token(cmd: String) -> String:

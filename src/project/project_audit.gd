@@ -24,6 +24,7 @@ const StepDecls := preload("res://src/content/step_decl.gd")
 const TriggerDecls := preload("res://src/content/trigger_decl.gd")
 const RefFields := preload("res://src/content/ref_fields.gd")
 const EdgeRef := preload("res://src/map/edge_ref.gd")
+const CellGraphScript := preload("res://src/map/cell_graph.gd")
 const ReferenceIndex := preload("res://src/project/reference_index.gd")
 
 ## 审计全项目。manifest = 编辑器清单（含 _dir/_maps_dir）。
@@ -745,7 +746,7 @@ static func _ref_checks(data: Dictionary, manifest: Dictionary, map_name: String
 		var oc := str((e as Dictionary).get("code", ""))
 		if oc != "":
 			codes[oc] = true
-	# 实体类型声明的 entity_ref/map_ref 字段（值存 props，键 = 字段名）
+	# 实体类型声明的引用字段（值存 props，键 = 字段名）：整数格拓扑引用 + 有限格图 cell_id 引用
 	var refs := {}
 	var all_fields := {}
 	for a in AssetDecl.of_kind(manifest, "entity"):
@@ -756,7 +757,10 @@ static func _ref_checks(data: Dictionary, manifest: Dictionary, map_name: String
 			if not (fd is Dictionary):
 				continue
 			fld_all.append(fd)
-			if str((fd as Dictionary).get("type", "")) in ["entity_ref", "map_ref", "edge_ref"]:
+			var ftyp := str((fd as Dictionary).get("type", ""))
+			# §4.2-2：`source: cell:` 是引用（合法性由格图声明决定，不由整数格坐标推导）
+			if ftyp in ["entity_ref", "map_ref", "edge_ref"] \
+					or str((fd as Dictionary).get("source", "")).begins_with("cell:"):
 				flds.append(fd)
 		if not flds.is_empty():
 			refs[str(ad.get("id", ""))] = flds
@@ -849,6 +853,23 @@ static func _ref_checks(data: Dictionary, manifest: Dictionary, map_name: String
 						issue["fix"] = {"op": "clear_prop", "map": map_name,
 							"code": str(o.get("code", "")), "prop": key, "expect": _val_str(val)}
 					out.append(issue)
+			elif str(f.get("source", "")).begins_with("cell:"):
+				# §4.2-2：有限格图引用以**声明**为准（cell_id + 显式邻接），不按整数格坐标推导。
+				# 目标图读不出来/解析歧义时判定范围不完整，不报悬空（与 edge_ref 同口径）。
+				var bad2 := _cell_ref_problem(manifest, data, str(val), props, all_fields.get(aid, []), f)
+				if str(bad2.get("message", "")) != "":
+					var it2: Dictionary = {
+						"kind": "ref", "severity": "warning",
+						"path": "%s · %s(%s).%s" % [map_name, aid, str(o.get("code", "?")), key],
+						"message": str(bad2.get("message", "")),
+						"map": map_name,
+						"jump": {"type": "entity", "map": map_name, "code": str(o.get("code", "")),
+							"prop": key},
+					}
+					if bool(bad2.get("fixable", false)):
+						it2["fix"] = {"op": "clear_prop", "map": map_name,
+							"code": str(o.get("code", "")), "prop": key, "expect": str(val)}
+					out.append(it2)
 	return out
 
 ## edge_ref 悬空判定（§7.4）：边身份由格拓扑推导，因此只验「目标图存在 + 两格确实相邻 + cell 自洽」。
@@ -888,6 +909,39 @@ static func _edge_ref_problem(manifest: Dictionary, data: Dictionary, val) -> Di
 	if cell is Array and (cell as Array).size() == 2:
 		if int((cell as Array)[0]) != ea.x or int((cell as Array)[1]) != ea.y:
 			return {"message": "格边引用的 cell 与 edge 不自洽: %s" % e_code, "fixable": true}
+	return {"message": "", "fixable": false}
+
+## cell: 引用悬空判定（§4.2-2）：有限格图的合法性**只由声明决定**——cell_id 必须在目标图
+## meta.cellGraph.cells 里，不按整数格坐标或邻接推导（格图是游戏侧契约，可任意多边形）。
+## 目标图解析歧义/读不出、或目标图根本没有格图声明 = 判定范围不完整，只报诊断不给清空项。
+## 返回 {message, fixable}。
+static func _cell_ref_problem(manifest: Dictionary, data: Dictionary, val: String,
+		props: Dictionary, siblings: Array, decl: Dictionary) -> Dictionary:
+	var cid := val
+	if cid == "":
+		return {"message": "", "fixable": false}
+	var tgt_meta: Dictionary = data.get("meta", {}) if data.get("meta", {}) is Dictionary else {}
+	var pair := str(decl.get("mapField", ""))
+	if pair != "":
+		var pmap := RefFields.paired_map_value(decl, siblings, props)
+		if pmap != "" and pmap != str(tgt_meta.get("code", "")) and pmap != str(tgt_meta.get("name", "")):
+			var rm: Dictionary = ReferenceIndex.resolve_map(manifest, pmap)
+			var rst := str(rm.get("status", ""))
+			if rst == "ambiguous" or rst == "unreadable":
+				return {"message": "", "fixable": false}
+			if rst != "ok":
+				return {"message": "格图引用的目标地图不存在: %s" % pmap, "fixable": true}
+			var td: Dictionary = MapStore.read(manifest, str(rm.get("key", "")))
+			if td.is_empty():
+				return {"message": "", "fixable": false}
+			tgt_meta = td.get("meta", {}) if td.get("meta", {}) is Dictionary else {}
+	var graph: Dictionary = tgt_meta.get("cellGraph", {}) if tgt_meta.get("cellGraph", {}) is Dictionary else {}
+	var ids: Array = CellGraphScript.cell_ids(graph)
+	if ids.is_empty():
+		# 没有格图声明：无法判定这枚 cell_id 是否合法（不是「确证悬空」），不产清空项
+		return {"message": "", "fixable": false}
+	if not ids.has(cid):
+		return {"message": "引用的格 id 不在目标图的格图里: %s" % cid, "fixable": true}
 	return {"message": "", "fixable": false}
 
 ## 清空比对用的值串：字典（edge_ref）走 JSON，保持键序稳定；其余走 str()。
