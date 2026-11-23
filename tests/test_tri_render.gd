@@ -41,6 +41,16 @@ func test_tri_uv_alt() -> void:
 	eq(uvs.call(4)[1], Vector2(0.0, 1.0), "转置：包围盒右上取切片左下")
 	eq(uvs.call(5)[1], Vector2(1.0, 1.0), "90°：包围盒右上取切片右下")
 
+## §4.3-3：块缓存的分块键——同块内连续格号归一堆，跨 BLOCK 边界换块，负坐标向下取整
+## （负格是合法数据，块号不能 floor 成 0 与正格混堆）。
+func test_block_key_partition() -> void:
+	var b: int = TriTileViewScript.BLOCK
+	eq(TriTileViewScript._block_key(Vector2i(0, 0)), Vector2i(0, 0), "原点在 0 号块")
+	eq(TriTileViewScript._block_key(Vector2i(b - 1, b - 1)), Vector2i(0, 0), "块内末格仍属 0 号块")
+	eq(TriTileViewScript._block_key(Vector2i(b, 0)), Vector2i(1, 0), "跨列边界进 1 号块")
+	eq(TriTileViewScript._block_key(Vector2i(0, b)), Vector2i(0, 1), "跨行边界进 1 号块")
+	eq(TriTileViewScript._block_key(Vector2i(-1, -1)), Vector2i(-1, -1), "负格归负块（不与正格混堆）")
+
 ## 退化输入不炸：空多边形/零尺寸纹理都返回空数组（调用方据此跳过绘制）
 func test_tri_uv_degenerate() -> void:
 	eq(TriTileViewScript.tri_uvs(PackedVector2Array(), Vector2i.ZERO, Vector2i(16, 16), Vector2(16, 16)).size(),

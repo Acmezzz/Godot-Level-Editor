@@ -5,8 +5,11 @@ extends Node2D
 ## TileMapLayer（六元组原样读写），由本节点按真实格多边形自绘（以图集切片为源，按格形做 UV 裁切）。
 ##
 ## 显隐与层参数由层控制器同步到本节点（图层接口只碰 TileMapLayer，本节点跟它走）；
-## refresh() 只是请求重绘（queue_redraw），真正的遍历在 _draw() 里——只扫**可见世界矩形**内的格，
-## 但仍是每次重绘重算图元（不做逐格缓存），所以大图重绘是 O(可见格数)，别在每帧调用 refresh()。
+## refresh() 只是请求重绘（queue_redraw），真正的遍历在 _draw() 里——只扫**可见世界矩形**内的格。
+## §4.3-3：图元按块缓存。格空间按 BLOCK×BLOCK 分块，数据变化（refresh）时整表作废，
+## 下次绘制一次性把全部块算好；此后平移/缩放只遍历与视口相交的块，重算量与「数据变化」挂钩、
+## 与「相机移动」脱钩。块包围盒取块内实际多边形的并集，任何斜基/三角都不越界。
+const BLOCK := 16
 
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
 const TilesetCache := preload("res://src/canvas/tileset_cache.gd")
@@ -16,9 +19,11 @@ var layer: TileMapLayer
 var grid: GridSpace
 var cvs   # 宿主画布（manifest / atlas_texs / asset_of_source / asset_cell）
 
-## 每帧重建得太贵：数据变化时画布调 refresh() 抬代数，_draw 只在代数变时重算图元。
-var _rev := -1
-var _dirty := true
+## §4.3-3 块缓存：块坐标 (bx,by) → {bbox, items:[{poly, uvs, tex}]}。
+## refresh() 整表作废，下次绘制重建一次（O(该层瓦片数)），此后平移/缩放只遍历可见块。
+var _blocks := {}
+var _built := false
+var _atlas_rev := -1   # 图集重建（外改图集 / 资产增删）后，缓存里的纹理引用会过期
 
 func setup(p_layer: TileMapLayer, p_grid: GridSpace, p_cvs) -> Node2D:
 	layer = p_layer
@@ -27,7 +32,8 @@ func setup(p_layer: TileMapLayer, p_grid: GridSpace, p_cvs) -> Node2D:
 	return self
 
 func refresh() -> void:
-	_dirty = true
+	_blocks.clear()   # 数据变了：全部块作废，下次绘制重算（按可见块惰性重扫）
+	_built = false
 	queue_redraw()
 
 func _process(_dt: float) -> void:
@@ -40,8 +46,11 @@ func _draw() -> void:
 	# 三角拓扑与斜基拓扑都走自绘（斜基的平行四边形没有原生 tile_shape）
 	if not grid.is_tri() and not grid.has_basis:
 		return
-	_dirty = false
-	# §5：按可见世界矩形裁剪（原先每次重画遍历整层；大图拖动是 O(瓦片数)）。
+	if not _built or _atlas_rev != int(cvs.atlas_rev):
+		_atlas_rev = int(cvs.atlas_rev)
+		_build_blocks()
+		_built = true
+	# §5：按可见世界矩形裁剪——只遍历与视口相交的块，块内图元已算好。
 	var vis := Rect2()
 	var has_vis := false
 	var vp := get_viewport()
@@ -49,15 +58,25 @@ func _draw() -> void:
 		var world: Rect2 = vp.get_canvas_transform().affine_inverse() * Rect2(Vector2.ZERO, vp.get_visible_rect().size)
 		vis = get_global_transform().affine_inverse() * world
 		has_vis = true
+	for k in _blocks:
+		var blk: Dictionary = _blocks[k]
+		if has_vis and not vis.intersects(blk.bbox as Rect2):
+			continue
+		for it in (blk.items as Array):
+			var item: Dictionary = it
+			draw_polygon(item.poly as PackedVector2Array, _white_cols((item.poly as PackedVector2Array).size()),
+				item.uvs as PackedVector2Array, item.tex as Texture2D)
+
+## 块号：格空间按 BLOCK 均分。三角拓扑的格号 x 是半格列，块也就按半格列分，
+## 块包围盒由块内实际多边形合并得到（不依赖拓扑公式，任何斜基/三角都不越界）。
+static func _block_key(c: Vector2i) -> Vector2i:
+	return Vector2i(floori(float(c.x) / BLOCK), floori(float(c.y) / BLOCK))
+
+## 重建块表：遍历一次该层瓦片，把多边形/UV/纹理算好按块归堆。
+func _build_blocks() -> void:
 	for c in layer.get_used_cells():
-		# 多边形一次算好：裁剪与绘制共用（原先每格算两次）
-		var poly: PackedVector2Array = grid.cell_polygon(c)
-		if has_vis and not vis.intersects(_bbox_of_poly(poly)):
+		if layer.get_cell_tile_data(c) == null:
 			continue
-		var td: TileData = layer.get_cell_tile_data(c)
-		if td == null:
-			continue
-		# 图集切片：source → 资产 id → 纹理与格尺寸；atlas 坐标从 TileSet 的 source 拿
 		var src := layer.get_cell_source_id(c)
 		if src < 0:
 			continue
@@ -71,11 +90,30 @@ func _draw() -> void:
 		var cs: Vector2i = cvs.asset_cell(aid)
 		if cs == Vector2i.ZERO:
 			continue
+		var poly: PackedVector2Array = grid.cell_polygon(c)
 		if poly.size() < 3:
+			continue
+		var tex := texs[src] as Texture2D
+		if tex == null or tex.get_size().x <= 0.0 or tex.get_size().y <= 0.0:
 			continue
 		# R18：alt（编辑器变换位）参与自绘——翻转/转置不再被三角自绘吞掉
 		var alt := MapFormat.alt_of_godot(layer.get_cell_alternative_tile(c))
-		draw_tri_texture(texs[src] as Texture2D, poly, atl, cs, alt)
+		var uvs := tri_uvs(poly, atl, cs, tex.get_size(), alt)
+		if uvs.size() != poly.size():
+			continue
+		var k := _block_key(c)
+		var bb := _bbox_of_poly(poly)
+		if not _blocks.has(k):
+			_blocks[k] = {"bbox": bb, "items": []}
+		var blk: Dictionary = _blocks[k]
+		blk.bbox = (blk.bbox as Rect2).merge(bb)
+		(blk.items as Array).append({"poly": poly, "uvs": uvs, "tex": tex})
+
+static func _white_cols(n: int) -> PackedColorArray:
+	var cols := PackedColorArray()
+	for i in n:
+		cols.append(Color.WHITE)
+	return cols
 
 ## 多边形包围盒（可见区裁剪用）。
 static func _bbox_of_poly(poly: PackedVector2Array) -> Rect2:
@@ -87,21 +125,6 @@ static func _bbox_of_poly(poly: PackedVector2Array) -> Rect2:
 		mn = mn.min(p)
 		mx = mx.max(p)
 	return Rect2(mn, mx - mn)
-
-## 把一个图集切片贴到三角形内：UV 取切片在整张图集里的归一化矩形，
-## 按三角形包围盒做仿射（切片左上对齐包围盒；等距/斜平面下三角形是旋转的，
-## 包围盒映射会把贴图略微拉伸——与导出预览的 _blit_tile 同口径）。
-func draw_tri_texture(tex: Texture2D, poly: PackedVector2Array, atl: Vector2i, cs: Vector2i, alt := 0) -> void:
-	var tsz := tex.get_size()
-	if tsz.x <= 0.0 or tsz.y <= 0.0:
-		return
-	var uvs := tri_uvs(poly, atl, cs, tsz, alt)
-	if uvs.size() != poly.size():
-		return
-	var cols := PackedColorArray()
-	for i in poly.size():
-		cols.append(Color.WHITE)
-	draw_polygon(poly, cols, uvs, tex)
 
 ## 三角形三点 → 图集 UV（纯函数，绘制的几何口径；tests/test_tri_render.gd 直接验证）。
 ## R18：alt（编辑器变换位 0-7，D4 口径见 map_format）在切片内部施加变换，
