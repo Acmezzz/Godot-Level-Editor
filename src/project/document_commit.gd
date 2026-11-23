@@ -104,8 +104,11 @@ func apply(plan: Dictionary, hooks: Dictionary) -> Dictionary:
 		return {"status": "failed", "written": written, "conflicts": [],
 			"error": "提交日志写入失败：已中止（未写任何文件）",
 			"targets": _receipts_pending(targets, "")}
+	var guard: Callable = hooks.get("is_current", Callable())
 	for t2 in targets:
 		var tgt: Dictionary = t2
+		if guard.is_valid() and not guard.call():
+			return _frozen_fail(tgt, targets, receipts, written, log_path, "提交期间工作副本已变化")
 		var kind := str(tgt.get("kind", ""))
 		var path := str(tgt.get("path", ""))
 		var op := str(tgt.get("op", "write"))

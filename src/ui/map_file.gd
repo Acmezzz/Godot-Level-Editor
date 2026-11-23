@@ -309,6 +309,9 @@ func duplicate_current_from_dialog(old_name: String, name_edit: LineEdit, err_la
 	pop.hide()
 	app._set_status("已创建副本：%s → %s（实例与内容均为独立副本）" % [old_name, nn])
 func confirm_discard(action: String) -> bool:
+	if app.canvas != null and app.canvas.doc_busy:
+		app._set_status(" 文档操作正在进行，请稍后再试")
+		return false
 	if not app.map_loaded or not app.canvas.modified_flag:
 		return true
 	# 确认框开着时冻结撤销/重做（A2）：期间 Ctrl+Z 把画布换掉，用户确认的就不是同一份内容
@@ -830,6 +833,8 @@ func commit_document(reason := "", dry_run := false) -> Dictionary:
 		if pending.is_empty():
 			return {"status": "ok", "written": [], "error": "", "pending": [], "targets": []}
 		return {"status": "staged", "written": [], "error": "", "pending": pending, "targets": []}
+	if app.canvas != null and app.canvas.doc_busy:
+		return {"status": "failed", "error": "另一次文档操作正在进行"}
 	# 正式提交（R28）：先归位未松手的预览型手势，再清手势类型，随后冻结撤销/重做。
 	if app.canvas != null:
 		if app.canvas.has_method("cancel_preview_gesture"):
@@ -865,7 +870,7 @@ func commit_document(reason := "", dry_run := false) -> Dictionary:
 			or (app.map_loaded and str(app.cur_map_path) != "" and not FileAccess.file_exists(str(app.cur_map_path))),
 	}
 	var snap := sess.snapshot()
-	if not (snap["contents"] as Array).is_empty() and app.map_loaded:
+	if app.map_loaded and (op.map_dirty or not (snap["contents"] as Array).is_empty()):
 		var map_snapshot: Dictionary = app.canvas.extract()
 		if map_snapshot.is_empty():
 			_release_busy()
@@ -884,7 +889,12 @@ func commit_document(reason := "", dry_run := false) -> Dictionary:
 		return {"status": "failed", "written": [], "error": error, "pending": _pending_targets()}
 	# B1：apply 按依赖序执行 Plan（清单 → 内容 → 地图），逐文件记录进度；
 	# 失败/取消/冲突路径的提交日志保留（scan_pending 三态判定不变）。
-	var res: Dictionary = await _doc_commit.apply(prep.get("plan", {}) as Dictionary, _commit_hooks())
+	var source: Dictionary = app.manifest
+	var manifest_snapshot := source.duplicate(true)
+	var guard := _commit_is_current.bind(sess.generation, sess.revision, source)
+	var frozen_map: Dictionary = op.get("map_snapshot", {})
+	var res: Dictionary = await _doc_commit.apply(prep.get("plan", {}) as Dictionary,
+		_commit_hooks(guard, frozen_map, manifest_snapshot))
 	_release_busy()
 	var st := str(res.get("status", ""))
 	if st == "ok" and reason != "":
@@ -895,7 +905,7 @@ func commit_document(reason := "", dry_run := false) -> Dictionary:
 		app._set_status(" 提交中止：内容文件在提交期间被外部改动（先重扫再试）")
 	# §4.4-3：逐目标收据带给调用方（哪些写了/跳过了/没轮到），不再只有一句状态。
 	return {"status": st, "written": res.get("written", []), "error": str(res.get("error", "")),
-		"targets": res.get("targets", []),
+		"receipt": res.get("receipt", {}), "targets": res.get("targets", []),
 		"pending": [] if st == "ok" else _pending_targets()}
 
 ## 解除文档忙状态（保存失败/取消路径也必须走到，否则撤销永久失效）
@@ -918,18 +928,16 @@ func _doc_key() -> String:
 
 ## B1：apply 的 UI 侧钩子。清单/地图写盘含外部改动确认对话框（协程）；
 ## 内容逐条冲刷走 content_editor.flush_one_content（绑定复核在表单层）。
-func _commit_hooks() -> Dictionary:
+func _commit_is_current(gen: int, revision: int, source: Dictionary) -> bool:
+	return not sess.stale(gen) and sess.revision == revision and is_same(source, app.manifest)
+
+func _commit_hooks(guard: Callable, frozen_map: Dictionary, manifest_snapshot: Dictionary) -> Dictionary:
 	return {
-		"save_manifest": _hook_save_manifest,
-		"save_map": _hook_save_map,
+		"save_manifest": app._save_manifest_file_async.bind(guard, manifest_snapshot),
+		"save_map": _save_now.bind(frozen_map, guard),
 		"flush_one": _hook_flush_one,
+		"is_current": guard,
 	}
-
-func _hook_save_manifest() -> bool:
-	return await app._save_manifest_file_async()
-
-func _hook_save_map() -> bool:
-	return await on_save()
 
 func _hook_flush_one(cid: String, payload := {}) -> Dictionary:
 	var ce = app.project_shell.content_editor if app.project_shell != null else null
@@ -957,7 +965,9 @@ func _pending_targets() -> Array:
 ## 确认后才正式提交——这是 commit_document 的 staged 状态唯一的生产级消费方。
 func save_all() -> bool:
 	if not app.map_loaded and not _has_staged_or_codes():
-		return await on_save()   # 保持原语义与提示（无地图 = 报错，不是静默成功）
+		app._set_status(" 无地图：先新建或打开一张地图")
+		return false
+	var guard := _commit_is_current.bind(sess.generation, sess.revision, app.manifest)
 	var probe: Dictionary = await commit_document("保存", true)
 	if str(probe.get("status", "")) == "staged":
 		var what: Array[String] = []
@@ -973,25 +983,17 @@ func save_all() -> bool:
 		if not await confirm_action("保存", text, "写入"):
 			app._set_status(" 保存已取消：待写项仍在，未写任何文件")
 			return false
+	if not guard.call():
+		app._set_status(" 保存中止：确认期间文档已变化，请重新提交")
+		return false
 	var res: Dictionary = await commit_document("保存")
 	return str(res.get("status", "")) == "ok"
 
 func _has_staged_or_codes() -> bool:
 	return not _pending_targets().is_empty()
 
-## 保存当前地图；返回是否成功（试玩前依赖它决定是否继续）
-## 直接入口（Ctrl+S）也冻结撤销/重做；已在 commit_document 内嵌套调用时沿用外层标记。
-## 注意：这里只写地图本身。Ctrl+S 那种「用户以为全都存了」的入口走 save_all()——
-## 否则暂存内容还没落盘、地图却先写出去了，地图引用一个磁盘上不存在的内容 ID（A2 顺序）。
-func on_save() -> bool:
-	if app.canvas == null or app.canvas.doc_busy:
-		return await _save_now()
-	app.canvas.doc_busy = true
-	var ok := await _save_now()
-	_release_busy()
-	return ok
-
-func _save_now() -> bool:
+## 写入提交时冻结的地图。前置内容和清单由提交计划处理。
+func _save_now(data: Dictionary, guard: Callable) -> bool:
 	if not app.map_loaded:
 		app._set_status(" 无地图：先新建或打开一张地图")
 		return false
@@ -1003,8 +1005,7 @@ func _save_now() -> bool:
 	if not EditorManifest.is_valid_map_name(n):
 		app._set_status(" 地图名不合法：不能含 / \\ : * ? \" < > | 或以 . 开头")
 		return false
-	var data: Dictionary = app.canvas.extract()
-	if data.is_empty():   # 重建窗口哨兵：绝不能把空快照写盘
+	if data.is_empty():
 		app._set_status(" 地图重建中，保存已跳过：请稍后再试")
 		return false
 	# 依赖身份先落盘（D06）：本次画布可能用到刚补发的资产码/功能码；地图引用它们前
@@ -1061,6 +1062,9 @@ func _save_now() -> bool:
 				return false
 			baseline = cur_digest
 	# 确认等待期间内容又被外部改过：避免「确认的是 A、覆盖的是 B」
+	if not guard.call():
+		app._set_status(" 保存中止：工作副本已变化，请重新提交")
+		return false
 	var observed := Recovery.observe(path)
 	if (baseline == "" and observed.state != "missing") or (baseline != "" and \
 			(observed.state != "present" or observed.digest != baseline)):
@@ -1255,17 +1259,21 @@ func on_play(spawn_tiles: Vector2i = Vector2i(-1, -1)) -> void:
 		return
 	# 试玩只拿「成功提交后的项目内路径」（A2）：先走统一提交（清单码 → 内容 → 地图），
 	# 失败就停，避免游戏侧读到半套内容。
+	var gen := sess.generation
 	var res: Dictionary = await commit_document("试玩前提交")
 	if str(res.get("status", "")) != "ok":
 		app._set_status(" 试玩中止：" + str(res.get("error", "提交未完成")))
 		return
-	# 新建后未标脏的图提交不会写盘：这里补一次正式保存，否则游戏侧收到不存在的路径
-	if not FileAccess.file_exists(str(app.cur_map_path)):
-		if not await on_save():
-			app._set_status(" 试玩中止：地图未保存成功")
-			return
+	if sess.stale(gen) or app.canvas.modified_flag:
+		app._set_status(" 试玩中止：提交期间文档已变化")
+		return
+	var receipt: Dictionary = res.get("receipt", {})
 	var maps_root := str(app.manifest.get("_maps_dir", "")).simplify_path()
-	var play_path := str(app.cur_map_path).simplify_path()
+	var play_path := str(receipt.get("absolute_path", sess.map_path)).simplify_path()
+	var digest := str(receipt.get("map_digest", sess.opened_digest))
+	if digest == "" or Recovery.digest(play_path) != digest:
+		app._set_status(" 试玩中止：磁盘地图与已提交版本不一致")
+		return
 	if maps_root == "" or play_path == "" or not play_path.begins_with(maps_root.path_join("")):
 		app._set_status(" 试玩中止：地图不在当前项目 maps 目录内，拒绝启动")
 		return
