@@ -126,6 +126,11 @@ func _erase_hits(pos: Vector2) -> bool:
 ## 按格批量擦除（瓦片/碰撞），返回是否有真实改动。路径补格与起手共用。
 ## 撤销覆盖在首个真实改动前接上（H01 差量记录；空擦 = 零副作用、不留空条目）。
 func erase_cells(cells: Array) -> bool:
+	# 锁检查放在写入口本身：补格路径（_erase_path 直调）不经过 _apply_tool，
+	# 任何新增调用者也自动受锁约束，不再依赖调用方各自记得查。
+	if cvs.is_layer_locked(cvs.active_layer):
+		cvs._hint("当前图层已锁定：解锁后再擦除")
+		return false
 	var changed := false
 	var layer = null
 	if not cvs._is_grid_layer(cvs.active_layer):
