@@ -58,17 +58,18 @@ func _build_fn_block() -> Control:
 	if fns.is_empty():
 		box.add_child(Kit.hint_label("这个实例还没有功能。", RIGHT_W - 40))
 	for i in fns.size():
-		box.add_child(_build_fn_row(i, fns[i], fns.size()))
+		box.add_child(_build_fn_row(i, fns[i], fns.size(), _fn_token(fns, i)))
 	box.add_child(_build_add_row())
 	return box
 
-func _build_fn_row(i: int, item, total: int) -> Control:
+func _build_fn_row(i: int, item, total: int, tok: Dictionary = {}) -> Control:
 	var f: Dictionary = item if item is Dictionary else {}
 	var ref := _resolve_fn(f)
 	var fn_id := str(ref.get("id", ""))
 	var fname := str(f.get("name", ""))
 	var content_id := str(f.get("content", ""))
 	var on := i == _selected_fn
+	# 令牌由调用方按「功能码 + 同码序号」算好传入（§4.1：迟到回调按令牌定位）
 
 	var line := Kit.hbox(6)
 	line.add_theme_constant_override("separation", 6)
@@ -98,7 +99,7 @@ func _build_fn_row(i: int, item, total: int) -> Control:
 	par.button_pressed = bool(f.get("parallel", false))
 	par.add_theme_font_size_override("font_size", Th.FS_META)
 	par.tooltip_text = "与前一项同时触发"
-	par.toggled.connect(func(v: bool): _set_parallel(i, v))
+	par.toggled.connect(func(v: bool): _set_parallel(tok, v))
 	line.add_child(par)
 
 	# 时机：声明 triggers 是白名单，这里只能挑（空 = 用声明默认）；磁盘写时机码。
@@ -122,7 +123,7 @@ func _build_fn_row(i: int, item, total: int) -> Control:
 		trg.set_item_metadata(trg.get_item_count() - 1, cur_trigger)
 		tidx = trg.get_item_count() - 1
 	trg.select(tidx)
-	trg.item_selected.connect(func(k: int): _set_trigger(i, str(trg.get_item_metadata(k))))
+	trg.item_selected.connect(func(k: int): _set_trigger(tok, str(trg.get_item_metadata(k))))
 	line.add_child(trg)
 
 	var en := CheckBox.new()
@@ -130,7 +131,7 @@ func _build_fn_row(i: int, item, total: int) -> Control:
 	en.button_pressed = bool(f.get("enabled", true))
 	en.add_theme_font_size_override("font_size", Th.FS_META)
 	en.tooltip_text = "缺省为启用；关掉时写 enabled: false"
-	en.toggled.connect(func(v: bool): _set_enabled(i, v))
+	en.toggled.connect(func(v: bool): _set_enabled(tok, v))
 	line.add_child(en)
 
 	# 执行顺序 = 数组序：↑↓ 交换相邻绑定，order 随交换统一重排
@@ -229,6 +230,33 @@ func _resolve_fn(f: Dictionary) -> Dictionary:
 	var id := FunctionDecls.fn_id_of(manifest, code)
 	return {"id": id, "code": code, "known": id != ""}
 
+## §4.1：绑定行的稳定令牌 = 功能码 + 同码序号（同 steps_panel._step_token 口径）。
+## 行内回调原先捕获裸下标：期间增删/上下移绑定后，迟到的 toggled/库/删除会落到另一条上。
+func _fn_token(fns: Array, i: int) -> Dictionary:
+	if i < 0 or i >= fns.size():
+		return {"code": "", "nth": -1}
+	var code := str((fns[i] if fns[i] is Dictionary else {}).get("fn", ""))
+	var nth := 0
+	for k in i:
+		if str((fns[k] if fns[k] is Dictionary else {}).get("fn", "")) == code:
+			nth += 1
+	return {"code": code, "nth": nth}
+
+## 令牌 → 当前下标；找不到（那条绑定已被删）返回 -1。调用方据此放弃写入。
+func _fn_index_of(fns: Array, tok: Dictionary) -> int:
+	var code := str(tok.get("code", ""))
+	var want := int(tok.get("nth", -1))
+	if code == "" or want < 0:
+		return -1
+	var nth := 0
+	for i in fns.size():
+		if str((fns[i] if fns[i] is Dictionary else {}).get("fn", "")) != code:
+			continue
+		if nth == want:
+			return i
+		nth += 1
+	return -1
+
 func _pick_fn(i: int) -> void:
 	commit()
 	_selected_fn = -1 if _selected_fn == i else i
@@ -246,10 +274,13 @@ func _trigger_options(fn_id: String) -> Array:
 		out.append({"v": code, "t": str(tdef.get("name", str(tid)))})
 	return out
 
-func _set_parallel(i: int, v: bool) -> void:
+## 以下 setter 都收**稳定令牌**而不是下标（§4.1）：迟到回调按令牌重新定位，
+## 那条绑定已被删（-1）就放弃写入，绝不落到同列表的别人身上。
+func _set_parallel(tok: Dictionary, v: bool) -> void:
 	var spr := _current_spr()
 	var fns := _current_fns()
-	if spr == null or i < 0 or i >= fns.size():
+	var i := _fn_index_of(fns, tok)
+	if spr == null or i < 0:
 		return
 	var f: Dictionary = (fns[i] if fns[i] is Dictionary else {}).duplicate(true)
 	f["parallel"] = v
@@ -257,10 +288,11 @@ func _set_parallel(i: int, v: bool) -> void:
 	fns[i] = f
 	_write_fns(spr, fns)
 
-func _set_trigger(i: int, code: String) -> void:
+func _set_trigger(tok: Dictionary, code: String) -> void:
 	var spr := _current_spr()
 	var fns := _current_fns()
-	if spr == null or i < 0 or i >= fns.size():
+	var i := _fn_index_of(fns, tok)
+	if spr == null or i < 0:
 		return
 	var f: Dictionary = (fns[i] if fns[i] is Dictionary else {}).duplicate(true)
 	if code == "":
@@ -271,10 +303,11 @@ func _set_trigger(i: int, code: String) -> void:
 	fns[i] = f
 	_write_fns(spr, fns)
 
-func _set_enabled(i: int, v: bool) -> void:
+func _set_enabled(tok: Dictionary, v: bool) -> void:
 	var spr := _current_spr()
 	var fns := _current_fns()
-	if spr == null or i < 0 or i >= fns.size():
+	var i := _fn_index_of(fns, tok)
+	if spr == null or i < 0:
 		return
 	var f: Dictionary = (fns[i] if fns[i] is Dictionary else {}).duplicate(true)
 	# 缺省 true 省略，不写冗余键

@@ -221,14 +221,22 @@ func _report_recovery_items() -> void:
 	var pending: Array = preload("res://src/map/recovery.gd").scan_pending(manifest)
 	var partial := 0
 	var manual := 0
+	var skipped := 0
 	for p in pending:
-		var st := str((p as Dictionary).get("status", ""))
+		var pd: Dictionary = p
+		var st := str(pd.get("status", ""))
 		if st == "manual":
-			manual += 1
+			# §4.4 四态：manual 里再分「目标已不在且无基线」（可跳过）与「内容对不上」（外部改变）
+			if not (pd.get("external", []) as Array).is_empty():
+				manual += 1
+			elif not (pd.get("skipped", []) as Array).is_empty():
+				skipped += 1
 		elif st != "done":
 			partial += 1
 	if partial > 0:
 		parts.append("%d 次未完成提交（已写文件保留，可同 ID 重试）" % partial)
+	if skipped > 0:
+		parts.append("%d 次提交的目标已不在（计划失效，可直接清理 editor/pending）" % skipped)
 	if manual > 0:
 		parts.append("%d 次提交有文件对不上（外部改过或写了一半，需人工复核 editor/pending）" % manual)
 	if parts.is_empty():

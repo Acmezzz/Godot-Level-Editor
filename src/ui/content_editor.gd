@@ -869,12 +869,12 @@ func _resolve_options(decl: Dictionary) -> Array:
 	return _form._resolve_options(decl)
 func _resolve_fn(f: Dictionary) -> Dictionary:
 	return _fnbind._resolve_fn(f)
-func _set_parallel(i: int, v: bool) -> void:
-	_fnbind._set_parallel(i, v)
-func _set_trigger(i: int, code: String) -> void:
-	_fnbind._set_trigger(i, code)
-func _set_enabled(i: int, v: bool) -> void:
-	_fnbind._set_enabled(i, v)
+func _set_parallel(tok: Dictionary, v: bool) -> void:
+	_fnbind._set_parallel(tok, v)
+func _set_trigger(tok: Dictionary, code: String) -> void:
+	_fnbind._set_trigger(tok, code)
+func _set_enabled(tok: Dictionary, v: bool) -> void:
+	_fnbind._set_enabled(tok, v)
 func _delete_fn(i: int) -> void:
 	_fnbind._delete_fn(i)
 func _move_fn(i: int, dir: int) -> void:

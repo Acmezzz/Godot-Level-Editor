@@ -375,8 +375,23 @@ static func scan_pending(m: Dictionary) -> Array:
 			status = "done"
 		elif written > 0:
 			status = "partial"
+		# §4.4：待办项按「是否仍可无风险继续」再分一档——基线/预期都空的目标（新建文件）
+		# 目标不在就是待写；目标已在但内容不符才是「外部改变」。
+		var skipped: Array = []
+		var external: Array = []
+		for j in judged:
+			var jd: Dictionary = j
+			if str(jd.get("state", "")) != "manual":
+				continue
+			var jt := str(jd.get("path", ""))
+			# 目标已不在且没登记基线：这份计划已经不可能按原意落地（跳过），不是冲突
+			if jt != "" and not FileAccess.file_exists(jt) and str(jd.get("baseline", "")) == "":
+				skipped.append(jd)
+			else:
+				external.append(jd)
 		out.append({"path": p, "data": data, "status": status, "written": written,
-			"pending": pending, "manual": manual, "entries": judged})
+			"pending": pending, "manual": manual, "entries": judged,
+			"skipped": skipped, "external": external})
 	out.sort_custom(func(a, b): return str(a.path) < str(b.path))
 	return out
 
