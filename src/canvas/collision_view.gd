@@ -51,10 +51,10 @@ func _draw() -> void:
 		vis = get_global_transform().affine_inverse() * world
 		has_vis = true
 	for c in layer.get_used_cells():
-		if has_vis:
-			var bb := _bbox_of(_cell_poly(c))
-			if not vis.intersects(bb):
-				continue
+		# 多边形一次算好：裁剪与绘制共用（原先每格算两次）
+		var poly := _cell_poly(c)
+		if has_vis and not vis.intersects(_bbox_of(poly)):
+			continue
 		var cm = null
 		if canvas_ref != null and is_instance_valid(canvas_ref):
 			cm = canvas_ref._collision_meta.get(c, null)
@@ -67,7 +67,6 @@ func _draw() -> void:
 		if d.is_empty():
 			d = {"id": ctype, "name": ctype, "shape": cshape}
 		var cols: Array = _colors_of(d)
-		var poly := _cell_poly(c)
 		var r := _bbox_of(poly)
 		# 斜坡按包围盒近似：r45 = 右高（实心在斜线下方），l45 = 左高
 		if cshape == "r45":

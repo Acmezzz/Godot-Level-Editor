@@ -5,8 +5,8 @@ extends Node2D
 ## TileMapLayer（六元组原样读写），由本节点按真实格多边形自绘（以图集切片为源，按格形做 UV 裁切）。
 ##
 ## 显隐与层参数由层控制器同步到本节点（图层接口只碰 TileMapLayer，本节点跟它走）；
-## refresh() 只是请求重绘（queue_redraw），真正的遍历在 _draw() 里——每次重绘都扫该层全部瓦片，
-## 不做逐格缓存。所以大图重绘是 O(瓦片数)，别在每帧调用 refresh()。
+## refresh() 只是请求重绘（queue_redraw），真正的遍历在 _draw() 里——只扫**可见世界矩形**内的格，
+## 但仍是每次重绘重算图元（不做逐格缓存），所以大图重绘是 O(可见格数)，别在每帧调用 refresh()。
 
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
 const TilesetCache := preload("res://src/canvas/tileset_cache.gd")
@@ -50,10 +50,10 @@ func _draw() -> void:
 		vis = get_global_transform().affine_inverse() * world
 		has_vis = true
 	for c in layer.get_used_cells():
-		if has_vis:
-			var bb := _bbox_of_poly(grid.cell_polygon(c))
-			if not vis.intersects(bb):
-				continue
+		# 多边形一次算好：裁剪与绘制共用（原先每格算两次）
+		var poly: PackedVector2Array = grid.cell_polygon(c)
+		if has_vis and not vis.intersects(_bbox_of_poly(poly)):
+			continue
 		var td: TileData = layer.get_cell_tile_data(c)
 		if td == null:
 			continue
@@ -71,7 +71,6 @@ func _draw() -> void:
 		var cs: Vector2i = cvs.asset_cell(aid)
 		if cs == Vector2i.ZERO:
 			continue
-		var poly: PackedVector2Array = grid.cell_polygon(c)
 		if poly.size() < 3:
 			continue
 		# R18：alt（编辑器变换位）参与自绘——翻转/转置不再被三角自绘吞掉
