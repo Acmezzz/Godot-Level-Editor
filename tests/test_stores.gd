@@ -288,6 +288,25 @@ func test_resolve_map_states() -> void:
 	DirAccess.remove_absolute(bad_path)
 	_wipe()
 
+## §4.4-3：提交收据逐目标列出——提前返回时未轮到的目标一律记 pending，
+## 调用方不必猜「哪些落盘了」。
+func test_document_commit_receipts() -> void:
+	var DC := preload("res://src/project/document_commit.gd")
+	# apply() 是协程（钩子是保存协程），测试里只验证收据辅助函数；空计划分支见 prepare/app 调用侧
+	var plan_targets: Array = [
+		{"path": "a", "kind": "manifest", "id": ""},
+		{"path": "b", "kind": "content", "id": "C1"},
+		{"path": "c", "kind": "map", "id": "m"},
+	]
+	var rest: Array = DC._receipts_pending(plan_targets, "b")
+	eq(rest.size(), 1, "停在 b 之后只剩 c")
+	eq(str((rest[0] as Dictionary).get("status", "")), "pending", "未轮到 = pending")
+	eq(str((rest[0] as Dictionary).get("kind", "")), "map", "收据带 kind")
+	eq(DC._receipts_pending(plan_targets, "").size(), 3, "还没开始 = 全部 pending")
+	var rc: Dictionary = DC._receipt_of(plan_targets[1], "written", "DIG")
+	eq(str(rc.get("id", "")), "C1", "收据带目标身份")
+	eq(str(rc.get("digest", "")), "DIG", "写到盘上的目标带摘要")
+
 ## A3：草稿写到 editor/drafts/<地图码>.json，记录目标/基线/快照，可读回、可删。
 func test_draft_roundtrip_by_map_code() -> void:
 	_wipe()

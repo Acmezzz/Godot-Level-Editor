@@ -47,14 +47,18 @@ func prepare(operation: Dictionary, snap: Dictionary) -> Dictionary:
 ##   flush_one(cid) -> {status: ok|dropped|failed}（单条暂存内容：绑定复核 + 写盘 + 丢弃登记）
 ## 逐目标写前复验只对内容目标做（清单/地图的外部改动由各自 hook 的确认 UI 处理）；
 ## 复验不符 → conflict 停，提交日志保留（§7.1 stop_with_conflict）。
+## §4.4-3 逐目标收据：`targets` 数组对**每个计划目标**给 {path, kind, id, status, digest}
+## （status = written / dropped / pending / conflict / failed）。提前返回（conflict/failed）
+## 时也带上已完成的部分——调用方据此知道「哪些落盘了、哪些没有」，不必再猜。
 func apply(plan: Dictionary, hooks: Dictionary) -> Dictionary:
 	var m: Dictionary = plan.get("manifest", {})
 	var targets: Array = plan.get("targets", [])
 	var written: Array = []
 	var conflicts: Array = []
+	var receipts: Array = []
 	var receipt := {}
 	if targets.is_empty():
-		return {"status": "ok", "written": [], "conflicts": [], "receipt": {}}
+		return {"status": "ok", "written": [], "conflicts": [], "receipt": {}, "targets": []}
 	var journal: Array = []
 	for t in targets:
 		var tj: Dictionary = t
@@ -63,7 +67,8 @@ func apply(plan: Dictionary, hooks: Dictionary) -> Dictionary:
 	var log_path := Recovery.begin_pending(m, str(plan.get("operation", "")), journal)
 	if log_path == "":
 		return {"status": "failed", "written": written, "conflicts": [],
-			"error": "提交日志写入失败：已中止（未写任何文件）"}
+			"error": "提交日志写入失败：已中止（未写任何文件）",
+			"targets": _receipts_pending(targets, "")}
 	for t2 in targets:
 		var tgt: Dictionary = t2
 		var kind := str(tgt.get("kind", ""))
@@ -84,8 +89,10 @@ func apply(plan: Dictionary, hooks: Dictionary) -> Dictionary:
 			if conflict:
 				conflicts.append({"path": path, "kind": kind,
 					"message": "内容文件在提交期间被外部改动：%s" % path})
+				receipts.append(_receipt_of(tgt, "conflict", ""))
+				receipts.append_array(_receipts_pending(targets, str(path)))
 				return {"status": "conflict", "written": written, "conflicts": conflicts,
-					"receipt": {}, "journal": log_path}
+					"receipt": {}, "journal": log_path, "targets": receipts}
 		var ok := false
 		if kind == "manifest":
 			ok = await hooks.save_manifest.call()
@@ -97,14 +104,22 @@ func apply(plan: Dictionary, hooks: Dictionary) -> Dictionary:
 			var res: Dictionary = hooks.flush_one.call(str(tgt.get("id", "")), payload)
 			var st := str(res.get("status", ""))
 			if st == "failed":
+				receipts.append(_receipt_of(tgt, "failed", ""))
+				receipts.append_array(_receipts_pending(targets, path))
 				return {"status": "failed", "written": written, "conflicts": [],
-					"error": "暂存内容写盘失败：%s" % str(tgt.get("id", "")), "journal": log_path}
+					"error": "暂存内容写盘失败：%s" % str(tgt.get("id", "")),
+					"journal": log_path, "targets": receipts}
 			if st == "conflict":
+				receipts.append(_receipt_of(tgt, "conflict", ""))
+				receipts.append_array(_receipts_pending(targets, path))
 				return {"status": "conflict", "written": written, "conflicts": [{"path": path,
 					"kind": kind, "message": "内容目标在提交期间被创建或改动：%s" % path}],
-					"receipt": {}, "journal": log_path}
+					"receipt": {}, "journal": log_path, "targets": receipts}
 			if st == "dropped":
-				continue   # 绑定复核丢弃：不写盘、不回填日志（R02），提交继续
+				# 绑定复核丢弃：不写盘、不回填日志（R02），提交继续。
+				# 收据仍要有一条——「计划里有、但故意没写」必须能让调用方看见。
+				receipts.append(_receipt_of(tgt, "dropped", ""))
+				continue
 			ok = true
 			written.append("content")
 		elif kind == "map":
@@ -113,15 +128,23 @@ func apply(plan: Dictionary, hooks: Dictionary) -> Dictionary:
 				written.append("map")
 		if not ok:
 			# 写失败/取消：日志保留（下次启动 scan_pending 判 written/pending/manual）
+			receipts.append(_receipt_of(tgt, "failed", ""))
+			receipts.append_array(_receipts_pending(targets, path))
 			return {"status": "cancelled" if kind == "manifest" else "failed",
 				"written": written, "conflicts": [],
-				"error": "清单补码保存被取消或失败" if kind == "manifest" else "地图保存失败"}
+				"error": "清单补码保存被取消或失败" if kind == "manifest" else "地图保存失败",
+				"journal": log_path, "targets": receipts}
 		# 逐文件记录进度（R04）：写成功即回填实际结果摘要。
 		# 回填失败 = 日志已不可判读（被外部删/改）：**停在已写状态**，不再往下写，
 		# 让下次启动 scan_pending 按「文件摘要 vs 预期」重新判定（§7.1 阶段一）。
-		if not Recovery.mark_pending_written(m, log_path, targets.find(tgt), Recovery.digest(path)):
+		var dig := Recovery.digest(path)
+		if not Recovery.mark_pending_written(m, log_path, targets.find(tgt), dig):
+			receipts.append(_receipt_of(tgt, "written", dig))
+			receipts.append_array(_receipts_pending(targets, path))
 			return {"status": "failed", "written": written, "conflicts": [],
-				"error": "提交日志进度回填失败：已写文件保留，其后目标未写（日志已留在 editor/pending 供复核）"}
+				"error": "提交日志进度回填失败：已写文件保留，其后目标未写（日志已留在 editor/pending 供复核）",
+				"journal": log_path, "targets": receipts}
+		receipts.append(_receipt_of(tgt, "written", dig))
 	Recovery.clear_pending(m, log_path)
 	if written.has("map"):
 		for t3 in targets:
@@ -129,4 +152,28 @@ func apply(plan: Dictionary, hooks: Dictionary) -> Dictionary:
 				receipt = {"map_code": str(plan.get("map_code", "")),
 					"absolute_path": str((t3 as Dictionary).get("path", "")),
 					"map_digest": Recovery.digest(str((t3 as Dictionary).get("path", "")))}
-	return {"status": "ok", "written": written, "conflicts": conflicts, "receipt": receipt}
+	return {"status": "ok", "written": written, "conflicts": conflicts,
+		"receipt": receipt, "targets": receipts}
+
+## 单目标收据：{kind, id, path, status, digest}。digest 只在真写了文件时给。
+static func _receipt_of(tgt: Dictionary, status: String, dig: String) -> Dictionary:
+	return {"kind": str(tgt.get("kind", "")), "id": str(tgt.get("id", "")),
+		"path": str(tgt.get("path", "")), "status": status, "digest": dig}
+
+## 停在某目标之后：其后目标全部记为 pending（含因提前返回而没轮到的）。
+## after_path = "" 表示一个都还没轮上（整份计划都是 pending）。
+static func _receipts_pending(targets: Array, after_path: String) -> Array:
+	var out: Array = []
+	if after_path == "":
+		for t in targets:
+			out.append(_receipt_of(t as Dictionary, "pending", ""))
+		return out
+	var seen := false
+	for t in targets:
+		var td: Dictionary = t
+		if not seen:
+			if str(td.get("path", "")) == after_path:
+				seen = true
+			continue
+		out.append(_receipt_of(td, "pending", ""))
+	return out

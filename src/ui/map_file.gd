@@ -827,8 +827,8 @@ func commit_document(reason := "", dry_run := false) -> Dictionary:
 	if dry_run:
 		var pending := _pending_targets()
 		if pending.is_empty():
-			return {"status": "ok", "written": [], "error": "", "pending": []}
-		return {"status": "staged", "written": [], "error": "", "pending": pending}
+			return {"status": "ok", "written": [], "error": "", "pending": [], "targets": []}
+		return {"status": "staged", "written": [], "error": "", "pending": pending, "targets": []}
 	# 正式提交（R28）：先归位未松手的预览型手势，再清手势类型，随后冻结撤销/重做。
 	if app.canvas != null:
 		if app.canvas.has_method("cancel_preview_gesture"):
@@ -866,7 +866,7 @@ func commit_document(reason := "", dry_run := false) -> Dictionary:
 		_release_busy()
 		if reason != "":
 			app._set_status(" 已提交（%s）：无待写改动" % reason)
-		return {"status": "ok", "written": [], "error": "", "pending": []}
+		return {"status": "ok", "written": [], "error": "", "pending": [], "targets": []}
 	# B1：apply 按依赖序执行 Plan（清单 → 内容 → 地图），逐文件记录进度；
 	# 失败/取消/冲突路径的提交日志保留（scan_pending 三态判定不变）。
 	var res: Dictionary = await _doc_commit.apply(prep.get("plan", {}) as Dictionary, _commit_hooks())
@@ -878,7 +878,9 @@ func commit_document(reason := "", dry_run := false) -> Dictionary:
 			("：" + ", ".join(PackedStringArray(wk))) if not wk.is_empty() else "：无待写改动"])
 	elif st == "conflict":
 		app._set_status(" 提交中止：内容文件在提交期间被外部改动（先重扫再试）")
+	# §4.4-3：逐目标收据带给调用方（哪些写了/跳过了/没轮到），不再只有一句状态。
 	return {"status": st, "written": res.get("written", []), "error": str(res.get("error", "")),
+		"targets": res.get("targets", []),
 		"pending": [] if st == "ok" else _pending_targets()}
 
 ## 解除文档忙状态（保存失败/取消路径也必须走到，否则撤销永久失效）
