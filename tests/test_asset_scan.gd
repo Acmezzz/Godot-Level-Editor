@@ -135,6 +135,10 @@ func test_scan_ambiguous_two_candidates() -> void:
 	var out2 := AssetScan.sync(m)
 	eq(bool(out2.changes), false, "歧义状态静止后不再弄脏清单")
 	eq((out2.ambiguous as Array).size(), 1, "歧义仍然报给界面")
+	# 候选在确认前被替换，旧选择失效。
+	_mk("assets/tiles/b.png", "CHANGED")
+	ok(not AssetScan.confirm_relink(m, id0, "assets/tiles/b.png"), "拒绝指纹变化的候选")
+	_mk("assets/tiles/b.png", "DUP")
 	# 用户确认其一 → 指向该路径、清停用；被放弃的候选文件按新文件补码
 	ok(AssetScan.confirm_relink(m, id0, "assets/tiles/b.png"), "确认重链成功")
 	eq(str((m.assets as Array)[0].atlas), "assets/tiles/b.png", "条目指向确认的候选")
@@ -144,6 +148,22 @@ func test_scan_ambiguous_two_candidates() -> void:
 	eq((out3.added as Array).size(), 1, "被放弃的候选文件是新文件，补发新码")
 	eq((m.assets as Array).size(), 2, "确认后两个文件各有一条")
 	eq(str((m.assets as Array)[0].id), id0, "原 ID 留在确认的候选上")
+
+func test_scan_shared_candidate_and_changed_fingerprint() -> void:
+	_nuke(TMP)
+	_mk("assets/tiles/old1.png", "FIRST")
+	_mk("assets/tiles/old2.png", "SECOND")
+	var m := {"_dir": TMP, "assets": []}
+	AssetScan.sync(m)
+	_mk("assets/tiles/old1.png", "SECOND")
+	ok(AssetScan.sync(m).changes, "原位更新刷新指纹")
+	DirAccess.remove_absolute(TMP.path_join("assets/tiles/old1.png"))
+	DirAccess.remove_absolute(TMP.path_join("assets/tiles/old2.png"))
+	_mk("assets/tiles/moved.png", "SECOND")
+	var scan := AssetScan.sync(m)
+	eq(scan.renamed, 0, "两个旧条目争用同一路径时不自动重链")
+	eq(scan.ambiguous.size(), 2, "两个旧条目均保留候选")
+	eq(scan.added.size(), 0, "候选路径不补发 ID")
 
 ## A4：停用后重扫不发新 ID；恢复后原引用生效。
 func test_scan_retire_restore_keeps_id() -> void:

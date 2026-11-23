@@ -43,17 +43,34 @@ static func sync(m: Dictionary) -> Dictionary:
 	# 歧义候选也先占住——用户确认前把候选文件再发一份新 ID，会得到两份指向同一文件的资产。
 	# 这里只挡「新条目」，不挡条目自己再解析候选（否则歧义永远无法重新判断）。
 	var reserved := {}
+	var taken := {}
 	for a in assets:
 		if a is Dictionary:
+			for key in ["id", "code"]:
+				taken[str(a.get(key, "")).to_upper()] = true
 			var r0 := _rel_of(a)
 			if r0 != "":
 				claimed[r0] = true
-			var raw_c = (a as Dictionary).get("relinkCandidates", [])
-			if raw_c is PackedStringArray or raw_c is Array:
-				for c0 in raw_c:
-					reserved[str(c0)] = true
+	var candidates := {}
+	var demand := {}
+	for i in assets.size():
+		var a = assets[i]
+		if not (a is Dictionary) or bool(a.get("disabled", false)):
+			continue
+		var rel := _rel_of(a)
+		var fp := str(a.get("scanFingerprint", ""))
+		if rel == "" or fp == "" or found.has(rel) or FileAccess.file_exists(root.path_join(rel)):
+			continue
+		var paths: Array = []
+		for path in by_md5.get(fp, []):
+			if not claimed.has(path) and _compatible(a, found[path]):
+				paths.append(path)
+				demand[path] = int(demand.get(path, 0)) + 1
+		paths.sort()
+		candidates[i] = paths
 	# —— 先处理消失/改名 ——
-	for a in assets:
+	for i in assets.size():
+		var a = assets[i]
 		if not (a is Dictionary):
 			continue
 		# 用户在图鉴里删掉的扫描资产：保留条目与 ID 作停用记录（D12）。
@@ -71,6 +88,10 @@ static func sync(m: Dictionary) -> Dictionary:
 				(a as Dictionary).erase("retiredPath")
 				(a as Dictionary).erase("relinkCandidates")
 				out["changes"] = true
+			var md5 := str(found[rel].md5)
+			if md5 != "" and str(a.get("scanFingerprint", "")) != md5:
+				a["scanFingerprint"] = md5
+				out["changes"] = true
 			continue
 		if FileAccess.file_exists(root.path_join(rel)):
 			continue   # 文件真实存在（约定目录之外）：不碰
@@ -80,15 +101,8 @@ static func sync(m: Dictionary) -> Dictionary:
 		if fp == "" and not _under_scan_dir(rel):
 			(out["missing"] as Array).append(str((a as Dictionary).get("id", "")))
 			continue
-		var cands: Array = []
-		if fp != "" and by_md5.has(fp):
-			for c in (by_md5[fp] as Array):
-				var cr := str(c)
-				if claimed.has(cr):
-					continue
-				if _compatible(a, found[cr] as Dictionary):
-					cands.append(cr)
-		if cands.size() == 1:
+		var cands: Array = candidates.get(i, [])
+		if cands.size() == 1 and int(demand[cands[0]]) == 1:
 			var newrel := str(cands[0])
 			_set_rel(a, newrel)
 			claimed[newrel] = true
@@ -98,7 +112,9 @@ static func sync(m: Dictionary) -> Dictionary:
 			(a as Dictionary).erase("relinkCandidates")
 			out["renamed"] = int(out["renamed"]) + 1
 			out["changes"] = true
-		elif cands.size() > 1:
+		elif not cands.is_empty():
+			for path in cands:
+				reserved[path] = true
 			# 有歧义：保留旧 ID 与候选路径，等人工确认（不猜）。
 			# 候选集没变就别反复报——每次加载都算「变更」会每次都让清单脏。
 			var prev: Array = []
@@ -137,7 +153,11 @@ static func sync(m: Dictionary) -> Dictionary:
 			continue
 		var info: Dictionary = found[rel] as Dictionary
 		var stem := str(info.stem)
-		var code := ContentId.new_asset_code()
+		var code := _fresh_asset_code(taken)
+		if code == "":
+			push_warning("资产发号失败：%s" % rel)
+			continue
+		taken[code.to_upper()] = true
 		var e := {"id": code, "name": stem, "scanFingerprint": str(info.md5)}
 		if str(info.kind) == "entity":
 			e["kind"] = "entity"
@@ -155,18 +175,15 @@ static func sync(m: Dictionary) -> Dictionary:
 		claimed[str(rel)] = true
 		(out["added"] as Array).append(code)
 		out["changes"] = true
-	# —— 指纹补齐：原位条目缺 scanFingerprint 时按当前文件补（只补不改身份） ——
-	for a in assets:
-		if not (a is Dictionary):
-			continue
-		var r := _rel_of(a)
-		if r == "" or not found.has(r):
-			continue
-		if str((a as Dictionary).get("scanFingerprint", "")) == "":
-			(a as Dictionary)["scanFingerprint"] = str((found[r] as Dictionary).md5)
-			out["changes"] = true
 	m["_scan_report"] = out
 	return out
+
+static func _fresh_asset_code(taken: Dictionary) -> String:
+	for attempt in 64:
+		var code := ContentId.new_asset_code()
+		if not taken.has(code.to_upper()):
+			return code
+	return ""
 
 ## 相对路径是否位于扫描约定目录之下
 static func _under_scan_dir(rel: String) -> bool:
@@ -230,12 +247,34 @@ static func confirm_relink(m: Dictionary, aid: String, rel: String) -> bool:
 			return false
 	for a in (m.get("assets", []) as Array):
 		if a is Dictionary and str((a as Dictionary).get("id", "")) == aid:
-			_set_rel(a, rel)
+			var old_rel := _rel_of(a)
+			var paths = a.get("relinkCandidates", [])
+			if bool(a.get("disabled", false)) or not bool(a.get("retired", false)) \
+					or not (paths is Array or paths is PackedStringArray) or not paths.has(want):
+				return false
+			var root := str(m.get("_dir", ""))
+			var fp := str(a.get("scanFingerprint", ""))
+			if root == "" or fp == "" or old_rel == "" or FileAccess.file_exists(root.path_join(old_rel)):
+				return false
+			if not _candidate_matches(a, root, want, fp):
+				return false
+			_set_rel(a, want)
 			(a as Dictionary).erase("retired")
 			(a as Dictionary).erase("retiredPath")
 			(a as Dictionary).erase("relinkCandidates")
 			return true
 	return false
+
+static func _candidate_matches(asset: Dictionary, root: String, rel: String, fingerprint: String) -> bool:
+	if rel != rel.simplify_path() or not _under_scan_dir(rel):
+		return false
+	var kind := "entity" if rel.begins_with("assets/entities/") else "scene"
+	var shape := "tile" if rel.begins_with("assets/tiles/") else "image"
+	var ext := rel.get_extension().to_lower()
+	if not (ext == "tscn" if kind == "entity" else IMG_EXT.has(ext)):
+		return false
+	return _compatible(asset, {"kind": kind, "shape": shape}) \
+		and FileAccess.get_md5(root.path_join(rel)) == fingerprint
 
 ## 递归收集目录下的资产文件；rel = 相对工程根路径（/ 分隔）
 static func _walk(abs_dir: String, root: String, kind: String, shape: String, found: Dictionary) -> void:
@@ -253,8 +292,9 @@ static func _walk(abs_dir: String, root: String, kind: String, shape: String, fo
 			var ok: bool = ext == "tscn" if kind == "entity" else IMG_EXT.has(ext)
 			if ok:
 				var rel := abs_dir.path_join(f).substr(root.length()).replace("\\", "/").lstrip("/")
-				found[rel] = {"kind": kind, "shape": shape, "stem": f.get_basename(),
-					"md5": str(FileAccess.get_md5(abs_dir.path_join(f)))}
+				var md5 := FileAccess.get_md5(abs_dir.path_join(f))
+				if md5 != "":
+					found[rel] = {"kind": kind, "shape": shape, "stem": f.get_basename(), "md5": md5}
 		f = dir.get_next()
 	dir.list_dir_end()
 
