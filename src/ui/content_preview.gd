@@ -282,13 +282,24 @@ func _entity_rect(n: EntityNode, origin: Vector2, scale_px: float) -> Rect2:
 	return Rect2(origin + r.position * scale_px, r.size * scale_px)
 
 func _draw_entity(row: Dictionary, origin: Vector2, scale_px: float) -> void:
-	var rect := _entity_rect(row.node, origin, scale_px)
+	var n: EntityNode = row.node
+	var xf := MapViewData.layer_transform(host.app.canvas.map_data, n.layer_id)
+	var pts := n.quad()
+	for i in pts.size():
+		pts[i] = origin + (xf * pts[i]) * scale_px
 	var tex: Texture2D = host.app.canvas.thumbs.get(str(row.asset))
+	if is_zero_approx((pts[1] - pts[0]).cross(pts[3] - pts[0])):
+		return
 	if tex != null:
-		draw_texture_rect(tex, rect, false)
+		var uv := PackedVector2Array([Vector2.ZERO, Vector2.RIGHT, Vector2.ONE, Vector2.DOWN])
+		for i in uv.size():
+			uv[i] = Vector2(1.0 - uv[i].x if n.flipped_h() else uv[i].x,
+				1.0 - uv[i].y if n.flipped_v() else uv[i].y)
+		draw_colored_polygon(pts, Color.WHITE, uv, tex)
 	else:
-		draw_rect(rect, Color(Th.ACCENT, 0.35))
-		draw_rect(rect, Color(Th.ACCENT_HI, 0.8), false, 1.0)
+		draw_colored_polygon(pts, Color(Th.ACCENT, 0.35))
+		pts.append(pts[0])
+		draw_polyline(pts, Color(Th.ACCENT_HI, 0.8), 1.0)
 
 func _draw_collision(gs: GridSpace, origin: Vector2, scale_px: float, mw: int, mh: int) -> void:
 	var cvs = host.app.canvas

@@ -23,6 +23,7 @@ const MapViewData := preload("res://src/map/map_view_data.gd")
 
 ## 首版单张预览的像素上限：16_777_216 ≈ 64 MiB 原始 RGBA。
 const MAX_PIXELS := 16_777_216
+const MAX_ATLAS_BYTES := 128 * 1024 * 1024
 const MAX_ITEMS := 1_000_000
 const MAX_RASTER_WORK := MAX_PIXELS * 4
 ## 单张预览的精度上限（px/格）；批量默认再压到 4。
@@ -194,7 +195,7 @@ static func _render(data: Dictionary, manifest: Dictionary, geo: Dictionary,
 				order.append(lid)
 		var segment := MapViewData.object_segment(str(obj.get("zPolicy", "auto")))
 		objects_by_layer[lid][segment].append(obj)
-	var atlas_cache := {}
+	var atlas_cache := {"images": {}, "bytes": 0}
 	var extent := Rect2(Vector2.ZERO, Vector2(mw, mh))
 	for lid: String in order:
 		if layer_hidden.has(lid):
@@ -412,13 +413,20 @@ static func _blit_tile(img: Image, dst_poly: PackedVector2Array, c: Array,
 	var acy := int(c[4])
 	if aid == "" or Vector2i(acx, acy) == INVISIBLE_CELL:
 		return false
-	var img0: Image = atlas_cache.get(aid, null)
-	if img0 == null and not atlas_cache.has(aid):
+	var images: Dictionary = atlas_cache.images
+	var img0: Image = images.get(aid, null)
+	if not images.has(aid) and int(atlas_cache.bytes) < MAX_ATLAS_BYTES:
 		var rel := str(AssetDecl.by_id(manifest, aid).get("atlas", ""))
 		var base := str(manifest.get("_dir", ""))
 		var p: String = base.path_join(rel) if base != "" and rel != "" else rel
 		img0 = Image.load_from_file(p) if p != "" and FileAccess.file_exists(p) else null
-		atlas_cache[aid] = img0
+		if img0 != null:
+			var bytes := img0.get_data_size()
+			if int(atlas_cache.bytes) + bytes > MAX_ATLAS_BYTES:
+				img0 = null
+			else:
+				atlas_cache.bytes += bytes
+		images[aid] = img0
 	if img0 == null or img0.is_empty():
 		return false
 	var cs := AssetDecl.cell_size(manifest, aid)

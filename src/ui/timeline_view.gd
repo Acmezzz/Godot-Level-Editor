@@ -62,6 +62,9 @@ func sync_min_size() -> void:
 ## 所以按「数据引用 + 结构版本」缓存就够：宿主换数据或增删步骤必换引用/版本。
 var _tl_cache: Array = []
 var _tl_cache_key := ""
+var _max_time := 2.0
+var _tracks := 1
+var _by_track := {}
 ## 冲突集合与区间表同源同版本：冲突判定是 O(n²)（两两比较），每帧重算在上千步时是主成本。
 var _hot_cache := {}
 var _hot_cache_key := ""
@@ -71,6 +74,19 @@ func _timeline() -> Array:
 	if key == _tl_cache_key:
 		return _tl_cache
 	_tl_cache = StepTimeline.to_timeline(steps)
+	_max_time = 2.0
+	_tracks = 1
+	_by_track.clear()
+	for i in _tl_cache.size():
+		var e: Dictionary = _tl_cache[i]
+		if e.is_empty():
+			continue
+		var track := int(e.track)
+		_max_time = maxf(_max_time, float(e.at) + float(e.duration))
+		_tracks = maxi(_tracks, track + 1)
+		if not _by_track.has(track):
+			_by_track[track] = []
+		_by_track[track].append(i)
 	_tl_cache_key = key
 	_hot_cache_key = ""   # 区间表换了，冲突集合必然重算
 	return _tl_cache
@@ -85,17 +101,12 @@ func _hot_blocks() -> Dictionary:
 
 ## 时间轴总时长（视图宽度口径）：末尾再加 1 秒留白，至少 2 秒。
 func _time_max() -> float:
-	var t := 2.0
-	for e in _timeline():
-		var end_t := float(e.get("at", 0.0)) + float(e.get("duration", 0.0))
-		t = maxf(t, end_t)
-	return t
+	_timeline()
+	return _max_time
 
 func _track_count() -> int:
-	var n := 1
-	for e in _timeline():
-		n = maxi(n, int(e.get("track", 0)) + 1)
-	return n
+	_timeline()
+	return _tracks
 
 ## 最小高度 = 标尺 + 轨道数 × 行高；宿主把它塞进 custom_minimum_size。
 func fit_height() -> float:
@@ -148,10 +159,13 @@ func _eff(i: int) -> Dictionary:
 	return tl[i]
 
 func _hit(pos: Vector2) -> int:
-	for i in steps.size():
+	_timeline()
+	var track := int(floorf((pos.y - RULER_H) / TRACK_H))
+	var dragged := _drag_idx if _drag_idx >= 0 and _block_rect(_drag_idx).has_point(pos) else -1
+	for i: int in _by_track.get(track, []):
 		if _block_rect(i).has_point(pos):
-			return i
-	return -1
+			return mini(i, dragged) if dragged >= 0 else i
+	return dragged
 
 func _gui_input(ev: InputEvent) -> void:
 	var handled := false
@@ -204,6 +218,14 @@ func _press(p: Vector2) -> void:
 ## 当前步骤的工作副本数据（步骤不是对象时返回 {}）。
 func _step(i: int) -> Dictionary:
 	return steps[i] if i >= 0 and i < steps.size() and steps[i] is Dictionary else {}
+
+func reject_pick(previous: int) -> void:
+	sel = previous
+	_drag = ""
+	_drag_idx = -1
+	_preview = {}
+	_moved = false
+	queue_redraw()
 
 func _motion(p: Vector2) -> void:
 	if _drag == "scrub":
@@ -322,7 +344,8 @@ func _draw() -> void:
 		if i != _drag_idx and (r.end.x < MARGIN_L + vis_lo * _pps or r.position.x > MARGIN_L + vis_hi * _pps):
 			continue
 		var sc := str((steps[i] as Dictionary).get("step", ""))
-		var known: bool = name_of.is_valid() and str(name_of.call(sc)) != sc
+		var nm := str(name_of.call(sc)) if name_of.is_valid() else sc
+		var known := nm != sc
 		var base := Th.ACCENT_BG if known else Th.BG_HOVER
 		var fill := base
 		var border := Th.ACCENT if known else Th.WARN
@@ -332,7 +355,6 @@ func _draw() -> void:
 			border = Th.ACCENT_HI
 		draw_rect(r, fill, true)
 		draw_rect(r, border, false, 1.5)
-		var nm := str(name_of.call(sc)) if name_of.is_valid() else sc
 		var lbl := ("⚠ " + sc) if not known else nm
 		var pad := 4.0
 		if r.size.x > 26.0:

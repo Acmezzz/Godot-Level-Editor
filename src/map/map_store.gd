@@ -29,16 +29,16 @@ static var _cache := {}   # path -> {mtime: int, data: Dictionary}
 ## 按缓存读单图；读失败不缓存（下次重读）
 ## mtime 是秒级粒度，同秒内外部改文件会被脏缓存吃掉。缓存键补上文件长度——
 ## 尺寸变了必然重读；同秒且同尺寸的改动仍无法识别（自写路径有显式失效，只影响外部编辑器）。
-static func _read_cached(path: String, m: Dictionary) -> Dictionary:
+static func _read_cached(path: String, m: Dictionary, manifest_hash: int) -> Dictionary:
 	var mt := FileAccess.get_modified_time(path)
 	var sz := _file_size(path)
 	var hit = _cache.get(path, null)
 	if (hit != null and int(hit.get("mtime", -1)) == mt and int(hit.get("size", -1)) == sz
-			and int(hit.get("revision", -1)) == project_rev):
+			and hit.get("manifest_hash", -1) == manifest_hash):
 		return hit.get("data", {})
 	var result := read_path(path, m)
 	if result.ok:
-		_cache[path] = {"mtime": mt, "size": sz, "revision": project_rev, "data": result.data}
+		_cache[path] = {"mtime": mt, "size": sz, "manifest_hash": manifest_hash, "data": result.data}
 	return result.data if result.ok else {}
 
 static func _file_size(path: String) -> int:
@@ -148,16 +148,20 @@ static func invalidate_code_map() -> void:
 
 static func code_index(m: Dictionary) -> Dictionary:
 	var names := list_maps(m)
-	var key := _cm_signature(m, names)
+	var manifest_hash := m.hash()
+	var key := _cm_signature(m, names, manifest_hash)
 	if _ci_key == key:
 		return _ci_cache
 	var by_name := {}
 	var by_code := {}
 	var plain := {}
 	var unreadable: Array = []
+	var paths := {}
 	for mn in names:
 		var n := str(mn)
-		var md := _read_cached(path_for(m, n), m)
+		var path := path_for(m, n)
+		paths[path] = true
+		var md := _read_cached(path, m, manifest_hash)
 		if md.is_empty():
 			# 图名在目录里但内容读不出（坏 JSON / 校验不过）：不是「没有这张图」
 			unreadable.append(n)
@@ -171,7 +175,7 @@ static func code_index(m: Dictionary) -> Dictionary:
 			by_code[c] = []
 		(by_code[c] as Array).append(n)
 	_ci_cache = {"by_name": by_name, "by_code": by_code, "map": plain,
-		"unreadable": unreadable, "names": names}
+		"unreadable": unreadable, "names": names, "paths": paths}
 	_ci_key = key
 	return _ci_cache
 
@@ -180,10 +184,10 @@ static func code_map(m: Dictionary) -> Dictionary:
 
 ## 签名：图名清单 + 每图 mtime（不 open 文件）。图名清单抓新增/删除/改名，
 ## mtime 抓内容改动；同秒内的原地改写由写路径的 invalidate_code_map 兜住。
-static func _cm_signature(m: Dictionary, names: Array) -> String:
+static func _cm_signature(m: Dictionary, names: Array, manifest_hash: int) -> String:
 	var parts := PackedStringArray()
 	parts.append(str(m.get("_maps_dir", "")))
-	parts.append(str(project_rev))
+	parts.append(str(manifest_hash))
 	parts.append(str(names.size()))
 	for mn in names:
 		var p := path_for(m, str(mn))
@@ -260,6 +264,7 @@ static func write(m: Dictionary, name: String, data: Dictionary) -> bool:
 	if not write_text(path, MapFormat.encode(data)):
 		Recovery.discard_snapshot(staged)   # 替换失败：不把快照计入历史（旧历史不减）
 		return false
+	invalidate_code_map()
 	if staged != "" and not Recovery.commit_snapshot(m, code, name, staged):
 		# 历史落盘失败单独报告，但不影响「保存成功」这个事实
 		push_warning("地图历史落盘失败: " + staged)
@@ -323,8 +328,9 @@ static func write_text(path: String, text: String) -> bool:
 		return false
 	if not Recovery.write_text(path, text):
 		return false
-	_cache.erase(path)   # 写后失效，下次读回源
-	invalidate_code_map()   # 码表签名依赖 mtime，同秒改写也可能撞上——写路径直接置失效
+	_cache.erase(path)
+	if _ci_cache.get("paths", {}).has(path):
+		invalidate_code_map()
 	# 任何项目数据落盘都可能改变实体 id 引用（地图 props / 内容步骤）：
 	# 版本号 +1；画布的引用集缓存以 project_rev 为失效锚点（经参数传入，避免循环 preload）。
 	project_rev += 1
@@ -492,11 +498,12 @@ static func duplicate_map(m: Dictionary, old_name: String, new_name: String,
 ## 但记录进 bad_out（坏图不再对校验页/世界页隐身）。读取走 mtime 缓存。
 static func read_all(m: Dictionary, bad_out: Array = []) -> Dictionary:
 	var out := {}
+	var manifest_hash := m.hash()
 	for name in list_maps(m):
 		var path := path_for(m, name)
 		if path == "" or not FileAccess.file_exists(path):
 			continue
-		var data := _read_cached(path, m)
+		var data := _read_cached(path, m, manifest_hash)
 		if data.is_empty():
 			bad_out.append({"name": name, "reason": "无法读取或校验失败"})
 			continue

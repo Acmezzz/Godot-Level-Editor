@@ -130,6 +130,9 @@ func _build_form_block() -> Control:
 		rbtn.tooltip_text = "按 (功能, 内容) 看引用关系；点边改接/断开，写回同一字段"
 		rbtn.add_theme_font_size_override("font_size", Th.FS_META)
 		head.add_child(rbtn)
+	var reload_btn := Kit.button("重读内容", host.reload_content_form, "ghost")
+	reload_btn.tooltip_text = "放弃此表单尚未写入的值，重读当前内容"
+	head.add_child(reload_btn)
 	box.add_child(head)
 	# 码漂移：内容文件的 "function" 键与当前功能执行码不一致（清单改码后旧文件仍带旧码）。
 	# 只提示不阻断——写盘时会以当前码重写，用户改一次值即自愈。
@@ -163,12 +166,12 @@ func _build_form_block() -> Control:
 	name_edit.text = cname if cname != "" else fn_id
 	name_edit.placeholder_text = "显示名（空则用功能 id）"
 	name_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var saved_name := {"text": name_edit.text}
+	var saved_name := {"text": name_edit.text, "value": str(data.get("name", "")), "bound": content_id != ""}
 	var push_name := func() -> bool:
 		var text := name_edit.text.strip_edges()
 		if text == saved_name.text:
 			return true
-		if not _form_binding_matches(i, target) or not _commit_name(i, text):
+		if not _form_binding_matches(i, target) or not _commit_name(i, text, saved_name):
 			return false
 		target.binding = _current_fns()[i]
 		saved_name.text = text
@@ -281,18 +284,15 @@ func _build_field_row(i: int, fn_id: String, fd: Dictionary, cur: Dictionary, si
 		if tk != "":
 			d = fd.duplicate(true)
 			d["_mapKey"] = tk
+	var expected := {"present": cur.has(key), "value": cur.get(key)}.duplicate(true)
 	var apply := func(v) -> bool:
 		if not _form_binding_matches(i, target):
 			return false
 		var cid := str(target.binding.get("content", ""))
-		if paired and cid != "":
-			var current := _content_read(fn_id, cid)
-			var values: Dictionary = current.get("fields", {})
-			if RefFields.paired_map_value(fd, siblings, values) != tk:
-				app._set_status("配对地图已改，请重新打开表单后选择引用")
-				return false
 		var had_content := cid != ""
-		var ok := _set_field(i, fn_id, key, v)
+		var check_pair := func(values: Dictionary) -> bool:
+			return not paired or RefFields.paired_map_value(fd, siblings, values) == tk
+		var ok := _set_field(i, fn_id, key, v, expected, check_pair)
 		if ok and not had_content and i < _current_fns().size():
 			target.binding = _current_fns()[i]
 		return ok
@@ -505,7 +505,7 @@ func _content_write(fn_id: String, cid: String, data: Dictionary, base_digest :=
 ## 写前发现磁盘内容被外部改过（F1/P04）：不覆盖、不改画布，只提示去重开。
 ## 内容文件每次保存都有 .history 备份，但外部改动是别人的工作，静默吞掉比报错更糟。
 func _content_conflict(cid: String) -> void:
-	app._set_status(" 内容 %s 已被外部修改，本次未写入：重开该实例内容后再改" % cid)
+	app._set_status(" 内容 %s 已被外部修改，本次未写入：点击「重读内容」后再改" % cid)
 
 ## 字段改动：写内容文件。content 为空时生成 ID 并暂存（A2 staged）。
 ## 约定：字段值落在 content/<kind>/<id>.json，属「内容资产」而非地图快照——
@@ -513,9 +513,11 @@ func _content_conflict(cid: String) -> void:
 ## 改走 ContentKey 差量（§7.5 阶段二）：记录改前/改后整份内容 + 两侧摘要，
 ## undo 只写回那一个文件，盘上被外部改过则拒绝覆盖。
 ## 连续控件只在失焦/回车提交。
-func _set_field(i: int, fn_id: String, key: String, value) -> bool:
+func _set_field(i: int, fn_id: String, key: String, value, expected: Dictionary, check_pair: Callable) -> bool:
 	if value is String:
 		value = (value as String).strip_edges()
+	if key == "" or fn_id == "":
+		return false
 	var cid := _ensure_content(i)
 	if cid == "":
 		_ensure_failed()
@@ -523,10 +525,14 @@ func _set_field(i: int, fn_id: String, key: String, value) -> bool:
 	var rd := _content_read_ex(fn_id, cid)
 	var data: Dictionary = rd.data
 	if data.is_empty():
-		data = _blank_content(fn_id, cid)
+		_content_conflict(cid)
+		return false
 	var before: Dictionary = data.duplicate(true)
 	var fields: Dictionary = data.get("fields", {}) if data.get("fields", {}) is Dictionary else {}
-	if fields.get(key, null) == value:
+	if not check_pair.call(fields) or fields.has(key) != expected.present or fields.get(key) != expected.value:
+		_content_conflict(cid)
+		return false
+	if fields.get(key) == value:
 		return true
 	fields[key] = value
 	data["fields"] = fields
@@ -537,6 +543,7 @@ func _set_field(i: int, fn_id: String, key: String, value) -> bool:
 	if wr != "ok":
 		_ensure_failed()
 		return false
+	expected.merge({"present": true, "value": value}.duplicate(true), true)
 	_record_content_delta(fn_id, cid, before, data, str(rd.digest))
 	_refresh_value_only()
 	return true
@@ -552,7 +559,7 @@ func _record_content_delta(fn_id: String, cid: String, before: Dictionary, after
 	app.canvas._undo_history_ctrl.record_content(fn_id, cid, before, after, digest_before, digest_after)
 
 ## 显示名：内容条目的 name；改动写内容文件并同步实例绑定的 name（列表读的是绑定）。
-func _commit_name(i: int, text: String) -> bool:
+func _commit_name(i: int, text: String, expected: Dictionary) -> bool:
 	var fns := _current_fns()
 	if i < 0 or i >= fns.size():
 		return false
@@ -574,9 +581,11 @@ func _commit_name(i: int, text: String) -> bool:
 		return true
 	var rd := _content_read_ex(fn_id, cid)
 	var data: Dictionary = rd.data
-	if data.is_empty():
+	if data.is_empty() or (expected.bound and str(data.get("name", "")) != expected.value):
+		_content_conflict(cid)
 		return false
 	if str(data.get("name", "")) == nm:
+		expected.merge({"bound": true, "value": nm}, true)
 		return true
 	var before: Dictionary = data.duplicate(true)
 	data["name"] = nm
@@ -587,6 +596,7 @@ func _commit_name(i: int, text: String) -> bool:
 	if wr != "ok":
 		_ensure_failed()
 		return false
+	expected.merge({"bound": true, "value": nm}, true)
 	_record_content_delta(fn_id, cid, before, data, str(rd.digest))
 	var spr := _current_spr()
 	fns = fns.duplicate(true)

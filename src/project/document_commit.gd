@@ -52,7 +52,7 @@ func prepare(operation: Dictionary, snap: Dictionary) -> Dictionary:
 	# 3) 地图（只脏图入计划：干净图没有待写项；写前外部改动确认在 hooks.save_map 里）
 	if bool(operation.get("map_dirty", false)) and str(operation.get("map_path", "")) != "":
 		var data: Dictionary = operation.get("map_snapshot", {})
-		var expected := JSON.stringify(data, "\t").sha256_text() if not data.is_empty() else ""
+		var expected := MapFormat.encode(data).sha256_text() if not data.is_empty() else ""
 		var baseline := str(operation.get("map_digest", ""))
 		targets.append({"op": "write", "kind": "map", "id": str(operation.get("map_name", "")),
 			"path": str(operation.get("map_path", "")), "baseline": baseline,
@@ -114,67 +114,10 @@ func apply(plan: Dictionary, hooks: Dictionary) -> Dictionary:
 		var kind := str(tgt.get("kind", ""))
 		var path := str(tgt.get("path", ""))
 		var op := str(tgt.get("op", "write"))
-		if op == "rename":
-			# 改名：源必须仍是计划时那份（外部改动 → 冲突），目标必须仍不存在。
-			var from := str(tgt.get("from", ""))
-			var rbase := str(tgt.get("baseline", ""))
-			var rconf := ""
-			if not FileAccess.file_exists(from):
-				rconf = "待改名文件在提交期间已不存在：%s" % from
-			elif rbase != "" and Recovery.digest(from) != rbase:
-				rconf = "待改名文件在提交期间被外部改动：%s" % from
-			elif FileAccess.file_exists(path):
-				rconf = "新文件名在提交期间已被占用：%s" % path
-			if rconf != "":
-				receipts.append(_receipt_of(tgt, "conflict", ""))
-				receipts.append_array(_receipts_pending(targets, path))
-				return {"status": "conflict", "written": written, "conflicts": [{"path": path,
-					"kind": kind, "message": rconf}],
-					"receipt": {}, "journal": log_path, "targets": receipts}
-			if DirAccess.rename_absolute(from, path) != OK:
-				receipts.append(_receipt_of(tgt, "failed", ""))
-				receipts.append_array(_receipts_pending(targets, path))
-				return {"status": "failed", "written": written, "conflicts": [],
-					"error": "文件系统重命名失败：%s → %s" % [from, path],
-					"journal": log_path, "targets": receipts}
-			written.append(kind)
-			var rdig := Recovery.digest(path)
-			if not _mark_unpredicted(m, log_path, journal, receipts.size(), rdig):
-				receipts.append(_receipt_of(tgt, "written", rdig))
-				receipts.append_array(_receipts_pending(targets, path))
-				return {"status": "failed", "written": written, "conflicts": [],
-					"error": "提交日志进度回填失败：改名已完成，请在 editor/pending 复核",
-					"journal": log_path, "targets": receipts}
-			receipts.append(_receipt_of(tgt, "written", rdig))
-			continue
-		if op == "delete":
-			# 删除目标：计划时的摘要必须仍在（旧文件已消失/被改写都不是「删掉了它的旧内容」）
-			var del_base := str(tgt.get("baseline", ""))
-			if not FileAccess.file_exists(path):
-				receipts.append(_receipt_of(tgt, "conflict", ""))
-				receipts.append_array(_receipts_pending(targets, path))
-				return {"status": "conflict", "written": written, "conflicts": [{"path": path,
-					"kind": kind, "message": "待删除文件在提交期间已不存在：%s" % path}],
-					"receipt": {}, "journal": log_path, "targets": receipts}
-			if del_base != "" and Recovery.digest(path) != del_base:
-				receipts.append(_receipt_of(tgt, "conflict", ""))
-				receipts.append_array(_receipts_pending(targets, path))
-				return {"status": "conflict", "written": written, "conflicts": [{"path": path,
-					"kind": kind, "message": "待删除文件在提交期间被外部改动：%s" % path}],
-					"receipt": {}, "journal": log_path, "targets": receipts}
-			if DirAccess.remove_absolute(path) != OK:
-				receipts.append(_receipt_of(tgt, "failed", ""))
-				receipts.append_array(_receipts_pending(targets, path))
-				return {"status": "failed", "written": written, "conflicts": [],
-					"error": "删除失败：%s" % path, "journal": log_path, "targets": receipts}
-			written.append(kind)
-			if not _mark_unpredicted(m, log_path, journal, receipts.size(), ""):
-				receipts.append(_receipt_of(tgt, "deleted", ""))
-				receipts.append_array(_receipts_pending(targets, path))
-				return {"status": "failed", "written": written, "conflicts": [],
-					"error": "提交日志进度回填失败：已删除文件保留结果，其后目标未处理",
-					"journal": log_path, "targets": receipts}
-			receipts.append(_receipt_of(tgt, "deleted", ""))
+		if op in ["rename", "delete"]:
+			var result := _apply_file_operation(tgt, targets, receipts, written, m, log_path, journal)
+			if not result.is_empty():
+				return result
 			continue
 		if kind == "content":
 			# §7.1 accepted_state：写前复验磁盘状态与 prepare 基线一致。
@@ -362,7 +305,7 @@ static func _journal_entries(targets: Array) -> Array:
 		elif row.has("frozen_text"):
 			expect = str(row.frozen_text).sha256_text()
 		elif row.has("map_data"):
-			expect = JSON.stringify(row.map_data, "\t").sha256_text()
+			expect = MapFormat.encode(row.map_data).sha256_text()
 		elif row.get("kind") == "content":
 			var data: Dictionary = row.get("payload", row).get("data", {}).duplicate(true)
 			data["id"] = str(row.get("id", ""))
@@ -392,30 +335,10 @@ func apply_frozen(plan: Dictionary) -> Dictionary:
 		var kind := str(tgt.get("kind", ""))
 		var path := str(tgt.get("path", ""))
 		var op := str(tgt.get("op", "write"))
-		if op == "rename":
-			var from := str(tgt.get("from", ""))
-			var rbase := str(tgt.get("baseline", ""))
-			if not _matches_file(from, false, rbase) or not _matches_file(path, true, ""):
-				return _frozen_conflict(tgt, targets, receipts, log_path,
-					"改名源或目标已变化：%s → %s" % [from, path])
-			if DirAccess.rename_absolute(from, path) != OK:
-				return _frozen_fail(tgt, targets, receipts, written, log_path,
-					"文件系统重命名失败：%s → %s" % [from, path])
-			written.append(kind)
-			if not _frozen_mark(tgt, journal, receipts, m, log_path, path):
-				return _frozen_log_fail(targets, receipts, written, log_path, path)
-			continue
-		if op == "delete":
-			var del_base := str(tgt.get("baseline", ""))
-			if not _matches_file(path, false, del_base):
-				return _frozen_conflict(tgt, targets, receipts, log_path,
-					"待删除目标已变化：%s" % path)
-			if DirAccess.remove_absolute(path) != OK:
-				return _frozen_fail(tgt, targets, receipts, written, log_path, "删除失败：%s" % path)
-			written.append(kind)
-			receipts.append(_receipt_of(tgt, "deleted", ""))
-			if not _mark_unpredicted(m, log_path, journal, receipts.size() - 1, ""):
-				return _frozen_log_fail(targets, receipts, written, log_path, path)
+		if op in ["rename", "delete"]:
+			var result := _apply_file_operation(tgt, targets, receipts, written, m, log_path, journal)
+			if not result.is_empty():
+				return result
 			continue
 		var absent := bool(tgt.get("target_absent", false))
 		var baseline := str(tgt.get("baseline", ""))
@@ -468,6 +391,24 @@ func apply_frozen(plan: Dictionary) -> Dictionary:
 		"journal": log_path, "targets": receipts}
 
 ## 冻结计划的三种提前返回，收据口径与 apply 一致（已完成部分 + 其后 pending）。
+func _apply_file_operation(tgt: Dictionary, targets: Array, receipts: Array,
+		written: Array, m: Dictionary, log_path: String, journal: Array) -> Dictionary:
+	var path := str(tgt.get("path", ""))
+	var baseline := str(tgt.get("baseline", ""))
+	var deleting: bool = tgt.get("op") == "delete"
+	var source := path if deleting else str(tgt.get("from", ""))
+	if not _matches_file(source, false, baseline) or (not deleting and not _matches_file(path, true, "")):
+		return _frozen_conflict(tgt, targets, receipts, log_path, "改名或删除目标已变化：%s" % source)
+	var err := DirAccess.remove_absolute(path) if deleting else DirAccess.rename_absolute(source, path)
+	if err != OK:
+		return _frozen_fail(tgt, targets, receipts, written, log_path, "无法改名或删除：%s" % source)
+	written.append(str(tgt.get("kind", "")))
+	var digest := "" if deleting else Recovery.digest(path)
+	receipts.append(_receipt_of(tgt, "deleted" if deleting else "written", digest))
+	if not _mark_unpredicted(m, log_path, journal, receipts.size() - 1, digest):
+		return _frozen_log_fail(targets, receipts, written, log_path, path)
+	return {}
+
 func _frozen_conflict(tgt: Dictionary, targets: Array, receipts: Array, log_path: String, msg: String) -> Dictionary:
 	var written: Array = []
 	for row in receipts:

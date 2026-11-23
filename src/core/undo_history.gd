@@ -4,7 +4,6 @@ extends RefCounted
 var cvs   # 宿主引用
 
 const Constants := preload("res://src/core/constants.gd")
-const ContentId := preload("res://src/content/content_id.gd")
 const ContentStore := preload("res://src/content/content_store.gd")
 const MapFormat := preload("res://src/map/map_format.gd")
 const TilesetCache := preload("res://src/canvas/tileset_cache.gd")
@@ -500,15 +499,12 @@ func _functions_field(n: EntityNode) -> Dictionary:
 ## 实例差量里 before/after 都用它生成，撤销时按行原样重建节点，不碰整图。
 func _object_row(n: EntityNode) -> Dictionary:
 	var clean := n.props.duplicate(true)
-	# 无码的实体实例 → 补发实例码（身份丢失会让内容 ID 前缀漂移，不能留空）；
+	# 实例码由载入和摆放入口维护，提取快照只读；
 	# 场景实例永不产码（code 键整个不写）。
 	# R15：声明解析不出（资产停用/清单漂移）的旧摆放物以原行往返——带着实例码就保留，
 	# 不再被误当场景实例擦掉身份；只有「确认是非实体」的已知资产才擦码。
 	var unknown_asset: bool = not (n.decl is Dictionary) or (n.decl as Dictionary).is_empty()
 	var code := n.code
-	if n.is_entity() and code == "":
-		code = ContentId.new_inst_code()
-		n.code = code
 	# 以原条目为底：未知键（游戏侧自定义）与编辑器不认识的键都留在原处
 	var row: Dictionary = n.raw.duplicate(true)
 	row.erase("scene")   # 旧键作废：同一字段两种语义容易混

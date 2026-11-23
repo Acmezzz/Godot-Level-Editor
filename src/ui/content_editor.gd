@@ -446,7 +446,7 @@ func _write_fns(n: EntityNode, fns: Array) -> void:
 	n.functions = fns.duplicate(true)
 	if via_delta:
 		app.canvas._undo_history_ctrl.inst_commit(pre.get("rows", {}))
-	app.canvas._mark()
+	app.canvas._mark_ents()
 
 # ──────────── 左列渲染 ────────────
 
@@ -638,6 +638,10 @@ func _form_sig_of(spr: EntityNode) -> String:
 			else (_form._content_read(fn_id, cid) if fn_id != "" else {})
 	# 只列影响表单呈现的量：实例身份/类型/字段值、绑定表、展开的功能、内容数据、定位高亮
 	return JSON.stringify([spr.code, spr.asset, spr.props, fns, _selected_fn, fn_id, cid, data, _field_focus])
+
+func reload_content_form() -> void:
+	_form_sig = ""
+	_rebuild_right()
 
 func _rebuild_right() -> void:
 	if _r_body == null:

@@ -5,7 +5,6 @@ var cvs   # 宿主引用
 
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
 const ManifestScript := preload("res://src/project/manifest.gd")   # 出口 role 判定
-const MapStoreRef := preload("res://src/map/map_store.gd")   # 地图码→名解析（出口角标）
 const K := preload("res://src/core/constants.gd")
 const CellGraphRef := preload("res://src/map/cell_graph.gd")   # C4：格图多边形高亮
 const EdgeRefRef := preload("res://src/map/edge_ref.gd")   # §7.4：格边高亮/取值
@@ -186,7 +185,7 @@ func _draw() -> void:
 		var fnt: Font = ThemeDB.fallback_font   # Node2D 无 Control 主题接口，用引擎兜底字体
 		if fnt != null:
 			# 值 = 地图码（v7）：显示时码→名解析一次（code_map 带缓存）；老数据存名兜底原样显示
-			var cm: Dictionary = MapStoreRef.code_map(cvs.manifest)
+			var cm: Dictionary = cvs.exit_map_names
 			for it in exits:
 				var shown := str(it[1])
 				if cm.has(shown):

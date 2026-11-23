@@ -60,6 +60,7 @@ var manifest: Dictionary
 ## 空 = 未注入（引用连线的写入口自动降级为不可用，其余编辑不受影响）。
 var app_host = null
 var map_data := {}
+var exit_map_names := {}
 var cur_map_name := ""
 var map_root: Node2D
 # 层栈节点：下标 = meta.layers 栈序；每层 = 一个瓦片 TileMapLayer + 一个实体容器。
@@ -217,6 +218,7 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	var gen := _rebuild_gen
 	map_data = data
 	cur_map_name = map_name
+	_refresh_exit_names()
 	# 清单 tileSize 是「一格 = 多少像素」的唯一真相：网格/边界/实体对齐/碰撞视图全用它。
 	# 标量 = 正方形格；[w,h] = 矩形格（B1：正整数像素，畸形值回退 16×16）。
 	var gsize: Vector2i = GridSpaceScript.tile_size_of(manifest)
@@ -503,7 +505,20 @@ func _ready() -> void:
 	_ref_ops_ctrl = preload("res://src/canvas/ref_ops.gd").new(app_host)
 	# 视口尺寸变化时重绘底色（否则窗口缩放后底板会露出旧底色）
 	get_viewport().size_changed.connect(func(): queue_redraw())
+	var timer := Timer.new()
+	timer.wait_time = 1.0
+	timer.autostart = true
+	timer.timeout.connect(_refresh_exit_names)
+	add_child(timer)
 	queue_redraw()
+
+func _refresh_exit_names() -> void:
+	if map_data.is_empty() or not is_visible_in_tree():
+		return
+	var names := MapStoreRef.code_map(manifest)
+	if names != exit_map_names:
+		exit_map_names = names
+		queue_redraw()
 
 func set_thumbs(t: Dictionary) -> void:
 	thumbs = t

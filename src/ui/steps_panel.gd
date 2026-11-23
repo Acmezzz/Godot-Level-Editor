@@ -125,6 +125,7 @@ func _open_steps_editor(i: int) -> void:
 	_steps_fn_id = fn_id
 	_steps_ent = str(host._selected_ent)
 	_steps_cid = str(f.get("content", ""))
+	_steps_binding = f
 	_steps_map = _current_map_key()
 	_steps_rev = 0
 	# 时间轴视图对象每次开面板都是新建的：版本缓存必须同样归零，
@@ -505,9 +506,10 @@ func _steps_timebase() -> String:
 ## 时间轴点选：只换选中与表单，不重建视图（拖拽进行中 picked 会被发多次）。
 func _steps_pick_tl(idx: int) -> void:
 	# 换选中前提交旧步骤的待提交控件值（同 _steps_pick）
-	if not host.commit_fields():
+	if not host.commit_fields() or not _flush_pending():
+		if is_instance_valid(_steps_tl):
+			_steps_tl.reject_pick(_steps_sel)
 		return
-	_flush_pending()
 	_steps_sel = idx
 	if _steps_tl != null and is_instance_valid(_steps_tl):
 		_steps_tl.sel = idx
@@ -529,7 +531,7 @@ func _steps_identity_ok() -> bool:
 	if str(_resolve_fn(f).get("id", "")) != _steps_fn_id:
 		return false
 	# 空绑定：会话内还没预留内容 ID，仍可写（首次实际改动才预留）
-	return _steps_cid == "" or str(f.get("content", "")) == _steps_cid
+	return is_same(f, _steps_binding) and str(f.get("content", "")) == _steps_cid
 
 ## R23：当前文档身份键（地图码优先，无码退回图名）——与 content_form._doc_key 同口径。
 func _current_map_key() -> String:
@@ -563,6 +565,7 @@ func _steps_write(data: Dictionary) -> bool:
 			_ensure_failed()
 			return false
 		_steps_cid = cid
+		_steps_binding = _current_fns()[_steps_i]
 		if str(data.get("id", "")) == "":
 			data["id"] = cid
 	if str(host.write_content_staged(_steps_fn_id, _steps_cid, data, _steps_base)) != "ok":
@@ -605,6 +608,7 @@ func _rebuild_steps_all() -> void:
 
 ## 步骤列表（列表视图）：空态 + 逐行渲染。
 var _steps_list_snapshot: Array = []
+var _steps_binding: Dictionary = {}
 
 func _rebuild_steps_list(arr: Array) -> void:
 	_steps_list_snapshot = arr.duplicate(true)
@@ -746,20 +750,23 @@ func _steps_row(si: int, st: Dictionary, _pool: Dictionary) -> Control:
 func _run_row_command(revision: int, displayed: Array, command: Callable) -> void:
 	if revision != _steps_rev or not _steps_identity_ok():
 		return
+	if not _flush_pending():
+		return
 	var data := _steps_data()
 	if data.is_empty() or data.get("steps", []) != displayed:
 		_bump_steps_rev()
 		_rebuild_steps_all()
 		return
-	if _flush_pending():
-		command.call()
+	command.call()
 
 ## 点步骤名选中该步：右侧表单换到这一步（重建保持 _steps_sel 选中态）。
 func _steps_pick(si: int) -> void:
 	# 换选中前先提交当前表单控件：SpinBox 之类的待提交值属于旧步骤下标
-	if not host.commit_fields():
+	if not host.commit_fields() or not _flush_pending():
+		if is_instance_valid(_steps_tl):
+			_steps_tl.sel = _steps_sel
+			_steps_tl.queue_redraw()
 		return
-	_flush_pending()
 	_steps_sel = si
 	_rebuild_steps_all()
 
@@ -787,14 +794,19 @@ func _rebuild_steps_form(arr: Array) -> void:
 	var add_btn := Kit.button("添加步骤", func():
 		if pick.selected < 0:
 			return
-		_steps_add(str(pick.get_item_metadata(pick.selected))))
+		if _flush_pending():
+			_steps_add(str(pick.get_item_metadata(pick.selected))))
 	add_row.add_child(add_btn)
+	var reload_btn := Kit.button("重读步骤", _reload_steps, "ghost")
+	reload_btn.tooltip_text = "放弃尚未写入的步骤输入，重读当前内容"
+	add_row.add_child(reload_btn)
 	box.add_child(add_row)
 	# 时间轴警告（负 at/duration、同轨重叠）：只提示不阻断
 	for wtext in StepTimeline.warnings(arr):
 		box.add_child(Kit.hint_label("⚠ " + str(wtext), 320))
+	var shown := {"steps": arr.duplicate(true), "index": _steps_sel}
 	# D2：参考时钟（缺项 / 小数帧待修 / 参考帧与音频）
-	box.add_child(_steps_clock_box(arr))
+	box.add_child(_steps_clock_box(arr, shown))
 	if _steps_sel < 0 or _steps_sel >= arr.size() or not (arr[_steps_sel] is Dictionary):
 		if not arr.is_empty():
 			box.add_child(Kit.hint_label("点上方一个步骤进行编辑", 320))
@@ -809,13 +821,13 @@ func _rebuild_steps_form(arr: Array) -> void:
 	box.add_child(Kit.divider())
 	box.add_child(Kit.section_header("第 %d 步：%s" % [_steps_sel + 1, str(decl.get("name", sc))]))
 	# 时间与轨道（D1）：与时间轴同一份数据、同一补丁入口；缺 at 显示「随前序」
-	box.add_child(_steps_time_row(arr, _steps_sel))
+	box.add_child(_steps_time_row(arr, shown))
 	var sfields: Array = decl.get("fields", [])
 	var sfd: Dictionary = st.get("fields", {}) if st.get("fields", {}) is Dictionary else {}
 	for fd in sfields:
 		if not (fd is Dictionary):
 			continue
-		box.add_child(_step_field_row(fd, sfd, sfields, arr))
+		box.add_child(_step_field_row(fd, sfd, sfields, shown))
 	# 该步骤里有声明已删的键：只读保留
 	var known := {}
 	for fd2 in sfields:
@@ -840,13 +852,11 @@ func _rebuild_steps_form(arr: Array) -> void:
 ## 回调捕获**步骤稳定令牌 + 结构版本 + 绑定身份**（D1/V4 P1）：换序/切页签后迟到的
 ## 回调按版本丢弃；版本没变但步序真的变了（外部合并暂存）时按令牌重新定位。
 ## E1：同图实例引用给「画布选…」——选点会话写回走同一版本校验入口。
-func _step_field_row(fd: Dictionary, sfd: Dictionary, siblings: Array = [], arr: Array = []) -> Control:
+func _step_field_row(fd: Dictionary, sfd: Dictionary, siblings: Array, shown: Dictionary) -> Control:
 	var key := str(fd.get("code", ""))
 	var val = sfd.get(key, fd.get("default", FieldWidgets.default_for(fd)))
 	var label := str(fd.get("name", str(fd.get("id", ""))))
-	var si := _steps_sel
 	var rev := _steps_rev
-	var tok := _step_token(arr, si)
 	# R13：配对地图字段的现值注入 _mapKey——步骤字段的实例引用与摆放物同一语义。
 	var d := fd
 	var paired := str(fd.get("mapField", "")) != "" and not siblings.is_empty()
@@ -860,7 +870,7 @@ func _step_field_row(fd: Dictionary, sfd: Dictionary, siblings: Array = [], arr:
 			app._set_status("配对地图已改，请重新打开步骤表单后选择引用")
 			return false
 		return true
-	var apply := func(v) -> bool: return _set_step_field(tok, key, v, rev, check_pair)
+	var apply := func(v) -> bool: return _set_step_field(shown, key, v, rev, check_pair)
 	var built := FieldWidgets.build(d, val, apply, _resolve_options, "code")
 	if built.get("commit") is Callable and (built.commit as Callable).is_valid():
 		_pending_commits.append(built.commit)
@@ -938,7 +948,8 @@ func _step_seconds_hint(eff: Dictionary) -> String:
 
 ## 时间与轨道行（D1）：默认收起，展开后可输入起点 / 时长 / 轨号 / 阻塞。
 ## 起点留空 = 「随前序」（缺 at）；显式 0 = 从零开始。时长接受 0。
-func _steps_time_row(arr: Array, si: int) -> Control:
+func _steps_time_row(arr: Array, tok: Dictionary) -> Control:
+	var si := int(tok.index)
 	var box := Kit.vbox(2)
 	var eff: Dictionary = StepTimeline.effective(arr, si)
 	var st: Dictionary = arr[si] if si < len(arr) and arr[si] is Dictionary else {}
@@ -955,8 +966,6 @@ func _steps_time_row(arr: Array, si: int) -> Control:
 	box.add_child(head)
 	box.add_child(body)
 	var row := Kit.hbox(6)
-	# 回调捕获稳定令牌而不是下标：迟到的回车/失焦要落在「那一步」上（V4 P1）
-	var tok := _step_token(arr, si)
 	# 起点
 	var at_edit := LineEdit.new()
 	at_edit.custom_minimum_size = Vector2(74, 0)
@@ -1044,7 +1053,7 @@ func _steps_time_row(arr: Array, si: int) -> Control:
 
 ## D2 参考时钟块：声明缺项提示、小数帧待修（含一键量化）、参考帧缩略与音频名。
 ## 只服务于「按秒对齐」，不做游戏判定；缺项时时间仍按原单位编辑。
-func _steps_clock_box(arr: Array) -> Control:
+func _steps_clock_box(arr: Array, shown: Dictionary) -> Control:
 	var box := Kit.vbox(2)
 	if _steps_clock == null:
 		return box
@@ -1072,7 +1081,7 @@ func _steps_clock_box(arr: Array) -> Control:
 					str(f.key), _num_text(f.value)], 320)
 				flabel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 				frow.add_child(flabel)
-				var fix := Kit.button("取整", func(): _quantize_step(_step_token(arr, fi), 1.0), "ghost")
+				var fix := Kit.button("取整", func(): _quantize_step({"steps": shown.steps, "index": fi}, 1.0), "ghost")
 				fix.tooltip_text = "只把这一步的 at/duration 四舍五入到整帧"
 				frow.add_child(fix)
 				box.add_child(frow)
@@ -1168,7 +1177,7 @@ static func _num_text(v) -> String:
 	return ("%.4f" % f).rstrip("0").rstrip(".")
 
 ## 表单的时间编辑：与时间轴同一个补丁入口（StepTimeline.apply_patch + 同一写回）。
-## tok = 步骤稳定令牌（不是下标）：回调迟到时按令牌重新定位，落在「那一步」上。
+## tok 持有展示快照，顺序和正文仍匹配时才使用其中的下标。
 func _apply_time_patch(tok: Dictionary, patch: Dictionary, erase_keys: Array) -> void:
 	if tok.is_empty():
 		return
@@ -1178,7 +1187,8 @@ func _apply_time_patch(tok: Dictionary, patch: Dictionary, erase_keys: Array) ->
 	var arr: Array = data.get("steps", []) if data.get("steps", []) is Array else []
 	var si := _step_index_of(arr, tok)
 	if si < 0:
-		return   # 那一步已被删/换码
+		app._set_status("步骤已变更，本次未写入")
+		return
 	# D2：新输入的 at/duration 按声明粒度吸附（帧取整、拍按 subdivisionsPerBeat）；
 	# 秒基不吸附——手输的秒精度就是用户意图，不该被改
 	if _steps_clock != null and str(_steps_clock.timebase) != "seconds":
@@ -1191,49 +1201,29 @@ func _apply_time_patch(tok: Dictionary, patch: Dictionary, erase_keys: Array) ->
 	if not bool(res.get("ok", false)):
 		return
 	data["steps"] = res.get("steps", arr)
-	_steps_write(data)
+	if not _steps_write(data):
+		return
 	_steps_sel = si
 	_bump_steps_rev()
 	_rebuild_steps_all()
 
-## 步骤稳定令牌：{code, nth}（同码第 nth 条，0 起）。
-## 控件回调捕获的是「那一步」，不是「那个下标」——外部改动（暂存合并/另一面板）改了步序
-## 而结构版本没变时，按下标写回会落到别的步骤上（V4 P1）。写回前按令牌重新定位。
-static func _step_token(arr: Array, si: int) -> Dictionary:
-	if si < 0 or si >= arr.size() or not (arr[si] is Dictionary):
-		return {}
-	var code := str((arr[si] as Dictionary).get("step", ""))
-	var nth := 0
-	for j in si:
-		if arr[j] is Dictionary and str((arr[j] as Dictionary).get("step", "")) == code:
-			nth += 1
-	return {"code": code, "nth": nth}
-
-## 令牌 → 当前下标（找不到 = 那一步被删/换码，返回 -1）。
+## 使用展示时的顺序快照；同码步骤重排后拒绝旧回调。
 static func _step_index_of(arr: Array, tok: Dictionary) -> int:
-	var code := str(tok.get("code", ""))
-	if code == "":
-		return -1
-	var want := int(tok.get("nth", 0))
-	var nth := 0
-	for j in arr.size():
-		if not (arr[j] is Dictionary) or str((arr[j] as Dictionary).get("step", "")) != code:
-			continue
-		if nth == want:
-			return j
-		nth += 1
-	return -1
+	return int(tok.get("index", -1)) if arr == tok.get("steps") else -1
 
 ## 写步骤字段：即时写盘，不重建表单（保焦点）。版本过期/令牌失效直接丢弃。
-func _set_step_field(tok: Dictionary, key: String, value, rev := -1, check_pair := Callable()) -> bool:
-	if tok.is_empty() or key == "" or (rev >= 0 and rev != _steps_rev):
+func _set_step_field(shown: Dictionary, key: String, value, rev := -1, check_pair := Callable()) -> bool:
+	if key == "" or (rev >= 0 and rev != _steps_rev):
 		return false
 	var data := _steps_data()
 	if data.is_empty():
 		return false
 	var arr: Array = data.get("steps", []) if data.get("steps", []) is Array else []
-	var si := _step_index_of(arr, tok)
-	if si < 0 or not (arr[si] is Dictionary):
+	if arr != shown.steps:
+		app._set_status("步骤已变更，本次未写入")
+		return false
+	var si := int(shown.index)
+	if si < 0 or si >= arr.size() or not (arr[si] is Dictionary):
 		return false
 	var st: Dictionary = arr[si]
 	var sfd: Dictionary = st.get("fields", {}) if st.get("fields", {}) is Dictionary else {}
@@ -1244,18 +1234,33 @@ func _set_step_field(tok: Dictionary, key: String, value, rev := -1, check_pair 
 	sfd[key] = value
 	st["fields"] = sfd
 	data["steps"] = arr
-	return _steps_write(data)
+	if not _steps_write(data):
+		return false
+	var previous: Array = shown.steps
+	shown.steps = arr.duplicate(true)
+	if _steps_list_snapshot == previous:
+		_steps_list_snapshot[si] = st.duplicate(true)
+	if is_instance_valid(_steps_tl) and _steps_tl.steps == previous:
+		_steps_tl.steps[si] = st.duplicate(true)
+	return true
 
 ## 添加步骤：追加到末尾并选中。
+func _reload_steps() -> void:
+	_bump_steps_rev()
+	_rebuild_steps_all()
+
 func _steps_add(code: String) -> void:
 	if code == "":
 		return
 	var data := _steps_data()
+	if data.is_empty():
+		return
 	var arr: Array = data.get("steps", []) if data.get("steps", []) is Array else []
 	arr.append({"step": code, "fields": {}})
 	data["steps"] = arr
+	if not _steps_write(data):
+		return
 	_steps_sel = arr.size() - 1
-	_steps_write(data)
 	_bump_steps_rev()
 	_rebuild_steps_all()
 
@@ -1267,11 +1272,10 @@ func _steps_del(si: int) -> void:
 		return
 	arr.remove_at(si)
 	data["steps"] = arr
-	if _steps_sel >= arr.size():
-		_steps_sel = arr.size() - 1
-	if _steps_sel > si:
-		_steps_sel -= 1
-	_steps_write(data)
+	if not _steps_write(data):
+		return
+	var next_sel := _steps_sel - 1 if _steps_sel > si else _steps_sel
+	_steps_sel = mini(next_sel, arr.size() - 1)
 	_bump_steps_rev()
 	_rebuild_steps_all()
 
@@ -1286,8 +1290,9 @@ func _steps_move(si: int, dir: int) -> void:
 	arr[si] = arr[nj]
 	arr[nj] = tmp
 	data["steps"] = arr
+	if not _steps_write(data):
+		return
 	_steps_sel = nj
-	_steps_write(data)
 	_bump_steps_rev()
 	_rebuild_steps_all()
 
@@ -1302,7 +1307,8 @@ func _steps_dup(si: int) -> void:
 	cp["fields"] = (cp.get("fields", {}) as Dictionary).duplicate(true) if cp.get("fields", {}) is Dictionary else {}
 	arr.insert(si + 1, cp)
 	data["steps"] = arr
+	if not _steps_write(data):
+		return
 	_steps_sel = si + 1
-	_steps_write(data)
 	_bump_steps_rev()
 	_rebuild_steps_all()
