@@ -27,6 +27,20 @@ func _nuke(p: String) -> void:
 		_nuke(p.path_join(str(d)))
 	DirAccess.remove_absolute(p)
 
+func test_asset_deletion_usage_covers_tiles_nested_refs_and_bad_maps() -> void:
+	_wipe()
+	var m := _fake_manifest()
+	m.assets = [{"id": "owner", "kind": "entity", "fields": [{"id": "rows", "type": "array",
+		"of": "record", "fields": [{"id": "target", "type": "asset_ref"}]}]}]
+	var live := {"tiles": {"L1": [[0, 0, "used", 0, 0, 0]]},
+		"objects": [{"asset": "owner", "props": {"rows": [{"target": "used"}]}}]}
+	DirAccess.make_dir_recursive_absolute(m._maps_dir)
+	ok(MapStore.write_text(m._maps_dir.path_join("bad.json"), "{"), "写入损坏地图夹具")
+	var usage := ProjectAudit.asset_deletion_usage(m, "used", live, [])
+	eq(usage.live, 2, "瓦片和嵌套实例引用均计入")
+	eq(usage.bad.size(), 1, "不可读地图使扫描不完整")
+	_wipe()
+
 func test_map_write_read_roundtrip() -> void:
 	_wipe()
 	var m := _fake_manifest()

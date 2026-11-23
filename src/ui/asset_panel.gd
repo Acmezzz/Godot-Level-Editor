@@ -523,20 +523,37 @@ func _dist_row(map_name: String, r: Dictionary) -> Control:
 
 
 ## 删除资产前引用检查——列出仍在使用该类型的地图与实例数；有引用需确认
+func _deletion_usage(sid: String) -> Dictionary:
+	var live: Dictionary = host.canvas.extract() if host.map_loaded else {}
+	if host.map_loaded and live.is_empty():
+		return {"bad": [{"name": "当前地图重建中"}]}
+	var staged: Array = []
+	if host.project_shell != null and host.project_shell.content_editor != null:
+		staged = host.project_shell.content_editor.staged_rows_current_doc()
+	return ProjectAudit.asset_deletion_usage(manifest, sid, live, staged)
+
 func _delete_asset_checked(sid: String) -> void:
 	if bool(_edef.get("builtin", false)):
 		host._set_status(" 内置种类由编辑器提供，不能删除")
 		return
-	# 有引用先列出来；没有引用也要问一次——删资产不可撤销
-	var dist := _instance_distribution(sid)
-	var permanent: bool = bool(_edef.get("disabled", false))
+	var source := manifest
+	var original := AssetDecl.live_by_id(source, sid)
+	if original.is_empty() or not is_same(original, _edef):
+		return
+	var baseline := original.duplicate(true)
+	var permanent: bool = bool(original.get("disabled", false))
 	var scanned_asset: bool = str(_edef.get("scanFingerprint", "")) != "" \
 		or str(_edef.get("retiredPath", "")) != ""
 	# R15：条目将被抹掉（永久删除或非扫描条目删除）时的全量扫描——
 	# 内容引用字段与草稿也算引用，删了它们就悬空；停用（保 ID）不需要。
 	var erase_will_dangle: bool = permanent or not scanned_asset
-	var c_refs: Array = ProjectAudit.asset_content_refs(manifest, sid) if erase_will_dangle else []
-	var d_refs: Array = ProjectAudit.asset_draft_refs(manifest, sid) if erase_will_dangle else []
+	var usage := _deletion_usage(sid) if erase_will_dangle else {}
+	var bad: Array = usage.get("bad", [])
+	if not bad.is_empty():
+		host._set_status("无法完整检查资产引用：%s（共 %d 处），删除已中止" % [bad[0].get("name", ""), bad.size()])
+		return
+	var c_refs: Array = usage.get("contents", [])
+	var d_refs: Array = usage.get("drafts", [])
 	var text := ""
 	if permanent:
 		text = "将永久删除已停用资产「%s」(%s)，不可恢复。" % [str(_edef.get("name", sid)), sid]
@@ -545,18 +562,16 @@ func _delete_asset_checked(sid: String) -> void:
 		text = "将停用资产「%s」(%s)。\n\n条目与 ID 保留：不再出现在调色板，已有引用仍能定位；可随时重新启用。" % [str(_edef.get("name", sid)), sid]
 	else:
 		text = "将删除资产「%s」(%s)，不可撤销。" % [str(_edef.get("name", sid)), sid]
-	if not dist.is_empty():
-		var lines := []
-		var total := 0
-		for map_name in dist:
-			var n: int = (dist[map_name] as Array).size()
-			total += n
-			lines.append("%s × %d" % [map_name, n])
-		text += "\n\n还有 %d 张地图在用（共 %d 个实例）：%s。\n%s" % [dist.size(), total, ", ".join(lines),
-			"停用后这些实体从调色板消失；引用仍按原 ID 解析。" if scanned_asset and not permanent \
-			else "删除后这些实体失去调色板/占位框/导出依据。"]
-	else:
-		text += "\n\n当前没有地图实例在用它。"
+	var maps: Dictionary = usage.get("maps", {})
+	if erase_will_dangle:
+		var lines: PackedStringArray = []
+		for map_name in maps:
+			lines.append("%s × %d" % [map_name, maps[map_name]])
+		var live_count := int(usage.get("live", 0))
+		if not lines.is_empty():
+			text += "\n\n正式地图中的受影响条目（含瓦片与实例）：%s。" % ", ".join(lines)
+		if live_count > 0:
+			text += "\n当前画布另计 %d 个受影响条目（可与正式地图重叠）。" % live_count
 	if erase_will_dangle and not c_refs.is_empty():
 		var crefs: Array[String] = []
 		for r in c_refs:
@@ -569,26 +584,22 @@ func _delete_asset_checked(sid: String) -> void:
 			", ".join(PackedStringArray(d_refs.slice(0, 5)))
 	if not await host._confirm_action("删除资产", text, "删除"):
 		return
-	# 已停用的扫描条目：这一步是「永久删除」，真从清单里抹掉（用户已明确放弃）
-	if permanent:
-		manifest.get("assets", []).erase(_edef)
-		if not await _persist():
-			host._set_status(" 资产已从内存移除，但清单写盘失败：重试保存或重开项目后再操作")
-		_edef = {}
-		refresh_list()
+	var guard := func() -> bool:
+		return is_same(host.manifest, source) and is_same(AssetDecl.live_by_id(source, sid), original) \
+			and original == baseline and (not erase_will_dangle or _deletion_usage(sid) == usage)
+	if not guard.call():
+		host._set_status("确认期间资产或引用已变更，请重新检查")
 		return
-	# 扫描产出的条目不 erase：记停用，保 ID 可恢复（D12）。
-	# 否则源文件还在目录里，下次扫描就带新 ID 回来，旧引用全断。
-	if scanned_asset:
-		preload("res://src/project/asset_scan.gd").disable(manifest, sid)
-		host._set_status(" 已停用资产 %s（条目保留，可在资产页恢复）" % sid)
-	else:
-		manifest.get("assets", []).erase(_edef)
-	if not await _persist():
-		host._set_status(" 资产改动仅在内存里（清单写盘失败）：重试保存或重开项目后再操作")
+	var candidate := source.duplicate(true)
+	if erase_will_dangle:
+		(candidate.assets as Array).erase(AssetDecl.live_by_id(candidate, sid))
+	elif not preload("res://src/project/asset_scan.gd").disable(candidate, sid):
+		return
+	if not await host._save_manifest_file_async(guard, candidate, true):
+		return
 	_edef = {}
-	# 删除后留在图鉴：刷新列表并落到第一项（没有则给空态提示）
 	refresh_list()
+	host._set_status("已删除资产 %s" % sid if erase_will_dangle else "已停用资产 %s（可恢复）" % sid)
 
 # —— 自带功能（挂载）编辑器 ——
 ## 挂载 = 类型自带的 functions 声明 id 列表；实例绑定在放置/载图时自动补齐（C09）。

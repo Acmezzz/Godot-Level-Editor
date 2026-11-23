@@ -825,8 +825,9 @@ func _manifest_write_payload(source: Dictionary) -> Dictionary:
 			asset.erase("atlas_abs")
 	return preload("res://src/assets/builtin_kinds.gd").strip_from(out)
 
-func _save_manifest_file_async(guard := Callable(), snapshot := {}) -> bool:
+func _save_manifest_file_async(guard := Callable(), snapshot := {}, publish_assets := false) -> bool:
 	var source := manifest
+	var baseline := JSON.stringify(_manifest_write_payload(source), "\t") if publish_assets else ""
 	var out := _manifest_write_payload(source if snapshot.is_empty() else snapshot)
 	var txt := JSON.stringify(out, "\t")
 	var p := str(source.get("_dir", "")).path_join("editor/editor_manifest.json")
@@ -841,8 +842,9 @@ func _save_manifest_file_async(guard := Callable(), snapshot := {}) -> bool:
 			"清单文件在编辑器打开后被外部修改过。\n覆盖保存将丢失外部改动。", "覆盖保存"):
 			_set_status(" 已取消保存（保留磁盘上的外部改动）")
 			return false
+	var expected_live := baseline if publish_assets else txt
 	if (guard.is_valid() and not guard.call()) or not is_same(manifest, source) \
-			or JSON.stringify(_manifest_write_payload(manifest), "\t") != txt:
+			or JSON.stringify(_manifest_write_payload(manifest), "\t") != expected_live:
 		_set_status(" 清单保存中止：确认期间工作副本已变化")
 		return false
 	if recovery.digest(p) != seen:
@@ -852,6 +854,8 @@ func _save_manifest_file_async(guard := Callable(), snapshot := {}) -> bool:
 	if not MapStore.write_text(p, txt):
 		_set_status(" 清单写入失败: " + p)
 		return false
+	if publish_assets:
+		manifest["assets"] = (snapshot.get("assets", []) as Array).duplicate(true)
 	# 新补发的执行码已经随清单落盘，标记清掉（D6：避免每次内容视图 Ctrl+S 都重写清单）
 	manifest.erase("_codes_issued")
 	manifest.erase("_codes_issued_now")

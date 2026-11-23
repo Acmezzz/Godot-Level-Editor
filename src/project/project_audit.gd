@@ -642,15 +642,50 @@ static func asset_usage(manifest: Dictionary, asset_id: String, current_map := "
 		unreadable.append(str((b as Dictionary).get("name", "")))
 	return {"by_map": by_map, "unreadable": unreadable, "incomplete": not unreadable.is_empty()}
 
+static func asset_deletion_usage(manifest: Dictionary, asset_id: String, live: Dictionary, staged: Array) -> Dictionary:
+	var bad: Array = []
+	var maps_dir := str(manifest.get("_maps_dir", ""))
+	if DirAccess.open(maps_dir) == null:
+		bad.append({"name": maps_dir, "reason": "无法读取地图目录"})
+	var maps := MapStore.read_all_fresh(manifest, bad)
+	var refs := {}
+	for name in maps:
+		var count := _asset_map_count(manifest, asset_id, maps[name])
+		if count > 0:
+			refs[name] = count
+	var live_count := _asset_map_count(manifest, asset_id, live)
+	return {"maps": refs, "live": live_count, "contents": asset_content_refs(manifest, asset_id, bad, staged),
+		"drafts": asset_draft_refs(manifest, asset_id, bad), "bad": bad}
+
+static func _asset_map_count(manifest: Dictionary, asset_id: String, data: Dictionary) -> int:
+	var count := 0
+	for cells in (data.get("tiles", {}) as Dictionary).values():
+		for cell in cells as Array:
+			if cell is Array and cell.size() >= 3 and str(cell[2]) == asset_id:
+				count += 1
+	for obj in data.get("objects", []) as Array:
+		if obj is Dictionary:
+			var aid := str(obj.get("asset", ""))
+			var decl := AssetDecl.by_id(manifest, aid)
+			if aid == asset_id or not _asset_fields_pointing(asset_id, decl.get("fields", []), obj.get("props", {}), false).is_empty():
+				count += 1
+	return count
+
 ## R15：资产在内容文件里的引用字段（asset_ref / source=asset: 声明，值 = 资产 id）。
 ## 返回 [{kind, id, field}]，与 content_inbound_refs 同形；含 steps 段。
-static func asset_content_refs(manifest: Dictionary, asset_id: String) -> Array:
+static func asset_content_refs(manifest: Dictionary, asset_id: String, bad: Array = [],
+		staged: Array = [], include_disk := true) -> Array:
 	var out: Array = []
-	var root := ContentStore.root_dir(manifest)
-	if root == "" or not DirAccess.dir_exists_absolute(root):
-		return out
 	for kind in ContentStore.declared_kinds(manifest):
-		var items := ContentStore.read_all(manifest, kind)
+		var items := {}
+		if include_disk:
+			var dir := ContentStore.dir_for(manifest, kind)
+			if DirAccess.dir_exists_absolute(dir) and DirAccess.open(dir) == null:
+				bad.append({"name": dir, "reason": "无法读取内容目录"})
+			items = ContentStore.read_all(manifest, kind, bad)
+		for row in staged:
+			if row is Dictionary and str(row.get("fn_id", "")) == kind and row.get("data") is Dictionary:
+				items["草稿:" + str(row.get("cid", ""))] = row.data
 		var decls: Array = []
 		decls.append_array(FunctionDecls.function_fields(manifest, str(kind)))
 		var conds = FunctionDecls.function_decl(manifest, str(kind)).get("conditions", null)
@@ -661,7 +696,7 @@ static func asset_content_refs(manifest: Dictionary, asset_id: String) -> Array:
 		for oid in items:
 			var data: Dictionary = items[oid]
 			var oid_s := str(oid)
-			for f in _asset_fields_pointing(manifest, asset_id, decls, data.get("fields", null)):
+			for f in _asset_fields_pointing(asset_id, decls, data.get("fields", null)):
 				out.append({"kind": str(kind), "id": oid_s, "field": str(f)})
 			var steps = data.get("steps", null)
 			for st in (steps as Array) if steps is Array else []:
@@ -671,13 +706,12 @@ static func asset_content_refs(manifest: Dictionary, asset_id: String) -> Array:
 				var sdecls: Array = sd.get("fields", []) if sd.get("fields", []) is Array else []
 				if sdecls.is_empty():
 					continue
-				for f2 in _asset_fields_pointing(manifest, asset_id, sdecls, (st as Dictionary).get("fields", null)):
+				for f2 in _asset_fields_pointing(asset_id, sdecls, (st as Dictionary).get("fields", null)):
 					out.append({"kind": str(kind), "id": oid_s, "field": str(f2)})
 	return out
 
 ## 一组声明 + 值里，值为 asset 类引用且等于 asset_id 的字段 id 列表。
-static func _asset_fields_pointing(manifest: Dictionary, asset_id: String,
-		decls: Array, values) -> Array:
+static func _asset_fields_pointing(asset_id: String, decls: Array, values, coded := true) -> Array:
 	var out: Array = []
 	if not (values is Dictionary):
 		return out
@@ -685,13 +719,18 @@ static func _asset_fields_pointing(manifest: Dictionary, asset_id: String,
 	for fd in decls:
 		if not (fd is Dictionary):
 			continue
+		var id := str(fd.get("id", ""))
+		var key := str(fd.get("code", "")) if coded else id
+		if key == "":
+			key = id
+		if not vals.has(key):
+			continue
+		if str(fd.get("type", "")) == "array" and str(fd.get("of", "")) == "record" and vals[key] is Array:
+			for row in vals[key]:
+				for sub in _asset_fields_pointing(asset_id, fd.get("fields", []), row, coded):
+					out.append(id + "." + str(sub))
 		var desc := RefFields.describe(fd)
 		if str(desc.get("kind", "")) != "asset":
-			continue
-		var key := str((fd as Dictionary).get("code", ""))
-		if key == "":
-			key = str((fd as Dictionary).get("id", ""))
-		if not vals.has(key):
 			continue
 		for v in _as_list(vals[key]):
 			if str(v) == asset_id:
@@ -701,36 +740,27 @@ static func _asset_fields_pointing(manifest: Dictionary, asset_id: String,
 
 ## R15：草稿里的资产使用（快照实例的 asset 键 + 待提交内容载荷的字段值）。
 ## 返回引用它的草稿键数组；读不出的草稿按「有使用」保守处理。
-static func asset_draft_refs(manifest: Dictionary, asset_id: String) -> Array:
+static func asset_draft_refs(manifest: Dictionary, asset_id: String, bad: Array = []) -> Array:
 	var out: Array = []
 	var base := str(manifest.get("_dir", "")).path_join("editor/drafts")
 	var d := DirAccess.open(base)
 	if d == null:
+		if DirAccess.dir_exists_absolute(base):
+			bad.append({"name": base, "reason": "无法读取草稿目录"})
 		return out
 	for f in d.get_files():
 		if not str(f).ends_with(".json"):
 			continue
 		var key := str(f).get_basename()
 		var parsed = JSON.parse_string(FileAccess.get_file_as_string(base.path_join(str(f))))
-		if not (parsed is Dictionary):
-			out.append(key)   # 读不出：保守报有使用
+		if not (parsed is Dictionary) or not (parsed.get("snapshot") is Dictionary):
+			bad.append({"name": key, "reason": "无法读取草稿"})
 			continue
 		var dd: Dictionary = parsed
-		var hit := false
-		var snap: Dictionary = dd.get("snapshot", {}) if dd.get("snapshot", {}) is Dictionary else {}
-		for o in (snap.get("objects", []) as Array):
-			if o is Dictionary and str((o as Dictionary).get("asset", "")) == asset_id:
-				hit = true
-		var pcs = dd.get("pendingContents", null)
-		if pcs is Array:
-			for pc in (pcs as Array):
-				if not (pc is Dictionary):
-					continue
-				var pd: Dictionary = pc
-				var flds: Dictionary = pd.get("data", {}) as Dictionary if pd.get("data", {}) is Dictionary else {}
-				for k in flds.get("fields", {}) if flds.get("fields", {}) is Dictionary else {}:
-					if str((flds.get("fields", {}) as Dictionary).get(k, "")) == asset_id:
-						hit = true
+		var hit := _asset_map_count(manifest, asset_id, dd.snapshot) > 0
+		var pending = dd.get("pendingContents", [])
+		if pending is Array and not asset_content_refs(manifest, asset_id, [], pending, false).is_empty():
+			hit = true
 		if hit:
 			out.append(key)
 	return out
