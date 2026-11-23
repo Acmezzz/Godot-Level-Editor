@@ -122,8 +122,10 @@ static func _is_empty_value(v) -> bool:
 
 ## 主入口。codes 为空 = 源文档里的对象全部参与（配合 include_world 做整图）；
 ## 非空只复制这些实例码（缺码的实例 = 冲突）。清单可缺省（纯数据对拷）。
-## staged_contents（R12）：会话里的暂存内容 {内容ID: data}——未落盘的绑定内容也从这里读，
-## 不再把有效内容报成缺失。
+static func content_key(fn_id: String, cid: String) -> String:
+	return fn_id + "\u0001" + cid
+
+## staged_contents：源工作副本 {ContentKey: data}，优先于正式内容。
 static func build(src: Dictionary, dst: Dictionary, codes: PackedStringArray = PackedStringArray(),
 		include_world := false, staged_contents := {}, self_copy := false) -> Dictionary:
 	var sdata := _data(src)
@@ -195,9 +197,8 @@ static func build(src: Dictionary, dst: Dictionary, codes: PackedStringArray = P
 				continue
 			var fb: Dictionary = f
 			var cid := str(fb.get("content", ""))
-			if cid == "" or seen_cid.has(cid):
+			if cid == "":
 				continue
-			seen_cid[cid] = true
 			var fn_code := str(fb.get("fn", ""))
 			var fn_id := FunctionDecls.fn_id_of(m, fn_code) if not m.is_empty() else ""
 			if fn_id == "":
@@ -205,9 +206,11 @@ static func build(src: Dictionary, dst: Dictionary, codes: PackedStringArray = P
 					conflicts.append({"kind": "content_function", "id": cid,
 						"message": "内容 %s 的功能码 %s 未在清单声明" % [cid, fn_code]})
 				continue
-			var cdata := ContentStore.read(m, fn_id, cid)
-			if cdata.is_empty() and staged_contents.has(cid) and (staged_contents[cid] as Variant) is Dictionary:
-				cdata = staged_contents[cid] as Dictionary   # R12：暂存内容也在复制范围内
+			var key := content_key(fn_id, cid)
+			if seen_cid.has(key):
+				continue
+			seen_cid[key] = true
+			var cdata: Dictionary = staged_contents[key] if staged_contents.has(key) else ContentStore.read(m, fn_id, cid)
 			if cdata.is_empty():
 				conflicts.append({"kind": "content_missing", "id": cid,
 					"message": "内容文件读不到：%s/%s" % [fn_id, cid]})
@@ -217,7 +220,9 @@ static func build(src: Dictionary, dst: Dictionary, codes: PackedStringArray = P
 				conflicts.append({"kind": "content_id", "id": cid,
 					"message": "新内容 ID 生成失败：%s" % cid})
 				continue
-			content_map[cid] = new_cid
+			if not content_map.has(fn_id):
+				content_map[fn_id] = {}
+			content_map[fn_id][cid] = new_cid
 			var clone: Dictionary = cdata.duplicate(true)
 			clone["id"] = new_cid
 			clone["function"] = FunctionDecls.fn_code(m, fn_id)
@@ -302,8 +307,10 @@ static func remap_row(row: Dictionary, instance_map: Dictionary, content_map: Di
 			continue
 		var fb: Dictionary = fns[i]
 		var cid := str(fb.get("content", ""))
-		if cid != "" and content_map.has(cid):
-			fb["content"] = content_map[cid]
+		var fn_id := FunctionDecls.fn_id_of(manifest, str(fb.get("fn", "")))
+		var ids: Dictionary = content_map.get(fn_id, {})
+		if cid != "" and ids.has(cid):
+			fb["content"] = ids[cid]
 		fns[i] = fb
 	out["functions"] = fns
 	out["props"] = props
@@ -324,7 +331,7 @@ static func _remap_content(data: Dictionary, manifest: Dictionary, fn_id: String
 	var decls := _content_decls(manifest, fn_id)
 	var owner := str(data.get("id", ""))
 	_remap_field_map(data.get("fields", null), decls, instance_map, content_map,
-		cross_code, source_codes, conflicts, owner, target_data, target_map, source_key, source_name)
+		cross_code, source_codes, conflicts, owner, target_data, target_map, source_key, source_name, fn_id)
 	var steps = data.get("steps", null)
 	for st in (steps as Array) if steps is Array else []:
 		if not (st is Dictionary):
@@ -334,18 +341,18 @@ static func _remap_content(data: Dictionary, manifest: Dictionary, fn_id: String
 		var sdecls: Array = sd.get("fields", []) if sd.get("fields", []) is Array else []
 		_remap_field_map((st as Dictionary).get("fields", null), sdecls, instance_map,
 			content_map, cross_code, source_codes, conflicts, owner, target_data, target_map,
-			source_key, source_name)
+			source_key, source_name, fn_id)
 
 ## 一组声明字段 → 值字典的引用重映射（功能字段/条件字段/步骤字段共用）。
 static func _remap_field_map(values, decls: Array, instance_map: Dictionary,
 		content_map: Dictionary, cross_code: String, source_codes: Dictionary,
 		conflicts: Array, owner: String, target_data: Dictionary, target_map: String,
-		source_key := "", source_name := "") -> void:
+		source_key := "", source_name := "", fn_id := "") -> void:
 	if not (values is Dictionary):
 		return
 	var vals: Dictionary = values
 	# C1：record 数组行先递归（行内键 = 码或 id；引用与配对字段作用域 = 行内值）
-	_remap_record_rows(vals, decls, instance_map, content_map, cross_code, source_codes, conflicts, owner, target_data, target_map, source_key, source_name)
+	_remap_record_rows(vals, decls, instance_map, content_map, cross_code, source_codes, conflicts, owner, target_data, target_map, source_key, source_name, fn_id)
 	# C3：port_ref 重映射（内容字段键 = 码优先，id 兜底）
 	_remap_port_refs(vals, decls, instance_map, target_data, target_map, cross_code, source_codes, source_key, source_name)
 	# §7.4：edge_ref 只改所属图分量（键 = 字段码优先，id 兜底）
@@ -366,7 +373,10 @@ static func _remap_field_map(values, decls: Array, instance_map: Dictionary,
 			key = str(f.get("id", ""))
 		if not vals.has(key):
 			continue
-		var id_map: Dictionary = instance_map if kind == "entity_inst" else content_map
+		var id_map := instance_map
+		if kind == "content":
+			var target_fn := str((desc.get("filter", {}) as Dictionary).get("fn", ""))
+			id_map = content_map.get(target_fn if target_fn != "" else fn_id, {})
 		# R10：先看配对地图字段的现值——目标不是源图的引用原样保留（跨图身份）。
 		var pair := str(f.get("mapField", ""))
 		if kind == "entity_inst" and pair != "" and (source_key != "" or source_name != ""):
@@ -533,7 +543,7 @@ static func _remap_entity_ref_fields(vals: Dictionary, fdecls: Array, owner: Str
 static func _remap_record_rows(values: Dictionary, decls: Array, instance_map: Dictionary,
 		content_map: Dictionary, cross_code: String, source_codes: Dictionary,
 		conflicts: Array, owner: String, target_data: Dictionary, target_map: String,
-		source_key := "", source_name := "") -> void:
+		source_key := "", source_name := "", fn_id := "") -> void:
 	for fd in decls:
 		if not (fd is Dictionary):
 			continue
@@ -550,7 +560,7 @@ static func _remap_record_rows(values: Dictionary, decls: Array, instance_map: D
 		for r in rows:
 			if r is Dictionary:
 				_remap_field_map(r as Dictionary, subs, instance_map, content_map, cross_code,
-					source_codes, conflicts, owner, target_data, target_map, source_key, source_name)
+					source_codes, conflicts, owner, target_data, target_map, source_key, source_name, fn_id)
 ## C3：port_ref 字段的重映射：值 = {map, inst, port}，只改所属实例/地图分量（端口 ID 不动）。
 ## 组内：inst 在 instance_map → 换新码，map 分量在空/指向源图时换目标图键；指向第三图原样保留。
 ## 组外指向源图 + 跨图复制 → map 钉源图；组外指向第三图 → 原样保留。

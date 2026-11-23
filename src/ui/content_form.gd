@@ -795,13 +795,13 @@ func staged_rows_for_current_doc() -> Array:
 ## 当前文档的暂存内容 {内容ID: data}：整图复制要把未落盘的绑定内容一起带进副本
 ## （只读磁盘副本会把这些内容判成缺失/丢内容，V4 P1）。键只用内容 ID——ClonePlan 按
 ## 绑定行里的 content 值查表，与功能 id 无关。
-func staged_data_by_cid() -> Dictionary:
+func staged_data_by_key() -> Dictionary:
 	var out := {}
 	for row in staged_rows_for_current_doc():
 		var cid := str(row.get("cid", ""))
 		var dat = row.get("data", null)
 		if cid != "" and dat is Dictionary:
-			out[cid] = (dat as Dictionary).duplicate(true)
+			out[_staged_key(str(row.fn_id), cid)] = (dat as Dictionary).duplicate(true)
 	return out
 
 ## 当前文档是否有暂存内容。

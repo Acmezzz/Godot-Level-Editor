@@ -666,13 +666,17 @@ func _closest_on_segment(p: Vector2, a: Vector2, b: Vector2) -> Vector2:
 	return a + ab * t
 
 
-func copy_selection() -> void:
+func copy_selection() -> bool:
 	if cvs.map_root == null:
-		return
+		return false
 	var sel := _live_selection()
 	if sel.is_empty():
 		cvs._hint("先选中实例再复制（Ctrl+C）")
-		return
+		return false
+	var source: Dictionary = cvs.copy_content_source()
+	if source.is_empty():
+		return false
+	cvs._clipboard_source = source
 	var center := Vector2.ZERO
 	for s in sel:
 		center += (s as EntityNode).position
@@ -697,6 +701,7 @@ func copy_selection() -> void:
 			"raw": n.raw.duplicate(true),
 		})
 	cvs._hint("已复制 %d 个实例（Ctrl+V 粘贴到光标处）" % cvs._clipboard.size())
+	return true
 
 ## 剪切 = 复制 + 删除，但整件事只算一个撤销步。
 ## （分别调 copy_selection + delete_selection 会推两次撤销，Ctrl+Z 一次撤不回来）
@@ -717,7 +722,8 @@ func cut_selection() -> void:
 		cvs._hint("选中实例所在图层已锁定：解锁后再剪切")
 		return
 	# 复用复制逻辑生成剪贴板（它负责算中心与相对偏移）
-	copy_selection()
+	if not copy_selection():
+		return
 	var pre: Dictionary = cvs._undo_history_ctrl.inst_rows(sel)
 	var via_delta := bool(pre.get("ok", false))
 	if not via_delta:
@@ -759,16 +765,12 @@ func paste_at(pos: Vector2) -> void:
 			"props": (t.get("props", {}) as Dictionary).duplicate(true),
 			"functions": (t.get("functions", []) as Array).duplicate(true),
 		})
-	# R12：暂存内容一并复制——未落盘的新内容从会话暂存里读，不再把有效内容报成缺失。
-	var staged := {}
-	if cvs.app_host != null and cvs.app_host.project_shell != null \
-			and cvs.app_host.project_shell.content_editor != null:
-		for row in cvs.app_host.project_shell.content_editor.staged_rows_current_doc():
-			staged[str(row.cid)] = row.data
+	var source: Dictionary = cvs._clipboard_source
 	var plan: Dictionary = ClonePlan.build(
-		{"data": {"objects": rows}, "manifest": cvs.manifest},
-		{"data": cvs.map_data, "manifest": cvs.manifest},
-		PackedStringArray(), false, staged)
+		{"data": {"objects": rows, "meta": source.get("meta", {})}, "manifest": cvs.manifest,
+			"map": str(source.get("map", ""))},
+		{"data": cvs.map_data, "manifest": cvs.manifest, "map": cvs.cur_map_name},
+		PackedStringArray(), false, source.get("staged", {}))
 	if str(plan.get("status", "")) != "ok":
 		cvs._hint("粘贴已取消：" + ClonePlan.conflicts_text(plan.get("conflicts", [])))
 		return

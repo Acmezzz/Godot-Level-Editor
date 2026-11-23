@@ -836,6 +836,8 @@ var pick_mode_owner := ""      # 发起方标记（"content" / "steps"），归�
 var pick_mode_types: Array = []  # E2：声明的 of 白名单（空 = 不限资产类型）
 @warning_ignore("unused_private_class_variable")
 var _clipboard: Array = []       # 实例复制模板 [{asset, code, dx, dy, transform, functions, props}]
+@warning_ignore("unused_private_class_variable")
+var _clipboard_source := {}      # 源图身份和复制时的内容工作副本
 var _region_sel := Rect2i(-1, 0, 0, 0)  # 区域框选结果（瓦片层 Ctrl+C 用）
 var _region_clip := {}           # 区域快照 {tiles:{层id:[...]}, collision[], entities[], size}
 var _paste_mode := false         # 区域粘贴预览态（幽灵跟随鼠标）
@@ -1467,6 +1469,16 @@ func _move_drag_preview(pos: Vector2) -> void:
 
 func _finish_entity_drag() -> void:
 	_selection_ops_ctrl._finish_entity_drag()
+
+func copy_content_source() -> Dictionary:
+	var staged := {}
+	if app_host != null and app_host.project_shell != null and app_host.project_shell.content_editor != null:
+		var ce = app_host.project_shell.content_editor
+		if not ce.commit_fields():
+			return {}
+		staged = ce.staged_data_by_key()
+	return {"map": cur_map_name, "meta": (map_data.get("meta", {}) as Dictionary).duplicate(true),
+		"staged": staged}
 
 func copy_selection() -> void:
 	_selection_ops_ctrl.copy_selection()

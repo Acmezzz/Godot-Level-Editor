@@ -107,7 +107,7 @@ func on_duplicate() -> void:
 			copy_btn.disabled = true
 			return
 		var inst: int = (p.get("instance_map", {}) as Dictionary).size()
-		var contents: int = (p.get("content_map", {}) as Dictionary).size()
+		var contents: int = (p.get("pending_contents", []) as Array).size()
 		var c := _counts((p.get("map_patch", {}) as Dictionary))
 		var conflicts: Array = p.get("conflicts", [])
 		var head := "计划：实例 %d（新码）· 内容 %d（新 ID）· 瓦片 %d · 碰撞 %d · 摆放物 %d" % [
@@ -144,13 +144,13 @@ func _plan_preview(old_name: String, nn: String) -> Dictionary:
 	# 预览只需要一份可解析的计划：目标码用占位（真正的新码由 duplicate_map 发行）
 	return {"plan": ClonePlan.whole_map_document(
 		{"data": data, "manifest": app.manifest, "map": old_name}, nn, "PREV",
-		_staged_by_cid()), "err": ""}
+		_staged_by_key()), "err": ""}
 
 ## 当前文档未落盘的暂存内容 {cid: data}（整图复制的输入；没有内容编辑器时为空）。
-func _staged_by_cid() -> Dictionary:
+func _staged_by_key() -> Dictionary:
 	if app.project_shell == null or app.project_shell.content_editor == null:
 		return {}
-	return app.project_shell.content_editor.staged_data_by_cid()
+	return app.project_shell.content_editor.staged_data_by_key()
 
 ## 段计数（计划里的 map_patch 或整份文档都适用）
 func _counts(d: Dictionary) -> Dictionary:
@@ -292,6 +292,10 @@ func duplicate_current_from_dialog(old_name: String, name_edit: LineEdit, err_la
 		err_label.text = "同名地图已存在：换个名字"
 		return
 	# 以画布提交状态为源（未保存改动一并进副本；原图磁盘文件不动）
+	var source: Dictionary = app.canvas.copy_content_source()
+	if source.is_empty():
+		err_label.text = "有字段未能提交，请修正后再复制"
+		return
 	var data: Dictionary = app.canvas.extract()
 	if data.is_empty():   # 重建窗口哨兵：此刻复制会得到空图
 		err_label.text = "地图重建中，请稍后再试"
@@ -300,8 +304,7 @@ func duplicate_current_from_dialog(old_name: String, name_edit: LineEdit, err_la
 	# 保留源图码：整图复制时组外引用要钉的是**源图码**（游戏侧按码认图），剥码会让它们
 	# 变成名字、预览与执行也不一致。副本自己的码由 whole_map_document 重新写（V4 P1）。
 	var conflicts: Array = []
-	var err: String = app.MapStore.duplicate_map(app.manifest, old_name, nn, conflicts, data,
-		_staged_by_cid())
+	var err: String = app.MapStore.duplicate_map(app.manifest, old_name, nn, conflicts, data, source.staged)
 	if err != "":
 		var detail := ClonePlan.conflicts_text(conflicts) if not conflicts.is_empty() else ""
 		err_label.text = "复制失败：" + err + (("\n" + detail) if detail != "" else "")

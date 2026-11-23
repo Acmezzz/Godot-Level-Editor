@@ -235,21 +235,21 @@ func copy_selection() -> void:
 func cut_selection() -> void:
 	cvs._selection_ops_ctrl.cut_selection()
 
-func copy_region() -> void:
+func copy_region() -> bool:
 	if cvs.map_root == null:
-		return
+		return false
 	if cvs.place_kind == "object":
-		copy_selection()
-		return
+		return cvs._selection_ops_ctrl.copy_selection()
 	if cvs._region_sel.size.x <= 0:
 		cvs._hint("先框选一块区域再复制")
-		return
+		return false
+	var source: Dictionary = cvs.copy_content_source()
+	if source.is_empty():
+		return false
 	# 层栈剪贴板：tiles = {层id: [[dx,dy,资产id,ax,ay,alt]...]}，碰撞/实体照旧（实体带 layer）
 	# 源图身份随剪贴板带走（C2）：跨图粘贴时配对地图字段据此补源图键。
 	cvs._region_clip = {"tiles": {}, "collision": [], "size": cvs._region_sel.size,
-		"map": cvs.cur_map_name,
-		"map_code": str((cvs.map_data.get("meta", {}) as Dictionary).get("code", "")) \
-			if cvs.map_data.get("meta", {}) is Dictionary else ""}
+		"map": source.map, "map_code": str(source.meta.get("code", "")), "staged": source.staged}
 	# 层名凭据：粘贴时同图按 id 直配，跨图按层名重映射（谁的名字谁带走）
 	var lnames := {}
 	for li2 in cvs.layer_count():
@@ -298,6 +298,7 @@ func copy_region() -> void:
 		tcount += ((cvs._region_clip["tiles"] as Dictionary)[lid2] as Array).size()
 	cvs._hint("已复制 %dx%d 区域（%d 瓦片 / %d 实体；Ctrl+V 幽灵预览，左键落位/右键或 Esc 取消）" % [
 		cvs._region_sel.size.x, cvs._region_sel.size.y, tcount, ents_clip.size()])
+	return true
 
 ## 任一图层锁定即拒绝区域级操作：部分跳过会让剪贴板与实际删除不一致。
 
@@ -314,8 +315,7 @@ func cut_region() -> void:
 	if cvs._any_layer_locked():
 		cvs._hint("有图层处于锁定状态：解锁后再剪切区域")
 		return
-	copy_region()
-	if cvs._region_clip.is_empty():
+	if not copy_region():
 		return
 	cvs.push_undo()
 	# P05：擦源也只走实际存在的格（used_cells 过滤），空池不按面积空转
@@ -367,12 +367,7 @@ func _paste_region(origin: Vector2i) -> void:
 			"props": (t.get("props", {}) as Dictionary).duplicate(true),
 			"functions": (t.get("functions", []) as Array).duplicate(true),
 		})
-	# R12：暂存内容一并复制——未落盘的新内容从会话暂存里读，不再把有效内容报成缺失。
-	var staged := {}
-	if cvs.app_host != null and cvs.app_host.project_shell != null \
-			and cvs.app_host.project_shell.content_editor != null:
-		for row in cvs.app_host.project_shell.content_editor.staged_rows_current_doc():
-			staged[str(row.cid)] = row.data
+	var staged: Dictionary = cvs._region_clip.get("staged", {})
 	var plan: Dictionary = ClonePlan.build(
 		{"data": {"meta": {"code": str(cvs._region_clip.get("map_code", ""))}, "objects": rows},
 			"manifest": cvs.manifest, "map": str(cvs._region_clip.get("map", ""))},

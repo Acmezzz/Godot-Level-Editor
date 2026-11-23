@@ -147,7 +147,7 @@ func test_content_clone_independent() -> void:
 		PackedStringArray(["AAAA", "BBBB"]))
 	eq(str(plan.status), "ok", "计划成功：%s" % ClonePlan.conflicts_text(plan.conflicts))
 	eq((plan.content_map as Dictionary).size(), 1, "一条内容进映射")
-	var new_cid := str((plan.content_map as Dictionary).get("CID1", ""))
+	var new_cid := str(plan.content_map.dlg.get("CID1", ""))
 	ok(new_cid != "" and new_cid != "CID1", "内容 ID 换新")
 	var pend: Array = plan.pending_contents
 	eq(pend.size(), 1, "一份待写内容")
@@ -162,6 +162,20 @@ func test_content_clone_independent() -> void:
 	# 实例行里的功能绑定换成新内容 ID
 	var a2: Dictionary = (plan.map_patch.objects as Array)[0]
 	eq(str((a2.functions as Array)[0].content), new_cid, "行绑定内容换成副本 ID")
+	_wipe()
+
+func test_clone_separates_same_id_and_prefers_staged() -> void:
+	_wipe()
+	var m := _manifest()
+	m.functions.append({"id": "other", "code": "FN02"})
+	ok(ContentStore.write(m, "dlg", "CID1", {"name": "disk"}), "源正式内容存在")
+	var staged := {ClonePlan.content_key("dlg", "CID1"): {"name": "edited"},
+		ClonePlan.content_key("other", "CID1"): {"name": "draft"}}
+	var rows := [{"code": "AAAA", "functions": [{"fn": "FN01", "content": "CID1"},
+		{"fn": "FN02", "content": "CID1"}]}]
+	var plan := ClonePlan.build({"manifest": m, "data": {"objects": rows}}, {}, PackedStringArray(), false, staged)
+	eq(plan.status, "ok", "同名内容分别复制")
+	eq(plan.pending_contents.map(func(r): return r.data.name), ["edited", "draft"], "使用源暂存载荷")
 	_wipe()
 
 ## —— 整图复制：瓦片/碰撞/出生点/图片/未知键都保留，实例与内容独立，目标重发地图码 ——
@@ -195,7 +209,7 @@ func test_whole_map_document() -> void:
 	var o: Dictionary = (doc.objects as Array)[0]
 	ok(str(o.code) != "AAAA", "实例码换新")
 	ok(dict_has_array(o, "sortAnchor"), "sortAnchor 随行复制")
-	eq(str((o.functions as Array)[0].content), str((plan.content_map as Dictionary)["CID1"]),
+	eq(str((o.functions as Array)[0].content), str(plan.content_map.dlg["CID1"]),
 		"绑定内容独立")
 	# 原始文档不被改写
 	eq(str((src.objects as Array)[0].code), "AAAA", "源文档保持原状")

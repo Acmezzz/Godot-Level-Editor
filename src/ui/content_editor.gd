@@ -890,9 +890,9 @@ func has_staged_content() -> bool:
 ## 当前文档（地图）的暂存状态与目标（R02/R04：提交日志与草稿按文档冻结）。
 func staged_rows_current_doc() -> Array:
 	return _form.staged_rows_for_current_doc()
-## 当前文档的暂存内容 {cid: data}（整图复制带未落盘内容用，V4 P1）。
-func staged_data_by_cid() -> Dictionary:
-	return _form.staged_data_by_cid()
+## 当前文档的暂存内容 {ContentKey: data}。
+func staged_data_by_key() -> Dictionary:
+	return _form.staged_data_by_key()
 func has_staged_for_current_doc() -> bool:
 	return _form.has_staged_for_current_doc()
 func consume_written_staged(receipts: Array) -> void:
