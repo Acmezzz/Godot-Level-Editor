@@ -60,6 +60,10 @@ func _paint(c: Vector2i) -> void:
 	if cvs.map_root == null:
 		cvs._hint("无地图：先新建或打开一张地图")
 		return
+	# 锁检查放在写入口：补格路径（_paint_path）直调这里，不经过 _apply_tool
+	if cvs.is_layer_locked(cvs.active_layer):
+		cvs._hint("当前图层已锁定：解锁后再编辑")
+		return
 	# 有真实改动才 _mark：拖动涂刷每个 mouse-motion 都进这里，无条件 mark 会让
 	# 碰撞视图整层重画、内容预览按 map_rev 的缓存反复失效重建（热路径）
 	var changed := false

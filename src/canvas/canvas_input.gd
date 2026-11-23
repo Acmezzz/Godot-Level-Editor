@@ -142,6 +142,9 @@ func _stroke_cell(pos: Vector2) -> Vector2i:
 
 ## 涂刷补格：从上一格到当前格逐格执行 _apply_tool（同一笔只压一次撤销）
 func _paint_path(pos: Vector2) -> void:
+	# 锁定层：拖动中每个 motion 都会进这里，一次提示就够（起手处已提示，写入侧也有守卫）
+	if cvs.is_layer_locked(cvs.active_layer):
+		return
 	var c := _stroke_cell(pos)
 	var cells: Array = [c] if not cvs._stroke_has_last \
 		else cvs.grid.cells_between(cvs._stroke_last_cell, c)
@@ -157,6 +160,9 @@ func _paint_path(pos: Vector2) -> void:
 
 ## 擦除补格：经过的格全擦；实例命中只对当前点判（擦实例不做路径插值）
 func _erase_path(pos: Vector2) -> void:
+	# 锁定层：拖动中每个 motion 都会进这里，一次提示就够（起手处已提示，写入侧也有守卫）
+	if cvs.is_layer_locked(cvs.active_layer):
+		return
 	if cvs._entity_hit_on(cvs.active_layer, pos) != null:
 		cvs._erase_at(pos)
 		cvs._stroke_has_last = false

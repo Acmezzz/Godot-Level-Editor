@@ -140,7 +140,8 @@
   时间轴节拍起点非零可逆；FileDialog 选完/取消即释放；批量改值 `cur` 重绑后不再冲刷旧控件；
   步骤补丁按稳定令牌（同码第 n 条）而非下标；时间失焦不再两位小数回写；数值控件基线为
   「上次真正写出的值」；`commit_fields` 传播写入结果；时间轴冲突集合按修订缓存。
-- 撤销/笔画/锁定：锁检查下沉到擦除写入口 `erase_cells`（补格路径 `_erase_path` 不经过
-  `_apply_tool`，原先只在各调用方各自查锁）；笔画在顶掉手势（`begin_gesture`）与撤销
+- 撤销/笔画/锁定：锁检查下沉到写入函数本身——`erase_cells`（补格路径 `_erase_path` 不经过
+  `_apply_tool`）与 `_paint`（补格路径 `_paint_path` 同理）各自守门，任何新增调用者都自动受约束；
+  拖动补格前也先判锁定，避免每个 mouse-motion 反复提示。笔画在顶掉手势（`begin_gesture`）与撤销
   （`undo`）前先 `stroke_end` 定格，已涂格不再丢失；撤销不再 `stroke_cancel` 丢弃记录。
 - 测试：`test_grid_space` 增加三角列折算断言（位移/所在格/范围/边界）。全套 262 用例通过。
