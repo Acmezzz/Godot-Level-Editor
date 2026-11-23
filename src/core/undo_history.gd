@@ -24,7 +24,7 @@ func clear_history() -> void:
 	redo_stack.clear()
 
 func _snapshot() -> String:
-	return JSON.stringify(cvs.extract())
+	return MapFormat.encode(cvs.extract(), true)
 
 
 func _restore(snapshot) -> void:
@@ -578,12 +578,10 @@ func extract() -> Dictionary:
 		var cells := []
 		var seen_cells := {}
 		for c in tn.get_used_cells():
-			var ac = tn.get_cell_atlas_coords(c)
-			var aid: String = cvs.asset_of_source(tn.get_cell_source_id(c))
-			if aid == "":
-				continue   # source 不属于任何声明资产：不写出坏条目
-			var alt := MapFormat.alt_of_godot(tn.get_cell_alternative_tile(c))
-			cells.append([c.x, c.y, aid, ac.x, ac.y, alt])
+			var row = _tile_state(lid, tn, c)
+			if row == null or str(row[2]) == "":
+				continue
+			cells.append(row)
 			seen_cells[c] = true
 		# 装载时资产缺失/图集读不到的瓦片原样带回（D02：缺素材不删已存记录）；
 		# 该格已被玩家重新涂过则丢弃旧记录（当前位置的新值优先）。

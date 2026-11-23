@@ -1421,13 +1421,21 @@ func _open_play_cfg() -> void:
 	var btn_row = app.UiKitScript.hbox(8)
 	btn_row.alignment = BoxContainer.ALIGNMENT_END
 	btn_row.add_child(app.UiKitScript.button("取消", func(): pop.hide(), "ghost"))
+	var prefs_key := _prefs_key()
+	var generation := sess.generation
 	var apply_cfg := func():
-		var cfg := {}
+		if app._map_file_ctrl != self or sess.stale(generation) or prefs_key != _prefs_key():
+			return
+		var cfg: Dictionary = app.play_cfg.duplicate(true)
 		for sid in states:
 			cfg[sid] = (states[sid] as Callable).call()
+		var previous: Dictionary = app._prefs.duplicate(true)
+		app._prefs[prefs_key] = cfg
+		if not app._save_prefs():
+			app._prefs = previous
+			app._set_status("试玩配置写入失败，请重试")
+			return
 		app.play_cfg = cfg
-		app._prefs[_prefs_key()] = app.play_cfg
-		app._save_prefs()
 		pop.hide()
 		app._set_status("试玩配置已应用（仅影响试玩启动参数）")
 	btn_row.add_child(app.UiKitScript.button("应用", apply_cfg, "primary"))
@@ -1472,27 +1480,30 @@ func _prefs_key() -> String:
 	return root.path_join("|") + code
 
 func _sync_play_cfg_to_map() -> void:
-	var raw = app._prefs.get(_prefs_key(), null)
-	# 兼容旧键（纯图名）：只在项目键缺失时回退一次，读到即迁移到新键
-	if not (raw is Dictionary):
-		var legacy = app._prefs.get(app.cur_map_name, null)
-		if legacy is Dictionary:
-			raw = legacy
-			app._prefs[_prefs_key()] = legacy
-	if not (raw is Dictionary):
+	var key := _prefs_key()
+	var legacy_key := str(app.cur_map_name)
+	var raw = app._prefs.get(key, null)
+	var from_legacy := false
+	if not raw is Dictionary and legacy_key != "" and app._prefs.get(legacy_key) is Dictionary:
+		raw = app._prefs[legacy_key]
+		from_legacy = true
+	if not raw is Dictionary:
 		app.play_cfg = {}
 		return
-	var cfg := {}
-	var old_ab = (raw as Dictionary).get("abilities", null)
-	if old_ab is Array:
-		for x in (old_ab as Array):
-			cfg[str(x)] = true
-	var old_hp = (raw as Dictionary).get("hp", null)
-	if old_hp != null:
-		cfg["hp"] = int(old_hp)
-	for k in (raw as Dictionary):
-		if not cfg.has(k):
-			cfg[k] = (raw as Dictionary)[k]
+	var cfg: Dictionary = raw.duplicate(true)
+	var old_flags = cfg.get("abilities")
+	if old_flags is Array:
+		cfg.erase("abilities")
+		for flag in old_flags:
+			if flag is String and flag != "" and not cfg.has(flag):
+				cfg[flag] = true
+	if cfg.get("hp") is float:
+		cfg["hp"] = int(cfg.hp)
 	app.play_cfg = cfg
-	app._prefs[_prefs_key()] = cfg
-	app._save_prefs()
+	if from_legacy or cfg != raw:
+		var previous: Dictionary = app._prefs.duplicate(true)
+		app._prefs[key] = cfg
+		if from_legacy:
+			app._prefs.erase(legacy_key)
+		if not app._save_prefs():
+			app._prefs = previous

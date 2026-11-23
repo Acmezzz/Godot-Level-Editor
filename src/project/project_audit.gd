@@ -912,6 +912,8 @@ static func _edge_ref_problem(manifest: Dictionary, data: Dictionary, val) -> Di
 	if not (val is Dictionary):
 		return {"message": "格边引用值不是 {map, cell, edge} 字典", "fixable": true}
 	var v: Dictionary = val
+	if not v.get("edge") is String or not v.get("map", "") is String:
+		return {"message": "格边引用的 map 和 edge 必须是字符串", "fixable": true}
 	var e_code := str(v.get("edge", ""))
 	var ends := EdgeRef.parse_edge(e_code)
 	if ends.size() != 2:
@@ -936,12 +938,15 @@ static func _edge_ref_problem(manifest: Dictionary, data: Dictionary, val) -> Di
 	var g: GridSpace = GridSpace.resolve(tgt_meta, manifest).get("grid") as GridSpace
 	var ea := Vector2i(int(ends[0][0]), int(ends[0][1]))
 	var eb := Vector2i(int(ends[1][0]), int(ends[1][1]))
+	var w := int(tgt_meta.get("w", 0))
+	var h := int(tgt_meta.get("h", 0))
+	if w > 0 and h > 0 and (not g.cell_in_map(ea, w, h) or not g.cell_in_map(eb, w, h)):
+		return {"message": "格边引用超出目标地图范围: %s" % e_code, "fixable": true}
 	if not g.neighbors_any(ea).has(eb):
 		return {"message": "格边引用的两格在地图里不相邻: %s" % e_code, "fixable": true}
 	var cell = v.get("cell", null)
-	if cell is Array and (cell as Array).size() == 2:
-		if int((cell as Array)[0]) != ea.x or int((cell as Array)[1]) != ea.y:
-			return {"message": "格边引用的 cell 与 edge 不自洽: %s" % e_code, "fixable": true}
+	if not cell is Array or cell.size() != 2 or cell[0] != ea.x or cell[1] != ea.y:
+		return {"message": "格边引用的 cell 与 edge 不自洽: %s" % e_code, "fixable": true}
 	return {"message": "", "fixable": false}
 
 ## cell: 引用悬空判定（§4.2-2）：有限格图的合法性**只由声明决定**——cell_id 必须在目标图

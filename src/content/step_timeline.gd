@@ -66,8 +66,7 @@ static func conflicts(steps: Array) -> Array:
 	return conflicts_of(to_timeline(steps))
 
 ## 已有生效区间表时的重叠检测（P02：调用方算一次 to_timeline，多处复用）。
-static func conflicts_of(tl: Array) -> Array:
-	var out: Array = []
+static func _tracks_by_start(tl: Array) -> Dictionary:
 	# 每轨按起点排序后线性扫描：O(n log n)，大段演出拖动时每帧都要算
 	var by_track := {}
 	for i in tl.size():
@@ -78,21 +77,49 @@ static func conflicts_of(tl: Array) -> Array:
 		if not by_track.has(tr):
 			by_track[tr] = []
 		(by_track[tr] as Array).append(i)
-	for tr2 in by_track:
-		var idxs: Array = by_track[tr2]
-		idxs.sort_custom(func(a, b):
-			return float((tl[a] as Dictionary).get("at", 0.0)) < float((tl[b] as Dictionary).get("at", 0.0)))
-		for k in range(0, idxs.size() - 1):
-			var a: Dictionary = tl[idxs[k]]
-			var s0 := float(a.get("at", 0.0))
-			var e0 := s0 + float(a.get("duration", 0.0))
+	for idxs: Array in by_track.values():
+		idxs.sort_custom(func(a, b): return float(tl[a].at) < float(tl[b].at))
+	return by_track
+
+static func conflicts_of(tl: Array, limit := -1) -> Array:
+	var out: Array = []
+	if limit == 0:
+		return out
+	for idxs: Array in _tracks_by_start(tl).values():
+		for k in idxs.size():
+			var e: Dictionary = tl[idxs[k]]
 			for m in range(k + 1, idxs.size()):
-				var b: Dictionary = tl[idxs[m]]
-				var s1 := float(b.get("at", 0.0))
-				if s1 >= e0:
-					break   # 已按起点排序：后面的更靠右，不会与 a 重叠
+				if float(tl[idxs[m]].at) >= float(e.at) + float(e.duration):
+					break
 				out.append({"a": idxs[k], "b": idxs[m]})
+				if limit > 0 and out.size() >= limit:
+					return out
 	return out
+
+## 每个区间与所有起点落在它结束前的后续区间重叠。二分计数，不构造配对。
+static func overlap_summary(tl: Array) -> Dictionary:
+	var total := 0
+	var hot := {}
+	for idxs: Array in _tracks_by_start(tl).values():
+		var furthest := -1
+		for k in idxs.size():
+			var e: Dictionary = tl[idxs[k]]
+			var end := float(e.at) + float(e.duration)
+			var lo := k + 1
+			var hi := idxs.size()
+			while lo < hi:
+				var mid := (lo + hi) >> 1
+				if float(tl[idxs[mid]].at) < end:
+					lo = mid + 1
+				else:
+					hi = mid
+			var later := lo - k - 1
+			if later > 0 or k <= furthest:
+				hot[idxs[k]] = true
+			total += later
+			if later > 0:
+				furthest = maxi(furthest, lo - 1)
+	return {"count": total, "hot": hot}
 
 ## 允许进补丁的时间键（D1）；fields/step 等身份键不在此列，永不经时间轴改写。
 const PATCH_KEYS := ["at", "duration", "track", "blocking"]
@@ -151,8 +178,8 @@ static func warnings(steps: Array, limit := MAX_WARNINGS) -> Array:
 			total += 1
 			if limit <= 0 or out.size() < limit:
 				out.append("第 %d 步 duration 为负（拖右缘改回非负）" % (i + 1))
-	var pairs := conflicts_of(tl)
-	total += pairs.size()
+	total += int(overlap_summary(tl).count)
+	var pairs := conflicts_of(tl, -1 if limit <= 0 else maxi(0, limit - out.size()))
 	for pair in pairs:
 		if limit > 0 and out.size() >= limit:
 			break

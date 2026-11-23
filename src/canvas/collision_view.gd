@@ -10,12 +10,14 @@ extends Node2D
 ## 颜色/形状按清单 `collisionTypes` 声明（缺省池 = 内置四类）；斜坡画三角形
 ## （r45 右高 / l45 左高），一眼区分朝向。形状画法只认 rect/斜坡，其余声明形状暂按矩形画。
 
+const MapViewData := preload("res://src/map/map_view_data.gd")
 const CollisionTypes := preload("res://src/assets/collision_types.gd")
 
 var layer: TileMapLayer
 var grid_ref: GridSpace = null   # GridSpace 引用：cell 多边形随投影（等距 = 菱形）
 var canvas_ref   # 宿主编码画布：读 _collision_meta 做类型化分色分形
-var manifest := {}   # 清单（declared pool 的颜色来源）
+var manifest := {}
+var _cell_count := -1   # 清单（declared pool 的颜色来源）
 
 ## 声明 color → [填充, 描边]；未声明颜色的类型按 id 稳定取一个柔和色相。
 static func _colors_of(d: Dictionary) -> Array:
@@ -36,6 +38,7 @@ func setup(p_layer: TileMapLayer, p_tile_px: int, p_grid: GridSpace = null) -> N
 
 ## 数据变了就重画（碰撞格增删、撤销、区域粘贴都走这里）
 func refresh() -> void:
+	_cell_count = -1
 	queue_redraw()
 
 func _draw() -> void:
@@ -50,7 +53,23 @@ func _draw() -> void:
 		var world: Rect2 = vp.get_canvas_transform().affine_inverse() * Rect2(Vector2.ZERO, vp.get_visible_rect().size)
 		vis = get_global_transform().affine_inverse() * world
 		has_vis = true
-	for c in layer.get_used_cells():
+	var cells: Array[Vector2i]
+	if has_vis and grid_ref != null:
+		var window := grid_ref.cell_window(vis)
+		if _cell_count < 0:
+			cells = layer.get_used_cells()
+			_cell_count = cells.size()
+		if float(window.size.x) * float(window.size.y) < _cell_count and cells.is_empty():
+			for y in range(window.position.y, window.end.y):
+				for x in range(window.position.x, window.end.x):
+					var cell := Vector2i(x, y)
+					if layer.get_cell_source_id(cell) >= 0:
+						cells.append(cell)
+		elif cells.is_empty() and _cell_count > 0:
+			cells = layer.get_used_cells()
+	else:
+		cells = layer.get_used_cells()
+	for c in cells:
 		# 多边形一次算好：裁剪与绘制共用（原先每格算两次）
 		var poly := _cell_poly(c)
 		if has_vis and not vis.intersects(_bbox_of(poly)):
@@ -67,18 +86,7 @@ func _draw() -> void:
 		if d.is_empty():
 			d = {"id": ctype, "name": ctype, "shape": cshape}
 		var cols: Array = _colors_of(d)
-		var r := _bbox_of(poly)
-		# 斜坡按包围盒近似：r45 = 右高（实心在斜线下方），l45 = 左高
-		if cshape == "r45":
-			var pts := PackedVector2Array([r.position + Vector2(0, r.size.y), r.position + Vector2(r.size.x, 0), r.position + Vector2(r.size.x, r.size.y)])
-			draw_colored_polygon(pts, cols[0])
-			draw_polyline(pts + PackedVector2Array([pts[0]]), cols[1], 1.0)
-			continue
-		if cshape == "l45":
-			var pts2 := PackedVector2Array([r.position + Vector2(0, 0), r.position + Vector2(r.size.x, r.size.y), r.position + Vector2(0, r.size.y)])
-			draw_colored_polygon(pts2, cols[0])
-			draw_polyline(pts2 + PackedVector2Array([pts2[0]]), cols[1], 1.0)
-			continue
+		poly = MapViewData.collision_polygon(poly, cshape)
 		draw_colored_polygon(poly, cols[0])
 		draw_polyline(poly + PackedVector2Array([poly[0]]), cols[1], 1.0)
 

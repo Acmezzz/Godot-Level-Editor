@@ -849,13 +849,19 @@ func _step_field_row(fd: Dictionary, sfd: Dictionary, siblings: Array = [], arr:
 	var tok := _step_token(arr, si)
 	# R13：配对地图字段的现值注入 _mapKey——步骤字段的实例引用与摆放物同一语义。
 	var d := fd
-	if str(fd.get("mapField", "")) != "" and not siblings.is_empty():
-		var tk := RefFields.paired_map_value(fd, siblings, sfd)
+	var paired := str(fd.get("mapField", "")) != "" and not siblings.is_empty()
+	var tk := RefFields.paired_map_value(fd, siblings, sfd) if paired else ""
+	if paired:
 		if tk != "":
 			d = fd.duplicate(true)
 			d["_mapKey"] = tk
-	var built := FieldWidgets.build(d, val, func(v):
-		return _set_step_field(tok, key, v, rev), _resolve_options, "code")
+	var check_pair := func(values: Dictionary) -> bool:
+		if paired and RefFields.paired_map_value(fd, siblings, values) != tk:
+			app._set_status("配对地图已改，请重新打开步骤表单后选择引用")
+			return false
+		return true
+	var apply := func(v) -> bool: return _set_step_field(tok, key, v, rev, check_pair)
+	var built := FieldWidgets.build(d, val, apply, _resolve_options, "code")
 	if built.get("commit") is Callable and (built.commit as Callable).is_valid():
 		_pending_commits.append(built.commit)
 	var row := Kit.field_row(label, built.ctl, 96)
@@ -863,7 +869,7 @@ func _step_field_row(fd: Dictionary, sfd: Dictionary, siblings: Array = [], arr:
 	if tip != "":
 		row.tooltip_text = tip
 	if FieldWidgets.wants_canvas_pick(fd):
-		var pick := Kit.button("画布选…", func(): _pick_step_ref(fd, key, tok, rev), "ghost")
+		var pick := Kit.button("画布选…", func(): _pick_step_ref(fd, apply), "ghost")
 		pick.tooltip_text = "临时切到画布点一个实例；确认才写入这一步，取消不改当前值" \
 			if not FieldWidgets.wants_edge_pick(fd) else "临时切到画布点一条格边；确认才写入这一步，取消不改当前值"
 		if FieldWidgets.wants_cell_pick(fd):
@@ -876,7 +882,7 @@ func _step_field_row(fd: Dictionary, sfd: Dictionary, siblings: Array = [], arr:
 ## 期间步骤被增删/换序则丢弃（与拖拽同一套过期校验）。
 ## accept 按字段种类走：entity_ref = 实例；§7.4 edge_ref = 格边（值解码回 {map, cell, edge}）；
 ## C4 cell: 的 choice = 格图一格（值就是 cell_id 字符串）——与内容表单同一路径。
-func _pick_step_ref(fd: Dictionary, key: String, tok: Dictionary, rev: int) -> void:
+func _pick_step_ref(fd: Dictionary, apply: Callable) -> void:
 	var fname := str(fd.get("name", str(fd.get("id", ""))))
 	var is_cell := FieldWidgets.wants_cell_pick(fd)
 	var is_edge := FieldWidgets.wants_edge_pick(fd)
@@ -888,11 +894,9 @@ func _pick_step_ref(fd: Dictionary, key: String, tok: Dictionary, rev: int) -> v
 	var on_ok := func(code: String):
 		if code == "":
 			return
-		if is_edge:
-			var ev = JSON.parse_string(code)
-			_set_step_field(tok, key, ev if ev is Dictionary else {}, rev)
-		else:
-			_set_step_field(tok, key, code, rev)
+		var value = JSON.parse_string(code) if is_edge else code
+		if not is_edge or value is Dictionary:
+			apply.call(value)
 		_reopen_after_pick()
 	var on_cancel := func(_code: String):
 		_reopen_after_pick()
@@ -1221,7 +1225,7 @@ static func _step_index_of(arr: Array, tok: Dictionary) -> int:
 	return -1
 
 ## 写步骤字段：即时写盘，不重建表单（保焦点）。版本过期/令牌失效直接丢弃。
-func _set_step_field(tok: Dictionary, key: String, value, rev := -1) -> bool:
+func _set_step_field(tok: Dictionary, key: String, value, rev := -1, check_pair := Callable()) -> bool:
 	if tok.is_empty() or key == "" or (rev >= 0 and rev != _steps_rev):
 		return false
 	var data := _steps_data()
@@ -1233,6 +1237,8 @@ func _set_step_field(tok: Dictionary, key: String, value, rev := -1) -> bool:
 		return false
 	var st: Dictionary = arr[si]
 	var sfd: Dictionary = st.get("fields", {}) if st.get("fields", {}) is Dictionary else {}
+	if check_pair.is_valid() and not check_pair.call(sfd):
+		return false
 	if sfd.get(key, null) == value:
 		return true
 	sfd[key] = value

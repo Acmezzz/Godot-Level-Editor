@@ -50,6 +50,13 @@ func _used_in_rect(layer: TileMapLayer, sel: Rect2i) -> Array:
 	var out: Array = []
 	if layer == null or not is_instance_valid(layer):
 		return out
+	if float(sel.size.x) * float(sel.size.y) <= 4096:
+		for y in range(sel.position.y, sel.end.y):
+			for x in range(sel.position.x, sel.end.x):
+				var cell := Vector2i(x, y)
+				if layer.get_cell_source_id(cell) >= 0:
+					out.append(cell)
+		return out
 	for c in layer.get_used_cells():
 		if sel.has_point(c):
 			out.append(c)

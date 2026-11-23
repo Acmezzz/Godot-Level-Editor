@@ -480,6 +480,7 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	active_layer = clampi(active_layer, 0, layer_count())
 	_ent_by_id_dirty = true   # 整图载入（含撤销恢复）索引置脏
 	map_rev += 1              # 整图替换后下游缓存必须重扫
+	tile_rev += 1
 	ents_rev += 1
 	vis_rev += 1              # 层栈重建：可见集合缓存作废（P01）
 	modified.emit()
@@ -1204,6 +1205,7 @@ var ents_rev := 0
 func _mark(ents_changed := true) -> void:
 	modified_flag = true
 	map_rev += 1
+	tile_rev += 1
 	if ents_changed:
 		_ent_by_id_dirty = true   # 实体集变了，索引置脏
 		ents_rev += 1             # 下游缓存（内容编辑器实例/预览数组）随之失效
@@ -1223,6 +1225,7 @@ func _mark(ents_changed := true) -> void:
 func _mark_tiles() -> void:
 	modified_flag = true
 	map_rev += 1
+	tile_rev += 1
 	_layer_has_tiles.clear()   # 任一层的「有没有瓦片」都可能变：整表失效
 	for tv in tri_views:
 		if tv != null and is_instance_valid(tv):
@@ -1252,18 +1255,15 @@ func _mark_ents() -> void:
 func _mark_tiles_layer(li: int) -> void:
 	modified_flag = true
 	map_rev += 1
+	tile_rev += 1
 	_layer_has_tiles.erase(li)
-	for tv_i in tri_views.size():
-		if li >= 0 and tv_i != li:
-			continue
-		var tv = tri_views[tv_i]
-		if tv != null and is_instance_valid(tv):
-			(tv as Node).refresh()
+
 	modified.emit()
 
 ## 图层显隐版本号：ents_shown() 的可见集合缓存以它为键之一（层隐藏改变可见性
 ## 但不改实体集，ents_rev 抓不到）。实例眼睛开关走 visible_flag → 调用方照常 _mark()。
 var vis_rev := 0
+var tile_rev := 0
 
 ## —— 阶段三：按层计数缓存 ——
 ## 「这层有没有瓦片」在混放提示里每次放置都问一次，之前是全层 used_cells 重扫。
@@ -1468,6 +1468,9 @@ func erase_tile(lid: String, layer: TileMapLayer, cell: Vector2i) -> void:
 	if _unresolved_tiles.has(lid):
 		_unresolved_tiles[lid].erase(cell)
 	layer.erase_cell(cell)
+	var li := _layer_index_of(lid)
+	if li >= 0 and li < tri_views.size() and is_instance_valid(tri_views[li]):
+		tri_views[li].dirty_cell(cell)
 
 func write_tile_row(lid: String, layer: TileMapLayer, row: Array) -> bool:
 	var cell := Vector2i(int(row[0]), int(row[1]))

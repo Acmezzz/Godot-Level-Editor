@@ -11,8 +11,8 @@ static func precheck(data: Dictionary) -> Array[Dictionary]:
 	var issues: Array[Dictionary] = []
 	if not data.has("version"):
 		_add(issues, "error", "version", "version is required")
-	elif not (data["version"] is int or data["version"] is float):
-		_add(issues, "error", "version", "must be a number")
+	elif not _is_integral_number(data["version"]):
+		_add(issues, "error", "version", "must be a finite integer")
 	elif int(data["version"]) > MapFormat.VERSION:
 		_add(issues, "error", "version",
 			"map format %d is newer than this editor supports (%d)" % [int(data["version"]), MapFormat.VERSION])
@@ -28,7 +28,7 @@ static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 	var issues: Array[Dictionary] = []
 	# version：缺失/非数字 = 错误（结构契约没有锚点）；高于当前格式 = 错误（打不开新图）；
 	# 低于当前 = 警告（upgrade() 只抬版本号不迁移，结构问题由下面各项各自报出）
-	if not data.has("version") or not (data["version"] is int or data["version"] is float):
+	if not data.has("version") or not _is_integral_number(data["version"]):
 		_add(issues, "error", "version", "must be a number")
 	else:
 		var ver := int(data["version"])
@@ -46,8 +46,8 @@ static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 		_add(issues, "error", "meta", "must be an object")
 	else:
 		for key in ["w", "h"]:
-			if meta.has(key) and not (meta[key] is int or meta[key] is float):
-				_add(issues, "error", "meta." + key, "must be a number")
+			if meta.has(key) and (not _is_integral_number(meta[key]) or int(meta[key]) <= 0):
+				_add(issues, "error", "meta." + key, "must be a positive integer")
 		# 逐图投影（B1）：可选键，三种枚举；缺键 = 沿用项目解析
 		if meta.has("gridProjection") and not (str(meta.gridProjection) in ["orthogonal", "isometric", "hexagonal"]):
 			_add(issues, "error", "meta.gridProjection", "must be \"orthogonal\" / \"isometric\" / \"hexagonal\"")
@@ -67,13 +67,13 @@ static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 	var tiles = data.get("tiles", null)
 	if tiles != null and not (tiles is Dictionary):
 		_add(issues, "error", "tiles", "must be an object keyed by layer id")
-	elif tiles is Dictionary and not layer_ids.is_empty():
+	elif tiles is Dictionary:
 		var known_assets := _asset_ids(manifest)
 		var tile_cells := {}   # R21：同层同坐标多瓦片 = 错误（编辑器读入会覆写）
 		for lid in tiles.keys():
-			if not layer_ids.has(str(lid)):
+			if not layer_ids.is_empty() and not layer_ids.has(str(lid)):
 				_add(issues, "error", "tiles." + str(lid), "unknown layer id")
-			elif not (tiles[lid] is Array):
+			if not (tiles[lid] is Array):
 				_add(issues, "error", "tiles." + str(lid), "must be an array")
 			else:
 				for j in (tiles[lid] as Array).size():
@@ -92,13 +92,12 @@ static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 					elif int((cell as Array)[3]) < 0 or int((cell as Array)[4]) < 0 \
 							or int((cell as Array)[5]) < 0 or int((cell as Array)[5]) > 7:
 						_add(issues, "error", p, "atlas coords must be >= 0 and alt in 0..7")
-					elif not known_assets.is_empty() and not known_assets.has(str((cell as Array)[2])):
-						_add(issues, "warning", p, "asset id is not in the current manifest: " + str((cell as Array)[2]))
-					elif tile_cells.has("%s|%d|%d" % [str(lid), int((cell as Array)[0]), int((cell as Array)[1])]):
-						_add(issues, "error", p, "duplicate tile cell on layer %s: (%d,%d)" % [
-							str(lid), int((cell as Array)[0]), int((cell as Array)[1])])
-					else:
-						var ck := "%s|%d|%d" % [str(lid), int((cell as Array)[0]), int((cell as Array)[1])]
+					elif not known_assets.is_empty() and not known_assets.has(str(cell[2])):
+						_add(issues, "warning", p, "asset id is not in the current manifest: " + str(cell[2]))
+					if cell is Array and cell.size() >= 2 and _is_integral_number(cell[0]) and _is_integral_number(cell[1]):
+						var ck := "%s|%d|%d" % [str(lid), int(cell[0]), int(cell[1])]
+						if tile_cells.has(ck):
+							_add(issues, "error", p, "duplicate tile cell on layer %s: (%d,%d)" % [str(lid), int(cell[0]), int(cell[1])])
 						tile_cells[ck] = true
 	var spawn = data.get("spawn", [2, 2])
 	if not (spawn is Array) or spawn.size() != 2 or not _is_number_pair(spawn):
@@ -133,8 +132,12 @@ static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 				_add(issues, "error", p + ".shape", "must be a shape id string")
 	# C4（§7.4）：有限格图声明校验（meta.cellGraph：{cells: [{id, polygon, neighbors}]}）——
 	# 无重复 id、有效多边形、邻接目标存在。格图是只读参考层，坏声明 = cell_id 引用落空。
-	for it in CellGraph.validate_graph((meta as Dictionary).get("cellGraph", {}) if (meta as Dictionary).get("cellGraph", {}) is Dictionary else {}):
-		_add(issues, "error", str((it as Dictionary).get("path", "")), str((it as Dictionary).get("message", "")))
+	if meta is Dictionary and meta.has("cellGraph"):
+		if not meta.cellGraph is Dictionary:
+			_add(issues, "error", "meta.cellGraph", "must be an object")
+		else:
+			for it: Dictionary in CellGraph.validate_graph(meta.cellGraph):
+				_add(issues, "error", str(it.path), str(it.message))
 
 	return issues
 
@@ -165,7 +168,7 @@ static func _validate_layers(meta: Dictionary, issues: Array[Dictionary]) -> Dic
 		if ldef.has("visible") and not (ldef.visible is bool):
 			_add(issues, "error", p + ".visible", "must be a boolean")
 		# 层参数（第 5 批）：parallax/ySort/offset/scale 可选，类型错就报错
-		if ldef.has("parallax") and not (ldef.parallax is int or ldef.parallax is float):
+		if ldef.has("parallax") and not _finite_number(ldef.parallax):
 			_add(issues, "error", p + ".parallax", "must be a number")
 		if ldef.has("ySort") and not (ldef.ySort is bool):
 			_add(issues, "error", p + ".ySort", "must be a boolean")
@@ -175,7 +178,7 @@ static func _validate_layers(meta: Dictionary, issues: Array[Dictionary]) -> Dic
 				and ((loff as Array)[1] is int or (loff as Array)[1] is float)):
 			_add(issues, "error", p + ".offset", "must be [x, y] numbers")
 		if ldef.has("scale"):
-			if not (ldef.scale is int or ldef.scale is float):
+			if not _finite_number(ldef.scale):
 				_add(issues, "error", p + ".scale", "must be a number")
 			elif float(ldef.scale) <= 0.0:
 				# 非正缩放 = 层塌成点/镜像翻转：坐标换算的逆变换退化（除零），必须拦
@@ -219,7 +222,7 @@ static func _validate_objects(objects: Array, manifest: Dictionary, layer_ids: D
 					and str((known[aid] as Dictionary).get("kind", "")) != "entity":
 				_add(issues, "error", path + ".code", "only kind=entity assets may carry an instance code")
 		for key in ["x", "y"]:
-			if o.has(key) and not (o[key] is int or o[key] is float):
+			if o.has(key) and not _finite_number(o[key]):
 				_add(issues, "error", path + "." + key, "must be numeric")
 		if o.has("props") and not (o.props is Dictionary):
 			_add(issues, "error", path + ".props", "must be an object")
@@ -269,6 +272,9 @@ static func _validate_functions(raw, path: String, manifest: Dictionary, issues:
 		if (item as Dictionary).has("enabled") and not ((item as Dictionary).enabled is bool):
 			_add(issues, "error", p + ".enabled", "must be a boolean")
 
+static func _finite_number(value: Variant) -> bool:
+	return value is int or (value is float and is_finite(value))
+
 static func _is_number_pair(values: Array) -> bool:
 	return _is_number_prefix(values, 2)
 
@@ -284,18 +290,18 @@ static func _is_number_prefix(values: Array, count: int) -> bool:
 	if values.size() < count:
 		return false
 	for i in count:
-		if not (values[i] is int or values[i] is float):
+		if not _finite_number(values[i]):
 			return false
 	return true
 
 ## JSON 数字都是 float：接受有限且为整数的值，拒绝 5.5、NAN、INF（D01）。
 static func _is_integral_number(v) -> bool:
 	if v is int:
-		return true
+		return v >= -2147483648 and v <= 2147483647
 	if not (v is float):
 		return false
 	var f: float = v
-	return is_finite(f) and f == floorf(f)
+	return is_finite(f) and f >= -2147483648.0 and f <= 2147483647.0 and f == floorf(f)
 
 static func _add(issues: Array[Dictionary], severity: String, path: String, message: String) -> void:
 	issues.append({"severity": severity, "path": path, "message": message})

@@ -125,7 +125,7 @@ static func _value_commit(read_value: Callable, initial: Variant, on_set: Callab
 
 ## 构建控件。返回 {ctl: Control, commit: Callable}。
 ## commit 用于重建/切实例前统一提交连续控件（SpinBox/多行文本）的待写值；
-## 幂等（值未变不写盘）由下游 _set_field 保证。离散控件（CheckBox/LineEdit/OptionButton）commit 为空操作。
+## 离散控件即时提交。失败时保留控件值，由统一 commit 重试。
 ## option_resolver（可选）：Callable(decl) -> Array，元素为 {v, t} 或纯字符串，
 ## 供 choice 的 source（content:item / entity:portal,exit / map）动态取选项。
 static func build(decl: Dictionary, value, on_set: Callable,
@@ -155,8 +155,9 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 					"编辑器不会改写它，请游戏侧或手工修正")
 			var cb := CheckBox.new()
 			cb.button_pressed = bool(value)
-			cb.toggled.connect(func(v: bool): on_set.call(v))
-			return {"ctl": cb, "commit": Callable()}
+			var push := _value_commit(func(): return cb.button_pressed, cb.button_pressed, on_set)
+			cb.toggled.connect(func(_v: bool): push.call())
+			return {"ctl": cb, "commit": push}
 		"int", "float":
 			if not (value is int or value is float) and str(value) != "":
 				return _readonly(decl, value, "值类型不符：声明 %s，实际是 %s" % [typ, type_name(value)],
@@ -207,8 +208,10 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 			var cp := ColorPickerButton.new()
 			cp.color = Color(str(value) if str(value).begins_with("#") else "#ffffff")
 			cp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			cp.color_changed.connect(func(c: Color): on_set.call("#%s" % c.to_html(false)))
-			return {"ctl": cp, "commit": Callable()}
+			var read_color := func(): return "#%s" % cp.color.to_html(false)
+			var push := _value_commit(read_color, read_color.call(), on_set)
+			cp.color_changed.connect(func(_c: Color): push.call())
+			return {"ctl": cp, "commit": push}
 		"vector2":
 			# 维数按声明（C06）：缺省二维；声明 dims: 3 时只接受三元。多一元/少一元都只读，
 			# 否则一提交就会静默丢维度或把第三位吞掉。
@@ -302,7 +305,7 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 			var enc := JSON.stringify(value) if value is Dictionary else ""
 			return _build_choice(pd2, enc, func(v2):
 				var pd = JSON.parse_string(str(v2))
-				on_set.call(pd if pd is Dictionary else {}), option_resolver)
+				return on_set.call(pd if pd is Dictionary else {}), option_resolver)
 		"edge_ref":
 			# §7.4 格边引用 = 对象值 {map, cell, edge}；候选 = edge: 解析器（本图/配对图的共边）。
 			# 与 port_ref 同口径：JSON 串走 choice 控件，值不在候选里显示「(当前值)」。
@@ -312,7 +315,7 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 			var eenc := JSON.stringify(value) if value is Dictionary else ""
 			return _build_choice(ed2, eenc, func(v3):
 				var ed = JSON.parse_string(str(v3))
-				on_set.call(ed if ed is Dictionary else {}), option_resolver)
+				return on_set.call(ed if ed is Dictionary else {}), option_resolver)
 		"asset_ref":
 			# 资产引用走 choice 的同一套控件，只是选项来源由 asset: 解析器提供。
 			# 白名单两种写法：`of`（字段直写）或 `ids`（数组元素的同型声明——`of` 已被元素类型占用）。
@@ -554,9 +557,13 @@ static func _build_choice(decl: Dictionary, value, on_set: Callable,
 		idx = opt.get_item_count() - 1
 	if idx >= 0:
 		opt.select(idx)
-	opt.item_selected.connect(func(i: int):
-		on_set.call(str(opt.get_item_metadata(i))))
-	return {"ctl": opt, "commit": Callable()}
+	else:
+		opt.select(-1)
+	var read_choice := func():
+		return str(opt.get_item_metadata(opt.selected)) if opt.selected >= 0 else cur
+	var push := _value_commit(read_choice, cur, on_set)
+	opt.item_selected.connect(func(_i: int): push.call())
+	return {"ctl": opt, "commit": push}
 
 ## choice multiple：每选项一个勾选框；值 = 按选项顺序收集的已勾 v 列表（存字符串数组）。
 ## 值不在选项集里的残留项照单选口径保留——显示为「(当前值)」行，取消勾选 = 明确移除。
@@ -582,6 +589,7 @@ static func _build_choice_multi(decl: Dictionary, value, on_set: Callable,
 	for o in opts:
 		known[str((o as Dictionary).get("v", ""))] = true
 	var pend := {"v": chosen.duplicate()}
+	var push := _value_commit(func(): return pend.v.duplicate(), chosen, on_set)
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 2)
 	for o in opts:
@@ -594,7 +602,7 @@ static func _build_choice_multi(decl: Dictionary, value, on_set: Callable,
 				pend.v.append(ov)
 			elif not on:
 				pend.v.erase(ov)
-			on_set.call(pend.v.duplicate()))
+			push.call())
 		box.add_child(cb)
 	for extra in chosen:
 		var ev := str(extra)
@@ -606,9 +614,9 @@ static func _build_choice_multi(decl: Dictionary, value, on_set: Callable,
 		cb2.toggled.connect(func(on: bool):
 			if not on:
 				pend.v.erase(ev)
-			on_set.call(pend.v.duplicate()))
+			push.call())
 		box.add_child(cb2)
-	return {"ctl": box, "commit": Callable()}
+	return {"ctl": box, "commit": push}
 
 static func _norm_option(o) -> Dictionary:
 	if o is Dictionary:

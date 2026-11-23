@@ -287,13 +287,11 @@ func _load_prefs() -> void:
 	if parsed is Dictionary:
 		_prefs = parsed
 
-func _save_prefs() -> void:
-	var f := FileAccess.open(PREFS_PATH, FileAccess.WRITE)
-	if f == null:
-		push_warning("偏好写盘失败: " + PREFS_PATH)
-		return
-	f.store_string(JSON.stringify(_prefs, "\t"))
-	f.close()
+func _save_prefs() -> bool:
+	if MapStore.Recovery.write_json(PREFS_PATH, _prefs):
+		return true
+	push_warning("偏好写盘失败: " + PREFS_PATH)
+	return false
 
 ## D1：实体缩略图按项目目录缓存——启动/换图不再重复读盘；打开项目时清缓存
 var _ent_thumbs_cache := {}

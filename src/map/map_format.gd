@@ -75,3 +75,7 @@ static func alt_of_godot(g: int) -> int:
 	if g & 16384:
 		f |= TILE_ROT90
 	return f
+
+## 地图正文与冻结计划的摘要使用同一序列化格式。整图撤销使用紧凑正文。
+static func encode(data: Dictionary, compact := false) -> String:
+	return JSON.stringify(data, "" if compact else "	")

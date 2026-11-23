@@ -322,6 +322,21 @@ func to_grid(p: Vector2) -> Vector2:
 ## 按实际六角轮廓判定（最近中心只是 Voronoi 近似，与绘制形状在边界上不一致），
 ## 轮廓内优先、再取中心更近者；遍历序固定 → 边界结果稳定。
 ## B3 三角拓扑：返回值仍是 Vector2i（三角列 i, row），按对角线 x+y=1 分半格。
+## 像素视口的保守格窗口，供瓦片块/碰撞查询使用。六边取整及格边界留两格余量。
+func cell_window(rect: Rect2) -> Rect2i:
+	var low := Vector2(INF, INF)
+	var high := Vector2(-INF, -INF)
+	for point in [rect.position, rect.end, Vector2(rect.position.x, rect.end.y), Vector2(rect.end.x, rect.position.y)]:
+		var coord := to_grid(point)
+		low = low.min(coord)
+		high = high.max(coord)
+	var a := Vector2i(floori(low.x) - 2, floori(low.y) - 2)
+	var b := Vector2i(ceili(high.x) + 3, ceili(high.y) + 3)
+	if is_tri():
+		a.x *= 2
+		b.x *= 2
+	return Rect2i(a, b - a)
+
 func pick_cell(px: Vector2) -> Vector2i:
 	if is_tri():
 		return pick_tri(px)

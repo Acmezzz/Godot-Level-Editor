@@ -158,12 +158,24 @@ func _build_form_block() -> Control:
 	_form_id_edit.add_theme_font_size_override("font_size", Th.FS_META)
 	box.add_child(Kit.field_row("ID", _form_id_edit, 40))
 
+	var target := {"entity": _current_spr(), "binding": f, "doc": _doc_key(), "scope": _content_scope_guard()}
 	var name_edit := LineEdit.new()
 	name_edit.text = cname if cname != "" else fn_id
 	name_edit.placeholder_text = "显示名（空则用功能 id）"
 	name_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	name_edit.text_submitted.connect(func(t: String): _commit_name(i, t))
-	name_edit.focus_exited.connect(func(): _commit_name(i, name_edit.text))
+	var saved_name := {"text": name_edit.text}
+	var push_name := func() -> bool:
+		var text := name_edit.text.strip_edges()
+		if text == saved_name.text:
+			return true
+		if not _form_binding_matches(i, target) or not _commit_name(i, text):
+			return false
+		target.binding = _current_fns()[i]
+		saved_name.text = text
+		return true
+	_pending_commits.append(push_name)
+	name_edit.text_submitted.connect(func(_t: String): push_name.call())
+	name_edit.focus_exited.connect(func(): push_name.call())
 	box.add_child(Kit.field_row("显示名", name_edit, 56))
 
 	# 演出功能（声明 "steps": true）：只读摘要 + 子面板入口。步骤数组是这类功能
@@ -179,7 +191,9 @@ func _build_form_block() -> Control:
 		var slabel := Kit.hint_label("演出步骤：%s" % sum, RIGHT_W - 200)
 		slabel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		srow.add_child(slabel)
-		srow.add_child(Kit.button("编辑演出", func(): _open_steps_editor(i), "primary"))
+		srow.add_child(Kit.button("编辑演出", func():
+			if _form_binding_matches(i, target):
+				_open_steps_editor(i), "primary"))
 		box.add_child(srow)
 		box.add_child(Kit.divider())
 
@@ -187,7 +201,6 @@ func _build_form_block() -> Control:
 	if fields.is_empty():
 		box.add_child(Kit.hint_label("这个功能没有声明可填字段；填个名字即可。", RIGHT_W - 40))
 	var cur: Dictionary = data.get("fields", {}) if data.get("fields", {}) is Dictionary else {}
-	var target := {"entity": _current_spr(), "binding": _current_fns()[i], "doc": _doc_key()}
 	for fd in fields:
 		if not (fd is Dictionary):
 			continue
@@ -262,18 +275,23 @@ func _build_field_row(i: int, fn_id: String, fd: Dictionary, cur: Dictionary, si
 	# R13：配对地图字段的现值注入 _mapKey——功能/条件字段的实例引用与摆放物引用同一语义
 	# （缺省 = 本图；配对字段填了别的图就枚举那张图的实例）。
 	var d := fd
-	if str(fd.get("mapField", "")) != "" and not siblings.is_empty():
-		var tk := RefFields.paired_map_value(fd, siblings, cur)
+	var paired := str(fd.get("mapField", "")) != "" and not siblings.is_empty()
+	var tk := RefFields.paired_map_value(fd, siblings, cur) if paired else ""
+	if paired:
 		if tk != "":
 			d = fd.duplicate(true)
 			d["_mapKey"] = tk
 	var apply := func(v) -> bool:
-		var rows := _current_fns()
-		if target.doc != _doc_key() or target.entity != _current_spr() or i >= rows.size():
+		if not _form_binding_matches(i, target):
 			return false
-		if not is_same(rows[i], target.binding):
-			return false
-		var had_content := str(target.binding.get("content", "")) != ""
+		var cid := str(target.binding.get("content", ""))
+		if paired and cid != "":
+			var current := _content_read(fn_id, cid)
+			var values: Dictionary = current.get("fields", {})
+			if RefFields.paired_map_value(fd, siblings, values) != tk:
+				app._set_status("配对地图已改，请重新打开表单后选择引用")
+				return false
+		var had_content := cid != ""
 		var ok := _set_field(i, fn_id, key, v)
 		if ok and not had_content and i < _current_fns().size():
 			target.binding = _current_fns()[i]
@@ -296,6 +314,12 @@ func _build_field_row(i: int, fn_id: String, fd: Dictionary, cur: Dictionary, si
 		row.add_child(pick)
 	return row
 
+func _form_binding_matches(i: int, target: Dictionary) -> bool:
+	if not target.scope.call() or target.doc != _doc_key() or target.entity != _current_spr():
+		return false
+	var rows := _current_fns()
+	return i >= 0 and i < rows.size() and is_same(rows[i], target.binding)
+
 ## E1：为一个实例引用字段开画布选点（宿主 = app，会话管理与确认条都在那边）。
 ## 确认回调只写字段值；字段写盘走与手选下拉同一条 _set_field。
 ## C4：cell_id 字段走同一会话，accept="cell"（候选来自格图多边形，不走实例命中）。
@@ -314,11 +338,9 @@ func _pick_entity_for(fd: Dictionary, key: String, commit: Callable) -> void:
 	var on_ok := func(code: String):
 		if code == "":
 			return
-		if is_edge:
-			var ev = JSON.parse_string(code)
-			commit.call(ev if ev is Dictionary else {})
-		else:
-			commit.call(code)
+		var value = JSON.parse_string(code) if is_edge else code
+		if (is_edge and not value is Dictionary) or not commit.call(value):
+			return
 		# 下拉控件还停在旧值：提交后重建右栏让新值上屏（用户主动确认的写盘）
 		_rebuild_right()
 	var accept := "cell" if is_cell else ("edge" if is_edge else "entity")
@@ -530,10 +552,10 @@ func _record_content_delta(fn_id: String, cid: String, before: Dictionary, after
 	app.canvas._undo_history_ctrl.record_content(fn_id, cid, before, after, digest_before, digest_after)
 
 ## 显示名：内容条目的 name；改动写内容文件并同步实例绑定的 name（列表读的是绑定）。
-func _commit_name(i: int, text: String) -> void:
+func _commit_name(i: int, text: String) -> bool:
 	var fns := _current_fns()
 	if i < 0 or i >= fns.size():
-		return
+		return false
 	var f: Dictionary = fns[i] if fns[i] is Dictionary else {}
 	var fn_id := str(_resolve_fn(f).get("id", ""))
 	var nm := text.strip_edges()
@@ -543,34 +565,35 @@ func _commit_name(i: int, text: String) -> void:
 	if cid == "":
 		# 只改名字不创建内容：绑定里的 name 先记下，保持列表可读
 		if str(f.get("name", "")) == nm:
-			return
+			return true
 		var spr0 := _current_spr()
 		fns = fns.duplicate(true)
 		(fns[i] as Dictionary)["name"] = nm
 		_write_fns(spr0, fns)
 		_refresh_status_only()
-		return
+		return true
 	var rd := _content_read_ex(fn_id, cid)
 	var data: Dictionary = rd.data
 	if data.is_empty():
-		return
+		return false
 	if str(data.get("name", "")) == nm:
-		return
+		return true
 	var before: Dictionary = data.duplicate(true)
 	data["name"] = nm
 	var wr := _content_write(fn_id, cid, data, str(rd.digest))
 	if wr == "conflict":
 		_content_conflict(cid)
-		return
+		return false
 	if wr != "ok":
 		_ensure_failed()
-		return
+		return false
 	_record_content_delta(fn_id, cid, before, data, str(rd.digest))
 	var spr := _current_spr()
 	fns = fns.duplicate(true)
 	(fns[i] as Dictionary)["name"] = nm
 	_write_fns(spr, fns)
 	_refresh_status_only()
+	return true
 
 ## 新内容条目骨架：function 写功能码（执行引用），目录名仍是人类名（可读）。
 func _blank_content(fn_id: String, cid: String) -> Dictionary:
@@ -898,6 +921,8 @@ func _refresh_value_only() -> void:
 ## 跨功能不列：字段声明不同，复用没有意义。
 ## E3：名称筛选 + 改显示名（保 ID）+ 删除（先跑 C3 引用检查，仍被引用时停住）。
 func _open_lib(i: int) -> void:
+	if not commit():
+		return
 	var fns := _current_fns()
 	if i < 0 or i >= fns.size():
 		return
@@ -905,6 +930,7 @@ func _open_lib(i: int) -> void:
 	var fn_id := str(_resolve_fn(f).get("id", ""))
 	if fn_id == "":
 		return
+	var target := {"entity": _current_spr(), "binding": f, "doc": _doc_key(), "scope": _content_scope_guard()}
 	var fn_label := str(FunctionDecls.function_name(manifest, fn_id))
 	var shell: Dictionary = app._popup_body("选择已有%s内容" % fn_label,
 		"选中即复制进当前实例，生成新 ID。改显示名不改 ID；删除前先查引用。")
@@ -1056,6 +1082,8 @@ func _open_lib(i: int) -> void:
 		edges_lbl.text = _lib_edges_text(cid, bulk))
 
 	var on_ok := func():
+		if not _form_binding_matches(i, target) or not commit() or not _form_binding_matches(i, target):
+			return
 		if picked[0] == "":
 			app._set_status(" 先选一条内容")
 			return
@@ -1090,6 +1118,8 @@ func _batch_candidates(fn_id: String) -> Array:
 ## 批量只改已有内容文件：不新建内容、不碰绑定（绑定编辑走正常表单）。
 func _content_scope_guard() -> Callable:
 	var ctrl = app._map_file_ctrl
+	if ctrl == null:
+		return func() -> bool: return false
 	var generation := int(ctrl.sess.generation)
 	var source: Dictionary = manifest
 	return func() -> bool:
@@ -1475,6 +1505,10 @@ func _share_rebind(i: int, fn_id: String, cid: String) -> void:
 		return
 	if str(((_current_fns()[i] if i >= 0 and i < _current_fns().size() else {}) as Dictionary).get("content", "")) == cid:
 		return
+	var rows := _current_fns()
+	if i < 0 or i >= rows.size() or not rows[i] is Dictionary:
+		return
+	var target := {"entity": _current_spr(), "binding": rows[i], "doc": _doc_key(), "scope": _content_scope_guard()}
 	var bulk := ProjectAudit.content_edges_bulk(manifest, fn_id, [cid], app.canvas.cur_map_name, [])
 	var inst: Dictionary = ((bulk.get("refs", {}) as Dictionary).get(cid, {}) as Dictionary).get("instances", {})
 	var parts: Array[String] = []
@@ -1489,6 +1523,11 @@ func _share_rebind(i: int, fn_id: String, cid: String) -> void:
 	body.add_child(Kit.hint_label("目标内容：" + cid + "（沿用此 ID，不再复制）", RIGHT_W - 40))
 	# 确认 → 改绑：只改 bindings 的 content 键（地图改动，走 _write_fns 进撤销栈）
 	var go := func():
+		if not _form_binding_matches(i, target) or not commit() or not _form_binding_matches(i, target):
+			return
+		if _content_read(fn_id, cid).is_empty():
+			app._set_status("目标内容已变更，请重新选择")
+			return
 		var fns := _current_fns()
 		if i < 0 or i >= fns.size():
 			return
@@ -1625,7 +1664,8 @@ func _duplicate_from_lib(fn_id: String, old_id: String, new_name: String, bind_i
 	if not (data.get("steps", null) is Array):
 		data["steps"] = []
 	# 新内容 + 新绑定都属于 staged 范围（A2）：先暂存，等正式保存/试玩再落盘
-	commit()   # 复制库内容前先落盘当前表单待提交值（下标保持有效）
+	if not commit():
+		return
 	var fns := _current_fns().duplicate(true)
 	if bind_index >= 0 and bind_index < fns.size() and fns[bind_index] is Dictionary:
 		# 继承行复用：内容填进原行，行身份（mounted 标记/时机/并行）原样保留

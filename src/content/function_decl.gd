@@ -10,6 +10,7 @@ const PoolPrint := preload("res://src/core/pool_fingerprint.gd")
 
 static var _cache: Dictionary = {}
 static var _cache_key := ""
+static var _by_code := {}
 
 static func _key(m: Dictionary) -> String:
 	return PoolPrint.of(m, "functions")
@@ -111,6 +112,11 @@ static func functions(m: Dictionary) -> Dictionary:
 				continue
 			out[fid2] = _normalize_fn(fid2, src2)
 	_cache = out
+	_by_code = {}
+	for id in out:
+		var code := str(out[id].get("code", ""))
+		if code != "" and not _by_code.has(code):
+			_by_code[code] = id
 	_cache_key = key
 	return out
 
@@ -169,10 +175,8 @@ static func fn_code(m: Dictionary, fn_id: String) -> String:
 static func fn_id_of(m: Dictionary, code: String) -> String:
 	if code == "":
 		return ""
-	for fid in functions(m):
-		if str((functions(m)[fid] as Dictionary).get("code", "")) == code:
-			return str(fid)
-	return ""
+	functions(m)
+	return str(_by_code.get(code, ""))
 
 ## 资产类型的自带功能（挂载）：清单 assets[].functions = 功能 id 数组，声明顺序即默认执行顺序。
 ## 返回 [{id, code}]；挂载了未声明功能的 id 被过滤（校验层报错误），保证返回的都可用。

@@ -14,6 +14,8 @@ const FunctionDecls := preload("res://src/content/function_decl.gd")
 ## map_store，而 map_store 要复用本模块做改名/复制的冻结计划，静态 preload 会成环。
 const CONTENT_STORE_PATH := "res://src/content/content_store.gd"
 
+const MapFormat := preload("res://src/map/map_format.gd")
+
 static func _content_store():
 	return load(CONTENT_STORE_PATH)
 
@@ -137,7 +139,7 @@ func apply(plan: Dictionary, hooks: Dictionary) -> Dictionary:
 					"journal": log_path, "targets": receipts}
 			written.append(kind)
 			var rdig := Recovery.digest(path)
-			if not Recovery.mark_pending_written(m, log_path, targets.find(tgt), rdig):
+			if not _mark_unpredicted(m, log_path, journal, receipts.size(), rdig):
 				receipts.append(_receipt_of(tgt, "written", rdig))
 				receipts.append_array(_receipts_pending(targets, path))
 				return {"status": "failed", "written": written, "conflicts": [],
@@ -166,7 +168,7 @@ func apply(plan: Dictionary, hooks: Dictionary) -> Dictionary:
 				return {"status": "failed", "written": written, "conflicts": [],
 					"error": "删除失败：%s" % path, "journal": log_path, "targets": receipts}
 			written.append(kind)
-			if not Recovery.mark_pending_written(m, log_path, targets.find(tgt), ""):
+			if not _mark_unpredicted(m, log_path, journal, receipts.size(), ""):
 				receipts.append(_receipt_of(tgt, "deleted", ""))
 				receipts.append_array(_receipts_pending(targets, path))
 				return {"status": "failed", "written": written, "conflicts": [],
@@ -272,7 +274,7 @@ func apply(plan: Dictionary, hooks: Dictionary) -> Dictionary:
 		# 回填失败 = 日志已不可判读（被外部删/改）：**停在已写状态**，不再往下写，
 		# 让下次启动 scan_pending 按「文件摘要 vs 预期」重新判定（§7.1 阶段一）。
 		var dig := Recovery.digest(path)
-		if not Recovery.mark_pending_written(m, log_path, targets.find(tgt), dig):
+		if not _mark_unpredicted(m, log_path, journal, receipts.size(), dig):
 			receipts.append(_receipt_of(tgt, "written", dig))
 			receipts.append_array(_receipts_pending(targets, path))
 			return {"status": "failed", "written": written, "conflicts": [],
@@ -400,7 +402,7 @@ func apply_frozen(plan: Dictionary) -> Dictionary:
 				return _frozen_fail(tgt, targets, receipts, written, log_path,
 					"文件系统重命名失败：%s → %s" % [from, path])
 			written.append(kind)
-			if not _frozen_mark(tgt, targets, receipts, written, m, log_path, path):
+			if not _frozen_mark(tgt, journal, receipts, m, log_path, path):
 				return _frozen_log_fail(targets, receipts, written, log_path, path)
 			continue
 		if op == "delete":
@@ -412,7 +414,7 @@ func apply_frozen(plan: Dictionary) -> Dictionary:
 				return _frozen_fail(tgt, targets, receipts, written, log_path, "删除失败：%s" % path)
 			written.append(kind)
 			receipts.append(_receipt_of(tgt, "deleted", ""))
-			if not Recovery.mark_pending_written(m, log_path, targets.find(tgt), ""):
+			if not _mark_unpredicted(m, log_path, journal, receipts.size() - 1, ""):
 				return _frozen_log_fail(targets, receipts, written, log_path, path)
 			continue
 		var absent := bool(tgt.get("target_absent", false))
@@ -432,7 +434,7 @@ func apply_frozen(plan: Dictionary) -> Dictionary:
 				return _frozen_fail(tgt, targets, receipts, written, log_path,
 					"内容写入失败：%s" % str(tgt.get("id", "")))
 			written.append("content")
-			if not _frozen_mark(tgt, targets, receipts, written, m, log_path, p):
+			if not _frozen_mark(tgt, journal, receipts, m, log_path, p):
 				return _frozen_log_fail(targets, receipts, written, log_path, p)
 			continue
 		# 冻结字节目标（地图文档等）
@@ -444,7 +446,7 @@ func apply_frozen(plan: Dictionary) -> Dictionary:
 				return _frozen_fail(tgt, targets, receipts, written, log_path,
 					"地图写盘失败（写前校验不过或目标不可写）：%s" % path)
 			written.append(kind)
-			if not _frozen_mark(tgt, targets, receipts, written, m, log_path, path):
+			if not _frozen_mark(tgt, journal, receipts, m, log_path, path):
 				return _frozen_log_fail(targets, receipts, written, log_path, path)
 			continue
 		if str(tgt.get("frozen_text", "")) == "":
@@ -453,7 +455,7 @@ func apply_frozen(plan: Dictionary) -> Dictionary:
 		if not Recovery.write_text(path, str(tgt.get("frozen_text", ""))):
 			return _frozen_fail(tgt, targets, receipts, written, log_path, "写盘失败：%s" % path)
 		written.append(kind)
-		if not _frozen_mark(tgt, targets, receipts, written, m, log_path, path):
+		if not _frozen_mark(tgt, journal, receipts, m, log_path, path):
 			return _frozen_log_fail(targets, receipts, written, log_path, path)
 	Recovery.clear_pending(m, log_path)
 	if written.has("map"):
@@ -471,23 +473,27 @@ func _frozen_conflict(tgt: Dictionary, targets: Array, receipts: Array, log_path
 	for row in receipts:
 		if row.get("status") in ["written", "deleted"]:
 			written.append(row.get("kind", ""))
-	receipts.append(_receipt_of(tgt, "conflict", ""))
+	var failed := _receipt_of(tgt, "conflict", "")
+	failed["message"] = msg
+	receipts.append(failed)
 	receipts.append_array(_receipts_pending(targets, str(tgt.get("path", ""))))
 	return {"status": "conflict", "written": written, "conflicts": [{"path": str(tgt.get("path", "")),
 		"kind": str(tgt.get("kind", "")), "message": msg}], "receipt": {}, "targets": receipts, "journal": log_path}
 
 func _frozen_fail(tgt: Dictionary, targets: Array, receipts: Array, written: Array, log_path: String,
 		msg: String) -> Dictionary:
-	receipts.append(_receipt_of(tgt, "failed", ""))
+	var failed := _receipt_of(tgt, "failed", "")
+	failed["message"] = msg
+	receipts.append(failed)
 	receipts.append_array(_receipts_pending(targets, str(tgt.get("path", ""))))
 	return {"status": "failed", "written": written, "conflicts": [], "error": msg,
 		"journal": log_path, "targets": receipts}
 
 ## 回填一条成功进度；false = 日志已不可判读（调用方停在已写状态）。
-func _frozen_mark(tgt: Dictionary, targets: Array, receipts: Array, _written: Array,
+func _frozen_mark(tgt: Dictionary, journal: Array, receipts: Array,
 		m: Dictionary, log_path: String, digest_path: String) -> bool:
 	var dig := Recovery.digest(digest_path)
-	if not Recovery.mark_pending_written(m, log_path, targets.find(tgt), dig):
+	if not _mark_unpredicted(m, log_path, journal, receipts.size(), dig):
 		receipts.append(_receipt_of(tgt, "written", dig))
 		return false
 	receipts.append(_receipt_of(tgt, "written", dig))
@@ -498,6 +504,15 @@ func _frozen_log_fail(targets: Array, receipts: Array, written: Array, log_path:
 	return {"status": "failed", "written": written, "conflicts": [],
 		"error": "提交日志进度回填失败：已写文件保留，其后目标未写（日志已留在 editor/pending 供复核）",
 		"journal": log_path, "targets": receipts}
+
+## 摘要已在写前日志登记时，重启可直接核对磁盘，无须重写日志。
+static func _mark_unpredicted(m: Dictionary, path: String, journal: Array, index: int, digest: String) -> bool:
+	if index < 0 or index >= journal.size():
+		return false
+	var entry: Dictionary = journal[index]
+	if str(entry.get("op", "")) == "delete" or (digest != "" and digest == str(entry.get("expect", ""))):
+		return true
+	return Recovery.mark_pending_written(m, path, index, digest)
 
 ## 单目标收据：{kind, id, path, status, digest}。digest 只在真写了文件时给。
 static func _receipt_of(tgt: Dictionary, status: String, dig: String) -> Dictionary:

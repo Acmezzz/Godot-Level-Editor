@@ -33,11 +33,12 @@ static func _read_cached(path: String, m: Dictionary) -> Dictionary:
 	var mt := FileAccess.get_modified_time(path)
 	var sz := _file_size(path)
 	var hit = _cache.get(path, null)
-	if hit != null and int(hit.get("mtime", -1)) == mt and int(hit.get("size", -1)) == sz:
+	if (hit != null and int(hit.get("mtime", -1)) == mt and int(hit.get("size", -1)) == sz
+			and int(hit.get("revision", -1)) == project_rev):
 		return hit.get("data", {})
 	var result := read_path(path, m)
 	if result.ok:
-		_cache[path] = {"mtime": mt, "size": sz, "data": result.data}
+		_cache[path] = {"mtime": mt, "size": sz, "revision": project_rev, "data": result.data}
 	return result.data if result.ok else {}
 
 static func _file_size(path: String) -> int:
@@ -52,6 +53,7 @@ static func _file_size(path: String) -> int:
 ## 正式写入路径各自失效或直读。需要看到磁盘最新结构时（脚本/诊断）调用它强制重扫。
 static func invalidate_read_cache() -> void:
 	_cache.clear()
+	invalidate_code_map()
 
 ## 统一文本解码、版本升级与结构校验；错误时不返回可编辑数据。
 ## 先跑原始文档检查（版本缺失/超前、退役键），再抬版本号并做结构校验（D11）。
@@ -61,7 +63,9 @@ static func decode_text(text: String, source := "", manifest := {}) -> Dictionar
 		return {"ok": false, "data": {}, "errors": [{"path": source, "message": "JSON must be an object"}], "warnings": [], "migrated": false}
 	var data: Dictionary = parsed
 	var issues := MapValidator.precheck(data)
-	var migrated := upgrade(data)
+	var migrated := false
+	if not issues.any(func(issue): return issue.severity == "error"):
+		migrated = upgrade(data)
 	issues.append_array(MapValidator.validate(data, manifest))
 	var errors: Array[Dictionary] = []
 	var warnings: Array[Dictionary] = []
@@ -179,6 +183,7 @@ static func code_map(m: Dictionary) -> Dictionary:
 static func _cm_signature(m: Dictionary, names: Array) -> String:
 	var parts := PackedStringArray()
 	parts.append(str(m.get("_maps_dir", "")))
+	parts.append(str(project_rev))
 	parts.append(str(names.size()))
 	for mn in names:
 		var p := path_for(m, str(mn))
@@ -252,7 +257,7 @@ static func write(m: Dictionary, name: String, data: Dictionary) -> bool:
 	# maps 目录可能还不存在（新项目/测试临时目录）：写入口负责建，不依赖历史目录副作用
 	DirAccess.make_dir_recursive_absolute(path.get_base_dir())
 	var staged := Recovery.stage_snapshot(m, code, name, path)
-	if not write_json(path, data):
+	if not write_text(path, MapFormat.encode(data)):
 		Recovery.discard_snapshot(staged)   # 替换失败：不把快照计入历史（旧历史不减）
 		return false
 	if staged != "" and not Recovery.commit_snapshot(m, code, name, staged):
@@ -316,14 +321,7 @@ static var test_fail_prefix := ""
 static func write_text(path: String, text: String) -> bool:
 	if test_fail_prefix != "" and path.begins_with(test_fail_prefix):
 		return false
-	# V4 P0-3：唯一临时名。固定后缀会让地图/清单/内容/历史同时写同目录时互相截断，
-	# 且残留的旧 .tmp 可能被当成合法中间态。
-	var tmp := path + ".tmp-" + str(Time.get_ticks_usec()) + "-" + str(randi() % 100000)
-	if not _write_bytes(tmp, text.to_utf8_buffer()):
-		return false
-	var err := DirAccess.rename_absolute(tmp, path)
-	if err != OK:
-		DirAccess.remove_absolute(tmp)
+	if not Recovery.write_text(path, text):
 		return false
 	_cache.erase(path)   # 写后失效，下次读回源
 	invalidate_code_map()   # 码表签名依赖 mtime，同秒改写也可能撞上——写路径直接置失效

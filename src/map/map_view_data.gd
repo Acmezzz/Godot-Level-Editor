@@ -1,10 +1,25 @@
 extends RefCounted
 ## MapViewData（§7.3）：一份场景几何的只读视图数据——格多边形、层内变换、代表点。
 ## 内容预览与主画布共用同一口径（预览直接调 layer_transform + GridSpace 格多边形）；
-## 导出是**数据坐标下的俯视概览**，按同一格多边形但**不叠层变换**（见 map_export 头注释）。
-## PNG 概览允许色块简化，但格形、落点与范围必须保真（R19 口径）。
+## PNG 概览允许色块简化，但与内容预览共用格形、层变换和落位规则。
 
 const GridSpaceScript := preload("res://src/canvas/grid_space.gd")
+
+static func object_segment(policy: String) -> int:
+	match policy:
+		"below": return 0
+		"above": return 2
+	return 1
+
+static func collision_polygon(poly: PackedVector2Array, shape: String) -> PackedVector2Array:
+	if shape != "r45" and shape != "l45":
+		return poly
+	var r := Rect2(poly[0], Vector2.ZERO)
+	for p in poly:
+		r = r.expand(p)
+	var bottom_left := Vector2(r.position.x, r.end.y)
+	var high := Vector2(r.end.x, r.position.y) if shape == "r45" else r.position
+	return PackedVector2Array([bottom_left, high, r.end])
 
 ## 生效格空间（GridSpace.resolve 的转发；要 issues 的调用点直接调 GridSpace.resolve）。
 static func effective_grid(data: Dictionary, manifest: Dictionary) -> GridSpace:

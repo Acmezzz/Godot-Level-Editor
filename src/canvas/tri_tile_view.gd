@@ -23,6 +23,7 @@ var cvs   # 宿主画布（manifest / atlas_texs / asset_of_source / asset_cell�
 ## refresh() 整表作废，下次绘制重建一次（O(该层瓦片数)），此后平移/缩放只遍历可见块。
 var _blocks := {}
 var _built := false
+var _dirty_blocks := {}
 var _atlas_rev := -1   # 图集重建（外改图集 / 资产增删）后，缓存里的纹理引用会过期
 
 func setup(p_layer: TileMapLayer, p_grid: GridSpace, p_cvs) -> Node2D:
@@ -36,9 +37,9 @@ func refresh() -> void:
 	_built = false
 	queue_redraw()
 
-func _process(_dt: float) -> void:
-	# 图层显隐由 layer_ops._apply_layer_shown 直接设置（数据节点常隐，这里不反向跟随）
-	pass
+func dirty_cell(cell: Vector2i) -> void:
+	_dirty_blocks[_block_key(cell)] = true
+	queue_redraw()
 
 func _draw() -> void:
 	if layer == null or not is_instance_valid(layer) or grid == null or cvs == null:
@@ -48,7 +49,9 @@ func _draw() -> void:
 		return
 	if not _built or _atlas_rev != int(cvs.atlas_rev):
 		_atlas_rev = int(cvs.atlas_rev)
-		_build_blocks()
+		_blocks.clear()
+		_build_blocks(layer.get_used_cells())
+		_dirty_blocks.clear()
 		_built = true
 	# §5：按可见世界矩形裁剪——只遍历与视口相交的块，块内图元已算好。
 	var vis := Rect2()
@@ -58,7 +61,32 @@ func _draw() -> void:
 		var world: Rect2 = vp.get_canvas_transform().affine_inverse() * Rect2(Vector2.ZERO, vp.get_visible_rect().size)
 		vis = get_global_transform().affine_inverse() * world
 		has_vis = true
-	for k in _blocks:
+	var keys: Array = _blocks.keys()
+	for key: Vector2i in _dirty_blocks:
+		_blocks.erase(key)
+		var start := key * BLOCK
+		var cells: Array[Vector2i] = []
+		for y in range(start.y, start.y + BLOCK):
+			for x in range(start.x, start.x + BLOCK):
+				var cell := Vector2i(x, y)
+				if layer.get_cell_source_id(cell) >= 0:
+					cells.append(cell)
+		_build_blocks(cells)
+	if not _dirty_blocks.is_empty():
+		keys = _blocks.keys()
+		_dirty_blocks.clear()
+	if has_vis:
+		var range_cells := grid.cell_window(vis)
+		var lo := _block_key(range_cells.position)
+		var hi := _block_key(range_cells.end - Vector2i.ONE)
+		if float(hi.x - lo.x + 1) * float(hi.y - lo.y + 1) < keys.size():
+			keys = []
+			for y in range(lo.y, hi.y + 1):
+				for x in range(lo.x, hi.x + 1):
+					var key := Vector2i(x, y)
+					if _blocks.has(key):
+						keys.append(key)
+	for k in keys:
 		var blk: Dictionary = _blocks[k]
 		if has_vis and not vis.intersects(blk.bbox as Rect2):
 			continue
@@ -73,8 +101,8 @@ static func _block_key(c: Vector2i) -> Vector2i:
 	return Vector2i(floori(float(c.x) / BLOCK), floori(float(c.y) / BLOCK))
 
 ## 重建块表：遍历一次该层瓦片，把多边形/UV/纹理算好按块归堆。
-func _build_blocks() -> void:
-	for c in layer.get_used_cells():
+func _build_blocks(cells: Array[Vector2i]) -> void:
+	for c in cells:
 		if layer.get_cell_tile_data(c) == null:
 			continue
 		var src := layer.get_cell_source_id(c)
@@ -147,29 +175,34 @@ static func tri_uvs(poly: PackedVector2Array, atl: Vector2i, cs: Vector2i, tex_s
 	for p2: Vector2 in poly:
 		var lx := (p2.x - mn.x) / sx
 		var ly := (p2.y - mn.y) / sy
-		# R18：按编辑器变换位在切片内部施加变换（D4 作用，见 map_format ALT_* 表）：
-		# 0 恒等 / 1 水平翻转 / 2 垂直翻转 / 3 180° / 4 转置 / 5 90° / 6 270° / 7 270°·翻转
-		var ux := lx
-		var uy := ly
-		var a := alt & 7
-		if a == 1:
-			ux = 1.0 - lx
-		elif a == 2:
-			uy = 1.0 - ly
-		elif a == 3:
-			ux = 1.0 - lx
-			uy = 1.0 - ly
-		elif a == 4:
-			ux = ly
-			uy = lx
-		elif a == 5:
-			ux = 1.0 - ly
-			uy = lx
-		elif a == 6:
-			ux = ly
-			uy = 1.0 - lx
-		elif a == 7:
-			ux = 1.0 - ly
-			uy = 1.0 - lx
-		out.append(Vector2(lerpf(u0, u1, ux), lerpf(v0, v1, uy)))
+		var uv := tile_uv(Vector2(lx, ly), alt)
+		out.append(Vector2(lerpf(u0, u1, uv.x), lerpf(v0, v1, uv.y)))
 	return out
+
+## 图集格内的 D4 变换，实时预览和 PNG 采样共用。
+static func tile_uv(local: Vector2, alt: int) -> Vector2:
+	var lx := local.x
+	var ly := local.y
+	var ux := lx
+	var uy := ly
+	var a := alt & 7
+	if a == 1:
+		ux = 1.0 - lx
+	elif a == 2:
+		uy = 1.0 - ly
+	elif a == 3:
+		ux = 1.0 - lx
+		uy = 1.0 - ly
+	elif a == 4:
+		ux = ly
+		uy = lx
+	elif a == 5:
+		ux = 1.0 - ly
+		uy = lx
+	elif a == 6:
+		ux = ly
+		uy = 1.0 - lx
+	elif a == 7:
+		ux = 1.0 - ly
+		uy = 1.0 - lx
+	return Vector2(ux, uy)

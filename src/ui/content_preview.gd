@@ -7,6 +7,7 @@ const Th := preload("res://src/ui/ui_theme.gd")
 const K := preload("res://src/core/constants.gd")
 const MapExport := preload("res://src/map/map_export.gd")
 const MapViewData := preload("res://src/map/map_view_data.gd")
+const CollisionTypes := preload("res://src/assets/collision_types.gd")
 const MapFormat := preload("res://src/map/map_format.gd")
 
 ## 悬停高亮色：青色，和选中框的黄（Th.WARN）区分开
@@ -24,7 +25,9 @@ var _pan := Vector2.ZERO
 var _panning := false   # 中键按住拖动平移（手势同关卡画布）
 # 瓦片缓存（整图满涂时每次重绘重建上万条临时数组——按 canvas.map_rev 缓存）
 var _tiles_cache := {}
-var _tiles_rev := {}   # 层栈下标 -> 缓存对应的 map_rev
+var _tiles_rev := {}   # 层栈下标 -> 缓存对应的 tile_rev
+var _entity_order_key := []
+var _entity_order: Array = []
 
 func _init(h) -> void:
 	self.host = h
@@ -163,16 +166,16 @@ func _hit_at(pos: Vector2) -> String:
 		return ""
 	var origin := _origin(s)
 	var world := (pos - origin) / s
-	var ents: Array = host._entities()
+	var ents := _ordered_entities()
 	for i in range(ents.size() - 1, -1, -1):
 		var row: Dictionary = ents[i]
 		var n: EntityNode = row.node
-		if n == null or not is_instance_valid(n):
+		if str(row.code) == "" or n == null or not is_instance_valid(n):
 			continue
 		if not host.app.canvas.is_entity_shown(n):
 			continue
-		var li: int = host.app.canvas._layer_index_of(n.layer_id)
-		var lp: Vector2 = world if li < 0 else host.app.canvas.to_layer_local(li, world)
+		var xf := MapViewData.layer_transform(host.app.canvas.map_data, n.layer_id)
+		var lp := xf.affine_inverse() * world
 		if n.contains_point(lp):
 			return str(row.code)
 	return ""
@@ -217,157 +220,121 @@ func _draw_map() -> void:
 			draw_line(Vector2(origin.x, py), Vector2(origin.x + map_px.x, py), grid_col, 1.0)
 	draw_rect(Rect2(origin + mbb.position * s, map_px), Color(1, 1, 1, 0.25), false, 1.0)
 
-	# 各用户层真实瓦片：预览必须看得出实例压在哪块地上，只画网格等于丢了一半信息。
-	# 数据优先取画布实时 TileMapLayer（刚涂的与主画布一致），退回 map_data 的序列化数组；
-	# 两种来源都归一成 [x, y, 资产id, ax, ay]；预览不分层配色，统一用地形色。
-	# R19：非正交图（等距/六边/斜基/三角）的地形按 GridSpace 格多边形落位与着色
-	# （与主画布/导出同一口径），实体走世界坐标——同一 GridSpace 下地形与实例对齐。
-	# 正交图保持原纹理块绘制；参考图允许色块简化，但格形、落点与范围必须保真。
-	var gs: GridSpace = MapExport.grid_of(host.app.canvas.map_data, host.app.manifest)
-	var use_poly: bool = gs.has_basis or gs.is_iso() or gs.is_hex() or gs.is_tri()
-	var layers: Array = meta.get("layers", [])
-	if not use_poly:
-		for li in layers.size():
-			var ldef = layers[li]
-			if not (ldef is Dictionary):
-				continue
-			var fallback: Color = Th.MAP_TERRAIN
-			var lid := str(ldef.get("id", ""))
-			# 层 offset/scale 同样作用在正交瓦片上（否则瓦片不动、实例动，预览会错位）。
-			# 层变换统一取 MapViewData.layer_transform（与画布/导出同一份规则），每层只算一次。
-			var lxf := MapViewData.layer_transform(host.app.canvas.map_data, lid)
-			for t in _tiles(li, lid):
-				# 只画地图边界内的格：画布允许在边界外涂，预览出框会显得脏。
-				# 三角拓扑的 x 是三角列（0..2w-1），边界判定交 GridSpace（V4 P1）
-				if not gs_lines.cell_in_map(Vector2i(int(t[0]), int(t[1])), mw, mh):
-					continue
-				var cx := int(t[0])
-				var cy := int(t[1])
-				var aid := str(t[2])
-				var texs: Array = host.app.canvas.atlas_texs
-				var ai: int = host.app.canvas.source_of_asset(aid)
-				var cs := Vector2(host.app.canvas.asset_cell(aid))
-				var src := Rect2(Vector2(float(t[3]), float(t[4])) * cs, cs)
-				var alt := int(t[5]) if t.size() >= 6 else 0
-				var atex: Texture2D = null
-				if ai >= 0 and ai < texs.size():
-					atex = texs[ai] as Texture2D
-				# 正交格形本来就是方形：无层变换时直接量出目标矩形（不每格走 cell_polygon）；
-				# 有层变换才取格多边形过变换再取包围盒（与实例同一条规则）。
-				var quad: PackedVector2Array
-				var dst: Rect2
-				if lxf == Transform2D.IDENTITY:
-					dst = Rect2(origin + Vector2(float(cx) * tile_w * s, float(cy) * tile_h * s),
-						Vector2(tile_w, tile_h) * s)
-					quad = PackedVector2Array([dst.position, Vector2(dst.end.x, dst.position.y),
-						dst.end, Vector2(dst.position.x, dst.end.y)])
-				else:
-					var poly := _xformed(lxf, gs.cell_polygon(Vector2i(cx, cy)))
-					var bb := _poly_bbox(poly)
-					dst = Rect2(origin + bb.position * s, bb.size * s)
-					quad = PackedVector2Array()
-					for p1 in poly:
-						quad.append(origin + (p1 as Vector2) * s)
-				if atex == null:
-					draw_rect(dst, fallback, true)
-				elif alt == 0:
-					# 无变换：直接按纹理块贴（最快路径）
-					draw_texture_rect_region(atex, dst, src)
-				elif cs != Vector2.ZERO:
-					# alt ≠ 0：翻转/转置编在切片内，纹理块贴图会丢掉它们——
-					# 改走与多边形分支同一个 tri_uvs（切片内施加变换），格形仍是方形。
-					var uvs: PackedVector2Array = TriTileView.tri_uvs(quad,
-						Vector2i(int(t[3]), int(t[4])), cs, atex.get_size(), alt)
-					if uvs.size() == quad.size():
-						var cols := PackedColorArray()
-						for _i in quad.size():
-							cols.append(Color.WHITE)
-						draw_polygon(quad, cols, uvs, atex)
-					else:
-						draw_texture_rect_region(atex, dst, src)
-				else:
-					draw_texture_rect_region(atex, dst, src)
-	else:
-		for li2 in layers.size():
-			var ldef2 = layers[li2]
-			if not (ldef2 is Dictionary):
-				continue
-			# R19/B3：层变换（偏移/缩放）参与瓦片落位（与实体同一变换路径）；格多边形 + 真实图集切片：
-			# UV 经 tri_uvs（通用多边形口径）贴到格形上，alt 变换位同样生效；坏资产退回色块。
-			# 几何统一走 GridSpace 格多边形 + MapViewData 层变换（与画布/导出同口径），每层变换只算一次。
-			var lid2 := str(ldef2.get("id", ""))
-			var lxf2 := MapViewData.layer_transform(host.app.canvas.map_data, lid2)
-			for t2 in _tiles(li2, lid2):
-				var cx2 := int(t2[0])
-				var cy2 := int(t2[1])
-				if not gs.cell_in_map(Vector2i(cx2, cy2), mw, mh):
-					continue
-				var poly := _xformed(lxf2, gs.cell_polygon(Vector2i(cx2, cy2)))
-				var pts := PackedVector2Array()
-				for p0 in poly:
-					pts.append(origin + (p0 as Vector2) * s)
-				var aid2 := str(t2[2])
-				var texs: Array = host.app.canvas.atlas_texs
-				var ai: int = host.app.canvas.source_of_asset(aid2)
-				var cs := Vector2(host.app.canvas.asset_cell(aid2))
-				var atex: Texture2D = null
-				if ai >= 0 and ai < texs.size():
-					atex = texs[ai] as Texture2D
-				if atex != null and cs != Vector2.ZERO:
-					# R19：切片 → 格多边形 UV（与三角自绘同一纯函数），alt 在切片内生效
-					var uvs: PackedVector2Array = TriTileView.tri_uvs(pts,
-						Vector2i(int(t2[3]), int(t2[4])), cs, atex.get_size(),
-						int(t2[5]) if t2.size() >= 6 else 0)
-					if uvs.size() == pts.size():
-						var cols := PackedColorArray()
-						for _i in pts.size():
-							cols.append(Color.WHITE)
-						draw_polygon(pts, cols, uvs, atex)
-				else:
-					draw_colored_polygon(pts, Th.MAP_TERRAIN)
-				var outline: PackedVector2Array = pts.duplicate()
-				outline.append(pts[0])
-				draw_polyline(outline, Color(1, 1, 1, 0.06), 1.0)
-
-	var hover_rect := Rect2()
-	var highlight_rect := Rect2()
-	var sel: String = str(host._selected_ent)
-	for row in host._entities():
+	var rows := _ordered_entities()
+	var by_layer := {}
+	for row: Dictionary in rows:
 		var n: EntityNode = row.node
-		if n == null or not is_instance_valid(n):
+		if not by_layer.has(n.layer_id):
+			by_layer[n.layer_id] = [[], []]
+		var side := 0 if n.z_policy == "below" else 1
+		by_layer[n.layer_id][side].append(row)
+	var layers: Array = meta.get("layers", [])
+	for li in layers.size():
+		if not layers[li] is Dictionary or not host.app.canvas.is_layer_visible(li):
 			continue
-		# 与主画布同一可见性口径（E06）：隐藏层/隐藏实例在预览里也不显示
-		if not host.app.canvas.is_entity_shown(n):
+		var lid := str(layers[li].get("id", ""))
+		var groups: Array = by_layer.get(lid, [[], []])
+		for row: Dictionary in groups[0]:
+			_draw_entity(row, origin, s)
+		_draw_tiles(li, lid, gs_lines, origin, s, mw, mh)
+		for row: Dictionary in groups[1]:
+			_draw_entity(row, origin, s)
+	_draw_collision(gs_lines, origin, s, mw, mh)
+	for row: Dictionary in rows:
+		var code := str(row.code)
+		if code == "":
 			continue
-		# 层局部 → 世界 → 预览屏幕（E02）：层偏移/缩放/排序点在预览里同样生效
-		var li: int = host.app.canvas._layer_index_of(n.layer_id)
-		var wrect: Rect2 = n.aabb() if li < 0 else host.app.canvas.layer_xform(li) * n.aabb()
-		var rect := Rect2(origin + wrect.position * s, wrect.size * s)
-		var tex: Texture2D = host.app.canvas.thumbs.get(str(row.asset))
-		if tex != null:
-			draw_texture_rect(tex, rect, false)
-		else:
-			# 内置种类（事件区等）没有缩略图：画半透明块，尺寸就是它在游戏里的占位
-			draw_rect(rect, Color(Th.ACCENT, 0.35), true)
-			draw_rect(rect, Color(Th.ACCENT_HI, 0.8), false, 1.0)
-		# 悬停框记下来，循环结束后再画：否则被后画的实体盖住，悬停看起来像没生效
-		if str(row.code) == hover_ent and str(row.code) != sel:
-			hover_rect = rect
-		if str(row.code) == highlight_ent:
-			highlight_rect = rect
-		if str(row.code) == sel:
-			var pad := 3.0
-			draw_rect(rect.grow(pad), Th.WARN, false, 2.0)
-	# 悬停高亮：青色淡框 + 细十字，最后画保证在最上层
-	if hover_rect.size.x > 0.0:
-		var hr := hover_rect.grow(2.0)
-		var hc := hr.get_center()
-		draw_rect(hr, HOVER_COL, false, 1.5)
-		draw_line(Vector2(hr.position.x, hc.y), Vector2(hr.end.x, hc.y), Color(HOVER_COL, 0.35), 1.0)
-		draw_line(Vector2(hc.x, hr.position.y), Vector2(hc.x, hr.end.y), Color(HOVER_COL, 0.35), 1.0)
-	# 指向预览：引用字段选中的实例（亮青粗框，最后画保证可见）
-	if highlight_rect.size.x > 0.0:
-		draw_rect(highlight_rect.grow(3.0), Color(0.2, 1.0, 0.9, 0.95), false, 2.0)
+		if code == str(host._selected_ent) or code == hover_ent or code == highlight_ent:
+			var rect := _entity_rect(row.node, origin, s)
+			var color := Th.WARN if code == str(host._selected_ent) else HOVER_COL
+			draw_rect(rect.grow(3.0), color, false, 2.0)
+
+func _ordered_entities() -> Array:
+	var cvs = host.app.canvas
+	var key := [cvs.get_instance_id(), cvs.ents_rev, cvs.vis_rev]
+	if key == _entity_order_key:
+		return _entity_order
+	var out: Array = []
+	for n: EntityNode in cvs.ents_all():
+		if cvs.is_entity_shown(n):
+			out.append({"node": n, "code": n.code if n.is_entity() else "", "asset": n.asset, "index": out.size()})
+	out.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		var na: EntityNode = a.node
+		var nb: EntityNode = b.node
+		var li: int = cvs._layer_index_of(na.layer_id)
+		var lj: int = cvs._layer_index_of(nb.layer_id)
+		if li != lj:
+			return li < lj
+		var sa := MapViewData.object_segment(na.z_policy)
+		var sb := MapViewData.object_segment(nb.z_policy)
+		if sa != sb:
+			return sa < sb
+		if sa == 1 and na.get_parent().y_sort_enabled and na.position.y != nb.position.y:
+			return na.position.y < nb.position.y
+		return a.index < b.index)
+	_entity_order_key = key
+	_entity_order = out
+	return out
+
+func _entity_rect(n: EntityNode, origin: Vector2, scale_px: float) -> Rect2:
+	var xf := MapViewData.layer_transform(host.app.canvas.map_data, n.layer_id)
+	var r := MapViewData.xform_rect(xf, n.aabb())
+	return Rect2(origin + r.position * scale_px, r.size * scale_px)
+
+func _draw_entity(row: Dictionary, origin: Vector2, scale_px: float) -> void:
+	var rect := _entity_rect(row.node, origin, scale_px)
+	var tex: Texture2D = host.app.canvas.thumbs.get(str(row.asset))
+	if tex != null:
+		draw_texture_rect(tex, rect, false)
+	else:
+		draw_rect(rect, Color(Th.ACCENT, 0.35))
+		draw_rect(rect, Color(Th.ACCENT_HI, 0.8), false, 1.0)
+
+func _draw_collision(gs: GridSpace, origin: Vector2, scale_px: float, mw: int, mh: int) -> void:
+	var cvs = host.app.canvas
+	if cvs.collision == null or not cvs.is_layer_visible(cvs.collision_index()):
+		return
+	var colors := {}
+	for cell: Vector2i in cvs.collision.get_used_cells():
+		if not gs.cell_in_map(cell, mw, mh):
+			continue
+		var info: Dictionary = cvs._collision_meta.get(cell, {})
+		var type := str(info.get("type", "solid"))
+		if not colors.has(type):
+			var decl := CollisionTypes.decl_of(host.app.manifest, type)
+			colors[type] = CollisionView._colors_of(decl if not decl.is_empty() else {"id": type})
+		var pts := MapViewData.collision_polygon(gs.cell_polygon(cell), str(info.get("shape", "")))
+		for i in pts.size():
+			pts[i] = origin + pts[i] * scale_px
+		draw_colored_polygon(pts, colors[type][0])
+		draw_polyline(pts + PackedVector2Array([pts[0]]), colors[type][1], 1.0)
+
+func _draw_tiles(li: int, lid: String, gs: GridSpace, origin: Vector2, s: float, mw: int, mh: int) -> void:
+	var cvs = host.app.canvas
+	var xf := MapViewData.layer_transform(cvs.map_data, lid)
+	var texs: Array = cvs.atlas_texs
+	for row: Array in _tiles(li, lid):
+		var cell := Vector2i(int(row[0]), int(row[1]))
+		if not gs.cell_in_map(cell, mw, mh):
+			continue
+		var pts := gs.cell_polygon(cell)
+		for i in pts.size():
+			pts[i] = origin + (xf * pts[i]) * s
+		var aid := str(row[2])
+		var source: int = cvs.source_of_asset(aid)
+		var tex: Texture2D = texs[source] if source >= 0 and source < texs.size() else null
+		var cell_size := Vector2(cvs.asset_cell(aid))
+		if tex == null or cell_size.x <= 0.0 or cell_size.y <= 0.0:
+			draw_colored_polygon(pts, Th.MAP_TERRAIN)
+			continue
+		var atlas := Vector2i(int(row[3]), int(row[4]))
+		var alt := int(row[5]) if row.size() >= 6 else 0
+		var uv := TriTileView.tri_uvs(pts, atlas, cell_size, tex.get_size(), alt)
+		if uv.size() == pts.size():
+			var colors := PackedColorArray()
+			colors.resize(pts.size())
+			colors.fill(Color.WHITE)
+			draw_polygon(pts, colors, uv, tex)
 
 ## 预览用的瓦片列表，统一为 [x, y, 资产id, ax, ay, alt]（按层栈下标取）。
 ## 首选画布实时 TileMapLayer（编辑中的改动立刻反映），图层不可用时退回 map_data 数组。
@@ -375,7 +342,7 @@ func _draw_map() -> void:
 func _tiles(li: int, layer_id: String) -> Array:
 	if not host._map_ready():
 		return []
-	var rev: int = int(host.app.canvas.map_rev)
+	var rev := [host.app.canvas.get_instance_id(), host.app.canvas.tile_rev]
 	if _tiles_rev.get(li, -1) == rev:
 		return _tiles_cache.get(li, [])
 	var out: Array = []

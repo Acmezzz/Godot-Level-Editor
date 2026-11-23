@@ -12,7 +12,7 @@ static func graph_of(meta: Dictionary) -> Dictionary:
 static func validate_graph(g: Dictionary) -> Array[Dictionary]:
 	var issues: Array[Dictionary] = []
 	var cells = g.get("cells", null)
-	if cells == null:
+	if g.is_empty():
 		return issues
 	if not (cells is Array):
 		issues.append({"path": "meta.cellGraph.cells", "message": "must be an array"})
@@ -26,7 +26,7 @@ static func validate_graph(g: Dictionary) -> Array[Dictionary]:
 			continue
 		var cd: Dictionary = c
 		var cid := str(cd.get("id", ""))
-		if cid == "" or ids.has(cid):
+		if not cd.get("id") is String or cid.strip_edges() == "" or ids.has(cid):
 			issues.append({"path": p + ".id", "message": "must be non-empty and unique (seen: %s)" % cid})
 		ids[cid] = true
 		var poly = cd.get("polygon", null)
@@ -34,12 +34,14 @@ static func validate_graph(g: Dictionary) -> Array[Dictionary]:
 			issues.append({"path": p + ".polygon", "message": "must be at least 3 [x, y] points"})
 		else:
 			for pt in (poly as Array):
-				var okp: bool = pt is Array and (pt as Array).size() >= 2 and ((pt as Array)[0] is int or (pt as Array)[0] is float) and ((pt as Array)[1] is int or (pt as Array)[1] is float)
+				var okp: bool = _valid_point(pt)
 				if not okp:
 					issues.append({"path": p + ".polygon", "message": "points must be [x, y] number pairs"})
 					break
+			if _poly_of(cd).size() == poly.size() and Geometry2D.triangulate_polygon(_poly_of(cd)).is_empty():
+				issues.append({"path": p + ".polygon", "message": "polygon must enclose a valid area"})
 		var nbs = cd.get("neighbors", null)
-		if nbs != null and not (nbs is Array):
+		if cd.has("neighbors") and not nbs is Array:
 			issues.append({"path": p + ".neighbors", "message": "must be an array of cell ids"})
 	var known := ids
 	for j2 in (cells as Array).size():
@@ -52,11 +54,11 @@ static func validate_graph(g: Dictionary) -> Array[Dictionary]:
 		if not (nbs2 is Array):
 			continue
 		for nb in (nbs2 as Array):
-			if not (nb is String or nb is StringName or nb is int or nb is float):
+			if not nb is String or nb == "":
 				issues.append({"path": "meta.cellGraph.cells[%d].neighbors" % j2,
 					"message": "neighbor entries must be cell id strings (got %s)" % type_string(typeof(nb))})
 				continue
-			if str(nb) != "" and not known.has(str(nb)):
+			if not known.has(nb):
 				issues.append({"path": "meta.cellGraph.cells[%d].neighbors" % j2, "message": "neighbor cell id not declared: %s" % str(nb)})
 	return issues
 ## cell_id 枚举（choice source "cell:" 的候选值）。
@@ -104,10 +106,21 @@ static func centroid_of(g: Dictionary, id: String) -> Vector2:
 ## 声明里的 polygon 数组 → PackedVector2Array（脏点跳过，不炸）。
 static func _poly_of(c: Dictionary) -> PackedVector2Array:
 	var poly := PackedVector2Array()
-	for pt in (c.get("polygon", []) as Array):
-		if pt is Array and (pt as Array).size() >= 2:
+	var points = c.get("polygon", [])
+	if not points is Array:
+		return poly
+	for pt in points:
+		if _valid_point(pt):
 			poly.append(Vector2(float((pt as Array)[0]), float((pt as Array)[1])))
 	return poly
+
+static func _valid_point(pt: Variant) -> bool:
+	if not pt is Array or pt.size() != 2:
+		return false
+	for value in pt:
+		if not (value is int or value is float) or not is_finite(float(value)):
+			return false
+	return true
 
 ## 多边形面积重心（三角扇形加权）；退化（面积 0）退回点均值。
 static func _centroid(poly: PackedVector2Array) -> Vector2:

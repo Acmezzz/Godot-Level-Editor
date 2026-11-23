@@ -10,18 +10,21 @@ extends RefCounted
 ## 分配前先算像素总数，超过 MAX_PIXELS 时不给图，由调用方提示可用的缩放倍率。
 ##
 ## 边界：导出画的是**数据坐标下的俯视概览**——格形/落点/范围保真，层 offset/scale
-## **参与边界与落位**（与内容预览同一 MapViewData.layer_transform），parallax 与 ySort 不参与
-## （它们只影响运行时的相机跟随与遮挡顺序）。
+## 参与边界与落位。实例使用格内色标，层内遵循 zPolicy / ySort；不模拟视差或瓦片逐格遮挡。
 
 const K := preload("res://src/core/constants.gd")
 const INVISIBLE_CELL := K.INVISIBLE_CELL
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
 const GridSpaceScript := preload("res://src/canvas/grid_space.gd")
+const CollisionViewScript := preload("res://src/canvas/collision_view.gd")
 const CollisionTypes := preload("res://src/assets/collision_types.gd")
+const TriView := preload("res://src/canvas/tri_tile_view.gd")
 const MapViewData := preload("res://src/map/map_view_data.gd")
 
 ## 首版单张预览的像素上限：16_777_216 ≈ 64 MiB 原始 RGBA。
 const MAX_PIXELS := 16_777_216
+const MAX_ITEMS := 1_000_000
+const MAX_RASTER_WORK := MAX_PIXELS * 4
 ## 单张预览的精度上限（px/格）；批量默认再压到 4。
 const MAX_PX_PER_TILE := 16
 
@@ -49,7 +52,6 @@ static func grid_of(data: Dictionary, manifest: Dictionary, grid_fallback = 16) 
 static func output_geometry(data: Dictionary, manifest: Dictionary, px_per_tile := 4,
 		grid_fallback = 16) -> Dictionary:
 	var grid := grid_of(data, manifest, grid_fallback)
-	var meta: Dictionary = data.get("meta", {}) if data.get("meta", {}) is Dictionary else {}
 	# §4.3-1：名义范围（根边界 ∪ 各层变换后边界）统一由 MapViewData.scene_bounds 给，
 	# 预览 _fit / Home 取景与导出同一条口径。
 	var bounds: Rect2 = MapViewData.scene_bounds(data, manifest, true)
@@ -67,7 +69,11 @@ static func budget(data: Dictionary, manifest: Dictionary, px_per_tile := 4,
 	var geo := output_geometry(data, manifest, px_per_tile, grid_fallback)
 	var size: Vector2i = geo.size
 	var px := size.x * size.y
-	if px <= MAX_PIXELS:
+	var work := _workload(data, geo.grid)
+	if int(work.items) > MAX_ITEMS:
+		return {"ok": false, "size": size, "pixels": px, "suggested": 0,
+			"error": "地图条目 %d 超过导出上限 %d" % [work.items, MAX_ITEMS]}
+	if _fits_budget(size, work, float(geo.scale)):
 		return {"ok": true, "size": size, "pixels": px,
 			"suggested": clampi(int(px_per_tile), 1, MAX_PX_PER_TILE), "error": ""}
 	var bounds: Rect2 = geo.bounds
@@ -77,15 +83,42 @@ static func budget(data: Dictionary, manifest: Dictionary, px_per_tile := 4,
 	for p in range(mini(int(px_per_tile), MAX_PX_PER_TILE) - 1, 0, -1):
 		var sc := float(p) / cell
 		var s2 := Vector2i(maxi(1, ceili(bounds.size.x * sc)), maxi(1, ceili(bounds.size.y * sc)))
-		if s2.x * s2.y <= MAX_PIXELS:
+		if _fits_budget(s2, work, sc):
 			sug = p
 			break
-	var err := "预览 %d×%d = %d 像素，超过上限 %d" % [size.x, size.y, px, MAX_PIXELS]
+	var err := "预览 %d×%d 超过输出尺寸或绘制工作量上限" % [size.x, size.y]
 	if sug > 0:
 		err += "；可用 %d px/格" % sug
 	else:
 		err += "；按 1 px/格仍超限，请先缩图"
 	return {"ok": false, "size": size, "pixels": px, "suggested": sug, "error": err}
+
+static func _fits_budget(size: Vector2i, work: Dictionary, scale: float) -> bool:
+	return (size.x > 0 and size.y > 0 and size.x <= 16384 and size.y <= 16384
+		and size.x * size.y <= MAX_PIXELS
+		and float(work.area) * scale * scale + float(work.items) <= MAX_RASTER_WORK)
+
+static func _workload(data: Dictionary, grid: GridSpace) -> Dictionary:
+	var items := 0
+	var counts := {}
+	for key in ["objects", "collision"]:
+		var rows: Array = data.get(key, [])
+		items += rows.size()
+		for row in rows:
+			if row is Dictionary:
+				var lid := str(row.get("layer", "")) if key == "objects" else ""
+				counts[lid] = int(counts.get(lid, 0)) + 1
+	var tiles: Dictionary = data.get("tiles", {})
+	for lid in tiles:
+		if tiles[lid] is Array:
+			items += tiles[lid].size()
+			counts[lid] = int(counts.get(lid, 0)) + tiles[lid].size()
+	var cell_size := _bbox(grid.cell_polygon(Vector2i.ZERO)).size
+	var area := 0.0
+	for lid in counts:
+		var xf := MapViewData.layer_transform(data, str(lid))
+		area += int(counts[lid]) * cell_size.x * cell_size.y * absf(xf.determinant())
+	return {"items": items, "area": area}
 
 ## 生成预览图（调用方先用 budget() 检查；超限时返回空 Image 而不是让引擎分配爆内存）。
 ## 碰撞条目按 v6 对象口径读 {x, y, type?, shape?}；斜坡按半格三角近似。
@@ -99,11 +132,11 @@ static func render_preview(data: Dictionary, px_per_tile := 4, manifest: Diction
 	if not bool(b.get("ok", false)):
 		return Image.new()
 	var geo := output_geometry(data, manifest, px_per_tile, grid_fallback)
-	var img := _render(data, manifest, geo, grid_fallback, match_canvas)
+	var img := _render(data, manifest, geo, match_canvas)
 	return img
 
 ## 直接渲染（跳过预算检查；批量作业已按预算缩小过时用）。失败返回空 Image。
-static func _render(data: Dictionary, manifest: Dictionary, geo: Dictionary, grid_fallback: int,
+static func _render(data: Dictionary, manifest: Dictionary, geo: Dictionary,
 		match_canvas := false) -> Image:
 	var size: Vector2i = geo.size
 	var grid: GridSpace = geo.grid
@@ -130,11 +163,13 @@ static func _render(data: Dictionary, manifest: Dictionary, geo: Dictionary, gri
 	# §4.3-4：画面一致档读层显隐与混合；布局示意档一律当作可见 + mix
 	var layer_hidden := {}
 	var layer_blend := {}
+	var layer_ysort := {}
 	for row in layers:
 		if not (row is Dictionary):
 			continue
 		var lid_row := str((row as Dictionary).get("id", ""))
 		order.append(lid_row)
+		layer_ysort[lid_row] = bool(row.get("ySort", false))
 		if match_canvas:
 			if (row as Dictionary).get("visible", true) == false:
 				layer_hidden[lid_row] = true
@@ -147,81 +182,90 @@ static func _render(data: Dictionary, manifest: Dictionary, geo: Dictionary, gri
 	for lid in (tiles_data as Dictionary):
 		if not order.has(str(lid)):
 			order.append(str(lid))
+	var objects_by_layer := {}
+	for raw in (data.get("objects", []) as Array):
+		if not raw is Dictionary or (match_canvas and raw.get("visible", true) == false):
+			continue
+		var obj: Dictionary = raw
+		var lid := str(obj.get("layer", ""))
+		if not objects_by_layer.has(lid):
+			objects_by_layer[lid] = [[], [], []]
+			if not order.has(lid):
+				order.append(lid)
+		var segment := MapViewData.object_segment(str(obj.get("zPolicy", "auto")))
+		objects_by_layer[lid][segment].append(obj)
 	var atlas_cache := {}
-	for lid2 in order:
-		if layer_hidden.has(lid2):
-			continue   # 画面一致：隐藏层不参与
-		if not (tiles_data as Dictionary).has(lid2):
+	var extent := Rect2(Vector2.ZERO, Vector2(mw, mh))
+	for lid: String in order:
+		if layer_hidden.has(lid):
 			continue
-		var cells = (tiles_data as Dictionary)[lid2]
-		if not (cells is Array):
-			continue
-		# 层 offset/scale 参与落位（与内容预览/画布同一 MapViewData 口径）
-		var lxf := MapViewData.layer_transform(data, lid2)
-		var bl := str(layer_blend.get(lid2, ""))
-		for c in (cells as Array):
-			if not (c is Array) or (c as Array).size() < 2:
-				continue
-			var cell := Vector2i(int(c[0]), int(c[1]))
-			var poly := _to_out(_xformed(lxf, grid.cell_polygon(cell)), bounds, scale)
-			# add/mul 层：切片与兜底色块都按层混合合成（无 alpha 时 add 提亮、mul 压暗）
-			if _blit_tile(img, poly, c, manifest, grid, atlas_cache, bl):
-				continue
-			var fallback_col := Color(0.45, 0.70, 0.45, 1)
-			_put_poly_blend(img, poly, fallback_col, fallback_col, bl)
+		var xf := MapViewData.layer_transform(data, lid)
+		var blend := str(layer_blend.get(lid, ""))
+		var groups: Array = objects_by_layer.get(lid, [[], [], []])
+		if bool(layer_ysort.get(lid, false)):
+			groups[1] = _sorted_objects(groups[1], grid)
+		_draw_object_markers(img, groups[0], grid, extent, xf, geo, blend)
+		var cells = (tiles_data as Dictionary).get(lid, [])
+		if cells is Array:
+			for c in cells:
+				if not c is Array or c.size() < 2:
+					continue
+				var cell := Vector2i(int(c[0]), int(c[1]))
+				if not grid.cell_in_map(cell, mw, mh):
+					continue
+				var poly := _to_out(_xformed(xf, grid.cell_polygon(cell)), bounds, scale)
+				if not _blit_tile(img, poly, c, manifest, grid, atlas_cache, blend):
+					var fallback := Color(0.45, 0.70, 0.45)
+					_put_poly_blend(img, poly, fallback, fallback, blend)
+		_draw_object_markers(img, groups[1], grid, extent, xf, geo, blend)
+		_draw_object_markers(img, groups[2], grid, extent, xf, geo, blend)
 
-	# 碰撞（v6 对象口径）：颜色/形状来自 collisionTypes 声明池；斜坡画半格三角
-	for c2 in (data.get("collision", []) as Array):
-		if not (c2 is Dictionary):
+	var color_cache := {}
+	for raw in (data.get("collision", []) as Array):
+		if not raw is Dictionary:
 			continue
-		var cx := int((c2 as Dictionary).get("x", 0))
-		var cy := int((c2 as Dictionary).get("y", 0))
-		var ctype := str((c2 as Dictionary).get("type", "solid"))
-		var cshape := str((c2 as Dictionary).get("shape", ""))
-		var decl: Dictionary = CollisionTypes.decl_of(manifest, ctype)
-		var col := Color("#f0605c")
-		if decl.has("color"):
-			col = Color(str(decl.get("color", "#f0605c")))
-		col.a = 0.55
-		var poly2 := _to_out(grid.cell_polygon(Vector2i(cx, cy)), bounds, scale)
-		if cshape == "r45" or cshape == "l45":
-			var r := _bbox(poly2)
-			var tri: PackedVector2Array
-			if cshape == "r45":
-				tri = PackedVector2Array([r.position + Vector2(0, r.size.y),
-					r.position + Vector2(r.size.x, 0), r.position + r.size])
-			else:
-				tri = PackedVector2Array([r.position, r.position + r.size,
-					r.position + Vector2(0, r.size.y)])
-			_put_poly(img, tri, col, Color(col, 0.9))
-		else:
-			_put_poly(img, poly2, col, Color(col, 0.9))
-
-	# 摆放物：按资产稳定取色；浮点格坐标 → 格中心着色（出界跳过）。
-	# 实例住在自己那一层：格轮廓要过该层的 offset/scale，否则与地形错位（同一 MapViewData 口径）。
-	var layer_xf := {}
-	for e in (data.get("objects", []) as Array):
-		if not (e is Dictionary):
+		var cell := Vector2i(int(raw.get("x", 0)), int(raw.get("y", 0)))
+		if not grid.cell_in_map(cell, mw, mh):
 			continue
-		var exz := floorf(float((e as Dictionary).get("x", 0)))
-		var eyz := floorf(float((e as Dictionary).get("y", 0)))
-		if int(exz) < 0 or int(eyz) < 0 or int(exz) >= mw or int(eyz) >= mh:
-			continue
-		var elid := str((e as Dictionary).get("layer", ""))
-		if layer_hidden.has(elid):
-			continue   # 画面一致：隐藏层的实例也不画
-		if not layer_xf.has(elid):
-			layer_xf[elid] = MapViewData.layer_transform(data, elid)
-		var col2 := _asset_color(str((e as Dictionary).get("asset", "")))
-		_put_poly_blend(img, _to_out(_xformed(layer_xf[elid] as Transform2D,
-			grid.cell_polygon(Vector2i(int(exz), int(eyz)))), bounds, scale),
-			col2, Color(col2, 1.0), str(layer_blend.get(elid, "")))
+		var type := str(raw.get("type", "solid"))
+		if not color_cache.has(type):
+			var decl := CollisionTypes.decl_of(manifest, type)
+			color_cache[type] = CollisionViewScript._colors_of(decl if not decl.is_empty() else {"id": type})
+		var colors: Array = color_cache[type]
+		var poly := MapViewData.collision_polygon(grid.cell_polygon(cell), str(raw.get("shape", "")))
+		_put_poly(img, _to_out(poly, bounds, scale), colors[0], colors[1])
 	# 出生点：白框（格轮廓）
 	var sp: Array = data.get("spawn", [2, 2])
 	if (sp as Array).size() >= 2:
 		_put_poly(img, _to_out(grid.cell_polygon(Vector2i(int(sp[0]), int(sp[1]))), bounds, scale),
 			null, Color(1, 1, 1, 1))
 	return img
+
+static func _sorted_objects(objects: Array, grid: GridSpace) -> Array:
+	var keys: Array = []
+	for i in objects.size():
+		var obj: Dictionary = objects[i]
+		var y := grid.to_px(Vector2(float(obj.get("x", 0)), float(obj.get("y", 0)))).y
+		var anchor = obj.get("sortAnchor", [])
+		if anchor is Array and anchor.size() >= 2:
+			y += float(anchor[1])
+		keys.append(Vector2(y, i))
+	keys.sort_custom(func(a: Vector2, b: Vector2): return a.y < b.y if a.x == b.x else a.x < b.x)
+	var out: Array = []
+	for key: Vector2 in keys:
+		out.append(objects[int(key.y)])
+	return out
+
+static func _draw_object_markers(img: Image, objects: Array, grid: GridSpace, extent: Rect2,
+		xf: Transform2D, geo: Dictionary, blend: String) -> void:
+	for obj: Dictionary in objects:
+		var pos := Vector2(float(obj.get("x", 0)), float(obj.get("y", 0)))
+		if not extent.has_point(pos):
+			continue
+		var cell := grid.pick_cell(grid.to_px(pos))
+		var poly := _to_out(_xformed(xf, grid.cell_polygon(cell)), geo.bounds, geo.scale)
+		var col := _asset_color(str(obj.get("asset", "")))
+		_put_poly_blend(img, poly, col, Color(col, 1.0), blend)
 
 ## 原生像素点 → 输出像素点（先减去边界原点，再乘缩放）。
 static func _to_out_px(p: Vector2, bounds: Rect2, scale: float) -> Vector2:
@@ -385,28 +429,20 @@ static func _blit_tile(img: Image, dst_poly: PackedVector2Array, c: Array,
 	if src_rect.position.x < 0 or src_rect.position.y < 0 \
 			or src_rect.end.x > asz.x or src_rect.end.y > asz.y:
 		return false
-	var sub := img0.get_region(src_rect)
-	# 目标矩形 = 格多边形包围盒（调用方已转成输出像素）
 	var r := _bbox(dst_poly)
-	var dw := maxi(1, roundi(r.size.x))
-	var dh := maxi(1, roundi(r.size.y))
-	sub.resize(dw, dh, Image.INTERPOLATE_NEAREST)
-	# 逐像素 alpha 叠加（合成后裁掉出界部分）；等距菱形下的方形贴图按包围盒绘制
-	var ox := roundi(r.position.x)
-	var oy := roundi(r.position.y)
-	for y in dh:
-		var ty := oy + y
-		if ty < 0 or ty >= img.get_height():
-			continue
-		for x in dw:
-			var tx := ox + x
-			if tx < 0 or tx >= img.get_width():
+	var alt := int(c[5]) if c.size() >= 6 else 0
+	var dst := Rect2i(r.position.floor(), r.end.ceil() - r.position.floor())
+	dst = dst.intersection(Rect2i(Vector2i.ZERO, img.get_size()))
+	for ty in range(dst.position.y, dst.end.y):
+		for tx in range(dst.position.x, dst.end.x):
+			var point := Vector2(tx + 0.5, ty + 0.5)
+			if not Geometry2D.is_point_in_polygon(point, dst_poly):
 				continue
-			var sc := sub.get_pixel(x, y)
-			if sc.a <= 0.0:
-				continue
-			var old := img.get_pixel(tx, ty)
-			img.set_pixel(tx, ty, _mix_over(old, sc, blend))
+			var uv := TriView.tile_uv((point - r.position) / r.size, alt)
+			var sample := Vector2i((uv * Vector2(cs)).floor()).clamp(Vector2i.ZERO, cs - Vector2i.ONE)
+			var sc := img0.get_pixelv(src_rect.position + sample)
+			if sc.a > 0.0:
+				img.set_pixel(tx, ty, _mix_over(img.get_pixel(tx, ty), sc, blend))
 	return true
 
 ## 统计文本（给策划/评审看）。输出几何可选：传 manifest 时附投影与预览尺寸。

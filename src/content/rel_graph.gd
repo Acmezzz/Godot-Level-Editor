@@ -34,8 +34,11 @@ static func build(manifest: Dictionary, fn_id: String, extra: Dictionary = {}) -
 		if extra[cid_x] is Dictionary:
 			items[str(cid_x)] = extra[cid_x]
 	var local_ids := {}
+	for k in ContentStore.list_ids(manifest, fn_id):
+		local_ids[str(k)] = true
 	for k in items:
 		local_ids[str(k)] = true
+	var catalog := {fn_id: local_ids}
 	var decls := _top_decls(manifest, fn_id)
 	for cid in items:
 		var data: Dictionary = items[cid]
@@ -47,7 +50,7 @@ static func build(manifest: Dictionary, fn_id: String, extra: Dictionary = {}) -
 		# 出边：功能/条件字段
 		var values = data.get("fields", null)
 		if values is Dictionary:
-			_collect(manifest, key, base, decls, values as Dictionary, -1, edges, external, local_ids)
+			_collect(manifest, key, base, decls, values as Dictionary, -1, edges, external, catalog)
 		# 出边：步骤字段（按每步自己的声明）
 		var steps = data.get("steps", null)
 		if steps is Array:
@@ -63,7 +66,7 @@ static func build(manifest: Dictionary, fn_id: String, extra: Dictionary = {}) -
 				var sdecls = step_by.get("fields", [])
 				if sdecls is Array and not (sdecls as Array).is_empty():
 					_collect(manifest, key, base, sdecls as Array, sfields as Dictionary, i,
-						edges, external, local_ids, "步骤%d" % (i + 1))
+						edges, external, catalog, "步骤%d" % (i + 1))
 	_add_target_nodes(manifest, fn_id, nodes, edges)
 	return {"nodes": nodes, "edges": edges, "external": external, "bad": bad}
 
@@ -86,7 +89,7 @@ static func declaration_matches(manifest: Dictionary, fn_id: String, edge: Dicti
 	return fields is Array and fields.has(edge.decl)
 
 static func _collect(manifest: Dictionary, from_key: String, base: Dictionary, decls: Array,
-		values: Dictionary, step: int, edges: Array, external: Array, local_ids: Dictionary,
+		values: Dictionary, step: int, edges: Array, external: Array, catalog: Dictionary,
 		prefix := "") -> void:
 	var own_fn := _fn_of_key(from_key)
 	for fd in decls:
@@ -121,9 +124,12 @@ static func _collect(manifest: Dictionary, from_key: String, base: Dictionary, d
 			row["shown_value"] = snapshot
 			row["index"] = index
 			row["multi"] = bool(desc.get("many", false))
-			var exists := ContentStore.list_ids(manifest, to_fn).has(cid)
-			if not exists and to_fn == own_fn and local_ids.has(cid):
-				exists = true   # staged 内容还没落盘
+			if not catalog.has(to_fn):
+				var ids := {}
+				for id in ContentStore.list_ids(manifest, to_fn):
+					ids[id] = true
+				catalog[to_fn] = ids
+			var exists: bool = catalog[to_fn].has(cid)
 			if exists:
 				row["from"] = from_key
 				row["to"] = _key(to_fn, cid)

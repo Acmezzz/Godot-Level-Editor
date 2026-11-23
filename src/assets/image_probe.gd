@@ -30,7 +30,7 @@ static func trim_alpha(img: Image) -> Image:
 ##   [node name="X" type="Y" parent="..."]  → 记录类型与 parent 链
 ##   shape = SubResource("id")             → 该节点引用的形状
 ## 只认「从根可达」的节点（parent 链逐层在文件里存在），优先返回挂在目标形状/
-## 首个挂载节点的 CollisionShape2D；找不到再退回任意可达节点，最后才用声明兜底。
+## 首个已启用的 CollisionShape2D；没有可靠的挂载形状就由资产声明兜底。
 static func prefab_collision_size(project_dir: String, prefab_rel: String) -> Vector2:
 	var p: String = project_dir.path_join(prefab_rel) if project_dir != "" else prefab_rel
 	if p == "" or not FileAccess.file_exists(p):
@@ -44,51 +44,39 @@ static func prefab_collision_size(project_dir: String, prefab_rel: String) -> Ve
 	if shapes.is_empty():
 		return Vector2.ZERO
 	var nodes := _parse_nodes(text)   # [{name, type, parent, shape}]
-	# 可达性：从根逐层展开。.tscn 的 parent 是相对根的节点路径（"A/B"），
-	# 不是叶名——按完整路径求不动点，parent 链断掉的节点整棵算未挂载。
-	var reachable := {"": true, ".": true}
-	var changed := true
-	while changed:
-		changed = false
-		for n in nodes:
-			var npath := _node_path(n)
-			if reachable.has(npath):
-				continue
-			if reachable.has(str((n as Dictionary).get("parent", ""))):
-				reachable[npath] = true
-				changed = true
-	var mounted: Array = []
-	for n in nodes:
-		if reachable.has(_node_path(n)):
-			(n as Dictionary)["reachable"] = true
-			mounted.append(n)
-	# 优先：挂载节点里的 CollisionShape2D（按文件顺序，取首个可达的）。
-	# 形状尺寸要乘上所在节点的缩放（V4 P1：忽略节点变换会让放大过的 prefab 体积算错）。
-	for n in mounted:
-		if str((n as Dictionary).get("type", "")) != "CollisionShape2D":
+	var by_path := {}
+	for node: Dictionary in nodes:
+		by_path[_node_path(node)] = node
+	var transforms := {}
+	for node: Dictionary in nodes:
+		if node.type != "CollisionShape2D" or bool(node.get("disabled", false)) or not shapes.has(node.shape):
 			continue
-		var sid := str((n as Dictionary).get("shape", ""))
-		if shapes.has(sid):
-			return _scaled_size(shapes[sid], n)
-	# 其次：任意节点的 CollisionShape2D（老文件/嵌套场景）
-	for n in nodes:
-		if str((n as Dictionary).get("type", "")) == "CollisionShape2D":
-			var sid2 := str((n as Dictionary).get("shape", ""))
-			if shapes.has(sid2):
-				return _scaled_size(shapes[sid2], n)
-	# 没有 CollisionShape2D：单个形状时直接用它（保持旧行为），多个形状不猜
-	if shapes.size() == 1:
-		for k in shapes:
-			return shapes[k]
+		var xf = _mounted_transform(_node_path(node), by_path, transforms, {})
+		if xf is Transform2D:
+			var dims: Vector2 = shapes[node.shape]
+			var basis: Transform2D = xf
+			var size := basis.x.abs() * dims.x + basis.y.abs() * dims.y
+			if size.is_finite() and size.x > 0.0 and size.y > 0.0:
+				return size
 	return Vector2.ZERO
 
-## 形状尺寸 × 节点缩放（取绝对值：负缩放只是镜像，体积不变）。
-static func _scaled_size(sz: Vector2, node: Dictionary) -> Vector2:
-	var s = node.get("scale", null)
-	if not (s is Vector2):
-		return sz
-	var sv: Vector2 = s
-	return Vector2(absf(sz.x * sv.x), absf(sz.y * sv.y))
+static func _mounted_transform(path: String, nodes: Dictionary, cache: Dictionary, active: Dictionary) -> Variant:
+	if cache.has(path):
+		return cache[path]
+	if active.has(path) or not nodes.has(path):
+		return null
+	active[path] = true
+	var node: Dictionary = nodes[path]
+	var xf := Transform2D(float(node.get("rotation", 0.0)), node.get("scale", Vector2.ONE), 0.0, Vector2.ZERO)
+	if path != "." and not bool(node.get("top_level", false)):
+		var parent = _mounted_transform(str(node.get("parent", "")), nodes, cache, active)
+		if not parent is Transform2D:
+			active.erase(path)
+			return null
+		xf = parent * xf
+	active.erase(path)
+	cache[path] = xf
+	return xf
 
 ## 解析 sub_resource 形状表：{id: Vector2}。rect 用 size，circle/radius，capsule 组合。
 static func _parse_shapes(text: String) -> Dictionary:
@@ -131,6 +119,9 @@ static func _parse_shapes(text: String) -> Dictionary:
 			var h := line.trim_prefix("height = ").to_float()
 			var rv: Vector2 = sizes.get(cur_id + "\u0001r", Vector2(0, 0))
 			sizes[cur_id] = Vector2(rv.x * 2.0, h)
+	for key in sizes.keys():
+		if str(key).ends_with("r"):
+			sizes.erase(key)
 	return sizes
 
 ## 解析节点块：只取 [node] 头行 + 块内 shape 引用。parent 保持原始字符串
@@ -157,6 +148,12 @@ static func _parse_nodes(text: String) -> Array:
 		if in_node and line.begins_with("shape = SubResource(\""):
 			var rest := line.substr(line.find("SubResource(\"") + 13)
 			cur["shape"] = rest.substr(0, rest.find("\""))
+		elif in_node and line.begins_with("rotation = "):
+			cur["rotation"] = line.trim_prefix("rotation = ").to_float()
+		elif in_node and line == "disabled = true":
+			cur["disabled"] = true
+		elif in_node and line == "top_level = true":
+			cur["top_level"] = true
 		elif in_node and line.begins_with("scale = Vector2("):
 			# 节点缩放参与碰撞体积（放大过的 prefab 占位盒要跟着放大）
 			var inner := line.trim_prefix("scale = Vector2(").trim_suffix(")")
@@ -182,6 +179,8 @@ static func _attr(line: String, key: String) -> String:
 static func _node_path(n: Dictionary) -> String:
 	var nm := str(n.get("name", ""))
 	var par := str(n.get("parent", ""))
-	if par == "" or par == ".":
+	if par == "":
+		return "."
+	if par == ".":
 		return nm
 	return par + "/" + nm
