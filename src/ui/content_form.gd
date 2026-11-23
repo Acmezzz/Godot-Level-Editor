@@ -806,9 +806,8 @@ func has_staged_for_current_doc() -> bool:
 			return true
 	return false
 
-## 放弃当前文档的暂存内容（R02 三种去向之一）：切换/放弃确认后调用。
-func drop_staged_for_current_doc() -> int:
-	var doc := _doc_key()
+## 地图成功切换后，只清理被替换文档的暂存。
+func drop_staged_for_doc(doc: String) -> int:
 	var dropped := 0
 	for key in _staged.keys():
 		if str((_staged[key] as Dictionary).get("doc", "")) == doc:

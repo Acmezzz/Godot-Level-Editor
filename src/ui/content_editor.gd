@@ -901,8 +901,8 @@ func has_staged_for_current_doc() -> bool:
 func consume_written_staged(receipts: Array) -> void:
 	_form.consume_written_staged(receipts)
 
-func drop_staged_for_current_doc() -> int:
-	return _form.drop_staged_for_current_doc()
+func drop_staged_for_doc(doc: String) -> int:
+	return _form.drop_staged_for_doc(doc)
 ## 草稿恢复：把待提交内容载荷重新暂存（R03）；返回收下的条数。
 func restage_rows(rows: Array) -> int:
 	return _form.restage_rows(rows)

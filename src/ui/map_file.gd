@@ -317,15 +317,14 @@ func confirm_discard(action: String) -> bool:
 	# 确认框开着时冻结撤销/重做（A2）：期间 Ctrl+Z 把画布换掉，用户确认的就不是同一份内容
 	if app.canvas != null:
 		app.canvas.doc_busy = true
+	var guard := _commit_is_current.bind(sess.generation, sess.revision, app.manifest)
 	var answer := await _ask_discard(action)
-	if answer:
-		# R02 放弃路径：该文档的暂存内容一并放弃（绑定随画布消失，留着只会写出孤儿文件）。
-		if app.project_shell != null and app.project_shell.content_editor != null:
-			var dropped: int = app.project_shell.content_editor.drop_staged_for_current_doc()
-			if dropped > 0:
-				app._set_status("已放弃 %d 份暂存内容（绑定随画布一起放弃）" % dropped)
 	_release_busy()
-	return answer
+	return answer and guard.call()
+
+func _discard_previous_staging(doc: String) -> void:
+	if doc != "" and app.project_shell != null and app.project_shell.content_editor != null:
+		app.project_shell.content_editor.drop_staged_for_doc(doc)
 
 func _ask_discard(action: String) -> bool:
 	var dlg := ConfirmationDialog.new()
@@ -464,17 +463,19 @@ func create_map_from_dialog(name_edit: LineEdit, err_label: Label, pop: PopupPan
 	pop.hide()
 	if not await confirm_discard("新建"):
 		return
+	var previous_doc := _doc_key()
 	var gen := _begin_doc_op()
 	app.canvas.set_thumbs(app._entity_thumbs())
 	await app.canvas.load_data(MapStore.new_map(n, K.DEFAULT_MAP_W, K.DEFAULT_MAP_H, proj, topo), n)
 	if _doc_stale(gen):
 		return   # 期间又切了别的图：本次载入结果已被更新的一次重建取代
+	_discard_previous_staging(previous_doc)
 	app.cur_map_name = n
 	app.cur_map_path = EditorManifest.map_path(app.manifest, n)
 	# 新图：身份换到这张，基线清空（磁盘上还没有这份文件）
 	sess.set_identity(str(app.manifest.get("_dir", "")), app.canvas.cur_map_code(),
 		n, str(app.cur_map_path), "", 0)
-	sess.contents.clear()
+	sess.contents = {}
 	sess.revision = 0
 	app._sync_play_cfg_to_map()
 	app._set_map_loaded(true)
@@ -662,6 +663,7 @@ func load_map_file(p: String, expected_digest := "") -> void:
 	# 实体还在重建中——内容页 after_switch 刷新会拿到半重建的画布（列表/点选全乱）。
 	# 文档代次（A2）：双击/连续切图时只有最后一次请求可以发布图名与路径。
 	# 未保存确认在上层入口（打开/侧栏）做；这里只做真实载入。
+	var previous_doc := _doc_key()
 	var gen := _begin_doc_op()
 	var result: Dictionary = app.MapStore.read_path(p, app.manifest)
 	if not result.ok:
@@ -725,6 +727,7 @@ func load_map_file(p: String, expected_digest := "") -> void:
 	await app.canvas.load_data(data, base)
 	if _doc_stale(gen):
 		return
+	_discard_previous_staging(previous_doc)
 	app.cur_map_name = base
 	app._sync_play_cfg_to_map()
 	app.cur_map_path = p
@@ -735,7 +738,7 @@ func load_map_file(p: String, expected_digest := "") -> void:
 	# 基线取此刻磁盘上的这份文件（草稿归位的情况：正式文件才是要对比的外部状态）。
 	sess.set_identity(str(app.manifest.get("_dir", "")), app.canvas.cur_map_code(),
 		base, str(p), baseline, FileAccess.get_modified_time(p))
-	sess.contents.clear()
+	sess.contents = {}
 	sess.revision = 0
 	var tcount := 0
 	for lid in (data.get("tiles", {}) as Dictionary):
@@ -798,14 +801,19 @@ func on_history() -> void:
 
 ## 历史快照载入画布：按草稿恢复同一条路径（keep_dirty=true，正式文件不动）。
 func _restore_history_snapshot(map_name: String, snapshot_path: String) -> void:
-	var snap := Recovery.read_json(snapshot_path)
-	if snap.is_empty():
+	var decoded := MapStore.read_path(snapshot_path, app.manifest)
+	if not decoded.ok:
 		app._set_status(" 历史快照读取失败：" + snapshot_path.get_file())
 		return
+	var snap: Dictionary = decoded.data
+	var guard := _commit_is_current.bind(sess.generation, sess.revision, app.manifest)
+	var path := EditorManifest.map_path(app.manifest, map_name)
+	var baseline := Recovery.digest(path)
 	if not await app._confirm_action("恢复历史版本",
 		"把 %s 载入画布。\n\n正式文件不会被改动；Ctrl+S 才会写回（当前未保存的改动会先被替换）。" % snapshot_path.get_file(),
-		"载入"):
+		"载入") or not guard.call():
 		return
+	var previous_doc := _doc_key()
 	var gen := _begin_doc_op()
 	app.canvas.set_thumbs(app._entity_thumbs())
 	# 快照里记的是当时的 meta.name（改名前的旧名）：以当前图名为准，保存才不会写回旧名
@@ -814,8 +822,13 @@ func _restore_history_snapshot(map_name: String, snapshot_path: String) -> void:
 	await app.canvas.load_data(snap, map_name, false, true)
 	if _doc_stale(gen):
 		return
+	_discard_previous_staging(previous_doc)
 	app.cur_map_name = map_name
-	app.cur_map_path = EditorManifest.map_path(app.manifest, map_name)
+	app.cur_map_path = path
+	sess.set_identity(str(app.manifest.get("_dir", "")), app.canvas.cur_map_code(),
+		map_name, path, baseline, FileAccess.get_modified_time(path))
+	sess.contents = {}
+	sess.revision = 0
 	app._sync_play_cfg_to_map()
 	app._set_map_loaded(true)
 	app.canvas.modified_flag = true   # 历史内容与磁盘不同：必须显式保存
@@ -1161,57 +1174,82 @@ func write_draft_now() -> bool:
 ## 恢复草稿：把快照载入画布并标记脏（正式文件未动，Ctrl+S 才写回）。
 ## 参数是**草稿键**（文件名，A3）：带地图码的地图键是码、不带码才是图名，
 ## 拿「空码 + 图名」重算路径会算出另一个键，读不到自己刚写的草稿。
+func _resolve_draft_target(draft: Dictionary, fallback: String) -> Dictionary:
+	var name_ := str(draft.get("mapName", ""))
+	if name_ == "":
+		name_ = fallback
+	var code := str(draft.get("mapCode", ""))
+	MapStore.invalidate_read_cache()
+	MapStore.invalidate_code_map()
+	var index := MapStore.code_index(app.manifest)
+	var matches: Array = index.get("by_code", {}).get(code, [])
+	if matches.size() > 1:
+		return {"error": "草稿地图码重复，无法确定正式图"}
+	if matches.size() == 1:
+		name_ = str(matches[0])
+	var path := EditorManifest.map_path(app.manifest, name_)
+	if path == "":
+		return {"error": "草稿地图名无效"}
+	var seen := Recovery.observe(path)
+	if seen.state == "unreadable":
+		return {"error": "正式图无法读取"}
+	if seen.state == "present" and code != "" and matches.is_empty():
+		return {"error": "同名正式图的地图码与草稿不一致"}
+	return {"name": name_, "path": path, "observed": seen}
+
 func restore_draft_key(draft_key: String) -> bool:
 	var draft := Recovery.read_draft_key(app.manifest, draft_key)
 	if draft.is_empty():
 		app._set_status(" 没有可恢复的草稿：" + draft_key)
 		return false
-	var map_name := str(draft.get("mapName", ""))
-	if map_name == "":
-		map_name = draft_key
-	# R08/R06：按地图码重新定位正式图（改名不失效）；码表没有才退回草稿记录的路径。
-	var dcode := str(draft.get("mapCode", ""))
-	var target := str(draft.get("targetPath", ""))
-	if dcode != "":
-		var cm: Dictionary = MapStore.code_map(app.manifest)
-		if cm.has(dcode):
-			map_name = str(cm[dcode])
-			target = EditorManifest.map_path(app.manifest, map_name)
+	var resolved := _resolve_draft_target(draft, draft_key)
+	if resolved.has("error"):
+		app._set_status(" 草稿恢复中止：" + str(resolved.error))
+		return false
+	var map_name := str(resolved.name)
+	var target := str(resolved.path)
+	var seen: Dictionary = resolved.observed
 	var snap = draft.get("snapshot", null)
-	if not (snap is Dictionary) or (snap as Dictionary).is_empty():
-		app._set_status(" 草稿内容为空，无法恢复：" + map_name)
+	if not (snap is Dictionary) or not MapStore.validate_for_write(snap, app.manifest):
+		app._set_status(" 草稿结构无效，无法恢复：" + map_name)
 		return false
 	# 恢复会把画布整份换掉：当前未保存改动同样要确认（与打开/切图一致）
+	var guard := _commit_is_current.bind(sess.generation, sess.revision, app.manifest)
 	if not await confirm_discard("恢复草稿"):
 		return false
-	# 基线不同 = 正式图在草稿之后被改过：保留草稿并提示冲突（A3），不静默覆盖
 	var base := str(draft.get("baseline", ""))
-	if target != "" and base != "" and FileAccess.file_exists(target) and Recovery.digest(target) != base:
+	var accepted := str(seen.get("digest", ""))
+	if accepted != base:
 		if not await app._confirm_action("草稿与正式图冲突",
 			"正式图在草稿保存后被改动过。\n恢复会把草稿载入画布（磁盘文件不动），Ctrl+S 将覆盖正式图。\n草稿已另存副本保留。",
 			"仍然恢复"):
 			return false
 		_keep_conflict_copy(draft_key)
+	var current := _resolve_draft_target(draft, draft_key)
+	if not guard.call() or current.get("path", "") != target \
+			or current.get("observed", {}).get("digest", "") != accepted:
+		app._set_status(" 草稿恢复中止：确认期间文档或正式图已变化")
+		return false
+	var previous_doc := _doc_key()
 	# V4 P0-2：草稿记录的预留码必须在装载画布**之前**合回清单。
 	# 装载会做 C09 挂载补齐、实例码生成与引用解析——这些都以当前清单码为准；
 	# 先装载再合并，画布上的绑定/字段键已经按启动时临时补发的新码算好了。
 	var draft_codes = draft.get("codesMap", null)
 	if draft_codes is Dictionary and not (draft_codes as Dictionary).is_empty():
-		EditorManifest.merge_issued_codes(app.manifest, draft_codes as Dictionary, true)
-	if bool(draft.get("codesPending", false)):
-		app.manifest["_codes_issued"] = true
+		if EditorManifest.merge_issued_codes(app.manifest, draft_codes as Dictionary, true) > 0:
+			app.manifest["_codes_issued"] = true
 	var gen := _begin_doc_op()
 	app.canvas.set_thumbs(app._entity_thumbs())
 	await app.canvas.load_data((snap as Dictionary).duplicate(true), map_name, false, true)
 	if _doc_stale(gen):
 		return false
+	_discard_previous_staging(previous_doc)
 	app.cur_map_name = map_name
-	app.cur_map_path = target if target != "" else EditorManifest.map_path(app.manifest, map_name)
+	app.cur_map_path = target
 	_name_memo = map_name
-	var tpath := str(app.cur_map_path)
-	sess.set_identity(str(app.manifest.get("_dir", "")), str((snap.get("meta", {}) as Dictionary).get("code", "")),
-		map_name, str(tpath), Recovery.digest(tpath),
-		FileAccess.get_modified_time(tpath) if FileAccess.file_exists(tpath) else 0)
+	sess.set_identity(str(app.manifest.get("_dir", "")), app.canvas.cur_map_code(),
+		map_name, target, accepted, FileAccess.get_modified_time(target) if accepted != "" else 0)
+	sess.revision = 0
 	app._sync_play_cfg_to_map()
 	app._set_map_loaded(true)
 	app.canvas._undo_history_ctrl.clear_history()
@@ -1235,7 +1273,7 @@ func _keep_conflict_copy(draft_key: String) -> void:
 	if text == "":
 		return
 	var stamp := Time.get_datetime_string_from_system().replace(":", "").replace("-", "").replace("T", "-")
-	Recovery.write_text(src.get_basename() + ".conflict-" + stamp + ".json", text)
+	Recovery.write_text(src.get_base_dir().path_join(src.get_file().get_basename() + ".conflict-" + stamp + ".json"), text)
 
 ## 正式保存成功后删掉对应草稿（草稿已完成使命）
 func _drop_draft_for(name: String) -> void:
@@ -1249,18 +1287,13 @@ func open_draft_target(draft_key: String) -> void:
 	if draft.is_empty():
 		app._set_status(" 没有这份草稿：" + draft_key)
 		return
-	# 先定位目标正式图（读不到就别问丢弃），再确认，最后载入
-	var target := str(draft.get("targetPath", ""))
-	if target == "" or not FileAccess.file_exists(target):
-		var nm := str(draft.get("mapName", ""))
-		target = EditorManifest.map_path(app.manifest, nm) if nm != "" else ""
-		if target == "" or not FileAccess.file_exists(target):
-			app._set_status(" 正式图已不在（草稿：%s）：可在「打开」里手动选文件" % draft_key)
-			return
-		app._set_status(" 草稿记录的路径已失效，按图名打开：" + target.get_file())
+	var resolved := _resolve_draft_target(draft, draft_key)
+	if resolved.has("error") or resolved.get("observed", {}).get("state") != "present":
+		app._set_status(" 无法打开正式图：" + str(resolved.get("error", "文件不存在")))
+		return
 	if not await confirm_discard("打开正式图"):
 		return
-	await load_map_file(target)
+	await load_map_file(str(resolved.path), str(resolved.observed.digest))
 
 ## 打开项目时提示可恢复草稿（A3）：有草稿就列出来，让用户选恢复/查看正式图/丢弃。
 func offer_draft_recovery() -> void:
