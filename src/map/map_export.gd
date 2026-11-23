@@ -50,33 +50,14 @@ static func output_geometry(data: Dictionary, manifest: Dictionary, px_per_tile 
 		grid_fallback = 16) -> Dictionary:
 	var grid := grid_of(data, manifest, grid_fallback)
 	var meta: Dictionary = data.get("meta", {}) if data.get("meta", {}) is Dictionary else {}
-	var w := maxi(int(meta.get("w", 1)), 1)
-	var h := maxi(int(meta.get("h", 1)), 1)
-	var base: Rect2 = grid.map_bounds(Rect2i(0, 0, w, h))
-	var bounds := base
-	for row in (meta.get("layers", []) as Array):
-		if not (row is Dictionary):
-			continue
-		var lxf := MapViewData.layer_transform(data, str((row as Dictionary).get("id", "")))
-		if lxf == Transform2D.IDENTITY:
-			continue
-		bounds = bounds.merge(_xf_rect(lxf, base))
+	# §4.3-1：名义范围（根边界 ∪ 各层变换后边界）统一由 MapViewData.scene_bounds 给，
+	# 预览 _fit / Home 取景与导出同一条口径。
+	var bounds: Rect2 = MapViewData.scene_bounds(data, manifest, true)
 	var cell := maxf(float(grid.tile.x), float(grid.tile.y))
 	var px := clampi(int(px_per_tile), 1, MAX_PX_PER_TILE)
 	var scale := float(px) / maxf(cell, 1.0)
 	var size := Vector2i(maxi(1, ceili(bounds.size.x * scale)), maxi(1, ceili(bounds.size.y * scale)))
 	return {"size": size, "scale": scale, "bounds": bounds, "grid": grid}
-
-## 矩形过仿射变换后的轴对齐包围盒。
-static func _xf_rect(xf: Transform2D, r: Rect2) -> Rect2:
-	var pts := [r.position, Vector2(r.end.x, r.position.y), r.end, Vector2(r.position.x, r.end.y)]
-	var mn: Vector2 = xf * (pts[0] as Vector2)
-	var mx := mn
-	for p in pts:
-		var q: Vector2 = xf * (p as Vector2)
-		mn = mn.min(q)
-		mx = mx.max(q)
-	return Rect2(mn, mx - mn)
 
 ## 分配前的预算检查。ok = false 时 suggested 是能压进上限的最大整数 px/格（0 = 1px 也放不下）。
 ## §5：候选档位按算术推算，不再每档重跑 output_geometry（那会重建 GridSpace 并重算层边界）。

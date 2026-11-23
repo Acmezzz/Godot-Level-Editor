@@ -107,11 +107,15 @@ func _map_bounds_px() -> Rect2:
 	var meta: Dictionary = host.app.canvas.map_data.get("meta", {})
 	var mw := int(meta.get("w", K.DEFAULT_MAP_W))
 	var mh := int(meta.get("h", K.DEFAULT_MAP_H))
-	var gs: GridSpace = MapExport.grid_of(host.app.canvas.map_data, host.app.manifest)
-	_bounds_cache = gs.map_bounds(Rect2i(0, 0, mw, mh))
+	# §4.3-1：取景范围与导出一份口径——层 offset/scale 之后内容可能出根边界，
+	# 只按根边界 fit 会把移出去的层裁在画面外。
+	_bounds_cache = MapViewData.scene_bounds(host.app.canvas.map_data, host.app.manifest, true)
+	if not _bounds_cache.has_area():
+		# 退化范围（空图/坏 meta）：退回格空间名义边界，保证 fit 有正尺寸
+		var gs: GridSpace = MapExport.grid_of(host.app.canvas.map_data, host.app.manifest)
+		_bounds_cache = gs.map_bounds(Rect2i(0, 0, mw, mh))
 	_bounds_rev = rev
 	return _bounds_cache
-
 ## fit 缩放：把整张地图塞进控件（留 24px 边距），不跟随关卡画布的 zoom/相机。
 func _fit() -> float:
 	if not host._map_ready() or size.x <= 1 or size.y <= 1:

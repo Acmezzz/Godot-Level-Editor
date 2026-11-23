@@ -55,3 +55,36 @@ static func anchor_px(data: Dictionary, manifest: Dictionary, layer_id: String, 
 	if layer_id == "":
 		return px
 	return layer_transform(data, layer_id) * px
+
+## 名义范围（§4.3-1）：根空间地图边界 ∪ 每层经自身 offset/scale 变换后的边界。
+## 层位移/放大后内容可能跑出根边界，不扩边界就会把内容裁掉——导出取景、预览 _fit、
+## Home 取景同一份口径（原先这段合并只写在 map_export 里，别处各算一遍）。
+## include_layers=false = 只要根边界（数据坐标下的俯视概览用）。
+static func scene_bounds(data: Dictionary, manifest: Dictionary, include_layers := true) -> Rect2:
+	var meta: Dictionary = data.get("meta", {}) if data.get("meta", {}) is Dictionary else {}
+	var w := maxi(int(meta.get("w", 1)), 1)
+	var h := maxi(int(meta.get("h", 1)), 1)
+	var g := effective_grid(data, manifest)
+	var base: Rect2 = g.map_bounds(Rect2i(0, 0, w, h))
+	if not include_layers:
+		return base
+	var bounds := base
+	for row in (meta.get("layers", []) as Array):
+		if not (row is Dictionary):
+			continue
+		var lxf := layer_transform(data, str((row as Dictionary).get("id", "")))
+		if lxf == Transform2D.IDENTITY:
+			continue
+		bounds = bounds.merge(xform_rect(lxf, base))
+	return bounds
+
+## 矩形过仿射变换后的轴对齐包围盒（层变换扩边界用）。
+static func xform_rect(xf: Transform2D, r: Rect2) -> Rect2:
+	var pts := [r.position, Vector2(r.end.x, r.position.y), r.end, Vector2(r.position.x, r.end.y)]
+	var mn: Vector2 = xf * (pts[0] as Vector2)
+	var mx := mn
+	for p in pts:
+		var q: Vector2 = xf * (p as Vector2)
+		mn = mn.min(q)
+		mx = mx.max(q)
+	return Rect2(mn, mx - mn)
