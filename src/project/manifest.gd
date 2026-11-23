@@ -81,7 +81,7 @@ static func load_from(project_dir: String) -> Dictionary:
 	# V4 P0-1：mtime 在粗粒度文件系统上可能同秒不变（改了两份不同内容仍是同一个数），
 	# 摘要才是准的基线；mtime 只在摘要不可得时兜底。
 	data["_manifest_mtime"] = FileAccess.get_modified_time(p)
-	data["_manifest_digest"] = preload("res://src/map/recovery.gd").digest(p)
+	data["_manifest_digest"] = text.sha256_text()
 	# 清单 version——缺省补 1，结构演进时有迁移锚点。
 	# JSON 把数字解析成 float，不能按 `is int` 判断：那样每次加载都会把版本重置成 1。
 	if not data.has("version") or not (data["version"] is int or data["version"] is float):

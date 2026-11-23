@@ -11,7 +11,7 @@
 ## 数据完整性与编辑正确性
 
 - [ ] B1 提交互斥、冻结清单和地图、修订对账及试玩收据（`map_file.gd`、`document_commit.gd`）。
-- [ ] B2 清单覆盖确认和同源摘要（`app.gd`、`manifest.gd`）。
+- [x] B2 清单使用解析正文的摘要作为加载基线。覆盖确认绑定到当时看到的磁盘版本，并在写前复验项目身份和序列化工作副本（`app.gd`、`manifest.gd`）。
 - [ ] B3 改名收据、未落盘改名依赖、整图复制校验（`map_store.gd`、`map_file.gd`）。
 - [ ] B4 恢复日志记录操作、来源和预期摘要，保留部分成功详情（`recovery.gd`、`document_commit.gd`）。
 - [ ] B5 延迟放弃暂存，统一切图与恢复发布流程，防止草稿误选撞码图或覆写已落盘码（`map_file.gd`、`manifest.gd`）。
