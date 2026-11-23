@@ -7,6 +7,7 @@ extends RefCounted
 
 const GridSpace := preload("res://src/canvas/grid_space.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
+const EdgeRefScript := preload("res://src/map/edge_ref.gd")
 
 const PRESETS := ["orthogonal", "isometric", "hexagonal"]
 
@@ -85,6 +86,13 @@ static func plan(data: Dictionary, manifest: Dictionary, target: String) -> Dict
 	if coll_n > 0:
 		manual.append({"kind": "collision", "count": coll_n,
 			"message": "碰撞 %d 格保留原格号：格系无唯一对应，需在副本里核对或清空" % coll_n})
+	# §4.2-3：格边引用在**目标拓扑**下重验。边身份 = 两合法格共享线段，投影变了
+	# 原来的相邻格对可能不再相邻（例如正交 (0,0)-(1,0) 到六边仍相邻，但斜向格对不一定）。
+	# 不静默改写也不删：保留原值并报数，交制作者在副本里重选（审计随后会照常显形）。
+	var stale_edges := _count_stale_edges(data, objects_out, dst_g)
+	if stale_edges > 0:
+		manual.append({"kind": "edges", "count": stale_edges,
+			"message": "格边引用 %d 条在目标拓扑下两格不再相邻：保留原值，需在副本里重选" % stale_edges})
 	var doc: Dictionary = data.duplicate(true)
 	var dmeta: Dictionary = doc.get("meta", {}) if doc.get("meta", null) is Dictionary else {}
 	dmeta["gridProjection"] = target
@@ -123,4 +131,26 @@ static func _count_tiles(data: Dictionary) -> int:
 		var cells = (seg as Dictionary)[lid]
 		if cells is Array:
 			n += (cells as Array).size()
+	return n
+
+## 已换算的实例行里，「两格在目标拓扑下不再相邻」的格边引用条数（§4.2-3）。
+## 只数不修：边身份由拓扑推导，换投影没有唯一对应，改写成什么都是猜。
+static func _count_stale_edges(data: Dictionary, objects_out: Array, dst_g: GridSpace) -> int:
+	var n := 0
+	for row in objects_out:
+		if not (row is Dictionary):
+			continue
+		var props = (row as Dictionary).get("props", null)
+		if not (props is Dictionary):
+			continue
+		for k in (props as Dictionary):
+			var v = (props as Dictionary)[k]
+			if v is Dictionary and (v as Dictionary).has("edge"):
+				var ends := EdgeRefScript.parse_edge(str((v as Dictionary).get("edge", "")))
+				if ends.size() != 2:
+					continue
+				var a := Vector2i(int(ends[0][0]), int(ends[0][1]))
+				var b := Vector2i(int(ends[1][0]), int(ends[1][1]))
+				if not dst_g.neighbors_any(a).has(b):
+					n += 1
 	return n

@@ -95,6 +95,25 @@ func test_clone_keeps_edge_pins_source_map() -> void:
 	eq(str(got.map), "MAP1", "跨图复制钉源图码")
 	eq(str(got.edge), str(row.props.E.edge), "边身份不动")
 
+## §4.2-3：整图复制（副本 = 源图的新身份）时，map:"" 随副本解释，不钉回源图；
+## 显式指向第三图的引用原样保留。
+func test_whole_map_copy_keeps_edge_local() -> void:
+	var m := {"assets": [{"id": "gate", "kind": "entity", "visual": {"type": "rect"},
+		"fields": [{"id": "E", "type": "edge_ref"}]}]}
+	var local_row := {"code": "AAAA", "asset": "gate", "x": 0, "y": 0,
+		"props": {"E": EdgeRef.value_of("", Vector2i(1, 1), Vector2i(2, 1))}}
+	var third_row := {"code": "BBBB", "asset": "gate", "x": 1, "y": 0,
+		"props": {"E": EdgeRef.value_of("MAP9", Vector2i(0, 0), Vector2i(1, 0))}}
+	var plan: Dictionary = ClonePlan.whole_map_document(
+		{"data": {"meta": {"name": "m1", "code": "MAP1"}, "objects": [local_row, third_row]},
+			"manifest": m, "map": "m1"}, "m2", "MAP2")
+	eq(str(plan.status), "ok", "整图计划成功：%s" % ClonePlan.conflicts_text(plan.conflicts))
+	var rows: Array = plan.document.objects
+	var e_local: Dictionary = (rows[0] as Dictionary).props.E
+	eq(str(e_local.get("map")), "", "整图复制保留「本图」分量（随副本解释）")
+	var e_third: Dictionary = (rows[1] as Dictionary).props.E
+	eq(str(e_third.get("map")), "MAP9", "显式第三图原样保留")
+
 ## 候选：只列「两侧都有瓦片」的相邻格对，按规范边去重（两条相反方向的边只出一项）
 func test_edge_candidates_of_occupied_cells() -> void:
 	# 3 个格连成一条横线：两条边；再放对角格（不相邻）不产生边

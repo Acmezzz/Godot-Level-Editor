@@ -125,7 +125,7 @@ static func _is_empty_value(v) -> bool:
 ## staged_contents（R12）：会话里的暂存内容 {内容ID: data}——未落盘的绑定内容也从这里读，
 ## 不再把有效内容报成缺失。
 static func build(src: Dictionary, dst: Dictionary, codes: PackedStringArray = PackedStringArray(),
-		include_world := false, staged_contents := {}) -> Dictionary:
+		include_world := false, staged_contents := {}, self_copy := false) -> Dictionary:
 	var sdata := _data(src)
 	var ddata := _data(dst)
 	var m := _manifest(src) if not _manifest(src).is_empty() else _manifest(dst)
@@ -223,8 +223,11 @@ static func build(src: Dictionary, dst: Dictionary, codes: PackedStringArray = P
 			clone["function"] = FunctionDecls.fn_code(m, fn_id)
 			pending.append({"fn_id": fn_id, "id": new_cid, "data": clone})
 	# —— 行补丁：实例码 / 引用 / 绑定（按声明，不做字符串盲扫） ——
+	# §4.2-3：cross_code 只给「局部跨图复制」用（组外引用要钉在源图）。
+	# 整图复制（self_copy=true）时副本本身就是源图的新身份：map:"" 随副本解释，
+	# 组外与组内的引用都指向副本自己——原先复用局部复制口径会把它们钉回源图（复制完还指旧图）。
 	var cross_code := ""
-	if src_map != "" and src_map != dst_map:
+	if not self_copy and src_map != "" and src_map != dst_map:
 		cross_code = _source_key(sdata, src_map)   # 同图粘贴 = ""，组外引用原样保留
 	# R10：源图身份键——配对地图字段的现值与它不符的引用指向第三张图，原样保留。
 	var source_key := _source_key(sdata, src_map)
@@ -456,8 +459,9 @@ static func whole_map_document(src: Dictionary, new_name: String, new_code: Stri
 	doc["meta"] = meta
 	# 目标文档（自身）只用于实例码占位查询：整图复制到新文件，不能撞现有任何码
 	var dst_ctx := {"data": {"meta": meta}, "manifest": m, "map": new_name}
+	# §4.2-3：整图复制 = 副本继承源图自己的引用（map:"" 指副本自己，不钉回源图）
 	var plan: Dictionary = build({"data": sdata, "manifest": m, "map": src_map}, dst_ctx,
-		PackedStringArray(), true, staged_contents)
+		PackedStringArray(), true, staged_contents, true)
 	var patch: Dictionary = plan.get("map_patch", {}) if plan.get("map_patch", {}) is Dictionary else {}
 	for key in ["objects", "tiles", "spawn", "collision"]:
 		if patch.has(key):
