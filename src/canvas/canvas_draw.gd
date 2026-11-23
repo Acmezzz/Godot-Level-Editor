@@ -34,7 +34,7 @@ func _draw() -> void:
 			cvs.draw_line(segs[k], segs[k + 1], Color(1, 1, 1, 0.07), 1.0, true)
 		
 	# 幽灵预览：只看「手上拿着什么」，没有工具要判断
-	var on_ent: bool = cvs.place_kind == "object"
+	var on_ent: bool = cvs.place_kind == "object" and not cvs._is_grid_layer(cvs.active_layer)
 	if cvs.grid.map_bounds(map_rect).has_point(pos):
 		if on_ent:
 			# 摆放模式：手上拿着资产就画它的幽灵，否则画「点这里会选中」的提示框
@@ -121,7 +121,7 @@ func _draw() -> void:
 	var screen_rect := Rect2(spos - Vector2(ss[0], ss[1]) * 0.5, Vector2(ss[0], ss[1]))
 	cvs.draw_rect(screen_rect, Color(0.35, 0.65, 1.0, 0.40), false, 1.0)
 	# 出生点标记：摆放模式下画成「可拖」的样子，其余画淡一些——避免误导成可点
-	var spawn_draggable: bool = cvs.place_kind == "object"
+	var spawn_draggable: bool = on_ent and not cvs.select_mode and not cvs.is_layer_locked(cvs.active_layer)
 	var spawn_col := Color(0.3, 1.0, 0.5, 0.9) if spawn_draggable else Color(0.3, 1.0, 0.5, 0.35)
 	var sg = cvs.grid.pick_cell(spos)
 	var spoly = cvs.grid.cell_polygon(sg)

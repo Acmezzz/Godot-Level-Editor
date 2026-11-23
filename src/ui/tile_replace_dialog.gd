@@ -58,9 +58,18 @@ func open() -> void:
 	# 当前计划与目标资产（应用时一并取走；计划本身不塞 UI 上下文）
 	# 字典按引用捕获：lambda 里只能改它的内容，不能重新赋值局部变量（V4 P1）
 	var cur := {"plan": {}, "dst": ""}
+	var canvas = app.canvas
+	var live: Dictionary = canvas.map_data
+	var atlas_rev: int = canvas.atlas_rev
+	var current := func() -> bool:
+		return app.map_loaded and app.canvas == canvas and is_same(canvas.map_data, live) \
+			and canvas._region_sel == sel and canvas.atlas_rev == atlas_rev
 	var apply_btn: Button = Kit.button("替换", func():
 		pop.hide()
-		_apply(cur["plan"] as Dictionary, str(cur["dst"])), "primary")
+		if current.call():
+			_apply(cur["plan"] as Dictionary, str(cur["dst"]))
+		else:
+			app._set_status("地图、选区或图集已变更，请重新预览瓦片替换"), "primary")
 	apply_btn.disabled = true
 
 	# 目标切片选项重建：palette 条目；未配 palette = 「与源同坐标」（由 keep_src 决定）
@@ -94,6 +103,15 @@ func open() -> void:
 				dst_cell = md
 		var cells: Array = TileReplace.collect(app.canvas, sel, src_id)
 		var plan: Dictionary = TileReplace.plan(app.manifest, cells, dst_id, dst_cell)
+		var available := []
+		var target_source: int = canvas.source_of_asset(dst_id)
+		for entry: Dictionary in plan.cells:
+			var li: int = canvas._layer_index_of(entry.layer)
+			if li >= 0 and TileReplace.slice_available(canvas.layer_tiles[li], target_source, entry.atlas):
+				available.append(entry)
+			else:
+				plan.conflicts.append({"c": entry.c, "why": "目标切片未加载"})
+		plan.cells = available
 		cur["plan"] = plan
 		cur["dst"] = dst_id
 		var ok_n: int = (plan.get("cells", []) as Array).size()
@@ -142,20 +160,18 @@ func _apply(plan: Dictionary, dst_asset: String) -> void:
 	if src < 0:
 		app._set_status(" 替换失败：目标资产没有可用图集（图集文件缺失？）")
 		return
+	for e: Dictionary in cells:
+		var li: int = app.canvas._layer_index_of(e.layer)
+		if li < 0 or not TileReplace.cell_matches(app.canvas.layer_tiles[li], e) \
+				or not TileReplace.slice_available(app.canvas.layer_tiles[li], src, e.atlas):
+			app._set_status("源瓦片或目标切片已变化，请重新预览")
+			return
 	app.canvas.push_undo()
-	var n := 0
-	var missing := 0
-	for it in cells:
-		var e: Dictionary = it
-		var li: int = app.canvas._layer_index_of(str(e.get("layer", "")))
-		if li < 0:
-			missing += 1
-			continue
-		TilesetCache.set_cell_alt(app.canvas.layer_tiles[li] as TileMapLayer,
-			e.get("c", Vector2i.ZERO) as Vector2i, src,
-			e.get("atlas", Vector2i.ZERO) as Vector2i, int(e.get("alt", 0)))
-		n += 1
-	app.canvas._mark_tiles()   # P01：只动地形瓦片，碰撞/实体集都没变
+	for e: Dictionary in cells:
+		var li: int = app.canvas._layer_index_of(e.layer)
+		var c: Vector2i = e.c
+		var atlas: Vector2i = e.atlas
+		app.canvas.write_tile_row(e.layer, app.canvas.layer_tiles[li], [c.x, c.y, dst_asset, atlas.x, atlas.y, e.alt])
+	app.canvas._mark_tiles()
 	app.canvas.queue_redraw()
-	app._set_status("已替换 %d 格瓦片%s（Ctrl+Z 撤销）" % [n,
-		("，%d 格因图层缺失跳过" % missing) if missing > 0 else ""])
+	app._set_status("已替换 %d 格瓦片（Ctrl+Z 撤销）" % cells.size())

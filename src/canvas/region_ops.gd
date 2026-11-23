@@ -242,7 +242,7 @@ func cut_selection() -> void:
 func copy_region() -> bool:
 	if cvs.map_root == null:
 		return false
-	if cvs.place_kind == "object":
+	if cvs.place_kind == "object" and not cvs._is_grid_layer(cvs.active_layer):
 		return cvs._selection_ops_ctrl.copy_selection()
 	if cvs._region_sel.size.x <= 0:
 		cvs._hint("先框选一块区域再复制")
@@ -303,7 +303,7 @@ func copy_region() -> bool:
 func cut_region() -> void:
 	if cvs.map_root == null:
 		return
-	if cvs.place_kind == "object":
+	if cvs.place_kind == "object" and not cvs._is_grid_layer(cvs.active_layer):
 		cut_selection()
 		return
 	if cvs._region_sel.size.x <= 0:

@@ -84,8 +84,21 @@ static func plan(manifest: Dictionary, cells: Array, dst_asset: String,
 				str(ac), bounds.x, bounds.y]})
 			continue
 		out.cells.append({"c": c, "layer": str(e.get("layer", "")), "atlas": ac,
+			"old_atlas": e.get("atlas", Vector2i.ZERO), "old_source": int(e.get("src", -1)),
 			"alt": int(e.get("alt", 0))})
 	return out
+
+static func slice_available(layer: TileMapLayer, source_id: int, atlas: Vector2i) -> bool:
+	if layer.tile_set == null or not layer.tile_set.has_source(source_id):
+		return false
+	var source := layer.tile_set.get_source(source_id) as TileSetAtlasSource
+	return source != null and source.has_tile(atlas)
+
+static func cell_matches(layer: TileMapLayer, entry: Dictionary) -> bool:
+	var c: Vector2i = entry.c
+	return layer.get_cell_source_id(c) == int(entry.old_source) \
+		and layer.get_cell_atlas_coords(c) == entry.old_atlas \
+		and MapFormat.alt_of_godot(layer.get_cell_alternative_tile(c)) == int(entry.alt)
 
 ## 目标资产的图集切片边界（列 x 行）。palette 非空按切片声明；否则按整图 / cell 尺寸算。
 ## 读不到图集尺寸时返回 ZERO（调用方跳过边界检查——不拿未知尺寸去否掉用户操作）。

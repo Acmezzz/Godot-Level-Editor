@@ -151,7 +151,7 @@ func _paint_path(pos: Vector2) -> void:
 	cvs._stroke_last_cell = c
 	cvs._stroke_has_last = true
 	for bc: Vector2i in cells:
-		if cvs.place_kind == "object":
+		if cvs.place_kind == "object" and not cvs._is_grid_layer(cvs.active_layer):
 			cvs._apply_tool(pos)
 			return   # 摆放不补格：一次鼠标事件只落一个实例
 		cvs._paint(bc)
@@ -193,8 +193,10 @@ func _on_left_press(pos: Vector2, b: InputEventMouseButton) -> void:
 	if cvs._paste_mode:
 		cvs._paste_region(cvs._cell_of(pos))
 		return
-	# 出生点标记可在实体放置模式下直接拖动——瓦片/碰撞笔刷优先，
-	# 框选模式下让位给框选。当前图层锁定时也不拖。
+	if cvs._is_grid_layer(cvs.active_layer):
+		_on_tile_layer_press(pos, b)
+		return
+	# 出生点拖动留在摆放模式，碰撞层始终先处理格工具。
 	if not cvs.select_mode and cvs.place_kind == "object" and cvs._on_spawn(pos):
 		if cvs.is_layer_locked(cvs.active_layer):
 			cvs._hint("当前图层已锁定：解锁后再移动出生点")
@@ -203,11 +205,6 @@ func _on_left_press(pos: Vector2, b: InputEventMouseButton) -> void:
 		cvs._spawn_origin = (cvs.spawn as Node2D).position
 		cvs.begin_gesture(cvs.Gesture.SPAWN_DRAG, MOUSE_BUTTON_LEFT)
 		cvs._drag_start = pos
-		return
-	# 碰撞元层没有资产可摆：无论左栏还留着什么笔刷，点击都必须是「涂碰撞」。
-	# 否则 place_kind == "object" 时点击走摆放分支（撞上出生点还会开始拖出生点）。
-	if cvs._is_grid_layer(cvs.active_layer):
-		_on_tile_layer_press(pos, b)
 		return
 	if cvs.place_kind == "object":
 		_on_object_layer_press(pos, b)
@@ -335,7 +332,7 @@ func _on_right_press(pos: Vector2) -> void:
 					cvs._mark()   # 与左键松手同语义：动过才置脏
 		cvs.end_gesture()
 	# 顶点删点（R-02）：右键顶点 = 删点，优先于擦除（poly≥3/path≥2 保底在实现里）
-	if cvs._delete_vertex_at(pos):
+	if not cvs._is_grid_layer(cvs.active_layer) and cvs._delete_vertex_at(pos):
 		return
 	# 空白处起手也进入追踪（E13）：从此处按住划过瓦片，沿途补擦。
 	# 撤销快照推迟到首个真实改动前压（空起手 = 零副作用）。
@@ -383,7 +380,7 @@ func _on_left_release(pos: Vector2) -> void:
 			cvs.end_gesture()
 		cvs.Gesture.BOX:
 			cvs.end_gesture()
-			if cvs.place_kind == "object":
+			if cvs.place_kind == "object" and not cvs._is_grid_layer(cvs.active_layer):
 				cvs._box_select(cvs._drag_start, pos)
 			else:
 				cvs._region_sel = cvs._cell_rect(cvs._drag_start, pos)
