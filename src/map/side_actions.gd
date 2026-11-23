@@ -17,11 +17,12 @@ func _scene_name(aid: String) -> String:
 func _open_map_by_name(map_name: String) -> void:
 	if map_name == app.cur_map_name:
 		return
-	if not await app._confirm_discard("打开地图 " + map_name):
-		return
+	# 先确认目标存在，再问「要不要丢改动」：目标不存在还先丢改动 = 白白损失工作
 	var p := EditorManifest.map_path(app.manifest, map_name)
 	if p == "" or not FileAccess.file_exists(p):
 		app._set_status(" 地图不存在: " + map_name)
+		return
+	if not await app._confirm_discard("打开地图 " + map_name):
 		return
 	await app._load_map_file(p)
 

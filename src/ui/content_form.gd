@@ -770,6 +770,18 @@ func staged_rows_for_current_doc() -> Array:
 			"data": (st.get("data", {}) as Dictionary).duplicate(true)})
 	return out
 
+## 当前文档的暂存内容 {内容ID: data}：整图复制要把未落盘的绑定内容一起带进副本
+## （只读磁盘副本会把这些内容判成缺失/丢内容，V4 P1）。键只用内容 ID——ClonePlan 按
+## 绑定行里的 content 值查表，与功能 id 无关。
+func staged_data_by_cid() -> Dictionary:
+	var out := {}
+	for row in staged_rows_for_current_doc():
+		var cid := str(row.get("cid", ""))
+		var dat = row.get("data", null)
+		if cid != "" and dat is Dictionary:
+			out[cid] = (dat as Dictionary).duplicate(true)
+	return out
+
 ## 当前文档是否有暂存内容。
 func has_staged_for_current_doc() -> bool:
 	if _staged.is_empty():
@@ -1085,7 +1097,9 @@ func _open_batch(fn_id: String) -> void:
 	var cur := {"plan": {}, "commit": Callable()}
 	# 读控件值 → {v} 或 {err}
 	var value_of := func(fd: Dictionary, ctl: Control, commit: Callable) -> Dictionary:
-		commit.call()
+		# 空 Callable（换字段后旧提交器已清）不能 call()，否则直接报 Method not found
+		if commit is Callable and (commit as Callable).is_valid():
+			commit.call()
 		# 控件族与 _set_field 一致：CheckBox / OptionButton / LineEdit / SpinBox / 行内多控件
 		if ctl is CheckBox:
 			return {"v": (ctl as CheckBox).button_pressed}
@@ -1139,8 +1153,14 @@ func _open_batch(fn_id: String) -> void:
 			var row: Control = value_slot.get_child(0)
 			for ch in row.get_children():
 				if ch is Control and not (ch is Label):
-					# 连续控件（LineEdit）的待写值先冲刷，否则预览读到的是上一个值
-					got = value_of.call(fd, ch, cur["commit"] as Callable)
+					# 连续控件（LineEdit）的待写值先冲刷，否则预览读到的是上一个值。
+					# cur.commit 是 rebuild 里按当前字段码装的，切换字段后会指向旧控件——
+					# 只在它属于当前字段的非空 Callable 时才冲刷（V4 P1：cur 重绑后刷错控件）。
+					var cb: Callable = cur.get("commit", Callable())
+					if cb is Callable and (cb as Callable).is_valid():
+						got = value_of.call(fd, ch, cb)
+					else:
+						got = value_of.call(fd, ch, Callable())
 					break
 		if str(got.get("err", "")) != "":
 			plan_lbl.text = "⚠ " + str(got.get("err", ""))

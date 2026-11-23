@@ -418,8 +418,10 @@ static func rename_map(m: Dictionary, old_name: String, new_name: String) -> Str
 ## 复制地图（C2）：整图走 ClonePlan——实例码与附属内容全部独立、组内引用重映射，
 ## 目标图重发地图码。内容先写（A2），再写地图；任何一步失败都不留新地图文件。
 ## 返回错误信息（"" = 成功）；conflicts_out 收计划冲突给人看。
+## staged_contents：会话里未落盘的暂存内容 {cid: data}——未保存的绑定内容也要复制
+## （只读磁盘会把它们判成缺失，V4 P1）。
 static func duplicate_map(m: Dictionary, old_name: String, new_name: String,
-		conflicts_out: Array = [], src_data: Dictionary = {}) -> String:
+		conflicts_out: Array = [], src_data: Dictionary = {}, staged_contents := {}) -> String:
 	new_name = new_name.strip_edges()
 	if not ManifestScript.is_valid_map_name(new_name):
 		return "名称非法"
@@ -441,7 +443,7 @@ static func duplicate_map(m: Dictionary, old_name: String, new_name: String,
 	var ClonePlan := preload("res://src/content/clone_plan.gd")
 	var ContentStore := preload("res://src/content/content_store.gd")
 	var plan: Dictionary = ClonePlan.whole_map_document(
-		{"data": d, "manifest": m, "map": old_name}, new_name, code)
+		{"data": d, "manifest": m, "map": old_name}, new_name, code, staged_contents)
 	if str(plan.get("status", "")) != "ok":
 		conflicts_out.append_array(plan.get("conflicts", []))
 		return "复制计划有冲突（见问题列表）"

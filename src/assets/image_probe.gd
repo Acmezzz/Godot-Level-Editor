@@ -62,23 +62,33 @@ static func prefab_collision_size(project_dir: String, prefab_rel: String) -> Ve
 		if reachable.has(_node_path(n)):
 			(n as Dictionary)["reachable"] = true
 			mounted.append(n)
-	# 优先：挂载节点里的 CollisionShape2D（按文件顺序）
+	# 优先：挂载节点里的 CollisionShape2D（按文件顺序，取首个可达的）。
+	# 形状尺寸要乘上所在节点的缩放（V4 P1：忽略节点变换会让放大过的 prefab 体积算错）。
 	for n in mounted:
-		if str((n as Dictionary).get("type", "")) == "CollisionShape2D":
-			var sid := str((n as Dictionary).get("shape", ""))
-			if shapes.has(sid):
-				return shapes[sid]
+		if str((n as Dictionary).get("type", "")) != "CollisionShape2D":
+			continue
+		var sid := str((n as Dictionary).get("shape", ""))
+		if shapes.has(sid):
+			return _scaled_size(shapes[sid], n)
 	# 其次：任意节点的 CollisionShape2D（老文件/嵌套场景）
 	for n in nodes:
 		if str((n as Dictionary).get("type", "")) == "CollisionShape2D":
 			var sid2 := str((n as Dictionary).get("shape", ""))
 			if shapes.has(sid2):
-				return shapes[sid2]
+				return _scaled_size(shapes[sid2], n)
 	# 没有 CollisionShape2D：单个形状时直接用它（保持旧行为），多个形状不猜
 	if shapes.size() == 1:
 		for k in shapes:
 			return shapes[k]
 	return Vector2.ZERO
+
+## 形状尺寸 × 节点缩放（取绝对值：负缩放只是镜像，体积不变）。
+static func _scaled_size(sz: Vector2, node: Dictionary) -> Vector2:
+	var s = node.get("scale", null)
+	if not (s is Vector2):
+		return sz
+	var sv: Vector2 = s
+	return Vector2(absf(sz.x * sv.x), absf(sz.y * sv.y))
 
 ## 解析 sub_resource 形状表：{id: Vector2}。rect 用 size，circle/radius，capsule 组合。
 static func _parse_shapes(text: String) -> Dictionary:
@@ -147,6 +157,13 @@ static func _parse_nodes(text: String) -> Array:
 		if in_node and line.begins_with("shape = SubResource(\""):
 			var rest := line.substr(line.find("SubResource(\"") + 13)
 			cur["shape"] = rest.substr(0, rest.find("\""))
+		elif in_node and line.begins_with("scale = Vector2("):
+			# 节点缩放参与碰撞体积（放大过的 prefab 占位盒要跟着放大）
+			var inner := line.trim_prefix("scale = Vector2(").trim_suffix(")")
+			var parts := inner.split(",")
+			if parts.size() == 2:
+				cur["scale"] = Vector2(parts[0].strip_edges().to_float(),
+					parts[1].strip_edges().to_float())
 	if not cur.is_empty():
 		out.append(cur)
 	return out

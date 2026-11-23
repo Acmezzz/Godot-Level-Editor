@@ -94,31 +94,41 @@ func _notification(what: int) -> void:
 func _update_hover(pos: Vector2) -> void:
 	set_hover(_hit_at(pos))
 
+## 地图的世界像素包围盒（取景/原点/背景共用）：等距/六边/斜基/三角的地图不是
+## w×tile、h×tile 的矩形，按正交宽高取景会把整图裁掉（V4 P1）。几何统一走 GridSpace。
+## 每帧多次调用（fit/origin/绘制），按 map_rev 缓存——切图或有改动才重算。
+var _bounds_cache := Rect2()
+var _bounds_rev := -1
+
+func _map_bounds_px() -> Rect2:
+	var rev: int = int(host.app.canvas.map_rev)
+	if rev == _bounds_rev:
+		return _bounds_cache
+	var meta: Dictionary = host.app.canvas.map_data.get("meta", {})
+	var mw := int(meta.get("w", K.DEFAULT_MAP_W))
+	var mh := int(meta.get("h", K.DEFAULT_MAP_H))
+	var gs: GridSpace = MapExport.grid_of(host.app.canvas.map_data, host.app.manifest)
+	_bounds_cache = gs.map_bounds(Rect2i(0, 0, mw, mh))
+	_bounds_rev = rev
+	return _bounds_cache
+
 ## fit 缩放：把整张地图塞进控件（留 24px 边距），不跟随关卡画布的 zoom/相机。
 func _fit() -> float:
 	if not host._map_ready() or size.x <= 1 or size.y <= 1:
 		return 0.0
-	var meta: Dictionary = host.app.canvas.map_data.get("meta", {})
-	# app.canvas 在宿主上是无类型 var，链式取值是 Variant：必须显式标注，否则推断失败
-	var tile_w: float = float(host.app.canvas.tile_w)
-	var tile_h: float = float(host.app.canvas.tile_h)
-	var w: float = float(int(meta.get("w", K.DEFAULT_MAP_W))) * tile_w
-	var h: float = float(int(meta.get("h", K.DEFAULT_MAP_H))) * tile_h
-	if w <= 0 or h <= 0:
+	var bb := _map_bounds_px()
+	if bb.size.x <= 0.0 or bb.size.y <= 0.0:
 		return 0.0
-	return minf((size.x - 48) / w, (size.y - 48) / h)
+	return minf((size.x - 48) / bb.size.x, (size.y - 48) / bb.size.y)
 
 func _scale() -> float:
 	return _fit() * _zoom
 
-## 预览视图原点：居中原点 + 用户 pan 偏移（绘制与命中测试共用同一变换）
+## 预览视图原点：世界 (0,0) 在控件里的位置 = 居中 + 用户 pan 偏移
+## （地图包围盒起点不一定在 0,0——等距图的左上角为负，必须扣掉 bounds.position）。
 func _origin(s: float) -> Vector2:
-	var meta: Dictionary = host.app.canvas.map_data.get("meta", {})
-	var tile_w: float = float(host.app.canvas.tile_w)
-	var tile_h: float = float(host.app.canvas.tile_h)
-	var map_px := Vector2(float(int(meta.get("w", K.DEFAULT_MAP_W))) * tile_w,
-		float(int(meta.get("h", K.DEFAULT_MAP_H))) * tile_h) * s
-	return (size - map_px) * 0.5 + _pan
+	var bb := _map_bounds_px()
+	return (size - bb.size * s) * 0.5 - bb.position * s + _pan
 
 ## 滚轮缩放预览：缩放前后鼠标指着的地图点不动。pan 屏幕偏移 = 新原点 − 新居中原点。
 func _zoom_at(pos: Vector2, factor: float) -> void:
@@ -182,13 +192,18 @@ func _draw_map() -> void:
 	var mh := int(meta.get("h", K.DEFAULT_MAP_H))
 	var tile_w := float(host.app.canvas.tile_w)
 	var tile_h := float(host.app.canvas.tile_h)
-	var map_px := Vector2(float(mw) * tile_w, float(mh) * tile_h) * s
+	var mbb := _map_bounds_px()
+	var map_px := mbb.size * s
 	var origin := _origin(s)
-	draw_rect(Rect2(origin, map_px), Th.BG_BASE)
-	# 网格：缩略后逐格线过密就不画（避免一整片灰）；矩形格两轴步长分开
+	# 背景/边框 = 地图真实包围盒（等距/六边/斜基/三角都不是 w×tile 的矩形）
+	draw_rect(Rect2(origin + mbb.position * s, map_px), Th.BG_BASE)
+	# 网格：缩略后逐格线过密就不画（避免一整片灰）；矩形格两轴步长分开。
+	# 只有正交（无斜基）才铺规则方格——其余投影的格线走 GridSpace，不在这里硬画。
 	var step_x := tile_w * s
 	var step_y := tile_h * s
-	if minf(step_x, step_y) >= 6.0:
+	var gs_lines: GridSpace = MapExport.grid_of(host.app.canvas.map_data, host.app.manifest)
+	var plain_ortho := not (gs_lines.has_basis or gs_lines.is_iso() or gs_lines.is_hex() or gs_lines.is_tri())
+	if plain_ortho and minf(step_x, step_y) >= 6.0:
 		var grid_col := Color(1, 1, 1, 0.05)
 		for x in mw + 1:
 			var px := origin.x + x * step_x
@@ -196,7 +211,7 @@ func _draw_map() -> void:
 		for y in mh + 1:
 			var py := origin.y + y * step_y
 			draw_line(Vector2(origin.x, py), Vector2(origin.x + map_px.x, py), grid_col, 1.0)
-	draw_rect(Rect2(origin, map_px), Color(1, 1, 1, 0.25), false, 1.0)
+	draw_rect(Rect2(origin + mbb.position * s, map_px), Color(1, 1, 1, 0.25), false, 1.0)
 
 	# 各用户层真实瓦片：预览必须看得出实例压在哪块地上，只画网格等于丢了一半信息。
 	# 数据优先取画布实时 TileMapLayer（刚涂的与主画布一致），退回 map_data 的序列化数组；
@@ -218,11 +233,12 @@ func _draw_map() -> void:
 			# 层变换统一取 MapViewData.layer_transform（与画布/导出同一份规则），每层只算一次。
 			var lxf := MapViewData.layer_transform(host.app.canvas.map_data, lid)
 			for t in _tiles(li, lid):
-				# 只画地图边界内的格：画布允许在边界外涂，预览出框会显得脏
+				# 只画地图边界内的格：画布允许在边界外涂，预览出框会显得脏。
+				# 三角拓扑的 x 是三角列（0..2w-1），边界判定交 GridSpace（V4 P1）
+				if not gs_lines.cell_in_map(Vector2i(int(t[0]), int(t[1])), mw, mh):
+					continue
 				var cx := int(t[0])
 				var cy := int(t[1])
-				if cx < 0 or cy < 0 or cx >= mw or cy >= mh:
-					continue
 				var aid := str(t[2])
 				var texs: Array = host.app.canvas.atlas_texs
 				var ai: int = host.app.canvas.source_of_asset(aid)
@@ -280,7 +296,7 @@ func _draw_map() -> void:
 			for t2 in _tiles(li2, lid2):
 				var cx2 := int(t2[0])
 				var cy2 := int(t2[1])
-				if cx2 < 0 or cx2 >= mw or cy2 < 0 or cy2 >= mh:
+				if not gs.cell_in_map(Vector2i(cx2, cy2), mw, mh):
 					continue
 				var poly := _xformed(lxf2, gs.cell_polygon(Vector2i(cx2, cy2)))
 				var pts := PackedVector2Array()

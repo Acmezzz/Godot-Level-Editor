@@ -138,6 +138,36 @@ func tri_tex_rect(i: int, row: int, cs: Vector2i) -> Rect2:
 		mn = mn.min(p)
 		mx = mx.max(p)
 	return Rect2(mn, mx - mn)
+
+## 连续格坐标（平行四边形列口径，to_grid/连续拖动用）→ **本拓扑的格号**。
+## 三角拓扑要把平行四边形列折成半格列（c·2 + 上半格?1:0）——实体所在格、框选命中
+## 与区域选区必须同一口径，否则三角图上「实例算出的格」和「框选出的格」差一倍（V4 P1）。
+func cell_of_continuous(g: Vector2) -> Vector2i:
+	if is_tri():
+		var c := floori(g.x)
+		var row := floori(g.y)
+		var fx := g.x - float(c)
+		var fy := g.y - float(row)
+		return Vector2i(c * 2 + (1 if fx + fy > 1.0 else 0), row)
+	return Vector2i(floori(g.x), floori(g.y))
+
+## 本拓扑格号 → 连续格坐标的**格原点**（三角拓扑取所在平行四边形列，半格奇偶丢失是
+## 连续坐标的固有粒度：实例位置本身是浮点，落位仍以它为准）。
+func cell_origin_continuous(c: Vector2i) -> Vector2:
+	if is_tri():
+		return Vector2(float(tri_col(c.x).c), float(c.y))
+	return Vector2(c)
+
+## 格号是否落在地图 [0,w)×[0,h) 内。三角拓扑的 x 是三角列（0..2w-1），
+## 直接和 w 比会把图外半个地图当成图内（V4 P1）。
+func cell_in_map(c: Vector2i, w: int, h: int) -> bool:
+	if c.y < 0 or c.y >= h:
+		return false
+	if is_tri():
+		var cc := int(tri_col(c.x).c)
+		return cc >= 0 and cc < w
+	return c.x >= 0 and c.x < w
+
 static func parse_basis(meta: Dictionary) -> Dictionary:
 	if not meta.has("gridBasis"):
 		return {"ok": true, "u": Vector2.ZERO, "v": Vector2.ZERO, "why": ""}
@@ -323,13 +353,22 @@ func to_continuous_grid(px: Vector2) -> Vector2:
 	var off := 0.5 if posmod(floori(gy), 2) == 1 else 0.0
 	return Vector2((px.x - w * 0.5) / w - off, gy)
 
+## 拓扑格号位移 → 像素平移（只给区域移动/粘贴用的 **cell 索引** 换算）。
+## 三角拓扑的格号 x 是**三角列**（两列共用一个平行四边形列），所以要先折半再走 to_px；
+## 直接 to_px(delta) 会把 1 个三角列当成 1 个整列（V4 P1：两种列混用）。
+## 注意：实例的连续格坐标（EntityNode.apply_grid）用的是平行四边形列，不走这里。
+func delta_px(d: Vector2i) -> Vector2:
+	if is_tri():
+		return to_px(Vector2(float(d.x) * 0.5, float(d.y))) - to_px(Vector2.ZERO)
+	return to_px(Vector2(d)) - to_px(Vector2.ZERO)
+
 ## R22：区域移动/粘贴的格平移原语——经像素几何换算（六边 odd-r 行错位、三角半格列由
-## 拾取统一处理）。正交/等距/斜基与直接相加等价；六边/三角按「格中心 + 像素位移」
+## delta_px 折算）。正交/等距/斜基与直接相加等价；六边/三角按「格中心 + 像素位移」
 ## 回拾取，跨奇偶行/半格列的平移不再破坏几何。delta=(0,0) 恒等。
 func shift_cell(c: Vector2i, delta: Vector2i) -> Vector2i:
 	if delta == Vector2i.ZERO:
 		return c
-	return pick_cell(cell_center_px(c) + (to_px(Vector2(delta)) - to_px(Vector2.ZERO)))
+	return pick_cell(cell_center_px(c) + delta_px(delta))
 
 ## cell 的中心像素（正交 = 方形中心；等距 = 菱形中心；六边 = 格中心，与 TileMapLayer.map_to_local 口径一致）
 func cell_center_px(c: Vector2i) -> Vector2:
@@ -358,7 +397,15 @@ func cell_polygon(c: Vector2i) -> PackedVector2Array:
 		to_px(g0 + Vector2(1, 1)), to_px(g0 + Vector2(0, 1))])
 
 ## 格空间矩形 [a, b) 的像素多边形（区域选区/笔刷块/地图边界统一口径；六边 = 四角 cell 包围盒近似）
+## 三角拓扑的 a/b 是**三角列**（两列 = 一个平行四边形列）：按 x/2 折算，否则选区轮廓
+## 与真实覆盖范围差一倍（V4 P1）。半列起止也照实算（奇列起点 = 平行四边形列的中点）。
 func grid_polygon(a: Vector2i, b: Vector2i) -> PackedVector2Array:
+	if is_tri():
+		var t0 := Vector2(float(a.x) * 0.5, float(a.y))
+		var t1 := Vector2(float(b.x) * 0.5, float(b.y))
+		return PackedVector2Array([
+			to_px(t0), to_px(Vector2(t1.x, t0.y)),
+			to_px(t1), to_px(Vector2(t0.x, t1.y))])
 	if has_basis:
 		var g0b := Vector2(a)
 		var g1b := Vector2(b)
@@ -542,7 +589,7 @@ func cells_between(a: Vector2i, b: Vector2i) -> Array:
 ## 地图像素包围盒（背景/视野拟合/界内判定的统一口径）。
 ## 正交 = 精确矩形；等距 = 菱形网格多边形包围盒（精确）；六边 = 四角 cell 包围盒（近似）。
 func map_bounds(map_rect: Rect2i) -> Rect2:
-	if is_iso() or is_hex():
+	if is_iso() or is_hex() or is_tri():
 		var pts := grid_polygon(map_rect.position, map_rect.end)
 		var mn := pts[0]
 		var mx := pts[0]

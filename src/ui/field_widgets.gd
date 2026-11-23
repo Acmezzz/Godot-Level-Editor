@@ -161,17 +161,20 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 					pending.v = int(v)
 				else:
 					pending.v = v)
-			# 未改动就提交时什么都不做（A2）：否则「空表单按 Ctrl+S」会先建出内容 ID
-			var initial := sp.value
-			var commit := func():
-				if float(pending.v) != initial:
+			# 未改动就提交时什么都不做（A2）：否则「空表单按 Ctrl+S」会先建出内容 ID。
+			# 基线必须是「上次真正写出去的值」：拿建控件时的值比，用户写 7 之后再改回 5
+			# 会被判成「没变」而丢写（V4 P1）。拖动期间仍只记内存（连续控件纪律）。
+			var last := {"v": float(pending.v)}
+			var push := func():
+				if float(pending.v) != float(last.v):
+					last.v = pending.v
 					on_set.call(pending.v)
-			sp.get_line_edit().text_submitted.connect(func(_t: String):
-				if float(pending.v) != initial:
-					on_set.call(pending.v))
-			sp.get_line_edit().focus_exited.connect(func():
-				if float(pending.v) != initial:
-					on_set.call(pending.v))
+			var commit := func(): push.call()
+			sp.get_line_edit().text_submitted.connect(func(_t: String): push.call())
+			sp.get_line_edit().focus_exited.connect(func(): push.call())
+			# 失焦也要落盘：键盘输入走 SpinBox 自身行编辑，不会触发 text_submitted
+			# 的情形（直接点别处）同样要写出去
+			sp.focus_exited.connect(func(): push.call())
 			return {"ctl": sp, "commit": commit}
 		"string":
 			if not (value is String) and value != null:

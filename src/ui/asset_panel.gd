@@ -28,6 +28,8 @@ var extra: VBoxContainer
 
 var _edef: Dictionary = {}
 var _loading := false
+## 建详情时的名字基线：写盘失败要能退回（否则失败的名字留在内存里，别处保存会带进清单）。
+var _edef_name_before := ""
 
 ## 整页底色：直接画在控件自身，不额外插入节点、不占布局，也不会露出默认灰
 func _draw() -> void:
@@ -133,11 +135,29 @@ func build() -> void:
 	name_edit.text_submitted.connect(func(_t: String): _commit_name())
 	name_edit.focus_exited.connect(_commit_name)
 
-## 名称提交（写盘）
+## 名称提交（写盘）。写失败不留「看起来已保存」的假象：把名字退回提交前的值并重建详情。
 func _commit_name() -> void:
 	if _edef.is_empty() or _loading:
 		return
-	save_manifest.call()
+	var sid := str(_edef.get("id", ""))
+	if await _persist():
+		refresh_list(sid)
+		return
+	# 写盘失败（状态栏已报原因）：内存里改过的名字不能留着，否则别处保存会把失败值带进清单
+	var name_now := str(_edef.get("name", ""))
+	if name_now != _edef_name_before:
+		_edef["name"] = _edef_name_before
+		refresh_list(sid)
+
+## 写清单并返回是否成功（V4 P1：原来的 void 回调把写盘失败吞成静默成功）。
+## 直连宿主的异步保存方法：注入的 Callable 是协程，call() 拿不到返回值。
+func _persist() -> bool:
+	if host != null and host.has_method("_save_manifest_file_async"):
+		return bool(await host._save_manifest_file_async())
+	if save_manifest is Callable and (save_manifest as Callable).is_valid():
+		save_manifest.call()
+		return true
+	return true
 
 # —— 视图切换 ——
 func show_detail(sid: String) -> void:
@@ -155,7 +175,9 @@ func refresh_list(focus_sid := "") -> void:
 	asset_list.clear()
 	var focus_idx := -1
 	var idx := 0
-	for edef in AssetDecl.of_kind(manifest, "entity"):
+	# 图鉴 = 清单里的全部非内置资产（实体 + 场景/图集）：只列实体会让瓦片/装饰资产
+	# 在编辑器里既搜不到也看不了引用，删/停用也没有入口（V4 P1）。of_kind("") = 不限种类。
+	for edef in AssetDecl.of_kind(manifest, ""):
 		if bool((edef as Dictionary).get("builtin", false)):
 			continue
 		var sid := str((edef as Dictionary).get("id", ""))
@@ -241,7 +263,8 @@ func _show_detail(sid: String) -> void:
 			"停用：源文件不在 %s。把文件放回原位后重开项目即可恢复；已有引用仍按原 ID 解析。" % str(_edef.get("retiredPath", ""))
 		_detail_hint.visible = true
 	_loading = true
-	name_edit.text = str(_edef.get("name", sid))
+	_edef_name_before = str(_edef.get("name", sid))
+	name_edit.text = _edef_name_before
 	thumb.texture = _asset_texture(_edef)
 	_mount_rows(_edef)
 	for child in extra.get_children():
@@ -363,8 +386,8 @@ func _add_scan_section(sid: String) -> void:
 		var row0 := Kit.hbox(6)
 		row0.add_child(Kit.button("重新启用", func():
 			preload("res://src/project/asset_scan.gd").enable(manifest, sid)
-			save_manifest.call()
-			refresh_list(sid), "primary"))
+			if await _persist():
+				refresh_list(sid), "primary"))
 		extra.add_child(row0)
 		extra.add_child(Kit.hint_label(
 			"此条目已停用：不再出现在调色板，但保留原 ID——已有引用仍能定位到它，重新启用即恢复。", 460))
@@ -384,8 +407,8 @@ func _add_scan_section(sid: String) -> void:
 		var row := Kit.hbox(6)
 		row.add_child(Kit.button("恢复（文件已放回原位）", func():
 			preload("res://src/project/asset_scan.gd").restore(manifest, sid)
-			save_manifest.call()
-			refresh_list(sid), "primary"))
+			if await _persist():
+				refresh_list(sid), "primary"))
 		box.add_child(row)
 		box.add_child(Kit.hint_label("引用检查：地图或内容里仍按此 ID 引用时会继续定位到本条目。", 460))
 		return
@@ -396,9 +419,11 @@ func _add_scan_section(sid: String) -> void:
 		lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		r2.add_child(lbl)
 		r2.add_child(Kit.button("用这个路径", func():
-			preload("res://src/project/asset_scan.gd").confirm_relink(manifest, sid, c)
-			save_manifest.call()
-			refresh_list(sid), "primary"))
+			if not preload("res://src/project/asset_scan.gd").confirm_relink(manifest, sid, c):
+				host._set_status(" 该路径已被另一份资产占用：改选别的候选，或先处理那份资产")
+				return
+			if await _persist():
+				refresh_list(sid), "primary"))
 		box.add_child(r2)
 
 ## 实例分布（只读视图）：按地图折叠列实例 id 与坐标，供清点/删除检查。
@@ -547,7 +572,8 @@ func _delete_asset_checked(sid: String) -> void:
 	# 已停用的扫描条目：这一步是「永久删除」，真从清单里抹掉（用户已明确放弃）
 	if permanent:
 		manifest.get("assets", []).erase(_edef)
-		save_manifest.call()
+		if not await _persist():
+			host._set_status(" 资产已从内存移除，但清单写盘失败：重试保存或重开项目后再操作")
 		_edef = {}
 		refresh_list()
 		return
@@ -558,7 +584,8 @@ func _delete_asset_checked(sid: String) -> void:
 		host._set_status(" 已停用资产 %s（条目保留，可在资产页恢复）" % sid)
 	else:
 		manifest.get("assets", []).erase(_edef)
-	save_manifest.call()
+	if not await _persist():
+		host._set_status(" 资产改动仅在内存里（清单写盘失败）：重试保存或重开项目后再操作")
 	_edef = {}
 	# 删除后留在图鉴：刷新列表并落到第一项（没有则给空态提示）
 	refresh_list()
@@ -621,7 +648,7 @@ func _add_mount_row(edef: Dictionary, mounted: Array) -> void:
 		mounts_box.remove_child(sel)
 		mounts_box.queue_redraw()
 		_mount_rows(edef)
-		save_manifest.call())
+		await _persist())
 	sel.select(0)
 	mounts_box.add_child(sel)
 
@@ -633,7 +660,7 @@ func _unmount(edef: Dictionary, mid: String) -> void:
 	arr.erase(mid)
 	edef["functions"] = arr
 	_mount_rows(edef)
-	save_manifest.call()
+	await _persist()
 
 
 ## 资产缩略图：裁掉透明留白后再用。

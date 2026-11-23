@@ -256,6 +256,18 @@ func test_grid_triangles() -> void:
 	ok(ctr.distance_to(Vector2(16, 16) / 3.0) < 0.001, "偶半格重心 = 三点平均")
 	# 网格线含对角线；六边 + 三角组合被拒
 	ok(g.grid_lines(Rect2(-8, -8, 48, 48), Rect2i(0, 0, 2, 2)).size() >= 12, "三角网格线含外框/内线/对角线")
+	# V4 P1：三角列与连续格列不能混用——位移/所在格/范围/边界全部折半
+	eq(g.delta_px(Vector2i(2, 0)), Vector2(16, 0), "两个三角列 = 一个平行四边形列宽")
+	eq(g.shift_cell(Vector2i(0, 0), Vector2i(2, 0)), Vector2i(2, 0), "三角位移 (2,0) = 同排下一个偶半格")
+	eq(g.shift_cell(Vector2i(0, 0), Vector2i(0, 1)), Vector2i(0, 1), "三角竖移一格")
+	eq(g.cell_of_continuous(Vector2(0.25, 0.25)), Vector2i(0, 0), "连续坐标左下 → 偶半格")
+	eq(g.cell_of_continuous(Vector2(0.75, 0.75)), Vector2i(1, 0), "连续坐标右上 → 奇半格")
+	eq(g.cell_origin_continuous(Vector2i(3, 2)), Vector2(1, 2), "三角列 3 → 平行四边形列 1")
+	ok(g.cell_in_map(Vector2i(3, 0), 2, 4), "三角列 3 在 2 列宽图内（列 1）")
+	ok(not g.cell_in_map(Vector2i(4, 0), 2, 4), "三角列 4 超出 2 列宽图")
+	var gp2: PackedVector2Array = g.grid_polygon(Vector2i(0, 0), Vector2i(4, 1))
+	eq(gp2, PackedVector2Array([Vector2(0, 0), Vector2(32, 0), Vector2(32, 16), Vector2(0, 16)]),
+		"三角范围 4 个三角列 = 2 个平行四边列宽")
 	var hexg = GridSpaceScript.new(Vector2i(16, 16), "hexagonal")
 	hexg.set_topology("triangles")
 	ok(not hexg.is_tri(), "六边投影拒绝三角拓扑（保持 quads）")

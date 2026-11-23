@@ -346,18 +346,25 @@ func remember_context() -> void:
 
 ## 只冲刷连续控件值（切视图/离开内容页）：不落 staged 新内容——新 ID/新绑定
 ## 必须等正式保存或试玩（A2），否则来回切视图就凭空生成内容文件。
-func commit_fields() -> void:
+## V4 P1：返回是否有任何一条写入失败。以前忽略结果，正式提交在控件值写失败时
+## 仍会继续往下提交地图——地图里带着没落盘的字段值。
+func commit_fields() -> bool:
 	var pend := _pending_commits.duplicate()
 	_pending_commits.clear()
+	var failed := false
 	for cb in pend:
 		if cb is Callable and (cb as Callable).is_valid():
-			(cb as Callable).call()
+			# 提交器契约：显式返回 false = 写失败；不返回值（void 控件）按成功计
+			var r = (cb as Callable).call()
+			if r is bool and not bool(r):
+				failed = true
+	return not failed
 
 ## Ctrl+S / 正式提交：冲刷控件值后再把 staged 内容写盘（A2 正式提交点）。
 ## on_written(fn_id, cid)：每条成功写入即回调（提交日志逐文件登记，R04）。
 func commit(on_written: Callable = Callable()) -> bool:
-	commit_fields()
-	return _form.flush_staged(on_written)
+	var fields_ok := commit_fields()
+	return _form.flush_staged(on_written) and fields_ok
 
 ## 是否有尚未落盘的暂存内容（新 ID / 新绑定）；正式提交/试玩据此判定。
 func has_staged() -> bool:
@@ -886,6 +893,9 @@ func has_staged_content() -> bool:
 ## 当前文档（地图）的暂存状态与目标（R02/R04：提交日志与草稿按文档冻结）。
 func staged_rows_current_doc() -> Array:
 	return _form.staged_rows_for_current_doc()
+## 当前文档的暂存内容 {cid: data}（整图复制带未落盘内容用，V4 P1）。
+func staged_data_by_cid() -> Dictionary:
+	return _form.staged_data_by_cid()
 func has_staged_for_current_doc() -> bool:
 	return _form.has_staged_for_current_doc()
 func drop_staged_for_current_doc() -> int:

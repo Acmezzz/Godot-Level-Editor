@@ -85,6 +85,21 @@ static func _touches(v, id_map: Dictionary) -> bool:
 		return false
 	return v is String and id_map.has(v)
 
+## 值是否**全部**落在映射表里（单值 = 是否命中；数组 = 非空且每项都命中）。
+## 组内/组外混排的多值引用不能整组改判地图归属，调用方据此报冲突（V4 P1）。
+static func _all_in(v, id_map: Dictionary) -> bool:
+	if id_map.is_empty():
+		return false
+	if v is Array:
+		var arr := v as Array
+		if arr.is_empty():
+			return false
+		for it in arr:
+			if not (it is String) or not id_map.has(it):
+				return false
+		return true
+	return v is String and id_map.has(v)
+
 ## 按映射表换值（多选数组逐元素；未命中原样）。
 static func _swap(v, id_map: Dictionary):
 	if v is Array:
@@ -364,8 +379,15 @@ static func _remap_field_map(values, decls: Array, instance_map: Dictionary,
 			continue
 		var pair_key := _key_of(decls, pair)
 		if touched:
-			# 组内：配对地图字段指向副本所在的图
+			# 组内：配对地图字段指向副本所在的图。
+			# 多值列表只命中一部分时不能整组改判：列表里同时有本图与组外引用，
+			# 一个 mapField 表达不了两个归属——保留原值并报冲突（V4 P1）。
 			if pair_key != "":
+				if not _all_in(v, id_map):
+					conflicts.append({"kind": "ref_pair_partial", "id": owner,
+						"message": "内容 %s 的字段 %s 是混合引用（部分在本图/部分指向别的图），配对地图字段 %s 无法同时表示：请拆分或取消" % [
+							owner, str(f.get("id", "")), pair]})
+					continue
 				var tk := _target_key(target_data, target_map)
 				if pairs_to_fill.has(pair_key) and str(pairs_to_fill[pair_key]) != tk:
 					conflicts.append({"kind": "ref_pair_conflict", "id": owner,
@@ -422,7 +444,8 @@ static func conflicts_text(conflicts: Array) -> String:
 ## 源文档全部保留（含游戏侧自定义顶层键），只替换 meta 身份与 objects/tiles/spawn/collision。
 ## 调用方先发行新图名与地图码；内容按 A2 顺序由调用方先写 pending_contents。
 ## 返回 build 的结果 + 额外键 "document"（可直接 MapStore.write 的文档）。
-static func whole_map_document(src: Dictionary, new_name: String, new_code: String) -> Dictionary:
+static func whole_map_document(src: Dictionary, new_name: String, new_code: String,
+		staged_contents := {}) -> Dictionary:
 	var sdata := _data(src)
 	var m := _manifest(src) if not _manifest(src).is_empty() else {}
 	var src_map := _map_name(src)
@@ -434,7 +457,7 @@ static func whole_map_document(src: Dictionary, new_name: String, new_code: Stri
 	# 目标文档（自身）只用于实例码占位查询：整图复制到新文件，不能撞现有任何码
 	var dst_ctx := {"data": {"meta": meta}, "manifest": m, "map": new_name}
 	var plan: Dictionary = build({"data": sdata, "manifest": m, "map": src_map}, dst_ctx,
-		PackedStringArray(), true)
+		PackedStringArray(), true, staged_contents)
 	var patch: Dictionary = plan.get("map_patch", {}) if plan.get("map_patch", {}) is Dictionary else {}
 	for key in ["objects", "tiles", "spawn", "collision"]:
 		if patch.has(key):
@@ -469,8 +492,14 @@ static func _remap_entity_ref_fields(vals: Dictionary, fdecls: Array, owner: Str
 		var vs := str(vv)
 		if instance_map.has(vs):
 			vals[fid] = instance_map[vs]
-			# 组内：配对地图字段指向副本所在的图（同图复制也是本图当前码）
+			# 组内：配对地图字段指向副本所在的图（同图复制也是本图当前码）。
+			# 数组值部分命中时不能整组改判（同一字段表达不了两个归属），报冲突。
 			if pair != "":
+				if not _all_in(vv, instance_map):
+					if conflicts is Array:
+						(conflicts as Array).append({"kind": "ref_pair_partial", "id": owner,
+							"message": "实例 %s 的字段 %s 是混合引用（部分在本图/部分指向别的图），配对地图字段 %s 无法同时表示：请拆分或取消" % [owner, fid, pair]})
+					continue
 				var tk := _target_key(target_data, target_map)
 				if pairs_to_fill.has(pair) and str(pairs_to_fill[pair]) != tk:
 					if conflicts is Array:
@@ -551,7 +580,12 @@ static func _remap_port_refs(vals: Dictionary, fdecls: Array, instance_map: Dict
 			continue
 		if cross_code == "":
 			continue
+		# 保留原图归属：端口值自带 map 分量。旧实例码可能与源图某码同名，
+		# 但 map 已指向第三图时不能再改成源图（否则覆盖第三图归属，V4 P1）。
 		if not source_codes.is_empty() and not source_codes.has(inst):
+			continue
+		var mcmp_keep := str(vd.get("map", ""))
+		if mcmp_keep != "" and mcmp_keep != source_key and mcmp_keep != source_name:
 			continue
 		vd["map"] = cross_code
 

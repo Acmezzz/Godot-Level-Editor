@@ -26,20 +26,42 @@ func _entity_hit(pos: Vector2) -> EntityNode:
 ## 单层命中核心：遍历给定容器子节点（tool_ops 擦除与跨层选区共用同一规则）。
 ## 层局部坐标（E02）：pos 是世界坐标，先逆变换到该层容器空间，再与实例 rect() 比。
 ## 实例 rect()/position 都在层局部空间（层容器承担 offset/scale/parallax）。
+## 多个命中时取**绘制顺序最靠上**的那个（不是中心距最近）：below/YSort/above 三段
+## 依次靠上；ySort 层内按 y 越大越靠上，否则按子节点顺序（V4 P1）。
 func _entity_hit_in(children: Array, pos: Vector2, layer_i := -1) -> EntityNode:
 	var lp: Vector2 = pos if layer_i < 0 else cvs.to_layer_local(layer_i, pos)
 	var best: EntityNode = null
-	var best_d = INF
+	var best_rank := -INF
 	for e in children:
 		var n := e as EntityNode
 		if n == null or n.asset == "" or not cvs.is_entity_shown(n):
 			continue
-		if n.contains_point(lp):
-			var d = n.position.distance_squared_to(lp)
-			if d < best_d:
-				best = n
-				best_d = d
+		if not n.contains_point(lp):
+			continue
+		var rank := _draw_rank(n)
+		if rank > best_rank:
+			best = n
+			best_rank = rank
 	return best
+
+## 实例在层内的绘制先后近似值（越大越靠上）：
+## 段容器 Below < YSort < Above；ySort 开着时用 y 坐标（Godot 同层 y 越大越后画），
+## 否则用子节点顺序。只用于命中择一，不参与渲染。
+func _draw_rank(n: EntityNode) -> float:
+	var parent := n.get_parent() as Node2D
+	var bucket := 1.0
+	if parent != null:
+		match str(parent.name):
+			"Below": bucket = 0.0
+			"Above": bucket = 2.0
+			_: bucket = 1.0
+	var rank := bucket * 1000000.0
+	if parent != null and parent.y_sort_enabled:
+		# y 越大越靠上；同一 y 时子节点顺序靠后者在上
+		rank += n.position.y * 10.0 + float(n.get_index()) * 0.001
+	else:
+		rank += float(n.get_index())
+	return rank
 
 
 func _select_entity_at(pos: Vector2) -> void:

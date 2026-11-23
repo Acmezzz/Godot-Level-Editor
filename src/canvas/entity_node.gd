@@ -260,8 +260,9 @@ func _hex_anchor_off() -> Vector2:
 func cell() -> Vector2i:
 	var r := rect()
 	if grid_ref != null:
-		var gg := grid_ref.to_continuous_grid(r.position)
-		return Vector2i(floori(gg.x), floori(gg.y))
+		# 连续格坐标 → 格号归 GridSpace：三角拓扑要把平行四边形列折成半格列，
+		# 这里自己 floori 会得到半格数（与框选/选区口径差一倍，V4 P1）
+		return grid_ref.cell_of_continuous(grid_ref.to_continuous_grid(r.position))
 	return Vector2i(floori(r.position.x / tile_px), floori(r.position.y / tile_px))
 
 func apply_grid(gx: float, gy: float) -> void:
@@ -297,11 +298,43 @@ func data_scale() -> Vector2:
 		return Vector2(float((s as Array)[0]), float((s as Array)[1]))
 	return Vector2.ONE
 
-## 点是否落在实例实际几何内（层局部坐标）。无旋转无缩放时走矩形快速路径。
+## 点是否落在实例实际几何内（层局部坐标）。
+## poly/path 资产按声明的真实几何判定（不是占位矩形）：poly 用点集多边形，
+## path 用「到折线的距离 ≤ 半线宽 + 容差」——否则一条细线会有一大块空气可点（V4 P1）。
 func contains_point(p: Vector2) -> bool:
+	if visual_type() != "rect" and not points_local().is_empty():
+		return _contains_point_visual(p)
 	if is_zero_approx(data_rotation()) and data_scale().is_equal_approx(Vector2.ONE):
 		return rect().has_point(p)
 	return Geometry2D.is_point_in_polygon(p, quad())
+
+## poly/path 的点集判定：p（层局部）→ 本节点局部（去 position/旋转/缩放，含 fit）
+## → 去翻转后与点集比。PolyView 子节点继承同一变换，所以用本节点 transform 的逆最省心。
+func _contains_point_visual(p: Vector2) -> bool:
+	var pts := points_local()
+	if pts.is_empty():
+		return false
+	var lp: Vector2 = transform.affine_inverse() * p
+	lp = Vector2(-lp.x if flipped_h() else lp.x, -lp.y if flipped_v() else lp.y)
+	var arr := PackedVector2Array()
+	for q: Vector2 in pts:
+		arr.append(q)
+	var vis: Dictionary = (decl as Dictionary).get("visual", {}) \
+		if (decl as Dictionary).get("visual", null) is Dictionary else {}
+	if str(vis.get("type", "rect")) == "path":
+		return _near_polyline(lp, arr, maxf(1.0, float(vis.get("width", 3.0))) * 0.5 + 2.0)
+	if bool(vis.get("closed", true)):
+		return arr.size() >= 3 and Geometry2D.is_point_in_polygon(lp, arr)
+	# 不闭合 poly 按折线判（同 path 口径）
+	return _near_polyline(lp, arr, 2.0)
+
+## 点到折线的距离是否在容差内（2px 抓取容差：贴着线段就能点中）。
+func _near_polyline(p: Vector2, arr: PackedVector2Array, tol: float) -> bool:
+	for i in range(arr.size() - 1):
+		var c := Geometry2D.get_closest_point_to_segment(p, arr[i], arr[i + 1])
+		if p.distance_to(c) <= tol:
+			return true
+	return false
 
 ## 实际几何的轴对齐包围盒（层局部）：框选/并集用
 func aabb() -> Rect2:

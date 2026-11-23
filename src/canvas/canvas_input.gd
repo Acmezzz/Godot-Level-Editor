@@ -198,6 +198,11 @@ func _on_left_press(pos: Vector2, b: InputEventMouseButton) -> void:
 		cvs.begin_gesture(cvs.Gesture.SPAWN_DRAG, MOUSE_BUTTON_LEFT)
 		cvs._drag_start = pos
 		return
+	# 碰撞元层没有资产可摆：无论左栏还留着什么笔刷，点击都必须是「涂碰撞」。
+	# 否则 place_kind == "object" 时点击走摆放分支（撞上出生点还会开始拖出生点）。
+	if cvs._is_grid_layer(cvs.active_layer):
+		_on_tile_layer_press(pos, b)
+		return
 	if cvs.place_kind == "object":
 		_on_object_layer_press(pos, b)
 	else:

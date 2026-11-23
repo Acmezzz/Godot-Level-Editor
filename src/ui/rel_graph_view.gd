@@ -32,6 +32,8 @@ func set_data(d: Dictionary) -> void:
 
 func _layout() -> void:
 	_pos.clear()
+	_segs.clear()   # 空图/换数据时必须清段缓存：留着旧段 = 看不见的边还能被点中（V4 P1）
+	_hover_edge = -1
 	var nodes: Array = data.get("nodes", [])
 	if nodes.is_empty():
 		return

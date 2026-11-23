@@ -362,6 +362,9 @@ func layer_set_param(i: int, key: String, v) -> void:
 				(SL[i] as Dictionary)["offset"] = [ov.x, ov.y]
 		"scale":
 			var sv := float(v)
+			# 非正缩放 = 层塌成点/镜像翻转：坐标逆变换退化（除零），与校验页同口径拒绝
+			if sv <= 0.0:
+				return
 			if is_zero_approx(sv - 1.0):
 				(SL[i] as Dictionary).erase("scale")
 			else:

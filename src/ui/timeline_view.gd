@@ -62,6 +62,9 @@ func sync_min_size() -> void:
 ## 所以按「数据引用 + 结构版本」缓存就够：宿主换数据或增删步骤必换引用/版本。
 var _tl_cache: Array = []
 var _tl_cache_key := ""
+## 冲突集合与区间表同源同版本：冲突判定是 O(n²)（两两比较），每帧重算在上千步时是主成本。
+var _hot_cache := {}
+var _hot_cache_key := ""
 
 func _timeline() -> Array:
 	var key := "%d:%d" % [steps.size(), struct_rev]
@@ -69,7 +72,20 @@ func _timeline() -> Array:
 		return _tl_cache
 	_tl_cache = StepTimeline.to_timeline(steps)
 	_tl_cache_key = key
+	_hot_cache_key = ""   # 区间表换了，冲突集合必然重算
 	return _tl_cache
+
+## 冲突步骤集合 {下标: true}：按区间表版本缓存（P02）。
+func _hot_blocks() -> Dictionary:
+	if _hot_cache_key == _tl_cache_key and not _tl_cache_key.is_empty():
+		return _hot_cache
+	var hot := {}
+	for pair in StepTimeline.conflicts_of(_timeline()):
+		hot[int((pair as Dictionary).get("a", -1))] = true
+		hot[int((pair as Dictionary).get("b", -1))] = true
+	_hot_cache = hot
+	_hot_cache_key = _tl_cache_key
+	return _hot_cache
 
 ## 时间轴总时长（视图宽度口径）：末尾再加 1 秒留白，至少 2 秒。
 func _time_max() -> float:
@@ -290,10 +306,7 @@ func _draw() -> void:
 	var phx := MARGIN_L + playhead * _pps
 	# 先记下位置，条块画完再叠播放头（否则会被条块盖住）
 	# 条块：选中高亮、冲突描红、瞬发画细条（P02：冲突基于同一份缓存区间表）
-	var hot := {}
-	for pair in StepTimeline.conflicts_of(_timeline()):
-		hot[int((pair as Dictionary).get("a", -1))] = true
-		hot[int((pair as Dictionary).get("b", -1))] = true
+	var hot := _hot_blocks()
 	for i in steps.size():
 		if not (steps[i] is Dictionary):
 			continue

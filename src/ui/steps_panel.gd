@@ -788,7 +788,7 @@ func _rebuild_steps_form(arr: Array) -> void:
 	for fd in sfields:
 		if not (fd is Dictionary):
 			continue
-		box.add_child(_step_field_row(fd, sfd, sfields))
+		box.add_child(_step_field_row(fd, sfd, sfields, arr))
 	# 该步骤里有声明已删的键：只读保留
 	var known := {}
 	for fd2 in sfields:
@@ -810,14 +810,16 @@ func _rebuild_steps_form(arr: Array) -> void:
 			box.add_child(row)
 
 ## 步骤字段行：复用 field_widgets，值取自步骤自己的 fields（键=字段码）。
-## 回调捕获**步骤下标 + 结构版本 + 绑定身份**（D1）：换序/切页签后迟到的回调按版本丢弃。
+## 回调捕获**步骤稳定令牌 + 结构版本 + 绑定身份**（D1/V4 P1）：换序/切页签后迟到的
+## 回调按版本丢弃；版本没变但步序真的变了（外部合并暂存）时按令牌重新定位。
 ## E1：同图实例引用给「画布选…」——选点会话写回走同一版本校验入口。
-func _step_field_row(fd: Dictionary, sfd: Dictionary, siblings: Array = []) -> Control:
+func _step_field_row(fd: Dictionary, sfd: Dictionary, siblings: Array = [], arr: Array = []) -> Control:
 	var key := str(fd.get("code", ""))
 	var val = sfd.get(key, fd.get("default", FieldWidgets.default_for(fd)))
 	var label := str(fd.get("name", str(fd.get("id", ""))))
 	var si := _steps_sel
 	var rev := _steps_rev
+	var tok := _step_token(arr, si)
 	# R13：配对地图字段的现值注入 _mapKey——步骤字段的实例引用与摆放物同一语义。
 	var d := fd
 	if str(fd.get("mapField", "")) != "" and not siblings.is_empty():
@@ -826,7 +828,7 @@ func _step_field_row(fd: Dictionary, sfd: Dictionary, siblings: Array = []) -> C
 			d = fd.duplicate(true)
 			d["_mapKey"] = tk
 	var built := FieldWidgets.build(d, val, func(v):
-		_set_step_field(si, key, v, rev), _resolve_options, "code")
+		_set_step_field(tok, key, v, rev), _resolve_options, "code")
 	if built.get("commit") is Callable and (built.commit as Callable).is_valid():
 		_pending_commits.append(built.commit)
 	var row := Kit.field_row(label, built.ctl, 96)
@@ -834,31 +836,36 @@ func _step_field_row(fd: Dictionary, sfd: Dictionary, siblings: Array = []) -> C
 	if tip != "":
 		row.tooltip_text = tip
 	if FieldWidgets.wants_canvas_pick(fd):
-		var pick := Kit.button("画布选…", func(): _pick_step_ref(fd, key, si, rev), "ghost")
+		var pick := Kit.button("画布选…", func(): _pick_step_ref(fd, key, tok, rev), "ghost")
 		pick.tooltip_text = "临时切到画布点一个实例；确认才写入这一步，取消不改当前值" \
 			if not FieldWidgets.wants_edge_pick(fd) else "临时切到画布点一条格边；确认才写入这一步，取消不改当前值"
+		if FieldWidgets.wants_cell_pick(fd):
+			pick.tooltip_text = "临时切到画布点格图里的一格（按多边形命中）；确认才写入这一步，取消不改当前值"
 		pick.add_theme_font_size_override("font_size", Th.FS_META)
 		row.add_child(pick)
 	return row
 
-## E1：步骤字段的画布选点。确认后按起手时的步骤下标 + 版本写回：
+## E1：步骤字段的画布选点。确认后按起手时的步骤令牌 + 版本写回：
 ## 期间步骤被增删/换序则丢弃（与拖拽同一套过期校验）。
-## accept 按字段种类走：entity_ref = 实例；§7.4 edge_ref = 格边（值解码回 {map, cell, edge}）。
-func _pick_step_ref(fd: Dictionary, key: String, si: int, rev: int) -> void:
+## accept 按字段种类走：entity_ref = 实例；§7.4 edge_ref = 格边（值解码回 {map, cell, edge}）；
+## C4 cell: 的 choice = 格图一格（值就是 cell_id 字符串）——与内容表单同一路径。
+func _pick_step_ref(fd: Dictionary, key: String, tok: Dictionary, rev: int) -> void:
 	var fname := str(fd.get("name", str(fd.get("id", ""))))
+	var is_cell := FieldWidgets.wants_cell_pick(fd)
 	var is_edge := FieldWidgets.wants_edge_pick(fd)
 	var of := FieldWidgets.canvas_pick_types(fd)
-	var hint := ("第 %d 步「%s」选一条格边（靠近格边点）" % [si + 1, fname]) if is_edge \
-		else ("第 %d 步「%s」选目标实例" % [si + 1, fname] + \
-			("（限定类型：%s）" % ",".join(PackedStringArray(of)) if not of.is_empty() else ""))
+	var hint := ("第 %d 步「%s」选一格（格图）" % [_steps_sel + 1, fname]) if is_cell \
+		else (("第 %d 步「%s」选一条格边（靠近格边点）" % [_steps_sel + 1, fname]) if is_edge \
+		else ("第 %d 步「%s」选目标实例" % [_steps_sel + 1, fname] + \
+			("（限定类型：%s）" % ",".join(PackedStringArray(of)) if not of.is_empty() else "")))
 	var on_ok := func(code: String):
 		if code == "":
 			return
 		if is_edge:
 			var ev = JSON.parse_string(code)
-			_set_step_field(si, key, ev if ev is Dictionary else {}, rev)
+			_set_step_field(tok, key, ev if ev is Dictionary else {}, rev)
 		else:
-			_set_step_field(si, key, code, rev)
+			_set_step_field(tok, key, code, rev)
 		_reopen_after_pick()
 	var on_cancel := func(_code: String):
 		_reopen_after_pick()
@@ -872,8 +879,8 @@ func _pick_step_ref(fd: Dictionary, key: String, si: int, rev: int) -> void:
 	_steps_pop = null
 	if old != null and is_instance_valid(old):
 		old.hide()
-	app._begin_canvas_pick("steps", "edge" if is_edge else "entity", hint, on_ok, on_cancel,
-		[] if is_edge else of)
+	app._begin_canvas_pick("steps", "cell" if is_cell else ("edge" if is_edge else "entity"),
+		hint, on_ok, on_cancel, [] if (is_cell or is_edge) else of)
 
 ## 选点归来：重开同一个绑定行的演出面板（步骤/视图/播放头由 _steps_mem 恢复）。
 ## 期间实例/绑定换了（身份校验失败）就不重开——对着另一条绑定弹出旧面板更糟。
@@ -916,6 +923,8 @@ func _steps_time_row(arr: Array, si: int) -> Control:
 	box.add_child(head)
 	box.add_child(body)
 	var row := Kit.hbox(6)
+	# 回调捕获稳定令牌而不是下标：迟到的回车/失焦要落在「那一步」上（V4 P1）
+	var tok := _step_token(arr, si)
 	# 起点
 	var at_edit := LineEdit.new()
 	at_edit.custom_minimum_size = Vector2(74, 0)
@@ -923,16 +932,23 @@ func _steps_time_row(arr: Array, si: int) -> Control:
 	at_edit.text = _num_text(st.get("at", null)) if has_at else ""
 	at_edit.tooltip_text = "留空 = 随前序（接着上一阻塞步骤结束）；填 0 = 从零开始"
 	var rev_at := _steps_rev
+	var at_base := at_edit.text
 	at_edit.text_submitted.connect(func(t: String):
 		if rev_at != _steps_rev:
 			return
 		if t.strip_edges() == "":
-			_apply_time_patch(si, {}, ["at"])   # 清起点 = 恢复「随前序」
+			_apply_time_patch(tok, {}, ["at"])   # 清起点 = 恢复「随前序」
 		else:
-			_apply_time_patch(si, {"at": maxf(t.to_float(), 0.0)}, []))
+			_apply_time_patch(tok, {"at": maxf(t.to_float(), 0.0)}, []))
 	at_edit.focus_exited.connect(func():
-		if rev_at == _steps_rev and at_edit.text.strip_edges() != "":
-			_apply_time_patch(si, {"at": maxf(at_edit.text.to_float(), 0.0)}, []))
+		# 只是把焦点移走（没改内容）不该写盘：显示文本与起手文本一致就不再回写，
+		# 否则显示精度会把已存值截断（V4 P1）
+		if rev_at != _steps_rev or at_edit.text == at_base:
+			return
+		if at_edit.text.strip_edges() == "":
+			_apply_time_patch(tok, {}, ["at"])
+		else:
+			_apply_time_patch(tok, {"at": maxf(at_edit.text.to_float(), 0.0)}, []))
 	row.add_child(Kit.text_label("起点", Th.TEXT_DIM, Th.FS_META))
 	row.add_child(at_edit)
 	# 时长
@@ -941,10 +957,15 @@ func _steps_time_row(arr: Array, si: int) -> Control:
 	dur_edit.text = _num_text(eff.get("duration", 0.0))
 	dur_edit.tooltip_text = "持续时长；0 = 瞬发（不占时）"
 	var rev_dur := _steps_rev
+	var dur_base := dur_edit.text
 	dur_edit.text_submitted.connect(func(t: String):
 		if rev_dur != _steps_rev:
 			return
-		_apply_time_patch(si, {"duration": maxf(t.to_float(), 0.0)}, []))
+		_apply_time_patch(tok, {"duration": maxf(t.to_float(), 0.0)}, []))
+	dur_edit.focus_exited.connect(func():
+		if rev_dur != _steps_rev or dur_edit.text == dur_base:
+			return
+		_apply_time_patch(tok, {"duration": maxf(dur_edit.text.to_float(), 0.0)}, []))
 	row.add_child(Kit.text_label("时长", Th.TEXT_DIM, Th.FS_META))
 	row.add_child(dur_edit)
 	# 轨号
@@ -958,7 +979,7 @@ func _steps_time_row(arr: Array, si: int) -> Control:
 	var rev_trk := _steps_rev
 	trk.value_changed.connect(func(v: float):
 		if rev_trk == _steps_rev:
-			_apply_time_patch(si, {"track": int(v)}, []))
+			_apply_time_patch(tok, {"track": int(v)}, []))
 	row.add_child(Kit.text_label("轨", Th.TEXT_DIM, Th.FS_META))
 	row.add_child(trk)
 	# 阻塞
@@ -969,12 +990,12 @@ func _steps_time_row(arr: Array, si: int) -> Control:
 	var rev_blk := _steps_rev
 	blk.toggled.connect(func(v: bool):
 		if rev_blk == _steps_rev:
-			_apply_time_patch(si, {"blocking": v}, []))
+			_apply_time_patch(tok, {"blocking": v}, []))
 	row.add_child(blk)
 	var rev_new := _steps_rev
 	var new_trk := Kit.button("移至新轨", func():
 		if rev_new == _steps_rev:
-			_apply_time_patch(si, {"track": _next_track()}, []), "ghost")
+			_apply_time_patch(tok, {"track": _next_track()}, []), "ghost")
 	new_trk.tooltip_text = "轨号取当前最大值 + 1（新轨在时间轴底部）"
 	row.add_child(new_trk)
 	# 拍基：显式对齐到声明细分格（既有拍数精度不自动改，D2）
@@ -983,7 +1004,7 @@ func _steps_time_row(arr: Array, si: int) -> Control:
 		var rev_align := _steps_rev
 		var align := Kit.button("对齐 1/%d 拍" % int(roundf(1.0 / grid)), func():
 			if rev_align == _steps_rev:
-				_quantize_step(si, grid), "ghost")
+				_quantize_step(tok, grid), "ghost")
 		align.tooltip_text = "把这一步的 at/duration 对齐到声明的每拍格数"
 		row.add_child(align)
 	body.add_child(row)
@@ -1019,7 +1040,7 @@ func _steps_clock_box(arr: Array) -> Control:
 					str(f.key), _num_text(f.value)], 320)
 				flabel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 				frow.add_child(flabel)
-				var fix := Kit.button("取整", func(): _quantize_step(fi, 1.0), "ghost")
+				var fix := Kit.button("取整", func(): _quantize_step(_step_token(arr, fi), 1.0), "ghost")
 				fix.tooltip_text = "只把这一步的 at/duration 四舍五入到整帧"
 				frow.add_child(fix)
 				box.add_child(frow)
@@ -1073,15 +1094,16 @@ func _fill_frame_preview() -> void:
 
 ## 显式量化单步（D2：吸附只作用于新输入或显式量化选中项）：
 ## 只把该步 at/duration 按粒度四舍五入（帧 = 1 帧；拍 = 1/subdivisions），
-## 经同一补丁入口写回，已有精度不被自动改写。
-func _quantize_step(si: int, grid: float) -> void:
-	if grid <= 0.0:
+## 经同一补丁入口写回，已有精度不被自动改写。tok = 步骤稳定令牌。
+func _quantize_step(tok: Dictionary, grid: float) -> void:
+	if grid <= 0.0 or tok.is_empty():
 		return
 	var data := _steps_data()
 	if data.is_empty():
 		return
 	var arr: Array = data.get("steps", []) if data.get("steps", []) is Array else []
-	if si < 0 or si >= arr.size() or not (arr[si] is Dictionary):
+	var si := _step_index_of(arr, tok)
+	if si < 0 or not (arr[si] is Dictionary):
 		return
 	var step: Dictionary = arr[si]
 	var patch := {}
@@ -1090,7 +1112,7 @@ func _quantize_step(si: int, grid: float) -> void:
 			patch[key] = snappedf(maxf(float(step.get(key, 0.0)), 0.0), grid)
 	if patch.is_empty():
 		return
-	_apply_time_patch(si, patch, [])
+	_apply_time_patch(tok, patch, [])
 
 ## 新轨号 = 当前所有步骤的最大轨号 + 1。
 func _next_track() -> int:
@@ -1108,13 +1130,23 @@ static func _num_text(v) -> String:
 	if v is int:
 		return str(v)
 	var f := float(v)
-	return str(int(f)) if is_equal_approx(f, floorf(f)) else ("%.2f" % f)
+	if f == roundf(f):
+		return str(int(f))
+	# 四位小数去尾零，不用两位：两位会把 1.234 显示成 1.23，失焦回写就把真实值截断了（V4 P1）
+	return ("%.4f" % f).rstrip("0").rstrip(".")
 
 ## 表单的时间编辑：与时间轴同一个补丁入口（StepTimeline.apply_patch + 同一写回）。
-func _apply_time_patch(si: int, patch: Dictionary, erase_keys: Array) -> void:
+## tok = 步骤稳定令牌（不是下标）：回调迟到时按令牌重新定位，落在「那一步」上。
+func _apply_time_patch(tok: Dictionary, patch: Dictionary, erase_keys: Array) -> void:
+	if tok.is_empty():
+		return
 	var data := _steps_data()
 	if data.is_empty():
 		return
+	var arr: Array = data.get("steps", []) if data.get("steps", []) is Array else []
+	var si := _step_index_of(arr, tok)
+	if si < 0:
+		return   # 那一步已被删/换码
 	# D2：新输入的 at/duration 按声明粒度吸附（帧取整、拍按 subdivisionsPerBeat）；
 	# 秒基不吸附——手输的秒精度就是用户意图，不该被改
 	if _steps_clock != null and str(_steps_clock.timebase) != "seconds":
@@ -1123,18 +1155,46 @@ func _apply_time_patch(si: int, patch: Dictionary, erase_keys: Array) -> void:
 		for k in ["at", "duration"]:
 			if patch.has(k):
 				patch[k] = snappedf(maxf(float(patch[k]), 0.0), snapv)
-	var arr: Array = data.get("steps", []) if data.get("steps", []) is Array else []
 	var res: Dictionary = StepTimeline.apply_patch(arr, si, patch, erase_keys)
 	if not bool(res.get("ok", false)):
 		return
 	data["steps"] = res.get("steps", arr)
 	_steps_write(data)
+	_steps_sel = si
 	_bump_steps_rev()
 	_rebuild_steps_all()
 
-## 写步骤字段：即时写盘，不重建表单（保焦点）。版本过期/下标越界直接丢弃。
-func _set_step_field(si: int, key: String, value, rev := -1) -> void:
-	if si < 0 or key == "":
+## 步骤稳定令牌：{code, nth}（同码第 nth 条，0 起）。
+## 控件回调捕获的是「那一步」，不是「那个下标」——外部改动（暂存合并/另一面板）改了步序
+## 而结构版本没变时，按下标写回会落到别的步骤上（V4 P1）。写回前按令牌重新定位。
+static func _step_token(arr: Array, si: int) -> Dictionary:
+	if si < 0 or si >= arr.size() or not (arr[si] is Dictionary):
+		return {}
+	var code := str((arr[si] as Dictionary).get("step", ""))
+	var nth := 0
+	for j in si:
+		if arr[j] is Dictionary and str((arr[j] as Dictionary).get("step", "")) == code:
+			nth += 1
+	return {"code": code, "nth": nth}
+
+## 令牌 → 当前下标（找不到 = 那一步被删/换码，返回 -1）。
+static func _step_index_of(arr: Array, tok: Dictionary) -> int:
+	var code := str(tok.get("code", ""))
+	if code == "":
+		return -1
+	var want := int(tok.get("nth", 0))
+	var nth := 0
+	for j in arr.size():
+		if not (arr[j] is Dictionary) or str((arr[j] as Dictionary).get("step", "")) != code:
+			continue
+		if nth == want:
+			return j
+		nth += 1
+	return -1
+
+## 写步骤字段：即时写盘，不重建表单（保焦点）。版本过期/令牌失效直接丢弃。
+func _set_step_field(tok: Dictionary, key: String, value, rev := -1) -> void:
+	if tok.is_empty() or key == "":
 		return
 	if rev >= 0 and rev != _steps_rev:
 		return   # 过期控件回调：期间增删/换序过，按下标写回会落到别的步骤上
@@ -1142,8 +1202,9 @@ func _set_step_field(si: int, key: String, value, rev := -1) -> void:
 	if data.is_empty():
 		return
 	var arr: Array = data.get("steps", []) if data.get("steps", []) is Array else []
-	if si >= arr.size() or not (arr[si] is Dictionary):
-		return
+	var si := _step_index_of(arr, tok)
+	if si < 0 or not (arr[si] is Dictionary):
+		return   # 那一步已被删/换码：丢弃这次迟到写入
 	var st: Dictionary = arr[si]
 	var sfd: Dictionary = st.get("fields", {}) if st.get("fields", {}) is Dictionary else {}
 	if sfd.get(key, null) == value:

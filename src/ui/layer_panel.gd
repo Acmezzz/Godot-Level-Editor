@@ -151,23 +151,45 @@ func _rebuild_layer_mgr() -> void:
 		_layer_mgr_rows.add_child(_layer_mgr_row(i, decl[i] as Dictionary))
 		_layer_mgr_rows.add_child(_layer_mgr_params(i, decl[i] as Dictionary))
 
+## 层码 → 当前下标（不可用返回 -1）。
+## 行内回调不能捕获建行时的下标：每次层操作都全量重建并 await，期间层序/V 可能变了，
+## 按下标写回会落到别的层上（V4 P1）。所有行操作都先按稳定层码重新定位。
+func _idx_of_lid(lid: String) -> int:
+	if lid == "":
+		return -1
+	var d: Array = app.canvas.layers_decl()
+	for i in d.size():
+		if d[i] is Dictionary and str((d[i] as Dictionary).get("id", "")) == lid:
+			return i
+	return -1
+
 ## 一层一行：名字（行内改名，回车提交）+ 运行时可见 + ↑ ↓ 删除
 func _layer_mgr_row(i: int, decl: Dictionary) -> Control:
 	var row = app.UiKitScript.hbox(4)
+	var lid := str(decl.get("id", ""))
 	var nm := LineEdit.new()
 	nm.text = str(decl.get("name", ""))
-	nm.placeholder_text = str(decl.get("id", ""))
+	nm.placeholder_text = lid
 	nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	nm.tooltip_text = "层名（改成新名字后回车提交）"
 	nm.text_submitted.connect(func(s: String):
-		await app.canvas.layer_rename(i, s)
+		var at := _idx_of_lid(lid)
+		if at < 0:
+			app._set_status(" 该层已不存在：改名忽略")
+			_rebuild_layer_mgr()
+			return
+		await app.canvas.layer_rename(at, s)
 		app._sync_ui())
 	row.add_child(nm)
 	var vis := CheckBox.new()
 	vis.button_pressed = bool(decl.get("visible", true))
 	vis.tooltip_text = "运行时初始可见（差分视图用）"
 	vis.toggled.connect(func(on: bool):
-		await app.canvas.layer_set_visible(i, on)
+		var at := _idx_of_lid(lid)
+		if at < 0:
+			_rebuild_layer_mgr()
+			return
+		await app.canvas.layer_set_visible(at, on)
 		app._sync_ui())
 	row.add_child(vis)
 	var blend_opt := OptionButton.new()
@@ -180,25 +202,35 @@ func _layer_mgr_row(i: int, decl: Dictionary) -> Control:
 	blend_opt.select({"mix": 0, "add": 1, "mul": 2}.get(str(decl.get("blend", "mix")), 0))
 	blend_opt.tooltip_text = "层混合模式：混合（缺省）/ 加法（发光类）/ 相乘（遮罩类）"
 	blend_opt.item_selected.connect(func(idx: int):
-		await app.canvas.layer_set_blend(i, str(blend_opt.get_item_metadata(idx))))
+		var at := _idx_of_lid(lid)
+		if at < 0:
+			_rebuild_layer_mgr()
+			return
+		await app.canvas.layer_set_blend(at, str(blend_opt.get_item_metadata(idx))))
 	row.add_child(blend_opt)
 	var up = app.UiKitScript.button("↑", func():
-		await app.canvas.layer_move(i, -1)
+		var at := _idx_of_lid(lid)
+		if at > 0:
+			await app.canvas.layer_move(at, -1)
 		_rebuild_layer_mgr()
 		app._sync_ui(), "ghost")
 	up.disabled = i == 0
 	up.tooltip_text = "上移一层"
 	row.add_child(up)
 	var down = app.UiKitScript.button("↓", func():
-		await app.canvas.layer_move(i, 1)
+		var at := _idx_of_lid(lid)
+		if at >= 0 and at < app.canvas.layer_count() - 1:
+			await app.canvas.layer_move(at, 1)
 		_rebuild_layer_mgr()
 		app._sync_ui(), "ghost")
 	down.disabled = i >= app.canvas.layer_count() - 1
 	down.tooltip_text = "下移一层"
 	row.add_child(down)
 	var del = app.UiKitScript.button("删除", func():
+		var at := _idx_of_lid(lid)
 		var before: int = app.canvas.layer_count()
-		await app.canvas.layer_del(i)
+		if at >= 0:
+			await app.canvas.layer_del(at)
 		if app.canvas.layer_count() == before:
 			app._set_status("至少保留一个图层")
 		_rebuild_layer_mgr()
@@ -230,33 +262,58 @@ func _cur_off(i: int, comp: int) -> float:
 		return float((o as Array)[comp])
 	return 0.0
 
-## 参数行（R-04 控件批）：y排序开关 + 视差/偏移/缩放数字字段，改动走 layer_set_param 重建
+## 参数行（R-04 控件批）：y排序开关 + 视差/偏移/缩放数字字段，改动走 layer_set_param 重建。
+## 同 _layer_mgr_row：回调按层码重新定位，不信任建行时的下标（V4 P1）。
 func _layer_mgr_params(i: int, decl: Dictionary) -> Control:
 	var row = app.UiKitScript.hbox(6)
+	var lid := str(decl.get("id", ""))
 	var ys := CheckBox.new()
 	ys.text = "y排序"
 	ys.button_pressed = bool(decl.get("ySort", false))
 	ys.tooltip_text = "层内 y-sort（瓦片与 auto 实体按 y 排序；改动重建全图）"
 	ys.toggled.connect(func(on: bool):
-		await app.canvas.layer_set_param(i, "ySort", on)
+		var at := _idx_of_lid(lid)
+		if at < 0:
+			_rebuild_layer_mgr()
+			return
+		await app.canvas.layer_set_param(at, "ySort", on)
 		_rebuild_layer_mgr()
 		app._sync_ui())
 	row.add_child(ys)
 	row.add_child(_num_field(float(decl.get("parallax", 1.0)), "视差：1 = 正常，<1 = 远景半速，0 = 固定（回车提交）", func(v: float):
-		await app.canvas.layer_set_param(i, "parallax", v)
+		var at := _idx_of_lid(lid)
+		if at < 0:
+			_rebuild_layer_mgr()
+			return
+		await app.canvas.layer_set_param(at, "parallax", v)
 		_rebuild_layer_mgr()
 		app._sync_ui()))
 	row.add_child(_num_field(_cur_off(i, 0), "层偏移 X（像素，回车提交）", func(v: float):
-		await app.canvas.layer_set_param(i, "offset", Vector2(v, _cur_off(i, 1)))
+		var at := _idx_of_lid(lid)
+		if at < 0:
+			_rebuild_layer_mgr()
+			return
+		await app.canvas.layer_set_param(at, "offset", Vector2(v, _cur_off(at, 1)))
 		_rebuild_layer_mgr()
 		app._sync_ui()))
 	row.add_child(_num_field(_cur_off(i, 1), "层偏移 Y（像素，回车提交）", func(v: float):
-		await app.canvas.layer_set_param(i, "offset", Vector2(_cur_off(i, 0), v))
+		var at := _idx_of_lid(lid)
+		if at < 0:
+			_rebuild_layer_mgr()
+			return
+		await app.canvas.layer_set_param(at, "offset", Vector2(_cur_off(at, 0), v))
 		_rebuild_layer_mgr()
 		app._sync_ui()))
 	row.add_child(_num_field(float(decl.get("scale", 1.0)), "层缩放（>0，回车提交）", func(v: float):
-		if v > 0.0:
-			await app.canvas.layer_set_param(i, "scale", v)
+		if v <= 0.0:
+			app._set_status(" 层缩放必须大于 0（当前输入 %g 未应用）" % v)
 			_rebuild_layer_mgr()
-			app._sync_ui()))
+			return
+		var at := _idx_of_lid(lid)
+		if at < 0:
+			_rebuild_layer_mgr()
+			return
+		await app.canvas.layer_set_param(at, "scale", v)
+		_rebuild_layer_mgr()
+		app._sync_ui()))
 	return row

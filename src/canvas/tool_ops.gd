@@ -18,9 +18,11 @@ func _apply_tool(pos: Vector2) -> void:
 	if cvs.is_layer_locked(cvs.active_layer):
 		cvs._hint("当前图层已锁定：解锁后再编辑")
 		return
-	# 世界鼠标 → 活动层局部（E02）：涂刷格号与摆落点都在层局部空间算
-	var lp: Vector2 = cvs.to_layer_local(clampi(cvs.active_layer, 0, maxi(cvs.layer_count() - 1, 0)), pos)
-	if cvs.place_kind == "object":
+	# 世界鼠标 → 活动层局部（E02）。碰撞元层的索引 = layer_count()，
+	# clamp 到 0..layer_count()-1 会把它夹进最后一个瓦片层——首笔画到别的层空间去，
+	# 后续 mouse-motion 却用 _active_local（根空间），同一笔前后格号不连续。
+	var lp: Vector2 = cvs._active_local(pos)
+	if cvs.place_kind == "object" and not cvs._is_grid_layer(cvs.active_layer):
 		_stamp(lp)
 	else:
 		_paint(cvs.grid.pick_cell(lp))

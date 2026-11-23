@@ -126,9 +126,11 @@ static func _render(data: Dictionary, manifest: Dictionary, geo: Dictionary, gri
 	var mh := maxi(int(meta.get("h", 1)), 1)
 	var line := Color(1, 1, 1, 0.06)
 	# 背景逐格描线只在格数可控时画（大图 4000×4000 逐格描线会卡死导出）
-	if mw * mh <= 65536:
+	# 三角拓扑的格号 x 是三角列：横向格数是 2×w（V4 P1：按 w 画会丢一半三角）
+	var gcols := mw * 2 if grid.is_tri() else mw
+	if gcols * mh <= 65536:
 		for gy in mh:
-			for gx in mw:
+			for gx in gcols:
 				_put_poly(img, _to_out(grid.cell_polygon(Vector2i(gx, gy)), bounds, scale), null, line)
 
 	# 瓦片按层叠（层栈顺序 = meta.layers 底→顶）：贴图集切片，缺素材退回地形绿

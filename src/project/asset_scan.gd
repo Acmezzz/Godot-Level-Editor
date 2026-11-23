@@ -219,7 +219,15 @@ static func restore(m: Dictionary, aid: String) -> bool:
 	return false
 
 ## 确认歧义重链：把条目指到候选路径之一（用户选择），清停用状态。
+## 逐条局部唯一（V4 P1）：同一文件不能再被第二份资产认领——否则两条资产各自解析、
+## 扫描下次还会把其中一条判成重复。已被别人占用的路径直接拒绝（返回 false）。
 static func confirm_relink(m: Dictionary, aid: String, rel: String) -> bool:
+	var want := rel.replace("\\", "/")
+	for other in (m.get("assets", []) as Array):
+		if not (other is Dictionary) or str((other as Dictionary).get("id", "")) == aid:
+			continue
+		if _rel_of(other as Dictionary) == want:
+			return false
 	for a in (m.get("assets", []) as Array):
 		if a is Dictionary and str((a as Dictionary).get("id", "")) == aid:
 			_set_rel(a, rel)

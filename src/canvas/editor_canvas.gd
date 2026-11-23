@@ -84,6 +84,9 @@ var atlas_texs: Array = []
 # 清单里 shape=tile 的资产（顺序 = TileSet source_id）与 id→source_id 映射
 var _tile_assets: Array = []
 var _src_of_asset := {}
+## 图集修订号：每次重建 TileSet（图集重载/清单变化）递增。缩略图缓存等按它失效
+## （只按资产 id + cell 做键会把旧图集的像素当新图集用，V4 P1）。
+var atlas_rev := 0
 # 当前笔刷：资产 id + 图集内 cell（source_id 落笔时查）
 var paint_asset := ""
 var collision_type := "solid"
@@ -143,6 +146,12 @@ func _build_tileset() -> bool:
 			continue
 		_tile_assets.append(a)
 	if _tile_assets.is_empty():
+		# 没有可用图集：清掉上一次构建的映射，别让后面按旧 source_id 建出隐形瓦片（V4 P1）
+		atlas_imgs = []
+		atlas_texs = []
+		atlas_img = null
+		atlas_tex = null
+		_src_of_asset.clear()
 		return false
 	var lst: Array = []
 	for a in _tile_assets:
@@ -162,10 +171,15 @@ func _build_tileset() -> bool:
 	atlas_imgs = got.imgs
 	atlas_texs = got.texs
 	tile_set = got.ts
-	# 资产 id ↔ source_id 双向映射（磁盘写资产 id，TileMapLayer 要整数）
+	atlas_rev += 1
+	# 资产 id ↔ source_id 双向映射（磁盘写资产 id，TileMapLayer 要整数）。
+	# 图集缺失/解码失败的源在 got.ids 里是空串：不登记，asset_of_source→source_of_asset
+	# 不会把瓦片落到隐形源上（这类瓦片走 _unresolved_tiles 原样往返，V4 P1）。
 	_src_of_asset.clear()
 	for i in (got.ids as Array).size():
-		_src_of_asset[str((got.ids as Array)[i])] = i
+		var gid := str((got.ids as Array)[i])
+		if gid != "":
+			_src_of_asset[gid] = i
 	atlas_img = got.imgs[0] if not (got.imgs as Array).is_empty() else null
 	atlas_tex = got.texs[0] if not (got.texs as Array).is_empty() else null
 	return true
@@ -174,11 +188,16 @@ func _build_tileset() -> bool:
 func source_of_asset(aid: String) -> int:
 	return int(_src_of_asset.get(aid, -1))
 
-## source_id → 资产 id；未知返回空串
+## source_id → 资产 id；未知返回空串。
+## 只在双向映射成立时返回 id：图集缺失/解码失败的源虽占着下标，却没有可用 id
+## （写回时会把它当瓦片资产导出，V4 P1）。
 func asset_of_source(sid: int) -> String:
 	if sid < 0 or sid >= _tile_assets.size():
 		return ""
-	return str((_tile_assets[sid] as Dictionary).get("id", ""))
+	var aid := str((_tile_assets[sid] as Dictionary).get("id", ""))
+	if aid == "" or int(_src_of_asset.get(aid, -1)) != sid:
+		return ""
+	return aid
 
 ## 资产在图集里的切片尺寸（像素）；非 tile 资产退回地图格。
 func asset_cell(aid: String) -> Vector2i:
@@ -312,14 +331,15 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 		tn.tile_set = tile_set
 		tn.y_sort_enabled = ly
 		ysp.add_child(tn)
-		# B3 三角拓扑：TileMapLayer 表现不了半格三角，叠一个自绘视图（数据仍住在 tn）
-		if grid != null and grid.is_tri():
+		# B3：三角拓扑（半格三角）与斜基（gridBasis 平行四边形）都没有原生 tile_shape，
+		# 叠一个自绘视图；数据仍住在 tn（V4 P1：斜基此前走原生预设，格线与瓦片错位）
+		if grid != null and (grid.is_tri() or grid.has_basis):
 			var tv := TriTileViewScript.new()
 			tv.name = "TriTiles"
 			tv.setup(tn, grid, self)
 			ysp.add_child(tv)
 			tri_views.append(tv)
-			tn.visible = false   # 数据节点不显示；可见性由 TriTileView 跟随层显隐
+			tn.visible = false   # 数据节点不显示；可见性由自绘层跟随层显隐
 		var above := Node2D.new()
 		above.name = "Above"
 		root.add_child(below)
@@ -626,8 +646,10 @@ func has_content() -> bool:
 	return not ents_all().is_empty()
 
 ## 格空间方向向量 → 像素位移（方向键微调/原位复制的格对齐移动；正交 = 轴对齐，等距沿菱形方向，六边沿格中心连线）
+## 格号位移 → 像素（nudge/复制偏移/区域拖动共用）。三角拓扑的格号 x 是三角列，
+## 折半由 GridSpace.delta_px 处理（V4 P1：两种列混用会让三角图上的位移量翻倍）
 func grid_dir_px(dx: int, dy: int) -> Vector2:
-	return grid.to_px(Vector2(dx, dy)) - grid.to_px(Vector2.ZERO)
+	return grid.delta_px(Vector2i(dx, dy))
 
 ## —— 最终可见性（E06） ——
 ## 实例眼睛 + 所属层显隐。命中/框选/连线/出口角标/预览全走这里，
@@ -760,8 +782,10 @@ func _fit_view() -> void:
 		var li: int = _layer_index_of(n.layer_id)
 		if li >= 0:
 			r = layer_xform(li) * r
-		take.call(Rect2i(floori(r.position.x / float(maxi(tile_w, 1))), floori(r.position.y / float(maxi(tile_h, 1))),
-			maxi(1, ceili(r.size.x / float(maxi(tile_w, 1)))), maxi(1, ceili(r.size.y / float(maxi(tile_h, 1))))))
+		# 格号归 GridSpace（三角拓扑的 x 是三角列，按格宽直除会低估一倍范围）
+		var c0: Vector2i = grid.cell_of_continuous(grid.to_continuous_grid(r.position))
+		var c1: Vector2i = grid.cell_of_continuous(grid.to_continuous_grid(r.end))
+		take.call(Rect2i(c0, Vector2i(maxi(1, c1.x - c0.x), maxi(1, c1.y - c0.y))))
 	var used: Rect2i = (acc["rect"] as Rect2i) if bool(acc["has"]) else Rect2i(0, 0, 10, 10)
 	cam_pos = grid.cell_center_px(Vector2i(used.get_center()))
 	var vp := get_viewport_rect().size

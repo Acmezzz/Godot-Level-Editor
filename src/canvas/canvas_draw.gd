@@ -9,6 +9,7 @@ const MapStoreRef := preload("res://src/map/map_store.gd")   # 地图码→名�
 const K := preload("res://src/core/constants.gd")
 const CellGraphRef := preload("res://src/map/cell_graph.gd")   # C4：格图多边形高亮
 const EdgeRefRef := preload("res://src/map/edge_ref.gd")   # §7.4：格边高亮/取值
+const TriTileViewScript := preload("res://src/canvas/tri_tile_view.gd")   # 格多边形贴图 UV
 
 func _init(host) -> void:
 	cvs = host
@@ -101,12 +102,9 @@ func _draw() -> void:
 				var bsrc: int = cvs.source_of_asset(cvs.paint_asset)
 				var gtex: Texture2D = cvs.atlas_texs[bsrc] \
 					if bsrc >= 0 and bsrc < (cvs.atlas_texs as Array).size() else null
-				if gtex != null:
-					var cs: Vector2i = cvs.asset_cell(cvs.paint_asset)
-					cvs.draw_texture_rect_region(gtex,
-						cvs.grid.cell_tex_rect(c, cs),
-						Rect2(Vector2(cvs.paint_cell) * Vector2(cs), Vector2(cs)),
-						Color(1, 1, 1, 0.5))
+				# 幽灵落在活动层局部空间（层 offset/scale 跟手），格形按拓扑走
+				_draw_tile_ghost(gtex, c, cvs.asset_cell(cvs.paint_asset), cvs.paint_cell,
+					cvs.tile_alt, clampi(cvs.active_layer, -1, cvs.layer_count() - 1), 0.5)
 	# 碰撞叠加由 CollisionView 节点绘制（图层接口控制显隐），这里不再特例绘制。
 	# 地图边界（meta w×h，关卡的实际范围）
 	var meta: Dictionary = cvs.map_data.get("meta", {})
@@ -285,14 +283,12 @@ func _draw() -> void:
 				var ai2: int = cvs.source_of_asset(aid2)
 				var tex2: Texture2D = cvs.atlas_texs[ai2] \
 					if ai2 >= 0 and ai2 < (cvs.atlas_texs as Array).size() else null
-				if tex2 != null:
-					var cs2: Vector2i = cvs.asset_cell(aid2)
-					# 幽灵落点与真实搬移同一原语（六边行错位/三角半格列）：不能格号直接相加
-					var dst2: Rect2 = cvs.grid.cell_tex_rect(
-						cvs.grid.shift_cell(Vector2i(int((t as Array)[0]), int((t as Array)[1])), md), cs2)
-					cvs.draw_texture_rect_region(tex2, _wrect_local(dst2, lli2),
-						Rect2(Vector2(int((t as Array)[3]), int((t as Array)[4])) * Vector2(cs2), Vector2(cs2)),
-						Color(1, 1, 1, 0.6))
+				# 幽灵落点与真实搬移同一原语（六边行错位/三角半格列）：不能格号直接相加
+				var dst2: Vector2i = cvs.grid.shift_cell(
+					Vector2i(int((t as Array)[0]), int((t as Array)[1])), md)
+				_draw_tile_ghost(tex2, dst2, cvs.asset_cell(aid2),
+					Vector2i(int((t as Array)[3]), int((t as Array)[4])),
+					int((t as Array)[5]) if (t as Array).size() >= 6 else 0, lli2, 0.6)
 		for t in cvs._move_snap.get("collision", []):
 			var mc: Vector2i = cvs.grid.shift_cell(Vector2i(int(t[0]), int(t[1])), md)
 			cvs.draw_colored_polygon(cvs.grid.cell_polygon(mc), Color(1.0, 0.25, 0.25, 0.45))
@@ -302,7 +298,9 @@ func _draw() -> void:
 			var gaid := str(d0.get("asset", ""))
 			var gprops0: Dictionary = d0.get("props", {}) if d0.get("props", {}) is Dictionary else {}
 			var gsz0: Vector2 = AssetDecl.instance_size(cvs.manifest, gaid, gprops0, Vector2(cvs.grid.tile))
-			var ep: Vector2 = Vector2(morg) \
+			# dx/dy 是连续格坐标偏移：基准点由格号折回连续坐标（三角拓扑 = 平行四边形列）
+			var gbase0: Vector2 = cvs.grid.cell_origin_continuous(morg)
+			var ep: Vector2 = gbase0 \
 				+ Vector2(float(d0.get("dx", 0.0)), float(d0.get("dy", 0.0)))
 			var gu := EntityNode.anchor_unit_of(AssetDecl.by_id(cvs.manifest, gaid))
 			var gr := Rect2(cvs.grid.to_px(ep + gu) - EntityNode.anchor_off_of(gu, gsz0), gsz0)
@@ -319,9 +317,15 @@ func _draw() -> void:
 	# 区域粘贴预览：各层幽灵跟随鼠标，左键落位
 	if cvs._paste_mode and not cvs._region_clip.is_empty():
 		var org = cvs._cell_of(pos)
-		# tiles = {层id: [[dx,dy,资产id,ax,ay]...]}——预览不区分层，统一原色
-		for cells2 in (cvs._region_clip.get("tiles", {}) as Dictionary).values():
-			for t in cells2:
+		# 幽灵按**目标层**画，与真实粘贴同一套层重映射（同图按 id、跨图按唯一层名、
+		# 匹配不上落最底层）——否则预览停在源层位置，落位后内容跳到别的层（V4 P1）。
+		var lnames_g: Dictionary = cvs._region_clip.get("layer_names", {})
+		var clip_map_g := str(cvs._region_clip.get("map", ""))
+		var same_map_g: bool = clip_map_g == "" or clip_map_g == cvs.cur_map_name
+		var missed_g: Array = []
+		for lidg in (cvs._region_clip.get("tiles", {}) as Dictionary):
+			var lig: int = cvs._region_ops_ctrl._paste_layer_index(str(lidg), lnames_g, missed_g, same_map_g)
+			for t in ((cvs._region_clip.get("tiles", {}) as Dictionary)[lidg]) as Array:
 				# 落点与真实粘贴同一原语（六边行错位/三角半格列）
 				var tc = cvs.grid.shift_cell(org, Vector2i(int((t as Array)[0]), int((t as Array)[1])))
 				# 按条目自己的资产 id 取纹理与切片尺寸（同上）
@@ -329,12 +333,9 @@ func _draw() -> void:
 				var ai3: int = cvs.source_of_asset(aid3)
 				var tex3: Texture2D = cvs.atlas_texs[ai3] \
 					if ai3 >= 0 and ai3 < (cvs.atlas_texs as Array).size() else null
-				if tex3 != null:
-					var cs3: Vector2i = cvs.asset_cell(aid3)
-					cvs.draw_texture_rect_region(tex3,
-						cvs.grid.cell_tex_rect(tc, cs3),
-						Rect2(Vector2(int((t as Array)[3]), int((t as Array)[4])) * Vector2(cs3), Vector2(cs3)),
-						Color(1, 1, 1, 0.5))
+				_draw_tile_ghost(tex3, tc, cvs.asset_cell(aid3),
+					Vector2i(int((t as Array)[3]), int((t as Array)[4])),
+					int((t as Array)[5]) if (t as Array).size() >= 6 else 0, lig, 0.5)
 		for t in cvs._region_clip.get("collision", []):
 			var cc = cvs.grid.shift_cell(org, Vector2i(int(t[0]), int(t[1])))
 			cvs.draw_colored_polygon(cvs.grid.cell_polygon(cc), Color(1.0, 0.25, 0.25, 0.35))
@@ -344,9 +345,13 @@ func _draw() -> void:
 			var gprops: Dictionary = t.get("props", {}) if t.get("props", {}) is Dictionary else {}
 			var gsz: Vector2 = AssetDecl.instance_size(cvs.manifest, gaid2, gprops, Vector2(cvs.grid.tile))
 			# dx/dy 是格坐标（浮点）：与落位后的 apply_grid 同一口径
-			var eg: Vector2 = Vector2(org) + Vector2(float(t.get("dx", 0.0)), float(t.get("dy", 0.0)))
+			var eg: Vector2 = cvs.grid.cell_origin_continuous(org) + Vector2(float(t.get("dx", 0.0)), float(t.get("dy", 0.0)))
 			var gu2 := EntityNode.anchor_unit_of(AssetDecl.by_id(cvs.manifest, gaid2))
 			var er := Rect2(cvs.grid.to_px(eg + gu2) - EntityNode.anchor_off_of(gu2, gsz), gsz)
+			# 实例也画在它将要落进去的那一层（同一条重映射规则）
+			var eli2: int = cvs._region_ops_ctrl._paste_layer_index(
+				str(t.get("layer", "")), lnames_g, missed_g, same_map_g)
+			er = _wrect_local(er, eli2)
 			var tex: Texture2D = cvs.thumbs.get(gaid2)
 			if tex == null:
 				var ad2 := AssetDecl.by_id(cvs.manifest, gaid2)
@@ -397,6 +402,29 @@ func _wrect_local(r: Rect2, li: int) -> Rect2:
 		return r
 	var xf: Transform2D = cvs.layer_xform(li)
 	return Rect2(xf * r.position, r.size * Vector2(xf.x.length(), xf.y.length()))
+
+## 单格瓦片幽灵（笔刷/搬移/粘贴共用）：按**格形**贴图——三角与斜基走格多边形 + tri_uvs，
+## 其余走矩形切片；最后按目标层变换变到世界。层有 offset/scale 时幽灵与落笔一致（V4 P1：
+## 此前幽灵直接画在根空间，缩放层上跟手位置与落下的瓦片错开）。
+func _draw_tile_ghost(tex: Texture2D, cell: Vector2i, cs: Vector2i, atl: Vector2i, alt: int,
+		li: int, alpha: float) -> void:
+	if tex == null or cs == Vector2i.ZERO:
+		return
+	var tint := Color(1, 1, 1, alpha)
+	if cvs.grid.is_tri() or cvs.grid.has_basis:
+		var poly: PackedVector2Array = cvs.grid.cell_polygon(cell)
+		var pts := PackedVector2Array()
+		for p: Vector2 in poly:
+			pts.append(p if li < 0 else cvs.to_layer_world(li, p))
+		var uvs: PackedVector2Array = TriTileViewScript.tri_uvs(pts, atl, cs, tex.get_size(), alt)
+		if uvs.size() == pts.size():
+			var cols := PackedColorArray()
+			for _i in pts.size():
+				cols.append(tint)
+			cvs.draw_polygon(pts, cols, uvs, tex)
+		return
+	cvs.draw_texture_rect_region(tex, _wrect_local(cvs.grid.cell_tex_rect(cell, cs), li),
+		Rect2(Vector2(atl) * Vector2(cs), Vector2(cs)), tint)
 
 ## visual:rect 资产的画布呈现：颜色/alpha 读资产声明，尺寸走实例 rect()。
 ## 不含 props.event/mode/once 分支——事件就是绑定了功能的实体，语义只在 functions[] 里。

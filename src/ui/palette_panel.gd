@@ -170,10 +170,16 @@ func _img_for(aid: String) -> Image:
 		return null
 	return imgs[sid] as Image
 
-## D7：瓦片缩略纹理缓存（资产 id + cell → ImageTexture），类别切换不再逐格重建
+## D7：瓦片缩略纹理缓存（图集修订 + 资产 id + cell → ImageTexture），类别切换不再逐格重建。
+## 键必须含图集修订：外改图集后重建 TileSet，只按 id+cell 做键会一直显示旧像素（V4 P1）。
 var _tex_cache := {}
+var _tex_cache_rev := -1
 
 func _tex(aid: String, cell: Vector2i) -> ImageTexture:
+	var rev: int = int(app.canvas.atlas_rev)
+	if rev != _tex_cache_rev:
+		_tex_cache.clear()
+		_tex_cache_rev = rev
 	var key := "%s:%d,%d" % [aid, cell.x, cell.y]
 	var hit = _tex_cache.get(key, null)
 	if hit != null:

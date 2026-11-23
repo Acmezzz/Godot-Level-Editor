@@ -78,10 +78,17 @@ func value_at(seconds: float) -> float:
 	return seconds
 
 ## 拍 → 秒：以第 0 拍开段，逐段累加 (拍差 × 60 / BPM)。
+## 首段起点非零（声明里第一段 beat > 0）：0 拍..首段起点这段没有变速记录，
+## 按首段 BPM 外推——否则这段恒算 0 秒，正向/反向换算在起点前不可逆（V4 P1）。
 func _beats_to_seconds(beat: float) -> float:
 	var sec := 0.0
 	var cur_beat := 0.0
 	var cur_bpm := 0.0
+	if not tempo.is_empty():
+		var b0 := float((tempo[0] as Dictionary).get("beat", 0.0))
+		var v0 := float((tempo[0] as Dictionary).get("bpm", 0.0))
+		if b0 > 0.0 and v0 > 0.0:
+			cur_bpm = v0   # 首段之前的基底 BPM（外推）
 	for seg in tempo:
 		var b := float((seg as Dictionary).get("beat", 0.0))
 		var v := float((seg as Dictionary).get("bpm", 0.0))
@@ -101,6 +108,11 @@ func _seconds_to_beats(sec: float) -> float:
 	var acc := 0.0
 	var cur_beat := 0.0
 	var cur_bpm := 0.0
+	if not tempo.is_empty():
+		var b0 := float((tempo[0] as Dictionary).get("beat", 0.0))
+		var v0 := float((tempo[0] as Dictionary).get("bpm", 0.0))
+		if b0 > 0.0 and v0 > 0.0:
+			cur_bpm = v0
 	for seg in tempo:
 		var b := float((seg as Dictionary).get("beat", 0.0))
 		var v := float((seg as Dictionary).get("bpm", 0.0))

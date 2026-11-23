@@ -136,6 +136,8 @@ func on_duplicate() -> void:
 
 ## C2 计划预览（不写盘）：源 = 画布当前提交状态，目标 = 新图名。
 ## 返回 {plan: <ClonePlan.build 结果>, err: ""}；名字非法时 err 给原因、plan 为空。
+## 预览与执行同一口径：源文档保留自己的地图码（组外引用要钉的是**源图码**，不是图名），
+## 未落盘的暂存内容一并参与，否则预览的「内容 N」与冲突和真正执行时不一致（V4 P1）。
 func _plan_preview(old_name: String, nn: String) -> Dictionary:
 	if nn == "":
 		return {"plan": {}, "err": "先填新图名"}
@@ -148,7 +150,14 @@ func _plan_preview(old_name: String, nn: String) -> Dictionary:
 		return {"plan": {}, "err": "地图重建中，请稍后再试"}
 	# 预览只需要一份可解析的计划：目标码用占位（真正的新码由 duplicate_map 发行）
 	return {"plan": ClonePlan.whole_map_document(
-		{"data": data, "manifest": app.manifest, "map": old_name}, nn, "PREV"), "err": ""}
+		{"data": data, "manifest": app.manifest, "map": old_name}, nn, "PREV",
+		_staged_by_cid()), "err": ""}
+
+## 当前文档未落盘的暂存内容 {cid: data}（整图复制的输入；没有内容编辑器时为空）。
+func _staged_by_cid() -> Dictionary:
+	if app.project_shell == null or app.project_shell.content_editor == null:
+		return {}
+	return app.project_shell.content_editor.staged_data_by_cid()
 
 ## 段计数（计划里的 map_patch 或整份文档都适用）
 func _counts(d: Dictionary) -> Dictionary:
@@ -265,7 +274,7 @@ func convert_current_to_dialog(old_name: String, name_edit: LineEdit, err_label:
 		err_label.text = "转换结果为空：请重试"
 		return
 	doc.meta.name = old_name
-	doc.meta.erase("code")   # 副本重发地图码（duplicate_map 发行）
+	# 同上：来源图码要留着给组外引用做「钉源图」判定；副本自己的码由 duplicate_map 换新
 	var conflicts: Array = []
 	var err: String = app.MapStore.duplicate_map(app.manifest, old_name, nn, conflicts, doc)
 	if err != "":
@@ -295,9 +304,11 @@ func duplicate_current_from_dialog(old_name: String, name_edit: LineEdit, err_la
 		err_label.text = "地图重建中，请稍后再试"
 		return
 	data.meta.name = old_name
-	data.meta.erase("code")   # 源图码不进副本：duplicate_map 给目标发新码
+	# 保留源图码：整图复制时组外引用要钉的是**源图码**（游戏侧按码认图），剥码会让它们
+	# 变成名字、预览与执行也不一致。副本自己的码由 whole_map_document 重新写（V4 P1）。
 	var conflicts: Array = []
-	var err: String = app.MapStore.duplicate_map(app.manifest, old_name, nn, conflicts, data)
+	var err: String = app.MapStore.duplicate_map(app.manifest, old_name, nn, conflicts, data,
+		_staged_by_cid())
 	if err != "":
 		var detail := ClonePlan.conflicts_text(conflicts) if not conflicts.is_empty() else ""
 		err_label.text = "复制失败：" + err + (("\n" + detail) if detail != "" else "")
@@ -603,22 +614,35 @@ func rename_map_now(old_name: String, new_name: String, allow_write_unsaved := f
 		app._sync_play_cfg_to_map()
 	return ""
 
+## 打开另一张地图：先选文件，再确认丢弃，最后载入。
+## 顺序是硬约束（V4 P1）：以前先 confirm_discard 再开文件选择器——
+## 用户在选图对话框按取消，改动与暂存已经被丢掉，画布却还停在原图（静默数据损失）。
 func on_open() -> void:
-	if not await confirm_discard("打开另一张地图"):
-		return
 	var fd := FileDialog.new()
 	fd.file_mode = FileDialog.FILE_MODE_OPEN_FILE
 	fd.access = FileDialog.ACCESS_FILESYSTEM
 	fd.current_dir = str(app.manifest.get("_maps_dir", ""))
 	fd.add_filter("*.json")
-	# 生命周期：选完/取消都释放对话框。以前只接 file_selected 不释放，
-	# 每按一次「打开」就在 app 下堆一个隐藏 FileDialog（V4 P1）。
+	# 生命周期：选完/取消都释放对话框
 	fd.file_selected.connect(func(p: String):
 		fd.queue_free()
-		load_map_file(p))
-	fd.canceled.connect(func(): fd.queue_free())
+		_open_chosen(p))
+	fd.canceled.connect(func():
+		fd.queue_free()
+		app._set_status(" 已取消打开（当前地图与暂存内容保持不变）"))
 	app.add_child(fd)
 	fd.popup_centered(Vector2i(700, 500))
+
+## 选定文件之后的打开流程：先读+校验（失败不动旧文档），再确认丢弃，最后载入。
+func _open_chosen(p: String) -> void:
+	# 读不出来就别问「要不要丢改动」——那等于逼用户丢掉能保住的工作
+	var probe: Dictionary = app.MapStore.read_path(p, app.manifest)
+	if not probe.get("ok", false):
+		app._set_status(" 打开失败: " + _format_issues(probe.get("errors", [])))
+		return
+	if not await confirm_discard("打开另一张地图"):
+		return
+	await load_map_file(p)
 
 func load_map_file(p: String) -> void:
 	# load_data 是协程（节点重建中间 await 一帧）：必须等它完成，否则切图刚返回时
@@ -662,6 +686,9 @@ func load_map_file(p: String) -> void:
 		if target != base:
 			app._set_status(" 项目内已有同名地图，导入为 " + target + ".json")
 		base = target
+		# 侧效前查代次（V4 P1）：确认期间又发起了别的切图请求，这次导入就不该再写盘
+		if _doc_stale(gen):
+			return
 		# R06：外部图的身份重新登记——源图码不进本项目（可能与现有图撞码），重发项目内新码。
 		if data.get("meta", null) is Dictionary:
 			(data["meta"] as Dictionary).erase("code")
@@ -1169,8 +1196,7 @@ func open_draft_target(draft_key: String) -> void:
 	if draft.is_empty():
 		app._set_status(" 没有这份草稿：" + draft_key)
 		return
-	if not await confirm_discard("打开正式图"):
-		return
+	# 先定位目标正式图（读不到就别问丢弃），再确认，最后载入
 	var target := str(draft.get("targetPath", ""))
 	if target == "" or not FileAccess.file_exists(target):
 		var nm := str(draft.get("mapName", ""))
@@ -1179,6 +1205,8 @@ func open_draft_target(draft_key: String) -> void:
 			app._set_status(" 正式图已不在（草稿：%s）：可在「打开」里手动选文件" % draft_key)
 			return
 		app._set_status(" 草稿记录的路径已失效，按图名打开：" + target.get_file())
+	if not await confirm_discard("打开正式图"):
+		return
 	await load_map_file(target)
 
 ## 打开项目时提示可恢复草稿（A3）：有草稿就列出来，让用户选恢复/查看正式图/丢弃。

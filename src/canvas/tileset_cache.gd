@@ -50,15 +50,18 @@ static func build(tile_assets: Array, grid: Vector2i, proj := "orthogonal") -> D
 		# R20：隔离单个坏源——一个图集缺失/解码失败只让它自己的源缺位（占位 null，
 		# source_id 映射保持稳定），其余资产照常建源；该资产的旧瓦片记录按未解析往返。
 		if p == "" or not FileAccess.file_exists(p):
+			# 占位 null 保持其余资产 source_id 稳定；但**不登记资产 id**（见下）
 			imgs.append(null)
 			texs.append(null)
-			ids.append(str(d2.get("id", "")))
+			ids.append("")
 			continue
 		var img := Image.load_from_file(p)
 		if img == null:
+			# 文件在但解码失败（损坏/不是图片）：**不登记资产 id**——登记了就等于承认这个
+			# source 可用，落格会静默变成隐形瓦片且不再走「未解析保留」往返（V4 P1）。
 			imgs.append(null)
 			texs.append(null)
-			ids.append(str(d2.get("id", "")))
+			ids.append("")
 			continue
 		var cell: Vector2i = d2.get("cell", grid)
 		if cell.x <= 0 or cell.y <= 0:

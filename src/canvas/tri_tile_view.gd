@@ -1,12 +1,12 @@
 class_name TriTileView
 extends Node2D
-## B3：三角格的瓦片可视层。TileMapLayer 只有方形/等距/六角三种 tile_shape，表现不了
-## 半格三角形；因此三角拓扑下瓦片数据仍住在 TileMapLayer（六元组原样读写），
-## 由本节点按三角形轮廓自绘（以图集切片为源，按三角形做 UV 裁切）。
+## B3：瓦片自绘层。TileMapLayer 只有方形/等距/六角三种 tile_shape，表现不了
+## 半格三角形，也表达不了任意斜基（gridBasis）的平行四边形。这两种拓扑下瓦片数据仍住在
+## TileMapLayer（六元组原样读写），由本节点按真实格多边形自绘（以图集切片为源，按格形做 UV 裁切）。
 ##
 ## 显隐与层参数由层控制器同步到本节点（图层接口只碰 TileMapLayer，本节点跟它走）；
 ## refresh() 只是请求重绘（queue_redraw），真正的遍历在 _draw() 里——每次重绘都扫该层全部瓦片，
-## 不做逐格缓存。所以大图三角层重绘是 O(瓦片数)，别在每帧调用 refresh()。
+## 不做逐格缓存。所以大图重绘是 O(瓦片数)，别在每帧调用 refresh()。
 
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
 const TilesetCache := preload("res://src/canvas/tileset_cache.gd")
@@ -37,7 +37,8 @@ func _process(_dt: float) -> void:
 func _draw() -> void:
 	if layer == null or not is_instance_valid(layer) or grid == null or cvs == null:
 		return
-	if not grid.is_tri():
+	# 三角拓扑与斜基拓扑都走自绘（斜基的平行四边形没有原生 tile_shape）
+	if not grid.is_tri() and not grid.has_basis:
 		return
 	_dirty = false
 	for c in layer.get_used_cells():
@@ -58,7 +59,7 @@ func _draw() -> void:
 		var cs: Vector2i = cvs.asset_cell(aid)
 		if cs == Vector2i.ZERO:
 			continue
-		var poly: PackedVector2Array = grid.tri_polygon(c.x, c.y)
+		var poly: PackedVector2Array = grid.cell_polygon(c)
 		if poly.size() < 3:
 			continue
 		# R18：alt（编辑器变换位）参与自绘——翻转/转置不再被三角自绘吞掉

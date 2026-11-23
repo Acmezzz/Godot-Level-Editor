@@ -95,9 +95,11 @@ func _snapshot_region(sel: Rect2i) -> Dictionary:
 	return snap
 
 ## 一个实例的数据模板（复制/区域快照共用）：相对偏移（格，浮点——保留亚格位置）+ 全部数据字段，
-## 不含活体引用。
-func _ent_template(n: EntityNode, at: Vector2) -> Dictionary:
-	var g: Vector2 = n.grid_of_world(n.position) - at
+## 不含活体引用。offsets 用**连续格坐标**（三角拓扑 = 平行四边形列），因此基准点也要
+## 由格号折回连续坐标，不能直接拿三角列号当 x（V4 P1：两种列混用）。
+func _ent_template(n: EntityNode, at: Vector2i) -> Dictionary:
+	var base: Vector2 = cvs.grid.cell_origin_continuous(at)
+	var g: Vector2 = n.grid_of_world(n.position) - base
 	return {
 		"dx": snappedf(g.x, 0.001),
 		"dy": snappedf(g.y, 0.001),
@@ -178,16 +180,16 @@ func _finish_region_move() -> void:
 		else:
 			cvs.set_collision_cell(cc2, true, "solid", "", {})
 	# 实例：区块内的实例原地平移（保持身份码与层归属，不重建节点）。
-	# 平移量按各实例所在层逆变换（E02）：跨层组的层偏移/缩放不同，不能共用一个世界位移。
+	# 平移量与瓦片同一口径：**本层局部格**位移。层 offset/scale 作用在整层上，
+	# 层内格号平移永远是 grid_dir_px(delta)——再按世界位移逆变换会除以层缩放，
+	# 同一块区域里瓦片走 d 格、实例只走 d/scale 格（V4 P1）。
 	for e in cvs.ents_all():
 		var n := e as EntityNode
 		if n != null and n.asset != "" and cvs._region_sel.has_point(n.cell()):
-			var li: int = cvs._layer_index_of(n.layer_id)
-			var dl: Vector2 = cvs.grid_dir_px(delta.x, delta.y) if li < 0 \
-				else cvs.world_delta_local(li, cvs.grid_dir_px(delta.x, delta.y))
-			n.position += dl
-	# 选区跟着搬到新位置，方便接着拖第二下
-	cvs._region_sel.position = from + delta
+			# position 是层局部坐标，格位移也按层局部算：不再过一次世界位移逆变换
+			n.position += cvs.grid_dir_px(delta.x, delta.y)
+	# 选区跟着搬到新位置，方便接着拖第二下（六边/三角走同一格平移原语，不能格号直加）
+	cvs._region_sel.position = cvs.grid.shift_cell(from, delta)
 	cvs._mark()
 	cvs.queue_redraw()
 	cvs._hint("已移动区域 %dx%d 偏移 (%d,%d)（Ctrl+Z 撤销）" % [
@@ -216,7 +218,10 @@ func _instantiate(t: Dictionary, origin: Vector2i, lnames := {}, missed: Array =
 	# 完整对象负载（E12）：sortAnchor 与游戏侧未知键随模板走
 	n.raw = (t.get("raw", {}) as Dictionary).duplicate(true) if t.get("raw", null) is Dictionary else {}
 	n.refresh_visual()
-	n.apply_grid(origin.x + float(t.get("dx", 0.0)), origin.y + float(t.get("dy", 0.0)))
+	# dx/dy 是**连续格坐标**偏移（三角拓扑 = 平行四边形列）：落位基准点由格号折算，
+	# 不能直接拿三角列号当连续 x（V4 P1）
+	var org_c: Vector2 = cvs.grid.cell_origin_continuous(origin)
+	n.apply_grid(org_c.x + float(t.get("dx", 0.0)), org_c.y + float(t.get("dy", 0.0)))
 	var ei: int = cvs._layer_index_of(n.layer_id)
 	cvs._place_in_layer(n, maxi(ei, 0))
 	# 新实例按需发码（场景实例不产码）；旧码只作为引用重映射的键
