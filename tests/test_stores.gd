@@ -307,6 +307,35 @@ func test_document_commit_receipts() -> void:
 	eq(str(rc.get("id", "")), "C1", "收据带目标身份")
 	eq(str(rc.get("digest", "")), "DIG", "写到盘上的目标带摘要")
 
+## §4.4-2：常驻会话——开图换身份 + 抬令牌（旧请求作废）；保存只前移基线不动令牌；
+## 暂存按 doc_key 过滤，换图后旧文档的暂存不会混进新文档的提交快照。
+func test_document_session_lifecycle() -> void:
+	var DS := preload("res://src/project/document_session.gd")
+	var s = DS.new()
+	var g1: int = s.open_doc("/proj", "AB12", "map_a", "/proj/maps/map_a.json", "D1", 100)
+	var g2: int = s.open_doc("/proj", "CD34", "map_b", "/proj/maps/map_b.json", "D2", 200)
+	ok(g2 > g1, "开图抬高令牌")
+	ok(s.stale(g1) and not s.stale(g2), "旧代次过期、新代次有效")
+	eq(s.map_code, "CD34", "身份换到新图")
+	eq(s.opened_digest, "D2", "基线跟着新图走")
+	eq(s.contents.size(), 0, "开新图清空暂存")
+	# 保存：基线前移，令牌不动
+	s.note_saved("/proj/maps/map_b.json", "D3", 300)
+	eq(s.opened_digest, "D3", "保存后基线前移")
+	ok(not s.stale(g2), "保存不影响文档令牌")
+	s.rename_doc("map_c", "/proj/maps/map_c.json", "D4", 400)
+	eq(s.map_name, "map_c", "改名换图名")
+	eq(s.opened_digest, "D4", "改名换基线")
+	eq(s.doc_key, "/proj/CD34", "文档键按项目根 + 地图码")
+	ok(not s.stale(g2), "改名不动令牌")
+	# 暂存按 doc_key 过滤：别的文档建的暂存行不进本快照
+	s.stage_content("dialog", "X1", {"id": "X1"}, "", -1, "/proj/AB12")
+	s.stage_content("dialog", "X2", {"id": "X2"}, "", -1, s.doc_key)
+	var snap: Dictionary = s.snapshot()
+	var rows: Array = snap.get("contents", [])
+	eq(rows.size(), 1, "只带当前文档的暂存行")
+	eq(str((rows[0] as Dictionary).get("cid", "")), "X2", "留下的是当前文档那条")
+
 ## A3：草稿写到 editor/drafts/<地图码>.json，记录目标/基线/快照，可读回、可删。
 func test_draft_roundtrip_by_map_code() -> void:
 	_wipe()

@@ -208,15 +208,22 @@
 - 日志尾部：`Playtest.log_tail` 只读末尾 64 KB 并丢弃可能被截断的首行。
 - 引用扫描：见上面的 `code_index`。
 
-### 9.6 本轮未取的口径（有意保留）
-- 版本化块缓存（按可见块缓存图元、按层修订失效）：`TriTileView` 已有 `_rev`/`_dirty` 框架但
-  目前只在 `refresh()` 时置脏；进一步做块缓存需要先定义「块」的粒度与失效边界，
-  与 §4.3-3 的「按可见块缓存」同一条，留待下一步。
-- `DocumentSession` 独立会话对象（§4.4-2）：逐目标收据（§4.4-3）已落地，
-  但提交编排仍留在 `DocumentCommit` 静态函数里，尚未抽成可变会话对象。
+### 9.6 收口状态
+- 3：`TriTileView` 按 BLOCK×BLOCK 分块缓存图元（`_blocks`：块 → {bbox, items[poly, uvs, tex]}）。
+  `refresh()` 整表作废，下次绘制重建一次；此后平移/缩放只遍历与视口相交的块，重算量与相机移动脱钩。
+  缓存还按 `cvs.atlas_rev` 失效（外改图集/资产增删后纹理引用会过期）。块包围盒取块内实际多边形并集，
+  斜基/三角都不越界；`_block_key` 对负格向下取整，负坐标数据不跟正格混堆。
+- 2：`DocumentSession` 从「每次提交新建的空壳」改成**常驻**会话：项目身份 / 文档令牌
+  (`generation, revision`) / 图身份 (code/name/path) / 正式基线 (`opened_digest, opened_mtime`)
+  / 暂存 / 补码标记都在它上面。`map_file.gd` 里散落的 `_doc_generation` / `_doc_project_root` /
+  `_opened_digest` / `_opened_mtime` 四个字段全部并入，各调用点改为 `open_doc` / `set_identity` /
+  `rename_doc` / `note_saved` / `bump` / `stale`。语义保持：开图抬令牌（旧请求作废）、
+  保存只前移基线、改名换身份不动令牌、暂存按 `doc_key` 过滤。
 
 - 测试：新增 `test_resolve_map_states`（六态 + 读不出的目标不产清空项）、
   `test_whole_map_copy_keeps_edge_local`（整图复制保留本图边 + 第三图原样）、
   `test_document_commit_receipts`（收据形状与 pending 推导）、
   `test_map_view_scene_bounds`（层扩展 / 无层等价 / 仿射盒）、
-  `test_export_hidden_layer_modes` 与 `test_export_add_blend_brightens`（两档导出）。全套 268 用例通过。
+  `test_block_key_partition`（块键分区 + 负格）、
+  `test_document_session_lifecycle`（令牌/基线/改名/暂存过滤）、
+  `test_export_hidden_layer_modes` 与 `test_export_add_blend_brightens`（两档导出）。全套 270 用例通过。

@@ -28,33 +28,27 @@ func _init(host) -> void:
 
 const AUTOSAVE_INTERVAL_MS := 120000
 var _last_autosave_msec := 0
-var _opened_mtime := 0   # A4.3：打开地图时记录的磁盘 mtime（保存时对比检测外部改动）
 var _last_alive_poll := 0   # PF-04：存活轮询节流
 var _play_pid := 0
 var _play_started_msec: int = 0
 var _play_program := ""        # A6：实际启动的程序（结构化配置的 exe 或模板首个 token）
 var _play_args_text := ""      # A6：实际参数（数组直启时原样，模板时为空）
 var _play_tracked := true      # false = 跟踪的是包装进程（playCommand 模板）
-## 文档身份（A2）：切图/退出/保存都用它判断“当前请求是否仍是同一个文档”。
-## generation 每次切图自增；await 回来后代次不符 = 请求已过期，绝不发布图名/路径/基线。
-var _doc_generation := 0
-var _doc_project_root := ""
-## 打开/上次保存时目标文件的文本摘要（A2）：同秒同长度的外部改动靠它识别——
-## mtime 是秒级粒度，长度也可能撞巧，摘要才是可靠基线。
-var _opened_digest := ""
 ## 最近一次在新建/重命名弹窗里确认的名字（顶栏常驻名字框已移除，这里记住值供预填）
 var _name_memo := ""
 ## B1（§7.1）：提交编排器（prepare/apply），提交与确认 UI 保留在本文件。
 var _doc_commit := DocumentCommit.new()
+## §4.4-2：常驻文档会话——项目身份 / 文档令牌 / 正式基线 / 暂存内容 / 补码标记都挂在它上面。
+## 以前这些是散落在本文件的一组字段 + 每次提交新建一个空会话，基线只能靠人肉同步。
+var sess := DocumentSession.new()
 
-## 进入一次会影响当前文档的操作（新建/切图）：抬代数并返回本次代次。
+## 进入一次会影响当前文档的操作（新建/切图）：抬会话代数并返回本次代次。
 func _begin_doc_op() -> int:
-	_doc_generation += 1
-	return _doc_generation
+	return sess.bump()
 
 ## 本次请求是否已过期（期间又切了图/退出了项目）。过期请求不得发布图名/路径。
 func _doc_stale(gen: int) -> bool:
-	return gen != _doc_generation
+	return sess.stale(gen)
 
 ## 文件内容摘要；不存在/打不开返回 ""。
 func _file_digest(path: String) -> String:
@@ -475,9 +469,11 @@ func create_map_from_dialog(name_edit: LineEdit, err_label: Label, pop: PopupPan
 		return   # 期间又切了别的图：本次载入结果已被更新的一次重建取代
 	app.cur_map_name = n
 	app.cur_map_path = EditorManifest.map_path(app.manifest, n)
-	_doc_project_root = str(app.manifest.get("_dir", ""))
-	_opened_mtime = 0
-	_opened_digest = ""
+	# 新图：身份换到这张，基线清空（磁盘上还没有这份文件）
+	sess.set_identity(str(app.manifest.get("_dir", "")), app.canvas.cur_map_code(),
+		n, str(app.cur_map_path), "", 0)
+	sess.contents.clear()
+	sess.revision = 0
 	app._sync_play_cfg_to_map()
 	app._set_map_loaded(true)
 	app.canvas._undo_history_ctrl.clear_history()
@@ -606,8 +602,8 @@ func rename_map_now(old_name: String, new_name: String, allow_write_unsaved := f
 		# 历史随地图码走（A3）：码不变则目录不变；无码兜底到图名的旧记录搬到新名下
 		var mcode := str((app.canvas.map_data.get("meta", {}) as Dictionary).get("code", ""))
 		Recovery.migrate_history(app.manifest, mcode, old_name, mcode, nn)
-		_opened_mtime = FileAccess.get_modified_time(new_path)
-		_opened_digest = _file_digest(new_path)
+		sess.rename_doc(nn, str(new_path), _file_digest(new_path),
+			FileAccess.get_modified_time(new_path))
 		# 刚才已把内容写进新文件：脏标记与自动保存计时归零，
 		# 否则状态栏还挂着「未保存」、两分钟后又多写一份 .autosave.json。
 		if not on_disk:
@@ -704,8 +700,6 @@ func load_map_file(p: String) -> void:
 			app._set_status("已导入外部地图 → " + p)
 	if _doc_stale(gen):
 		return   # 读取/确认期间又发起了更新的切图请求：本次不再改画布
-	_opened_mtime = FileAccess.get_modified_time(p)
-	_opened_digest = _file_digest(p)
 	app.canvas.set_thumbs(app._entity_thumbs())
 	await app.canvas.load_data(data, base)
 	if _doc_stale(gen):
@@ -716,8 +710,12 @@ func load_map_file(p: String) -> void:
 	_name_memo = base
 	app._set_map_loaded(true)
 	app.canvas._undo_history_ctrl.clear_history()
-	# 画布重建成功后才发布项目根（A2）：外部导入/切项目期间路径已变，旧根不得残留
-	_doc_project_root = str(app.manifest.get("_dir", ""))
+	# 画布重建成功后才发布文档身份（A2）：外部导入/切项目期间路径已变，旧根不得残留。
+	# 基线取此刻磁盘上的这份文件（草稿归位的情况：正式文件才是要对比的外部状态）。
+	sess.set_identity(str(app.manifest.get("_dir", "")), app.canvas.cur_map_code(),
+		base, str(p), _file_digest(p), FileAccess.get_modified_time(p))
+	sess.contents.clear()
+	sess.revision = 0
 	var tcount := 0
 	for lid in (data.get("tiles", {}) as Dictionary):
 		tcount += ((data.get("tiles", {}) as Dictionary)[lid] as Array).size()
@@ -811,8 +809,10 @@ func _effective_map_name() -> String:
 		if FileAccess.file_exists(cpath):
 			app.cur_map_name = cname
 			app.cur_map_path = cpath
-			_opened_mtime = FileAccess.get_modified_time(cpath)
-			_opened_digest = _file_digest(cpath)
+			sess.map_name = cname
+			sess.map_path = str(cpath)
+			sess.opened_digest = _file_digest(cpath)
+			sess.opened_mtime = FileAccess.get_modified_time(cpath)
 			return cname
 	return n
 
@@ -845,17 +845,19 @@ func commit_document(reason := "", dry_run := false) -> Dictionary:
 		return {"status": "failed", "written": [], "error": "字段写入失败", "pending": _pending_targets()}
 	# B1（§7.1）：提交编排迁到 DocumentCommit——冻结会话快照与 Plan，按依赖序执行；
 	# 清单/地图写盘的外部改动确认对话框保留在 UI 侧钩子（_hook_*）里。
-	var sess := DocumentSession.new()
+	# §4.4-2：会话是常驻的，这里只把「此刻的工作副本」同步进去，再取冻结快照。
 	if ce != null:
 		sess.contents = ce.staged_table()   # 与 UI 共享同一份工作副本（字典按引用）
-		sess.codes_pending = bool(app.manifest.get("_codes_issued", false))
+	sess.codes_pending = bool(app.manifest.get("_codes_issued", false))
 	sess.map_code = str((app.canvas.map_data.get("meta", {}) as Dictionary).get("code", "")) if app.map_loaded else ""
 	sess.map_name = str(app.cur_map_name)
+	sess.map_path = str(app.cur_map_path)
+	sess.project_root = str(app.manifest.get("_dir", ""))
 	sess.doc_key = _doc_key()
 	var op := {
 		"reason": reason, "manifest": app.manifest,
 		"map_name": app.cur_map_name, "map_path": app.cur_map_path,
-		"map_digest": _opened_digest,
+		"map_digest": sess.opened_digest,
 		# 从未落过盘的新图（含恢复草稿后正式文件不存在）：即使画布还没标脏也必须建文件，
 		# 否则首次保存报「无待写改动」而地图目录里什么都没有。
 		"map_dirty": bool(app.map_loaded and app.canvas != null and app.canvas.modified_flag)
@@ -890,6 +892,8 @@ func _release_busy() -> void:
 
 ## 当前文档键（R02/B1）：项目根|地图码（无码退回图名）——与 content_form._doc_key 同一口径。
 func _doc_key() -> String:
+	if sess.doc_key != "":
+		return sess.doc_key
 	var root := str(app.manifest.get("_dir", ""))
 	var code := ""
 	if app.map_loaded and app.canvas != null \
@@ -978,7 +982,7 @@ func _save_now() -> bool:
 	if not app.map_loaded:
 		app._set_status(" 无地图：先新建或打开一张地图")
 		return false
-	var gen := _doc_generation   # 保存属于发起时的那个文档（A2）：等待后必须仍指向同一份
+	var gen := sess.generation   # 保存属于发起时的那个文档（A2）：等待后必须仍指向同一份
 	var n: String = _effective_map_name()
 	if n == "":
 		app._set_status(" 当前地图没有名字：先「新建地图」并填名字")
@@ -1003,15 +1007,15 @@ func _save_now() -> bool:
 		app._set_status(" 地图名不合法: " + n)
 		return false
 	# 保存期间项目/文档被换掉（确认框还开着时切了项目）：此时代次不同，写盘会落到别的项目
-	if _doc_stale(gen) or (_doc_project_root != "" and _doc_project_root != str(app.manifest.get("_dir", ""))):
+	if _doc_stale(gen) or (sess.project_root != "" and sess.project_root != str(app.manifest.get("_dir", ""))):
 		app._set_status(" 保存中止：文档已切换，本次改动未写入")
 		return false
 	# 外部变更检测——打开后磁盘内容变了 = 别处改过这份文件（本次保存会覆盖外部改动）。
 	# 摘要优先（A2）：mtime 是秒级粒度，同秒同长度的外部编辑 mtime/长度都撞得上，只有内容摘要能识别。
 	# R05：确认绑定到「此刻这份内容」——确认前抓的摘要，确认后仍须一致才写。
-	var baseline := _opened_digest
+	var baseline := sess.opened_digest
 	if FileAccess.file_exists(path):
-		if _opened_digest == "" and _opened_mtime == 0:
+		if sess.opened_digest == "" and sess.opened_mtime == 0:
 			# V4 P0-1：本会话里这张图从未落过盘，磁盘上却出现了同名文件
 			# （期间别的编辑器/脚本建了图）：按「新文件」覆盖等于删掉别人的图，
 			# 必须确认，且确认后复验摘要没再变。
@@ -1027,10 +1031,10 @@ func _save_now() -> bool:
 			baseline = appeared
 		var cur_digest := _file_digest(path)
 		var ext_changed := false
-		if _opened_digest != "" and cur_digest != "":
-			ext_changed = cur_digest != _opened_digest
-		elif _opened_mtime > 0:
-			ext_changed = FileAccess.get_modified_time(path) != _opened_mtime
+		if sess.opened_digest != "" and cur_digest != "":
+			ext_changed = cur_digest != sess.opened_digest
+		elif sess.opened_mtime > 0:
+			ext_changed = FileAccess.get_modified_time(path) != sess.opened_mtime
 		if ext_changed:
 			# C-20：保存前确认而不是覆盖后提示——外部改动是别人的工作，覆盖是破坏性动作
 			if not await app._confirm_action("外部改动",
@@ -1053,8 +1057,8 @@ func _save_now() -> bool:
 		var why: String = app.MapStore.write_error(app.manifest, data)
 		app._set_status(" 保存失败: %s%s" % [path, ("（%s）" % why) if why != "" else ""])
 		return false
-	_opened_mtime = FileAccess.get_modified_time(path)
-	_opened_digest = _file_digest(path)
+	# 基线前移（§4.4-2）：此后外部改动 = 相对这次写入的内容
+	sess.note_saved(str(path), _file_digest(path), FileAccess.get_modified_time(path))
 	app.canvas.cur_map_name = n
 	app.canvas.map_data["meta"] = data.meta
 	app.cur_map_name = n
@@ -1094,7 +1098,7 @@ func write_draft_now() -> bool:
 	var target := EditorManifest.map_path(app.manifest, name)
 	# R08：草稿基线 = 本会话打开/上次提交时的摘要（没有才退回当前磁盘摘要）——
 	# 外部改写发生在打开之后、写草稿之前时，磁盘摘要会把外部版本误记为本会话基线。
-	var baseline := _opened_digest
+	var baseline := sess.opened_digest
 	if baseline == "":
 		baseline = Recovery.digest(target)
 	# R03：待提交内容载荷 {fn_id, id, data} 进草稿；恢复时校验绑定后重新暂存。
@@ -1163,9 +1167,10 @@ func restore_draft_key(draft_key: String) -> bool:
 	app.cur_map_name = map_name
 	app.cur_map_path = target if target != "" else EditorManifest.map_path(app.manifest, map_name)
 	_name_memo = map_name
-	_doc_project_root = str(app.manifest.get("_dir", ""))
-	_opened_mtime = FileAccess.get_modified_time(app.cur_map_path) if FileAccess.file_exists(app.cur_map_path) else 0
-	_opened_digest = Recovery.digest(app.cur_map_path)
+	var tpath := str(app.cur_map_path)
+	sess.set_identity(str(app.manifest.get("_dir", "")), str((snap.get("meta", {}) as Dictionary).get("code", "")),
+		map_name, str(tpath), Recovery.digest(tpath),
+		FileAccess.get_modified_time(tpath) if FileAccess.file_exists(tpath) else 0)
 	app._sync_play_cfg_to_map()
 	app._set_map_loaded(true)
 	app.canvas._undo_history_ctrl.clear_history()
