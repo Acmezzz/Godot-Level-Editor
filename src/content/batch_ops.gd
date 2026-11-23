@@ -33,7 +33,7 @@ static func is_batchable(fd: Dictionary) -> bool:
 ##   ① 内容文件读不出来 / 缺失（不猜、不新建——批量只改已有内容）；
 ##   ② 旧值类型与声明不符（int/float/bool/vector2/color 等严格口径，与控件同一规则）。
 static func plan_field(manifest: Dictionary, fn_id: String, rows: Array,
-		fcode: String, new_value) -> Dictionary:
+		fcode: String, new_value, read_fn: Callable = Callable()) -> Dictionary:
 	var fields: Array = FunctionDecls.function_fields(manifest, fn_id)
 	var fd := _field_by_key(fields, fcode)
 	if fd.is_empty():
@@ -59,7 +59,7 @@ static func plan_field(manifest: Dictionary, fn_id: String, rows: Array,
 			continue   # 同一内容被两个实例共用（C2 之后不应出现）：只改一次
 		seen[cid] = true
 		var path := ContentStore.path_for(manifest, fn_id, cid)
-		var data: Dictionary = ContentStore.read(manifest, fn_id, cid)
+		var data: Dictionary = read_fn.call(fn_id, cid) if read_fn.is_valid() else ContentStore.read(manifest, fn_id, cid)
 		if data.is_empty():
 			conflicts.append({"cid": cid, "why": "内容文件读不出来或缺失（%s）" % path})
 			continue
@@ -71,7 +71,7 @@ static func plan_field(manifest: Dictionary, fn_id: String, rows: Array,
 		old_values[cid] = cur
 		targets.append(cid)
 		files.append(path)
-	return {"status": "ok", "field": fd, "code": fcode, "type": typ,
+	return {"status": "ok", "field": fd.duplicate(true), "code": fcode, "type": typ,
 		"targets": targets, "skipped": skipped, "conflicts": conflicts,
 		"old_values": old_values, "files": files,
 		"old": old_values.duplicate(), "new": new_value}
@@ -87,24 +87,30 @@ static func apply_field(manifest: Dictionary, fn_id: String, plan: Dictionary,
 	var nv = plan.get("new", null)
 	var written := 0
 	var failed: Array = []
+	var old_values: Dictionary = plan.get("old_values", {})
+	var field := _field_by_key(FunctionDecls.function_fields(manifest, fn_id), code)
 	for cid in (plan.get("targets", []) as Array):
 		var id := str(cid)
-		var data: Dictionary
-		if read_fn is Callable and (read_fn as Callable).is_valid():
-			data = read_fn.call(fn_id, id)
-		else:
-			data = ContentStore.read(manifest, fn_id, id)
+		if field.is_empty() or field != plan.get("field", {}):
+			failed.append({"cid": id, "why": "字段声明已变更"})
+			continue
+		var read: Dictionary = read_fn.call(fn_id, id) if read_fn.is_valid() else ContentStore.read_ex(manifest, fn_id, id)
+		var data: Dictionary = read.get("data", {})
+		var digest := str(read.get("digest", ""))
 		if data.is_empty():
 			failed.append({"cid": id, "why": "读不到内容文件"})
 			continue
 		var fv: Dictionary = data.get("fields", {}) if data.get("fields", {}) is Dictionary else {}
+		if not old_values.has(id) or fv.get(code, null) != old_values[id]:
+			failed.append({"cid": id, "why": "字段旧值已变更，请重新预览"})
+			continue
 		fv[code] = nv
 		data["fields"] = fv
 		var ok := false
-		if write_fn is Callable and (write_fn as Callable).is_valid():
-			ok = bool(write_fn.call(fn_id, id, data))
+		if write_fn.is_valid():
+			ok = bool(write_fn.call(fn_id, id, data, digest))
 		else:
-			ok = ContentStore.write(manifest, fn_id, id, data)
+			ok = bool(ContentStore.write_ex(manifest, fn_id, id, data, digest).get("ok", false))
 		if ok:
 			written += 1
 		else:

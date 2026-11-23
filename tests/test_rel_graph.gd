@@ -122,6 +122,20 @@ func test_set_edge_roundtrip() -> void:
 	eq(str((g.edges[0] as Dictionary).get("to", "")), "dialog\u0001b", "重开后边指向同一目标")
 	_cleanup()
 
+func test_set_edge_rejects_changed_display() -> void:
+	var shown := {"shown_value": "b", "shown_steps": [{"step": "S100", "fields": {"N500": "b"}}]}
+	var data := {"fields": {"N100": "c"}, "steps": [{"step": "S200", "fields": {"N500": "b"}}]}
+	var writes := [0]
+	var rd := func(_fn: String, _cid: String) -> Dictionary: return data.duplicate(true)
+	var wr := func(_fn: String, _cid: String, _data: Dictionary) -> bool:
+		writes[0] += 1
+		return true
+	eq(RelGraph.set_edge(rd, wr, "dialog", "a", -1, "N100", "", false, "b", shown).status,
+		"stale", "顶层引用改变后拒绝断开")
+	eq(RelGraph.set_edge(rd, wr, "dialog", "a", 0, "N500", "", false, "b", shown).status,
+		"stale", "步骤被替换后拒绝断开同下标的引用")
+	eq(writes[0], 0, "过期操作不写回")
+
 func test_set_edge_step_scope_and_multi() -> void:
 	_cleanup()
 	var m := _manifest()

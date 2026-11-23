@@ -36,13 +36,7 @@ static func build(manifest: Dictionary, fn_id: String, extra: Dictionary = {}) -
 	var local_ids := {}
 	for k in items:
 		local_ids[str(k)] = true
-	var decls: Array = []
-	decls.append_array(FunctionDecls.function_fields(manifest, fn_id))
-	var conds = FunctionDecls.function_decl(manifest, fn_id).get("conditions", null)
-	for cond_id in (conds as Array) if conds is Array else []:
-		var cd := ConditionDecls.condition_decl(manifest, str(cond_id))
-		if cd.get("fields", []) is Array:
-			decls.append_array(cd.get("fields", []) as Array)
+	var decls := _top_decls(manifest, fn_id)
 	for cid in items:
 		var data: Dictionary = items[cid]
 		var key := _key(fn_id, str(cid))
@@ -57,6 +51,7 @@ static func build(manifest: Dictionary, fn_id: String, extra: Dictionary = {}) -
 		# 出边：步骤字段（按每步自己的声明）
 		var steps = data.get("steps", null)
 		if steps is Array:
+			base["shown_steps"] = (steps as Array).duplicate(true)
 			for i in (steps as Array).size():
 				var st = (steps as Array)[i]
 				if not (st is Dictionary):
@@ -71,6 +66,24 @@ static func build(manifest: Dictionary, fn_id: String, extra: Dictionary = {}) -
 						edges, external, local_ids, "步骤%d" % (i + 1))
 	_add_target_nodes(manifest, fn_id, nodes, edges)
 	return {"nodes": nodes, "edges": edges, "external": external, "bad": bad}
+
+static func _top_decls(manifest: Dictionary, fn_id: String) -> Array:
+	var decls := FunctionDecls.function_fields(manifest, fn_id).duplicate()
+	var conds = FunctionDecls.function_decl(manifest, fn_id).get("conditions", null)
+	for cond_id in (conds as Array) if conds is Array else []:
+		var cd := ConditionDecls.condition_decl(manifest, str(cond_id))
+		if cd.get("fields", []) is Array:
+			decls.append_array(cd.get("fields", []) as Array)
+	return decls
+
+static func declaration_matches(manifest: Dictionary, fn_id: String, edge: Dictionary) -> bool:
+	var step := int(edge.get("step", -1))
+	if step < 0:
+		return _top_decls(manifest, fn_id).has(edge.decl)
+	var row: Dictionary = edge.shown_steps[step]
+	var decl := StepDecls.step_by_code(manifest, str(row.get("step", "")))
+	var fields = decl.get("fields", [])
+	return fields is Array and fields.has(edge.decl)
 
 static func _collect(manifest: Dictionary, from_key: String, base: Dictionary, decls: Array,
 		values: Dictionary, step: int, edges: Array, external: Array, local_ids: Dictionary,
@@ -93,15 +106,20 @@ static func _collect(manifest: Dictionary, from_key: String, base: Dictionary, d
 		var want_fn := str((desc.get("filter", {}) as Dictionary).get("fn", ""))
 		# 声明限定了功能就用它；没限定 = 同功能内的引用（内容 ID 只在功能目录里唯一）
 		var to_fn := want_fn if want_fn != "" else own_fn
-		for v in _as_list(values[key]):
-			var cid := str(v)
+		var shown = values[key]
+		var snapshot = shown.duplicate(true) if shown is Array else shown
+		var refs := _as_list(shown)
+		for index in refs.size():
+			var cid := str(refs[index])
 			if cid == "":
 				continue
 			var row := base.duplicate()
 			row["field"] = key
 			row["label"] = fname
 			row["step"] = step
-			row["decl"] = fd
+			row["decl"] = (fd as Dictionary).duplicate(true)
+			row["shown_value"] = snapshot
+			row["index"] = index
 			row["multi"] = bool(desc.get("many", false))
 			var exists := ContentStore.list_ids(manifest, to_fn).has(cid)
 			if not exists and to_fn == own_fn and local_ids.has(cid):
@@ -138,7 +156,7 @@ static func _add_target_nodes(manifest: Dictionary, fn_id: String, nodes: Array,
 ## multi 字段（值是数组）：old_cid 指出要替换/移除的元素，其余值原样保留。
 ## 返回 {status: ok/noop/missing/failed}。
 static func set_edge(read_fn: Callable, write_fn: Callable, fn_id: String, cid: String,
-		step: int, field: String, to_cid: String, multi: bool, old_cid := "") -> Dictionary:
+		step: int, field: String, to_cid: String, multi: bool, old_cid := "", shown: Dictionary = {}) -> Dictionary:
 	if cid == "" or field == "":
 		return {"status": "failed"}
 	var data: Dictionary = read_fn.call(fn_id, cid)
@@ -149,16 +167,19 @@ static func set_edge(read_fn: Callable, write_fn: Callable, fn_id: String, cid: 
 		var steps = data.get("steps", null)
 		if not (steps is Array) or step >= (steps as Array).size() or not ((steps as Array)[step] is Dictionary):
 			return {"status": "missing"}
+		if not shown.is_empty() and steps != shown.get("shown_steps"):
+			return {"status": "stale"}
 		var st: Dictionary = (steps as Array)[step]
 		if not (st.get("fields", null) is Dictionary):
 			st["fields"] = {}
 		holder = st
 	var fields: Dictionary = holder.get("fields", {}) if holder.get("fields", null) is Dictionary else {}
+	if not shown.is_empty() and (not fields.has(field) or fields[field] != shown.get("shown_value")):
+		return {"status": "stale"}
 	if multi:
 		var arr: Array = fields.get(field, []) if fields.get(field, null) is Array else []
-		# 断开 = 去掉这条；改接 = 原位替换（其余元素不动）
-		var at: int = arr.find(old_cid) if old_cid != "" else (arr.find(to_cid) if to_cid != "" else -1)
-		if at < 0:
+		var at := int(shown.get("index", -1)) if not shown.is_empty() else arr.find(old_cid if old_cid != "" else to_cid)
+		if at < 0 or at >= arr.size():
 			return {"status": "missing"}
 		if to_cid == "":
 			arr.remove_at(at)

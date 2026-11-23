@@ -73,6 +73,19 @@ func test_batch_plan_field() -> void:
 		"类型不符的 c3 原值保留（不被批量写坏）")
 	_cleanup()
 
+func test_batch_rejects_changed_old_value() -> void:
+	_cleanup()
+	var m := _manifest()
+	_write_content(m, "c1", {"N111": 1})
+	_write_content(m, "c2", {"N111": 2})
+	var plan := BatchOps.plan_field(m, "card", [{"cid": "c1"}, {"cid": "c2"}], "N111", 7)
+	_write_content(m, "c1", {"N111": 9})
+	var result := BatchOps.apply_field(m, "card", plan)
+	eq(result.written, 1, "只写旧值未变的目标")
+	eq(result.failed[0].cid, "c1", "过期目标有失败收据")
+	eq(int(ContentStore.read(m, "card", "c1").fields.N111), 9, "保留预览后的编辑")
+	_cleanup()
+
 ## 批量可写字段清单：只列 input/choice（与控件可写集合一致）
 func test_batchable_fields() -> void:
 	var m := _manifest()

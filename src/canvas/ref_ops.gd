@@ -36,9 +36,19 @@ func set_entity_ref(n: EntityNode, fd: Dictionary, value) -> Dictionary:
 			if str(props.get(str((other as Dictionary).get("id", "")), "")) != "":
 				paired_refs.append(other)
 	if not paired_refs.is_empty():
+		var source: Dictionary = app.manifest
+		var live_map: Dictionary = cvs.map_data
+		var asset_id := n.asset
+		var asset_decl := edef.duplicate(true)
 		var msg := "改目标地图会清空 %d 个已填引用（旧落点属于原图）。继续？" % paired_refs.size()
 		if not await app._confirm_action("改目标地图", msg, "改并清空"):
 			return {"status": "cancelled", "cleared": []}
+		if not app.map_loaded or app.canvas != cvs or not is_same(cvs.map_data, live_map) \
+				or not is_same(app.manifest, source) or not is_instance_valid(n) \
+				or n.is_queued_for_deletion() or n.asset != asset_id or n.props != props \
+				or AssetDecl.by_id(source, asset_id) != asset_decl:
+			app._set_status("确认期间实例或引用已变更，请重试")
+			return {"status": "failed", "cleared": []}
 	# §7.5 阶段二：引用值改的是这一条实例的 props → InstanceKey 差量。
 	var pre: Dictionary = cvs._undo_history_ctrl.inst_rows([n])
 	var via_delta := bool(pre.get("ok", false))

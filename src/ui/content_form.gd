@@ -1088,7 +1088,18 @@ func _batch_candidates(fn_id: String) -> Array:
 ## E2 批量改值弹窗：选字段（只列同功能可写字段）→ 填目标值（复用原字段控件）
 ## → 预览命中/跳过/冲突 → 「应用」逐条写。冲突不阻断其余命中，但会逐条列名。
 ## 批量只改已有内容文件：不新建内容、不碰绑定（绑定编辑走正常表单）。
+func _content_scope_guard() -> Callable:
+	var ctrl = app._map_file_ctrl
+	var generation := int(ctrl.sess.generation)
+	var source: Dictionary = manifest
+	return func() -> bool:
+		return app._map_file_ctrl == ctrl and not ctrl.sess.stale(generation) and is_same(app.manifest, source)
+
 func _open_batch(fn_id: String) -> void:
+	if not commit():
+		return
+	var guard := _content_scope_guard()
+	var fn_code := FunctionDecls.fn_code(manifest, fn_id)
 	var bfields: Array = BatchOps.batchable_fields(manifest, fn_id)
 	if bfields.is_empty():
 		app._set_status(" 这个功能没有可批量写入的字段")
@@ -1158,11 +1169,10 @@ func _open_batch(fn_id: String) -> void:
 		ctl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		value_slot.add_child(Kit.field_row("目标值", ctl, 48))
 		plan_lbl.text = "选字段并填写目标值后点「预览」。"
-	var preview := func():
+	var read_target := func() -> Dictionary:
 		var code := str(field_opt.get_item_metadata(field_opt.selected)) if field_opt.selected >= 0 else ""
 		if code == "":
-			app._set_status(" 先选字段")
-			return
+			return {"err": "先选字段"}
 		var fd: Dictionary = {}
 		for r2 in bfields:
 			if str((r2 as Dictionary).get("code", "")) == code:
@@ -1183,11 +1193,18 @@ func _open_batch(fn_id: String) -> void:
 					else:
 						got = value_of.call(fd, ch, Callable())
 					break
+		got["code"] = code
+		return got
+	var preview := func():
+		if not guard.call() or not commit():
+			return
+		var got: Dictionary = read_target.call()
 		if str(got.get("err", "")) != "":
 			plan_lbl.text = "⚠ " + str(got.get("err", ""))
 			apply_btn.disabled = true
 			return
-		cur["plan"] = BatchOps.plan_field(manifest, fn_id, cand, code, got.get("v"))
+		cur["candidates"] = _batch_candidates(fn_id)
+		cur["plan"] = BatchOps.plan_field(manifest, fn_id, cur.candidates, str(got.code), got.get("v"), _content_read)
 		var txt := BatchOps.plan_text(cur["plan"])
 		plan_lbl.text = txt
 		apply_btn.disabled = str((cur["plan"] as Dictionary).get("status", "")) != "ok" \
@@ -1203,12 +1220,20 @@ func _open_batch(fn_id: String) -> void:
 		var plan_now: Dictionary = cur["plan"]
 		if str(plan_now.get("status", "")) != "ok":
 			return
+		if not guard.call() or not commit():
+			return
+		var got: Dictionary = read_target.call()
+		if got.has("err") or got.get("code") != plan_now.code or got.get("v") != plan_now.new \
+				or FunctionDecls.fn_code(manifest, fn_id) != fn_code \
+				or _batch_candidates(fn_id) != cur.get("candidates", []):
+			apply_btn.disabled = true
+			plan_lbl.text = "目标值或绑定已变更，请重新预览。"
+			return
 		var plan := plan_now.duplicate(true)
 		pop.hide()
-		var res := BatchOps.apply_field(manifest, fn_id, plan,
-			func(fid: String, cid: String) -> Dictionary: return _content_read(fid, cid),
-			func(fid: String, cid: String, data: Dictionary) -> bool:
-				return _content_write(fid, cid, data) == "ok")
+		var res := BatchOps.apply_field(manifest, fn_id, plan, _content_read_ex,
+			func(fid: String, cid: String, data: Dictionary, digest: String) -> bool:
+				return _content_write(fid, cid, data, digest) == "ok")
 		var failed := (res.get("failed", []) as Array)
 		var msg := "批量改值：写入 %d 条" % int(res.get("written", 0))
 		if not failed.is_empty():
@@ -1235,7 +1260,10 @@ func _staged_count(fn_id: String) -> int:
 ## 点节点 = 在列表里定位那条内容；点边 = 改接（选目标）或断开（复用 C1 清空语义）。
 ## 写回走 _content_read/_content_write，与表单同一条路径（staged 感知）——两边改完一致。
 func _open_rel_graph(fn_id: String) -> void:
-	commit()
+	if not commit():
+		return
+	var guard := _content_scope_guard()
+	var fn_code := FunctionDecls.fn_code(manifest, fn_id)
 	# 状态放字典里（lambda 按值捕获局部变量，重新赋值传不出去）
 	var cur := {"g": RelGraph.build(manifest, fn_id, _staged_for(fn_id))}
 	if (cur.g.get("nodes", []) as Array).is_empty():
@@ -1263,7 +1291,8 @@ func _open_rel_graph(fn_id: String) -> void:
 		view.set_data(cur.g)
 		info.text = _rel_graph_hint(cur.g)
 	var on_edge := func(e: Dictionary) -> void:
-		_open_rel_edge(fn_id, e, func(): refresh.call())
+		_open_rel_edge(fn_id, e, refresh, func() -> bool:
+			return guard.call() and FunctionDecls.fn_code(manifest, fn_id) == fn_code)
 	view.on_pick = locate
 	view.on_edge = on_edge
 	view.set_data(cur.g)
@@ -1295,8 +1324,23 @@ func _rel_graph_hint(g: Dictionary) -> String:
 		parts.append("⚠ %d 个内容文件读不出" % bad.size())
 	return "　".join(parts)
 
+func _rel_targets(fn_id: String, decl: Dictionary) -> Array:
+	var desc := RefFields.describe(decl)
+	var target_fn := str((desc.get("filter", {}) as Dictionary).get("fn", ""))
+	if target_fn == "":
+		target_fn = fn_id
+	var targets := ContentStore.read_all(manifest, target_fn)
+	targets.merge(_staged_for(target_fn), true)
+	var opts := []
+	for cid in targets:
+		var name := str((targets[cid] as Dictionary).get("name", ""))
+		opts.append({"v": str(cid), "t": str(cid) if name == "" else "%s  %s" % [cid, name]})
+	return opts
+
 ## 点边 → 小弹窗：改接到某条内容 / 断开（清空字段）。
-func _open_rel_edge(fn_id: String, ed: Dictionary, after: Callable) -> void:
+func _open_rel_edge(fn_id: String, ed: Dictionary, after: Callable, guard: Callable) -> void:
+	if not guard.call():
+		return
 	var label := str(ed.get("label", ed.get("field", "")))
 	var multi := bool(ed.get("multi", false))
 	var shell: Dictionary = app._popup_body("改关系 · %s" % label,
@@ -1305,7 +1349,7 @@ func _open_rel_edge(fn_id: String, ed: Dictionary, after: Callable) -> void:
 	var pop: PopupPanel = shell.pop
 	var body: VBoxContainer = shell.body
 	var decl: Dictionary = ed.get("decl", {}) if ed.get("decl", null) is Dictionary else {}
-	var opts: Array = _resolve_options(decl)
+	var opts := _rel_targets(fn_id, decl)
 	var opt := OptionButton.new()
 	opt.add_item("（未设置 / 断开）")
 	opt.set_item_metadata(0, "")
@@ -1320,17 +1364,28 @@ func _open_rel_edge(fn_id: String, ed: Dictionary, after: Callable) -> void:
 	opt.select(sel_i)
 	body.add_child(Kit.field_row("目标", opt, 48))
 	var do_it := func() -> void:
+		if not guard.call() or not commit():
+			return
 		var want := str(opt.get_item_metadata(opt.selected)) if opt.selected >= 0 else ""
+		if not RelGraph.declaration_matches(manifest, fn_id, ed) \
+				or (want != "" and not _rel_targets(fn_id, decl).any(func(o): return str(o.get("v", "")) == want)):
+			app._set_status("关系声明或目标已变更，请重新选择")
+			pop.hide()
+			after.call()
+			return
+		var cid := str(ed.get("cid", ""))
+		var rd := _content_read_ex(fn_id, cid)
+		var res := RelGraph.set_edge(func(_fn: String, _cid: String) -> Dictionary: return rd.data,
+			_content_write.bind(str(rd.digest)), fn_id, cid,
+			int(ed.get("step", -1)), str(ed.get("field", "")), want, multi, cur_to, ed)
 		pop.hide()
-		var res := RelGraph.set_edge(_content_read, _content_write, fn_id, str(ed.get("cid", "")),
-			int(ed.get("step", -1)), str(ed.get("field", "")), want, multi, cur_to)
 		var st := str(res.get("status", ""))
 		if st == "ok":
 			app._set_status("关系已%s：%s" % ["断开" if want == "" else "改接", label])
 		elif st == "noop":
 			app._set_status("关系未变（%s）" % label)
-		elif st == "missing":
-			app._set_status(" 改关系失败：目标内容或字段已不存在，先刷新")
+		elif st == "stale" or st == "missing":
+			app._set_status("关系或步骤已变更，已刷新关系图，请重新选择")
 		else:
 			app._set_status(" 改关系失败：内容文件写入被拒绝（损坏或被占用？）")
 		after.call()
