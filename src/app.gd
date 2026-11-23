@@ -222,9 +222,13 @@ func _report_recovery_items() -> void:
 	var partial := 0
 	var manual := 0
 	var skipped := 0
+	var corrupt := 0
 	for p in pending:
 		var pd: Dictionary = p
 		var st := str(pd.get("status", ""))
+		if st == "corrupt":
+			corrupt += 1
+			continue
 		if st == "manual":
 			# §4.4 四态：manual 里再分「目标已不在且无基线」（可跳过）与「内容对不上」（外部改变）
 			if not (pd.get("external", []) as Array).is_empty():
@@ -239,6 +243,8 @@ func _report_recovery_items() -> void:
 		parts.append("%d 次提交的目标已不在（计划失效，可直接清理 editor/pending）" % skipped)
 	if manual > 0:
 		parts.append("%d 次提交有文件对不上（外部改过或写了一半，需人工复核 editor/pending）" % manual)
+	if corrupt > 0:
+		parts.append("%d 份提交日志已损坏读不出（editor/pending 下确认后可删除）" % corrupt)
 	if parts.is_empty():
 		return
 	_set_status(" 上次会话有 %s" % "；".join(PackedStringArray(parts)))

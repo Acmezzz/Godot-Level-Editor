@@ -360,8 +360,21 @@ func test_pending_log_partial_detection() -> void:
 	for e in (rec.get("entries", []) as Array):
 		states.append(str((e as Dictionary).get("state", "")))
 	eq(states, ["written", "pending", "manual"], "逐条状态按摘要判定")
+	# §4.4：manual 再分「外部改变」（内容对不上）与「可跳过」（目标不在且无基线）
+	eq((rec.get("external", []) as Array).size(), 1, "外部改动一条进 external")
+	eq((rec.get("skipped", []) as Array).size(), 0, "目标都在，没有可跳过项")
 	ok(Recovery.clear_pending(m, log), "清除日志")
 	ok(Recovery.scan_pending(m).is_empty(), "清除后扫不到")
+	# 坏日志不能静默隐身：写出坏 JSON 后应扫到 status=corrupt
+	var bad := str(m._maps_dir).get_base_dir().path_join("editor/pending/pending-broken.json")
+	Recovery.write_text(bad, "{ not json")
+	var scan2 := Recovery.scan_pending(m)
+	var corrupt := 0
+	for r2 in scan2:
+		if str((r2 as Dictionary).get("status", "")) == "corrupt":
+			corrupt += 1
+	eq(corrupt, 1, "坏日志 → status=corrupt（不静默跳过）")
+	DirAccess.remove_absolute(bad)
 	_wipe()
 
 ## §7.1 阶段一：替换已成功但进度标记失败时必须停手，不能报成功也不能继续写。

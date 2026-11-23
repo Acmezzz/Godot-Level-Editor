@@ -328,6 +328,10 @@ static func scan_pending(m: Dictionary) -> Array:
 		var p := dir.path_join(n)
 		var data := read_json(p)
 		if data.is_empty():
+			# §4.4 五态之一：日志本身读不出（截断/坏 JSON）——不能静默跳过，
+			# 否则用户以为没有待办，实际是一份无法判读的提交记录躺在盘上。
+			out.append({"path": p, "data": {}, "status": "corrupt", "written": 0,
+				"pending": 0, "manual": 1, "entries": [], "skipped": [], "external": []})
 			continue
 		var entries: Array = data.get("entries", []) if data.get("entries", []) is Array else []
 		var written := 0
