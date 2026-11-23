@@ -9,6 +9,7 @@ extends RefCounted
 ## 本模块只实现其中「清单 → 内容 → 地图」这一条的编排，不另行维护文件清单。
 
 const Recovery := preload("res://src/map/recovery.gd")
+const FunctionDecls := preload("res://src/content/function_decl.gd")
 ## ContentStore 只在 prepare 里用来拼内容路径；**不 preload**：content_store 反向 preload 了
 ## map_store，而 map_store 要复用本模块做改名/复制的冻结计划，静态 preload 会成环。
 const CONTENT_STORE_PATH := "res://src/content/content_store.gd"
@@ -26,18 +27,23 @@ func prepare(operation: Dictionary, snap: Dictionary) -> Dictionary:
 		var mpath := str(m.get("_dir", "")).path_join("editor/editor_manifest.json")
 		targets.append({"op": "write", "kind": "manifest", "id": "",
 			"path": mpath, "baseline": Recovery.digest(mpath), "expected": ""})
-	# 2) 内容目标：prepare 时抓基线摘要，apply 逐条写前复验（§7.1 accepted_state）
+	var dependencies := _bound_content(operation.get("map_snapshot", {}))
+	# 2) 暂存内容先于地图写盘；内部索引不能作为文件身份。
 	#    V4 P0-1：新内容的目标必须声明「预期不存在」——不能只靠空摘要表达，
 	#    否则提交期间出现的同路径文件会被当成合法基线并被覆盖。
 	for row in (snap.get("contents", []) as Array):
 		var r: Dictionary = row
 		var cp: String = _content_store().path_for(m, str(r.get("fn_id", "")), str(r.get("cid", "")))
+		if cp == "":
+			return {"status": "failed", "error": "暂存内容目标非法：%s/%s" % [r.get("fn_id", ""), r.get("cid", "")]}
 		var exists := FileAccess.file_exists(cp)
+		var binding := [FunctionDecls.fn_code(m, str(r.get("fn_id", ""))), str(r.get("cid", ""))]
+		var required := dependencies.has(binding)
 		targets.append({"op": "write", "kind": "content", "id": str(r.get("cid", "")),
 			"path": cp, "baseline": Recovery.digest(cp) if exists else "", "expected": "",
-			"expect_absent": not exists,
+			"expect_absent": not exists, "required": required,
 			"payload": {"fn_id": str(r.get("fn_id", "")), "cid": str(r.get("cid", "")),
-				"data": r.get("data", {}), "expect_absent": not exists}})
+				"data": r.get("data", {}), "expect_absent": not exists, "required": required}})
 	# 3) 地图（只脏图入计划：干净图没有待写项；写前外部改动确认在 hooks.save_map 里）
 	if bool(operation.get("map_dirty", false)) and str(operation.get("map_path", "")) != "":
 		targets.append({"op": "write", "kind": "map", "id": str(operation.get("map_name", "")),
@@ -47,6 +53,19 @@ func prepare(operation: Dictionary, snap: Dictionary) -> Dictionary:
 	return {"status": "ok", "plan": {"token": str(snap.get("token", "")), "revision": int(snap.get("revision", 0)),
 		"operation": str(operation.get("reason", "")), "manifest": m, "map_code": str(snap.get("map", "")),
 		"targets": targets}}
+
+static func _bound_content(data: Dictionary) -> Dictionary:
+	var keys := {}
+	for obj in data.get("objects", []):
+		if not (obj is Dictionary) or not (obj.get("functions", null) is Array):
+			continue
+		for binding in obj["functions"]:
+			if binding is Dictionary:
+				var code := str(binding.get("fn", ""))
+				var cid := str(binding.get("content", ""))
+				if cid != "":
+					keys[[code, cid]] = true
+	return keys
 
 ## apply：执行冻结 Plan。hooks（全部 Callable）：
 ##   save_manifest() -> bool（协程；清单写盘含外部改动确认）
@@ -191,6 +210,12 @@ func apply(plan: Dictionary, hooks: Dictionary) -> Dictionary:
 				return {"status": "conflict", "written": written, "conflicts": [{"path": path,
 					"kind": kind, "message": "内容目标在提交期间被创建或改动：%s" % path}],
 					"receipt": {}, "journal": log_path, "targets": receipts}
+			if st != "ok" and (st != "dropped" or bool(tgt.get("required", false))):
+				receipts.append(_receipt_of(tgt, "failed", ""))
+				receipts.append_array(_receipts_pending(targets, path))
+				return {"status": "failed", "written": written, "conflicts": [],
+					"error": "地图依赖的暂存内容未写入：%s" % path,
+					"journal": log_path, "targets": receipts}
 			if st == "dropped":
 				# 绑定复核丢弃：不写盘、不回填日志（R02），提交继续。
 				# 收据仍要有一条——「计划里有、但故意没写」必须能让调用方看见。

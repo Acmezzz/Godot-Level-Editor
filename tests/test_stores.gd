@@ -336,6 +336,23 @@ func test_document_session_lifecycle() -> void:
 	eq(rows.size(), 1, "只带当前文档的暂存行")
 	eq(str((rows[0] as Dictionary).get("cid", "")), "X2", "留下的是当前文档那条")
 
+func test_commit_uses_staged_record_identity() -> void:
+	var s := preload("res://src/project/document_session.gd").new()
+	var dc := preload("res://src/project/document_commit.gd").new()
+	var m := _fake_manifest()
+	s.open_doc(str(m._dir), "AB12", "a", MapStore.path_for(m, "a"))
+	s.contents["dialog\u0001X2"] = {"fn_id": "dialog", "cid": "X2", "doc": s.doc_key, "data": {"id": "X2"}}
+	m["functions"] = {"dialog": {"code": "DLG"}}
+	var map_snapshot := {"objects": [{"functions": [{"fn": "DLG", "content": "X2"}]}]}
+	var prep := dc.prepare({"manifest": m, "map_snapshot": map_snapshot}, s.snapshot())
+	eq(prep.get("status"), "ok", "生产暂存表可进入正式提交计划")
+	var targets: Array = prep.get("plan", {}).get("targets", [])
+	if not targets.is_empty():
+		eq(targets[0].get("path"), ContentStore.path_for(m, "dialog", "X2"), "写入路径使用真实内容 ID")
+		ok(bool(targets[0].get("required", false)), "冻结地图中仍绑定的目标不可丢弃")
+	s.contents["dialog\u0001X2"]["cid"] = "../bad"
+	eq(dc.prepare({"manifest": m}, s.snapshot()).get("status"), "failed", "非法目标拒绝整份计划")
+
 ## §4.4-4：冻结计划执行器——rename 原子换名、delete 复验摘要后删除、
 ## 目标占用/源被外部改动都判冲突不越写，收据逐目标给状态。
 func test_frozen_plan_targets() -> void:

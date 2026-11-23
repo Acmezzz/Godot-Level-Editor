@@ -858,12 +858,24 @@ func commit_document(reason := "", dry_run := false) -> Dictionary:
 		"map_dirty": bool(app.map_loaded and app.canvas != null and app.canvas.modified_flag)
 			or (app.map_loaded and str(app.cur_map_path) != "" and not FileAccess.file_exists(str(app.cur_map_path))),
 	}
-	var prep: Dictionary = _doc_commit.prepare(op, sess.snapshot())
+	var snap := sess.snapshot()
+	if not (snap["contents"] as Array).is_empty() and app.map_loaded:
+		var map_snapshot: Dictionary = app.canvas.extract()
+		if map_snapshot.is_empty():
+			_release_busy()
+			return {"status": "failed", "error": "地图正在重建，无法复核暂存依赖"}
+		op["map_snapshot"] = map_snapshot
+	var prep: Dictionary = _doc_commit.prepare(op, snap)
 	if str(prep.get("status", "")) == "empty":
 		_release_busy()
 		if reason != "":
 			app._set_status(" 已提交（%s）：无待写改动" % reason)
 		return {"status": "ok", "written": [], "error": "", "pending": [], "targets": []}
+	if str(prep.get("status", "")) != "ok":
+		_release_busy()
+		var error := str(prep.get("error", "无法准备提交计划"))
+		app._set_status(" 提交中止：" + error)
+		return {"status": "failed", "written": [], "error": error, "pending": _pending_targets()}
 	# B1：apply 按依赖序执行 Plan（清单 → 内容 → 地图），逐文件记录进度；
 	# 失败/取消/冲突路径的提交日志保留（scan_pending 三态判定不变）。
 	var res: Dictionary = await _doc_commit.apply(prep.get("plan", {}) as Dictionary, _commit_hooks())

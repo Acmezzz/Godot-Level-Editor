@@ -67,7 +67,8 @@ func stale(gen: int) -> bool:
 func stage_content(fn_id: String, cid: String, data: Dictionary, ent := "", bind_index := -1, doc := "") -> Dictionary:
 	if fn_id == "" or cid == "":
 		return {"status": "error", "error": "功能 id 与内容 ID 必须非空"}
-	contents[cid] = {"fn_id": fn_id, "data": data, "ent": ent, "bind_index": bind_index, "doc": doc}
+	contents[fn_id + "\u0001" + cid] = {"fn_id": fn_id, "cid": cid, "data": data,
+		"ent": ent, "bind_index": bind_index, "doc": doc}
 	revision += 1
 	return {"status": "ok", "error": ""}
 
@@ -88,10 +89,10 @@ func snapshot() -> Dictionary:
 ## 当前文档（doc_key 匹配）的暂存行 [{fn_id, cid, data}]——提交日志/草稿冻结目标用（R04）。
 func rows_for(doc: String) -> Array:
 	var out: Array = []
-	for cid in contents:
-		var st: Dictionary = contents[cid]
+	for key in contents:
+		var st: Dictionary = contents[key]
 		if doc != "" and str(st.get("doc", "")) != doc:
 			continue
-		out.append({"fn_id": str(st.get("fn_id", "")), "cid": str(cid),
+		out.append({"fn_id": str(st.get("fn_id", "")), "cid": str(st.get("cid", key)),
 			"data": (st.get("data", {}) as Dictionary).duplicate(true)})
 	return out

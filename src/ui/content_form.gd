@@ -728,6 +728,8 @@ func flush_one(cid: String, payload := {}, on_written: Callable = Callable()) ->
 		data = (payload as Dictionary).get("data", data) as Dictionary
 	var state := _staged_bind_state(st as Dictionary, cid)
 	if state != "":
+		if bool(payload.get("required", false)):
+			return {"status": "failed"}
 		_staged_erase(fn_id, cid)   # 绑定已撤销/实例已删：这条不再写盘（R02）
 		app._set_status(" 暂存内容 %s 的绑定已不在（撤销/切图放弃）：未写盘，已丢弃" % cid)
 		return {"status": "dropped"}

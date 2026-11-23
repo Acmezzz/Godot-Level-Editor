@@ -4,7 +4,7 @@
 
 ## 发布阻断
 
-- [ ] A1 暂存键误作内容 ID。会话快照保留真实 `fn_id/cid`，非法目标写前中止，依赖仍在时不得丢弃暂存（`document_session.gd`、`content_form.gd`、`document_commit.gd`）。
+- [x] A1 暂存键误作内容 ID。会话快照保留真实 `fn_id/cid`，非法目标写前中止，冻结地图仍依赖的暂存不得丢弃。生产复合键回归及表单、地图文件脚本检查通过。
 - [ ] A2 文件创建、替换、删除和改名统一检查前置状态。数据与摘要同源，创建意图从发号保留，冻结计划拒绝无效目标（`document_commit.gd`、`content_store.gd`、`map_store.gd`）。
 - [ ] A3 跨图清理按逐图收据同步当前画布与基线，涵盖部分成功和读盘不完整（`issues_drawer.gd`、`map_file.gd`、`project_audit.gd`）。
 
