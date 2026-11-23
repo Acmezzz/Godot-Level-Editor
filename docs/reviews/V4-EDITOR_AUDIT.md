@@ -172,13 +172,23 @@
   既不报悬空也不产出清空项。
 
 ### 9.3 gridBasis / 渲染 / 取景（§4.3）
+- 1：名义范围收敛到 `MapViewData.scene_bounds(data, manifest, include_layers)`：
+  根边界 = `grid.map_bounds(0,0,w,h)`，再逐层并入 `xform_rect(layer_transform, base)`（四角取包围盒）。
+  导出几何与内容预览共用这一份取景口径，不再各自算根矩形 + 层合并。
 - 2：新增 `GridSpace.is_hex_geom()`（= `projection == "hexagonal" and not has_basis`）作为唯一判据，
   替换 `pick_cell` / `to_continuous_grid` / `cell_center_px` / `cell_polygon` / `map_rect_polygon` /
   `grid_polygon` / `cell_tex_rect` / `grid_lines` / `neighbors` / `up_neighbors` / `map_bounds` /
   `EntityNode` 锚点换算 / `MapConvert` 锚点换算里的 `is_hex()`：basis 优先于投影预设，
   同一张图不再有两套口径。
 
+- 4：`render_preview(..., match_canvas)` 两档：**布局示意**（默认，全部层都画、一律 mix，看东西在哪）
+  与**画面一致**（隐藏层不画、层 `blend = add/mul` 参与合成）。导出弹窗加一个勾选框，
+  画面一致档文件名带 `-canvas`；批量导出固定走布局示意档（概览用途）。
+
 ### 9.4 提交与日志（§4.4）
+- 3：`DocumentCommit.apply` 返回逐目标 `receipts`：每项 `{kind,id,path,status,digest}`，
+  `status ∈ written / dropped / pending / conflict / failed`；提前返回（计划失败、日志写不了）也带
+  完整的 pending 收据，经 `commit_document` 原样透出。调用方不再只能看一个总布尔。
 - 4：`Recovery.scan_pending` 从三态扩到**五态**：新增 `corrupt`（日志本身读不出，不再静默隐身），
   并把 `manual` 再分成 `skipped`（目标已不在且无基线 → 计划失效，可直接清理）与
   `external`（目标在但内容对不上 → 需人工复核）。`app` 启动摘要按四类分别报数。
@@ -202,10 +212,11 @@
 - 版本化块缓存（按可见块缓存图元、按层修订失效）：`TriTileView` 已有 `_rev`/`_dirty` 框架但
   目前只在 `refresh()` 时置脏；进一步做块缓存需要先定义「块」的粒度与失效边界，
   与 §4.3-3 的「按可见块缓存」同一条，留待下一步。
-- `DocumentSession` 抽象（§4.4-2）与逐目标收据（§4.4-3）：现有提交路径已逐目标回填日志摘要
-  并在失败时停手，但没有抽出独立的会话对象与收据结构体。
-- 导出「画面一致 vs 布局示意」两档（§4.3-4）：当前只有一档预览，预算已提到分配前；
-  两档需要先定「画面一致」要复刻哪些画布行为（裁剪/遮挡/混合）。
+- `DocumentSession` 独立会话对象（§4.4-2）：逐目标收据（§4.4-3）已落地，
+  但提交编排仍留在 `DocumentCommit` 静态函数里，尚未抽成可变会话对象。
 
 - 测试：新增 `test_resolve_map_states`（六态 + 读不出的目标不产清空项）、
-  `test_whole_map_copy_keeps_edge_local`（整图复制保留本图边 + 第三图原样）。全套 264 用例通过。
+  `test_whole_map_copy_keeps_edge_local`（整图复制保留本图边 + 第三图原样）、
+  `test_document_commit_receipts`（收据形状与 pending 推导）、
+  `test_map_view_scene_bounds`（层扩展 / 无层等价 / 仿射盒）、
+  `test_export_hidden_layer_modes` 与 `test_export_add_blend_brightens`（两档导出）。全套 268 用例通过。
