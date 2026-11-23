@@ -108,3 +108,29 @@ func test_layer_scale_expands_bounds() -> void:
 	d["meta"]["layers"] = [{"id": "L1", "scale": 2.0}]
 	var xf := MapExport.output_geometry(d, _m(), 4)
 	eq((xf.bounds as Rect2).size, Vector2(128, 128), "2× 层 = 边界 128×128")
+
+## §4.3-4：两档导出——布局示意（默认）画全部层；画面一致档跳过隐藏层。
+func test_export_hidden_layer_modes() -> void:
+	# 两层：L1 可见、L2 隐藏；都铺一格。4×4 @16px 格、8 px/格
+	var d := _map(4, 4)
+	d["meta"]["layers"] = [{"id": "L1", "visible": true}, {"id": "L2", "visible": false}]
+	d["tiles"] = {"L1": [], "L2": [[1, 1, "", 0, 0, 0]]}
+	var loose := MapExport.render_preview(d, 8, _m())
+	var strict := MapExport.render_preview(d, 8, _m(), 16, true)
+	ok(not loose.is_empty() and not strict.is_empty(), "两档都出图")
+	# L2 隐藏层的那格：布局示意档有色块，画面一致档与「另一个没瓦片的格」同为背景
+	var px_probe := Vector2i(1 * 8 + 4, 1 * 8 + 4)
+	var empty_probe := Vector2i(3 * 8 + 4, 3 * 8 + 4)
+	ok(loose.get_pixelv(px_probe) != strict.get_pixelv(px_probe), "隐藏层在画面一致档不参与合成")
+	eq(strict.get_pixelv(px_probe), strict.get_pixelv(empty_probe), "画面一致档该格 = 空格背景色")
+
+## §4.3-4：blend=add 层在画面一致档提亮（与 mix 档同位置像素不同）。
+func test_export_add_blend_brightens() -> void:
+	var d := _map(4, 4)
+	d["meta"]["layers"] = [{"id": "L1", "blend": "add"}, {"id": "L2"}]
+	d["tiles"] = {"L1": [[1, 1, "", 0, 0, 0]], "L2": []}
+	var mixy := MapExport.render_preview(d, 8, _m(), 16, false)
+	var addy := MapExport.render_preview(d, 8, _m(), 16, true)
+	var probe := Vector2i(1 * 8 + 4, 1 * 8 + 4)
+	ok(addy.get_pixelv(probe).get_luminance() >= mixy.get_pixelv(probe).get_luminance(),
+		"add 层不比 mix 暗")

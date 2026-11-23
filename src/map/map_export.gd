@@ -89,17 +89,22 @@ static func budget(data: Dictionary, manifest: Dictionary, px_per_tile := 4,
 
 ## 生成预览图（调用方先用 budget() 检查；超限时返回空 Image 而不是让引擎分配爆内存）。
 ## 碰撞条目按 v6 对象口径读 {x, y, type?, shape?}；斜坡按半格三角近似。
+## match_canvas（§4.3-4 两档）：
+##   false = 布局示意（默认）：所有层都画、层混合一律 mix——看「东西在哪」。
+##   true  = 画面一致：隐藏层不画（层 visible=false 的瓦片与实例都跳过）、层 blend(add/mul)
+##           参与合成——看「画布上是什么样」。两档几何与预算完全相同。
 static func render_preview(data: Dictionary, px_per_tile := 4, manifest: Dictionary = {},
-		grid_fallback = 16) -> Image:
+		grid_fallback := 16, match_canvas := false) -> Image:
 	var b := budget(data, manifest, px_per_tile, grid_fallback)
 	if not bool(b.get("ok", false)):
 		return Image.new()
 	var geo := output_geometry(data, manifest, px_per_tile, grid_fallback)
-	var img := _render(data, manifest, geo, grid_fallback)
+	var img := _render(data, manifest, geo, grid_fallback, match_canvas)
 	return img
 
 ## 直接渲染（跳过预算检查；批量作业已按预算缩小过时用）。失败返回空 Image。
-static func _render(data: Dictionary, manifest: Dictionary, geo: Dictionary, grid_fallback: int) -> Image:
+static func _render(data: Dictionary, manifest: Dictionary, geo: Dictionary, grid_fallback: int,
+		match_canvas := false) -> Image:
 	var size: Vector2i = geo.size
 	var grid: GridSpace = geo.grid
 	var bounds: Rect2 = geo.bounds
@@ -122,9 +127,20 @@ static func _render(data: Dictionary, manifest: Dictionary, geo: Dictionary, gri
 	# 瓦片按层叠（层栈顺序 = meta.layers 底→顶）：贴图集切片，缺素材退回地形绿
 	var layers: Array = meta.get("layers", []) if meta.get("layers", null) is Array else []
 	var order: Array = []
+	# §4.3-4：画面一致档读层显隐与混合；布局示意档一律当作可见 + mix
+	var layer_hidden := {}
+	var layer_blend := {}
 	for row in layers:
-		if row is Dictionary:
-			order.append(str((row as Dictionary).get("id", "")))
+		if not (row is Dictionary):
+			continue
+		var lid_row := str((row as Dictionary).get("id", ""))
+		order.append(lid_row)
+		if match_canvas:
+			if (row as Dictionary).get("visible", true) == false:
+				layer_hidden[lid_row] = true
+			var bm := str((row as Dictionary).get("blend", "mix"))
+			if bm == "add" or bm == "mul":
+				layer_blend[lid_row] = bm
 	var tiles_data = data.get("tiles", {})
 	if not (tiles_data is Dictionary):
 		tiles_data = {}
@@ -133,6 +149,8 @@ static func _render(data: Dictionary, manifest: Dictionary, geo: Dictionary, gri
 			order.append(str(lid))
 	var atlas_cache := {}
 	for lid2 in order:
+		if layer_hidden.has(lid2):
+			continue   # 画面一致：隐藏层不参与
 		if not (tiles_data as Dictionary).has(lid2):
 			continue
 		var cells = (tiles_data as Dictionary)[lid2]
@@ -140,14 +158,17 @@ static func _render(data: Dictionary, manifest: Dictionary, geo: Dictionary, gri
 			continue
 		# 层 offset/scale 参与落位（与内容预览/画布同一 MapViewData 口径）
 		var lxf := MapViewData.layer_transform(data, lid2)
+		var bl := str(layer_blend.get(lid2, ""))
 		for c in (cells as Array):
 			if not (c is Array) or (c as Array).size() < 2:
 				continue
 			var cell := Vector2i(int(c[0]), int(c[1]))
 			var poly := _to_out(_xformed(lxf, grid.cell_polygon(cell)), bounds, scale)
-			if _blit_tile(img, poly, c, manifest, grid, atlas_cache):
+			# add/mul 层：切片与兜底色块都按层混合合成（无 alpha 时 add 提亮、mul 压暗）
+			if _blit_tile(img, poly, c, manifest, grid, atlas_cache, bl):
 				continue
-			_put_poly(img, poly, Color(0.45, 0.70, 0.45, 1), Color(0.45, 0.70, 0.45, 1))
+			var fallback_col := Color(0.45, 0.70, 0.45, 1)
+			_put_poly_blend(img, poly, fallback_col, fallback_col, bl)
 
 	# 碰撞（v6 对象口径）：颜色/形状来自 collisionTypes 声明池；斜坡画半格三角
 	for c2 in (data.get("collision", []) as Array):
@@ -187,12 +208,14 @@ static func _render(data: Dictionary, manifest: Dictionary, geo: Dictionary, gri
 		if int(exz) < 0 or int(eyz) < 0 or int(exz) >= mw or int(eyz) >= mh:
 			continue
 		var elid := str((e as Dictionary).get("layer", ""))
+		if layer_hidden.has(elid):
+			continue   # 画面一致：隐藏层的实例也不画
 		if not layer_xf.has(elid):
 			layer_xf[elid] = MapViewData.layer_transform(data, elid)
 		var col2 := _asset_color(str((e as Dictionary).get("asset", "")))
-		_put_poly(img, _to_out(_xformed(layer_xf[elid] as Transform2D,
+		_put_poly_blend(img, _to_out(_xformed(layer_xf[elid] as Transform2D,
 			grid.cell_polygon(Vector2i(int(exz), int(eyz)))), bounds, scale),
-			col2, Color(col2, 1.0))
+			col2, Color(col2, 1.0), str(layer_blend.get(elid, "")))
 	# 出生点：白框（格轮廓）
 	var sp: Array = data.get("spawn", [2, 2])
 	if (sp as Array).size() >= 2:
@@ -229,8 +252,17 @@ static func _put_poly(img: Image, poly: PackedVector2Array, fill, edge: Color) -
 		_fill_poly(img, poly, fill)
 	_draw_poly_line(img, poly, edge)
 
+## §4.3-4：带层混合模式的多边形（blend = "" / "add" / "mul"；"" 等价旧行为）。
+static func _put_poly_blend(img: Image, poly: PackedVector2Array, fill, edge: Color, blend: String) -> void:
+	if poly.size() < 3:
+		return
+	if fill != null:
+		_fill_poly(img, poly, fill, blend)
+	_draw_poly_line(img, poly, edge)   # 描边走普通 alpha 合成（1px 线，混合差异不可见）
+
 ## 扫描线填充（奇偶规则）。颜色按 alpha 混合到已有像素上。
-static func _fill_poly(img: Image, poly: PackedVector2Array, color: Color) -> void:
+## blend = "" 覆盖写（alpha 混合）；"add"/"mul" 按层混合模式合成（§4.3-4）。
+static func _fill_poly(img: Image, poly: PackedVector2Array, color: Color, blend := "") -> void:
 	var w := img.get_width()
 	var h := img.get_height()
 	var ys: Array = []
@@ -255,16 +287,28 @@ static func _fill_poly(img: Image, poly: PackedVector2Array, color: Color) -> vo
 			var xa := maxi(0, floori(float(xs[k])))
 			var xb := mini(w - 1, ceili(float(xs[k + 1])) - 1)
 			if xb >= xa:
-				_blend_span(img, xa, xb, y, color)
+				_blend_span(img, xa, xb, y, color, blend)
 			k += 2
 
-static func _blend_span(img: Image, xa: int, xb: int, y: int, c: Color) -> void:
-	if c.a >= 0.999:
+static func _blend_span(img: Image, xa: int, xb: int, y: int, c: Color, blend := "") -> void:
+	if blend == "" and c.a >= 0.999:
 		img.fill_rect(Rect2i(xa, y, xb - xa + 1, 1), c)
 		return
 	for x in range(xa, xb + 1):
 		var old := img.get_pixel(x, y)
-		img.set_pixel(x, y, old.lerp(c, c.a))
+		img.set_pixel(x, y, _mix_over(old, c, blend))
+
+## 单像素合成：blend = "" 普通 alpha 叠；"add" 加色（截到 1）；"mul" 乘色。
+## 三种模式都先按 c.a 把「混合结果」与底色插值——层 blend 在画布上是材质级混合，
+## 这里按像素近似（预览口径，不追求逐像素一致）。
+static func _mix_over(old: Color, c: Color, blend: String) -> Color:
+	if blend == "add":
+		var add := Color(minf(old.r + c.r, 1.0), minf(old.g + c.g, 1.0), minf(old.b + c.b, 1.0), 1.0)
+		return old.lerp(add, c.a)
+	if blend == "mul":
+		var mul := Color(old.r * c.r, old.g * c.g, old.b * c.b, 1.0)
+		return old.lerp(mul, c.a)
+	return old.lerp(c, c.a)
 
 static func _draw_poly_line(img: Image, poly: PackedVector2Array, c: Color) -> void:
 	for i in poly.size():
@@ -316,7 +360,7 @@ static func _asset_color(asset_id: String) -> Color:
 ## 目标按格多边形包围盒落位（正交 = 方形；等距/六边 = 格中心对齐的包围盒）。
 ## atlas_cache 按资产 id 缓存读到的 Image，避免同一图集重复读盘。
 static func _blit_tile(img: Image, dst_poly: PackedVector2Array, c: Array,
-		manifest: Dictionary, grid: GridSpace, atlas_cache: Dictionary) -> bool:
+		manifest: Dictionary, grid: GridSpace, atlas_cache: Dictionary, blend := "") -> bool:
 	if c.size() < 5:
 		return false
 	var aid := str(c[2])
@@ -362,7 +406,7 @@ static func _blit_tile(img: Image, dst_poly: PackedVector2Array, c: Array,
 			if sc.a <= 0.0:
 				continue
 			var old := img.get_pixel(tx, ty)
-			img.set_pixel(tx, ty, old.lerp(sc, sc.a))
+			img.set_pixel(tx, ty, _mix_over(old, sc, blend))
 	return true
 
 ## 统计文本（给策划/评审看）。输出几何可选：传 manifest 时附投影与预览尺寸。

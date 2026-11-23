@@ -158,6 +158,12 @@ func open_export_dialog() -> void:
 	px.value = 4
 	px.suffix = " px/格"
 	body.add_child(UiKitScript.field_row("预览精度", px, UiKitScript.LABEL_W_LONG))
+	# §4.3-4：两档导出——布局示意（全部层都画）/ 画面一致（隐藏层不画、层混合参与合成）
+	var mode := CheckBox.new()
+	mode.text = "按画布显示导出（隐藏层不画、层混合生效）"
+	mode.button_pressed = false
+	mode.tooltip_text = "关：布局示意——所有层都画、混合一律 mix，看东西在哪\n开：画面一致——与画布看到的合成一致"
+	body.add_child(mode)
 	var geo_lbl := UiKitScript.hint_label("", 460)
 	body.add_child(geo_lbl)
 	var refresh := func():
@@ -188,13 +194,14 @@ func open_export_dialog() -> void:
 		if not bool(b.get("ok", false)):
 			app._set_status("导出取消：" + str(b.get("error", "")))
 			return
-		var img := MapExport.render_preview(data, int(px.value), app.manifest)
+		var img := MapExport.render_preview(data, int(px.value), app.manifest, 16, mode.button_pressed)
 		if img.is_empty():
 			app._set_status("导出失败：预览图为空（请检查地图尺寸）")
 			return
 		var dir := _export_dir()
 		DirAccess.make_dir_recursive_absolute(dir)
-		var path := dir.path_join(app.cur_map_name + ".png")
+		var suffix := "-canvas" if mode.button_pressed else ""
+		var path := dir.path_join(app.cur_map_name + suffix + ".png")
 		var err := img.save_png(path)
 		app._set_status(("已导出 " + path) if err == OK else ("导出失败（%d）: %s" % [err, path]))
 		pop.hide()
@@ -314,7 +321,7 @@ func _run_batch_export(label: Label, btn: Button, px_per_tile: int) -> void:
 			skipped.append(nm + "（超预算）")
 			lines.append("%s: 跳过（%s）" % [nm, str(b.get("error", ""))])
 			continue
-		var img := MapExport.render_preview(d, bpx, app.manifest)
+		var img := MapExport.render_preview(d, bpx, app.manifest)   # 批量 = 布局示意档（概览用途）
 		var png_ok := false
 		if not img.is_empty():
 			png_ok = img.save_png(dir.path_join(nm + ".png")) == OK
