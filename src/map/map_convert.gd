@@ -104,13 +104,13 @@ static func _anchor_unit(decl: Dictionary) -> Vector2:
 
 ## 数据坐标 + 锚点 → 世界锚点像素（与 entity_node.world_of_grid 同口径，不含 sortAnchor）。
 static func _anchor_px(g: GridSpace, unit: Vector2, x: float, y: float) -> Vector2:
-	if g.is_hex():
+	if g.is_hex_geom():
 		return g.to_px(Vector2(x, y)) + (unit - Vector2(0.5, 0.5)) * Vector2(g.tile)
 	return g.to_px(Vector2(x, y) + unit)
 
 ## 世界锚点像素 → 目标格系数据坐标（_anchor_px 的逆）。
 static func _grid_of_px(g: GridSpace, unit: Vector2, p: Vector2) -> Vector2:
-	if g.is_hex():
+	if g.is_hex_geom():
 		return g.to_continuous_grid(p - (unit - Vector2(0.5, 0.5)) * Vector2(g.tile))
 	return g.to_grid(p) - unit
 

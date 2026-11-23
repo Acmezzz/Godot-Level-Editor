@@ -41,7 +41,20 @@ func refresh() -> void:
 func _draw() -> void:
 	if layer == null:
 		return
+	# §5：按可见世界矩形裁剪（原先每次重画都遍历整层；120×56 满图拖动时每帧上千格）。
+	# 可见矩形反算到本节点空间（本节点挂在层容器下，层 offset/scale 已计入变换）。
+	var vis := Rect2()
+	var has_vis := false
+	var vp := get_viewport()
+	if vp != null:
+		var world: Rect2 = vp.get_canvas_transform().affine_inverse() * Rect2(Vector2.ZERO, vp.get_visible_rect().size)
+		vis = get_global_transform().affine_inverse() * world
+		has_vis = true
 	for c in layer.get_used_cells():
+		if has_vis:
+			var bb := _bbox_of(_cell_poly(c))
+			if not vis.intersects(bb):
+				continue
 		var cm = null
 		if canvas_ref != null and is_instance_valid(canvas_ref):
 			cm = canvas_ref._collision_meta.get(c, null)

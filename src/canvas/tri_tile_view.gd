@@ -41,7 +41,19 @@ func _draw() -> void:
 	if not grid.is_tri() and not grid.has_basis:
 		return
 	_dirty = false
+	# §5：按可见世界矩形裁剪（原先每次重画遍历整层；大图拖动是 O(瓦片数)）。
+	var vis := Rect2()
+	var has_vis := false
+	var vp := get_viewport()
+	if vp != null:
+		var world: Rect2 = vp.get_canvas_transform().affine_inverse() * Rect2(Vector2.ZERO, vp.get_visible_rect().size)
+		vis = get_global_transform().affine_inverse() * world
+		has_vis = true
 	for c in layer.get_used_cells():
+		if has_vis:
+			var bb := _bbox_of_poly(grid.cell_polygon(c))
+			if not vis.intersects(bb):
+				continue
 		var td: TileData = layer.get_cell_tile_data(c)
 		if td == null:
 			continue
@@ -65,6 +77,17 @@ func _draw() -> void:
 		# R18：alt（编辑器变换位）参与自绘——翻转/转置不再被三角自绘吞掉
 		var alt := MapFormat.alt_of_godot(layer.get_cell_alternative_tile(c))
 		draw_tri_texture(texs[src] as Texture2D, poly, atl, cs, alt)
+
+## 多边形包围盒（可见区裁剪用）。
+static func _bbox_of_poly(poly: PackedVector2Array) -> Rect2:
+	if poly.is_empty():
+		return Rect2()
+	var mn := poly[0]
+	var mx := poly[0]
+	for p: Vector2 in poly:
+		mn = mn.min(p)
+		mx = mx.max(p)
+	return Rect2(mn, mx - mn)
 
 ## 把一个图集切片贴到三角形内：UV 取切片在整张图集里的归一化矩形，
 ## 按三角形包围盒做仿射（切片左上对齐包围盒；等距/斜平面下三角形是旋转的，

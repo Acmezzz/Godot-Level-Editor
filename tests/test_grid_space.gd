@@ -276,6 +276,25 @@ func test_grid_triangles() -> void:
 	var hexg = GridSpaceScript.new(Vector2i(16, 16), "hexagonal")
 	hexg.set_topology("triangles")
 	ok(not hexg.is_tri(), "六边投影拒绝三角拓扑（保持 quads）")
+	# §4.3：hex + gridBasis 三种口径统一——basis 优先，六边的格中心/六角多边形/最近中心拾取不再生效
+	var hb = GridSpaceScript.new(Vector2i(16, 16), "hexagonal")
+	hb.set_basis(Vector2(20, 0), Vector2(3, 14))
+	ok(hb.is_hex() and not hb.is_hex_geom(), "hex+basis：投影仍是六边，但几何已不是六边")
+	eq(hb.cell_center_px(Vector2i(0, 0)), hb.to_px(Vector2(0.5, 0.5)), "hex+basis 格中心 = 平行四边形中心")
+	eq(hb.cell_polygon(Vector2i(0, 0)).size(), 4, "hex+basis 格多边形 = 平行四边形四点")
+	eq(hb.pick_cell(hb.cell_center_px(Vector2i(1, 1))), Vector2i(1, 1), "hex+basis 拾取按 basis 反算")
+	eq(hb.neighbors(Vector2i(0, 0)).size(), 4, "hex+basis 邻接 = 四邻（不是六边六邻）")
+	# 无 basis 的六边仍按六边形几何
+	var h0 = GridSpaceScript.new(Vector2i(16, 16), "hexagonal")
+	ok(h0.is_hex_geom(), "纯六边 = hex 几何")
+	eq(h0.cell_polygon(Vector2i(0, 0)).size(), 6, "纯六边格多边形 = 六角")
+	eq(h0.neighbors(Vector2i(0, 0)).size(), 6, "纯六边六邻")
+	# §4.2：共边几何在 GridSpace（点选/高亮/下拉同一份）
+	var eb: PackedVector2Array = g.edge_between(Vector2i(0, 0), Vector2i(1, 0))
+	eq(eb.size(), 2, "三角共边 = 两点")
+	eq(eb, PackedVector2Array([Vector2(16, 0), Vector2(0, 16)]), "三角共边 = 斜边公共两点")
+	var hb_edge: PackedVector2Array = h0.edge_between(Vector2i(0, 0), Vector2i(0, 1))
+	eq(hb_edge.size(), 2, "六边斜向共边也是两点")
 
 ## B3：gridTopology 解析（缺省 quads、非法值/六边组合报具体原因）
 func test_parse_topology() -> void:

@@ -90,8 +90,9 @@ static func is_entity(m: Dictionary, aid: String) -> bool:
 ## 按 kind 过滤（kind 为空 = 全部）。
 static func of_kind(m: Dictionary, kind: String) -> Array:
 	var out: Array = []
-	for aid in all(m):
-		var d: Dictionary = all(m)[aid]
+	var src := all(m)   # 视图缓存命中也是字典查找，别在循环里重复取
+	for aid in src:
+		var d: Dictionary = src[aid]
 		if kind == "" or str(d.get("kind", "")) == kind:
 			out.append(d)
 	return out

@@ -199,6 +199,12 @@ func is_iso() -> bool:
 func is_hex() -> bool:
 	return projection == "hexagonal"
 
+## 几何意义上的六边：hex 投影**且没有显式 gridBasis**。
+## 有 basis 时格是平行四边形（basis 优先于投影预设），六边的格中心/六角多边形/最近中心拾取
+## 都不成立——原先这几处各判 is_hex()、其余走 to_px(basis)，同一张图两套口径（V4 §4.3）。
+func is_hex_geom() -> bool:
+	return projection == "hexagonal" and not has_basis
+
 ## 清单 tileSize → 格尺寸（内部一律 Vector2i）：16 或 [32,16]；零/负/非整数/畸形回退 16×16。
 static func tile_size_of(m: Dictionary) -> Vector2i:
 	var ts = m.get("tileSize", 16)
@@ -323,7 +329,7 @@ func pick_cell(px: Vector2) -> Vector2i:
 	if is_tri():
 		return pick_tri(px)
 	var g := to_grid(px)
-	if not is_hex():
+	if not is_hex_geom():
 		return Vector2i(floori(g.x), floori(g.y))
 	var ctr := Vector2i(int(g.x), int(g.y))
 	var best := ctr
@@ -343,7 +349,7 @@ func pick_cell(px: Vector2) -> Vector2i:
 ## 不取最近中心——离格拖动逐帧反算时要连续，过奇偶行边界 gx 可变半格但像素位置不断。
 ## 公式是 to_px 的严格反解：gy=(py-h/2)/(0.75h)，gx=(px-w/2)/w-odd_offset(floor(gy))。
 func to_continuous_grid(px: Vector2) -> Vector2:
-	if not is_hex():
+	if not is_hex_geom():
 		return to_grid(px)
 	var w := float(tile.x)
 	var h := float(tile.y)
@@ -374,7 +380,7 @@ func shift_cell(c: Vector2i, delta: Vector2i) -> Vector2i:
 func cell_center_px(c: Vector2i) -> Vector2:
 	if is_tri():
 		return tri_center_px(c.x, c.y)   # B3：三角形重心
-	if is_hex():
+	if is_hex_geom():
 		return to_px(Vector2(c))
 	return to_px(Vector2(c) + Vector2(0.5, 0.5))
 
@@ -383,7 +389,7 @@ func cell_center_px(c: Vector2i) -> Vector2:
 func cell_polygon(c: Vector2i) -> PackedVector2Array:
 	if is_tri():
 		return tri_polygon(c.x, c.y)
-	if is_hex():
+	if is_hex_geom():
 		var q := cell_center_px(c)
 		var w2 := float(tile.x) * 0.5
 		var h2 := float(tile.y) * 0.5
@@ -400,7 +406,7 @@ func cell_polygon(c: Vector2i) -> PackedVector2Array:
 ## 连续格坐标（三角拓扑的 w 也是列数，不是三角列），所以不做 tri 折算。
 ## 与 grid_polygon 分工：那个吃「格号」（三角拓扑 = 三角列），这个吃「列号」。
 func map_rect_polygon(a: Vector2i, b: Vector2i) -> PackedVector2Array:
-	if is_hex():
+	if is_hex_geom():
 		return grid_polygon_hex_bbox(a, b)
 	var g0 := Vector2(a)
 	var g1 := Vector2(b)
@@ -431,7 +437,7 @@ func grid_polygon(a: Vector2i, b: Vector2i) -> PackedVector2Array:
 		return PackedVector2Array([
 			to_px(t0), to_px(Vector2(t1.x, t0.y)),
 			to_px(t1), to_px(Vector2(t0.x, t1.y))])
-	if is_hex():
+	if is_hex_geom():
 		return grid_polygon_hex_bbox(a, b)
 	var g0 := Vector2(a)
 	var g1 := Vector2(b)
@@ -447,7 +453,7 @@ func cell_tex_rect(c: Vector2i, cs: Vector2i) -> Rect2:
 		return tri_tex_rect(c.x, c.y, cs)   # B3：三角形包围盒
 	if has_basis:
 		return Rect2(to_px(Vector2(c)), Vector2(cs))
-	if is_iso() or is_hex():
+	if is_iso() or is_hex_geom():
 		return Rect2(cell_center_px(c) - Vector2(cs) * 0.5, Vector2(cs))
 	return Rect2(Vector2(c) * Vector2(tile), Vector2(cs))
 
@@ -482,8 +488,8 @@ func grid_lines(vis: Rect2, map_rect: Rect2i) -> PackedVector2Array:
 			for j2 in range(j0, j1):
 				out.append(to_px(Vector2(i2 + 1, j2)))
 				out.append(to_px(Vector2(i2, j2 + 1)))
-		return out
-	if is_hex():
+			return out
+	if is_hex_geom():
 		var hw := float(tile.x)
 		var hh := float(tile.y)
 		var hi0 := maxi(lo.x, map_rect.position.x)
@@ -542,7 +548,7 @@ func cell_max() -> float:
 ## 格 c 的共边邻格（B2/E16）：正交/等距 = 四邻；六边 = 六个共边邻格（奇偶行错位）。
 ## 自动碰撞轮廓/顶面策略按真实邻接枚举，不能对六边硬套四邻。
 func neighbors(c: Vector2i) -> Array:
-	if not is_hex():
+	if not is_hex_geom():
 		return [c + Vector2i(1, 0), c + Vector2i(-1, 0), c + Vector2i(0, 1), c + Vector2i(0, -1)]
 	var odd := posmod(c.y, 2) == 1
 	# odd-r：奇行整体右移半格，两行之间的邻格对随奇偶切换：
@@ -567,10 +573,26 @@ func up_neighbors(c: Vector2i) -> Array:
 			elif nb.y == c.y and nb.x > c.x:
 				same.append(nb)
 		return up if not up.is_empty() else same
-	if not is_hex():
+	if not is_hex_geom():
 		return [c + Vector2i(0, -1)]
 	var odd := posmod(c.y, 2) == 1
 	return [c + Vector2i(1 if odd else 0, -1), c + Vector2i(0 if odd else -1, -1)]
+
+## 两格之间的共边线段（§4.2：格边的**几何**归 GridSpace，身份串归 EdgeRef）。
+## 返回两格多边形的公共顶点（真正的分界线）；退化/非邻格时退回两格中心连线（仍给 2 点）。
+## 点选/下拉/悬停/审计全走这里，避免「同一条边在几处各自算」。
+func edge_between(a: Vector2i, b: Vector2i) -> PackedVector2Array:
+	var pa := cell_polygon(a)
+	var pb := cell_polygon(b)
+	var shared := PackedVector2Array()
+	for p: Vector2 in pa:
+		for q: Vector2 in pb:
+			if p.distance_squared_to(q) < 0.01:
+				shared.append(p)
+				break
+	if shared.size() == 2:
+		return shared
+	return PackedVector2Array([cell_center_px(a), cell_center_px(b)])
 
 ## 两格之间经过的格序列（E13：快速拖动时鼠标事件会跳格，涂/擦要补上中间格）。
 ## 像素线段按 1/4 格采样再 pick_cell——投影无关（正交/等距/六边都按真实轮廓命中），
@@ -600,7 +622,7 @@ func cells_between(a: Vector2i, b: Vector2i) -> Array:
 ## 正交 = 精确矩形；等距/斜基 = 网格多边形包围盒（精确）；六边 = 四角 cell 包围盒（近似）；
 ## 三角 = 整列平行四边形（地图范围 w×h 是**列数**，不是三角列数，V4 P1）。
 func map_bounds(map_rect: Rect2i) -> Rect2:
-	if is_iso() or is_hex() or is_tri() or has_basis:
+	if is_iso() or is_hex_geom() or is_tri() or has_basis:
 		var pts := map_rect_polygon(map_rect.position, map_rect.end)
 		var mn := pts[0]
 		var mx := pts[0]

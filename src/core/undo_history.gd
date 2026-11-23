@@ -143,26 +143,30 @@ func _apply_entry(entry, forward: bool) -> bool:
 
 var _stroke_open := false
 var _stroke_cells: Array = []   # 进行中的笔画 [{kind, layer, cell, before}]
+## 查重任一：原先每格线性扫 _stroke_cells（整笔 O(N²)）。键 → 已登记，顺序仍按 _stroke_cells。
+var _stroke_keys := {}
 
 ## 笔画开始（tool_ops._ensure_stroke_undo 调用）：清 redo，开始记录。
 func stroke_begin() -> void:
 	_stroke_open = true
 	_stroke_cells = []
+	_stroke_keys.clear()
 	redo_stack.clear()
 
 ## 笔画取消（撤销在笔画进行中触发时）：记录作废，不产生撤销条目。
 func stroke_cancel() -> void:
 	_stroke_open = false
 	_stroke_cells = []
+	_stroke_keys.clear()
 
 ## 登记一个瓦片格的 before 状态（同格重复登记跳过）。
 func stroke_touch_tile(lid: String, c: Vector2i) -> void:
 	if not _stroke_open:
 		return
 	var key := "t|%s|%d,%d" % [lid, c.x, c.y]
-	for s in _stroke_cells:
-		if str((s as Dictionary).get("key", "")) == key:
-			return
+	if _stroke_keys.has(key):
+		return
+	_stroke_keys[key] = true
 	var tn := _tile_layer(lid)
 	var before = _tile_state(tn, c)
 	_stroke_cells.append({"key": key, "kind": "tile", "layer": lid,
@@ -173,9 +177,9 @@ func stroke_touch_collision(c: Vector2i) -> void:
 	if not _stroke_open:
 		return
 	var key := "c|%d,%d" % [c.x, c.y]
-	for s in _stroke_cells:
-		if str((s as Dictionary).get("key", "")) == key:
-			return
+	if _stroke_keys.has(key):
+		return
+	_stroke_keys[key] = true
 	_stroke_cells.append({"key": key, "kind": "collision", "layer": "",
 		"cell": [c.x, c.y], "before": _collision_state(c)})
 

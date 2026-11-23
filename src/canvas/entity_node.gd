@@ -230,7 +230,7 @@ static func anchor_off_of(unit: Vector2, size: Vector2) -> Vector2:
 ## 视觉/命中用 rect() 反向扣回，数据锚点位置不变。
 func world_of_grid(gx: float, gy: float) -> Vector2:
 	if grid_ref != null:
-		if grid_ref.is_hex():
+		if grid_ref.is_hex_geom():
 			return grid_ref.to_px(Vector2(gx, gy)) + _hex_anchor_off() + sort_anchor()
 		return grid_ref.to_px(Vector2(gx, gy) + anchor_unit()) + sort_anchor()
 	return (Vector2(gx, gy) + anchor_unit()) * float(tile_px) + sort_anchor()
@@ -239,7 +239,7 @@ func world_of_grid(gx: float, gy: float) -> Vector2:
 func grid_of_world(p: Vector2) -> Vector2:
 	var q := p - sort_anchor()
 	if grid_ref != null:
-		if grid_ref.is_hex():
+		if grid_ref.is_hex_geom():
 			return grid_ref.to_continuous_grid(q - _hex_anchor_off())
 		return grid_ref.to_grid(q) - anchor_unit()
 	return q / float(tile_px) - anchor_unit()

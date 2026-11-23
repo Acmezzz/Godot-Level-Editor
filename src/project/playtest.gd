@@ -9,6 +9,10 @@ class_name Playtest
 ## tracked = false 时 pid 是包装进程，退出状态不代表游戏本身。
 ## 因此 UI 必须**同时**看 tracked 与 kind 才能说清「跟踪的是谁」：tracked=false 时只能报
 ## 「包装进程已退出」，不能断言游戏成功/失败。
+
+## 日志尾部读取上限（§5：日志按有界尾部读取，不整份载入）
+const TAIL_BYTES := 64 * 1024
+
 static func launch_tracked(m: Dictionary, map_path: String, extra_args: PackedStringArray = []) -> Dictionary:
 	var pt: Dictionary = m.get("playtest", {}) if m.get("playtest", null) is Dictionary else {}
 	var project_dir := str(m.get("_dir", ""))
@@ -82,6 +86,8 @@ static func _first_token(cmd: String) -> String:
 	return s if sp < 0 else s.substr(0, sp)
 
 ## 读试玩日志最后 n 行（游戏侧写 <项目>/editor/playtest.log）；无文件返回空串
+## §5：有界尾部读取——日志可能长到几 MB，get_as_text() 每次全量载入会卡交互线程。
+## 只读末尾 TAIL_BYTES，丢弃可能被截断的首行。
 static func log_tail(project_dir: String, n: int) -> String:
 	if project_dir == "":
 		return ""
@@ -91,8 +97,14 @@ static func log_tail(project_dir: String, n: int) -> String:
 	var f := FileAccess.open(path, FileAccess.READ)
 	if f == null:
 		return ""
-	var lines := f.get_as_text().split("\n")
+	var sz := int(f.get_length())
+	var start := maxi(0, sz - TAIL_BYTES)
+	f.seek(start)
+	var text := f.get_buffer(sz - start).get_string_from_utf8()
 	f.close()
+	var lines := text.split("\n")
+	if start > 0 and not lines.is_empty():
+		lines.remove_at(0)   # 首行可能只读到半行
 	var out := []
 	for i in range(maxi(lines.size() - n, 0), lines.size()):
 		var t := str(lines[i]).strip_edges()

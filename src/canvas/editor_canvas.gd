@@ -705,7 +705,7 @@ func snap_anchor_px(unit: Vector2, p: Vector2) -> Vector2:
 		# B3 三角格：吸附到三角形重心（格号 = (三角列, 行)）
 		var tri: Vector2i = grid.pick_cell(p)
 		return grid.tri_center_px(tri.x, tri.y)
-	if grid.is_hex():
+	if grid.is_hex_geom():
 		var off: Vector2 = (unit - Vector2(0.5, 0.5)) * Vector2(grid.tile)
 		var gh: Vector2 = grid.to_continuous_grid(p - off)
 		return grid.to_px(Vector2(roundf(gh.x), roundf(gh.y))) + off
@@ -978,8 +978,9 @@ func pick_edge_at(world: Vector2, tol := 0.0) -> Dictionary:
 	var limit: float = tol if tol > 0.0 else grid.cell_max() * 0.35
 	var best := {}
 	var best_d := INF
+	# §4.2：边几何统一走 GridSpace.edge_between（与下拉/审计/导出同一份公共顶点）
 	for nb: Vector2i in grid.neighbors_any(c):
-		var seg := _edge_segment_local(EdgeRefScript.canonical_edge(c, nb))
+		var seg: PackedVector2Array = grid.edge_between(c, nb)
 		if seg.size() != 2:
 			continue
 		var d := _dist_to_seg(lp, seg[0], seg[1])
@@ -1013,16 +1014,7 @@ func _edge_segment_local(edge: String) -> PackedVector2Array:
 		return PackedVector2Array()
 	var a := Vector2i(int(ends[0][0]), int(ends[0][1]))
 	var b := Vector2i(int(ends[1][0]), int(ends[1][1]))
-	var pa: PackedVector2Array = grid.cell_polygon(a)
-	var pb: PackedVector2Array = grid.cell_polygon(b)
-	var shared := PackedVector2Array()
-	for p in pa:
-		for q in pb:
-			if p.distance_squared_to(q) < 0.01:
-				shared.append(p)
-				break
-	if shared.size() == 2:
-		return shared
+	return grid.edge_between(a, b)
 	return PackedVector2Array([grid.cell_center_px(a), grid.cell_center_px(b)])
 
 ## 该边当前是否仍成立（两端格在声明地图里仍是共边）。声明地图 = 本图时查本图 grid。
