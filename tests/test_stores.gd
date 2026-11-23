@@ -392,6 +392,28 @@ func test_frozen_plan_targets() -> void:
 	eq(str((res4.get("targets", []) as Array)[0].get("status", "")), "deleted", "删除收据 = deleted")
 	_wipe()
 
+func test_frozen_plan_preserves_file_preconditions() -> void:
+	_wipe()
+	var m := _fake_manifest()
+	var dc := preload("res://src/project/document_commit.gd").new()
+	var data := MapStore.new_map("a", 8, 8)
+	ok(MapStore.write(m, "a", data), "写入替换目标")
+	var path := MapStore.path_for(m, "a")
+	var read := MapStore.read_path(path, m)
+	var map_target := {"kind": "map", "id": "a", "path": path, "map_data": read.data, "baseline": read.digest}
+	var content_target := {"kind": "content", "fn_id": "dialog", "id": "new", "data": {"name": "ours"}}
+	var prep := dc.prepare_frozen("部分写入", m, [map_target, content_target])
+	ok(ContentStore.write(m, "dialog", "new", {"name": "external"}), "计划后新建同名内容")
+	var result := dc.apply_frozen(prep.plan)
+	eq(result.status, "conflict", "冻结内容目标出现时拒绝覆盖")
+	eq(result.targets[0].status, "written", "部分成功保留已写地图收据")
+	eq(ContentStore.read(m, "dialog", "new").name, "external", "保留外部数据")
+	DirAccess.remove_absolute(path)
+	var replace := dc.prepare_frozen("替换", m, [map_target])
+	eq(dc.apply_frozen(replace.plan).status, "conflict", "替换目标删除后不重建")
+	eq(dc.prepare_frozen("坏目标", m, [map_target, {"kind": "map"}]).status, "failed", "非法目标拒绝整份计划")
+	_wipe()
+
 ## A3：草稿写到 editor/drafts/<地图码>.json，记录目标/基线/快照，可读回、可删。
 func test_draft_roundtrip_by_map_code() -> void:
 	_wipe()

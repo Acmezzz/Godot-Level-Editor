@@ -36,14 +36,17 @@ func prepare(operation: Dictionary, snap: Dictionary) -> Dictionary:
 		var cp: String = _content_store().path_for(m, str(r.get("fn_id", "")), str(r.get("cid", "")))
 		if cp == "":
 			return {"status": "failed", "error": "暂存内容目标非法：%s/%s" % [r.get("fn_id", ""), r.get("cid", "")]}
-		var exists := FileAccess.file_exists(cp)
+		var expect_absent := bool(r.get("expect_absent", true))
+		var baseline := str(r.get("baseline", ""))
+		if not expect_absent and baseline == "":
+			return {"status": "failed", "error": "暂存内容缺少替换基线：%s" % cp}
 		var binding := [FunctionDecls.fn_code(m, str(r.get("fn_id", ""))), str(r.get("cid", ""))]
 		var required := dependencies.has(binding)
 		targets.append({"op": "write", "kind": "content", "id": str(r.get("cid", "")),
-			"path": cp, "baseline": Recovery.digest(cp) if exists else "", "expected": "",
-			"expect_absent": not exists, "required": required,
+			"path": cp, "baseline": baseline, "expected": "",
+			"expect_absent": expect_absent, "required": required,
 			"payload": {"fn_id": str(r.get("fn_id", "")), "cid": str(r.get("cid", "")),
-				"data": r.get("data", {}), "expect_absent": not exists, "required": required}})
+				"data": r.get("data", {}), "expect_absent": expect_absent, "baseline": baseline, "required": required}})
 	# 3) 地图（只脏图入计划：干净图没有待写项；写前外部改动确认在 hooks.save_map 里）
 	if bool(operation.get("map_dirty", false)) and str(operation.get("map_path", "")) != "":
 		targets.append({"op": "write", "kind": "map", "id": str(operation.get("map_name", "")),
@@ -172,16 +175,7 @@ func apply(plan: Dictionary, hooks: Dictionary) -> Dictionary:
 			# §7.1 accepted_state：写前复验磁盘状态与 prepare 基线一致。
 			# 计划里「预期不存在」的新内容：文件在提交期间被别的写入方创建 → 冲突停，
 			# 绝不用暂存加载覆盖刚出现的正式文件。
-			var exists_now := FileAccess.file_exists(path)
-			var conflict := false
-			if bool(tgt.get("expect_absent", false)):
-				conflict = exists_now
-			elif not exists_now:
-				# 计划时存在的目标在提交期间消失：不能按新文件静默重建（原内容已不由本计划拥有）
-				conflict = str(tgt.get("baseline", "")) != ""
-			else:
-				conflict = Recovery.digest(path) != str(tgt.get("baseline", ""))
-			if conflict:
+			if not _matches_file(path, bool(tgt.get("expect_absent", false)), str(tgt.get("baseline", ""))):
 				conflicts.append({"path": path, "kind": kind,
 					"message": "内容文件在提交期间被外部改动：%s" % path})
 				receipts.append(_receipt_of(tgt, "conflict", ""))
@@ -302,25 +296,27 @@ static func prepare_frozen(reason: String, manifest: Dictionary, targets: Array)
 	for t in targets:
 		var td: Dictionary = (t as Dictionary).duplicate(true)
 		# content 目标只给 {fn_id, id, data}：路径由 ContentStore 派生（入口不重复拼路径）
-		if str(td.get("kind", "")) == "content" and str(td.get("path", "")) == "":
-			td["path"] = _content_store().path_for(manifest,
+		if str(td.get("kind", "")) == "content":
+			var content_path: String = _content_store().path_for(manifest,
 				str(td.get("fn_id", "")), str(td.get("id", "")))
-			td["expect_absent"] = true
+			if content_path == "" or str(td.get("path", content_path)) not in ["", content_path]:
+				return {"status": "failed", "error": "冻结内容目标非法：%s" % str(td.get("id", ""))}
+			td["path"] = content_path
+			if not td.has("expect_absent"):
+				td["expect_absent"] = true
 		var p := str(td.get("path", ""))
-		if p == "":
-			continue
-		if str(td.get("op", "write")) == "delete":
-			td["baseline"] = Recovery.digest(p)
-			td.erase("frozen_text")
-		elif str(td.get("op", "write")) == "rename":
-			# rename 的基线属于**源文件**：源必须仍是计划时那一份，否则重命名会把别人的改动带走
-			td["baseline"] = Recovery.digest(str(td.get("from", "")))
-			td["target_absent"] = true
-		elif bool(td.get("expect_absent", false)):
+		var op := str(td.get("op", "write"))
+		if p == "" or not op in ["write", "delete", "rename"]:
+			return {"status": "failed", "error": "冻结目标非法：%s" % str(td.get("id", ""))}
+		var source := str(td.get("from", "")) if op == "rename" else p
+		td["target_absent"] = op == "rename" or bool(td.get("expect_absent", false))
+		if op != "write" or not td.target_absent:
+			if not td.has("baseline"):
+				td["baseline"] = Recovery.digest(source)
+			if str(td.get("baseline", "")) == "" or source == "":
+				return {"status": "failed", "error": "无法取得冻结目标的替换基线：%s" % source}
+		elif not td.has("baseline"):
 			td["baseline"] = ""
-			td["target_absent"] = true
-		else:
-			td["baseline"] = Recovery.digest(p)
 		td.erase("expect_absent")
 		out.append(td)
 	if out.is_empty():
@@ -343,6 +339,12 @@ static func rename_target(old_path: String, new_path: String, name_: String) -> 
 ##   kind = "content" {fn_id, id, data}                    —— ContentStore 新建（逐条回填日志）
 ##   frozen_text    {path, frozen_text, target_absent?}   —— 原样写冻结字节
 ## 与 apply 同一套日志/复验/收据口径；返回结构也一致（status/written/conflicts/error/journal/targets）。
+static func _matches_file(path: String, expect_absent: bool, baseline: String) -> bool:
+	var observed := Recovery.observe(path)
+	if expect_absent:
+		return observed.state == "missing"
+	return observed.state == "present" and baseline != "" and observed.digest == baseline
+
 func apply_frozen(plan: Dictionary) -> Dictionary:
 	var m: Dictionary = plan.get("manifest", {})
 	var targets: Array = plan.get("targets", [])
@@ -369,15 +371,9 @@ func apply_frozen(plan: Dictionary) -> Dictionary:
 		if op == "rename":
 			var from := str(tgt.get("from", ""))
 			var rbase := str(tgt.get("baseline", ""))
-			var rconf := ""
-			if not FileAccess.file_exists(from):
-				rconf = "待改名文件在提交期间已不存在：%s" % from
-			elif rbase != "" and Recovery.digest(from) != rbase:
-				rconf = "待改名文件在提交期间被外部改动：%s" % from
-			elif FileAccess.file_exists(path):
-				rconf = "新文件名在提交期间已被占用：%s" % path
-			if rconf != "":
-				return _frozen_conflict(tgt, targets, receipts, log_path, rconf)
+			if not _matches_file(from, false, rbase) or not _matches_file(path, true, ""):
+				return _frozen_conflict(tgt, targets, receipts, log_path,
+					"改名源或目标已变化：%s → %s" % [from, path])
 			if DirAccess.rename_absolute(from, path) != OK:
 				return _frozen_fail(tgt, targets, receipts, written, log_path,
 					"文件系统重命名失败：%s → %s" % [from, path])
@@ -387,12 +383,9 @@ func apply_frozen(plan: Dictionary) -> Dictionary:
 			continue
 		if op == "delete":
 			var del_base := str(tgt.get("baseline", ""))
-			if not FileAccess.file_exists(path):
+			if not _matches_file(path, false, del_base):
 				return _frozen_conflict(tgt, targets, receipts, log_path,
-					"待删除文件在提交期间已不存在：%s" % path)
-			if del_base != "" and Recovery.digest(path) != del_base:
-				return _frozen_conflict(tgt, targets, receipts, log_path,
-					"待删除文件在提交期间被外部改动：%s" % path)
+					"待删除目标已变化：%s" % path)
 			if DirAccess.remove_absolute(path) != OK:
 				return _frozen_fail(tgt, targets, receipts, written, log_path, "删除失败：%s" % path)
 			written.append(kind)
@@ -400,11 +393,20 @@ func apply_frozen(plan: Dictionary) -> Dictionary:
 			if not Recovery.mark_pending_written(m, log_path, targets.find(tgt), ""):
 				return _frozen_log_fail(targets, receipts, written, log_path, path)
 			continue
+		var absent := bool(tgt.get("target_absent", false))
+		var baseline := str(tgt.get("baseline", ""))
+		if not _matches_file(path, absent, baseline):
+			return _frozen_conflict(tgt, targets, receipts, log_path, "写入目标已变化：%s" % path)
 		if kind == "content":
 			var cs = _content_store()
 			var p: String = cs.path_for(m, str(tgt.get("fn_id", "")), str(tgt.get("id", "")))
-			if not cs.write(m, str(tgt.get("fn_id", "")), str(tgt.get("id", "")),
-					tgt.get("data", {}) as Dictionary):
+			if p != path:
+				return _frozen_fail(tgt, targets, receipts, written, log_path, "内容路径与计划不符：%s" % path)
+			var wr: Dictionary = cs.write_ex(m, str(tgt.get("fn_id", "")), str(tgt.get("id", "")),
+				tgt.get("data", {}) as Dictionary, baseline, false, absent)
+			if bool(wr.get("conflict", false)):
+				return _frozen_conflict(tgt, targets, receipts, log_path, "内容目标已变化：%s" % p)
+			if not bool(wr.get("ok", false)):
 				return _frozen_fail(tgt, targets, receipts, written, log_path,
 					"内容写入失败：%s" % str(tgt.get("id", "")))
 			written.append("content")
@@ -414,25 +416,15 @@ func apply_frozen(plan: Dictionary) -> Dictionary:
 		# 冻结字节目标（地图文档等）
 		if tgt.has("map_data"):
 			var md: Dictionary = tgt.get("map_data", {}) if tgt.get("map_data", null) is Dictionary else {}
-			if bool(tgt.get("target_absent", false)) and FileAccess.file_exists(path):
-				return _frozen_conflict(tgt, targets, receipts, log_path,
-					"目标地图文件在提交期间被创建：%s" % path)
 			var MS := load("res://src/map/map_store.gd")
-			if md.is_empty() or not MS.write(m, str(tgt.get("id", "")), md):
+			if str(MS.path_for(m, str(tgt.get("id", "")))) != path or md.is_empty() \
+					or not MS.write(m, str(tgt.get("id", "")), md):
 				return _frozen_fail(tgt, targets, receipts, written, log_path,
 					"地图写盘失败（写前校验不过或目标不可写）：%s" % path)
 			written.append(kind)
 			if not _frozen_mark(tgt, targets, receipts, written, m, log_path, path):
 				return _frozen_log_fail(targets, receipts, written, log_path, path)
 			continue
-		if bool(tgt.get("target_absent", false)) and FileAccess.file_exists(path):
-			return _frozen_conflict(tgt, targets, receipts, log_path,
-				"目标文件在提交期间被创建：%s" % path)
-		var fbase := str(tgt.get("baseline", ""))
-		if not bool(tgt.get("target_absent", false)) and fbase != "" \
-				and FileAccess.file_exists(path) and Recovery.digest(path) != fbase:
-			return _frozen_conflict(tgt, targets, receipts, log_path,
-				"目标文件在提交期间被外部改动：%s" % path)
 		if str(tgt.get("frozen_text", "")) == "":
 			return _frozen_fail(tgt, targets, receipts, written, log_path,
 				"计划缺少冻结字节：%s" % path)

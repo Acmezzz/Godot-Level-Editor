@@ -94,5 +94,6 @@ func rows_for(doc: String) -> Array:
 		if doc != "" and str(st.get("doc", "")) != doc:
 			continue
 		out.append({"fn_id": str(st.get("fn_id", "")), "cid": str(st.get("cid", key)),
-			"data": (st.get("data", {}) as Dictionary).duplicate(true)})
+			"data": (st.get("data", {}) as Dictionary).duplicate(true),
+			"expect_absent": bool(st.get("expect_absent", true)), "baseline": str(st.get("baseline", ""))})
 	return out

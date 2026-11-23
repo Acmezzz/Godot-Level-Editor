@@ -223,37 +223,45 @@ func _clear_dangling() -> void:
 	var scope_lines: Array[String] = []
 	for mn2 in by_map:
 		scope_lines.append("%s × %d 项" % [str(mn2), (by_map[mn2] as Array).size()])
+	var root := str(app.manifest.get("_dir", ""))
+	var gen: int = app._map_file_ctrl.sess.generation
 	if not await app._confirm_action("清除悬空引用",
 		"将对 %d 张图写盘清除悬空引用：\n%s\n\n每张图重读文件并复验旧值，已失效的项会跳过。" % [
 			by_map.size(), "\n".join(scope_lines)],
 		"清除"):
 		app._set_status(" 已取消清除悬空引用")
 		return
-	# 当前图有未保存修改：先正式提交（A2），失败就整条操作不做
-	if app.map_loaded and app.canvas.modified_flag and by_map.has(app.cur_map_name):
+	if str(app.manifest.get("_dir", "")) != root or app._map_file_ctrl.sess.stale(gen):
+		app._set_status(" 清除中止：确认期间已切换文档")
+		return
+	# 当前活体也可能是其他地图的引用目标，先保存它再对正式文件做判断。
+	if app.map_loaded and (app.canvas.modified_flag or by_map.has(app.cur_map_name)):
 		var res: Dictionary = await app._map_file_ctrl.commit_document("清除悬空引用前提交")
-		if str(res.get("status", "")) != "ok":
-			app._set_status(" 清除中止：" + str(res.get("error", "当前图未提交")))
+		if str(res.get("status", "")) != "ok" or app._map_file_ctrl.sess.stale(gen) or app.canvas.modified_flag:
+			app._set_status(" 清除中止：" + str(res.get("error", "当前图已变化或未提交")))
 			return
+	MapStore.invalidate_read_cache()
+	MapStore.invalidate_code_map()
+	var fresh_meta := {}
+	ProjectAudit.audit(app.manifest, fresh_meta)
+	if bool(fresh_meta.get("incomplete", false)):
+		app._set_status(" 清除中止：最新扫描范围不完整")
+		return
 	var total := 0
 	var skipped := 0
 	var failed := 0
-	var cur_changed := false
 	var per_map: Array[String] = []   # R16：逐文件（逐图）结果，写完一并列出
 	# §4.4-4：跨图清理是一次多文件提交（N 张地图）——构造一份冻结计划交给执行器，
 	# 日志、写前复验与逐目标收据与常规提交同一口径（以前这里是裸 MapStore.write，无日志）。
 	var DC := preload("res://src/project/document_commit.gd")
 	var frozen: Array = []
-	var planned: Array[String] = []
-	var erased_total := 0
-	var erased_cur := 0
+	var planned := {}
 	for mn in by_map:
 		var fix_list: Array = by_map[mn]
 		var r: Dictionary = MapStore.read_path(MapStore.path_for(app.manifest, mn), app.manifest)
 		if not bool(r.get("ok", false)):
-			failed += 1
-			per_map.append("%s：读盘失败" % str(mn))
-			continue
+			app._set_status(" 清除中止：%s 无法读取，请重扫" % str(mn))
+			return
 		var d: Dictionary = r.get("data", {}) as Dictionary
 		# 新鲜报告 = 目标作用域的唯一判据：字段现在仍声明为悬空引用才动
 		var res2: Dictionary = ProjectAudit.apply_ref_fixes(app.manifest, str(mn), fix_list, d)
@@ -261,38 +269,41 @@ func _clear_dangling() -> void:
 		if not bool(res2.get("changed", false)):
 			per_map.append("%s：无改动（%d 项已不成立）" % [str(mn), int(res2.get("skipped", 0))])
 			continue
-		frozen.append({"kind": "map", "id": str(mn),
-			"path": MapStore.path_for(app.manifest, str(mn)), "map_data": d})
-		planned.append("%s：清除 %d 项" % [str(mn), int(res2.get("erased", 0))])
-		erased_total += int(res2.get("erased", 0))
-		if str(mn) == str(app.cur_map_name):
-			erased_cur += int(res2.get("erased", 0))
-	# 一张图都没变：不必写日志也不必建计划
+		var path := MapStore.path_for(app.manifest, str(mn))
+		frozen.append({"kind": "map", "id": str(mn), "path": path,
+			"map_data": d, "baseline": str(r.get("digest", ""))})
+		planned[path] = int(res2.get("erased", 0))
+	var reload_digest := ""
+	var commit_error := ""
 	if not frozen.is_empty():
-		var prep: Dictionary = DC.new().prepare_frozen("清除悬空引用（%d 张图）" % frozen.size(),
-			app.manifest, frozen)
-		if str(prep.get("status", "")) != "ok":
-			app._set_status(" 清除中止：提交计划为空")
+		var prep := DC.prepare_frozen("清除悬空引用（%d 张图）" % frozen.size(), app.manifest, frozen)
+		if prep.status != "ok":
+			app._set_status(" 清除中止：" + str(prep.get("error", "提交计划为空")))
 			return
-		var res3: Dictionary = DC.new().apply_frozen(prep.get("plan", {}) as Dictionary)
-		var st := str(res3.get("status", ""))
-		if st != "ok" and st != "empty":
-			# 逐目标收据说明停在哪：已写的保留，未写的报 pending
-			var done := 0
-			for rc in (res3.get("targets", []) as Array):
-				var rd: Dictionary = rc
-				if str(rd.get("status", "")) in ["written", "deleted"]:
-					done += 1
-			app._set_status(" 清除中止（%d/%d 张已写，日志留在 editor/pending）：%s" % [
-				done, frozen.size(), str(res3.get("error", "见问题列表"))])
-			_run_audit(false)
-			return
-		per_map.append_array(planned)
-		total = erased_total
-		cur_changed = erased_cur > 0
-	# 当前图被改过 → 重载画布让视图与磁盘一致（不过多扫描：只重开本图）
-	if cur_changed and app.map_loaded:
-		await app._open_map_by_name(app.cur_map_name)
+		var result: Dictionary = DC.new().apply_frozen(prep.plan)
+		for row in result.get("targets", []):
+			var path := str(row.get("path", ""))
+			var name_ := str(row.get("id", ""))
+			var status := str(row.get("status", ""))
+			if status != "written":
+				failed += 1
+				per_map.append("%s：%s" % [name_, status])
+				continue
+			var count := int(planned.get(path, 0))
+			total += count
+			per_map.append("%s：清除 %d 项" % [name_, count])
+			if app.map_loaded and path == str(app.cur_map_path):
+				reload_digest = str(row.get("digest", ""))
+		if result.status != "ok":
+			commit_error = str(result.get("error", ""))
+			if commit_error == "" and not result.get("conflicts", []).is_empty():
+				commit_error = str(result.conflicts[0].get("message", ""))
+	if reload_digest != "":
+		await app._map_file_ctrl.load_map_file(str(app.cur_map_path), reload_digest)
+		if app._map_file_ctrl.sess.opened_digest != reload_digest:
+			per_map.push_front("当前图已写盘，但重载失败，请重新打开")
+	if commit_error != "":
+		per_map.push_front(commit_error)
 	_run_audit(false)
 	if total == 0:
 		app._set_status(" 没有清掉任何悬空引用（%d 项已不成立，%d 张图写入失败）%s" % [

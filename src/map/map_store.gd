@@ -74,14 +74,13 @@ static func decode_text(text: String, source := "", manifest := {}) -> Dictionar
 		"errors": errors, "warnings": warnings, "migrated": migrated}
 
 static func read_path(path: String, manifest := {}) -> Dictionary:
-	if path == "" or not FileAccess.file_exists(path):
-		return {"ok": false, "data": {}, "errors": [{"path": path, "message": "file not found"}], "warnings": [], "migrated": false}
-	var file := FileAccess.open(path, FileAccess.READ)
-	if file == null:
-		return {"ok": false, "data": {}, "errors": [{"path": path, "message": "file cannot be opened"}], "warnings": [], "migrated": false}
-	var text := file.get_as_text()
-	file.close()
-	return decode_text(text, path, manifest)
+	var observed := Recovery.observe(path)
+	if observed.state != "present":
+		var message := "file not found" if observed.state == "missing" else "file cannot be opened"
+		return {"ok": false, "data": {}, "errors": [{"path": path, "message": message}], "warnings": [], "migrated": false}
+	var result := decode_text(observed.text, path, manifest)
+	result["digest"] = observed.digest
+	return result
 
 ## 升级地图数据到当前格式；返回是否改动。
 ## v4 起零兼容：旧格式（terrain/decor 顶层键、无 meta.layers、浮点坐标）一律不迁移，

@@ -637,7 +637,7 @@ func _open_chosen(p: String) -> void:
 		return
 	await load_map_file(p)
 
-func load_map_file(p: String) -> void:
+func load_map_file(p: String, expected_digest := "") -> void:
 	# load_data 是协程（节点重建中间 await 一帧）：必须等它完成，否则切图刚返回时
 	# 实体还在重建中——内容页 after_switch 刷新会拿到半重建的画布（列表/点选全乱）。
 	# 文档代次（A2）：双击/连续切图时只有最后一次请求可以发布图名与路径。
@@ -646,6 +646,9 @@ func load_map_file(p: String) -> void:
 	var result: Dictionary = app.MapStore.read_path(p, app.manifest)
 	if not result.ok:
 		app._set_status(" 打开失败: " + _format_issues(result.errors))
+		return
+	if expected_digest != "" and str(result.get("digest", "")) != expected_digest:
+		app._set_status(" 地图写入后已被改动，请重新打开")
 		return
 	var data: Dictionary = result.data
 	if not result.warnings.is_empty():
@@ -695,6 +698,9 @@ func load_map_file(p: String) -> void:
 			app._set_status("已导入外部地图 → " + p)
 	if _doc_stale(gen):
 		return   # 读取/确认期间又发起了更新的切图请求：本次不再改画布
+	var baseline := str(result.get("digest", ""))
+	if was_draft or outside:
+		baseline = _file_digest(p)
 	app.canvas.set_thumbs(app._entity_thumbs())
 	await app.canvas.load_data(data, base)
 	if _doc_stale(gen):
@@ -708,7 +714,7 @@ func load_map_file(p: String) -> void:
 	# 画布重建成功后才发布文档身份（A2）：外部导入/切项目期间路径已变，旧根不得残留。
 	# 基线取此刻磁盘上的这份文件（草稿归位的情况：正式文件才是要对比的外部状态）。
 	sess.set_identity(str(app.manifest.get("_dir", "")), app.canvas.cur_map_code(),
-		base, str(p), _file_digest(p), FileAccess.get_modified_time(p))
+		base, str(p), baseline, FileAccess.get_modified_time(p))
 	sess.contents.clear()
 	sess.revision = 0
 	var tcount := 0
@@ -1055,8 +1061,10 @@ func _save_now() -> bool:
 				return false
 			baseline = cur_digest
 	# 确认等待期间内容又被外部改过：避免「确认的是 A、覆盖的是 B」
-	if baseline != "" and FileAccess.file_exists(path) and _file_digest(path) != baseline:
-		app._set_status(" 保存中止：确认期间文件又被外部改写，请重新检查后再保存")
+	var observed := Recovery.observe(path)
+	if (baseline == "" and observed.state != "missing") or (baseline != "" and \
+			(observed.state != "present" or observed.digest != baseline)):
+		app._set_status(" 保存中止：地图写入目标已变化或不可读，请重新检查后再保存")
 		return false
 	# 写盘收敛到 MapStore 单入口（.tmp 原子替换，中途崩溃不留半截 JSON）；
 	# 写前校验不过时把首个错误带回状态栏，避免只看到「保存失败」无从下手。

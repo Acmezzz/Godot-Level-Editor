@@ -644,6 +644,7 @@ func _staged_put(fn_id: String, cid: String, st: Dictionary) -> void:
 	var s := st.duplicate(true)
 	s["fn_id"] = fn_id
 	s["cid"] = cid
+	s["expect_absent"] = bool(s.get("expect_absent", true))
 	_staged[_staged_key(fn_id, cid)] = s
 
 ## 删除暂存条目（同时清掉可能存在的旧裸键）。
@@ -735,10 +736,9 @@ func flush_one(cid: String, payload := {}, on_written: Callable = Callable()) ->
 		return {"status": "dropped"}
 	# V4 P0-1：写前记录目标是否已存在。新内容（无磁盘基线）必须是 create-only，
 	# 不能把提交期间出现的同路径文件当成合法现状覆盖。计划若冻结了 expect_absent 以其为准。
-	var expect_absent := not FileAccess.file_exists(ContentStore.path_for(manifest, fn_id, cid))
-	if payload is Dictionary and (payload as Dictionary).has("expect_absent"):
-		expect_absent = bool((payload as Dictionary).get("expect_absent", expect_absent))
-	var wr := ContentStore.write_ex(manifest, fn_id, cid, data, "", false, expect_absent)
+	var expect_absent := bool(payload.get("expect_absent", st.get("expect_absent", true)))
+	var baseline := str(payload.get("baseline", st.get("baseline", "")))
+	var wr := ContentStore.write_ex(manifest, fn_id, cid, data, baseline, false, expect_absent)
 	if bool(wr.get("conflict", false)):
 		app._set_status(" 内容 %s 的目标文件在提交期间被创建/改动：未写入（先复核再试）" % cid)
 		return {"status": "conflict"}

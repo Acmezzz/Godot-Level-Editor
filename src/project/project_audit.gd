@@ -43,7 +43,10 @@ static func audit(manifest: Dictionary, meta_out: Dictionary = {}) -> Array:
 	var used_content := {}
 	var binding_missing: Array = []
 	var maps_dir := str(manifest.get("_maps_dir", ""))
-	if maps_dir != "":
+	if maps_dir != "" and DirAccess.open(maps_dir) == null:
+		meta_out["incomplete"] = true
+		out.append(_wrap("map", {"path": maps_dir, "message": "无法扫描地图目录", "severity": "error"}))
+	elif maps_dir != "":
 		for name in MapStore.list_maps(manifest):
 			var r: Dictionary = MapStore.read_path(maps_dir.path_join(name + ".json"), manifest)
 			for e in (r.get("warnings", []) as Array):

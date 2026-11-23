@@ -175,15 +175,15 @@ static func write_ex(m: Dictionary, kind: String, id: String, data: Dictionary,
 		return {"ok": false, "conflict": false}
 	# V4 P0-1：create-only 写。新建内容在发号时目标本不存在；若提交期间别处创建了同路径
 	# 文件，必须报冲突而不是覆盖（base_digest 为空只能表达「无基线」，不能表达「应不存在」）。
-	if expect_absent and FileAccess.file_exists(path):
-		return {"ok": false, "conflict": true, "reason": "target appeared"}
-	if base_digest != "" and FileAccess.file_exists(path):
-		if file_digest(path) != base_digest:
-			return {"ok": false, "conflict": true}
-	if FileAccess.file_exists(path) and not allow_repair:
-		var cur := read_ex(m, kind, id)
-		if str(cur.status) == "invalid":
-			return {"ok": false, "conflict": false}
+	var observed := Store.Recovery.observe(path)
+	if expect_absent and observed.state != "missing":
+		return {"ok": false, "conflict": true, "reason": "target occupied or unreadable"}
+	if base_digest != "" and (observed.state != "present" or observed.digest != base_digest):
+		return {"ok": false, "conflict": true}
+	if observed.state == "unreadable":
+		return {"ok": false, "conflict": false}
+	if observed.state == "present" and not allow_repair and _decode(observed.text, id).is_empty():
+		return {"ok": false, "conflict": false}
 	DirAccess.make_dir_recursive_absolute(path.get_base_dir())
 	if FileAccess.file_exists(path):
 		# 内容文件与地图同权——误写可回滚（3 层 .history，最新 .1）

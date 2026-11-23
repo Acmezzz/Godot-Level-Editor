@@ -67,12 +67,23 @@ static func read_json(path: String) -> Dictionary:
 static func write_json(path: String, data: Dictionary) -> bool:
 	return write_text(path, JSON.stringify(data, "\t"))
 
-## 内容摘要（与 map_file 的外部改动基线同算法：整段文本 sha256）。
+## 读取正文和同源摘要，区分缺失和读失败。
+static func observe(path: String) -> Dictionary:
+	if path == "" or DirAccess.dir_exists_absolute(path):
+		return {"state": "unreadable"}
+	var f := FileAccess.open(path, FileAccess.READ)
+	if f == null:
+		var state := "missing" if FileAccess.get_open_error() == ERR_FILE_NOT_FOUND else "unreadable"
+		return {"state": state}
+	var text := f.get_as_text()
+	var err := f.get_error()
+	f.close()
+	if err != OK and err != ERR_FILE_EOF:
+		return {"state": "unreadable"}
+	return {"state": "present", "text": text, "digest": text.sha256_text()}
+
 static func digest(path: String) -> String:
-	var t := read_text(path)
-	if t == "" and not FileAccess.file_exists(path):
-		return ""
-	return t.sha256_text()
+	return str(observe(path).get("digest", ""))
 
 # ──────────── 草稿：editor/drafts/<地图码>.json ────────────
 
