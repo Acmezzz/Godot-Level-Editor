@@ -15,7 +15,6 @@ const UiThemeScript := preload("res://src/ui/ui_theme.gd")
 const K := preload("res://src/core/constants.gd")
 const MapStore := preload("res://src/map/map_store.gd")
 const Recovery := preload("res://src/map/recovery.gd")
-const ContentStore := preload("res://src/content/content_store.gd")
 const GridSpaceScript := preload("res://src/canvas/grid_space.gd")
 const MapConvert := preload("res://src/map/map_convert.gd")
 const DocumentSession := preload("res://src/project/document_session.gd")
@@ -553,8 +552,8 @@ func rename_map_now(old_name: String, new_name: String, allow_write_unsaved := f
 	elif allow_write_unsaved and is_current:
 		# 原图未落盘（新建后还没保存）：改名必须真正落地，否则只改内存名 =
 		# 面板显示新名、磁盘上始终没文件，用户看到的「重命名」是假的。
-		# R06：这是一次正式提交（内容 → 地图）——暂存内容随改名一并写盘，
-		# 避免磁盘地图引用未落盘的内容 ID。
+		# R06/§4.4-4：这是一次正式提交（内容 → 地图），走 DocumentCommit 的冻结计划：
+		# 暂存内容与地图在同一条日志里，逐目标复验与收据由执行器给。
 		var ce = null
 		if app.project_shell != null:
 			ce = app.project_shell.content_editor
@@ -562,34 +561,30 @@ func rename_map_now(old_name: String, new_name: String, allow_write_unsaved := f
 			# 字段写失败就不该继续写盘：否则新地图文件带着没落盘的字段值
 			if not ce.commit_fields():
 				return "表单字段写入失败：改名已中止"
-		var jentries: Array = []
-		var idx_by_cid := {}
-		if ce != null:
-			for row in ce.staged_rows_current_doc():
-				var cp := ContentStore.path_for(app.manifest, str(row.fn_id), str(row.cid))
-				idx_by_cid[str(row.cid)] = jentries.size()
-				jentries.append({"path": cp, "baseline": Recovery.digest(cp),
-					"expect": "", "kind": "content", "id": str(row.cid)})
 		var data: Dictionary = app.canvas.extract()
 		if data.is_empty():   # 重建窗口哨兵：此刻写盘会把空图落成新文件
 			return " 地图重建中，请稍后再试"
 		data.meta.name = nn
-		jentries.append({"path": new_path, "baseline": "", "expect": "", "kind": "map", "id": nn})
-		var log_path := Recovery.begin_pending(app.manifest, "未落盘地图改名落盘 → %s" % nn, jentries)
-		if log_path == "":
-			return "提交日志写入失败：改名已中止"
+		var frozen: Array = []
 		if ce != null:
-			var on_written := func(fn_id: String, cid: String) -> void:
-				Recovery.mark_pending_written(app.manifest, log_path, int(idx_by_cid.get(cid, -1)),
-					Recovery.digest(ContentStore.path_for(app.manifest, fn_id, cid)))
-			if not ce.flush_staged_content(on_written):
-				return "暂存内容写盘失败：改名已中止（未写地图文件）"
-		if not app.MapStore.write(app.manifest, nn, data):
-			return "无法写入 " + new_path
-		# V4 P0-3：回填失败 = 日志已不可判读；保留日志并明确报告，不能静默清除。
-		if not Recovery.mark_pending_written(app.manifest, log_path, jentries.size() - 1, Recovery.digest(new_path)):
-			return "改名已写入新文件，但提交日志回填失败（请在 editor/pending 复核）"
-		Recovery.clear_pending(app.manifest, log_path)
+			for row in ce.staged_rows_current_doc():
+				frozen.append({"kind": "content", "fn_id": str(row.fn_id), "id": str(row.cid),
+					"data": row.data})
+		# 地图目标带「写前校验 + 历史快照」的语义：用 payload 声明它是地图文档，
+		# 执行器按 MapStore.write 的同一入口落盘（不是裸写字节）。
+		frozen.append({"kind": "map", "id": nn, "path": new_path, "expect_absent": true,
+			"map_data": data})
+		var prep: Dictionary = _doc_commit.prepare_frozen("未落盘地图改名落盘 → %s" % nn,
+			app.manifest, frozen)
+		if str(prep.get("status", "")) != "ok":
+			return "提交计划为空：改名已中止"
+		var res: Dictionary = _doc_commit.apply_frozen(prep.get("plan", {}) as Dictionary)
+		if str(res.get("status", "")) != "ok":
+			var why := str(res.get("error", ""))
+			if why == "":
+				var cs: Array = res.get("conflicts", [])
+				why = str((cs[0] as Dictionary).get("message", "")) if not cs.is_empty() else "改名写盘失败"
+			return why
 	else:
 		return "原图不存在（先保存该地图）"
 	if is_current:

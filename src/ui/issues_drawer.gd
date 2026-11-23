@@ -240,6 +240,13 @@ func _clear_dangling() -> void:
 	var failed := 0
 	var cur_changed := false
 	var per_map: Array[String] = []   # R16：逐文件（逐图）结果，写完一并列出
+	# §4.4-4：跨图清理是一次多文件提交（N 张地图）——构造一份冻结计划交给执行器，
+	# 日志、写前复验与逐目标收据与常规提交同一口径（以前这里是裸 MapStore.write，无日志）。
+	var DC := preload("res://src/project/document_commit.gd")
+	var frozen: Array = []
+	var planned: Array[String] = []
+	var erased_total := 0
+	var erased_cur := 0
 	for mn in by_map:
 		var fix_list: Array = by_map[mn]
 		var r: Dictionary = MapStore.read_path(MapStore.path_for(app.manifest, mn), app.manifest)
@@ -254,14 +261,35 @@ func _clear_dangling() -> void:
 		if not bool(res2.get("changed", false)):
 			per_map.append("%s：无改动（%d 项已不成立）" % [str(mn), int(res2.get("skipped", 0))])
 			continue
-		if not MapStore.write(app.manifest, mn, d):
-			failed += 1
-			per_map.append("%s：写入失败（磁盘未变）" % str(mn))
-			continue   # 写失败：不计数（磁盘未变）
-		total += int(res2.get("erased", 0))
-		per_map.append("%s：清除 %d 项" % [str(mn), int(res2.get("erased", 0))])
-		if mn == app.cur_map_name:
-			cur_changed = true
+		frozen.append({"kind": "map", "id": str(mn),
+			"path": MapStore.path_for(app.manifest, str(mn)), "map_data": d})
+		planned.append("%s：清除 %d 项" % [str(mn), int(res2.get("erased", 0))])
+		erased_total += int(res2.get("erased", 0))
+		if str(mn) == str(app.cur_map_name):
+			erased_cur += int(res2.get("erased", 0))
+	# 一张图都没变：不必写日志也不必建计划
+	if not frozen.is_empty():
+		var prep: Dictionary = DC.new().prepare_frozen("清除悬空引用（%d 张图）" % frozen.size(),
+			app.manifest, frozen)
+		if str(prep.get("status", "")) != "ok":
+			app._set_status(" 清除中止：提交计划为空")
+			return
+		var res3: Dictionary = DC.new().apply_frozen(prep.get("plan", {}) as Dictionary)
+		var st := str(res3.get("status", ""))
+		if st != "ok" and st != "empty":
+			# 逐目标收据说明停在哪：已写的保留，未写的报 pending
+			var done := 0
+			for rc in (res3.get("targets", []) as Array):
+				var rd: Dictionary = rc
+				if str(rd.get("status", "")) in ["written", "deleted"]:
+					done += 1
+			app._set_status(" 清除中止（%d/%d 张已写，日志留在 editor/pending）：%s" % [
+				done, frozen.size(), str(res3.get("error", "见问题列表"))])
+			_run_audit(false)
+			return
+		per_map.append_array(planned)
+		total = erased_total
+		cur_changed = erased_cur > 0
 	# 当前图被改过 → 重载画布让视图与磁盘一致（不过多扫描：只重开本图）
 	if cur_changed and app.map_loaded:
 		await app._open_map_by_name(app.cur_map_name)

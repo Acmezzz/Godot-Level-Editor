@@ -336,6 +336,45 @@ func test_document_session_lifecycle() -> void:
 	eq(rows.size(), 1, "只带当前文档的暂存行")
 	eq(str((rows[0] as Dictionary).get("cid", "")), "X2", "留下的是当前文档那条")
 
+## §4.4-4：冻结计划执行器——rename 原子换名、delete 复验摘要后删除、
+## 目标占用/源被外部改动都判冲突不越写，收据逐目标给状态。
+func test_frozen_plan_targets() -> void:
+	_wipe()
+	var m := _fake_manifest()
+	var DC := preload("res://src/project/document_commit.gd")
+	var a := MapStore.new_map("fa", 8, 8)
+	var b := MapStore.new_map("fb", 8, 8)
+	ok(MapStore.write(m, "fa", a), "fa 写入")
+	ok(MapStore.write(m, "fb", b), "fb 写入")
+	var pa := MapStore.path_for(m, "fa")
+	var pb := MapStore.path_for(m, "fb")
+	var pc := MapStore.path_for(m, "fc")
+	# rename：源在 → 成功，源消失、目标出现
+	var prep: Dictionary = DC.prepare_frozen("测试改名", m, [DC.rename_target(pa, pc, "fc")])
+	eq(str(prep.get("status", "")), "ok", "计划非空")
+	var res: Dictionary = DC.new().apply_frozen(prep.get("plan", {}) as Dictionary)
+	eq(str(res.get("status", "")), "ok", "改名执行成功：%s" % str(res.get("error", "")))
+	ok(not FileAccess.file_exists(pa) and FileAccess.file_exists(pc), "源没了、目标在")
+	eq(str((res.get("targets", []) as Array)[0].get("status", "")), "written", "改名收据 = written")
+	# rename 目标已存在 → 冲突（不覆盖）
+	var prep2: Dictionary = DC.prepare_frozen("撞名", m, [DC.rename_target(pb, pc, "fc2")])
+	var res2: Dictionary = DC.new().apply_frozen(prep2.get("plan", {}) as Dictionary)
+	eq(str(res2.get("status", "")), "conflict", "目标已存在判冲突")
+	ok(FileAccess.file_exists(pb), "源文件原样保留")
+	# delete：摘要不符 → 冲突；相符 → 真删
+	var prep3: Dictionary = DC.prepare_frozen("删", m, [{"path": pb, "kind": "map", "id": "fb", "op": "delete"}])
+	# 计划后改写源文件：apply 必须发现基线不符
+	MapStore.write(m, "fb", MapStore.new_map("fb", 8, 8))
+	var res3: Dictionary = DC.new().apply_frozen(prep3.get("plan", {}) as Dictionary)
+	eq(str(res3.get("status", "")), "conflict", "删除前摘要复验：被改动就冲突")
+	ok(FileAccess.file_exists(pb), "冲突时不删")
+	var prep4: Dictionary = DC.prepare_frozen("删2", m, [{"path": pb, "kind": "map", "id": "fb", "op": "delete"}])
+	var res4: Dictionary = DC.new().apply_frozen(prep4.get("plan", {}) as Dictionary)
+	eq(str(res4.get("status", "")), "ok", "摘要相符可删")
+	ok(not FileAccess.file_exists(pb), "文件已删除")
+	eq(str((res4.get("targets", []) as Array)[0].get("status", "")), "deleted", "删除收据 = deleted")
+	_wipe()
+
 ## A3：草稿写到 editor/drafts/<地图码>.json，记录目标/基线/快照，可读回、可删。
 func test_draft_roundtrip_by_map_code() -> void:
 	_wipe()

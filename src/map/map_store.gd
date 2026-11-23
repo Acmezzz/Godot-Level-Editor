@@ -333,9 +333,9 @@ static func write_text(path: String, text: String) -> bool:
 	project_rev += 1
 	return true
 
-## 多文件提交（地图 + 内容 + 清单）的协调写入与崩溃恢复不在这里，走
-## Recovery.begin_pending / mark_pending_written（editor/pending 提交日志，见 ui/map_file.gd
-## 的 commit_document）；本函数只负责把一段字节写进一个文件。
+## 多文件提交的协调写入与崩溃恢复不在这里：全部走 DocumentCommit 的冻结计划
+## （prepare_frozen + apply_frozen，见 src/project/document_commit.gd），提交日志由它统一登记。
+## 本函数只负责把一段字节写进一个文件。
 static func _write_bytes(path: String, bytes: PackedByteArray) -> bool:
 	var file := FileAccess.open(path, FileAccess.WRITE)
 	if file == null:
@@ -379,6 +379,8 @@ static func _is_legacy_draft(path: String) -> bool:
 
 ## 纯 rename——只改文件名，不迁移引用（拍板：改名不迁移）。
 ## 返回错误信息；"" = 成功。
+## §4.4-4：落盘编排交给 DocumentCommit 的冻结计划（rename 目标 + 日志 + 收据），
+## 本函数只做前置校验与收尾（缓存失效、显示名回写、旧位置历史清理）。
 static func rename_map(m: Dictionary, old_name: String, new_name: String) -> String:
 	new_name = new_name.strip_edges()
 	if not ManifestScript.is_valid_map_name(new_name):
@@ -391,18 +393,20 @@ static func rename_map(m: Dictionary, old_name: String, new_name: String) -> Str
 	if src == "" or not FileAccess.file_exists(src):
 		return "原图不存在"
 	var dst := path_for(m, new_name)
-	# R06：改名 = 一次多文件提交（写新 + 删旧）——进提交日志，中途失败可辨认可清理；
-	# 日志不可写时中止（与正式提交同一门槛）。
-	var entries: Array = [
-		{"path": dst, "baseline": "", "expect": "", "kind": "map", "id": new_name},
-		{"path": src, "baseline": Recovery.digest(src), "expect": "", "kind": "map", "id": old_name, "op": "delete"},
-	]
-	var log_path := Recovery.begin_pending(m, "地图改名 %s → %s" % [old_name, new_name], entries)
-	if log_path == "":
-		return "提交日志写入失败：改名已中止"
-	if DirAccess.rename_absolute(src, dst) != OK:
-		Recovery.clear_pending(m, log_path)   # 什么都没动：日志作废
-		return "文件系统重命名失败"
+	# R06：改名 = 一次多文件提交（这里是单次原子 rename + 删除效果）——进提交日志，
+	# 中途失败可辨认可清理；日志不可写时中止（与正式提交同一门槛）。
+	var DC := preload("res://src/project/document_commit.gd").new()
+	var prep: Dictionary = DC.prepare_frozen("地图改名 %s → %s" % [old_name, new_name], m,
+		[preload("res://src/project/document_commit.gd").rename_target(src, dst, new_name)])
+	if str(prep.get("status", "")) != "ok":
+		return "提交计划为空：改名已中止"
+	var res: Dictionary = DC.apply_frozen(prep.get("plan", {}) as Dictionary)
+	if str(res.get("status", "")) != "ok":
+		var why := str(res.get("error", ""))
+		if why == "":
+			var cs: Array = res.get("conflicts", [])
+			why = str((cs[0] as Dictionary).get("message", "")) if not cs.is_empty() else "改名失败"
+		return why
 	# 文件内 meta.name 同步改名（A3）：只改文件名会让重开/历史查询拿到旧名。
 	# R06：回写失败不得报成功——文件已在新名下，显示名未更新要显式报告。
 	var renamed := read(m, new_name)
@@ -410,11 +414,6 @@ static func rename_map(m: Dictionary, old_name: String, new_name: String) -> Str
 		renamed.meta.name = new_name
 		if not write_json(dst, renamed):
 			return "改名后显示名回写失败（文件已在新名字下，显示名未更新）"
-	# R06：进度回填失败 = 日志已不可判读。改名本身已完成（文件已在新名下），
-	# 但不能再宣称「全程可追溯」——显式报告，让用户按 editor/pending 复核。
-	if not Recovery.mark_pending_written(m, log_path, 0, Recovery.digest(dst)) \
-			or not Recovery.mark_pending_written(m, log_path, 1, ""):
-		return "改名已完成但提交日志回填失败（文件在新名下；请在 editor/pending 复核）"
 	_cache.erase(src)
 	_cache.erase(dst)
 	invalidate_code_map()   # 改名换了文件：码表按图名做键，必须重算
@@ -425,7 +424,6 @@ static func rename_map(m: Dictionary, old_name: String, new_name: String) -> Str
 		var hp := hist_dir.path_join("%s.json.%d" % [old_name, i + 1])
 		if FileAccess.file_exists(hp):
 			DirAccess.remove_absolute(hp)
-	Recovery.clear_pending(m, log_path)
 	return ""
 
 ## 复制地图（C2）：整图走 ClonePlan——实例码与附属内容全部独立、组内引用重映射，
@@ -454,44 +452,38 @@ static func duplicate_map(m: Dictionary, old_name: String, new_name: String,
 	while taken.has(code):
 		code = ContentId.new_inst_code()
 	var ClonePlan := preload("res://src/content/clone_plan.gd")
-	var ContentStore := preload("res://src/content/content_store.gd")
 	var plan: Dictionary = ClonePlan.whole_map_document(
 		{"data": d, "manifest": m, "map": old_name}, new_name, code, staged_contents)
 	if str(plan.get("status", "")) != "ok":
 		conflicts_out.append_array(plan.get("conflicts", []))
 		return "复制计划有冲突（见问题列表）"
-	# R06：复制 = 一次多文件提交（内容 N 份 + 地图 1 份）——进提交日志；日志不可写时中止。
-	var jentries: Array = []
+	# R06/§4.4-4：复制 = 一次多文件冻结计划（内容 N 份 + 地图 1 份），
+	# 交给 DocumentCommit 执行——同一套日志、写前复验与逐目标收据。
+	# A2 依赖序：内容在前（失败即停，地图文件未动），地图在后。
+	var frozen := []
 	for pc in (plan.get("pending_contents", []) as Array):
 		var pd: Dictionary = pc
-		var cpath := ContentStore.path_for(m, str(pd.get("fn_id", "")), str(pd.get("id", "")))
-		jentries.append({"path": cpath, "baseline": "", "expect": "", "kind": "content", "id": str(pd.get("id", ""))})
-	var mpath := path_for(m, new_name)
-	jentries.append({"path": mpath, "baseline": "", "expect": "", "kind": "map", "id": new_name})
-	var log_path := Recovery.begin_pending(m, "整图复制 %s → %s" % [old_name, new_name], jentries)
-	if log_path == "":
-		return "提交日志写入失败：复制已中止"
-	# A2 顺序：先写内容（失败即停，地图文件未动），每份写成功即回填日志。
-	# 回填失败同样停：日志不可判读时继续写会留下「文件写了、日志说没写」的乱账。
-	var cidx := 0
-	for pc in (plan.get("pending_contents", []) as Array):
-		var pd: Dictionary = pc
-		if not ContentStore.write(m, str(pd.get("fn_id", "")), str(pd.get("id", "")),
-				pd.get("data", {}) as Dictionary):
-			return "新内容写入失败：%s" % str(pd.get("id", ""))
-		if not Recovery.mark_pending_written(m, log_path, cidx,
-				Recovery.digest(ContentStore.path_for(m, str(pd.get("fn_id", "")), str(pd.get("id", ""))))):
-			return "复制中止：提交日志回填失败（已写内容保留，请在 editor/pending 复核）"
-		cidx += 1
+		frozen.append({"kind": "content", "fn_id": str(pd.get("fn_id", "")),
+			"id": str(pd.get("id", "")), "data": pd.get("data", {})})
 	var doc: Dictionary = plan.get("document", {}) if plan.get("document", {}) is Dictionary else {}
 	if doc.is_empty():
 		return "复制文档组装失败"
-	# 走原子写单入口（tmp+rename）：写失败不留半截文件堵死同名重试
-	if not write_json(path_for(m, new_name), doc):
-		return "复制写盘失败"
-	if not Recovery.mark_pending_written(m, log_path, jentries.size() - 1, Recovery.digest(mpath)):
-		return "复制已完成但提交日志回填失败（请在 editor/pending 复核）"
-	Recovery.clear_pending(m, log_path)
+	var mpath := path_for(m, new_name)
+	frozen.append({"kind": "map", "id": new_name, "path": mpath, "expect_absent": true,
+		"frozen_text": JSON.stringify(doc, "\t") + "\n"})
+	var DC := preload("res://src/project/document_commit.gd").new()
+	var prep: Dictionary = DC.prepare_frozen("整图复制 %s → %s" % [old_name, new_name], m, frozen)
+	if str(prep.get("status", "")) != "ok":
+		return "提交计划为空：复制已中止"
+	var res: Dictionary = DC.apply_frozen(prep.get("plan", {}) as Dictionary)
+	if str(res.get("status", "")) != "ok":
+		var why := str(res.get("error", ""))
+		if why == "":
+			var cs: Array = res.get("conflicts", [])
+			why = str((cs[0] as Dictionary).get("message", "")) if not cs.is_empty() else "复制失败"
+		return why
+	_cache.erase(mpath)
+	invalidate_code_map()
 	return ""
 
 ## 读所有地图 → {地图名: data}。坏图（无法读取/JSON 解析失败/非对象）不进结果，

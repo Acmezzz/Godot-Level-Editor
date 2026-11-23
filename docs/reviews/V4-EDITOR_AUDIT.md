@@ -209,6 +209,23 @@
 - 引用扫描：见上面的 `code_index`。
 
 ### 9.6 收口状态
+- 4（分批接入口）：除「清单 → 内容 → 地图」这条常规链，改名 / 整图复制 / 跨图清理
+  现在也走同一套冻结计划与提交日志：
+  - `DocumentCommit.prepare_frozen` + `apply_frozen`：同步执行入口（数据层不发协程），
+    支持 `op = rename`（源摘要复验 + 原子换名 + 目标 create-only）、`op = delete`（摘要复验后删）、
+    `kind = content`（路径由 ContentStore 派生）、`map_data`（走 `MapStore.write` 的写前校验 +
+    历史快照）、`frozen_text`（原样写冻结字节）。逐目标收据与 `apply` 同形。
+  - `MapStore.rename_map`：手写的 `begin_pending` / `mark_pending_written` / `clear_pending`
+    三连全部删除，改为一条 rename 目标进计划；缓存失效与旧位置历史清理留在函数尾部。
+  - `MapStore.duplicate_map`：N 份内容 + 1 份地图的冻结计划（A2 顺序由计划顺序表达），
+    同样不再自写日志。
+  - 「未落盘地图改名落盘」（`map_file.rename_map_now` 分支）：暂存内容 + 地图文档进同一份计划，
+    `map_data` 目标走 `MapStore.write`（保留写前校验与历史快照）。
+  - `issues_drawer._clear_dangling`（跨图清理）：以前是裸 `MapStore.write`、**完全没有提交日志**；
+    现在先规划（逐图重读 + 复验旧值 + 计数），再一次性提交；失败时按收据报「已写 N/M 张」。
+  - 资产变更**有意不接入**：它只写清单一个文件，`_save_manifest_file_async` 已含摘要基线的
+    外部改动确认、写回前 JSON 校验与唯一临时名原子替换，没有多文件依赖序可言；
+    再包一层冻结计划只会把单文件写拆成两步而不增加任何保护。
 - 3：`TriTileView` 按 BLOCK×BLOCK 分块缓存图元（`_blocks`：块 → {bbox, items[poly, uvs, tex]}）。
   `refresh()` 整表作废，下次绘制重建一次；此后平移/缩放只遍历与视口相交的块，重算量与相机移动脱钩。
   缓存还按 `cvs.atlas_rev` 失效（外改图集/资产增删后纹理引用会过期）。块包围盒取块内实际多边形并集，
@@ -226,4 +243,5 @@
   `test_map_view_scene_bounds`（层扩展 / 无层等价 / 仿射盒）、
   `test_block_key_partition`（块键分区 + 负格）、
   `test_document_session_lifecycle`（令牌/基线/改名/暂存过滤）、
-  `test_export_hidden_layer_modes` 与 `test_export_add_blend_brightens`（两档导出）。全套 270 用例通过。
+  `test_frozen_plan_targets`（rename 原子换名 / 撞名冲突 / delete 摘要复验 / 收据状态）、
+  `test_export_hidden_layer_modes` 与 `test_export_add_blend_brightens`（两档导出）。全套 271 用例通过。
