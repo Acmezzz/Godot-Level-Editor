@@ -92,13 +92,14 @@ func _paint(c: Vector2i) -> void:
 	if src < 0:
 		cvs._hint("当前笔刷的资产不在清单里：左栏重新选一个瓦片")
 		return
+	var lid: String = cvs.layer_id(cvs.active_layer)
 	for bc in _brush_cells(c):
 		if layer.get_cell_source_id(bc) != src \
 				or layer.get_cell_atlas_coords(bc) != cvs.paint_cell \
 				or MapFormat.alt_of_godot(layer.get_cell_alternative_tile(bc)) != cvs.tile_alt:
 			_ensure_stroke_undo()
-			cvs._undo_history_ctrl.stroke_touch_tile(cvs.layer_id(cvs.active_layer), bc)
-			TilesetCache.set_cell_alt(layer, bc, src, cvs.paint_cell, cvs.tile_alt)
+			cvs._undo_history_ctrl.stroke_touch_tile(lid, bc)
+			cvs.write_tile_row(lid, layer, [bc.x, bc.y, cvs.paint_asset, cvs.paint_cell.x, cvs.paint_cell.y, cvs.tile_alt])
 			changed = true
 	if changed:
 		# 阶段三：只失效这一笔写的那一层（三角自绘按层重画，其它层数据没动）
@@ -121,8 +122,9 @@ func _erase_hits(pos: Vector2) -> bool:
 	var layer = cvs._layer_node(cvs.active_layer)
 	if layer == null:
 		return false
+	var lid: String = cvs.layer_id(cvs.active_layer)
 	for bc in _brush_cells(cvs.grid.pick_cell(lp)):
-		if layer.get_cell_source_id(bc) != -1:
+		if layer.get_cell_source_id(bc) != -1 or not cvs.unresolved_tile(lid, bc).is_empty():
 			return true
 	return false
 
@@ -141,9 +143,10 @@ func erase_cells(cells: Array) -> bool:
 		layer = cvs._layer_node(cvs.active_layer)
 		if layer == null:
 			return false
+	var lid: String = cvs.layer_id(cvs.active_layer) if layer != null else ""
 	for bc in cells:
 		var has: bool = cvs.collision.get_cell_source_id(bc) != -1 if layer == null \
-			else layer.get_cell_source_id(bc) != -1
+			else layer.get_cell_source_id(bc) != -1 or not cvs.unresolved_tile(lid, bc).is_empty()
 		if not has:
 			continue
 		_ensure_stroke_undo()
@@ -151,8 +154,8 @@ func erase_cells(cells: Array) -> bool:
 			cvs._undo_history_ctrl.stroke_touch_collision(bc)
 			cvs.set_collision_cell(bc, false)
 		else:
-			cvs._undo_history_ctrl.stroke_touch_tile(cvs.layer_id(cvs.active_layer), bc)
-			layer.erase_cell(bc)
+			cvs._undo_history_ctrl.stroke_touch_tile(lid, bc)
+			cvs.erase_tile(lid, layer, bc)
 		changed = true
 	if changed:
 		if layer == null:

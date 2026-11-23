@@ -76,8 +76,11 @@ func is_placeable(aid: String) -> bool:
 ## 老实体/新建实体没有码就补发；已有（载图恢复）保留。
 ## 只有 kind=entity 的资产需要实例码——场景实例（图片）永不产码。
 func _ensure_code(n: EntityNode) -> void:
-	if n == null or not n.is_entity():
-		n.code = ""
+	if n == null:
+		return
+	if not n.is_entity():
+		if not n.decl.is_empty():
+			n.code = ""
 		return
 	if n.code == "":
 		var c := _fresh_inst_code()

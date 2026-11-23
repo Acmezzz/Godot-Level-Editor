@@ -57,6 +57,21 @@ func _used_in_rect(layer: TileMapLayer, sel: Rect2i) -> Array:
 		return a.y < b.y or (a.y == b.y and a.x < b.x))
 	return out
 
+func _tile_rows_in_rect(layer: TileMapLayer, lid: String, rect: Rect2i) -> Array:
+	var rows := []
+	for c in _used_in_rect(layer, rect):
+		var aid: String = cvs.asset_of_source(layer.get_cell_source_id(c))
+		if aid == "":
+			continue
+		var atlas := layer.get_cell_atlas_coords(c)
+		rows.append([c.x, c.y, aid, atlas.x, atlas.y,
+			MapFormat.alt_of_godot(layer.get_cell_alternative_tile(c))])
+	var unresolved: Dictionary = cvs._unresolved_tiles.get(lid, {})
+	for c in unresolved:
+		if rect.has_point(c) and layer.get_cell_source_id(c) < 0:
+			rows.append(unresolved[c].duplicate(true))
+	return rows
+
 ## 区域快照存**数据**不存活体节点：节点随后被 free 也不会让剪贴板拿到失效引用。
 func _snapshot_region(sel: Rect2i) -> Dictionary:
 	# 层栈快照：tiles = {层id: [[x,y,资产id,ax,ay]...]}，碰撞/实例同形（实例带 layer）
@@ -66,14 +81,7 @@ func _snapshot_region(sel: Rect2i) -> Dictionary:
 		if lid == "":
 			continue
 		var tn: TileMapLayer = cvs.layer_tiles[li]
-		var cells := []
-		for c in _used_in_rect(tn, sel):
-			var tac: Vector2i = tn.get_cell_atlas_coords(c)
-			var aid: String = cvs.asset_of_source(tn.get_cell_source_id(c))
-			if aid == "":
-				continue
-			cells.append([c.x, c.y, aid, tac.x, tac.y,
-				MapFormat.alt_of_godot(tn.get_cell_alternative_tile(c))])
+		var cells := _tile_rows_in_rect(tn, lid, sel)
 		if not cells.is_empty():
 			snap["tiles"][lid] = cells
 	for c2 in _used_in_rect(cvs.collision, sel):
@@ -152,7 +160,7 @@ func _finish_region_move() -> void:
 		if li < 0:
 			continue
 		for t in (snap.get("tiles", {})[lid] as Array):
-			(cvs.layer_tiles[li] as TileMapLayer).erase_cell(Vector2i(int(t[0]), int(t[1])))
+			cvs.erase_tile(str(lid), cvs.layer_tiles[li], Vector2i(int(t[0]), int(t[1])))
 	for t in snap.get("collision", []):
 		cvs.set_collision_cell(Vector2i(int(t[0]), int(t[1])), false)
 	for lid2 in (snap.get("tiles", {}) as Dictionary):
@@ -160,15 +168,11 @@ func _finish_region_move() -> void:
 		if li2 < 0:
 			continue   # 层已不在（撤销/切图窗口）：跳过，不写回不存在的层
 		for t2 in (snap.get("tiles", {})[lid2] as Array):
-			var src2: int = cvs.source_of_asset(str((t2 as Array)[2]))
-			if src2 < 0:
-				continue
-			var ta2 := t2 as Array
-			# R22：格平移走投影几何（六边 odd-r 行错位、三角半格列），不再原始格号相加
-			TilesetCache.set_cell_alt(cvs.layer_tiles[li2] as TileMapLayer,
-				cvs.grid.shift_cell(Vector2i(int(ta2[0]), int(ta2[1])), delta), src2,
-				Vector2i(int(ta2[3]), int(ta2[4])),
-				int(ta2[5]) if ta2.size() >= 6 else 0)
+			var row: Array = t2.duplicate(true)
+			var dest: Vector2i = cvs.grid.shift_cell(Vector2i(int(row[0]), int(row[1])), delta)
+			row[0] = dest.x
+			row[1] = dest.y
+			cvs.write_tile_row(str(lid2), cvs.layer_tiles[li2], row)
 	for t in snap.get("collision", []):
 		var ta := t as Array
 		var cc2: Vector2i = cvs.grid.shift_cell(Vector2i(int(ta[0]), int(ta[1])), delta)
@@ -260,17 +264,10 @@ func copy_region() -> bool:
 		if lid == "":
 			continue
 		var tn: TileMapLayer = cvs.layer_tiles[li]
-		var cells := []
-		# P05：只走区域内实际存在的格（used_cells 过滤），不按面积 × 层数扫描
-		for c in _used_in_rect(tn, cvs._region_sel):
-			var d: Vector2i = c - cvs._region_sel.position
-			# 区域剪贴板带资产 id——多图集瓦片整块搬运，且清单重排不破坏剪贴板
-			var aid: String = cvs.asset_of_source(tn.get_cell_source_id(c))
-			if aid == "":
-				continue
-			var tac: Vector2i = tn.get_cell_atlas_coords(c)
-			cells.append([d.x, d.y, aid, tac.x, tac.y,
-				MapFormat.alt_of_godot(tn.get_cell_alternative_tile(c))])
+		var cells := _tile_rows_in_rect(tn, lid, cvs._region_sel)
+		for row in cells:
+			row[0] = int(row[0]) - cvs._region_sel.position.x
+			row[1] = int(row[1]) - cvs._region_sel.position.y
 		if not cells.is_empty():
 			cvs._region_clip["tiles"][lid] = cells
 	for c2 in _used_in_rect(cvs.collision, cvs._region_sel):
@@ -319,9 +316,11 @@ func cut_region() -> void:
 		return
 	cvs.push_undo()
 	# P05：擦源也只走实际存在的格（used_cells 过滤），空池不按面积空转
-	for tn in cvs.layer_tiles:
-		for c in _used_in_rect(tn as TileMapLayer, cvs._region_sel):
-			(tn as TileMapLayer).erase_cell(c)
+	for li in cvs.layer_tiles.size():
+		var layer: TileMapLayer = cvs.layer_tiles[li]
+		var lid: String = cvs.layer_id(li)
+		for row in _tile_rows_in_rect(layer, lid, cvs._region_sel):
+			cvs.erase_tile(lid, layer, Vector2i(int(row[0]), int(row[1])))
 	for c in _used_in_rect(cvs.collision, cvs._region_sel):
 		cvs.set_collision_cell(c, false)
 	# 区域内的实例一并移除（它们已经进了剪贴板）
@@ -406,15 +405,11 @@ func _paste_region(origin: Vector2i) -> void:
 	for lid in (cvs._region_clip.get("tiles", {}) as Dictionary):
 		var li: int = _paste_layer_index(str(lid), lnames, missed, same_map)
 		for t in ((cvs._region_clip.get("tiles", {}) as Dictionary)[lid]) as Array:
-			var ta := t as Array
-			var src: int = cvs.source_of_asset(str(ta[2]))
-			if src < 0:
-				continue   # 目标项目没有这个资产：跳过，不写坏格子
-			# R22：粘贴平移同样走投影几何（与区域移动同一空间规则）
-			TilesetCache.set_cell_alt(cvs.layer_tiles[li] as TileMapLayer,
-				cvs.grid.shift_cell(Vector2i(int(ta[0]), int(ta[1])), origin), src,
-				Vector2i(int(ta[3]), int(ta[4])),
-				int(ta[5]) if ta.size() >= 6 else 0)
+			var row: Array = t.duplicate(true)
+			var dest: Vector2i = cvs.grid.shift_cell(Vector2i(int(row[0]), int(row[1])), origin)
+			row[0] = dest.x
+			row[1] = dest.y
+			cvs.write_tile_row(cvs.layer_id(li), cvs.layer_tiles[li], row)
 	for t in cvs._region_clip.get("collision", []):
 		var cc: Vector2i = cvs.grid.shift_cell(Vector2i(int(t[0]), int(t[1])), origin)
 		if (t as Array).size() >= 4:

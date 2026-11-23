@@ -29,6 +29,9 @@ class Host extends Node2D:
 	var _collision_meta := {}
 	var asset_of_source_calls := 0
 
+	func erase_tile(_lid: String, layer: TileMapLayer, cell: Vector2i) -> void:
+		layer.erase_cell(cell)
+
 	func asset_of_source(_sid: int) -> String:
 		asset_of_source_calls += 1
 		return "tile_a"
@@ -261,6 +264,28 @@ func test_no_change_no_entry() -> void:
 
 
 ## 阶段三：撤销只失效真正动过的层——瓦片差量按层重画，不碰碰撞镜像、不碰实体索引。
+func test_unresolved_tile_delta_restores_original_row() -> void:
+	var canvas = preload("res://src/canvas/editor_canvas.gd").new()
+	canvas._layer_ops_ctrl = preload("res://src/canvas/layer_ops.gd").new(canvas)
+	canvas.map_data = {"meta": {"layers": [{"id": "L1", "name": "Layer"}]}}
+	var layer := TileMapLayer.new()
+	canvas.add_child(layer)
+	canvas.layer_tiles = [layer]
+	var undo := UndoHistory.new(canvas)
+	var cell := Vector2i(1, 2)
+	var row := [1, 2, "missing", 3, 4, 1]
+	canvas.write_tile_row("L1", layer, row)
+	undo.stroke_begin()
+	undo.stroke_touch_tile("L1", cell)
+	canvas.erase_tile("L1", layer, cell)
+	undo.stroke_end()
+	eq(canvas.unresolved_tile("L1", cell), [], "擦除清掉原始记录")
+	undo._restore_delta(undo.undo_stack.back(), false)
+	eq(canvas.unresolved_tile("L1", cell), row, "撤销恢复原始行")
+	undo._restore_delta(undo.undo_stack.back(), true)
+	eq(canvas.unresolved_tile("L1", cell), [], "重做再次擦除")
+	canvas.free()
+
 func test_restore_marks_only_touched_layer() -> void:
 	var ctx := _host()
 	var h: Host = ctx.host

@@ -168,7 +168,7 @@ func stroke_touch_tile(lid: String, c: Vector2i) -> void:
 		return
 	_stroke_keys[key] = true
 	var tn := _tile_layer(lid)
-	var before = _tile_state(tn, c)
+	var before = _tile_state(lid, tn, c)
 	_stroke_cells.append({"key": key, "kind": "tile", "layer": lid,
 		"cell": [c.x, c.y], "before": before})
 
@@ -192,7 +192,8 @@ func stroke_end() -> void:
 	for s in _stroke_cells:
 		var c := Vector2i(int((s as Dictionary).cell[0]), int((s as Dictionary).cell[1]))
 		if str((s as Dictionary).get("kind", "")) == "tile":
-			(s as Dictionary)["after"] = _tile_state(_tile_layer(str((s as Dictionary).get("layer", ""))), c)
+			var lid := str((s as Dictionary).get("layer", ""))
+			(s as Dictionary)["after"] = _tile_state(lid, _tile_layer(lid), c)
 		else:
 			(s as Dictionary)["after"] = _collision_state(c)
 	if not _stroke_cells.is_empty():
@@ -425,15 +426,11 @@ func _restore_delta(entry: Dictionary, forward: bool) -> void:
 			var tn := _tile_layer(str(st.get("layer", "")))
 			if tn == null:
 				continue
+			var lid := str(st.get("layer", ""))
 			if v == null:
-				tn.erase_cell(c)
+				cvs.erase_tile(lid, tn, c)
 			else:
-				var sid: int = cvs.source_of_asset(str((v as Dictionary).get("aid", "")))
-				if sid < 0:
-					tn.erase_cell(c)
-				else:
-					TilesetCache.set_cell_alt(tn, c, sid, Vector2i(int((v as Dictionary).get("ax", 0)), int((v as Dictionary).get("ay", 0))),
-						int((v as Dictionary).get("alt", 0)))
+				cvs.write_tile_row(lid, tn, v)
 		else:
 			if v == null:
 				cvs.set_collision_cell(c, false)
@@ -471,13 +468,14 @@ func _tile_layer(lid: String) -> TileMapLayer:
 		return null
 	return cvs.layer_tiles[li] as TileMapLayer
 
-## 瓦片格当前状态：空 = null；非空 = {aid, ax, ay, alt}（alt 走编辑器口径 0-7）。
-func _tile_state(tn: TileMapLayer, c: Vector2i):
+## 瓦片差量以磁盘行记录，未解析条目也能原样恢复。
+func _tile_state(lid: String, tn: TileMapLayer, c: Vector2i):
 	if tn == null or tn.get_cell_source_id(c) == -1:
-		return null
+		var row: Array = cvs.unresolved_tile(lid, c)
+		return null if row.is_empty() else row.duplicate(true)
 	var ac: Vector2i = tn.get_cell_atlas_coords(c)
-	return {"aid": cvs.asset_of_source(tn.get_cell_source_id(c)),
-		"ax": ac.x, "ay": ac.y, "alt": MapFormat.alt_of_godot(tn.get_cell_alternative_tile(c))}
+	return [c.x, c.y, cvs.asset_of_source(tn.get_cell_source_id(c)), ac.x, ac.y,
+		MapFormat.alt_of_godot(tn.get_cell_alternative_tile(c))]
 
 ## 碰撞格当前状态：无 = null；有 = {type, shape, raw}。
 func _collision_state(c: Vector2i):
@@ -501,11 +499,7 @@ func _functions_field(n: EntityNode) -> Dictionary:
 ## 以 n.raw 为底保留游戏侧自定义键，只覆盖编辑器管辖的键。
 ## 实例差量里 before/after 都用它生成，撤销时按行原样重建节点，不碰整图。
 func _object_row(n: EntityNode) -> Dictionary:
-	var props: Dictionary = n.props
-	var clean := {}
-	for k in props.keys():
-		if props[k] != null and str(props[k]) != "":
-			clean[k] = props[k]
+	var clean := n.props.duplicate(true)
 	# 无码的实体实例 → 补发实例码（身份丢失会让内容 ID 前缀漂移，不能留空）；
 	# 场景实例永不产码（code 键整个不写）。
 	# R15：声明解析不出（资产停用/清单漂移）的旧摆放物以原行往返——带着实例码就保留，
@@ -529,7 +523,7 @@ func _object_row(n: EntityNode) -> Dictionary:
 	row["x"] = snappedf(g.x, 0.001)
 	row["y"] = snappedf(g.y, 0.001)
 	# transform 缺省整键省略（旧数据没有它就等于缺省形态，读回后行为不变）
-	if n.transform_is_default():
+	if n.data_transform.is_empty():
 		row.erase("transform")
 	else:
 		row["transform"] = n.data_transform.duplicate(true)
@@ -593,14 +587,10 @@ func extract() -> Dictionary:
 			seen_cells[c] = true
 		# 装载时资产缺失/图集读不到的瓦片原样带回（D02：缺素材不删已存记录）；
 		# 该格已被玩家重新涂过则丢弃旧记录（当前位置的新值优先）。
-		var kept = cvs._unresolved_tiles.get(lid, [])
-		if kept is Array:
-			for entry in kept:
-				if not (entry is Array) or (entry as Array).size() < 2:
-					continue
-				if seen_cells.has(Vector2i(int(entry[0]), int(entry[1]))):
-					continue
-				cells.append(entry)
+		var kept: Dictionary = cvs._unresolved_tiles.get(lid, {})
+		for cell in kept:
+			if not seen_cells.has(cell):
+				cells.append(kept[cell].duplicate(true))
 		tiles[lid] = cells
 	# 碰撞条目对象（v6）：{x, y}，type 缺省省略（solid）、shape 缺省省略（矩形）。
 	var ccells := []

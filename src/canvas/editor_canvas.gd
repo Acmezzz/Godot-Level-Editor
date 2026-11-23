@@ -72,8 +72,7 @@ var spawn: Marker2D
 var tile_set: TileSet
 var atlas_tex: Texture2D
 var atlas_img: Image
-## 装载时未能解析的瓦片（资产缺失/图集读不到）：按层保存原始 6 元组，
-## 提取时原样写回——缺素材不允许把已存瓦片记录抹掉（D02）。
+## 未解析的瓦片按层码与格坐标保存原始行，参与擦除与撤销。
 var _unresolved_tiles := {}
 # 多图集：全部图集（索引 = TileSet source_id = 地图格 atlas 维度）
 var atlas_imgs: Array = []
@@ -394,17 +393,8 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 		var tn2: TileMapLayer = layer_tiles[li2]
 		for c in (tiles_data.get(lid, []) as Array):
 			var arr := c as Array
-			var src: int = source_of_asset(str(arr[2]))
-			if src < 0:
-				# 资产缺失（清单还没同步/图集读不到）：保留原始记录，保存时原样写回
-				if not _unresolved_tiles.has(lid):
-					_unresolved_tiles[lid] = []
-				(_unresolved_tiles[lid] as Array).append((arr as Array).duplicate())
+			if not write_tile_row(lid, tn2, arr):
 				missing_assets[str(arr[2])] = true
-				continue
-			var alt: int = int(arr[5]) if (arr as Array).size() >= 6 else 0
-			TilesetCache.set_cell_alt(tn2, Vector2i(int(arr[0]), int(arr[1])), src,
-				Vector2i(int(arr[3]), int(arr[4])), alt)
 	if not missing_assets.is_empty():
 		var names: Array = missing_assets.keys()
 		_hint("有 %d 种瓦片资产未能装载（%s）：这些瓦片已保留，补齐清单/图集后重开可恢复" % [
@@ -1286,7 +1276,8 @@ func layer_has_tiles(li: int) -> bool:
 		return false
 	if _layer_has_tiles.has(li):
 		return bool(_layer_has_tiles[li])
-	var has: bool = (layer_tiles[li] as TileMapLayer).get_used_cells().size() > 0
+	var has: bool = not (_unresolved_tiles.get(layer_id(li), {}) as Dictionary).is_empty() \
+		or not (layer_tiles[li] as TileMapLayer).get_used_cells().is_empty()
 	_layer_has_tiles[li] = has
 	return has
 
@@ -1469,6 +1460,29 @@ func _move_drag_preview(pos: Vector2) -> void:
 
 func _finish_entity_drag() -> void:
 	_selection_ops_ctrl._finish_entity_drag()
+
+func unresolved_tile(lid: String, cell: Vector2i) -> Array:
+	return _unresolved_tiles.get(lid, {}).get(cell, [])
+
+func erase_tile(lid: String, layer: TileMapLayer, cell: Vector2i) -> void:
+	if _unresolved_tiles.has(lid):
+		_unresolved_tiles[lid].erase(cell)
+	layer.erase_cell(cell)
+
+func write_tile_row(lid: String, layer: TileMapLayer, row: Array) -> bool:
+	var cell := Vector2i(int(row[0]), int(row[1]))
+	var atlas := Vector2i(int(row[3]), int(row[4]))
+	var src := source_of_asset(str(row[2]))
+	var tileset := layer.tile_set
+	var source := tileset.get_source(src) as TileSetAtlasSource if tileset != null and tileset.has_source(src) else null
+	erase_tile(lid, layer, cell)
+	if source == null or not source.has_tile(atlas):
+		if not _unresolved_tiles.has(lid):
+			_unresolved_tiles[lid] = {}
+		_unresolved_tiles[lid][cell] = row.duplicate(true)
+		return false
+	TilesetCache.set_cell_alt(layer, cell, src, atlas, int(row[5]) if row.size() >= 6 else 0)
+	return true
 
 func copy_content_source() -> Dictionary:
 	var staged := {}
