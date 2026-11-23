@@ -334,4 +334,20 @@ func test_map_view_cell_and_anchor() -> void:
 	eq(xf[0], Vector2(48, 0), "层空间 = 根坐标 ×2 + offset(16,0)")
 	eq(MapViewData.anchor_px(d, m, "A", 0.5, 0.5), Vector2(32, 16), "锚点像素同走层变换")
 
+## §4.3-1：名义范围 = 根边界 ∪ 各层变换后边界（导出/预览取景同一份口径）。
+func test_map_view_scene_bounds() -> void:
+	var d := {"meta": {"w": 4, "h": 4, "gridProjection": "orthogonal",
+		"layers": [{"id": "A", "offset": [64, 0], "scale": 2.0}]}}
+	var m := {"tileSize": 16}
+	var root: Rect2 = MapViewData.scene_bounds(d, m, false)
+	eq(root, Rect2(0, 0, 64, 64), "不含层 = 根边界 4×4 格")
+	var full: Rect2 = MapViewData.scene_bounds(d, m, true)
+	eq(full.position, Vector2(0, 0), "层向右扩：左上角不动")
+	eq(full.size.x, 192.0, "层 A：x 方向 64+128 = 192（扩出根边界）")
+	eq(full.size.y, 128.0, "层 A：y 方向 2×64 = 128")
+	# 无层时应与根边界完全相同（导出/预览不该凭空多留白）
+	eq(MapViewData.scene_bounds({"meta": {"w": 4, "h": 4}}, m, true), root, "无层 = 根边界")
+	eq(MapViewData.xform_rect(Transform2D(0.0, Vector2(2, 2), 0.0, Vector2(8, 8)),
+		Rect2(0, 0, 10, 10)), Rect2(8, 8, 20, 20), "仿射盒 = 平移 + 缩放")
+
 
