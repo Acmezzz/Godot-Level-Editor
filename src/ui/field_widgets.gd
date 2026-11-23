@@ -111,6 +111,18 @@ static func decl_tooltip(decl: Dictionary) -> String:
 			or dflt is bool) else JSON.stringify(dflt)))
 	return " · ".join(parts)
 
+static func _value_commit(read_value: Callable, initial: Variant, on_set: Callable) -> Callable:
+	var last := {"value": initial}
+	return func() -> bool:
+		var value = read_value.call()
+		if value == last.value:
+			return true
+		var result = on_set.call(value)
+		if result is bool and not result:
+			return false
+		last.value = value
+		return true
+
 ## 构建控件。返回 {ctl: Control, commit: Callable}。
 ## commit 用于重建/切实例前统一提交连续控件（SpinBox/多行文本）的待写值；
 ## 幂等（值未变不写盘）由下游 _set_field 保证。离散控件（CheckBox/LineEdit/OptionButton）commit 为空操作。
@@ -164,18 +176,13 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 			# 未改动就提交时什么都不做（A2）：否则「空表单按 Ctrl+S」会先建出内容 ID。
 			# 基线必须是「上次真正写出去的值」：拿建控件时的值比，用户写 7 之后再改回 5
 			# 会被判成「没变」而丢写（V4 P1）。拖动期间仍只记内存（连续控件纪律）。
-			var last := {"v": float(pending.v)}
-			var push := func():
-				if float(pending.v) != float(last.v):
-					last.v = pending.v
-					on_set.call(pending.v)
-			var commit := func(): push.call()
+			var push := _value_commit(func(): return pending.v, pending.v, on_set)
 			sp.get_line_edit().text_submitted.connect(func(_t: String): push.call())
 			sp.get_line_edit().focus_exited.connect(func(): push.call())
 			# 失焦也要落盘：键盘输入走 SpinBox 自身行编辑，不会触发 text_submitted
 			# 的情形（直接点别处）同样要写出去
 			sp.focus_exited.connect(func(): push.call())
-			return {"ctl": sp, "commit": commit}
+			return {"ctl": sp, "commit": push}
 		"string":
 			if not (value is String) and value != null:
 				return _readonly(decl, value, "值类型不符：声明 string，实际是 %s" % type_name(value),
@@ -186,21 +193,16 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 				te.wrap_mode = TextEdit.LINE_WRAPPING_BOUNDARY
 				te.custom_minimum_size = Vector2(0, 72)
 				te.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-				te.focus_exited.connect(func(): on_set.call(te.text))
-				var te0 := te.text
-				return {"ctl": te, "commit": func():
-					if te.text != te0:
-						on_set.call(te.text)}
+				var push := _value_commit(func(): return te.text, te.text, on_set)
+				te.focus_exited.connect(func(): push.call())
+				return {"ctl": te, "commit": push}
 			var le := LineEdit.new()
 			le.text = str(value)
 			le.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			le.text_submitted.connect(func(t: String): on_set.call(t.strip_edges()))
-			le.focus_exited.connect(func(): on_set.call(le.text.strip_edges()))
-			# 单行文本也登记提交器：Ctrl+S 时即使焦点还在框里，也按当前文本落盘（A2）
-			var le0 := le.text
-			return {"ctl": le, "commit": func():
-				if le.text.strip_edges() != le0.strip_edges():
-					on_set.call(le.text.strip_edges())}
+			var push_text := _value_commit(func(): return le.text.strip_edges(), le.text.strip_edges(), on_set)
+			le.text_submitted.connect(func(_t: String): push_text.call())
+			le.focus_exited.connect(func(): push_text.call())
+			return {"ctl": le, "commit": push_text}
 		"color":
 			var cp := ColorPickerButton.new()
 			cp.color = Color(str(value) if str(value).begins_with("#") else "#ffffff")
@@ -222,6 +224,7 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 			var pending := {"v": []}
 			for axis in dims:
 				(pending.v as Array).append(float(vv[axis]))
+			var commit_v := _value_commit(func(): return pending.v.duplicate(), pending.v.duplicate(), on_set)
 			for axis in dims:
 				var sp := SpinBox.new()
 				sp.step = 0.1
@@ -233,13 +236,8 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 				var ai := axis
 				sp.value_changed.connect(func(n: float):
 					pending.v[ai] = n)
-				sp.get_line_edit().focus_exited.connect(func(): on_set.call(pending.v.duplicate()))
+				sp.get_line_edit().focus_exited.connect(func(): commit_v.call())
 				h.add_child(sp)
-			var init_vv: Array = pending.v.duplicate()
-			# 没动过就提交 = 无操作（避免空表单保存时凭空创建内容，A2）
-			var commit_v := func():
-				if pending.v != init_vv:
-					on_set.call(pending.v.duplicate())
 			return {"ctl": h, "commit": commit_v}
 		"range":
 			# 数字之外的值（空串占位除外）只读展示——commit() 不能把它悄悄写成 min
@@ -274,10 +272,7 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 				pending2.v = n
 				sl.value = n)
 			# 拖完滑杆/输入框失焦即提交，与 int/float 同一口径；未改动不提交（A2）
-			var init2 := sl.value
-			var commit2 := func():
-				if pending2.v != init2:
-					on_set.call(pending2.v)
+			var commit2 := _value_commit(func(): return pending2.v, sl.value, on_set)
 			sl.drag_ended.connect(func(_c: bool): commit2.call())
 			num.get_line_edit().focus_exited.connect(func(): commit2.call())
 			num.get_line_edit().text_submitted.connect(func(_t: String): commit2.call())
@@ -384,9 +379,11 @@ static func _build_array(decl: Dictionary, items: Array, on_set: Callable,
 			var c: Callable = r.get("commit", Callable())
 			if c.is_valid():
 				c.call()
-			out.append((r.state as Dictionary).get("v"))
+			var value = (r.state as Dictionary).get("v")
+			out.append(value.duplicate(true) if value is Dictionary or value is Array else value)
 		return out
-	var done := func(): on_set.call(collect.call())
+	var commit := _value_commit(collect, items.duplicate(true), on_set)
+	var done := func(): commit.call()
 	var add_row := func(v, at := -1) -> void:
 		var r := {"state": {"v": v}, "commit": Callable(), "line": null}
 		var line := HBoxContainer.new()
@@ -405,7 +402,7 @@ static func _build_array(decl: Dictionary, items: Array, on_set: Callable,
 				c.call()
 			rows.erase(r)
 			line.queue_free()
-			on_set.call(collect.call()))
+			done.call())
 		line.add_child(del)
 		# 行容器子序与 rows 数组一致：插行 = add_child + move_child 到目标行号
 		if at < 0 or at >= rows.size():
@@ -427,10 +424,9 @@ static func _build_array(decl: Dictionary, items: Array, on_set: Callable,
 	add.focus_mode = Control.FOCUS_NONE
 	add.pressed.connect(func():
 		add_row.call(default_for(elem))
-		on_set.call(collect.call()))
+		done.call())
 	wrap.add_child(add)
-	return {"ctl": wrap, "commit": func():
-		on_set.call(collect.call())}
+	return {"ctl": wrap, "commit": commit}
 
 ## C1：记录行工具组（复制/上移/下移）。ctx = {"rows", "box", "add", "done"}。
 ## GDScript lambda 按值捕获局部变量，行操作需要共享可变状态，统一走 ctx 字典（字典按引用捕获）。
@@ -488,6 +484,8 @@ static func _build_record(decl: Dictionary, value, on_set: Callable,
 	var box := Kit.vbox(4)
 	panel.add_child(box)
 	var commits: Array = []
+	value = value.duplicate(true)
+	var commit := _value_commit(func(): return value.duplicate(true), value.duplicate(true), on_set)
 	var fields_arr: Array = decl.get("fields", []) if decl.get("fields", null) is Array else []
 	for sub in fields_arr:
 		if not (sub is Dictionary):
@@ -508,14 +506,16 @@ static func _build_record(decl: Dictionary, value, on_set: Callable,
 				d2["_mapKey"] = tk
 		var built := build(d2, sub_val, func(v2):
 			value[sub_key] = v2
-			on_set.call(value), option_resolver, key_mode)
+			return commit.call(), option_resolver, key_mode)
 		box.add_child(Kit.field_row(str(sd.get("name", sub_key)), built.ctl, 96))
 		commits.append(built.commit)
-	return {"ctl": panel, "commit": func():
+	return {"ctl": panel, "commit": func() -> bool:
 		for c in commits:
-			if c is Callable and (c as Callable).is_valid():
-				(c as Callable).call()
-		on_set.call(value)}
+			if c is Callable and c.is_valid():
+				var result = c.call()
+				if result is bool and not result:
+					return false
+		return commit.call()}
 
 ## choice：options[] 声明（或 source 动态解析）→ 单选 OptionButton / multiple 勾选组。
 ## 值不在选项里时保留原值并额外插一条「(当前值)」——绝不静默改成第一项。

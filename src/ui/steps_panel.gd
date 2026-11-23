@@ -37,17 +37,17 @@ var manifest: Dictionary:
 var _pending_commits: Array = []
 
 ## 冲刷本面板待提交值（换步骤/切时间轴点选前调用；控件闭包绑定的是当时的下标）。
-func _flush_pending() -> void:
-	var pend := _pending_commits.duplicate()
-	_pending_commits.clear()
-	for cb in pend:
-		if cb is Callable and (cb as Callable).is_valid():
-			(cb as Callable).call()
+func _flush_pending() -> bool:
+	for cb in _pending_commits.duplicate():
+		if cb is Callable and cb.is_valid():
+			var result = cb.call()
+			if result is bool and not result:
+				return false
+	return true
 
 ## 同名包装方法（真实实现经 host 转发）
 func commit() -> bool:
-	_flush_pending()
-	return host.commit()
+	return _flush_pending() and host.commit()
 func _current_fns() -> Array:
 	return host._current_fns()
 func _ensure_content(i: int) -> String:
@@ -111,7 +111,8 @@ static func _mem_key(fn_code: String, cid: String) -> String:
 ## E1：默认弹出独立窗口；可停靠到内容页底部或画布下方，也可随时独立展开。
 ## 三种形态共用同一控制器/工作副本/结构版本，切换只换宿主容器，不重建数据。
 func _open_steps_editor(i: int) -> void:
-	host.commit_fields()   # 主表单待提交值先落盘：子面板写盘不该挤掉未提交值
+	if not host.commit_fields():
+		return
 	var fns := _current_fns()
 	var f: Dictionary = fns[i] if i >= 0 and i < fns.size() and fns[i] is Dictionary else {}
 	var fn_id := str(_resolve_fn(f).get("id", ""))
@@ -301,7 +302,8 @@ func _steps_set_dock_where(where: String) -> void:
 		return
 	if _steps_dock_where == where:
 		return
-	host.commit_fields()
+	if not host.commit_fields():
+		return
 	_steps_remember()
 	if where != "popup" and _steps_dock_where != "popup" \
 			and _steps_dock != null and is_instance_valid(_steps_dock):
@@ -474,7 +476,8 @@ func _set_steps_view(mode: String) -> void:
 	if mode != "list" and mode != "timeline":
 		return
 	# 切页签前先提交当前控件（D1）：待提交值属于旧下标，切完再落到新表单上会串步
-	host.commit_fields()
+	if not host.commit_fields():
+		return
 	_steps_view = mode
 	_rebuild_steps_all()
 
@@ -502,7 +505,8 @@ func _steps_timebase() -> String:
 ## 时间轴点选：只换选中与表单，不重建视图（拖拽进行中 picked 会被发多次）。
 func _steps_pick_tl(idx: int) -> void:
 	# 换选中前提交旧步骤的待提交控件值（同 _steps_pick）
-	host.commit_fields()
+	if not host.commit_fields():
+		return
 	_flush_pending()
 	_steps_sel = idx
 	if _steps_tl != null and is_instance_valid(_steps_tl):
@@ -550,20 +554,21 @@ func _steps_data() -> Dictionary:
 	return (rd.get("data", {}) as Dictionary) if rd.get("data", null) is Dictionary else {}
 
 ## 工作副本写回：**首次实际改动时才预留内容 ID**（D1）；内容写盘失败给可见反馈。
-func _steps_write(data: Dictionary) -> void:
+func _steps_write(data: Dictionary) -> bool:
 	if not _steps_identity_ok():
-		return
+		return false
 	if _steps_cid == "":
-		# 空绑定：先预留（绑定行加 content、生成 staged 新 ID），再走同一写路径
 		var cid := _ensure_content(_steps_i)
 		if cid == "":
 			_ensure_failed()
-			return
+			return false
 		_steps_cid = cid
 		if str(data.get("id", "")) == "":
 			data["id"] = cid
 	if str(host.write_content_staged(_steps_fn_id, _steps_cid, data, _steps_base)) != "ok":
 		_ensure_failed()
+		return false
+	return true
 
 ## 结构版本递增：增删/排序/复制后旧控件与旧拖拽请求一律失效（D1）。
 func _bump_steps_rev() -> void:
@@ -599,7 +604,10 @@ func _rebuild_steps_all() -> void:
 	_rebuild_steps_form(arr)
 
 ## 步骤列表（列表视图）：空态 + 逐行渲染。
+var _steps_list_snapshot: Array = []
+
 func _rebuild_steps_list(arr: Array) -> void:
+	_steps_list_snapshot = arr.duplicate(true)
 	if _steps_list == null:
 		return
 	for c in _steps_list.get_children():
@@ -684,11 +692,16 @@ func _on_step_change_requested(idx: int, revision: int, patch: Dictionary) -> vo
 	if data.is_empty():
 		return
 	var arr: Array = data.get("steps", []) if data.get("steps", []) is Array else []
+	if _steps_tl == null or arr != _steps_tl.steps:
+		_bump_steps_rev()
+		_rebuild_steps_all()
+		return
 	var res: Dictionary = StepTimeline.apply_patch(arr, idx, patch)
 	if not bool(res.get("ok", false)):
 		return
 	data["steps"] = res.get("steps", arr)
-	_steps_write(data)
+	if not _steps_write(data):
+		return
 	_steps_sel = idx
 	_bump_steps_rev()
 	_rebuild_steps_all()
@@ -722,16 +735,30 @@ func _steps_row(si: int, st: Dictionary, _pool: Dictionary) -> Control:
 	row.add_child(mark)
 	if not known:
 		row.add_child(Kit.hint_label("⚠", 20))
-	row.add_child(Kit.button("↑", func(): _steps_move(si, -1), "ghost"))
-	row.add_child(Kit.button("↓", func(): _steps_move(si, 1), "ghost"))
-	row.add_child(Kit.button("复制", func(): _steps_dup(si), "ghost"))
-	row.add_child(Kit.del_button(func(): _steps_del(si)))
+	var revision := _steps_rev
+	var displayed: Array = _steps_list_snapshot
+	row.add_child(Kit.button("↑", func(): _run_row_command(revision, displayed, _steps_move.bind(si, -1)), "ghost"))
+	row.add_child(Kit.button("↓", func(): _run_row_command(revision, displayed, _steps_move.bind(si, 1)), "ghost"))
+	row.add_child(Kit.button("复制", func(): _run_row_command(revision, displayed, _steps_dup.bind(si)), "ghost"))
+	row.add_child(Kit.del_button(func(): _run_row_command(revision, displayed, _steps_del.bind(si))))
 	return row
+
+func _run_row_command(revision: int, displayed: Array, command: Callable) -> void:
+	if revision != _steps_rev or not _steps_identity_ok():
+		return
+	var data := _steps_data()
+	if data.is_empty() or data.get("steps", []) != displayed:
+		_bump_steps_rev()
+		_rebuild_steps_all()
+		return
+	if _flush_pending():
+		command.call()
 
 ## 点步骤名选中该步：右侧表单换到这一步（重建保持 _steps_sel 选中态）。
 func _steps_pick(si: int) -> void:
 	# 换选中前先提交当前表单控件：SpinBox 之类的待提交值属于旧步骤下标
-	host.commit_fields()
+	if not host.commit_fields():
+		return
 	_flush_pending()
 	_steps_sel = si
 	_rebuild_steps_all()
@@ -828,7 +855,7 @@ func _step_field_row(fd: Dictionary, sfd: Dictionary, siblings: Array = [], arr:
 			d = fd.duplicate(true)
 			d["_mapKey"] = tk
 	var built := FieldWidgets.build(d, val, func(v):
-		_set_step_field(tok, key, v, rev), _resolve_options, "code")
+		return _set_step_field(tok, key, v, rev), _resolve_options, "code")
 	if built.get("commit") is Callable and (built.commit as Callable).is_valid():
 		_pending_commits.append(built.commit)
 	var row := Kit.field_row(label, built.ctl, 96)
@@ -870,7 +897,8 @@ func _pick_step_ref(fd: Dictionary, key: String, tok: Dictionary, rev: int) -> v
 	var on_cancel := func(_code: String):
 		_reopen_after_pick()
 	# 收起子面板前先冲刷连续控件（写回的是本步当前值；面板重建后旧控件失效）
-	host.commit_fields()
+	if not host.commit_fields():
+		return
 	# 弹窗形态：切到画布前先收起（否则弹窗悬在画布上），返回时按记忆重建。
 	# hide() 会走 _open_popup 挂的 popup_hide → queue_free，不留隐形弹窗。
 	# 停靠形态不需要收：选点开始时宿主会把面板整体搬到画布下方，回来再搬回原处。
@@ -1193,26 +1221,24 @@ static func _step_index_of(arr: Array, tok: Dictionary) -> int:
 	return -1
 
 ## 写步骤字段：即时写盘，不重建表单（保焦点）。版本过期/令牌失效直接丢弃。
-func _set_step_field(tok: Dictionary, key: String, value, rev := -1) -> void:
-	if tok.is_empty() or key == "":
-		return
-	if rev >= 0 and rev != _steps_rev:
-		return   # 过期控件回调：期间增删/换序过，按下标写回会落到别的步骤上
+func _set_step_field(tok: Dictionary, key: String, value, rev := -1) -> bool:
+	if tok.is_empty() or key == "" or (rev >= 0 and rev != _steps_rev):
+		return false
 	var data := _steps_data()
 	if data.is_empty():
-		return
+		return false
 	var arr: Array = data.get("steps", []) if data.get("steps", []) is Array else []
 	var si := _step_index_of(arr, tok)
 	if si < 0 or not (arr[si] is Dictionary):
-		return   # 那一步已被删/换码：丢弃这次迟到写入
+		return false
 	var st: Dictionary = arr[si]
 	var sfd: Dictionary = st.get("fields", {}) if st.get("fields", {}) is Dictionary else {}
 	if sfd.get(key, null) == value:
-		return   # 值没变不写盘（重建触发的同值回调幂等跳过）
+		return true
 	sfd[key] = value
 	st["fields"] = sfd
 	data["steps"] = arr
-	_steps_write(data)
+	return _steps_write(data)
 
 ## 添加步骤：追加到末尾并选中。
 func _steps_add(code: String) -> void:

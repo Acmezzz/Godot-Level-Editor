@@ -350,21 +350,17 @@ func remember_context() -> void:
 ## 仍会继续往下提交地图——地图里带着没落盘的字段值。
 func commit_fields() -> bool:
 	var pend := _pending_commits.duplicate()
-	_pending_commits.clear()
-	var failed := false
 	for cb in pend:
-		if cb is Callable and (cb as Callable).is_valid():
-			# 提交器契约：显式返回 false = 写失败；不返回值（void 控件）按成功计
-			var r = (cb as Callable).call()
-			if r is bool and not bool(r):
-				failed = true
-	return not failed
+		if cb is Callable and cb.is_valid():
+			var result = cb.call()
+			if result is bool and not result:
+				return false
+	return _steps._flush_pending()
 
 ## Ctrl+S / 正式提交：冲刷控件值后再把 staged 内容写盘（A2 正式提交点）。
 ## on_written(fn_id, cid)：每条成功写入即回调（提交日志逐文件登记，R04）。
 func commit(on_written: Callable = Callable()) -> bool:
-	var fields_ok := commit_fields()
-	return _form.flush_staged(on_written) and fields_ok
+	return commit_fields() and _form.flush_staged(on_written)
 
 ## 是否有尚未落盘的暂存内容（新 ID / 新绑定）；正式提交/试玩据此判定。
 func has_staged() -> bool:
@@ -557,7 +553,8 @@ func select_inst(code: String) -> void:
 		return
 	# 切实例前只收集控件值（R01）：新绑定/新内容保持暂存，不跟切实例落盘——
 	# 落盘走正式提交（Ctrl+S / 试玩）。旧下标只对旧实例有效，冲刷必须先于换选中。
-	commit_fields()
+	if not commit_fields():
+		return
 	_selected_ent = code
 	_selected_fn = -1
 	# E1：画布停靠态下点选了别的实例——演出面板编辑的已不是当前对象，先收起

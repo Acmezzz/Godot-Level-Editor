@@ -30,8 +30,7 @@ var _add_menu: PopupMenu:
 ## 这里所有调用点都是「改绑定前先冲刷控件值」，不能走完整 commit——
 ## 那会把 staged 新内容提前写盘（只有正式保存/试玩才该落盘，A2）。
 func commit() -> bool:
-	host.commit_fields()
-	return true
+	return host.commit_fields()
 func _current_fns() -> Array:
 	return host._current_fns()
 func _current_spr() -> EntityNode:
@@ -258,7 +257,8 @@ func _fn_index_of(fns: Array, tok: Dictionary) -> int:
 	return -1
 
 func _pick_fn(i: int) -> void:
-	commit()
+	if not commit():
+		return
 	_selected_fn = -1 if _selected_fn == i else i
 	_rebuild_right()
 
@@ -324,7 +324,8 @@ func _delete_fn(i: int) -> void:
 	var fns := _current_fns()
 	if spr == null or i < 0 or i >= fns.size():
 		return
-	commit()   # 待提交值先落到旧绑定上，随后才增删绑定
+	if not commit():
+		return
 	fns = _current_fns().duplicate(true)
 	fns.remove_at(i)
 	# order 之后重排：序号是执行顺序的唯一真相，删除后不能留空洞
@@ -342,7 +343,8 @@ func _move_fn(i: int, dir: int) -> void:
 	var j := i + dir
 	if spr == null or j < 0 or j >= fns.size():
 		return
-	commit()   # 待提交值先落到旧绑定上，随后才交换
+	if not commit():
+		return
 	fns = _current_fns().duplicate(true)
 	var t = fns[i]
 	fns[i] = fns[j]
@@ -363,7 +365,8 @@ func _add_fn(fn_id: String) -> void:
 	var spr := _current_spr()
 	if spr == null or fn_id == "":
 		return
-	commit()   # 追加前先落盘当前表单待提交值（下标保持有效）
+	if not commit():
+		return
 	var fns := _current_fns().duplicate(true)
 	fns.append({"fn": FunctionDecls.fn_code(manifest, fn_id), "content": "", "name": "",
 		"order": fns.size() + 1, "parallel": false})

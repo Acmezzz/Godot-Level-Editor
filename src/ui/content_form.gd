@@ -63,8 +63,7 @@ var _r_badge: PanelContainer:
 ## 同名包装方法（真实实现经 host 转发）
 ## 表单内部调用点都是「换选择前先冲刷控件值」，不落 staged（A2）。
 func commit() -> bool:
-	host.commit_fields()
-	return true
+	return host.commit_fields()
 func _current_fns() -> Array:
 	return host._current_fns()
 func _current_spr() -> EntityNode:
@@ -188,10 +187,11 @@ func _build_form_block() -> Control:
 	if fields.is_empty():
 		box.add_child(Kit.hint_label("这个功能没有声明可填字段；填个名字即可。", RIGHT_W - 40))
 	var cur: Dictionary = data.get("fields", {}) if data.get("fields", {}) is Dictionary else {}
+	var target := {"entity": _current_spr(), "binding": _current_fns()[i], "doc": _doc_key()}
 	for fd in fields:
 		if not (fd is Dictionary):
 			continue
-		box.add_child(_build_field_row(i, fn_id, fd, cur, fields))
+		box.add_child(_build_field_row(i, fn_id, fd, cur, fields, target))
 	# 条件区：功能声明引用的条件库条目。条件参数是实例上填的——同一条件被不同
 	# 实例引用时参数各填各的；值与功能字段共存于同一份内容 fields（键=字段码）。
 	var cond_fds: Array = []
@@ -209,7 +209,7 @@ func _build_form_block() -> Control:
 			if not (fd2 is Dictionary):
 				continue
 			cond_fds.append(fd2)
-			box.add_child(_build_field_row(i, fn_id, fd2, cur, fields + cond_fds))
+			box.add_child(_build_field_row(i, fn_id, fd2, cur, fields + cond_fds, target))
 	if content_id == "":
 		box.add_child(Kit.hint_label("首次修改任意字段即创建内容条目。", RIGHT_W - 40))
 	var undeclared := _undeclared_block(fields, cond_fds, cur)
@@ -254,7 +254,7 @@ func _undeclared_block(fields: Array, cond_fields: Array, cur: Dictionary) -> Co
 ## 内容文件里的键一律是字段码（ensure_codes 保证声明都有码，无回退）。
 ## E1：同图实例引用额外给「画布选…」——临时切回画布点目标，确认才写值
 ## （取消时原值/焦点都不动，控件也不重建）。
-func _build_field_row(i: int, fn_id: String, fd: Dictionary, cur: Dictionary, siblings: Array = []) -> Control:
+func _build_field_row(i: int, fn_id: String, fd: Dictionary, cur: Dictionary, siblings: Array, target: Dictionary) -> Control:
 	var fid := str(fd.get("id", ""))
 	var key := str(fd.get("code", ""))
 	var val = cur.get(key, fd.get("default", FieldWidgets.default_for(fd)))
@@ -267,8 +267,18 @@ func _build_field_row(i: int, fn_id: String, fd: Dictionary, cur: Dictionary, si
 		if tk != "":
 			d = fd.duplicate(true)
 			d["_mapKey"] = tk
-	var built := FieldWidgets.build(d, val, func(v):
-		_set_field(i, fn_id, key, v), _resolve_options, "code")
+	var apply := func(v) -> bool:
+		var rows := _current_fns()
+		if target.doc != _doc_key() or target.entity != _current_spr() or i >= rows.size():
+			return false
+		if not is_same(rows[i], target.binding):
+			return false
+		var had_content := str(target.binding.get("content", "")) != ""
+		var ok := _set_field(i, fn_id, key, v)
+		if ok and not had_content and i < _current_fns().size():
+			target.binding = _current_fns()[i]
+		return ok
+	var built := FieldWidgets.build(d, val, apply, _resolve_options, "code")
 	if built.get("commit") is Callable and (built.commit as Callable).is_valid():
 		_pending_commits.append(built.commit)
 	var row := Kit.field_row(label, built.ctl, 96)
@@ -278,7 +288,7 @@ func _build_field_row(i: int, fn_id: String, fd: Dictionary, cur: Dictionary, si
 		row.tooltip_text = tip
 	if FieldWidgets.wants_canvas_pick(fd):
 		var pick := Kit.button("画布选…", func():
-			_pick_entity_for(fd, key, func(code): _set_field(i, fn_id, key, code)), "ghost")
+			_pick_entity_for(fd, key, apply), "ghost")
 		pick.tooltip_text = "临时切到画布点一个实例；确认才写入，取消不改当前值" \
 			if not FieldWidgets.wants_cell_pick(fd) else \
 			"临时切到画布点格图里的一格（按多边形命中）；确认才写入，取消不改当前值"
@@ -481,15 +491,13 @@ func _content_conflict(cid: String) -> void:
 ## 改走 ContentKey 差量（§7.5 阶段二）：记录改前/改后整份内容 + 两侧摘要，
 ## undo 只写回那一个文件，盘上被外部改过则拒绝覆盖。
 ## 连续控件只在失焦/回车提交。
-func _set_field(i: int, fn_id: String, key: String, value) -> void:
-	# 字符串字段统一 strip_edges——所有字符串值同一口径，避免同一字段
-	# 在两条编辑路径里一个被裁、一个带着首尾空格落盘。
+func _set_field(i: int, fn_id: String, key: String, value) -> bool:
 	if value is String:
 		value = (value as String).strip_edges()
 	var cid := _ensure_content(i)
 	if cid == "":
 		_ensure_failed()
-		return
+		return false
 	var rd := _content_read_ex(fn_id, cid)
 	var data: Dictionary = rd.data
 	if data.is_empty():
@@ -497,19 +505,19 @@ func _set_field(i: int, fn_id: String, key: String, value) -> void:
 	var before: Dictionary = data.duplicate(true)
 	var fields: Dictionary = data.get("fields", {}) if data.get("fields", {}) is Dictionary else {}
 	if fields.get(key, null) == value:
-		return
+		return true
 	fields[key] = value
 	data["fields"] = fields
 	var wr := _content_write(fn_id, cid, data, str(rd.digest))
 	if wr == "conflict":
 		_content_conflict(cid)
-		return
+		return false
 	if wr != "ok":
 		_ensure_failed()
-		return
+		return false
 	_record_content_delta(fn_id, cid, before, data, str(rd.digest))
-	# P04：改字段值不动左列行的「类型名 + 实例码」，只刷预览
 	_refresh_value_only()
+	return true
 
 ## 内容差量记账（ContentKey = 功能 id + 内容 id）：只记已落盘的那份内容。
 ## digest_before 为空（新建/staged）不记——这类内容撤销等于放弃暂存，由暂存复核处理。

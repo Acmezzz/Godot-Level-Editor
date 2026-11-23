@@ -692,7 +692,8 @@ func _set_mode(mode: String, focus_sid := "") -> void:
 	# 离开内容页前提交待提交的 SpinBox 值（连续控件失焦才写盘，直接 Esc 切走会丢）；
 	# 只冲刷控件值，暂存的新内容留到正式保存/试玩（A2）。
 	if mode != "content" and project_shell != null and project_shell.content_editor != null:
-		project_shell.content_editor.commit_fields()
+		if not project_shell.content_editor.commit_fields():
+			return
 		# E1：记下定位（实例 + 展开的功能），回内容页时按身份恢复
 		if str(project_shell._view) == "content":
 			project_shell.remember_content_context()
