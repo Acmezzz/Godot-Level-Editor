@@ -892,7 +892,12 @@ func commit_document(reason := "", dry_run := false) -> Dictionary:
 		if map_snapshot.is_empty():
 			_release_busy()
 			return {"status": "failed", "error": "地图正在重建，无法复核暂存依赖"}
+		if op.map_dirty:
+			map_snapshot.meta.name = str(op.map_name)
+			MapStore.ensure_code(app.manifest, map_snapshot)
 		op["map_snapshot"] = map_snapshot
+	if sess.codes_pending:
+		op["manifest_expected"] = JSON.stringify(app._manifest_write_payload(app.manifest), "\t").sha256_text()
 	var prep: Dictionary = _doc_commit.prepare(op, snap)
 	if str(prep.get("status", "")) == "empty":
 		_release_busy()

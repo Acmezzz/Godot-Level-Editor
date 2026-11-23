@@ -26,7 +26,7 @@ func prepare(operation: Dictionary, snap: Dictionary) -> Dictionary:
 	if bool((snap.get("manifest_changes", {}) as Dictionary).get("codes_pending", false)):
 		var mpath := str(m.get("_dir", "")).path_join("editor/editor_manifest.json")
 		targets.append({"op": "write", "kind": "manifest", "id": "",
-			"path": mpath, "baseline": Recovery.digest(mpath), "expected": ""})
+			"path": mpath, "baseline": Recovery.digest(mpath), "expected": str(operation.get("manifest_expected", ""))})
 	var dependencies := _bound_content(operation.get("map_snapshot", {}))
 	# 2) 暂存内容先于地图写盘；内部索引不能作为文件身份。
 	#    V4 P0-1：新内容的目标必须声明「预期不存在」——不能只靠空摘要表达，
@@ -49,8 +49,12 @@ func prepare(operation: Dictionary, snap: Dictionary) -> Dictionary:
 				"data": r.get("data", {}), "expect_absent": expect_absent, "baseline": baseline, "required": required}})
 	# 3) 地图（只脏图入计划：干净图没有待写项；写前外部改动确认在 hooks.save_map 里）
 	if bool(operation.get("map_dirty", false)) and str(operation.get("map_path", "")) != "":
+		var data: Dictionary = operation.get("map_snapshot", {})
+		var expected := JSON.stringify(data, "\t").sha256_text() if not data.is_empty() else ""
+		var baseline := str(operation.get("map_digest", ""))
 		targets.append({"op": "write", "kind": "map", "id": str(operation.get("map_name", "")),
-			"path": str(operation.get("map_path", "")), "baseline": str(operation.get("map_digest", "")), "expected": ""})
+			"path": str(operation.get("map_path", "")), "baseline": baseline,
+			"expected": expected, "expect_absent": baseline == ""})
 	if targets.is_empty():
 		return {"status": "empty"}
 	return {"status": "ok", "plan": {"token": str(snap.get("token", "")), "revision": int(snap.get("revision", 0)),
@@ -94,11 +98,7 @@ func apply(plan: Dictionary, hooks: Dictionary) -> Dictionary:
 	var receipt := {}
 	if targets.is_empty():
 		return {"status": "ok", "written": [], "conflicts": [], "receipt": {}, "targets": []}
-	var journal: Array = []
-	for t in targets:
-		var tj: Dictionary = t
-		journal.append({"path": str(tj.get("path", "")), "baseline": str(tj.get("baseline", "")),
-			"expect": "", "kind": str(tj.get("kind", "")), "id": str(tj.get("id", ""))})
+	var journal := _journal_entries(targets)
 	var log_path := Recovery.begin_pending(m, str(plan.get("operation", "")), journal)
 	if log_path == "":
 		return {"status": "failed", "written": written, "conflicts": [],
@@ -348,6 +348,29 @@ static func _matches_file(path: String, expect_absent: bool, baseline: String) -
 		return observed.state == "missing"
 	return observed.state == "present" and baseline != "" and observed.digest == baseline
 
+static func _journal_entries(targets: Array) -> Array:
+	var entries: Array = []
+	for target in targets:
+		var row: Dictionary = target
+		var op := str(row.get("op", "write"))
+		var baseline := str(row.get("baseline", ""))
+		var expect := str(row.get("expected", ""))
+		if op == "rename":
+			expect = baseline
+		elif row.has("frozen_text"):
+			expect = str(row.frozen_text).sha256_text()
+		elif row.has("map_data"):
+			expect = JSON.stringify(row.map_data, "\t").sha256_text()
+		elif row.get("kind") == "content":
+			var data: Dictionary = row.get("payload", row).get("data", {}).duplicate(true)
+			data["id"] = str(row.get("id", ""))
+			expect = JSON.stringify(data, "\t").sha256_text()
+		entries.append({"path": str(row.get("path", "")), "baseline": baseline, "expect": expect,
+			"kind": str(row.get("kind", "")), "id": str(row.get("id", "")), "op": op,
+			"from": str(row.get("from", "")),
+			"expect_absent": bool(row.get("target_absent", row.get("expect_absent", false)))})
+	return entries
+
 func apply_frozen(plan: Dictionary) -> Dictionary:
 	var m: Dictionary = plan.get("manifest", {})
 	var targets: Array = plan.get("targets", [])
@@ -356,11 +379,7 @@ func apply_frozen(plan: Dictionary) -> Dictionary:
 	var receipt := {}
 	if targets.is_empty():
 		return {"status": "ok", "written": [], "conflicts": [], "receipt": {}, "targets": []}
-	var journal: Array = []
-	for t in targets:
-		var tj: Dictionary = t
-		journal.append({"path": str(tj.get("path", "")), "baseline": str(tj.get("baseline", "")),
-			"expect": "", "kind": str(tj.get("kind", "")), "id": str(tj.get("id", ""))})
+	var journal := _journal_entries(targets)
 	var log_path := Recovery.begin_pending(m, str(plan.get("operation", "")), journal)
 	if log_path == "":
 		return {"status": "failed", "written": [], "conflicts": [],
@@ -447,11 +466,15 @@ func apply_frozen(plan: Dictionary) -> Dictionary:
 		"journal": log_path, "targets": receipts}
 
 ## 冻结计划的三种提前返回，收据口径与 apply 一致（已完成部分 + 其后 pending）。
-func _frozen_conflict(tgt: Dictionary, targets: Array, receipts: Array, _log: String, msg: String) -> Dictionary:
+func _frozen_conflict(tgt: Dictionary, targets: Array, receipts: Array, log_path: String, msg: String) -> Dictionary:
+	var written: Array = []
+	for row in receipts:
+		if row.get("status") in ["written", "deleted"]:
+			written.append(row.get("kind", ""))
 	receipts.append(_receipt_of(tgt, "conflict", ""))
 	receipts.append_array(_receipts_pending(targets, str(tgt.get("path", ""))))
-	return {"status": "conflict", "written": [], "conflicts": [{"path": str(tgt.get("path", "")),
-		"kind": str(tgt.get("kind", "")), "message": msg}], "receipt": {}, "targets": receipts}
+	return {"status": "conflict", "written": written, "conflicts": [{"path": str(tgt.get("path", "")),
+		"kind": str(tgt.get("kind", "")), "message": msg}], "receipt": {}, "targets": receipts, "journal": log_path}
 
 func _frozen_fail(tgt: Dictionary, targets: Array, receipts: Array, written: Array, log_path: String,
 		msg: String) -> Dictionary:

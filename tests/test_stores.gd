@@ -540,6 +540,21 @@ func test_pending_log_partial_detection() -> void:
 	DirAccess.remove_absolute(bad)
 	_wipe()
 
+func test_pending_recovers_before_progress_update() -> void:
+	_wipe()
+	var m := _fake_manifest()
+	var dc := preload("res://src/project/document_commit.gd")
+	var path := MapStore.path_for(m, "a")
+	var text := "{\"v\": 2}"
+	var log := Recovery.begin_pending(m, "中断", dc._journal_entries([
+		{"kind": "map", "path": path, "frozen_text": text, "target_absent": true},
+	]))
+	ok(log != "", "登记冻结摘要")
+	eq(Recovery.scan_pending(m)[0].status, "stale", "未写的新文件仍可判为待写")
+	ok(Recovery.write_text(path, text), "模拟写入成功、尚未回填")
+	eq(Recovery.scan_pending(m)[0].status, "done", "用预期摘要识别已完成写入")
+	_wipe()
+
 ## §7.1 阶段一：替换已成功但进度标记失败时必须停手，不能报成功也不能继续写。
 ## 这里直接验证底层判据：日志不在了，回填就返回 false（调用方据此停）。
 func test_pending_mark_fails_when_log_gone() -> void:

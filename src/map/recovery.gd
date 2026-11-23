@@ -357,25 +357,27 @@ static func scan_pending(m: Dictionary) -> Array:
 			var expect := str(entry.get("expect", ""))
 			var base := str(entry.get("baseline", ""))
 			var op := str(entry.get("op", "write"))
-			var state := "pending"
-			if tgt == "":
-				state = "manual"   # 没记目标路径 = 日志本身不完整
-			elif op == "delete":
-				# R06 改名/复制的清理项：目标已消失 = 已完成（期望态 = absent）；
-				# 还在 = 改名没走完，仍是待办
-				state = "pending" if FileAccess.file_exists(tgt) else "written"
-			elif not FileAccess.file_exists(tgt):
-				# V4 P0-3：写入意图在替换前登记，因此「基线非空、目标却不在」意味着计划开始后
-				# 目标被外部删除或写了一半——不能当成「本来就该新建」的 pending。
-				state = "manual" if base != "" or expect != "" else "pending"
-			else:
-				var cur := digest(tgt)
-				if expect != "" and cur == expect:
+			var seen := observe(tgt)
+			var cur := str(seen.get("digest", ""))
+			var state := "manual"
+			if op == "delete":
+				if seen.state == "missing":
 					state = "written"
 				elif base != "" and cur == base:
 					state = "pending"
-				else:
-					state = "manual"
+			elif op == "rename":
+				var src := observe(str(entry.get("from", "")))
+				if src.state == "missing" and expect != "" and cur == expect:
+					state = "written"
+				elif seen.state == "missing" and base != "" and src.get("digest", "") == base:
+					state = "pending"
+			elif seen.state == "missing" and base == "" \
+					and (bool(entry.get("expect_absent", false)) or expect == ""):
+				state = "pending"
+			elif expect != "" and cur == expect:
+				state = "written"
+			elif base != "" and cur == base:
+				state = "pending"
 			match state:
 				"written": written += 1
 				"pending": pending += 1
