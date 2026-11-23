@@ -127,32 +127,53 @@ static func new_map(name: String, w: int, h: int, proj := "", topo := "") -> Dic
 ## —— 地图码（v7）：meta.code 4 位码，项目内唯一。跨图引用（target_map / map_ref 字段）写码，
 ## 改名（文件名/显示名）不再破坏引用——与实例码/功能码同一身份原则，地图不再是「以名为身份」的例外。
 
-## 全项目地图码表 {code: 图名}；老图缺码不进表（由保存/迁移补发）。
+## 全项目地图码索引。一次扫描同时给出四张视图，避免 code_map / code_conflicts /
+## 引用解析各扫一遍盘（§5「引用扫描反复读盘」：原先每个引用要读全部地图文件两次）：
+##   by_name  {图名: 码}   by_code {码: [图名...]}（>1 = 撞码）   map {码: 图名}（= code_map，取字典序末位）
+##   unreadable [图名]（文件在、但读不出或结构校验不过 → 引用解析报 unreadable 而非 missing）
+##   names [图名]（目录里的全部地图，含读不出的）
 ## 带缓存（F1/P03）：签名 = 目录列举清单 + 各图 mtime，不再每图 open 取长度——
 ## 20 图 × 每次调用曾要约 3 ms（打开 20 个文件），而绘制出口角标每帧都要这张表。
 ## 目录列举能看见新增/删除/改名（文件系统的时间戳精度在目录项上比文件内容可靠），
 ## mtime 能看见内容改动；写盘路径另调 invalidate_code_map() 显式失效兜住同秒写。
-static var _cm_cache := {}
-static var _cm_key := "__never__"
+static var _ci_cache := {}
+static var _ci_key := "__never__"
 
-## 写盘/改名/删除后调用：下次 code_map 必重算（不依赖 mtime 粒度）。
+## 写盘/改名/删除后调用：下次 code_index 必重算（不依赖 mtime 粒度）。
 static func invalidate_code_map() -> void:
-	_cm_key = "__never__"
+	_ci_key = "__never__"
 
-static func code_map(m: Dictionary) -> Dictionary:
+static func code_index(m: Dictionary) -> Dictionary:
 	var names := list_maps(m)
 	var key := _cm_signature(m, names)
-	if _cm_key == key:
-		return _cm_cache
-	var out := {}
+	if _ci_key == key:
+		return _ci_cache
+	var by_name := {}
+	var by_code := {}
+	var plain := {}
+	var unreadable: Array = []
 	for mn in names:
-		var md := read(m, str(mn))
+		var n := str(mn)
+		var md := _read_cached(path_for(m, n), m)
+		if md.is_empty():
+			# 图名在目录里但内容读不出（坏 JSON / 校验不过）：不是「没有这张图」
+			unreadable.append(n)
+			continue
 		var c := str((md.get("meta", {}) as Dictionary).get("code", ""))
-		if c != "":
-			out[c] = str(mn)
-	_cm_cache = out
-	_cm_key = key
-	return out
+		if c == "":
+			continue
+		by_name[n] = c
+		plain[c] = n   # 撞码时保留字典序末位（历史行为），冲突由 by_code 摆出全部路径
+		if not by_code.has(c):
+			by_code[c] = []
+		(by_code[c] as Array).append(n)
+	_ci_cache = {"by_name": by_name, "by_code": by_code, "map": plain,
+		"unreadable": unreadable, "names": names}
+	_ci_key = key
+	return _ci_cache
+
+static func code_map(m: Dictionary) -> Dictionary:
+	return code_index(m).get("map", {}) as Dictionary
 
 ## 签名：图名清单 + 每图 mtime（不 open 文件）。图名清单抓新增/删除/改名，
 ## mtime 抓内容改动；同秒内的原地改写由写路径的 invalidate_code_map 兜住。
@@ -197,15 +218,7 @@ static func ensure_code(m: Dictionary, data: Dictionary) -> bool:
 ## 引用解析侧的「一码一图」表（code_map）在撞码时只保留最后读到的图名——
 ## 这正是必须用本函数把全部路径摆出来的原因。
 static func code_conflicts(m: Dictionary) -> Dictionary:
-	var by_code := {}
-	for mn in list_maps(m):
-		var md := read(m, str(mn))
-		var c := str((md.get("meta", {}) as Dictionary).get("code", ""))
-		if c == "":
-			continue
-		if not by_code.has(c):
-			by_code[c] = []
-		(by_code[c] as Array).append(str(mn))
+	var by_code: Dictionary = code_index(m).get("by_code", {})
 	var out := {}
 	for c in by_code:
 		if (by_code[c] as Array).size() > 1:

@@ -5,6 +5,7 @@ const MapStore := preload("res://src/map/map_store.gd")
 const ContentStore := preload("res://src/content/content_store.gd")
 const ProjectAudit := preload("res://src/project/project_audit.gd")
 const Recovery := preload("res://src/map/recovery.gd")
+const ReferenceIndex := preload("res://src/project/reference_index.gd")
 
 const TMP := "user://test_stores_tmp"
 
@@ -249,6 +250,42 @@ func test_map_code_conflict_lists_all_paths() -> void:
 				and str(e.get("message", "")).contains("b.json"):
 			found += 1
 	eq(found, 1, "审计报告给出两条路径")
+	_wipe()
+
+## V4 §4.2-4：地图键解析六态——不合法键 / 图在但读不出，都不能压成 missing
+## （压成 missing 会让审计把合法引用当悬空清掉）。
+func test_resolve_map_states() -> void:
+	_wipe()
+	var m := _fake_manifest()
+	var d := MapStore.new_map("okmap", 8, 8)
+	d.meta["code"] = "GOOD"
+	ok(MapStore.write(m, "okmap", d), "正常图写入")
+	eq(str(ReferenceIndex.resolve_map(m, "").get("status")), "unset", "空键 = unset")
+	eq(str(ReferenceIndex.resolve_map(m, "GOOD").get("status")), "ok", "码命中 = ok")
+	eq(str(ReferenceIndex.resolve_map(m, "okmap").get("status")), "ok", "图名命中 = ok")
+	eq(str(ReferenceIndex.resolve_map(m, "nosuch").get("status")), "missing", "普通未知键 = missing")
+	eq(str(ReferenceIndex.resolve_map(m, "bad/name").get("status")), "invalid",
+		"不能当地图名的键 = invalid（永远解析不成文件）")
+	# 图名在目录里、内容读不出 = unreadable（不是 missing）
+	DirAccess.make_dir_recursive_absolute(str(m._maps_dir))
+	var bad_path := str(m._maps_dir).path_join("broken.json")
+	var f := FileAccess.open(bad_path, FileAccess.WRITE)
+	f.store_string("{ not json")
+	f.close()
+	eq(str(ReferenceIndex.resolve_map(m, "broken").get("status")), "unreadable",
+		"文件在但读不出 = unreadable")
+	# 引用解析的消费侧：读不出的目标不参与悬空判定
+	var tgt := MapStore.new_map("tgt", 8, 8)
+	tgt.meta["code"] = "TGTT"
+	ok(MapStore.write(m, "tgt", tgt), "目标图写入")
+	var audit := ProjectAudit.audit(m)
+	var cleared := 0
+	for e in audit:
+		var fx = (e as Dictionary).get("fix", null)
+		if fx is Dictionary and str((fx as Dictionary).get("map", "")) == "broken":
+			cleared += 1
+	eq(cleared, 0, "读不出的目标图不产出清空项")
+	DirAccess.remove_absolute(bad_path)
 	_wipe()
 
 ## A3：草稿写到 editor/drafts/<地图码>.json，记录目标/基线/快照，可读回、可删。

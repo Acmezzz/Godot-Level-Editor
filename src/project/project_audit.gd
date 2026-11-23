@@ -782,8 +782,10 @@ static func _ref_checks(data: Dictionary, manifest: Dictionary, map_name: String
 			var rstat := str(ReferenceIndex.resolve_map(manifest, map_key).get("status", ""))
 			# V4 P0-5：歧义（一码多图/名字与码互撞）不参与悬空判定，也不产生自动清理项——
 			# 审计的码冲突条目才是唯一出处，按引用再猜一次就会清掉合法值。
-			var ref_fixable := rstat != "ambiguous"
+			# §4.2-4：目标图读不出来（unreadable）同样不能当「目标不存在」清掉，只算判定范围不完整。
+			var ref_fixable := rstat != "ambiguous" and rstat != "unreadable"
 			var ok_target: bool = map_codes.has(map_key) or rstat == "ambiguous" \
+				or rstat == "unreadable" \
 				or (maps_dir == "" or FileAccess.file_exists(maps_dir.path_join(map_key + ".json")))
 			# 配对地图（C1）：目标码必须在目标图的 objects 里；未配对 = 本图
 			var target_codes := codes
@@ -867,6 +869,9 @@ static func _edge_ref_problem(manifest: Dictionary, data: Dictionary, val) -> Di
 		if rstat == "ambiguous":
 			# 一码多图：不知道指的是哪张图，比对邻接没有意义（由码冲突条目单列）
 			return {"message": "", "fixable": false}
+		if rstat == "unreadable":
+			# §4.2-4：目标图在但读不出来——拓扑不可比，同样不可自动清（不报、也不给清空项）
+			return {"message": "", "fixable": false}
 		if rstat != "ok":
 			return {"message": "格边引用的目标地图不存在: %s" % e_map, "fixable": true}
 		var td: Dictionary = MapStore.read(manifest, str(ReferenceIndex.map_name_of(manifest, e_map)))
@@ -908,11 +913,6 @@ static func _codes_of_map_ex(manifest: Dictionary, map_key: String) -> Dictionar
 			if c != "":
 				codes[c] = true
 	return {"ok": true, "codes": codes}
-
-## 地图键（图名或地图码）→ 图名；未知/空返回 ""。码重复时拒绝猜测（code_map 已按重复剔除）。
-static func _map_name_of(manifest: Dictionary, map_key: String) -> String:
-	# B2（§7.2）：统一走 ReferenceIndex.resolve_map（撞码返回 ""：不猜，冲突由审计单列）
-	return ReferenceIndex.map_name_of(manifest, map_key)
 
 ## 清单校验条目包装（带 kind 标记；清单级问题不可跳转）。
 static func _wrap(kind: String, e: Dictionary) -> Dictionary:
