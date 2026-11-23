@@ -144,4 +144,7 @@
   `_apply_tool`）与 `_paint`（补格路径 `_paint_path` 同理）各自守门，任何新增调用者都自动受约束；
   拖动补格前也先判锁定，避免每个 mouse-motion 反复提示。笔画在顶掉手势（`begin_gesture`）与撤销
   （`undo`）前先 `stroke_end` 定格，已涂格不再丢失；撤销不再 `stroke_cancel` 丢弃记录。
+- 记录控件/批量改值/提交失败：`commit_document` 与「未落盘地图改名落盘」不再忽略
+  `commit_fields()` 的 false 结果——控件值写失败即中止提交/改名并给出原因，不再让地图
+  带着没落盘的字段值写出去。
 - 测试：`test_grid_space` 增加三角列折算断言（位移/所在格/范围/边界）。全套 262 用例通过。

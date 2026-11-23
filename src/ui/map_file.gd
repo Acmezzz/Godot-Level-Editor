@@ -563,7 +563,9 @@ func rename_map_now(old_name: String, new_name: String, allow_write_unsaved := f
 		if app.project_shell != null:
 			ce = app.project_shell.content_editor
 		if ce != null:
-			ce.commit_fields()
+			# 字段写失败就不该继续写盘：否则新地图文件带着没落盘的字段值
+			if not ce.commit_fields():
+				return "表单字段写入失败：改名已中止"
 		var jentries: Array = []
 		var idx_by_cid := {}
 		if ce != null:
@@ -835,9 +837,12 @@ func commit_document(reason := "", dry_run := false) -> Dictionary:
 			app.canvas.end_gesture()
 		app.canvas.doc_busy = true   # 确认/写入期间冻结撤销与重做
 	# R01/R04：先收集控件值——可能新增暂存条目或写已有内容文件，目标集合以收集后的为准。
+	# 集合失败即中止（V4 P1）：继续提交会让地图带着没落盘的字段值写出去。
 	var ce = app.project_shell.content_editor if app.project_shell != null else null
-	if ce != null:
-		ce.commit_fields()
+	if ce != null and not ce.commit_fields():
+		_release_busy()
+		app._set_status(" 提交中止：表单字段写入失败（" + reason + "），地图未写入")
+		return {"status": "failed", "written": [], "error": "字段写入失败", "pending": _pending_targets()}
 	# B1（§7.1）：提交编排迁到 DocumentCommit——冻结会话快照与 Plan，按依赖序执行；
 	# 清单/地图写盘的外部改动确认对话框保留在 UI 侧钩子（_hook_*）里。
 	var sess := DocumentSession.new()
