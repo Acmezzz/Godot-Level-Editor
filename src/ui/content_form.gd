@@ -750,6 +750,18 @@ func flush_one(cid: String, payload := {}, on_written: Callable = Callable()) ->
 		(on_written as Callable).call(fn_id, cid)
 	return {"status": "ok"}
 
+## 消费冻结计划中已落盘的内容，失败目标继续留在工作副本里。
+func consume_written_staged(receipts: Array) -> void:
+	var doc := _doc_key()
+	for row in receipts:
+		if row.get("kind") != "content" or row.get("status") != "written":
+			continue
+		var fn_id := str(row.get("fn_id", ""))
+		var cid := str(row.get("id", ""))
+		var staged = _staged_get(fn_id, cid)
+		if staged is Dictionary and staged.get("doc") == doc:
+			_staged_erase(fn_id, cid)
+
 ## 暂存表本体（B1：DocumentSession 经它共享同一份工作副本，字典按引用传递）。
 func staged_table() -> Dictionary:
 	return _staged

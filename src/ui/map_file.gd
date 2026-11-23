@@ -521,7 +521,7 @@ func rename_current_from_dialog(old_name: String, name_edit: LineEdit, err_label
 		return
 	# 真正的文件级改名（含「未落盘 → 按新名写盘」）统一走 rename_map_now
 	var was_on_disk := FileAccess.file_exists(EditorManifest.map_path(app.manifest, old_name))
-	var err := rename_map_now(old_name, nn, true)
+	var err := await rename_map_now(old_name, nn, true)
 	if err != "":
 		err_label.text = "改名失败：" + err
 		return
@@ -548,11 +548,24 @@ func rename_map_now(old_name: String, new_name: String, allow_write_unsaved := f
 		return "同名地图已存在"
 	var is_current: bool = app.map_loaded and old_name == _effective_map_name()
 	var on_disk := old_path != "" and FileAccess.file_exists(old_path)
+	if is_current and app.canvas.doc_busy:
+		return "另一次文档操作正在进行"
 	if on_disk:
-		var err: String = app.MapStore.rename_map(app.manifest, old_name, nn)
+		if is_current and sess.opened_digest == "":
+			return "原图缺少保存基线，请重新打开后再改名"
+		var err: String = app.MapStore.rename_map(app.manifest, old_name, nn, sess.opened_digest if is_current else "")
 		if err != "":
 			return err
 	elif allow_write_unsaved and is_current:
+		if sess.opened_digest != "":
+			return "原图已被删除，请重新检查地图文件"
+		if bool(app.manifest.get("_codes_issued", false)):
+			var guard := _commit_is_current.bind(sess.generation, sess.revision, app.manifest)
+			app.canvas.doc_busy = true
+			var saved: bool = await app._save_manifest_file_async(guard)
+			_release_busy()
+			if not saved or not guard.call():
+				return "清单未保存或文档已变化"
 		# 原图未落盘（新建后还没保存）：改名必须真正落地，否则只改内存名 =
 		# 面板显示新名、磁盘上始终没文件，用户看到的「重命名」是假的。
 		# R06/§4.4-4：这是一次正式提交（内容 → 地图），走 DocumentCommit 的冻结计划：
@@ -568,6 +581,8 @@ func rename_map_now(old_name: String, new_name: String, allow_write_unsaved := f
 		if data.is_empty():   # 重建窗口哨兵：此刻写盘会把空图落成新文件
 			return " 地图重建中，请稍后再试"
 		data.meta.name = nn
+		if not MapStore.validate_for_write(data, app.manifest):
+			return "地图校验失败：" + MapStore.write_error(app.manifest, data)
 		var frozen: Array = []
 		if ce != null:
 			for row in ce.staged_rows_current_doc():
@@ -582,6 +597,8 @@ func rename_map_now(old_name: String, new_name: String, allow_write_unsaved := f
 		if str(prep.get("status", "")) != "ok":
 			return "提交计划为空：改名已中止"
 		var res: Dictionary = _doc_commit.apply_frozen(prep.get("plan", {}) as Dictionary)
+		if ce != null:
+			ce.consume_written_staged(res.get("targets", []))
 		if str(res.get("status", "")) != "ok":
 			var why := str(res.get("error", ""))
 			if why == "":

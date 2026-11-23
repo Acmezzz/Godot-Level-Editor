@@ -376,11 +376,9 @@ static func _is_legacy_draft(path: String) -> bool:
 	var data = JSON.parse_string(text)
 	return data is Dictionary and str((data as Dictionary).get("_autosave_of", "")) != ""
 
-## 纯 rename——只改文件名，不迁移引用（拍板：改名不迁移）。
-## 返回错误信息；"" = 成功。
-## §4.4-4：落盘编排交给 DocumentCommit 的冻结计划（rename 目标 + 日志 + 收据），
-## 本函数只做前置校验与收尾（缓存失效、显示名回写、旧位置历史清理）。
-static func rename_map(m: Dictionary, old_name: String, new_name: String) -> String:
+## 改名保留地图码和引用，计划内写入新名称后再删除旧文件。
+## 返回错误信息，空串表示两个目标均已完成。
+static func rename_map(m: Dictionary, old_name: String, new_name: String, baseline := "") -> String:
 	new_name = new_name.strip_edges()
 	if not ManifestScript.is_valid_map_name(new_name):
 		return "名称非法"
@@ -392,11 +390,18 @@ static func rename_map(m: Dictionary, old_name: String, new_name: String) -> Str
 	if src == "" or not FileAccess.file_exists(src):
 		return "原图不存在"
 	var dst := path_for(m, new_name)
-	# R06：改名 = 一次多文件提交（这里是单次原子 rename + 删除效果）——进提交日志，
-	# 中途失败可辨认可清理；日志不可写时中止（与正式提交同一门槛）。
+	var original := read_path(src, m)
+	if not original.ok:
+		return "原图无法读取或校验失败"
+	if baseline != "" and original.digest != baseline:
+		return "原图已被外部修改，请重新打开后再改名"
+	var renamed: Dictionary = original.data
+	renamed.meta.name = new_name
 	var DC := preload("res://src/project/document_commit.gd").new()
-	var prep: Dictionary = DC.prepare_frozen("地图改名 %s → %s" % [old_name, new_name], m,
-		[preload("res://src/project/document_commit.gd").rename_target(src, dst, new_name)])
+	var prep: Dictionary = DC.prepare_frozen("地图改名 %s → %s" % [old_name, new_name], m, [
+		{"kind": "map", "id": new_name, "path": dst, "expect_absent": true, "map_data": renamed},
+		{"kind": "map", "id": old_name, "path": src, "op": "delete", "baseline": original.digest},
+	])
 	if str(prep.get("status", "")) != "ok":
 		return "提交计划为空：改名已中止"
 	var res: Dictionary = DC.apply_frozen(prep.get("plan", {}) as Dictionary)
@@ -405,14 +410,12 @@ static func rename_map(m: Dictionary, old_name: String, new_name: String) -> Str
 		if why == "":
 			var cs: Array = res.get("conflicts", [])
 			why = str((cs[0] as Dictionary).get("message", "")) if not cs.is_empty() else "改名失败"
+		for row in res.get("targets", []):
+			if row.get("path") == dst and row.get("status") == "written":
+				invalidate_read_cache()
+				invalidate_code_map()
+				return "新地图已写入，请检查新旧文件及待处理日志：" + why
 		return why
-	# 文件内 meta.name 同步改名（A3）：只改文件名会让重开/历史查询拿到旧名。
-	# R06：回写失败不得报成功——文件已在新名下，显示名未更新要显式报告。
-	var renamed := read(m, new_name)
-	if not renamed.is_empty() and str((renamed.get("meta", {}) as Dictionary).get("name", "")) != new_name:
-		renamed.meta.name = new_name
-		if not write_json(dst, renamed):
-			return "改名后显示名回写失败（文件已在新名字下，显示名未更新）"
 	_cache.erase(src)
 	_cache.erase(dst)
 	invalidate_code_map()   # 改名换了文件：码表按图名做键，必须重算
@@ -467,9 +470,11 @@ static func duplicate_map(m: Dictionary, old_name: String, new_name: String,
 	var doc: Dictionary = plan.get("document", {}) if plan.get("document", {}) is Dictionary else {}
 	if doc.is_empty():
 		return "复制文档组装失败"
+	if not validate_for_write(doc, m):
+		return "复制地图校验失败：" + write_error(m, doc)
 	var mpath := path_for(m, new_name)
 	frozen.append({"kind": "map", "id": new_name, "path": mpath, "expect_absent": true,
-		"frozen_text": JSON.stringify(doc, "\t") + "\n"})
+		"map_data": doc})
 	var DC := preload("res://src/project/document_commit.gd").new()
 	var prep: Dictionary = DC.prepare_frozen("整图复制 %s → %s" % [old_name, new_name], m, frozen)
 	if str(prep.get("status", "")) != "ok":

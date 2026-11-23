@@ -478,7 +478,7 @@ func _frozen_log_fail(targets: Array, receipts: Array, written: Array, log_path:
 
 ## 单目标收据：{kind, id, path, status, digest}。digest 只在真写了文件时给。
 static func _receipt_of(tgt: Dictionary, status: String, dig: String) -> Dictionary:
-	return {"kind": str(tgt.get("kind", "")), "id": str(tgt.get("id", "")),
+	return {"kind": str(tgt.get("kind", "")), "id": str(tgt.get("id", "")), "fn_id": str(tgt.get("fn_id", "")),
 		"path": str(tgt.get("path", "")), "status": status, "digest": dig}
 
 ## 停在某目标之后：其后目标全部记为 pending（含因提前返回而没轮到的）。

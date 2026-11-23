@@ -898,6 +898,9 @@ func staged_data_by_cid() -> Dictionary:
 	return _form.staged_data_by_cid()
 func has_staged_for_current_doc() -> bool:
 	return _form.has_staged_for_current_doc()
+func consume_written_staged(receipts: Array) -> void:
+	_form.consume_written_staged(receipts)
+
 func drop_staged_for_current_doc() -> int:
 	return _form.drop_staged_for_current_doc()
 ## 草稿恢复：把待提交内容载荷重新暂存（R03）；返回收下的条数。
