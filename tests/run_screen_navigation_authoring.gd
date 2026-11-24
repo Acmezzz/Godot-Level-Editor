@@ -36,10 +36,11 @@ func run() -> void:
 					"contentTypes": ["signal"], "contentMapContext": "inherit"}]}],
 		"startup": {"screens": true}, "viewports": [{"id": "handheld", "w": 480, "h": 720}],
 		"mapOutputs": {"completed": {"name": "Course completed",
-			"maps": true, "screens": true, "contentTypes": ["signal"]},
+			"maps": true, "screens": true, "contentTypes": ["signal"], "arrivalPorts": ["arrival"]},
 			"retry": {"name": "Retry the course", "arrivalPorts": ["arrival"]}},
 		"mapContentSlots": {"round": {"name": "Round rules",
-			"contentTypes": ["round_rules"], "contentMapContext": "inherit"}},
+			"contentTypes": ["round_rules"], "contentMapContext": "inherit"},
+			"course": {"name": "Generated course rules", "contentTypes": ["course_rules"]}},
 		"mapGenerators": {"course": {"contentType": "course_rules",
 			"parameterFields": ["projection", "placements"]}},
 		"preview": {"version": 1, "executable": OS.get_executable_path(), "capabilities": ["generateMap"],
@@ -276,6 +277,14 @@ func run() -> void:
 		return
 	space_choice.select(2)
 	space_choice.item_selected.emit(2)
+	var flow_label: Array = collect(regenerate, "Label").filter(func(label):
+		return label.text == "meta.flowOutputs.completed")
+	if not check(flow_label.size() == 1, "regeneration offers the whole completion target as a conflict"):
+		quit(1)
+		return
+	var flow_choice: OptionButton = collect(flow_label[0].get_parent(), "OptionButton")[0]
+	flow_choice.select(1)
+	flow_choice.item_selected.emit(1)
 	var merge_status: Label = regenerate.find_child("GeneratedMapStatus", true, false)
 	check("新增引用问题" in merge_status.text and "flowOutputs.retry" in merge_status.text and "R001" in merge_status.text,
 		"regeneration names the exact outlet and retired door before applying")
@@ -285,6 +294,7 @@ func run() -> void:
 	check(regenerated.meta.gridProjection == "isometric" and regenerated.spawn == [1, 2]
 		and regenerated.meta.flowOutputs.completed == {"view": "results"}
 		and regenerated.meta.contentSlots.round == round_target
+		and regenerated.meta.contentSlots.course == rules
 		and regenerated.objects[0].props.get("exit_target") == {"view": "results"}
 		and Array(regenerated.objects[0].props.get("landing", [])).map(func(n): return int(n)) == [16, 48],
 		"adopt generated geometry without erasing the map or instance outlets: %s" % [regenerated.objects[0]])

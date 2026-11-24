@@ -9,6 +9,7 @@ const SHAPE_PROPS := ["points", "holes", "parts"]
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
 const RefFields := preload("res://src/content/ref_fields.gd")
 const Conditions := preload("res://src/content/condition_decl.gd")
+const MapFlow := preload("res://src/map/map_flow.gd")
 
 static func origin(map: Dictionary) -> Dictionary:
 	var meta: Dictionary = map.get("meta", {})
@@ -175,11 +176,17 @@ static func _merge(base: Variant, live: Variant, incoming: Variant, path: String
 		var keys := original.duplicate()
 		keys.merge(live)
 		keys.merge(incoming)
+		var atomic := path.begins_with("meta.") and MapFlow.SECTIONS.has(path.trim_prefix("meta."))
 		for key in keys:
 			var segment := str(key)
 			var at := (segment if path == "" else path + "." + segment) if segment.is_valid_identifier() \
 				else path + "[" + JSON.stringify(segment) + "]"
-			var has := _merge_presence(original, live, incoming, key, at, state)
+			if path == "meta" and MapFlow.SECTIONS.has(key):
+				var slots: Dictionary = _merge(original.get(key, {}), live.get(key, {}), incoming.get(key, {}), at, state)
+				if not slots.is_empty():
+					output[key] = slots
+				continue
+			var has := _merge_presence(original, live, incoming, key, at, state, atomic)
 			if has.keep:
 				output[key] = has.value
 		return output
@@ -200,7 +207,7 @@ static func _resolve(path: String, authored: Dictionary, generated: Dictionary, 
 	return authored
 
 static func _merge_presence(base: Dictionary, live: Dictionary, next: Dictionary, key: Variant,
-		path: String, state: Dictionary) -> Dictionary:
+		path: String, state: Dictionary, atomic := false) -> Dictionary:
 	var b := base.has(key)
 	var l := live.has(key)
 	var n := next.has(key)
@@ -213,6 +220,10 @@ static func _merge_presence(base: Dictionary, live: Dictionary, next: Dictionary
 		return {"keep": n, "value": incoming}
 	if l != n:
 		return _resolve(path, {"keep": l, "value": current}, {"keep": n, "value": incoming}, state)
+	if atomic and l:
+		if _same(current, incoming):
+			return {"keep": true, "value": current}
+		return _resolve(path, {"keep": true, "value": current}, {"keep": true, "value": incoming}, state)
 	return {"keep": l, "value": _merge(before, current, incoming, path, state) if l else null}
 
 static func _tile_layer(path: String) -> bool:

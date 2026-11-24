@@ -374,7 +374,13 @@ func _preview(path: String) -> void:
 
 func _generate_course(dir: String, request: Dictionary) -> void:
 	var subject: Dictionary = request.subject
-	_write_json(dir.path_join("map.json"), _course_map(subject.parameters, subject.target))
+	var map := _course_map(subject.parameters, subject.target)
+	var goal := {"map": subject.target.code}
+	if subject.parameters.projection == "isometric":
+		goal.merge({"inst": "R002", "port": "door"})
+		map.meta["contentSlots"] = {"course": {"function": "course_rules", "content": "project-course-rules"}}
+	map.meta["flowOutputs"] = {"completed": goal}
+	_write_json(dir.path_join("map.json"), map)
 	_write_json(dir.path_join("result.json"), {"version": 1, "token": request.token, "status": "ready"})
 
 func _course_map(parameters: Dictionary, target: Dictionary) -> Dictionary:
