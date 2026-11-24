@@ -250,6 +250,11 @@ func run() -> void:
 		"map audit pinpoints the missing map-level destination")
 	published = await app._map_file_ctrl.commit_document("保存地图级出口")
 	check(published.get("status") == "ok", "publish the map-level completion outlet")
+	app._set_mode("content", pawn_code)
+	exit_picker = app.project_shell.content_editor.root.find_child("InstanceValue_exit_target", true, false)
+	choose(exit_picker, JSON.stringify({"view": "results"}))
+	app.project_shell.content_editor.commit_fields()
+	app._set_mode("map")
 	check(canvas.set_spawn_cell(Vector2i(4, 4)), "author a competing spawn move")
 	Generator.open(app, true)
 	var regenerate := popup()
@@ -269,7 +274,12 @@ func run() -> void:
 	var regenerated := canvas.extract()
 	check(regenerated.meta.gridProjection == "isometric" and regenerated.spawn == [1, 2]
 		and regenerated.meta.flowOutputs.completed == {"view": "results"}
-		and regenerated.meta.contentSlots.round == round_target, "adopt generated geometry without erasing authored flow")
+		and regenerated.meta.contentSlots.round == round_target
+		and regenerated.objects[0].props.get("exit_target") == {"view": "results"},
+		"adopt generated geometry without erasing the map or instance outlets")
+	published = await app._map_file_ctrl.commit_document("保存重生成的地图和实例出口")
+	check(published.get("status") == "ok" and Maps.read(manifest, "course").objects[0].props.exit_target == {"view": "results"},
+		"the kept instance outlet is published with the new projection")
 	app._set_mode("content")
 	var editor = app.project_shell.content_editor
 	editor._library._open_item("signal", "project-finished")

@@ -5,6 +5,7 @@ const KEY := "generatorSource"
 const GRID_KEYS := ["gridProjection", "gridTopology", "gridBasis"]
 const SPACE_META := ["gridProjection", "gridTopology", "gridBasis", "w", "h", "layers", "cellGraph"]
 const SPACE_ROWS := ["tiles", "collision", "objects", "spawn"]
+const SHAPE_PROPS := ["points", "holes", "parts"]
 
 static func origin(map: Dictionary) -> Dictionary:
 	var meta: Dictionary = map.get("meta", {})
@@ -36,8 +37,10 @@ static func plan(previous: Dictionary, authored: Dictionary, generated: Dictiona
 			{"keep": true, "value": _space_summary(incoming), "side": incoming}, state).side
 		if not state.conflicts.is_empty():
 			return {"map": current, "conflicts": state.conflicts}
+		var placements: Array = space.objects
+		var shared := _shared_instances(baseline.objects, current.objects, incoming.objects)
 		for map in [baseline, current, incoming]:
-			_use_space(map, space)
+			_use_space(map, space, placements, shared)
 	var result: Dictionary = _merge(baseline, current, incoming, "", state)
 	return {"map": result, "conflicts": state.conflicts}
 
@@ -58,14 +61,51 @@ static func _space_summary(map: Dictionary) -> Dictionary:
 		"图层": map.meta.layers.size(), "瓦片": map.tiles.values().reduce(func(n, rows): return n + rows.size(), 0),
 		"碰撞格": map.collision.size(), "实例": map.objects.size(), "出生点": map.spawn}
 
-static func _use_space(map: Dictionary, from: Dictionary) -> void:
+static func _shared_instances(base: Array, current: Array, incoming: Array) -> Dictionary:
+	var left := _instances_by_code(current)
+	var right := _instances_by_code(incoming)
+	var shared := {}
+	for row in base:
+		var code: String = row.get("code", "")
+		if left.has(code) and right.has(code) and left[code].asset == row.asset and right[code].asset == row.asset:
+			shared[code] = true
+	return shared
+
+static func _instances_by_code(rows: Array) -> Dictionary:
+	var indexed := {}
+	for row in rows:
+		var code: String = row.get("code", "")
+		if code != "":
+			indexed[code] = row
+	return indexed
+
+static func _use_space(map: Dictionary, from: Dictionary, placements: Array, shared: Dictionary) -> void:
 	for key in SPACE_META:
 		if from.meta.has(key):
 			map.meta[key] = from.meta[key]
 		else:
 			map.meta.erase(key)
-	for key in SPACE_ROWS:
+	for key in ["tiles", "collision", "spawn"]:
 		map[key] = from[key]
+	var originals := _instances_by_code(map.objects)
+	var aligned := []
+	for placement in placements:
+		var code: String = placement.get("code", "")
+		if not shared.has(code):
+			aligned.append(placement)
+			continue
+		var row: Dictionary = placement.duplicate()
+		var settings: Dictionary = originals[code]
+		var props: Dictionary = settings.get("props", {}).duplicate()
+		var shape: Dictionary = placement.get("props", {})
+		for key in SHAPE_PROPS:
+			props.erase(key)
+			if shape.has(key):
+				props[key] = shape[key]
+		row["props"] = props
+		row["functions"] = settings.get("functions", [])
+		aligned.append(row)
+	map.objects = aligned
 
 static func _normalized(map: Dictionary, name_: String) -> Dictionary:
 	var out := map.duplicate(true)
