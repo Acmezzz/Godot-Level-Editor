@@ -187,16 +187,12 @@ func _open_selected() -> void:
 	if _draft != _baseline:
 		_notice.text = "请先保存世界布局，再打开地图。"
 		return
-	var matches: Array = Maps.code_index(_source).by_code.get(_selected, [])
-	if matches.size() != 1:
-		_notice.text = "地图不存在或地图码重复。"
-		return
 	var host = _app
-	var target := str(matches[0])
-	_pop.hide()
-	await host._open_map_by_name(target)
-	if host.cur_map_name == target:
+	if await host._map_file_ctrl.open_map_by_code(_selected):
+		_pop.hide()
 		host._set_mode("map")
+	else:
+		_notice.text = "未打开地图。"
 
 func _save() -> void:
 	if _saving or _draft == _baseline:

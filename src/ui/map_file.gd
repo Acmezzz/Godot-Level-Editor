@@ -9,6 +9,7 @@ extends RefCounted
 ## 各入口（本控制器 + 内容视图保存 + 清除悬空）一次会提交哪些文件、按什么顺序，
 ## 由 docs/EDITOR_FEATURES.md §7.3「各入口提交哪些文件」唯一规定，此处不复述。
 ## 有未保存修改时新建/打开/切图/关窗口都要先确认；取消即中止。
+const ReferenceIndex := preload("res://src/project/reference_index.gd")
 const ClonePlan := preload("res://src/content/clone_plan.gd")
 const UiKitScript := preload("res://src/ui/ui_kit.gd")
 const BasisFields := preload("res://src/ui/grid_basis_fields.gd")
@@ -1149,6 +1150,17 @@ func prepare_playtest_document(project_entry: bool) -> Dictionary:
 	if not project_entry and (maps_root == "" or play_path.get_base_dir() != maps_root):
 		return {"error": " 试玩中止：地图不在当前项目 maps 目录内，拒绝启动"}
 	return {"path": play_path, "digest": digest}
+
+
+## References identify maps by code. Only the file-opening step needs a name.
+func open_map_by_code(code: String) -> bool:
+	var target := ReferenceIndex.resolve_map(app.manifest, code)
+	if target.status != "ok":
+		app._set_status("无法打开地图码：" + code)
+		return false
+	if not app.map_loaded or app.canvas.cur_map_code() != code:
+		await open_map_by_name(target.key)
+	return app.map_loaded and app.canvas.cur_map_code() == code
 
 
 func open_map_by_name(map_name: String) -> void:

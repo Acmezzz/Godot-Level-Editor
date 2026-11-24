@@ -951,10 +951,6 @@ func _build_project_view() -> void:
 func _scene_name(sid: String) -> String:
 	return preload("res://src/assets/asset_decl.gd").name_of(manifest, sid)
 
-## 协程透传：内部有未保存确认弹窗（await）。调用方必须也 await，
-## 否则弹窗一弹出就返回，新图还没加载完（顶栏切图刷新曾踩过这个坑）。
-func _open_map_by_name(map_name: String) -> void:
-	await _map_file_ctrl.open_map_by_name(map_name)
 ## —— 拆到 src/ui/project_picker.gd（调用点保持不变） ——
 
 func _load_projects() -> void:

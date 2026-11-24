@@ -8,7 +8,6 @@ extends HBoxContainer
 
 const Kit := preload("res://src/ui/ui_kit.gd")
 const CellGraphEditor := preload("res://src/ui/cell_graph_editor.gd")
-const References := preload("res://src/project/reference_index.gd")
 const WorldEditor := preload("res://src/ui/world_layout_editor.gd")
 const EventLayers := preload("res://src/project/event_layers.gd")
 const EventLayerDialog := preload("res://src/ui/event_layers_dialog.gd")
@@ -158,14 +157,11 @@ func _on_map_selected(id: int) -> void:
 	if id < 0 or id >= _menu_binds.size():
 		return
 	var selected: Dictionary = _menu_binds[id]
-	var name_: String = selected.name
 	var code: String = selected.code
-	if code != "":
-		var resolved := References.resolve_map_code(app.MapStore.code_index(app.manifest), code)
-		if resolved.status != "ok":
-			app._set_status("无法按地图码打开：%s [%s]" % [name_, code])
-			return
-		name_ = resolved.key
-	await app._open_map_by_name(name_)
+	if code.is_empty():
+		# An unissued legacy map is opened as a document before it receives its first code.
+		await app._map_file_ctrl.open_map_by_name(selected.name)
+	elif not await app._map_file_ctrl.open_map_by_code(code):
+		return
 	if after_switch.is_valid():
 		after_switch.call()

@@ -10,6 +10,7 @@ const Widgets := preload("res://src/ui/field_widgets.gd")
 const RelGraph := preload("res://src/content/rel_graph.gd")
 const RelGraphView := preload("res://src/ui/rel_graph_view.gd")
 const ReferenceViews := preload("res://src/ui/reference_view_library.gd")
+const EventLayerDialog := preload("res://src/ui/event_layers_dialog.gd")
 const MapFlowDialog := preload("res://src/ui/map_flow_dialog.gd")
 const MapFlow := preload("res://src/map/map_flow.gd")
 const References := preload("res://src/project/reference_index.gd")
@@ -229,8 +230,12 @@ func _open_flow() -> void:
 		if slot.selected < 0:
 			target.disabled = true
 			return
-		target.disabled = false
 		var edge: Dictionary = state.slots[slot.selected]
+		target.disabled = edge.has("event_layer")
+		if target.disabled:
+			target.set_item_text(0, "在图组事件层编辑")
+			target.select(0)
+			return
 		var match_idx := 0
 		var from_view: bool = edge.fn_id == RelGraph.VIEW_KIND
 		var mixed: bool = edge.get("flow_target", false)
@@ -386,12 +391,13 @@ func _open_flow() -> void:
 	view.on_pick = pick
 	var pick_edge := func(edge: Dictionary):
 		pick.call(edge.from)
-		if edge.has("map_instance"):
-			var map_name: String = state.index.nodes[edge.from].name
+		if edge.has("event_layer"):
 			pop.hide()
-			if not app.map_loaded or app.cur_map_name != map_name:
-				await app._open_map_by_name(map_name)
-			if app.map_loaded and app.cur_map_name == map_name:
+			EventLayerDialog.open.call_deferred(app, edge.event_layer)
+			return
+		if edge.has("map_instance"):
+			pop.hide()
+			if await app._map_file_ctrl.open_map_by_code(edge.cid):
 				var code: String = edge.map_instance
 				if app.canvas.focus_entity_code(code):
 					app._set_mode("content", code)
@@ -426,17 +432,13 @@ func _open_flow() -> void:
 		if not items.is_empty():
 			pick_edge.call(links.get_item_metadata(items[0]).edge), "ghost"))
 	actions.add_child(Kit.button("应用关系", func():
-		if state.saving or not is_same(app.manifest, source) or slot.selected < 0 or target.selected < 0 or target.is_item_disabled(target.selected):
+		if state.saving or not is_same(app.manifest, source) or slot.selected < 0 or target.disabled or target.selected < 0 or target.is_item_disabled(target.selected):
 			return
 		var edge: Dictionary = state.slots[slot.selected]
 		if edge.has("project_section"):
 			var section: String = edge.project_section
 			var before: Dictionary = source[section].duplicate(true)
 			var current: Dictionary = before if edge.field == "" else before.get(edge.field, {})
-			var layer: String = edge.get("event_layer", "")
-			if layer != "":
-				var previous = before.get(layer, {}).get("events", {}).get(edge.field)
-				current = edge.decl if previous == edge.decl.get("target") else {}
 			var chosen = target.get_selected_metadata()
 			var next: Dictionary = chosen if chosen is Dictionary else {}
 			if current != edge.decl or (not next.is_empty() and not StartupTargets.destination_available(source, current, next)):
@@ -453,23 +455,16 @@ func _open_flow() -> void:
 				notice.text = "关系未变。"
 				return
 			var candidate := source.duplicate(true)
-			if layer != "":
-				var events: Dictionary = candidate[section][layer].events
-				if next.is_empty():
-					events.erase(edge.field)
-				else:
-					events[edge.field] = next
+			var draft: Dictionary = candidate[section] if edge.field == "" else candidate[section][edge.field]
+			if next.is_empty():
+				draft.erase("target")
 			else:
-				var draft: Dictionary = candidate[section] if edge.field == "" else candidate[section][edge.field]
-				if next.is_empty():
-					draft.erase("target")
+				draft["target"] = next
+			if section == "startup":
+				if context_map.is_empty():
+					draft.erase("contentMap")
 				else:
-					draft["target"] = next
-				if section == "startup":
-					if context_map.is_empty():
-						draft.erase("contentMap")
-					else:
-						draft["contentMap"] = context_map
+					draft["contentMap"] = context_map
 			var guard := func() -> bool:
 				return is_instance_valid(pop) and pop.visible and is_same(app.manifest, source) and source.get(section) == before
 			state.saving = true
@@ -482,14 +477,12 @@ func _open_flow() -> void:
 		if edge.has("map_section"):
 			var chosen = target.get_selected_metadata()
 			var next: Dictionary = chosen if chosen is Dictionary else {}
-			var map_name: String = state.index.nodes[edge.from].name
 			state.saving = true
-			if not app.map_loaded or app.cur_map_name != map_name:
-				await app._open_map_by_name(map_name)
+			var opened: bool = await app._map_file_ctrl.open_map_by_code(edge.cid)
 			state.saving = false
 			if not is_instance_valid(pop) or not pop.visible or not is_same(app.manifest, source):
 				return
-			if not app.map_loaded or app.cur_map_name != map_name or app.canvas.cur_map_code() != edge.cid:
+			if not opened:
 				notice.text = "未打开源地图，未应用关系。"
 				return
 			var values := MapFlow.targets(app.canvas.map_data, edge.map_section).duplicate()
@@ -585,13 +578,9 @@ func _open_flow() -> void:
 		if item.fn_id == RelGraph.VIEW_KIND:
 			ReferenceViews.open.call_deferred(app, item.cid)
 		elif item.fn_id == RelGraph.MAP_KIND:
-			var map := References.resolve_map_code(app.MapStore.code_index(source), item.cid)
-			if map.status == "ok":
-				if app.cur_map_name != map.key or not app.map_loaded:
-					await app._open_map_by_name(map.key)
-				if app.map_loaded and app.cur_map_name == map.key:
-					app._set_mode("map")
-					MapFlowDialog.open(app)
+			if await app._map_file_ctrl.open_map_by_code(item.cid):
+				app._set_mode("map")
+				MapFlowDialog.open(app)
 		else:
 			_open_item.call_deferred(item.fn_id, item.cid)))
 	actions.add_child(Kit.button("重新扫描", func():

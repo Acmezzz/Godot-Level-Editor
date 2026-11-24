@@ -6,7 +6,7 @@ const Maps := preload("res://src/project/reference_index.gd")
 const SlotField := preload("res://src/ui/destination_slot_field.gd")
 const Kit := preload("res://src/ui/ui_kit.gd")
 
-static func open(app) -> void:
+static func open(app, layer_id := "") -> void:
 	var source: Dictionary = app.manifest
 	var before: Dictionary = source.get(Layers.KEY, {})
 	var draft := before.duplicate(true)
@@ -112,7 +112,7 @@ static func open(app) -> void:
 	toolbar.add_child(Kit.button("删除层", func():
 		draft.erase(selected.call())
 		refresh.call("")))
-	refresh.call("")
+	refresh.call(layer_id)
 
 	var current := func() -> bool:
 		return pop.visible and is_same(app.manifest, source) and source.get(Layers.KEY, {}) == before
