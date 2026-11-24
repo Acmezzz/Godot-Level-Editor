@@ -1052,9 +1052,9 @@ func _step_field_row(fd: Dictionary, sfd: Dictionary, siblings: Array, shown: Di
 			return false
 		return true
 	var apply := func(v) -> bool: return _set_step_field(shown, key, v, rev, check_pair)
-	var frame_pick := func(row: Control, nested: Dictionary, pair: Callable, save: Callable):
+	var frame_pick := func(row: Control, nested: Dictionary, pair: Callable, save: Callable, read: Callable):
 		FrameReference.add_reference_button(app, row, nested, pair, save, _resolve_options, _project_scope,
-			_rebuild_steps_form_from_data, _reference_context)
+			_rebuild_steps_form_from_data, _reference_context, read)
 	var built := FieldWidgets.build(d, val, apply, _resolve_options, "code", frame_pick)
 	if built.get("commit") is Callable and (built.commit as Callable).is_valid():
 		_pending_commits.append(built.commit)
@@ -1063,7 +1063,7 @@ func _step_field_row(fd: Dictionary, sfd: Dictionary, siblings: Array, shown: Di
 	if tip != "":
 		row.tooltip_text = tip
 	var pickable := FieldWidgets.wants_canvas_pick(fd) and (not _project_scope or tk != "")
-	if pickable and host._form.can_pick_on_canvas(tk):
+	if pickable and not bool(fd.get("multiple", false)) and host._form.can_pick_on_canvas(tk):
 		var pick := Kit.button("画布选…", func(): _pick_step_ref(fd, apply), "ghost")
 		pick.tooltip_text = "临时切到画布点一个实例；确认才写入这一步，取消不改当前值" \
 			if not FieldWidgets.wants_edge_pick(fd) else "临时切到画布点一条格边；确认才写入这一步，取消不改当前值"
@@ -1071,7 +1071,7 @@ func _step_field_row(fd: Dictionary, sfd: Dictionary, siblings: Array, shown: Di
 			pick.tooltip_text = "临时切到画布点格图里的一格（按多边形命中）；确认才写入这一步，取消不改当前值"
 		pick.add_theme_font_size_override("font_size", Th.FS_META)
 		row.add_child(pick)
-	if FieldWidgets.wants_frame_pick(fd):
+	if FieldWidgets.wants_frame_pick(fd) and FieldWidgets.frame_value_available(fd, built):
 		var pair := func() -> String:
 			var index: int = shown.index
 			var steps: Array = shown.steps
@@ -1081,7 +1081,7 @@ func _step_field_row(fd: Dictionary, sfd: Dictionary, siblings: Array, shown: Di
 			return _set_step_field(shown, key, value, rev,
 				func(fields: Dictionary): return RefFields.paired_map_value(fd, siblings, fields) == expected)
 		FrameReference.add_reference_button(app, row, fd, pair, save, _resolve_options, _project_scope,
-			_rebuild_steps_form_from_data, _reference_context)
+			_rebuild_steps_form_from_data, _reference_context, built.get("pick_values", Callable()))
 	return row
 
 ## E1：步骤字段的画布选点。确认后按起手时的步骤令牌 + 版本写回：

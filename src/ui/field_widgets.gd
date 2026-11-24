@@ -48,8 +48,7 @@ static func wants_canvas_pick(decl: Dictionary) -> bool:
 	return pick_mode(decl) != "entity"
 
 static func wants_frame_pick(decl: Dictionary) -> bool:
-	return not bool(decl.get("multiple", false)) and (
-		wants_canvas_pick(decl) or RefFields.describe(decl).kind == "entity_inst")
+	return pick_mode(decl) in ["cell", "edge", "port"] or RefFields.describe(decl).kind == "entity_inst"
 
 ## C4：choice 来源是 `cell:` 的字段可在画布上按格图多边形点选。
 static func wants_cell_pick(decl: Dictionary) -> bool:
@@ -435,9 +434,9 @@ static func _build_array(decl: Dictionary, items: Array, on_set: Callable,
 		line.add_theme_constant_override("separation", 4)
 		var nested_frame_pick := Callable()
 		if frame_pick.is_valid():
-			nested_frame_pick = func(row: Control, fd: Dictionary, pair: Callable, set_value: Callable):
+			nested_frame_pick = func(row: Control, fd: Dictionary, pair: Callable, set_value: Callable, read: Callable):
 				frame_pick.call(row, fd, pair, func(v2):
-					return bool(set_value.call(v2)) and save.call())
+					return bool(set_value.call(v2)) and save.call(), read)
 		var built := build(elem, v, func(v2): (r.state as Dictionary)["v"] = v2, option_resolver, key_mode, nested_frame_pick)
 		r["commit"] = built.commit
 		var tools: BoxContainer = line
@@ -648,9 +647,9 @@ static func _build_record(decl: Dictionary, value, on_set: Callable,
 		var built := build(d2, sub_val, set_value, option_resolver, key_mode, frame_pick)
 		var row := Kit.field_row(str(sd.get("name", sub_key)), built.ctl, 96)
 		box.add_child(row)
-		if frame_pick.is_valid() and wants_frame_pick(sd):
+		if frame_pick.is_valid() and wants_frame_pick(sd) and frame_value_available(sd, built):
 			var pair := func() -> String: return RefFields.paired_map_value(sd, fields_arr, value)
-			frame_pick.call(row, sd, pair, set_value)
+			frame_pick.call(row, sd, pair, set_value, built.get("pick_values", Callable()))
 		commits.append(built.commit)
 	return {"ctl": panel, "commit": func() -> bool:
 		for c in commits:
@@ -756,7 +755,10 @@ static func _build_choice_multi(decl: Dictionary, value, on_set: Callable,
 				pend.v.erase(ev)
 			push.call())
 		box.add_child(cb2)
-	return {"ctl": box, "commit": push}
+	return {"ctl": box, "commit": push, "pick_values": func(): return pend.v.duplicate()}
+
+static func frame_value_available(decl: Dictionary, built: Dictionary) -> bool:
+	return not bool(decl.get("multiple", false)) or built.has("pick_values")
 
 static func _norm_option(o) -> Dictionary:
 	if o is Dictionary:

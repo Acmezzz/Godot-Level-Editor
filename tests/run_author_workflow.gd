@@ -97,6 +97,23 @@ func create_ending(app, library, id: String, message: String, map_context := "",
 				confirm.pressed.emit()
 				await process_frame
 				await process_frame
+			var group: Button = pop.find_child("FrameFieldReference_goal_group", true, false)
+			check(group != null, "library exposes the multi-target reference picker")
+			if group != null:
+				group.pressed.emit()
+				var frame := await _render_pick_frame(app)
+				if frame != null:
+					var first := _frame_pick_at_world(frame, Vector2(72, 40))
+					var second := _frame_pick_at_world(frame, Vector2(104, 72))
+					var confirm := _click_pick_frame(frame, first)
+					_click_pick_frame(frame, second)
+					_click_pick_frame(frame, first)
+					_click_pick_frame(frame, first)
+					check(not confirm.disabled and not Store.list_ids(app.manifest, "ending").has("project-arrive"),
+						"multiple targets and toggles stay in one draft until confirmation")
+					confirm.pressed.emit()
+					await process_frame
+					await process_frame
 		for opt in collect(pop, "OptionButton"):
 			if id != "arrive" and goal != "" and range(opt.item_count).any(func(i): return opt.get_item_metadata(i) == goal):
 				select_metadata(opt, goal)
@@ -313,6 +330,7 @@ func run():
 				{"id":"message", "code":"MESG", "kind":"input", "type":"string"},
 				{"id":"goal", "code":"GOAL", "kind":"choice", "source":"entity_inst:door"},
 				{"id":"goal_port", "code":"GPRT", "kind":"input", "type":"port_ref", "of":"door"},
+				{"id":"goal_group", "code":"GGRP", "kind":"choice", "source":"entity_inst:door", "multiple":true},
 				{"id":"next", "code":"HOP1", "kind":"choice", "source":"content:ending",
 					"contentMapContext":"inherit"},
 				{"id":"retry_chart", "code":"AGAN", "name":"Retry chart", "kind":"choice",
@@ -359,7 +377,8 @@ func run():
 	var path := project.path_join("editor/editor_manifest.json")
 	DirAccess.make_dir_recursive_absolute(path.get_base_dir())
 	var flow_map := Maps.new_map("flow_stage", 8, 8, "orthogonal")
-	flow_map.objects = [{"asset": "door", "code": "EXIT", "x": 4, "y": 2, "layer": flow_map.meta.layers[0].id}]
+	flow_map.objects = [{"asset": "door", "code": "EXIT", "x": 4, "y": 2, "layer": flow_map.meta.layers[0].id},
+		{"asset": "door", "code": "ALT", "x": 6, "y": 4, "layer": flow_map.meta.layers[0].id}]
 	check(Maps.write(manifest, "flow_stage", flow_map), "save a map whose door can be chosen from the project library")
 	check(Maps.write_json(path, manifest), "write project manifest fixture")
 	var import_log := PackedStringArray()
@@ -517,6 +536,7 @@ func run():
 		and second_steps[0].get("duration") == 0.234567, "manual seconds retain time precision")
 	var arrival := Store.read(manifest, "ending", "project-arrive")
 	check(arrival.get("fields", {}).get("GOAL") == "EXIT"
+		and arrival.fields.get("GGRP") == ["ALT", "EXIT"]
 		and arrival.fields.get("GPRT") == {"map": "", "inst": "EXIT", "port": "open"} and not arrival.has("map")
 		and not arrival.fields.has("DMAP"), "temporary map exposes the local instance without pinning the saved reference")
 	ce._library.open()

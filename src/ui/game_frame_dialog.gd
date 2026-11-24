@@ -168,6 +168,9 @@ static func open(app, capability: String, options: Dictionary, snapshot: Callabl
 		if mode != "":
 			picks.current = current
 			picks.regions = result.get("picks", [])
+			if options.has("on_picks"):
+				options.on_picks.call(picks.regions)
+				frame.queue_redraw()
 			var pick_error: String = result.get("pick_error", "")
 			if pick_error != "":
 				notice.text = pick_error

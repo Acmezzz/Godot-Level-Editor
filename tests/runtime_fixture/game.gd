@@ -217,16 +217,18 @@ func _render_preview(path: String) -> void:
 			_compose_destination_frame(surface, size, path.get_base_dir(), request)
 		elif subject.get("map", {}).get("meta", {}).get("name") == "flow_stage":
 			_compose_map_frame(surface, subject, size)
-			var door: Dictionary = subject.map.objects[0]
-			var center := (Vector2(door.x, door.y) + Vector2(0.5, 0.5)) * 16.0
 			var camera: Dictionary = subject.camera
 			var origin := Vector2(size) * 0.5 - _vector(camera.center) * float(camera.zoom)
-			var triangle := []
-			for corner in [Vector2(-6, -8), Vector2(6, -8), Vector2(0, 8)]:
-				var pixel: Vector2 = origin + (center + corner) * float(camera.zoom)
-				triangle.append([pixel.x, pixel.y])
-			_write_frame_picks(path.get_base_dir(), request.token, [{"screen": triangle, "targets": {
-				"entity": door.code, "port": {"map": subject.map.meta.code, "inst": door.code, "port": "open"}}}])
+			var regions := []
+			for door: Dictionary in subject.map.objects:
+				var center := (Vector2(door.x, door.y) + Vector2(0.5, 0.5)) * 16.0
+				var triangle := []
+				for corner in [Vector2(-6, -8), Vector2(6, -8), Vector2(0, 8)]:
+					var pixel: Vector2 = origin + (center + corner) * float(camera.zoom)
+					triangle.append([pixel.x, pixel.y])
+				regions.append({"screen": triangle, "targets": {
+					"entity": door.code, "port": {"map": subject.map.meta.code, "inst": door.code, "port": "open"}}})
+			_write_frame_picks(path.get_base_dir(), request.token, regions)
 		else:
 			_compose_map_frame(surface, subject, size)
 	elif capability == "worldFrame":
@@ -1294,6 +1296,9 @@ func _resolve_ending(destination: String, current_map: Dictionary) -> Dictionary
 		if ending.is_empty() or ending.get("function") != _manifest.get("functions", {}).get("ending", {}).get("code"):
 			return {}
 		var fields: Dictionary = ending.get("fields", {})
+		for code in fields.get("GGRP", []):
+			if not current_map.get("objects", []).any(func(obj): return obj.get("code") == code and obj.get("asset") == "door"):
+				return {}
 		var port: Dictionary = fields.get("GPRT", {})
 		if not port.is_empty() and (port.get("map") != "" or port.get("port") != "open"
 				or not current_map.get("objects", []).any(func(obj): return obj.get("code") == port.get("inst") and obj.get("asset") == "door")):

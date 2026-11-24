@@ -16,7 +16,81 @@ const Recovery := preload("res://src/map/recovery.gd")
 const ViewData := preload("res://src/map/map_view_data.gd")
 const Graph := preload("res://src/map/cell_graph.gd")
 const Layout := preload("res://src/project/screen_layout.gd")
+const Picks := preload("res://src/project/frame_picks.gd")
 const CAPABILITY := "mapFrame"
+
+class ReferenceSelection extends RefCounted:
+	var mode: String
+	var match_target: Callable
+	var commit: Callable
+	var read: Callable
+	var initial: Array
+	var selected: Array
+	var regions: Array
+	var status: String
+
+	func _init(kind: String, lookup: Callable, save: Callable, current: Callable) -> void:
+		mode = kind
+		match_target = lookup
+		commit = save
+		read = current
+		initial = read.call()
+		clear()
+
+	func clear() -> void:
+		selected = initial.duplicate()
+		regions = []
+		_update_message()
+
+	func _update_message() -> void:
+		status = "已选 %d 项 · 点击切换，右键恢复本次打开时的选择。" % selected.size()
+
+	func message() -> String:
+		return status
+
+	func set_regions(hits: Array) -> void:
+		regions = hits
+
+	func ready() -> bool:
+		return selected != initial
+
+	func input(event: InputEvent, pixel: Vector2, hits: Array) -> bool:
+		if not event is InputEventMouseButton or not event.pressed:
+			return false
+		if event.button_index == MOUSE_BUTTON_RIGHT:
+			selected = initial.duplicate()
+			_update_message()
+			return true
+		if event.button_index != MOUSE_BUTTON_LEFT:
+			return false
+		var hit := Picks.at(hits, pixel, mode)
+		var candidate: Dictionary = {} if hit.is_empty() else match_target.call(hit.value)
+		if candidate.is_empty():
+			status = "这里没有此字段可选的目标。当前已选 %d 项。" % selected.size()
+			return true
+		var value: String = candidate.v
+		if selected.has(value):
+			selected.erase(value)
+		else:
+			selected.append(value)
+		_update_message()
+		return true
+
+	func apply() -> bool:
+		if read.call() != initial:
+			return false
+		return await commit.call(selected.duplicate())
+
+	func draw(frame: TextureRect, rect: Rect2) -> void:
+		var scale := rect.size / frame.texture.get_size()
+		for region in regions:
+			if not selected.has(region.targets.get(mode)):
+				continue
+			var line := PackedVector2Array()
+			for pixel: Vector2 in region.screen:
+				line.append(rect.position + pixel * scale)
+			line.append(line[0])
+			frame.draw_polyline(line, Color("#ffda67"), 2.0, true)
 
 static func available(app) -> bool:
 	return app.map_loaded and GamePreview.supports(app.manifest, CAPABILITY)
@@ -158,7 +232,8 @@ static func reference_available(app, map_key: String) -> bool:
 	return GamePreview.supports(app.manifest, CAPABILITY) and (app.map_loaded or map_key != "")
 
 static func add_reference_button(app, row: Control, decl: Dictionary, pair: Callable,
-		commit: Callable, resolve: Callable, project_scope: bool, refresh: Callable, context := "") -> void:
+		commit: Callable, resolve: Callable, project_scope: bool, refresh: Callable, context := "",
+		read := Callable()) -> void:
 	if not GamePreview.supports(app.manifest, CAPABILITY):
 		return
 	if context == "" and (project_scope or not app.map_loaded) and not decl.has("mapField"):
@@ -180,11 +255,12 @@ static func add_reference_button(app, row: Control, decl: Dictionary, pair: Call
 				return false
 			refresh.call_deferred()
 			return true
-		open_reference(app, scoped, resolve, save, row.get_window()), "ghost")
+		open_reference(app, scoped, resolve, save, row.get_window(), read), "ghost")
 	button.name = "FrameFieldReference_" + str(decl.get("id", ""))
 	row.add_child(button)
 
-static func open_reference(app, decl: Dictionary, resolve: Callable, commit: Callable, window: Window) -> void:
+static func open_reference(app, decl: Dictionary, resolve: Callable, commit: Callable, window: Window,
+		read := Callable()) -> void:
 	var mode := FieldWidgets.pick_mode(decl)
 	var source := decl.duplicate()
 	match mode:
@@ -194,15 +270,23 @@ static func open_reference(app, decl: Dictionary, resolve: Callable, commit: Cal
 			source["source"] = "port:" + str(decl.get("of", ""))
 		"edge":
 			source["source"] = "edge:"
-	var choose := func(value: Variant) -> Dictionary:
+	var match_target := func(value: Variant) -> Dictionary:
 		for row in resolve.call(source):
 			var candidate = FieldWidgets.decode_pick(mode, str(row.v))
 			if candidate != null and candidate == value:
-				return {"text": "目标：" + str(row.t), "apply": func(): return await commit.call(candidate)}
+				return {"v": candidate, "t": row.t}
+		return {}
+	var choose := func(value: Variant) -> Dictionary:
+		var candidate := match_target.call(value) as Dictionary
+		if not candidate.is_empty():
+			return {"text": "目标：" + str(candidate.t), "apply": func(): return await commit.call(candidate.v)}
 		return {"text": "该画面目标不在字段的候选范围内。"}
 	var key := str(decl.get("_mapKey", ""))
 	var local: bool = key == "" or (app.map_loaded and key in [app.canvas.cur_map_code(), app.canvas.cur_map_name])
 	var parent := {"parent": window} if window is PopupPanel else {}
+	if bool(decl.get("multiple", false)):
+		var selection := ReferenceSelection.new(mode, match_target, commit, read)
+		parent.merge({"interaction": selection, "on_picks": selection.set_regions, "confirm_label": "应用选择"})
 	if local:
 		_open(app, mode, choose, parent)
 	else:

@@ -442,8 +442,8 @@ func _build_field(form: VBoxContainer, fd: Dictionary, siblings: Array, values: 
 		return set_value.call(v)
 	var options := func(d: Dictionary) -> Array:
 		return host._form.project_reference_options(d, context)
-	var frame_pick := func(row: Control, nested: Dictionary, nested_pair: Callable, save: Callable):
-		FrameReference.add_reference_button(app, row, nested, nested_pair, save, options, true, refresh, context)
+	var frame_pick := func(row: Control, nested: Dictionary, nested_pair: Callable, save: Callable, read: Callable):
+		FrameReference.add_reference_button(app, row, nested, nested_pair, save, options, true, refresh, context, read)
 	var built := Widgets.build(decl, values.get(key, fd.get("default", Widgets.default_for(fd))), use, options, "code", frame_pick)
 	var commit: Callable = built.get("commit", Callable())
 	if commit.is_valid():
@@ -451,5 +451,6 @@ func _build_field(form: VBoxContainer, fd: Dictionary, siblings: Array, values: 
 	var row := Kit.field_row(str(fd.get("name", fd.get("id", key))), built.ctl, 92)
 	row.tooltip_text = Widgets.decl_tooltip(fd)
 	form.add_child(row)
-	if Widgets.wants_frame_pick(fd):
-		FrameReference.add_reference_button(app, row, fd, pair, set_value, options, true, refresh, context)
+	if Widgets.wants_frame_pick(fd) and Widgets.frame_value_available(fd, built):
+		FrameReference.add_reference_button(app, row, fd, pair, set_value, options, true, refresh, context,
+			built.get("pick_values", Callable()))
