@@ -1641,6 +1641,8 @@ func _share_rebind(i: int, fn_id: String, cid: String) -> void:
 ## R14：删除前的全部入边检查（活体绑定 / 暂存 / 草稿 / 内容间引用 / 范围完整性）。
 ## 返回 "" = 可以删；非空 = 中止原因（可直接给状态栏）。确认弹窗前后各跑一次（复验）。
 func _delete_blocked_reason(fn_id: String, cid: String) -> String:
+	if manifest.get("startup", {}).get("target", {}) == {"function": fn_id, "content": cid}:
+		return " 删除中止：此内容是正式启动入口。请先更换或清除入口。"
 	# 当前画布的**全部**活体绑定都算引用（磁盘是旧的）——不只当前选中实例。
 	var live_codes: Array = []
 	var fcode := FunctionDecls.fn_code(manifest, fn_id)

@@ -14,6 +14,7 @@ extends RefCounted
 ## 批量入边扫描（content_edges_bulk）走浏览缓存读盘一次，为内容库列表与详情共用；
 ## 破坏性操作（如清空悬空）必须走 inbound_content / read_all_fresh，不吃旧缓存。
 
+const StartupTargets := preload("res://src/project/startup_targets.gd")
 const ManifestValidation := preload("res://src/project/manifest_validation.gd")
 const MapStore := preload("res://src/map/map_store.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
@@ -40,8 +41,16 @@ static func audit(manifest: Dictionary, meta_out: Dictionary = {}) -> Array:
 	meta_out["incomplete"] = false
 	meta_out["unreadable_maps"] = []
 	# 1. 清单校验
+	var startup_valid := true
 	for e in ManifestValidation.validate(manifest, str(manifest.get("_dir", ""))):
 		out.append(_wrap("manifest", e))
+		if str(e.path).begins_with("startup"):
+			startup_valid = false
+	if startup_valid:
+		var startup_target: Dictionary = manifest.get("startup", {}).get("target", {})
+		if not StartupTargets.available(manifest, startup_target):
+			out.append(_wrap("manifest", {"severity": "error", "path": "startup.target",
+				"message": "正式启动入口不可读取：%s。请在「启动入口」重新选择。" % JSON.stringify(startup_target)}))
 	# 2. 地图校验（读盘全图）+ 顺带收集被实例引用的内容（孤立内容判定用）
 	var used_content := {}
 	var content_contexts := {}
@@ -1221,6 +1230,8 @@ static func _fields_pointing(manifest: Dictionary, kind: String, target: String,
 ## Ignore outgoing references from the view being removed along with its own layout.
 static func view_inbound_refs(manifest: Dictionary, id: String, staged: Array) -> Dictionary:
 	var refs: Array[String] = []
+	if manifest.get("startup", {}).get("target", {}) == {"view": id}:
+		refs.append("正式启动入口")
 	var bad: Array = []
 	for ref in ReferenceIndex.view_module_refs(manifest):
 		if ref.kind == "view" and ref.value == id and ref.view != id:

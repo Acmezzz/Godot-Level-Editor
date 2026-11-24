@@ -99,12 +99,47 @@ static func _validate_top_level(data: Dictionary, issues: Array[Dictionary]) -> 
 	_validate_viewports(data, issues)
 	_validate_views(data, issues)
 	_validate_screen_modules(data, issues)
+	_validate_startup(data, issues)
 	if data.has("screenSize"):
 		var ss = data["screenSize"]
 		if not (ss is Array) or (ss as Array).size() != 2 \
 				or not ((ss as Array)[0] is int or (ss as Array)[0] is float) \
 				or not ((ss as Array)[1] is int or (ss as Array)[1] is float):
 			_add(issues, "error", "screenSize", "must be [w, h] numbers")
+
+static func _validate_startup(data: Dictionary, issues: Array[Dictionary]) -> void:
+	if not data.has("startup"):
+		return
+	var startup = data.startup
+	if not startup is Dictionary:
+		_add(issues, "error", "startup", "must be an object")
+		return
+	for kind in ["screens", "maps"]:
+		if startup.has(kind) and not startup[kind] is bool:
+			_add(issues, "error", "startup." + kind, "must be a boolean")
+	var kinds = startup.get("contentTypes", [])
+	if not kinds is Array:
+		_add(issues, "error", "startup.contentTypes", "must be an array of declared function IDs")
+		return
+	var declarations := FunctionDecls.functions(data)
+	var seen := {}
+	for kind in kinds:
+		if not kind is String or not declarations.has(kind) or seen.has(kind):
+			_add(issues, "error", "startup.contentTypes", "must name unique declared function IDs")
+		else:
+			seen[kind] = true
+	if not startup.has("target"):
+		return
+	var target = startup.target
+	if target is Dictionary:
+		if target.size() == 2 and target.get("function") is String and target.function in kinds \
+				and target.get("content") is String and ContentStore.is_valid_id(target.content):
+			return
+		if target.size() == 1:
+			for pair in [["view", "screens"], ["map", "maps"]]:
+				if startup.get(pair[1]) == true and target.get(pair[0]) is String and not target[pair[0]].is_empty():
+					return
+	_add(issues, "error", "startup.target", "must select a permitted {function, content}, {view} or {map}")
 
 ## 功能/字段声明：结构 + 身份码唯一性 + 字段种类合法性。
 ## 码重复是**错误**：两个声明同码等于静默别名，磁盘上的引用会指向不确定的那个。

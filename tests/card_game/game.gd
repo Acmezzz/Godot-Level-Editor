@@ -5,6 +5,7 @@ var project_manifest: Dictionary
 var request := {}
 var verify := false
 var entry := {}
+var entry_source := "manifest"
 var rules := {}
 var hand := VBoxContainer.new()
 var settlements: Array[Dictionary] = []
@@ -18,9 +19,12 @@ func run() -> void:
 			request = decode(arg)
 		elif arg.begins_with("--editor-entry="):
 			entry = decode(arg)
+			entry_source = "argument"
 		elif arg == "--verify":
 			verify = true
 	project_manifest = JSON.parse_string(FileAccess.get_file_as_string("res://editor/editor_manifest.json"))
+	if entry.is_empty():
+		entry = project_manifest.get("startup", {}).get("target", {})
 	rules = fields(entry.get("function", ""), entry.get("content", ""))
 	if rules.is_empty() or rules.get("DECK", []).is_empty():
 		finish("No authored encounter or deck")
@@ -85,7 +89,7 @@ func finish(error: String) -> void:
 	if not request.is_empty():
 		var report := {"version": 1, "token": request.token, "status": "ready" if error == "" else "error",
 			"message": error, "mapDigest": "", "manifestDigest": FileAccess.get_sha256("res://editor/editor_manifest.json"),
-			"result": {"entry": entry, "settlements": settlements}}
+			"result": {"entry": entry, "entrySource": entry_source, "settlements": settlements}}
 		var file := FileAccess.open(request.path + ".tmp", FileAccess.WRITE)
 		file.store_string(JSON.stringify(report))
 		file.close()

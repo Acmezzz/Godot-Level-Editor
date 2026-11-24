@@ -22,6 +22,7 @@ func run() -> void:
 		check(DirAccess.copy_absolute(from, project.path_join(file)) == OK, "install game-side " + file)
 	var declarations := {
 		"projectName": "Market Hand",
+		"startup": {"contentTypes": ["encounter"]},
 		"functions": {
 			"card": {"name": "Card", "code": "CARD", "fields": [
 				{"id": "caption", "code": "CAPT", "kind": "input", "type": "string"},
@@ -76,15 +77,26 @@ func run() -> void:
 			{"CRDF": "project-courier", "COPY": 2.0}, {"CRDF": "project-sentry", "COPY": 3.0}], "deck records preserve authored order"):
 		finish()
 		return
+	press(app.project_shell, "启动入口…")
+	var startup := visible_popup()
+	var option: OptionButton = startup.find_child("StartupTarget", true, false)
+	check(option.item_count == 2, "only declared startup content types are offered")
+	for i in option.item_count:
+		if option.get_item_metadata(i) == {"function": "encounter", "content": "project-harbor"}:
+			option.select(i)
+			break
+	press(startup, "保存启动入口")
+	check(not startup.visible, "author published the startup choice")
 	app._clear_project_session()
 	app.manifest = Manifest.load_from(project)
 	app._build_editor_ui()
 	app._set_mode("content")
-	var library := open_library("encounter")
-	var list: ItemList = collect(library, "ItemList")[0]
-	list.select(0)
-	list.item_selected.emit(0)
-	press(library, "试玩所选内容")
+	check(app.manifest.startup.target == {"function": "encounter", "content": "project-harbor"},
+		"the published startup choice survives reloading")
+	var form = app.project_shell.content_editor._form
+	check(form._delete_blocked_reason("encounter", "project-harbor").contains("正式启动入口"),
+		"deletion identifies the active startup target")
+	press(app.project_shell, "试玩项目")
 	var controller = app._playtest_ctrl
 	var end := Time.get_ticks_msec() + 12000
 	while controller._play_report_result.is_empty() and Time.get_ticks_msec() < end:
@@ -92,6 +104,8 @@ func run() -> void:
 		controller.poll_playtest()
 	var report: Dictionary = controller._play_report_result
 	check(report.get("status") == "ready", "independent game returned a matching receipt: %s" % [report])
+	check(report.get("result", {}).get("entrySource") == "manifest",
+		"ordinary startup loaded the authored target without a command-line content override")
 	check(report.get("result", {}).get("settlements", []) == [
 		{"card": "project-courier", "score": 8.0, "outlet": "PASS", "target": "project-market-open", "text": "Market open"},
 		{"card": "project-sentry", "score": 6.0, "outlet": "FAIL", "target": "project-stand-down", "text": "Stand down"}],

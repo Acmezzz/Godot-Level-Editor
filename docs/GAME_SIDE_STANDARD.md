@@ -1312,6 +1312,22 @@ main.gd
 
 试玩时编辑器传 `--map=maps/xxx.json`（绝对或相对工程根）。
 
+**可选：由作者选择正式启动入口。** 游戏声明 `startup` 后，工作台显示「启动入口…」。
+例如 `{"startup":{"contentTypes":["campaign"],"screens":true,"maps":true}}`。
+`contentTypes` 列出允许启动的独立内容功能 ID；`screens` 和 `maps` 启用已保存的屏幕和地图候选。
+三个键都可省略，不启用的类型不会进入候选。编辑器保存一个 `startup.target`：
+
+| 类型 | 保存值 |
+|---|---|
+| 独立内容 | `{"function":"campaign","content":"project-intro"}` |
+| 屏幕 | `{"view":"title-screen"}` |
+| 地图 | `{"map":"M123"}`（地图码，改文件名不变） |
+
+正常启动时游戏读取这个值并派发；没有 `target` 时沿用自己的默认入口。游戏若收到显式的地图、
+内容或屏幕试玩参数，应优先使用该参数；工作台「试玩项目」不传选定内容参数，因此走同一套正常启动逻辑。
+正式入口与 `playtest.entryFunctions`（哪些内容可单独试玩）是独立声明。项目自检报告无法读取的已保存入口；
+删除当前入口引用的内容或屏幕前，请先更换或清除入口。
+
 **可选：游戏加载回执和无地图入口。** 清单设 `playtest.projectEntry: true` 后，工作台
 显示「试玩项目」：先提交工作台数据，再以空的 `%mapfile%` 启动。游戏可将独立内容 ID
 作为项目入口（例如 `project-campaign`）。普通「试玩」仍使用当前地图。
