@@ -20,8 +20,10 @@ const StartupTargets := preload("res://src/project/startup_targets.gd")
 const MapStore := preload("res://src/map/map_store.gd")
 const MapFlow := preload("res://src/map/map_flow.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
+const ProjectSlots := preload("res://src/project/project_content_slots.gd")
 const VIEW_KIND := "@view"
 const MAP_KIND := "@map"
+const PROJECT_KIND := "@project"
 
 static func node_target(node: Dictionary) -> Dictionary:
 	match node.fn_id:
@@ -127,9 +129,37 @@ static func _build(manifest: Dictionary, kinds: Array, extra: Dictionary, scope:
 	if scope.is_empty():
 		_collect_views(manifest, graph, catalog)
 		_collect_maps(manifest, graph, catalog)
+		_collect_project(manifest, graph, catalog)
 	else:
 		_add_target_nodes(manifest, scope, graph.nodes, graph.edges)
 	return graph
+
+static func _collect_project(manifest: Dictionary, graph: Dictionary, catalog: Dictionary) -> void:
+	var slots := ProjectSlots.declarations(manifest)
+	var startup: Dictionary = manifest.get("startup", {})
+	if not manifest.has("startup") and slots.is_empty():
+		return
+	var key := _key(PROJECT_KIND, "root")
+	graph.nodes.append({"key": key, "cid": "root", "fn_id": PROJECT_KIND, "name": "项目入口与规则"})
+	graph.slots[key] = []
+	if manifest.has("startup"):
+		_add_project_slot(graph, catalog, manifest, key, "startup", "", "正式启动入口", startup)
+	for id in slots:
+		_add_project_slot(graph, catalog, manifest, key, ProjectSlots.KEY, id, slots[id].get("name", id), slots[id])
+
+static func _add_project_slot(graph: Dictionary, catalog: Dictionary, manifest: Dictionary, key: String,
+		section: String, id: String, label: String, decl: Dictionary) -> void:
+	var target = decl.get("target")
+	var address := _flow_address(target)
+	var edge := {"from": key, "fn_id": PROJECT_KIND, "cid": "root", "field": id, "label": label,
+		"project_section": section, "decl": decl.duplicate(true), "target": target, "flow_target": true,
+		"multi": false, "fn": address[0], "value": address[1]}
+	graph.slots[key].append(edge)
+	if _typed_target_exists(manifest, catalog, decl, target, address):
+		edge["to"] = _key(address[0], address[1])
+		graph.edges.append(edge)
+	elif target != null:
+		graph.external.append(edge)
 
 static func _collect_maps(manifest: Dictionary, graph: Dictionary, catalog: Dictionary) -> void:
 	var declarations := {}

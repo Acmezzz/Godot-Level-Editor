@@ -68,13 +68,16 @@ func run() -> void:
 	field(scoring, "multiplier").value = 2
 	save(scoring)
 	var rule_target := {"function": "score_rules", "content": "project-double"}
-	press(app.project_shell, "项目规则…")
-	var global_rules := visible_popup()
-	var scorer: OptionButton = global_rules.find_child("ProjectContent_scoring", true, false)
+	var global_rules := await open_project_flow_slots()
+	var project_slots: OptionButton = global_rules.find_child("FlowSlot", true, false)
+	project_slots.select(1)
+	project_slots.item_selected.emit(1)
+	var scorer: OptionButton = global_rules.find_child("FlowTarget", true, false)
 	check(scorer.item_count == 2, "the scoring slot offers only compatible published contents")
-	choose(scorer, JSON.stringify(rule_target))
-	press(global_rules, "保存项目规则")
-	check(not global_rules.visible, "project rule was published by the editor")
+	choose(scorer, rule_target)
+	press(global_rules, "应用关系")
+	check(app.manifest.projectContentSlots.scoring.get("target") == rule_target, "project rule was published from the graph")
+	global_rules.hide()
 	var encounter := await new_content("encounter", "harbor")
 	field(encounter, "target").value = 14
 	var deck: Control = field(encounter, "deck")
@@ -115,16 +118,14 @@ func run() -> void:
 	check(Audit._content_ref_checks(manifest, "encounter", tail.cid, bad).any(func(issue):
 		return issue.path.ends_with(".deal_order#1") and issue.jump.field == "deal_order"),
 		"self-check identifies the broken list position")
-	press(app.project_shell, "启动入口…")
-	var startup := visible_popup()
-	var option: OptionButton = startup.find_child("StartupTarget", true, false)
+	var startup := await open_project_flow_slots()
+	var option: OptionButton = startup.find_child("FlowTarget", true, false)
 	check(option.item_count == 2, "only declared startup content types are offered")
-	for i in option.item_count:
-		if option.get_item_metadata(i) == {"function": "encounter", "content": "project-harbor"}:
-			option.select(i)
-			break
-	press(startup, "保存启动入口")
-	check(not startup.visible, "author published the startup choice")
+	var entrance := {"function": "encounter", "content": "project-harbor"}
+	choose(option, entrance)
+	press(startup, "应用关系")
+	check(app.manifest.startup.get("target") == entrance, "author published the startup choice from the graph")
+	startup.hide()
 	app._clear_project_session()
 	app.manifest = Manifest.load_from(project)
 	app._build_editor_ui()
@@ -180,13 +181,21 @@ func open_library(kind: String) -> PopupPanel:
 	choose(collect(pop, "OptionButton")[0], kind)
 	return pop
 
-func choose(control: OptionButton, id: String) -> void:
+func open_project_flow_slots() -> PopupPanel:
+	press(open_library("encounter"), "流程关系…")
+	await process_frame
+	var pop := visible_popup()
+	choose(pop.find_child("FlowSource", true, false), "@project\u0001root")
+	return pop
+
+func choose(control: OptionButton, id: Variant) -> void:
 	for index in control.item_count:
-		if control.get_item_metadata(index) == id:
+		var value = control.get_item_metadata(index)
+		if typeof(value) == typeof(id) and value == id:
 			control.select(index)
 			control.item_selected.emit(index)
 			return
-	check(false, "missing choice " + id)
+	check(false, "missing choice " + str(id))
 
 func press(node: Node, text: String) -> void:
 	for button in collect(node, "Button"):

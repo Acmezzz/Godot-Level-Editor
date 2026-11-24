@@ -405,6 +405,34 @@ func _open_flow() -> void:
 		if state.saving or not is_same(app.manifest, source) or slot.selected < 0 or target.selected < 0 or target.is_item_disabled(target.selected):
 			return
 		var edge: Dictionary = state.slots[slot.selected]
+		if edge.has("project_section"):
+			var section: String = edge.project_section
+			var before: Dictionary = source[section].duplicate(true)
+			var current: Dictionary = before if edge.field == "" else before.get(edge.field, {})
+			var chosen = target.get_selected_metadata()
+			var next: Dictionary = chosen if chosen is Dictionary else {}
+			if current != edge.decl or (not next.is_empty() and not StartupTargets.destination_available(source, current, next)):
+				refresh.call(edge.from)
+				notice.text = "项目配置或目标已变更；请选择有效目标后重试。"
+				return
+			if next == current.get("target", {}):
+				notice.text = "关系未变。"
+				return
+			var candidate := source.duplicate(true)
+			var draft: Dictionary = candidate[section] if edge.field == "" else candidate[section][edge.field]
+			if next.is_empty():
+				draft.erase("target")
+			else:
+				draft["target"] = next
+			var guard := func() -> bool:
+				return is_instance_valid(pop) and pop.visible and is_same(app.manifest, source) and source.get(section) == before
+			state.saving = true
+			var published := bool(await app._save_manifest_file_async(guard, candidate, section))
+			state.saving = false
+			if is_instance_valid(pop) and pop.visible:
+				refresh.call(edge.from)
+				notice.text = "项目关系已保存。" if published else "项目关系未保存。"
+			return
 		if edge.has("map_section"):
 			var chosen = target.get_selected_metadata()
 			var next: Dictionary = chosen if chosen is Dictionary else {}
@@ -499,6 +527,9 @@ func _open_flow() -> void:
 		if key.is_empty() or not is_same(app.manifest, source):
 			return
 		var item: Dictionary = state.index.nodes[key]
+		if item.fn_id == RelGraph.PROJECT_KIND:
+			notice.text = "请选择正式入口或规则槽，再应用关系。"
+			return
 		pop.hide()
 		if item.fn_id == RelGraph.VIEW_KIND:
 			ReferenceViews.open.call_deferred(app, item.cid)
@@ -523,6 +554,7 @@ func _open_flow() -> void:
 
 static func _flow_node_label(item: Dictionary, short := false) -> String:
 	match item.fn_id:
+		RelGraph.PROJECT_KIND: return item.name
 		RelGraph.VIEW_KIND: return "屏幕 · " + item.cid
 		RelGraph.MAP_KIND: return "地图 · %s [%s]" % [item.name, item.cid]
 	return "%s · %s" % [item.name, item.cid] if short else "%s · %s · %s" % [item.fn_id, item.name, item.cid]
