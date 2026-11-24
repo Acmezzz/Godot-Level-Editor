@@ -8,7 +8,6 @@ const SettingsCfg := "user://settings.cfg"
 const ProjectShellScript := preload("res://src/ui/project_shell.gd")
 const ProjectPicker := preload("res://src/ui/project_picker.gd")
 const ImageProbe := preload("res://src/assets/image_probe.gd")
-const MapDialogs := preload("res://src/ui/map_dialogs.gd")
 const UiThemeScript := preload("res://src/ui/ui_theme.gd")
 const UiKitScript := preload("res://src/ui/ui_kit.gd")
 const MapStore := preload("res://src/map/map_store.gd")
@@ -50,7 +49,6 @@ var _playtest_ctrl  # 试玩启动与反馈
 var _editor_state_ctrl   # canvas/editor_state.gd 控制器（状态流）
 var _layout_ctrl   # ui/editor_layout.gd 控制器（界面搭建）
 var _picker_ctrl   # ui/project_picker.gd 控制器（项目选择页）
-var _map_dialogs_ctrl   # ui/map_dialogs.gd 控制器（尺寸弹窗）
 var _tile_replace_ctrl   # ui/tile_replace_dialog.gd 控制器（E2 批量替换瓦片）
 var _palette_ctrl   # ui/palette_panel.gd 控制器（调色板导航：多图集三级/单图集两级）
 var selected_spr: EntityNode = null
@@ -67,7 +65,6 @@ var _canvas_empty: Control
 
 func _ready() -> void:
 	_picker_ctrl = ProjectPicker.new(self)
-	_map_dialogs_ctrl = MapDialogs.new(self)
 	_load_prefs()
 	_load_projects()
 	_ensure_editor_controllers()
@@ -83,8 +80,6 @@ func _ready() -> void:
 func _ensure_editor_controllers() -> void:
 	if _picker_ctrl == null:
 		_picker_ctrl = ProjectPicker.new(self)
-	if _map_dialogs_ctrl == null:
-		_map_dialogs_ctrl = MapDialogs.new(self)
 	if _tile_replace_ctrl == null:
 		_tile_replace_ctrl = preload("res://src/ui/tile_replace_dialog.gd").new(self)
 	if _layout_ctrl == null:
@@ -174,9 +169,6 @@ func _on_play(spawn_tiles := Vector2i(-1, -1)) -> void:
 
 func _poll_playtest() -> void:
 	_playtest_ctrl.poll_playtest()
-
-func _open_size_dialog() -> void:
-	_map_dialogs_ctrl.open_size_dialog()
 
 ## E2：按区域选区批量替换瓦片（弹窗在 ui/tile_replace_dialog.gd）
 func _open_tile_replace() -> void:

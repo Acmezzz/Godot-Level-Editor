@@ -230,7 +230,7 @@ func _on_map_menu_id(id: int) -> void:
 		3:
 			app._on_save()
 		5:
-			app._open_size_dialog()
+			preload("res://src/ui/map_resize.gd").open(app)
 		6:
 			# E2：按区域选区批量替换瓦片（一笔撤销；冲突先列）
 			app._open_tile_replace()

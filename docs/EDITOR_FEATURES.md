@@ -93,8 +93,7 @@ src/
 	├── reference_view_library.gd  参考视图窗口：选择、加载、草稿与保存
 	├── screen_layout_canvas.gd  屏幕布局画布：绘制、命中和布局手势
 	├── screen_layout_form.gd  屏幕布局表单：元素属性、模块字段和引用
-	├── map_dialogs.gd      地图尺寸弹窗（map_file 拆出）
-	├── map_resize.gd       改尺寸的裁剪预览与实际裁剪（E3/D17，map_dialogs 拆出）
+	├── map_resize.gd       尺寸弹窗、裁剪预览与实际裁剪
 	├── tile_replace_dialog.gd  E2 批量替换瓦片弹窗：源/目标资产与切片、冲突预览、一笔撤销
 	├── project_picker.gd   项目选择页 + 项目记忆（app.gd 拆出）
 	├── collision_dialog.gd 从地形生成碰撞
