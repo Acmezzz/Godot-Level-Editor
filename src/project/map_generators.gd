@@ -25,14 +25,36 @@ static func issues(manifest: Dictionary) -> Array[Dictionary]:
 				or Functions.function_decl(manifest, row.contentType).is_empty()):
 			out.append(_issue(path + ".contentType", "requires a declared function ID in place of fields"))
 			continue
-		_check_fields(fields_for(manifest, id), path, out, 0)
+		var fields = _parameter_fields(manifest, row)
+		if fields == null:
+			out.append(_issue(path + ".parameterFields", "requires contentType and a list of unique IDs declared by that function"))
+			continue
+		_check_fields(fields, path, out, 0)
 	return out
 
 static func fields_for(manifest: Dictionary, generator_id: String) -> Array:
-	var generator: Dictionary = manifest.mapGenerators[generator_id]
-	if generator.has("contentType"):
-		return Functions.function_fields(manifest, generator.contentType)
-	return generator.get("fields", [])
+	return _parameter_fields(manifest, manifest.mapGenerators[generator_id])
+
+static func _parameter_fields(manifest: Dictionary, generator: Dictionary) -> Variant:
+	if not generator.has("contentType"):
+		return null if generator.has("parameterFields") else generator.get("fields", [])
+	var fields := Functions.function_fields(manifest, generator.contentType)
+	if not generator.has("parameterFields"):
+		return fields
+	var ids = generator.parameterFields
+	if not ids is Array:
+		return null
+	var by_id := {}
+	for field in fields:
+		if field is Dictionary and field.get("id") is String:
+			by_id[field.id] = field
+	var selected := []
+	for id in ids:
+		if not id is String or not by_id.has(id):
+			return null
+		selected.append(by_id[id])
+		by_id.erase(id)
+	return selected
 
 ## Read published presets and translate their execution keys into request parameter IDs.
 static func presets(manifest: Dictionary, generator_id: String) -> Array[Dictionary]:
@@ -41,13 +63,14 @@ static func presets(manifest: Dictionary, generator_id: String) -> Array[Diction
 	if kind.is_empty():
 		return out
 	var fn := Functions.function_decl(manifest, kind)
+	var fields := fields_for(manifest, generator_id)
 	var rows := Store.read_all(manifest, kind)
 	for cid in rows:
 		var row: Dictionary = rows[cid]
 		if row.get("scope") != "project" or row.get("function") != fn.code or not row.get("fields") is Dictionary:
 			continue
-		var params := _parameter_ids(fn.fields, row.fields, true)
-		if fn.fields.all(func(field): return valid_value(field, params[field.id])):
+		var params := _parameter_ids(fields, row.fields, true)
+		if fields.all(func(field): return valid_value(field, params[field.id])):
 			out.append({"id": cid, "name": row.get("name", cid), "parameters": params})
 	return out
 

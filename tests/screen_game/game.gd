@@ -131,8 +131,7 @@ func _show_content(target: Dictionary) -> void:
 		next_button.text = "Finish procedural course"
 		next_button.position = Vector2(16, 16)
 		add_child(next_button)
-		next_button.pressed.connect(func():
-			_follow_target.call_deferred({"function": "signal", "content": fields.CNXT}))
+		next_button.pressed.connect(func(): _follow_target.call_deferred(fields.CNXT))
 		if verify:
 			await _verify_button(next_button)
 		return

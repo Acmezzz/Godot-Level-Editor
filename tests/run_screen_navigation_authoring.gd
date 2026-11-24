@@ -30,7 +30,8 @@ func run() -> void:
 			"fields": [{"id": "exit_target", "kind": "input", "type": "flow_target",
 				"maps": true, "screens": true, "contentTypes": ["signal"]}]}],
 		"startup": {"screens": true}, "viewports": [{"id": "handheld", "w": 480, "h": 720}],
-		"mapGenerators": {"course": {"contentType": "course_rules"}},
+		"mapGenerators": {"course": {"contentType": "course_rules",
+			"parameterFields": ["projection", "placements"]}},
 		"preview": {"version": 1, "executable": OS.get_executable_path(), "capabilities": ["generateMap"],
 			"args": ["--headless", "--path", "%projectpath%", "--"]},
 		"screenModules": {"signal-latch": {"name": "Latch", "outputs": {"accepted": "Continue"}, "fields": [
@@ -40,7 +41,8 @@ func run() -> void:
 			{"id": "placements", "code": "PLAC", "kind": "input", "type": "array", "of": "record", "fields": [
 				{"id": "asset", "code": "ASST", "kind": "input", "type": "asset_ref", "assetKind": "entity"},
 				{"id": "column", "code": "COLM", "kind": "input", "type": "int", "min": 1, "max": 10}]},
-			{"id": "next", "code": "CNXT", "kind": "choice", "source": "content:signal"}]},
+			{"id": "next", "code": "CNXT", "kind": "input", "type": "flow_target",
+				"maps": true, "screens": true, "contentTypes": ["signal"]}]},
 			"signal": {"code": "SIGN", "name": "Signal", "fields": [
 			{"id": "text", "code": "TEXT", "kind": "input", "type": "string"},
 			{"id": "next", "code": "NEXT", "kind": "input", "type": "flow_target",
@@ -88,7 +90,6 @@ func run() -> void:
 	inputs[1].text = "course-rules"
 	var choices := collect(form, "OptionButton")
 	choose(choices[0], "orthogonal")
-	choose(choices[1], "project-results-router")
 	press(form, "+ 添加")
 	press(form, "+ 添加")
 	var assets := collect(form, "OptionButton")
@@ -109,6 +110,8 @@ func run() -> void:
 		"generation offers the saved project content")
 	presets.select(1)
 	presets.item_selected.emit(1)
+	check(create.find_child("GeneratorField_next", true, false) == null,
+		"the runtime outlet is not part of the generator form")
 	var generate: Button = create.find_child("RunMapGenerator", true, false)
 	generate.pressed.emit()
 	while generate.disabled:
@@ -128,6 +131,9 @@ func run() -> void:
 	var canvas: EditorCanvas = app.canvas
 	check(canvas.extract().objects.map(func(row): return int(row.x)) == [3, 5],
 		"the generated placements match the two authored record rows")
+	var snapshot: Dictionary = canvas.extract().meta.generatorSource.parameters
+	check(snapshot.size() == 2 and snapshot.has_all(["projection", "placements"]),
+		"generation snapshots only selected fields")
 	var base: Dictionary = await app._map_file_ctrl.commit_document("发布地图供流程选用")
 	check(base.get("status") == "ok", "publish the map before it becomes a destination")
 	var pawn: EntityNode = canvas._ent_by_code_index()["R000"]
@@ -159,13 +165,22 @@ func run() -> void:
 	app._set_mode("content")
 	await add_screen("instructions", "Enter course", {}, {"map": map_code})
 	await add_screen("welcome", "Start tutorial", {"module": "signal-latch"}, {"view": "instructions"})
+	await add_screen("debrief", "Read results", {}, {"function": "signal", "content": "project-results-router"})
 	app.project_shell.content_editor._library.open()
 	press(popup(), "流程关系…")
 	await process_frame
 	var flow := popup()
+	var rules_key := "course_rules\u0001project-course-rules"
+	var targets: OptionButton = flow.find_child("FlowTarget", true, false)
+	choose(flow.find_child("FlowSource", true, false), rules_key)
+	for destination in [{"map": map_code}, {"function": "signal", "content": "project-finished"}, {"view": "debrief"}]:
+		choose(targets, destination)
+		press(flow, "应用关系")
+		var config := Store.read(manifest, rules.function, rules.content)
+		check(config.get("fields", {}).get("CNXT") == destination,
+			"the procedural course outlet accepts the typed destination %s" % destination)
 	var router_key := "signal\u0001project-results-router"
 	choose(flow.find_child("FlowSource", true, false), router_key)
-	var targets: OptionButton = flow.find_child("FlowTarget", true, false)
 	for destination in [{"map": map_code}, {"view": "instructions"}, {"function": "signal", "content": "project-finished"}]:
 		choose(targets, destination)
 		press(flow, "应用关系")
@@ -173,6 +188,8 @@ func run() -> void:
 		check(router.get("fields", {}).get("NEXT") == destination, "graph writes the typed destination %s" % destination)
 	flow.hide()
 	var graph := Flow.build_project(manifest)
+	check(graph.edges.any(func(edge): return edge.from == rules_key and edge.to == "@view\u0001debrief"),
+		"the project flow graph reloads the procedural course outlet")
 	check(graph.edges.any(func(edge): return edge.from == router_key and edge.to == "signal\u0001project-finished"),
 		"graph reloads the mixed destination as an edge to the published target")
 	var edge_exists: bool = graph.edges.any(func(edge):
@@ -204,7 +221,7 @@ func run() -> void:
 		controller.poll_playtest()
 	var report: Dictionary = controller._play_report_result
 	var result: Dictionary = report.get("result", {})
-	check(report.get("status") == "ready" and result.get("screens") == ["welcome", "instructions", "results"]
+	check(report.get("status") == "ready" and result.get("screens") == ["welcome", "instructions", "results", "debrief"]
 		and result.get("visited") == ["project-course-rules", "project-results-router", "project-finished"]
 		and result.get("runtimeCourse", []).map(func(x): return int(x)) == [3, 5] and result.get("board") == map_code
 		and result.get("placed") == [pawn_code, "R001"] and result.get("text") == "Screen sequence complete",
