@@ -156,9 +156,9 @@ func _preview(path: String) -> void:
 	if request.capability == "mapFrame":
 		var map: Dictionary = request.subject.map
 		var camera := _relay_camera(Vector2(extent))
-		_draw_relay(surface, map, camera)
+		var pawns := _draw_relay(surface, map, camera)
 		_write_json(dir.path_join("picks.json"), {"version": 1, "token": request.token,
-			"regions": _relay_regions(map.meta.layers[0], Vector2(extent), camera)})
+			"regions": _relay_regions(map, pawns, Vector2(extent), camera)})
 	else:
 		_draw_screen(surface, request.subject.layout, Vector2(extent), request.locale)
 	await RenderingServer.frame_post_draw
@@ -177,9 +177,22 @@ func _relay_layer(layer: Dictionary) -> Transform2D:
 	var offset: Array = layer.get("offset", [0, 0])
 	return Transform2D(0.0, Vector2.ONE * float(layer.get("scale", 1)), 0.0, Vector2(offset[0], offset[1]))
 
-func _relay_regions(layer: Dictionary, extent: Vector2, camera: Transform2D) -> Array:
+func _relay_regions(map: Dictionary, pawns: Dictionary, extent: Vector2, camera: Transform2D) -> Array:
+	var layer: Dictionary = map.meta.layers[0]
 	var inverse := (_relay_view(camera, layer)).affine_inverse()
 	var regions := []
+	var image_bounds := Rect2(Vector2.ZERO, extent)
+	for row in map.objects:
+		var pawn: Polygon2D = pawns[row.code]
+		var outline := Array(pawn.polygon).map(func(p: Vector2): return pawn.position + p)
+		if not outline.all(func(p: Vector2): return image_bounds.has_point(p)):
+			continue
+		var targets := {"entity": row.code}
+		if row.asset == "relay":
+			targets["port"] = {"map": map.meta.code, "inst": row.code, "port": "receive"}
+		for points in [[0, 1, 2], [0, 2, 3]]:
+			var screen: Array = points.map(func(i: int): return [outline[i].x, outline[i].y])
+			regions.append({"screen": screen, "targets": targets})
 	for triangle in [[Vector2.ZERO, Vector2(extent.x, 0), extent],
 			[Vector2.ZERO, extent, Vector2(0, extent.y)]]:
 		var screen: Array = triangle.map(func(p: Vector2): return [p.x, p.y])

@@ -57,12 +57,14 @@ static func frame_point_pick(decl: Dictionary) -> bool:
 static func ordered_frame_pick(decl: Dictionary) -> bool:
 	if frame_point_pick(decl):
 		return type_of(decl) == "array"
+	if type_of(decl) == "array" and decl.get("of") in ["port_ref", "edge_ref"]:
+		return true
 	return type_of(decl) == "array" and decl.get("of") == "choice" and not bool(decl.get("multiple", false)) \
 		and RefFields.describe(decl).kind in ["entity_inst", "cell"]
 
 ## C4：choice 来源是 `cell:` 的字段可在画布上按格图多边形点选。
 static func wants_cell_pick(decl: Dictionary) -> bool:
-	return (type_of(decl) == "choice" or ordered_frame_pick(decl)) and str(decl.get("source", "")).begins_with("cell:")
+	return (kind_of(decl) == KIND_CHOICE or ordered_frame_pick(decl)) and str(decl.get("source", "")).begins_with("cell:")
 
 ## §7.4：edge_ref 字段可在画布上按「最近的共边」点选（边身份由格拓扑推导）。
 static func wants_edge_pick(decl: Dictionary) -> bool:
@@ -71,11 +73,12 @@ static func wants_edge_pick(decl: Dictionary) -> bool:
 static func pick_mode(decl: Dictionary) -> String:
 	if frame_point_pick(decl):
 		return "placement" if decl.pickSpace == "layer" else "collision"
-	if type_of(decl) == "port_ref":
+	var type := str(decl.get("of", "")) if type_of(decl) == "array" else type_of(decl)
+	if type == "port_ref":
 		return "port"
 	if wants_cell_pick(decl):
 		return "cell"
-	if wants_edge_pick(decl):
+	if type == "edge_ref":
 		return "edge"
 	return "entity"
 
@@ -86,7 +89,8 @@ static func decode_pick(mode: String, code: String) -> Variant:
 static func canvas_pick_types(decl: Dictionary) -> Array:
 	match pick_mode(decl):
 		"port":
-			return Array(str(decl.get("of", "")).split(",", false))
+			var key := "portTypes" if type_of(decl) == "array" else "of"
+			return Array(str(decl.get(key, "")).split(",", false))
 		"cell":
 			var space = CellGraph.cell_source_space(decl)
 			return [] if space == null else [space]
@@ -630,7 +634,7 @@ static func _build_record(decl: Dictionary, value, on_set: Callable,
 		var row := Kit.field_row(str(sd.get("name", sub_key)), built.ctl, 96)
 		box.add_child(row)
 		if frame_pick.is_valid() and wants_frame_pick(sd) and frame_value_available(sd, built):
-			var pair := func() -> Array[String]: return RefFields.frame_scope(sd, fields_arr, value, key_mode)
+			var pair := func() -> Array[String]: return RefFields.frame_scope(sd, fields_arr, value, key_mode, true)
 			frame_pick.call(row, sd, pair, set_value, built.get("pick_values", Callable()))
 		commits.append(built.commit)
 	return {"ctl": panel, "commit": func() -> bool:

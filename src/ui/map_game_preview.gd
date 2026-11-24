@@ -259,7 +259,7 @@ static func reference_available(app, map_key: String) -> bool:
 
 static func add_reference_button(app, row: Control, decl: Dictionary, pair: Callable,
 		commit: Callable, resolve: Callable, project_scope: bool, refresh: Callable, context := "",
-		read := Callable()) -> void:
+		read := Callable(), saved_only := false) -> void:
 	if not GamePreview.supports(app.manifest, CAPABILITY):
 		return
 	if context == "" and (project_scope or not app.map_loaded) and not decl.has("mapField"):
@@ -282,12 +282,12 @@ static func add_reference_button(app, row: Control, decl: Dictionary, pair: Call
 				return false
 			refresh.call_deferred()
 			return true
-		open_reference(app, scoped, resolve, save, row.get_window(), read), "ghost")
+		open_reference(app, scoped, resolve, save, row.get_window(), read, saved_only), "ghost")
 	button.name = "FrameFieldReference_" + str(decl.get("id", ""))
 	row.add_child(button)
 
 static func open_reference(app, decl: Dictionary, resolve: Callable, commit: Callable, window: Window,
-		read := Callable()) -> void:
+		read := Callable(), saved_only := false) -> void:
 	var mode := FieldWidgets.pick_mode(decl)
 	var layer := str(decl.get("_pickLayer", ""))
 	if mode == "placement" and layer.is_empty():
@@ -298,7 +298,7 @@ static func open_reference(app, decl: Dictionary, resolve: Callable, commit: Cal
 		"entity":
 			source["source"] = "entity_inst:" + ",".join(PackedStringArray(FieldWidgets.canvas_pick_types(decl)))
 		"port":
-			source["source"] = "port:" + str(decl.get("of", ""))
+			source["source"] = "port:" + ",".join(PackedStringArray(FieldWidgets.canvas_pick_types(decl)))
 		"edge":
 			source["source"] = "edge:"
 	var match_target := func(value: Variant) -> Dictionary:
@@ -321,7 +321,8 @@ static func open_reference(app, decl: Dictionary, resolve: Callable, commit: Cal
 			return {"text": "目标：" + str(candidate.t), "apply": func(): return await commit.call(candidate.v)}
 		return {"text": "该画面目标不在字段的候选范围内。"}
 	var key := str(decl.get("_mapKey", ""))
-	var local: bool = key == "" or (app.map_loaded and key in [app.canvas.cur_map_code(), app.canvas.cur_map_name])
+	var local: bool = not saved_only and (key == "" or
+		(app.map_loaded and key in [app.canvas.cur_map_code(), app.canvas.cur_map_name]))
 	var parent := {"pick_layer": layer}
 	if window is PopupPanel:
 		parent["parent"] = window

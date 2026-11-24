@@ -3656,9 +3656,48 @@ func _author_screen_map_refs(app, manifest: Dictionary, relay_code: String) -> v
 		return popup.find_child("LayoutModuleField_" + id, true, false)
 	select_metadata(control.call("relay_map"), relay_map)
 	await process_frame
-	select_metadata(control.call("relay_actor"), relay_code)
+	var map_path := Maps.path_for(manifest, "relay_deck")
+	var manifest_path := str(manifest._dir).path_join("editor/editor_manifest.json")
+	var map_digest := Store.file_digest(map_path)
+	var manifest_digest := Store.file_digest(manifest_path)
+	var picker: Button = popup.find_child("FrameFieldReference_relay_actor", true, false)
+	check(picker != null, "screen module offers the game-rendered instance picker")
+	if picker == null:
+		popup.hide()
+		return
+	picker.pressed.emit()
+	var frame := await _render_pick_frame(app, "screen module relay", "handheld")
+	if frame == null:
+		popup.hide()
+		return
+	var render: Button = frame.find_child("MapGamePreviewRender", true, false)
+	check(render.text == "渲染目标地图", "the active map uses its saved version in the screen picker")
+	var shot: TextureRect = frame.find_child("MapGamePreviewFrame", true, false)
+	var image := shot.texture.get_image()
+	var relay_pixel := _find_frame_color(image, Color("#ffbe54"))
+	var confirm := _click_pick_frame(frame, relay_pixel / Vector2(image.get_size()))
+	check(not confirm.disabled and control.call("relay_actor").get_selected_metadata() != relay_code,
+		"clicking the visible relay only stages a pick in the frame")
+	confirm.pressed.emit()
+	await process_frame
+	await process_frame
+	check(control.call("relay_actor").get_selected_metadata() == relay_code
+		and Store.file_digest(map_path) == map_digest and Store.file_digest(manifest_path) == manifest_digest,
+		"confirm transfers the selected instance into the screen draft without writing files")
 	var port_value := JSON.stringify({"map": relay_map, "inst": relay_code, "port": "receive"})
-	select_metadata(control.call("relay_port"), port_value)
+	var pick_port: Button = popup.find_child("FrameFieldReference_relay_port", true, false)
+	pick_port.pressed.emit()
+	frame = await _render_pick_frame(app, "screen module typed port", "handheld")
+	if frame == null:
+		popup.hide()
+		return
+	confirm = _click_pick_frame(frame, relay_pixel / Vector2(image.get_size()))
+	check(not confirm.disabled, "the visible relay exposes its declared typed port")
+	confirm.pressed.emit()
+	await process_frame
+	await process_frame
+	check(control.call("relay_port").get_selected_metadata() == port_value,
+		"confirm updates the screen port control with the same target as the dropdown")
 	select_metadata(control.call("relay_map"), other.meta.code)
 	await process_frame
 	var actor: OptionButton = control.call("relay_actor")
@@ -3678,6 +3717,13 @@ func _author_screen_map_refs(app, manifest: Dictionary, relay_code: String) -> v
 	check(props.get("relay_map") == relay_map and props.get("relay_actor") == relay_code
 		and props.get("relay_port") == JSON.parse_string(port_value),
 		"the saved screen stores the selected map, filtered instance and typed port")
+
+func _find_frame_color(image: Image, color: Color) -> Vector2:
+	for y in image.get_height():
+		for x in image.get_width():
+			if image.get_pixel(x, y).is_equal_approx(color):
+				return Vector2(x + 0.5, y + 0.5)
+	return Vector2(-1, -1)
 
 func _route_matches(rows: Array, expected: Array) -> bool:
 	if rows.size() != expected.size():

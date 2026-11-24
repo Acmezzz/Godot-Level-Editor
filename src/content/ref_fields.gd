@@ -403,13 +403,7 @@ static func paired_map_value(decl: Dictionary, siblings: Array, values: Dictiona
 
 ## Layout props apply declared defaults when an override is absent, including sibling maps.
 static func effective_map_value(decl: Dictionary, siblings: Array, values: Dictionary, key_mode: String) -> String:
-	var pair := paired_map_decl(decl, siblings)
-	if pair.is_empty():
-		return ""
-	var code := str(pair.get("code", ""))
-	var key := code if key_mode == "code" and code != "" else str(pair.id)
-	var value = values.get(key, pair.get("default"))
-	return value if value is String else ""
+	return _sibling_value(paired_map_decl(decl, siblings), values, key_mode, true)
 
 static func with_map_scope(decl: Dictionary, siblings: Array, values: Dictionary, key_mode: String,
 		use_defaults := false) -> Dictionary:
@@ -420,14 +414,19 @@ static func with_map_scope(decl: Dictionary, siblings: Array, values: Dictionary
 	return decl.merged({"_mapKey": key}, true)
 
 ## Captured as one scope so either sibling changing invalidates a pending frame pick.
-static func frame_scope(decl: Dictionary, siblings: Array, values: Dictionary, key_mode := "code") -> Array[String]:
+static func frame_scope(decl: Dictionary, siblings: Array, values: Dictionary, key_mode := "code",
+		use_defaults := false) -> Array[String]:
 	var layer := _sibling_decl(str(decl.get("layerField", "")), siblings) if decl.get("pickSpace") == "layer" else {}
-	return [paired_map_value(decl, siblings, values, key_mode), _sibling_value(layer, values, key_mode)]
+	return [_sibling_value(paired_map_decl(decl, siblings), values, key_mode, use_defaults),
+		_sibling_value(layer, values, key_mode, use_defaults)]
 
-static func _sibling_value(pm: Dictionary, values: Dictionary, key_mode: String) -> String:
+static func _sibling_value(pm: Dictionary, values: Dictionary, key_mode: String, use_defaults := false) -> String:
 	if pm.is_empty():
 		return ""
 	var key := str(pm.get("code", "")) if key_mode == "code" else ""
+	if use_defaults:
+		var value = values.get(key if key != "" else str(pm.id), pm.get("default"))
+		return value if value is String else ""
 	if key == "" or not values.has(key):
 		key = str(pm.get("id", ""))
 	return str(values.get(key, "") if values.get(key, null) != null else "")

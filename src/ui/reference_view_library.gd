@@ -13,6 +13,7 @@ const FrameDialog := preload("res://src/ui/game_frame_dialog.gd")
 const Audit := preload("res://src/project/project_audit.gd")
 const Widgets := preload("res://src/ui/field_widgets.gd")
 const RefFields := preload("res://src/content/ref_fields.gd")
+const MapPreview := preload("res://src/ui/map_game_preview.gd")
 
 class Preview extends Control:
 	const FOCUS_ACTIONS := {"ui_left": "left", "ui_right": "right", "ui_up": "up", "ui_down": "down",
@@ -257,7 +258,7 @@ static func open(app, view_id := "", jump := {}) -> void:
 	var state := {"row": -1, "saving": false, "targets": [], "draft": {}, "layout": {},
 		"preview_size": "", "locale": "", "has_layout": false, "viewport_sizes": Layout.sizes(source),
 		"image_assets": Layout.image_assets(source), "project_dir": str(source.get("_dir", "")),
-		"render_revision": 0, "modules": Layout.modules(source), "module_commits": [], "manifest": source,
+		"render_revision": 0, "modules": Layout.modules(source), "module_commits": [], "manifest": source, "app": app,
 		"resolve_options": app.project_shell.content_editor._form._resolve_options.bind(true, true)}
 	var game_render := Kit.button("游戏渲染预览", Callable(), "ghost")
 	game_render.name = "GameRenderPreview"
@@ -840,23 +841,34 @@ static func _add_module_fields(form: VBoxContainer, state: Dictionary, item: Dic
 	var fields: Array = state.modules[item.module].get("fields", [])
 	var session := {"queued": false}
 	var props: Dictionary = item.get("props", {})
+	var frame_pick := func(row: Control, decl: Dictionary, pair: Callable, commit: Callable, read: Callable):
+		var apply := func(next) -> bool:
+			_commit_module_fields(state)
+			var result = commit.call(next)
+			return not result is bool or result
+		MapPreview.add_reference_button(state.app, row, decl, pair, apply, state.resolve_options,
+			true, refresh, "", read, true)
 	for field: Dictionary in fields:
 		var id: String = field.id
 		var value = props.get(id, field.get("default"))
 		var scoped := RefFields.with_map_scope(field, fields, props, "id", true)
-		var built := Widgets.build(scoped, value, func(next):
+		var set_value := func(next):
 			var previous = props.get(id, field.get("default"))
 			item["props"] = props
 			props[id] = next
 			if not session.queued and _module_map_values(state.manifest, field, id, previous) \
 					!= _module_map_values(state.manifest, field, id, next):
 				session.queued = true
-				refresh.call_deferred(), state.resolve_options)
+				refresh.call_deferred()
+		var built := Widgets.build(scoped, value, set_value, state.resolve_options, "id", frame_pick)
 		var ctl: Control = built.ctl
 		ctl.name = "LayoutModuleField_" + id
 		var row := Kit.field_row(str(field.get("name", id)), ctl, 70)
 		row.set_meta("module_field", id)
 		form.add_child(row)
+		if Widgets.wants_frame_pick(field) and Widgets.frame_value_available(field, built):
+			var pair := func() -> Array[String]: return RefFields.frame_scope(field, fields, props, "id", true)
+			frame_pick.call(row, field, pair, set_value, built.get("pick_values", Callable()))
 		state.module_commits.append(built.get("commit", Callable()))
 
 static func _module_map_values(manifest: Dictionary, decl: Dictionary, id: String, value: Variant) -> Array:
