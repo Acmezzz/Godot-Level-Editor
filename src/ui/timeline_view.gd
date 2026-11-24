@@ -10,6 +10,7 @@ class_name TimelineView
 
 const Th := preload("res://src/ui/ui_theme.gd")
 const StepTimeline := preload("res://src/content/step_timeline.gd")
+const StepIntervalIndex := preload("res://src/content/step_interval_index.gd")
 
 ## 拖拽落定后发一次：宿主按步骤身份 + 结构版本校验后合并补丁（D1）。
 ## revision = set_steps 时宿主给的结构版本（拖动起手即固定）；宿主据此丢弃过期请求。
@@ -66,8 +67,9 @@ var _tl_cache: Array = []
 var _tl_cache_key := ""
 var _max_time := 2.0
 var _tracks := 1
-var _by_track := {}
-## 冲突集合与区间表同源同版本：冲突判定是 O(n²)（两两比较），每帧重算在上千步时是主成本。
+var _intervals := StepIntervalIndex.new()
+var _step_names := {}
+## 冲突集合按生效区间缓存，仅在数据改变后重算。
 var _hot_cache := {}
 var _hot_cache_key := ""
 
@@ -78,7 +80,7 @@ func _timeline() -> Array:
 	_tl_cache = StepTimeline.to_timeline(steps)
 	_max_time = 2.0
 	_tracks = 1
-	_by_track.clear()
+	_step_names.clear()
 	for i in _tl_cache.size():
 		var e: Dictionary = _tl_cache[i]
 		if e.is_empty():
@@ -86,9 +88,7 @@ func _timeline() -> Array:
 		var track := int(e.track)
 		_max_time = maxf(_max_time, float(e.at) + float(e.duration))
 		_tracks = maxi(_tracks, track + 1)
-		if not _by_track.has(track):
-			_by_track[track] = []
-		_by_track[track].append(i)
+	_intervals.rebuild(_tl_cache, _pps, MARGIN_L)
 	_tl_cache_key = key
 	_hot_cache_key = ""   # 区间表换了，冲突集合必然重算
 	return _tl_cache
@@ -121,7 +121,10 @@ func fit_width() -> float:
 ## R-10：按声明时间基设刻度/吸附/像素密度（数据形态 at/duration 不变，游戏侧按声明解释单位）
 func set_timebase(tb: String) -> void:
 	timebase = tb if SNAP.has(tb) else "seconds"
-	_pps = {"seconds": 64.0, "frames": 12.0, "beats": 48.0}.get(timebase, 64.0)
+	var scale := float({"seconds": 64.0, "frames": 12.0, "beats": 48.0}[timebase])
+	if scale != _pps:
+		_pps = scale
+		_tl_cache_key = ""
 	queue_redraw()
 
 ## D2：绑定换算时钟；吸附粒度改由时钟的声明细分决定（拍按 subdivisionsPerBeat）。
@@ -144,6 +147,17 @@ func follow_playhead() -> void:
 	var x := MARGIN_L + playhead * _pps
 	if x < scroll.scroll_horizontal or x > scroll.scroll_horizontal + scroll.size.x - 8:
 		scroll.scroll_horizontal = maxi(0, roundi(x - scroll.size.x * 0.2))
+
+func reveal_step(index: int) -> void:
+	var scroll := _scroll_container()
+	var block := _block_rect(index)
+	if scroll == null or block.size == Vector2.ZERO:
+		return
+	var view := _visible_rect()
+	if block.position.x < view.position.x or block.position.x + StepIntervalIndex.MIN_BLOCK_WIDTH > view.end.x:
+		scroll.scroll_horizontal = maxi(0, roundi(block.position.x - view.size.x * 0.2))
+	if block.position.y < view.position.y or block.end.y > view.end.y:
+		scroll.scroll_vertical = maxi(0, roundi(block.position.y - TRACK_H))
 
 func _draw_reference_audio(lo: float, hi: float) -> void:
 	if _waveform.is_empty() or clock == null or _audio_length <= 0.0:
@@ -181,7 +195,7 @@ func _block_rect(i: int) -> Rect2:
 	var dur := maxf(float(e.get("duration", 0.0)), 0.0)
 	var track := int(e.get("track", 0))
 	var y := RULER_H + TRACK_H * float(track)
-	var w := maxf(dur * _pps, 10.0)
+	var w := maxf(dur * _pps, StepIntervalIndex.MIN_BLOCK_WIDTH)
 	return Rect2(MARGIN_L + at * _pps, y + 3.0, w, TRACK_H - 6.0)
 
 ## 生效条目（含缺省展开）；越界/非对象返回 {}。走缓存表（P02：不再每块重算整份）。
@@ -194,11 +208,15 @@ func _eff(i: int) -> Dictionary:
 func _hit(pos: Vector2) -> int:
 	_timeline()
 	var track := int(floorf((pos.y - RULER_H) / TRACK_H))
-	var dragged := _drag_idx if _drag_idx >= 0 and _block_rect(_drag_idx).has_point(pos) else -1
-	for i: int in _by_track.get(track, []):
-		if _block_rect(i).has_point(pos):
-			return mini(i, dragged) if dragged >= 0 else i
-	return dragged
+	var candidates: Array[int] = []
+	_intervals.query(track, pos.x, pos.x, candidates)
+	if _drag_idx >= 0:
+		candidates.append(_drag_idx)
+	var hit := -1
+	for i in candidates:
+		if (hit < 0 or i < hit) and _block_rect(i).has_point(pos):
+			hit = i
+	return hit
 
 func _gui_input(ev: InputEvent) -> void:
 	var handled := false
@@ -247,10 +265,6 @@ func _press(p: Vector2) -> void:
 	_moved = false
 	picked.emit(i)
 	queue_redraw()
-
-## 当前步骤的工作副本数据（步骤不是对象时返回 {}）。
-func _step(i: int) -> Dictionary:
-	return steps[i] if i >= 0 and i < steps.size() and steps[i] is Dictionary else {}
 
 func reject_pick(previous: int) -> void:
 	sel = previous
@@ -322,25 +336,32 @@ func _ready() -> void:
 		scroll.get_v_scroll_bar().value_changed.connect(func(_y: float): queue_redraw())
 		scroll.resized.connect(queue_redraw)
 
-func _visible_span(tmax: float) -> Vector2:
+func _visible_rect() -> Rect2:
 	var scroll := _scroll_container()
-	var off := float(scroll.scroll_horizontal) if scroll != null else 0.0
-	var vw := scroll.size.x if scroll != null else size.x
-	var lo := maxf(0.0, (off - MARGIN_L) / _pps)
-	var hi := maxf(lo, (off + vw - MARGIN_L) / _pps)
-	return Vector2(lo, minf(hi, tmax + 1.0))
+	if scroll == null:
+		return Rect2(Vector2.ZERO, size)
+	return Rect2(Vector2(scroll.scroll_horizontal, scroll.scroll_vertical), scroll.size)
+
+func _visible_blocks(view: Rect2, first_track: int, last_track: int) -> Array[int]:
+	var visible: Array[int] = []
+	for track in range(first_track, last_track + 1):
+		_intervals.query(track, view.position.x, view.end.x, visible)
+	if _drag_idx >= 0 and not visible.has(_drag_idx):
+		visible.append(_drag_idx)
+	visible.sort()
+	return visible
 
 func _draw() -> void:
 	var fnt: Font = ThemeDB.fallback_font
-	# 滚动容器按内容宽撑开：视图自身尺寸 = max(容器给宽, 内容宽)
-	var w := maxf(size.x, fit_width())
 	var tmax := _time_max()
 	var tracks := _track_count()
-	# P02：只画可视横段——长演出（上千步）串在滚动容器里，整条轴都画等于每帧刷几万条线
-	var span := _visible_span(tmax)
-	var vis_lo := span.x
-	var vis_hi := span.y
-	_draw_reference_audio(vis_lo, vis_hi)
+	var view := _visible_rect()
+	var vis_lo := maxf(0.0, (view.position.x - MARGIN_L) / _pps)
+	var vis_hi := maxf(vis_lo, (view.end.x - MARGIN_L) / _pps)
+	var first_track := maxi(0, floori((view.position.y - RULER_H) / TRACK_H))
+	var last_track := mini(tracks - 1, floori((view.end.y - RULER_H) / TRACK_H))
+	if view.position.y < RULER_H:
+		_draw_reference_audio(vis_lo, minf(vis_hi, tmax))
 	# 主刻度：每单位一格 + 单位标签（frames 每 5 帧一档防挤）
 	var tstep := 5 if timebase == "frames" else 1
 	var suffix: String = {"seconds": "s", "frames": "f", "beats": "拍"}.get(timebase, "s")
@@ -353,32 +374,30 @@ func _draw() -> void:
 			while float(k) * sub <= minf(tmax, vis_hi + sub):
 				if k % per != 0:   # 整拍处由主刻度画
 					var xs := MARGIN_L + float(k) * sub * _pps
-					draw_line(Vector2(xs, RULER_H * 0.55), Vector2(xs, fit_height()), Th.BORDER, 1.0)
+					draw_line(Vector2(xs, maxf(RULER_H * 0.55, view.position.y)), Vector2(xs, view.end.y), Th.BORDER, 1.0)
 				k += 1
 	var t0 := int(floorf(vis_lo / float(tstep))) * tstep
 	for t in range(maxi(0, t0), int(minf(tmax, vis_hi)) + 1, tstep):
 		var x := MARGIN_L + float(t) * _pps
-		draw_line(Vector2(x, 0), Vector2(x, fit_height()), Th.BORDER, 1.0)
-		draw_string(fnt, Vector2(x + 2, RULER_H - 4), "%s%s" % [t, suffix],
-			HORIZONTAL_ALIGNMENT_LEFT, -1, Th.FS_META, Th.TEXT_MUTE)
+		draw_line(Vector2(x, view.position.y), Vector2(x, view.end.y), Th.BORDER, 1.0)
+		if view.position.y < RULER_H:
+			draw_string(fnt, Vector2(x + 2, RULER_H - 4), "%s%s" % [t, suffix],
+				HORIZONTAL_ALIGNMENT_LEFT, -1, Th.FS_META, Th.TEXT_MUTE)
 	# 轨道分隔线
-	for k in tracks + 1:
+	for k in range(first_track, last_track + 2):
 		var y := RULER_H + TRACK_H * float(k)
-		draw_line(Vector2(0, y), Vector2(w, y), Th.BORDER, 1.0)
+		draw_line(Vector2(view.position.x, y), Vector2(view.end.x, y), Th.BORDER, 1.0)
 	# 播放头（D2）：标尺上点/拖定位；只画线+读数，不做游戏判定
 	var phx := MARGIN_L + playhead * _pps
 	# 先记下位置，条块画完再叠播放头（否则会被条块盖住）
 	# 条块：选中高亮、冲突描红、瞬发画细条（P02：冲突基于同一份缓存区间表）
 	var hot := _hot_blocks()
-	for i in steps.size():
-		if not (steps[i] is Dictionary):
-			continue
+	for i in _visible_blocks(view, first_track, last_track):
 		var r := _block_rect(i)
-		# P02：条块整块在可视段外就跳过（拖拽中的那块永远画，预览可能被拖到边界外）
-		if i != _drag_idx and (r.end.x < MARGIN_L + vis_lo * _pps or r.position.x > MARGIN_L + vis_hi * _pps):
-			continue
 		var sc := str((steps[i] as Dictionary).get("step", ""))
-		var nm := str(name_of.call(sc)) if name_of.is_valid() else sc
+		if not _step_names.has(sc):
+			_step_names[sc] = str(name_of.call(sc)) if name_of.is_valid() else sc
+		var nm: String = _step_names[sc]
 		var known := nm != sc
 		var base := Th.ACCENT_BG if known else Th.BG_HOVER
 		var fill := base

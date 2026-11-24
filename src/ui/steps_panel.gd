@@ -91,6 +91,8 @@ var _reference_context := ""
 var _steps_map := ""
 var _steps_rev := 0           # 结构版本：增删/排序后递增，过期控件回调据此丢弃（D1）
 var _steps_sel := -1          # 当前选中步骤下标；-1 = 无
+var _steps_page := 0
+const STEPS_PAGE_SIZE := 40
 ## E1：恢复记忆下标时校验「还是同一步」——期间步骤被增删/换序就回落到无选中，
 ## 不把下标悄悄挪到另一条步骤上（与 D1 的过期回调同一套身份原则）。
 var _steps_sel_expect := ""
@@ -181,6 +183,7 @@ func _mount_target() -> void:
 	# 否则「0 == 0」会跳过 set_steps，再开一次时间轴页签就是空白。
 	_steps_tl_rev = -1
 	_steps_sel = -1
+	_steps_page = 0
 	_steps_view = "list"
 	_steps_clock = null
 	_steps_clock_missing = []
@@ -193,6 +196,7 @@ func _mount_target() -> void:
 	_steps_sel_expect = ""
 	if not mem.is_empty():
 		_steps_sel = int(mem.get("sel", -1))
+		_reveal_step_page()
 		_steps_view = str(mem.get("view", "list"))
 		# 记下记忆里那一步的步骤码：复盘时若下标已指向别的步骤，宁可无选中
 		_steps_sel_expect = str(mem.get("step", ""))
@@ -624,6 +628,8 @@ func _set_steps_view(mode: String) -> void:
 		return
 	_steps_view = mode
 	_rebuild_steps_all()
+	if mode == "timeline" and _steps_sel >= 0:
+		_steps_tl.reveal_step.call_deferred(_steps_sel)
 
 func _sync_steps_tabs() -> void:
 	if _steps_tabs == null:
@@ -654,6 +660,7 @@ func _steps_pick_tl(idx: int) -> void:
 			_steps_tl.reject_pick(_steps_sel)
 		return
 	_steps_sel = idx
+	_reveal_step_page()
 	if _steps_tl != null and is_instance_valid(_steps_tl):
 		_steps_tl.sel = idx
 		_steps_tl.queue_redraw()
@@ -753,16 +760,16 @@ func _rebuild_steps_all() -> void:
 		_rebuild_steps_list(arr)
 	_rebuild_steps_form(arr)
 
-## 步骤列表（列表视图）：空态 + 逐行渲染。
+## 列表分页仅限制创建的控件，步骤序号、复制范围和写入均对应完整数组。
 var _steps_list_snapshot: Array = []
 var _steps_binding: Dictionary = {}
 var _copied_segment: Array = []
 var _segment_scope: Array = []
 
 func _rebuild_steps_list(arr: Array) -> void:
-	_steps_list_snapshot = arr.duplicate(true)
 	if _steps_list == null:
 		return
+	_steps_list_snapshot = arr.duplicate(true)
 	for c in _steps_list.get_children():
 		_steps_list.remove_child(c)
 		c.queue_free()
@@ -777,11 +784,39 @@ func _rebuild_steps_list(arr: Array) -> void:
 	actions.add_child(paste)
 	if arr.is_empty():
 		_steps_list.add_child(Kit.hint_label("（空演出：添加步骤开始排）", 320))
-	for si in arr.size():
+	var last_page := maxi(0, ceili(float(arr.size()) / STEPS_PAGE_SIZE) - 1)
+	_steps_page = mini(_steps_page, last_page)
+	var first := _steps_page * STEPS_PAGE_SIZE
+	var end := mini(first + STEPS_PAGE_SIZE, arr.size())
+	if last_page > 0:
+		var nav := Kit.hbox(6)
+		_steps_list.add_child(nav)
+		var prev := Kit.button("上一页", _go_to_step_page.bind(_steps_page - 1), "ghost")
+		prev.disabled = _steps_page == 0
+		nav.add_child(prev)
+		var next := Kit.button("下一页", _go_to_step_page.bind(_steps_page + 1), "ghost")
+		next.disabled = _steps_page == last_page
+		nav.add_child(next)
+		nav.add_child(Kit.text_label("%d–%d / %d" % [first + 1, end, arr.size()], Th.TEXT_DIM, Th.FS_SMALL))
+		var jump := _segment_range_input(arr.size(), first + 1)
+		jump.tooltip_text = "输入完整列表中的步骤序号"
+		nav.add_child(jump)
+		nav.add_child(Kit.button("定位步骤", func():
+			jump.apply()
+			_steps_pick(int(jump.value) - 1), "ghost"))
+	for si in range(first, end):
 		var st = arr[si]
 		if not (st is Dictionary):
 			continue
 		_steps_list.add_child(_steps_row(si, st))
+
+func _go_to_step_page(page: int) -> void:
+	if _flush_pending():
+		_steps_page = page
+		_rebuild_steps_list(_steps_data().get("steps", []))
+
+func _reveal_step_page() -> void:
+	_steps_page = floori(float(maxi(0, _steps_sel)) / STEPS_PAGE_SIZE)
 
 func _current_segment_scope() -> Array:
 	return [str(manifest.get("_dir", "")), _steps_fn_id, "" if _project_scope else _steps_map]
@@ -860,6 +895,7 @@ func _append_segment(origin: float) -> void:
 	data["steps"] = arr
 	if _steps_write(data):
 		_steps_sel = first
+		_reveal_step_page()
 		_bump_steps_rev()
 		_rebuild_steps_all()
 
@@ -1048,6 +1084,7 @@ func _steps_pick(si: int) -> void:
 			_steps_tl.queue_redraw()
 		return
 	_steps_sel = si
+	_reveal_step_page()
 	_rebuild_steps_all()
 
 ## 当前步骤表单：步骤类型选择 + 该步骤声明的字段 + 未声明键只读保留。
@@ -1583,10 +1620,11 @@ func _steps_add(code: String) -> void:
 	if not _steps_write(data):
 		return
 	_steps_sel = arr.size() - 1
+	_reveal_step_page()
 	_bump_steps_rev()
 	_rebuild_steps_all()
 
-## 删除步骤；删的是选中的步骤时清除选中。
+## 删除后尽量保留原选中步骤；删掉选中项时选相邻项。
 func _steps_del(si: int) -> void:
 	var data := _steps_data()
 	var arr: Array = data.get("steps", []) if data.get("steps", []) is Array else []
@@ -1598,6 +1636,7 @@ func _steps_del(si: int) -> void:
 		return
 	var next_sel := _steps_sel - 1 if _steps_sel > si else _steps_sel
 	_steps_sel = mini(next_sel, arr.size() - 1)
+	_reveal_step_page()
 	_bump_steps_rev()
 	_rebuild_steps_all()
 
@@ -1615,6 +1654,7 @@ func _steps_move(si: int, dir: int) -> void:
 	if not _steps_write(data):
 		return
 	_steps_sel = nj
+	_reveal_step_page()
 	_bump_steps_rev()
 	_rebuild_steps_all()
 
@@ -1631,5 +1671,6 @@ func _steps_dup(si: int) -> void:
 	if not _steps_write(data):
 		return
 	_steps_sel = si + 1
+	_reveal_step_page()
 	_bump_steps_rev()
 	_rebuild_steps_all()

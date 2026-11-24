@@ -1581,9 +1581,65 @@ func run():
 	await author_frame_picks(app, manifest)
 	await author_transformed_terrain(app, manifest)
 	await author_collision_batch(app, manifest)
+	await author_long_timeline(app, manifest)
 	await author_signal_room(app, project + "-signal")
 	print("WORKFLOW-DONE failures=", failures)
 	quit(1 if failures else 0)
+
+func author_long_timeline(app, manifest: Dictionary) -> void:
+	var steps: Array = [{"step": "NEXT", "at": 0, "duration": 10000}]
+	for i in range(1, 5000):
+		steps.append({"step": "NEXT", "at": i * 2, "track": i % 8})
+	check(Store.write(manifest, "second_sequence", "project-long-performance", {
+		"id": "project-long-performance", "function": "SSEQ", "name": "Long performance",
+		"scope": "project", "fields": {}, "steps": steps,
+	}), "create a 5000-step performance fixture")
+	app._set_mode("content")
+	var panel = app.project_shell.content_editor._steps
+	check(panel.open_content("second_sequence", "project-long-performance"), "open the long performance")
+	var pop: PopupPanel = panel._steps_pop
+	press(pop, "时间轴")
+	await process_frame
+	var timeline: TimelineView = panel._steps_tl
+	var pulse := timeline._block_rect(4967)
+	check(timeline._hit(pulse.get_center()) == 4967, "locate a distant instantaneous step on its track")
+	check(timeline._hit(Vector2(pulse.position.x, TimelineView.RULER_H + 10)) == 0,
+		"a long interval that starts offscreen stays hittable")
+	var window := Rect2(pulse.position.x - 200, TimelineView.RULER_H, 500, TimelineView.TRACK_H * 8)
+	var expected: Array[int] = []
+	var stamp := Time.get_ticks_usec()
+	for sample in range(30):
+		expected.clear()
+		for i in steps.size():
+			if timeline._block_rect(i).intersects(window, true):
+				expected.append(i)
+	var scan_us := Time.get_ticks_usec() - stamp
+	stamp = Time.get_ticks_usec()
+	var visible: Array[int] = []
+	for sample in range(30):
+		visible = timeline._visible_blocks(window, 0, 7)
+	var query_us := Time.get_ticks_usec() - stamp
+	check(visible == expected and visible.has(0) and visible.has(4967),
+		"the visible window includes long and instantaneous steps in source order")
+	print("TIMELINE-WINDOW steps=5000 samples=30 visible=%d scan_us=%d indexed_us=%d" % [
+		visible.size(), scan_us, query_us])
+	press(pop, "列表")
+	var list: VBoxContainer = panel._steps_list
+	collect(list, "SpinBox")[0].get_line_edit().text = "4961"
+	press(list, "定位步骤")
+	check(panel._steps_sel == 4960 and list.get_child_count() == 42, "jump to a late global row with one page mounted")
+	var previous_playhead := timeline.playhead
+	press(pop, "时间轴")
+	await process_frame
+	check(timeline._visible_rect().intersects(timeline._block_rect(4960)) and timeline.playhead == previous_playhead,
+		"switching to the timeline reveals the selected step without moving the playhead")
+	press(pop, "列表")
+	press(list.get_child(2), "↑")
+	check(panel._steps_sel == 4959, "moving across a page boundary follows the selected step")
+	var saved: Array = Store.read(manifest, "second_sequence", "project-long-performance").get("steps", [])
+	check(saved.size() == 5000 and saved[4959].at == 9920 and saved[4960].at == 9918,
+		"the reordered steps persist at the intended global positions")
+	panel._teardown_steps_host()
 
 func author_collision_batch(app, manifest: Dictionary) -> void:
 	var map := Maps.new_map("collision_batch", 224, 224)
