@@ -147,8 +147,8 @@ static func build(src: Dictionary, dst: Dictionary, codes: PackedStringArray = P
 		if not (row is Dictionary):
 			continue
 		var r: Dictionary = row
-		var scene := AssetDecl.by_id(m, str(r.get("asset", ""))).get("kind") == "scene"
-		var code := "" if scene else str(r.get("code", ""))
+		var entity := AssetDecl.is_entity(m, str(r.get("asset", "")))
+		var code := str(r.get("code", "")) if entity else ""
 		if code != "":
 			if src_by_code.has(code):
 				conflicts.append({"kind": "duplicate_code", "id": code,
@@ -356,6 +356,7 @@ static func remap_row(row: Dictionary, instance_map: Dictionary, content_map: Di
 	if ad.get("kind") == "scene":
 		out.erase("code")
 		out.erase("functions")
+	if ad.get("kind") != "entity":
 		return out
 	var old_code := str(out.get("code", ""))
 	if instance_map.has(old_code):

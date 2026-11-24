@@ -261,21 +261,16 @@ static func ref_fields(ad: Dictionary) -> Array:
 ## C3：资产声明的端口表（assets[].ports：{id, x, y, type?}）。无声明返回空数组。
 static func ports_of(ad: Dictionary) -> Array:
 	var ps = ad.get("ports", null)
-	return ps if ps is Array else []
+	return ps if ad.get("kind") == "entity" and ps is Array else []
 
 ## C3：端口候选（port: 选项来源）：目标图上每个实例的声明端口，按类型过滤。
 ## 返回 [{v: JSON 串（{map, inst, port}）, t: 标签}]；地图解析失败返回空（控件保留原值）。
 static func port_candidates(manifest: Dictionary, map_key: String, want_types: Array) -> Array:
-	var out: Array = []
-	var rm := ReferenceIndex.resolve_map(manifest, map_key)
-	if str(rm.get("status", "")) != "ok":
-		return out
-	var name := str(rm.get("key", ""))
-	if name == "":
-		return out
-	var data: Dictionary = MapStore.read(manifest, name)
-	var map_code := str((data.get("meta", {}) as Dictionary).get("code", ""))
-	return port_options(manifest, map_code if map_code != "" else name, data.get("objects", []), want_types)
+	var resolved := ReferenceIndex.resolve_map(manifest, map_key)
+	if resolved.status != "ok":
+		return []
+	var data := MapStore.read(manifest, resolved.key)
+	return port_options(manifest, map_key, data.get("objects", []), want_types)
 
 static func port_options(manifest: Dictionary, map_key: String, objects: Array, want_types: Array) -> Array:
 	var out: Array = []

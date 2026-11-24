@@ -198,18 +198,14 @@ func stroke_end() -> void:
 ## 无实例码的目标（场景图片）没有键可用——调用方按 inst_rows 的 ok=false 回退整图快照。
 
 ## 改动前的实例行快照。ok=false = 有目标没有实例码（场景图片），差量无从寻址。
-## 键从**行里**取（_object_row 会给缺码实体补发码），不能用登记前的 n.code。
+## 只记录已有实例码的实体；序列化不分配身份。
 func inst_rows(nodes: Array) -> Dictionary:
 	var rows := {}
 	for s in nodes:
 		var n := s as EntityNode
-		if n == null or not is_instance_valid(n):
+		if not is_instance_valid(n) or not n.is_entity() or n.code.is_empty():
 			return {"ok": false, "rows": {}}
-		var r := _object_row(n)
-		var key := str(r.get("code", ""))
-		if key == "":
-			return {"ok": false, "rows": {}}   # 场景图片永不产码：差量不可寻址
-		rows[key] = r
+		rows[n.code] = _object_row(n)
 	return {"ok": true, "rows": rows}
 
 ## 收尾一次实例改动：比对 before 与本图现状，把差异压成差量条目。
@@ -270,13 +266,9 @@ func inst_commit_add(new_nodes: Array, clone_contents := []) -> bool:
 	var ops: Array = []
 	for s in new_nodes:
 		var n := s as EntityNode
-		if n == null or not is_instance_valid(n):
+		if not is_instance_valid(n) or not n.is_entity() or n.code.is_empty():
 			return false
-		var r := _object_row(n)
-		var key := str(r.get("code", ""))
-		if key == "":
-			return false
-		ops.append({"op": "add", "key": key, "before": null, "after": r})
+		ops.append({"op": "add", "key": n.code, "before": null, "after": _object_row(n)})
 	if not ops.is_empty():
 		var entry := {"kind": "ents", "ops": ops}
 		if not clone_contents.is_empty():
@@ -328,23 +320,7 @@ func _restore_ents(entry: Dictionary, forward: bool) -> void:
 func _apply_row_to_node(n: EntityNode, row: Dictionary) -> void:
 	var old_lid := n.layer_id
 	var old_zp := n.z_policy
-	n.asset = str(row.get("asset", n.asset))
-	n.code = str(row.get("code", n.code))
-	n.props = (row.get("props", {}) as Dictionary).duplicate(true) \
-		if row.get("props", null) is Dictionary else {}
-	n.functions = (row.get("functions", []) as Array).duplicate(true) \
-		if (n.is_entity() or n.decl.is_empty()) and row.get("functions") is Array else []
-	n.data_transform = (row.get("transform", {}) as Dictionary).duplicate(true) \
-		if row.get("transform", null) is Dictionary else {}
-	n.raw = row.duplicate(true)
-	n.z_policy = str(row.get("zPolicy", "auto"))
-	n.visible_flag = bool(row.get("visible", true))
-	var ei: int = cvs._layer_index_of(str(row.get("layer", old_lid)))
-	if ei < 0:
-		ei = 0
-	n.layer_id = cvs.layer_id(ei)
-	n.refresh_visual()   # props 就位后按 sizeFields 重算尺寸
-	n.apply_grid(float(row.get("x", 0)), float(row.get("y", 0)))
+	var ei := _restore_placement(n, row)
 	if n.layer_id != old_lid or n.z_policy != old_zp:
 		cvs._place_in_layer(n, ei)
 
@@ -638,24 +614,26 @@ func _object_row(n: EntityNode) -> Dictionary:
 ## 保留行里的 ID；载图会在所有已有 ID 就位后集中补码和挂载。
 func _node_from_row(row: Dictionary) -> EntityNode:
 	var n: EntityNode = cvs.make_object(str(row.get("asset", "")))
-	n.code = str(row.get("code", ""))
-	n.props = (row.get("props", {}) as Dictionary).duplicate(true) \
-		if row.get("props", null) is Dictionary else {}
-	n.functions = (row.get("functions", []) as Array).duplicate(true) \
-		if (n.is_entity() or n.decl.is_empty()) and row.get("functions") is Array else []
-	n.data_transform = (row.get("transform", {}) as Dictionary).duplicate(true) \
-		if row.get("transform", null) is Dictionary else {}
-	n.raw = row.duplicate(true)
-	n.z_policy = str(row.get("zPolicy", "auto"))
-	n.visible_flag = bool(row.get("visible", true))
-	var ei: int = cvs._layer_index_of(str(row.get("layer", "")))
-	if ei < 0:
-		ei = 0
-	n.layer_id = cvs.layer_id(ei)
-	n.refresh_visual()   # props 就位后再算一次尺寸（sizeFields 资产按 props 定大小）
-	n.apply_grid(float(row.get("x", 0)), float(row.get("y", 0)))
+	var ei := _restore_placement(n, row)
 	cvs._place_in_layer(n, ei)
 	return n
+
+func _restore_placement(n: EntityNode, row: Dictionary) -> int:
+	n.raw = row.duplicate(true)
+	n.props = (row.props as Dictionary).duplicate(true) if row.get("props") is Dictionary else {}
+	n.data_transform = (row.transform as Dictionary).duplicate(true) if row.get("transform") is Dictionary else {}
+	# Preserve unknown rows for future asset recovery without indexing them as entities.
+	var has_identity := n.is_entity() or n.decl.is_empty()
+	n.code = str(row.get("code", "")) if has_identity else ""
+	n.functions = (row.get("functions", []) as Array).duplicate(true) \
+		if has_identity and row.get("functions") is Array else []
+	n.z_policy = str(row.get("zPolicy", "auto"))
+	n.visible_flag = bool(row.get("visible", true))
+	var ei := maxi(0, cvs._layer_index_of(str(row.get("layer", ""))))
+	n.layer_id = cvs.layer_id(ei)
+	n.refresh_visual()
+	n.apply_grid(float(row.get("x", 0)), float(row.get("y", 0)))
+	return ei
 
 func extract() -> Dictionary:
 	if cvs.map_root == null or not is_instance_valid(cvs.map_root):

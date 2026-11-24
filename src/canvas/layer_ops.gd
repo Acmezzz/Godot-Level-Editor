@@ -120,7 +120,12 @@ func _place_in_layer(n: EntityNode, li: int) -> void:
 		else root.get_node_or_null(NodePath("YSort")))
 	if box == null:
 		box = root
-	box.add_child(n)
+	if n.get_parent() == box:
+		return
+	if n.get_parent() != null:
+		n.reparent(box, false)
+	else:
+		box.add_child(n)
 	# 同层混放提示（作者提示 ⑤ 前半）：层没开 ySort 但该层已有瓦片又有实例 → 状态栏提示一次
 	if str(root.get_meta("yhint", "")) == "":
 		# 阶段三：「这层有没有瓦片」走缓存（瓦片写入时失效），不再每次放置全层重扫
