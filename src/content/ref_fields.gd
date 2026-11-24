@@ -66,6 +66,10 @@ static func vector_dims(decl: Dictionary) -> int:
 static func describe(decl: Dictionary) -> Dictionary:
 	var out := _base(decl)
 	var typ := str(decl.get("type", ""))
+	if typ == "array" and decl.get("of") in ["port_ref", "edge_ref"]:
+		var item := describe(array_element_decl(decl))
+		item["many"] = true
+		return item
 	# asset_ref 是 input 类型，不是 choice 来源：先归一成 asset 引用
 	if typ == "entity_ref":
 		out.kind = "entity_inst"

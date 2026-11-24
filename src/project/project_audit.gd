@@ -1349,12 +1349,13 @@ static func _spatial_fields(manifest: Dictionary, decls: Array, values: Variant,
 			continue
 		var paired := RefFields.paired_map_value(field, decls, values, "code" if coded else "id")
 		var entries := _as_list(value) if desc.many or field.get("type") == "array" else [value]
+		var ref_decl: Dictionary = RefFields.array_element_decl(field) if field.get("type") == "array" else field
 		for i in entries.size():
 			var entry = entries[i]
 			if _empty_reference_value(entry):
 				continue
 			var problem: Dictionary = probe.call(desc.kind, entry, source, map_name, paired) if probe.is_valid() \
-				else SpatialCheck.problem(manifest, desc.kind, source, map_name, entry, field, paired, overrides)
+				else SpatialCheck.problem(manifest, desc.kind, source, map_name, entry, ref_decl, paired, overrides)
 			if not problem.is_empty() and str(problem.get("message", "")) != "":
 				out.append({"path": path + ("#%d" % i if value is Array else ""),
 					"prop": prop, "message": problem.message, "fixable": bool(problem.get("fixable", false)),

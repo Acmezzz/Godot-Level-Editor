@@ -116,7 +116,7 @@ static func default_for(decl: Dictionary) -> Variant:
 		"color": return "#ffffff"
 		"choice": return [] if bool(decl.get("multiple", false)) else ""
 		"array", "curve": return []
-		"record", "condition": return {}
+		"record", "condition", "port_ref", "edge_ref": return {}
 		_: return ""
 
 ## 声明里能读到的说明性信息（E1）：字段 id / 执行码 / 类型与范围 / 缺省值。
@@ -333,7 +333,7 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 		"array":
 			# array.of ∈ 基础类型/choice/record（record 子字段可再嵌 array，限深 4）；非数组值只读展示——commit() 不能把坏值悄悄写成 []
 			var of := str(decl.get("of", ""))
-			var ok_of: Array = ["string", "int", "float", "bool", "color", "vector2", "range", "asset_ref", "choice", "record", "condition"]
+			var ok_of: Array = ["string", "int", "float", "bool", "color", "vector2", "range", "asset_ref", "choice", "record", "condition", "port_ref", "edge_ref"]
 			if not ok_of.has(of):
 				return _readonly(decl, value, "array.of 未声明（应写基础类型或 choice）",
 					"补全声明后重新加载清单即可恢复编辑")
@@ -358,7 +358,7 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 			var pd2: Dictionary = decl.duplicate(true)
 			pd2["kind"] = KIND_CHOICE
 			pd2["source"] = "port:" + str(decl.get("of", ""))
-			var enc := JSON.stringify(value) if value is Dictionary else ""
+			var enc := JSON.stringify(value) if value is Dictionary and not value.is_empty() else ""
 			return _build_choice(pd2, enc, func(v2):
 				var pd = JSON.parse_string(str(v2)) if v2 != "" else {}
 				return on_set.call(pd if pd is Dictionary else {}), option_resolver)
@@ -368,7 +368,7 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 			var ed2: Dictionary = decl.duplicate(true)
 			ed2["kind"] = KIND_CHOICE
 			ed2["source"] = "edge:"
-			var eenc := JSON.stringify(value) if value is Dictionary else ""
+			var eenc := JSON.stringify(value) if value is Dictionary and not value.is_empty() else ""
 			return _build_choice(ed2, eenc, func(v3):
 				var ed = JSON.parse_string(str(v3)) if v3 != "" else {}
 				return on_set.call(ed if ed is Dictionary else {}), option_resolver)

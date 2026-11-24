@@ -600,35 +600,39 @@ static func _remap_object_refs(vals: Dictionary, decls: Array, instance_map: Dic
 	for field in decls:
 		if not field is Dictionary:
 			continue
-		var type := str(field.get("type", ""))
+		var many: bool = field.get("type") == "array"
+		var type := str(field.get("of", "")) if many else str(field.get("type", ""))
 		if type not in ["port_ref", "edge_ref"]:
 			continue
 		var key := str(field.get("code", "")) if coded else ""
 		if key == "":
 			key = str(field.get("id", ""))
-		var value = vals.get(key)
-		if not value is Dictionary or value.is_empty():
-			continue
-		var map_key := RefFields.object_map_key(value, RefFields.paired_map_value(field, decls, vals, "code" if coded else "id"))
-		if not RefFields.map_key_local(map_key, source_name, source_key):
-			# 固化隐式跨图归属，防随兄弟字段改指向。
-			if str(value.get("map", "")) == "":
-				value["map"] = map_key
-			continue
-		if type == "port_ref":
-			var inst := str(value.get("inst", ""))
-			if inst == "":
+		var raw = vals.get(key)
+		var entries: Array = raw if many and raw is Array else [raw] if not many else []
+		var paired := RefFields.paired_map_value(field, decls, vals, "code" if coded else "id")
+		for value in entries:
+			if not value is Dictionary or value.is_empty():
 				continue
-			if instance_map.has(inst):
-				value["inst"] = str(instance_map[inst])
+			var map_key := RefFields.object_map_key(value, paired)
+			if not RefFields.map_key_local(map_key, source_name, source_key):
+				# 固化隐式跨图归属，防随兄弟字段改指向。
+				if str(value.get("map", "")) == "":
+					value["map"] = map_key
+				continue
+			if type == "port_ref":
+				var inst := str(value.get("inst", ""))
+				if inst == "":
+					continue
+				if instance_map.has(inst):
+					value["inst"] = str(instance_map[inst])
+					value["map"] = target
+					continue
+			elif map_edge.is_valid():
+				var edge: Dictionary = map_edge.call(value, target)
+				if not edge.is_empty():
+					value.merge(edge, true)
+					continue
+			if cross_code != "":
+				value["map"] = cross_code
+			elif map_key != "" and target != "":
 				value["map"] = target
-				continue
-		elif map_edge.is_valid():
-			var edge: Dictionary = map_edge.call(value, target)
-			if not edge.is_empty():
-				value.merge(edge, true)
-				continue
-		if cross_code != "":
-			value["map"] = cross_code
-		elif map_key != "" and target != "":
-			value["map"] = target
