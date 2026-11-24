@@ -3173,6 +3173,17 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 			func(row): return row.get_meta("field_id", "") == "routes" and row.get_meta("issue_highlight", false)),
 			"the issue drawer opens the owning step and marks the outer branch field")
 		issue_steps._teardown_steps_host()
+	var campaign_source := Store.read(manifest, "campaign", "project-acceptance")
+	var campaign_copy := await _copy_library_draft(app, editor._library, "campaign", "project-acceptance")
+	collect(campaign_copy, "LineEdit")[1].text = "campaign-copy"
+	press(campaign_copy, "保存")
+	await process_frame
+	var copied_campaign := Store.read(manifest, "campaign", "project-campaign-copy")
+	check(copied_campaign.get("id") == "project-campaign-copy" and copied_campaign.get("steps") == campaign_source.steps
+		and copied_campaign.get("fields") == campaign_source.fields
+		and Store.read(manifest, "campaign", "project-acceptance") == campaign_source,
+		"duplicating an independent campaign preserves its nested branches and steps without changing the source")
+	campaign_copy.hide()
 
 func _frame_contour_points(cvs: EditorCanvas, code: String) -> Array:
 	return _frame_contour_props(cvs, code).get("points", [])
@@ -3305,11 +3316,30 @@ func author_signal_room(app, project: String) -> void:
 			func(row): return row.get_meta("field_id", "") == "screen" and row.get_meta("issue_highlight", false)),
 			"the issue drawer opens the shared content and marks the screen field without an active map")
 		issue_form.hide()
+	var watch_source := Store.read(manifest, "signal", "project-watch")
+	var abandoned := await _copy_library_draft(app, library, "signal", "project-watch")
+	collect(abandoned, "LineEdit")[1].text = "discarded-watch"
+	abandoned.hide()
+	await process_frame
+	check(not Store.list_ids(manifest, "signal").has("project-discarded-watch"),
+		"closing a duplicate draft does not write a content file")
+	var watch_copy := await _copy_library_draft(app, library, "signal", "project-watch")
+	var copy_inputs := collect(watch_copy, "LineEdit")
+	copy_inputs[0].text = "Alternate entrance"
+	copy_inputs[1].text = "alternate-watch"
+	check(not Store.list_ids(manifest, "signal").has("project-alternate-watch"), "copy remains unpublished before saving")
+	press(watch_copy, "保存")
+	await process_frame
+	var alternate := Store.read(manifest, "signal", "project-alternate-watch")
+	check(alternate.get("name") == "Alternate entrance" and alternate.get("fields") == watch_source.fields
+		and Store.read(manifest, "signal", "project-watch") == watch_source,
+		"saving the duplicate creates an independent entry with the same screen link")
+	watch_copy.hide()
 	library.open()
 	var pop: PopupPanel = _visible_popup(app)
 	var entries: ItemList = collect(pop, "ItemList").front()
 	for i in entries.item_count:
-		if entries.get_item_metadata(i) == "project-watch":
+		if entries.get_item_metadata(i) == "project-alternate-watch":
 			entries.select(i)
 			entries.item_selected.emit(i)
 			break
@@ -3320,7 +3350,7 @@ func author_signal_room(app, project: String) -> void:
 	var report := await wait_for_playtest(app._map_file_ctrl)
 	var result: Dictionary = report.get("result", {})
 	check(report.get("status") == "ready" and report.get("mapDigest") == ""
-		and result.get("visited") == ["project-watch", "project-tune", "project-clear"]
+		and result.get("visited") == ["project-alternate-watch", "project-tune", "project-clear"]
 		and result.get("screens") == ["watch-deck", "relay-tuning"]
 		and result.get("buttons") == ["Tune the relay", "Confirm the signal"]
 		and result.get("text") == "Signal verified",
@@ -3328,6 +3358,20 @@ func author_signal_room(app, project: String) -> void:
 
 func _visible_popup(app) -> PopupPanel:
 	return collect(app, "PopupPanel").filter(func(p): return p.visible).back()
+
+func _copy_library_draft(app, library, kind: String, cid: String) -> PopupPanel:
+	library.open()
+	var pop := _visible_popup(app)
+	select_metadata(collect(pop, "OptionButton").front(), kind)
+	var list: ItemList = collect(pop, "ItemList").front()
+	for i in list.item_count:
+		if list.get_item_metadata(i) == cid:
+			list.select(i)
+			list.item_selected.emit(i)
+			break
+	press(pop, "复制为草稿…")
+	await process_frame
+	return _visible_popup(app)
 
 func _author_signal_content(app, library, id: String, message: String, view := "") -> void:
 	library.open()

@@ -52,6 +52,7 @@ func open() -> void:
 	var selected_kind := func() -> String:
 		return str(kinds.get_selected_metadata()) if kinds.selected >= 0 else ""
 	var eligible := {}
+	var reusable := {}
 	var selected_entry := func() -> Dictionary:
 		var selected := list.get_selected_items()
 		if selected.is_empty() or not eligible.has(selected[0]):
@@ -62,18 +63,39 @@ func open() -> void:
 		if not entry.is_empty():
 			pop.hide()
 			app._map_file_ctrl.on_play(Vector2i(-1, -1), true, entry), "ghost")
+	var copy := Kit.button("复制为草稿…", func():
+		var selected := list.get_selected_items()
+		if selected.is_empty():
+			return
+		var kind: String = selected_kind.call()
+		var cid := str(list.get_item_metadata(selected[0]))
+		var rd := Store.read_ex(manifest, kind, cid)
+		if rd.status != "ok" or rd.data.get("scope") != "project" or not rd.data.get("fields") is Dictionary:
+			app._set_status("无法复制该独立内容，请刷新内容库。")
+			return
+		var draft: Dictionary = rd.data.duplicate(true)
+		draft.erase("id")
+		draft["name"] = str(draft.get("name", cid)) + "（副本）"
+		pop.hide()
+		_open_item.call_deferred(kind, "", "", "", draft), "ghost")
+	copy.tooltip_text = "复制独立内容及其演出步骤。保存时创建新 ID，原内容及外部引用保持不变。"
 	var update_play := func():
 		play.visible = Playtest.allows_entry(manifest, selected_kind.call())
 		play.disabled = selected_entry.call().is_empty()
+		var selected := list.get_selected_items()
+		copy.disabled = selected.is_empty() or not reusable.has(selected[0])
 	var refill := func():
 		list.clear()
 		eligible.clear()
+		reusable.clear()
 		var kind: String = selected_kind.call()
 		for cid in Store.list_ids(manifest, kind):
 			var rd := Store.read_ex(manifest, kind, str(cid))
 			var label := str(rd.data.get("name", "")) if rd.status == "ok" else "[读取失败]"
 			var idx := list.add_item("%s  %s" % [label, cid])
 			list.set_item_metadata(idx, cid)
+			if rd.status == "ok" and rd.data.get("scope") == "project" and rd.data.get("fields") is Dictionary:
+				reusable[idx] = true
 			if rd.status == "ok" and rd.data.get("scope") == "project" and rd.data.get("function") == kinds_data[kind].get("code"):
 				eligible[idx] = true
 			if kind == _last_kind and cid == _last_id:
@@ -93,6 +115,7 @@ func open() -> void:
 		_open_item.call_deferred(kind, ""), "primary")
 	add.disabled = keys.is_empty()
 	controls.add_child(add)
+	controls.add_child(copy)
 	var relations := Kit.button("流程关系…", func():
 		pop.hide()
 		_open_flow.call_deferred())
@@ -302,7 +325,7 @@ func open_issue(jump: Dictionary) -> void:
 	elif host.commit_fields():
 		_open_item(fn, cid, context, field)
 
-func _open_item(kind: String, cid: String, context := "", field := "") -> void:
+func _open_item(kind: String, cid: String, context := "", field := "", draft := {}) -> void:
 	var fn := Functions.function_decl(manifest, kind)
 	if fn.is_empty():
 		return
@@ -311,8 +334,11 @@ func _open_item(kind: String, cid: String, context := "", field := "") -> void:
 	var rd := Store.read_ex(source, kind, cid) if not creating else {}
 	var readable: bool = creating or rd.get("status") == "ok"
 	var data: Dictionary = {"name": "", "fields": {}, "scope": "project"} if creating else rd.get("data", {})
+	if creating:
+		data.merge(draft, true)
 	var state := {"id": cid, "digest": str(rd.get("digest", "")), "new": creating, "map": context}
-	var shell: Dictionary = app._popup_body("编辑 · " + str(fn.get("name", kind)),
+	var title := "复制草稿" if not draft.is_empty() else "编辑"
+	var shell: Dictionary = app._popup_body(title + " · " + str(fn.get("name", kind)),
 		"保存写入内容文件。依赖其他字段的引用选项会在保存后更新。")
 	var pop: PopupPanel = shell.pop
 	var body: VBoxContainer = shell.body
