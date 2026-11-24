@@ -2,61 +2,20 @@ extends RefCounted
 ## ReferenceIndex（§7.2）：稳定身份键与引用解析的统一入口。
 ## MapKey = 地图码；InstanceKey = (地图码, 实例码)；ContentKey = (功能 id, 内容 ID)。
 ## resolve 系列是候选（ref_fields）、审计悬空判定（project_audit）与删除入边检查
-## （content_form）共享的同一套解析结果；status = ok / unset / missing / ambiguous /
-## unreadable / invalid（V4 §4.2-4：解析不出时不再一律压成 missing，让审计与控件各自分得清
-## 「没有这张图」与「图在但读不出来」与「键本身不合法」）。
+## （content_form）共享的同一套解析结果；status = ok / unset / missing / ambiguous。
 ## 只读查询走快速索引（MapStore code_index 缓存）；破坏性检查的入边全景按实际磁盘构建（R29 口径）。
 
 const MapStore := preload("res://src/map/map_store.gd")
-const ManifestScript := preload("res://src/project/manifest.gd")
 const ScreenLayout := preload("res://src/project/screen_layout.gd")
 const FlowTarget := preload("res://src/content/flow_target.gd")
 const ProjectSlots := preload("res://src/project/project_content_slots.gd")
 
-## 地图键（码或图名）解析 → {status, key(图名), candidates}。
-## 一码多图（R09 拒绝猜测，候选 = 冲突图名列表）；键同时是图名又是另一张图的码 = ambiguous
-## （名字先于码命中会让按码存储的引用悄悄改指另一张图，宁可报歧义让人修）。
-## 同一张图「图名 == 自己的码」不算歧义。missing：键不存在；ok：唯一图名（码命中时 key_code 带回原码）。
-## §4.2-4 两态细分：
-##   invalid   —— 键根本不能当地图名（含路径分隔符/保留名/首点等），永远解析不成文件；
-##   unreadable——键命中了某个文件，但那份文件读不出来（坏 JSON / 结构校验不过），
-##                「目标里有没有这个实例/这条边」无从判定，调用方不能据此报悬空。
-static func resolve_map(manifest: Dictionary, map_key: String) -> Dictionary:
-	return resolve_indexed_map(MapStore.code_index(manifest), map_key) if map_key != "" else _unset_map()
+## 按稳定地图码解析，返回对应文件名。
+static func resolve_map(manifest: Dictionary, code: String) -> Dictionary:
+	return resolve_map_code(MapStore.code_index(manifest), code) if code != "" else _unset_map()
 
 static func _unset_map() -> Dictionary:
 	return {"status": "unset", "key": "", "candidates": []}
-
-static func resolve_indexed_map(ci: Dictionary, map_key: String) -> Dictionary:
-	if map_key == "":
-		return _unset_map()
-	var names: Array = ci.get("names", [])
-	var unreadable: Array = ci.get("unreadable", [])
-	var by_code: Dictionary = ci.get("by_code", {})
-	var candidates: Array = by_code.get(map_key, [])
-	var by_name := names.has(map_key)
-	if by_name and candidates.size() > 1:
-		return {"status": "ambiguous", "key": "", "candidates": candidates}
-	var name := str((ci.get("map") as Dictionary).get(map_key, ""))
-	if by_name and name != "" and name != map_key:
-		# 键既是图名又是别的图的码：两种解释指向不同文件，不猜
-		var cands: Array = [str(map_key), name]
-		return {"status": "ambiguous", "key": "", "candidates": cands}
-	if by_name:
-		# 命中了目录里的文件：内容读不出就是 unreadable，不是「图不存在」
-		if unreadable.has(map_key):
-			return {"status": "unreadable", "key": str(map_key), "candidates": [str(map_key)]}
-		return {"status": "ok", "key": str(map_key), "candidates": [str(map_key)]}
-	if candidates.size() > 1:
-		return {"status": "ambiguous", "key": "", "candidates": candidates}
-	if name == "":
-		# 码表里没有：键本身能不能当地图名？不能 = invalid（永远不可能有这张图）
-		if not ManifestScript.is_valid_map_name(map_key):
-			return {"status": "invalid", "key": "", "candidates": []}
-		return {"status": "missing", "key": "", "candidates": []}
-	if unreadable.has(name):
-		return {"status": "unreadable", "key": name, "key_code": map_key, "candidates": [name]}
-	return {"status": "ok", "key": name, "key_code": map_key, "candidates": [name]}
 
 ## Resolve a stable map code. File names never participate in this lookup.
 static func resolve_map_code(index: Dictionary, code: String) -> Dictionary:

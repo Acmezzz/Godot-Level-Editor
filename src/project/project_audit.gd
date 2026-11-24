@@ -165,7 +165,7 @@ static func view_reference_issues(manifest: Dictionary, view_id := "") -> Array:
 				if ref.has("context_map"):
 					if map_index.is_empty():
 						map_index = MapStore.code_index(manifest)
-					if ReferenceIndex.resolve_indexed_map(map_index, ref.context_map).status != "ok":
+					if ReferenceIndex.resolve_map_code(map_index, ref.context_map).status != "ok":
 						out.append(_view_issue(ref, "请为内容出口选择可读取的配对地图。"))
 			else:
 				out.append(_view_issue(ref, _flow_target_message(ref.target)))
@@ -220,7 +220,7 @@ static func view_reference_issues(manifest: Dictionary, view_id := "") -> Array:
 				label = "地图"
 				if map_index.is_empty():
 					map_index = MapStore.code_index(manifest)
-				valid = ReferenceIndex.resolve_indexed_map(map_index, ref.value).status == "ok"
+				valid = ReferenceIndex.resolve_map_code(map_index, ref.value).status == "ok"
 			"entity_inst", "port", "edge", "cell", "layer":
 				if map_index.is_empty():
 					map_index = MapStore.code_index(manifest)
@@ -242,7 +242,7 @@ static func _module_spatial_problem(manifest: Dictionary, ref: Dictionary, asset
 	var key := _module_map_key(ref)
 	if key == "":
 		return "屏幕模块没有所属地图，请先选择配对地图。"
-	var resolved := ReferenceIndex.resolve_indexed_map(map_index, key)
+	var resolved := ReferenceIndex.resolve_map_code(map_index, key)
 	if resolved.status != "ok":
 		return "无法定位空间引用的目标地图：%s（%s）" % [key, resolved.status]
 	var name: String = resolved.key
@@ -276,7 +276,7 @@ static func _module_target_problem(manifest: Dictionary, ref: Dictionary, assets
 	if ref.kind == "cell" and CellGraphScript.cell_ids(target.get("meta", {}).get("cellGraph", {})).is_empty():
 		return "目标地图 %s 没有可引用的格。" % name
 	var key := _module_map_key(ref)
-	var problem := SpatialCheck.problem(manifest, ref.kind, target, name, value, ref.decl, key, {key: target})
+	var problem := SpatialCheck.problem(manifest, ref.kind, target, value, ref.decl, key, {key: target})
 	return str(problem.get("message", ""))
 
 static func _view_issue(ref: Dictionary, message: String) -> Dictionary:
@@ -684,8 +684,7 @@ static func _collect_entry_contexts(manifest: Dictionary, contexts: Dictionary) 
 		if not cache.has(map_key):
 			if index.is_empty():
 				index = MapStore.code_index(manifest)
-			var resolved := ReferenceIndex.resolve_indexed_map(index, map_key) if ref.has("view") \
-				else ReferenceIndex.resolve_map_code(index, map_key)
+			var resolved := ReferenceIndex.resolve_map_code(index, map_key)
 			cache[map_key] = MapStore.read(manifest, resolved.key) if resolved.status == "ok" else {}
 		var map: Dictionary = cache[map_key]
 		if map.is_empty():
@@ -761,8 +760,7 @@ static func _content_context_graph(manifest: Dictionary, seeds: Dictionary, rows
 					var map_key := str(link.get("map_key", ""))
 					if map_key == "":
 						continue
-					if context.map.is_empty() or not RefFields.map_key_local(map_key, context.name,
-							str(context.map.get("meta", {}).get("code", ""))):
+					if context.map.is_empty() or not RefFields.map_key_local(map_key, str(context.map.get("meta", {}).get("code", ""))):
 						if not map_cache.has(map_key):
 							var resolved := ReferenceIndex.resolve_map(manifest, map_key)
 							map_cache[map_key] = MapStore.read(manifest, str(resolved.key)) if resolved.status == "ok" else {}
@@ -1230,7 +1228,7 @@ static func _spatial_fields(manifest: Dictionary, decls: Array, values: Variant,
 			var entry = entries[i]
 			if _empty_reference_value(entry):
 				continue
-			var problem := SpatialCheck.problem(manifest, desc.kind, source, map_name, entry, ref_decl, paired, targets)
+			var problem := SpatialCheck.problem(manifest, desc.kind, source, entry, ref_decl, paired, targets)
 			if not problem.is_empty() and str(problem.get("message", "")) != "":
 				out.append({"path": path + ("#%d" % i if value is Array else ""),
 					"prop": prop, "message": problem.message})

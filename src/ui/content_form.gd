@@ -372,7 +372,7 @@ func _pick_entity_for(fd: Dictionary, commit: Callable) -> void:
 ## layer:（当前图用户层栈，值=层码，显示「序号.层名」）、
 ## asset:<kind>:<id,id>（资产引用，kind 空 = 全部；asset_ref 类型的 input 字段也走这里）。
 func can_pick_on_canvas(map_key: String) -> bool:
-	return _map_ready() and RefFields.map_key_local(map_key, app.canvas.cur_map_name, app.canvas.cur_map_code())
+	return _map_ready() and RefFields.map_key_local(map_key, app.canvas.cur_map_code())
 
 ## 临时地图只影响候选；不写入内容文件，也不覆盖字段自身的配对地图。
 func reference_context_selector(current: String, on_change: Callable) -> OptionButton:
@@ -382,11 +382,8 @@ func reference_context_selector(current: String, on_change: Callable) -> OptionB
 	select.tooltip_text = "只用来选择本图引用。已声明的配对地图优先，不会保存此选择。"
 	select.add_item("不指定")
 	select.set_item_metadata(0, "")
-	var index := MapStore.code_index(manifest)
 	for option in _resolve_options({"source": "map"}):
 		var key := str(option.v)
-		if ReferenceIndex.resolve_indexed_map(index, key).status != "ok":
-			continue
 		var i := select.item_count
 		select.add_item(str(option.t))
 		select.set_item_metadata(i, key)
@@ -510,7 +507,7 @@ func _resolve_options(decl: Dictionary, project_scope := false, saved_only := fa
 				if ent is EntityNode and ent.is_entity():
 					rows.append({"asset": ent.asset, "code": ent.code})
 			var map_code: String = app.canvas.cur_map_code()
-			return RefFields.port_options(manifest, map_code if map_code != "" else app.canvas.cur_map_name,
+			return RefFields.port_options(manifest, map_code,
 				rows, Array(pk))
 		return RefFields.port_candidates(manifest, pmap, Array(pk))
 	if src.begins_with("cell:"):
@@ -590,14 +587,8 @@ func _resolve_options(decl: Dictionary, project_scope := false, saved_only := fa
 			out6.append({"v": aid, "t": str(ad.get("name", aid))})
 		return out6
 	if src == "map":
-		var out3: Array = []
-		# 值 = 地图码（v7）：改名不破坏引用；老图缺码时退回图名（保存一次即补码）。
-		# 走 code_map 的 mtime+size 签名缓存（C-17）：表单每次刷新不再全量解析地图文件。
-		var n2c: Dictionary = MapStore.name_to_code(manifest)
-		for mn in MapStore.list_maps(manifest):
-			var mc := str(n2c.get(str(mn), ""))
-			out3.append({"v": mc if mc != "" else str(mn), "t": str(mn)})
-		return out3
+		return ReferenceIndex.map_target_options(manifest).map(func(row):
+			return {"v": row.code, "t": row.name})
 	return []
 
 

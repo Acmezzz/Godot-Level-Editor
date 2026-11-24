@@ -488,10 +488,10 @@ static func _remap_field_map(manifest: Dictionary, values, decls: Array, instanc
 			id_map = content_map.get(target_fn if target_fn != "" else fn_id, {})
 		# R10：先看配对地图字段的现值——目标不是源图的引用原样保留（跨图身份）。
 		var pair := str(f.get("mapField", ""))
-		if kind != "content" and pair != "" and (source_key != "" or source_name != ""):
+		if kind != "content" and pair != "" and source_key != "":
 			var pk := _key_of(decls, pair)
 			var pv := str(vals.get(pk, "")) if pk != "" and vals.has(pk) else ""
-			if pv != "" and pv != source_key and pv != source_name:
+			if pv != "" and pv != source_key:
 				continue
 		var v = vals[key]
 		if kind == "layer":
@@ -545,7 +545,7 @@ static func _remap_scoped_link(field: Dictionary, key: String, values: Dictionar
 	var mode: String = field.get("contentMapContext", "")
 	if mode == "paired":
 		var map_key := RefFields.effective_map_value(field, decls, values, "code")
-		if map_key == "" or not RefFields.map_key_local(map_key, source_name, source_key):
+		if map_key == "" or not RefFields.map_key_local(map_key, source_key):
 			return
 	elif mode != "inherit":
 		return
@@ -686,9 +686,9 @@ static func _remap_entity_ref_fields(vals: Dictionary, fdecls: Array, owner: Str
 			continue
 		var pair := str(f.get("mapField", ""))
 		# R10：先看配对地图字段的现值——目标不是源图的引用原样保留（跨图身份 (图码, 实例码)）。
-		if pair != "" and (source_key != "" or source_name != ""):
+		if pair != "" and source_key != "":
 			var pv := str(vals.get(pair, ""))
-			if pv != "" and pv != source_key and pv != source_name:
+			if pv != "" and pv != source_key:
 				continue
 		if kind == "layer":
 			_keep_layer_scope(vv, owner, fid, pair, pairs_to_fill, conflicts,
@@ -776,7 +776,7 @@ static func _remap_object_refs(vals: Dictionary, decls: Array, instance_map: Dic
 			if not value is Dictionary or value.is_empty():
 				continue
 			var map_key := RefFields.object_map_key(value, paired)
-			if not RefFields.map_key_local(map_key, source_name, source_key):
+			if not RefFields.map_key_local(map_key, source_key):
 				# 固化隐式跨图归属，防随兄弟字段改指向。
 				if str(value.get("map", "")) == "":
 					value["map"] = map_key

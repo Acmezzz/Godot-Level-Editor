@@ -9,7 +9,7 @@ const EdgeRef := preload("res://src/map/edge_ref.gd")
 const CellGraphScript := preload("res://src/map/cell_graph.gd")
 const ReferenceIndex := preload("res://src/project/reference_index.gd")
 
-static func problem(manifest: Dictionary, kind: String, source: Dictionary, map_name: String,
+static func problem(manifest: Dictionary, kind: String, source: Dictionary,
 		value: Variant, field: Dictionary, paired: String, overrides: Dictionary) -> Dictionary:
 	var local_code := str(source.get("meta", {}).get("code", ""))
 	match kind:
@@ -17,7 +17,7 @@ static func problem(manifest: Dictionary, kind: String, source: Dictionary, map_
 			if not value is String:
 				return {"message": ("图层引用必须是图层 ID 字符串" if kind == "layer" else "实例引用必须是实例码字符串")}
 			var target := source
-			if not RefFields.map_key_local(paired, map_name, local_code):
+			if not RefFields.map_key_local(paired, local_code):
 				if overrides.has(paired):
 					target = overrides[paired]
 				else:
@@ -40,22 +40,22 @@ static func problem(manifest: Dictionary, kind: String, source: Dictionary, map_
 			if source.is_empty() and paired == "" and value is Dictionary \
 					and value.get("map", "") is String and str(value.get("map", "")) == "":
 				return {}
-			return _port_ref_problem(manifest, source, map_name, value, field, paired, overrides)
+			return _port_ref_problem(manifest, source, value, field, paired, overrides)
 		"edge":
 			if source.is_empty() and paired == "" and value is Dictionary \
 					and value.get("map", "") is String and str(value.get("map", "")) == "":
 				return {}
-			return _edge_ref_problem(manifest, source, value, overrides, map_name, paired)
+			return _edge_ref_problem(manifest, source, value, overrides, paired)
 		"cell":
-			return _cell_ref_problem(manifest, source, str(value), paired, field, overrides, map_name)
+			return _cell_ref_problem(manifest, source, str(value), paired, field, overrides)
 		"map":
 			if manifest.get("_maps_dir", "") != "" and not overrides.has(str(value)) \
-					and not RefFields.map_key_local(str(value), map_name, local_code) \
-					and ReferenceIndex.resolve_map(manifest, str(value)).status not in ["ok", "ambiguous", "unreadable"]:
+					and not RefFields.map_key_local(str(value), local_code) \
+					and ReferenceIndex.resolve_map(manifest, str(value)).status not in ["ok", "ambiguous"]:
 				return {"message": "目标地图不存在: %s" % str(value)}
 	return {}
 
-static func _port_ref_problem(manifest: Dictionary, data: Dictionary, map_name: String,
+static func _port_ref_problem(manifest: Dictionary, data: Dictionary,
 		value: Variant, field: Dictionary, paired_map: String, overrides := {}) -> Dictionary:
 	if value is Dictionary and value.is_empty():
 		return {}
@@ -65,7 +65,7 @@ static func _port_ref_problem(manifest: Dictionary, data: Dictionary, map_name: 
 	var local_code := str(data.get("meta", {}).get("code", ""))
 	var target_key := RefFields.object_map_key(value, paired_map)
 	var target := data
-	if RefFields.map_key_local(target_key, map_name, local_code):
+	if RefFields.map_key_local(target_key, local_code):
 		pass
 	elif overrides.has(target_key):
 		target = overrides[target_key]
@@ -97,7 +97,7 @@ static func _port_ref_problem(manifest: Dictionary, data: Dictionary, map_name: 
 ## 目标图本图/跨图取法与 map_ref 一致；图读不出来时比对双方拓扑会误报，故只按「读不到不判悬空」放行。
 ## 目标图有歧义或不可读时，由地图检查报告。
 static func _edge_ref_problem(manifest: Dictionary, data: Dictionary, val, overrides: Dictionary,
-		map_name: String, paired: String) -> Dictionary:
+		paired: String) -> Dictionary:
 	if not (val is Dictionary):
 		return {"message": "格边引用值不是 {map, cell, edge} 字典"}
 	var v: Dictionary = val
@@ -109,7 +109,7 @@ static func _edge_ref_problem(manifest: Dictionary, data: Dictionary, val, overr
 		return {"message": "格边引用格式不合法: %s" % e_code}
 	var e_map := RefFields.object_map_key(v, paired)
 	var tgt_meta: Dictionary = data.get("meta", {}) if data.get("meta", {}) is Dictionary else {}
-	if RefFields.map_key_local(e_map, map_name, str(tgt_meta.get("code", ""))):
+	if RefFields.map_key_local(e_map, str(tgt_meta.get("code", ""))):
 		pass
 	elif overrides.has(e_map):
 		tgt_meta = overrides[e_map].meta
@@ -118,9 +118,6 @@ static func _edge_ref_problem(manifest: Dictionary, data: Dictionary, val, overr
 		var rstat := str(resolved.status)
 		if rstat == "ambiguous":
 			# 一码多图：不知道指的是哪张图，比对邻接没有意义（由码冲突条目单列）
-			return {"message": ""}
-		if rstat == "unreadable":
-			# §4.2-4：目标图在但读不出来——拓扑不可比，同样不可自动清（不报、也不给清空项）
 			return {"message": ""}
 		if rstat != "ok":
 			return {"message": "格边引用的目标地图不存在: %s" % e_map}
@@ -148,14 +145,14 @@ static func _edge_ref_problem(manifest: Dictionary, data: Dictionary, val, overr
 ## 目标图解析歧义/读不出、或目标图根本没有格图声明 = 判定范围不完整，只报诊断不给清空项。
 ## 返回 {message}。
 static func _cell_ref_problem(manifest: Dictionary, data: Dictionary, cid: String,
-		paired: String, decl: Dictionary, overrides: Dictionary, map_name: String) -> Dictionary:
+		paired: String, decl: Dictionary, overrides: Dictionary) -> Dictionary:
 	var tgt_meta: Dictionary = data.get("meta", {})
-	if not RefFields.map_key_local(paired, map_name, str(tgt_meta.get("code", ""))):
+	if not RefFields.map_key_local(paired, str(tgt_meta.get("code", ""))):
 		if overrides.has(paired):
 			tgt_meta = overrides[paired].get("meta", {})
 		else:
 			var resolved := ReferenceIndex.resolve_map(manifest, paired)
-			if resolved.status in ["ambiguous", "unreadable"]:
+			if resolved.status in ["ambiguous"]:
 				return {}
 			if resolved.status != "ok":
 				return {"message": "格图引用的目标地图不存在: %s" % paired}

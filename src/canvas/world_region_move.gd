@@ -391,7 +391,7 @@ func _retarget_edges(values: Dictionary, fields: Array, mapper: Callable, code: 
 		var value = values.get(key)
 		if field.get("type") == "edge_ref" and value is Dictionary:
 			var paired := RefFields.paired_map_value(field, fields, values, key_mode)
-			if RefFields.map_key_local(RefFields.object_map_key(value, paired), cvs.cur_map_name, code):
+			if RefFields.map_key_local(RefFields.object_map_key(value, paired), code):
 				var mapped: Dictionary = mapper.call(value, str(value.get("map", "")))
 				value.merge(mapped, true)
 		for scope in RefFields.nested_scopes(cvs.manifest, field, value):

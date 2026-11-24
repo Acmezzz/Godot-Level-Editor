@@ -365,26 +365,21 @@ static func occupied_edge_options(grid: GridSpace, meta: Dictionary, occ: Dictio
 		out.append(options[key])
 	return out
 
-## E2：配对地图值是否指向当前图（C1：未填配对地图 = 本图；v7 写地图码，老数据存图名）。
-## 只有指向本图的实例引用才有画布落点可连——跨图引用的目标实例不在本图。
-static func map_key_local(key: String, cur_name: String, cur_code: String) -> bool:
-	if key == "":
-		return true
-	if cur_code != "" and key == cur_code:
-		return true
-	return key == cur_name
+## 未填写时使用本图；显式值必须是地图码。
+static func map_key_local(key: String, cur_code: String) -> bool:
+	return key == "" or key == cur_code
 
 ## E2：资产声明里「可画布连线」的 entity_ref 字段及其当前值。
 ## 返回 [{fd, value}]；跨图配对（配对地图字段指向别的图）的引用不在本图，不列。
 ## 纯函数：画布不传节点，只按声明 + props 判断——同一份判据测试可独立验证。
 static func local_entity_refs(ad: Dictionary, props: Dictionary,
-		cur_name: String, cur_code: String) -> Array:
+		cur_code: String) -> Array:
 	var out := []
 	var fdecls: Array = ad.get("fields", []) if ad.get("fields", []) is Array else []
 	for fd in ref_fields(ad):
 		var f: Dictionary = fd
 		var pair := paired_map_value(f, fdecls, props)
-		if not map_key_local(pair, cur_name, cur_code):
+		if not map_key_local(pair, cur_code):
 			continue
 		out.append({"fd": f, "value": str(props.get(str(f.get("id", "")), ""))})
 	return out

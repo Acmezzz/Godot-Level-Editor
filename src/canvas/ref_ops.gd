@@ -109,11 +109,10 @@ func local_refs(n: EntityNode) -> Array:
 	if n == null or not is_instance_valid(n):
 		return out
 	var edef: Dictionary = AssetDecl.by_id(app.manifest, n.asset)
-	var cur_name := str(cvs.cur_map_name)
 	var cur_code := str((cvs.map_data.get("meta", {}) as Dictionary).get("code", "")) \
 		if cvs.map_data.get("meta", {}) is Dictionary else ""
 	var by_code: Dictionary = cvs._ent_by_code_index()
-	for r in RefFields.local_entity_refs(edef, n.props, cur_name, cur_code):
+	for r in RefFields.local_entity_refs(edef, n.props, cur_code):
 		var rd: Dictionary = r
 		var val := str(rd.get("value", ""))
 		var tgt = by_code.get(val, null) if val != "" else null

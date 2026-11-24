@@ -121,20 +121,20 @@ func test_local_entity_refs_and_accepts() -> void:
 	]}
 	# 配对地图留空 = 本图：两条引用都列；非引用字段不列
 	var props := {"target_point": "AAAA", "route": "BBBB"}
-	var rows := RefFields.local_entity_refs(ad, props, "m1", "M1CD")
+	var rows := RefFields.local_entity_refs(ad, props, "M1CD")
 	eq(rows.size(), 2, "本图引用两条（跨图字段不填 = 本图）")
 	eq(str((rows[0].fd as Dictionary).get("id", "")), "target_point", "保持声明顺序")
 	eq(str((rows[0] as Dictionary).get("value", "")), "AAAA", "带出当前值")
 	# 配对地图写本图码 = 仍算本图；写别的图码/图名 = 不列
-	eq(RefFields.local_entity_refs(ad, {"target_map": "M1CD", "target_point": "AAAA"}, "m1", "M1CD").size(), 2,
+	eq(RefFields.local_entity_refs(ad, {"target_map": "M1CD", "target_point": "AAAA"}, "M1CD").size(), 2,
 		"配对地图写本图码仍是本图")
-	eq(RefFields.local_entity_refs(ad, {"target_map": "m1", "target_point": "AAAA"}, "m1", "M1CD").size(), 2,
-		"配对地图写本图名仍是本图（老数据）")
-	eq(RefFields.local_entity_refs(ad, {"target_map": "ZZZZ", "target_point": "AAAA"}, "m1", "M1CD").size(), 1,
+	eq(RefFields.local_entity_refs(ad, {"target_map": "m1", "target_point": "AAAA"}, "M1CD").size(), 1,
+		"文件名不参与本图引用匹配")
+	eq(RefFields.local_entity_refs(ad, {"target_map": "ZZZZ", "target_point": "AAAA"}, "M1CD").size(), 1,
 		"配对地图指向别的图：该引用不参与本图连线")
 	# map_key_local 的单点判定
-	ok(RefFields.map_key_local("", "m1", "M1CD"), "空键 = 本图")
-	ok(not RefFields.map_key_local("ZZZZ", "m1", "M1CD"), "别的图码 = 跨图")
+	ok(RefFields.map_key_local("", "M1CD"), "空键 = 本图")
+	ok(not RefFields.map_key_local("ZZZZ", "M1CD"), "别的图码 = 跨图")
 	# of 白名单：空 = 不限；非空只收列出的资产
 	ok(RefFields.field_accepts({"type": "entity_ref"}, "anything"), "of 为空不限制目标类型")
 	ok(RefFields.field_accepts({"type": "entity_ref", "of": "portal,spawn"}, "spawn"), "白名单内可连")

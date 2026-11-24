@@ -951,7 +951,7 @@ func port_markers(want_types: Array = []) -> Array:
 	return out
 
 func is_local_port_map(key: String) -> bool:
-	return RefFieldsScript.map_key_local(key, cur_map_name, cur_map_code())
+	return RefFieldsScript.map_key_local(key, cur_map_code())
 
 func port_position(ent: EntityNode, port: Dictionary) -> Vector2:
 	return ent.geometry_point_to_world(Vector2(port.x, port.y))

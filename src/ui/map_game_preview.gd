@@ -223,19 +223,18 @@ static func _open_cell_destination(app, editor, parent: Window, source_current: 
 	FrameDialog.open(app, CAPABILITY, {"title": "跨地图选择终点 · " + code, "button": "渲染目标地图",
 		"hint": "目标地图使用已保存版本。确认选点后，回到起点地图应用连接。",
 		"prefix": "MapGamePreview", "default_label": "当前画布大小", "pick_mode": "cell", "pick": choose,
-		"camera": true, "parent": parent}, _saved_snapshot.bind(app, manifest, code, true, prepare), valid)
+		"camera": true, "parent": parent}, _saved_snapshot.bind(app, manifest, code, prepare), valid)
 
 static func _saved_snapshot(preset: String, app, manifest: Dictionary, key: String,
-		stable_code: bool, prepare: Callable) -> Dictionary:
+		prepare: Callable) -> Dictionary:
 	var resolve := func() -> Dictionary:
-		return RefIndex.resolve_map_code(Maps.code_index(manifest), key) if stable_code \
-			else RefIndex.resolve_map(manifest, key)
+		return RefIndex.resolve_map(manifest, key)
 	var resolved: Dictionary = resolve.call()
 	if resolved.status != "ok":
 		return {"error": "目标地图不可读或地图键不唯一。"}
 	var path := Maps.path_for(manifest, resolved.key)
 	var result := Maps.read_path(path, manifest)
-	if not result.ok or (stable_code and result.data.meta.code != key):
+	if not result.ok or result.data.meta.code != key:
 		return {"error": "目标地图不可读或地图码已变更。"}
 	var digest: String = result.digest
 	var current := func() -> bool:
@@ -358,7 +357,7 @@ static func open_reference(app, decl: Dictionary, resolve: Callable, commit: Cal
 			"hint": "使用引用字段指定地图的已保存版本。确认后只写入当前字段。",
 			"prefix": "MapGamePreview", "default_label": "当前窗口大小", "pick_mode": mode, "pick": choose, "camera": true}
 		FrameDialog.open(app, CAPABILITY, options.merged(parent),
-			_saved_snapshot.bind(app, app.manifest, key, false, prepare), valid)
+			_saved_snapshot.bind(app, app.manifest, key, prepare), valid)
 
 static func _match_edge(value: Variant, scope: Dictionary) -> Dictionary:
 	if not value is Dictionary or value.get("map") != scope.code or not value.get("edge") is String:

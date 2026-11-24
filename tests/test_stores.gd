@@ -278,23 +278,11 @@ func test_resolve_map_states() -> void:
 	ok(MapStore.write(m, "okmap", d), "正常图写入")
 	eq(str(ReferenceIndex.resolve_map(m, "").get("status")), "unset", "空键 = unset")
 	eq(str(ReferenceIndex.resolve_map(m, "GOOD").get("status")), "ok", "码命中 = ok")
-	eq(str(ReferenceIndex.resolve_map(m, "okmap").get("status")), "ok", "图名命中 = ok")
-	eq(str(ReferenceIndex.resolve_map(m, "nosuch").get("status")), "missing", "普通未知键 = missing")
-	eq(str(ReferenceIndex.resolve_map(m, "bad/name").get("status")), "invalid",
-		"不能当地图名的键 = invalid（永远解析不成文件）")
-	# 图名在目录里、内容读不出 = unreadable（不是 missing）
-	DirAccess.make_dir_recursive_absolute(str(m._maps_dir))
-	var bad_path := str(m._maps_dir).path_join("broken.json")
-	var f := FileAccess.open(bad_path, FileAccess.WRITE)
-	f.store_string("{ not json")
-	f.close()
-	eq(str(ReferenceIndex.resolve_map(m, "broken").get("status")), "unreadable",
-		"文件在但读不出 = unreadable")
-	# 引用解析的消费侧：读不出的目标不参与悬空判定
-	var tgt := MapStore.new_map("tgt", 8, 8)
-	tgt.meta["code"] = "TGTT"
-	ok(MapStore.write(m, "tgt", tgt), "目标图写入")
-	DirAccess.remove_absolute(bad_path)
+	eq(ReferenceIndex.resolve_map(m, "okmap").status, "missing", "文件名不参与引用解析")
+	var same_name := MapStore.new_map("GOOD", 8, 8)
+	same_name.meta["code"] = "OTHR"
+	ok(MapStore.write(m, "GOOD", same_name), "写入与地图码同名的另一张地图")
+	eq(ReferenceIndex.resolve_map(m, "GOOD").key, "okmap", "只按地图码解析")
 	_wipe()
 
 ## §4.4-3：提交收据逐目标列出——提前返回时未轮到的目标一律记 pending，
