@@ -101,6 +101,20 @@ static func _ring(raw: Array) -> PackedVector2Array:
 		out.append(p.snapped(Vector2(0.01, 0.01)))
 	return out
 
+## Adds to a draft copy; the first point determines the enclosing outer ring.
+static func add_ring(parts: Array, ring: Array, outer: bool) -> String:
+	var issue := problem(ring, POLY)
+	if not issue.is_empty():
+		return issue
+	if outer:
+		parts.append({"points": ring, "holes": []})
+		return parts_problem(parts)
+	for part in parts:
+		if Geometry2D.is_point_in_polygon(ring[0], PackedVector2Array(part.points)):
+			part.holes.append(ring)
+			return parts_problem(parts)
+	return "孔洞的起点必须在某个外轮廓里。"
+
 static func parts_problem(parts: Array) -> String:
 	if parts.size() > MAX_PARTS:
 		return "最多 %d 个外轮廓。" % MAX_PARTS

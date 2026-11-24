@@ -1972,6 +1972,50 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 		"the next redo reapplies the edited vertex")
 	check(await cvs.redo() and _frame_contour_points(cvs, outline.code) == inserted, "redo restores the inserted vertex")
 	check(await cvs.redo() and _frame_contour_points(cvs, outline.code) == points, "redo deletes the original vertex again")
+	app._layout_ctrl._on_map_menu_id(17)
+	var rings_pop := await _render_pick_frame(app)
+	if rings_pop == null:
+		return
+	var tools: OptionButton = rings_pop.find_child("MapGamePreviewTool", true, false)
+	tools.item_selected.emit(2)
+	_click_pick_frame(rings_pop, Vector2(0.65, 0.25))
+	_click_pick_frame(rings_pop, Vector2(0.659, 0.27))
+	_click_pick_frame(rings_pop, Vector2(0.674, 0.265))
+	check(_click_pick_frame(rings_pop, Vector2(0.15, 0.25)).disabled, "a hole cannot collect points from a different layer")
+	apply = _click_pick_frame(rings_pop, Vector2(0.659, 0.292))
+	check(not apply.disabled and not _frame_contour_props(cvs, outline.code).has("holes"), "the new hole awaits confirmation")
+	check(_click_pick_frame(rings_pop, Vector2.ZERO, MOUSE_BUTTON_RIGHT).disabled, "undo the last draft point without editing the map")
+	_click_pick_frame(rings_pop, Vector2(0.659, 0.292)).pressed.emit()
+	if await _wait_for_pick_frame(rings_pop) == null:
+		return
+	tools.item_selected.emit(1)
+	_click_pick_frame(rings_pop, Vector2(0.65, 0.25))
+	_click_pick_frame(rings_pop, Vector2(0.78, 0.25))
+	_click_pick_frame(rings_pop, Vector2(0.83, 0.25))
+	apply = _click_pick_frame(rings_pop, Vector2(0.78, 0.29))
+	check(not apply.disabled, "a separate closed ring can be added in the perspective view")
+	apply.pressed.emit()
+	if await _wait_for_pick_frame(rings_pop) == null:
+		return
+	var compound := _frame_contour_props(cvs, outline.code)
+	check(compound.get("holes", []).size() == 1 and compound.get("parts", []).size() == 1, "the same instance holds both new rings")
+	tools.item_selected.emit(3)
+	check(_click_pick_frame(rings_pop, Vector2(0.65, 0.25)).disabled, "the primary outer ring cannot be deleted")
+	apply = _click_pick_frame(rings_pop, Vector2(0.659, 0.292))
+	check(not apply.disabled, "the refreshed frame identifies the new hole for removal")
+	apply.pressed.emit()
+	if await _wait_for_pick_frame(rings_pop) == null:
+		return
+	check(not _frame_contour_props(cvs, outline.code).has("holes"), "confirmation removes the selected hole")
+	apply = _click_pick_frame(rings_pop, Vector2(0.78, 0.29))
+	check(not apply.disabled, "the extra outer ring remains selectable after ring indexes change")
+	apply.pressed.emit()
+	if await _wait_for_pick_frame(rings_pop) == null:
+		return
+	rings_pop.hide()
+	check(not _frame_contour_props(cvs, outline.code).has("parts"), "confirmation removes the selected extra outer ring")
+	check(await cvs.undo() and _frame_contour_props(cvs, outline.code).has("parts"), "one undo restores the extra outer ring")
+	check(await cvs.undo() and _frame_contour_props(cvs, outline.code) == compound, "the next undo restores the hole")
 	var saved: Dictionary = await app._map_file_ctrl.commit_document("保存实景落点及连接")
 	check(saved.get("status") == "ok", "publish positions and port selected from the game frame")
 	await app._load_map_file(path)
@@ -1983,14 +2027,17 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 		and absf(float(picks[1].point[0]) - (48.0 + (48.0 + 32.0 / 7.0) * 1.5)) < 0.02
 		and absf(float(picks[1].point[1]) - (16.0 + (32.0 + 64.0 / 7.0) * 1.5)) < 0.02
 		and result.get("opened") == doors[1].code
-		and result.get("contours", []).size() == 1 and result.contours[0].props.points == points,
+		and result.get("contours", []).size() == 1 and result.contours[0].props == compound,
 		"game reloads both view positions and the projected polygon, and opens the selected door: " + str(report))
 
 func _frame_contour_points(cvs: EditorCanvas, code: String) -> Array:
+	return _frame_contour_props(cvs, code).get("points", [])
+
+func _frame_contour_props(cvs: EditorCanvas, code: String) -> Dictionary:
 	for row in cvs.extract().objects:
 		if row.get("code") == code:
-			return row.props.points
-	return []
+			return row.props
+	return {}
 
 func _drag_pick_frame(pop: PopupPanel, a: Vector2, b: Vector2) -> Button:
 	var frame: TextureRect = pop.find_child("MapGamePreviewFrame", true, false)

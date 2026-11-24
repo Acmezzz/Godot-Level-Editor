@@ -59,6 +59,19 @@ static func open(app, capability: String, options: Dictionary, snapshot: Callabl
 		picks.apply = Callable()
 		confirm.disabled = true
 		frame.queue_redraw()
+	if options.has("tools"):
+		var tools := OptionButton.new()
+		tools.name = options.prefix + "Tool"
+		for label in options.tools:
+			tools.add_item(label)
+		var row := Kit.field_row("实景工具", tools, 82)
+		body.add_child(row)
+		body.move_child(row, frame.get_index())
+		tools.item_selected.connect(func(index: int):
+			interaction.tool = index
+			clear_selection.call()
+			if frame.texture != null and not picks.regions.is_empty():
+				notice.text = interaction.message())
 	var reset := func():
 		picks.regions = []
 		picks.current = Callable()

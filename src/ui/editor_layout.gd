@@ -196,7 +196,7 @@ func _build_global_bar() -> PanelContainer:
 	map_menu.add_item("调整地图尺寸", 5)
 	map_menu.add_item("批量替换瓦片…", 6)
 	map_menu.add_item("关卡游戏画面预览…", 14)
-	map_menu.add_item("实景调整实例和顶点…", 17)
+	map_menu.add_item("实景调整实例和轮廓…", 17)
 	map_menu.add_separator()
 	map_menu.add_item("检查项目完整性", 30)
 	map_menu.add_item("切换项目…", 20)

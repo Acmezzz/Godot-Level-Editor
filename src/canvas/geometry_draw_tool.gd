@@ -86,7 +86,7 @@ func remove_hole_at(world: Vector2) -> bool:
 		var index := entity.hole_at(local, part.holes)
 		if index >= 0:
 			part.holes.remove_at(index)
-			_write_parts(entity, parts, "已删除孔洞")
+			commit_parts(entity, parts, "已删除孔洞")
 			return true
 	return false
 
@@ -99,7 +99,7 @@ func remove_part_at(world: Vector2) -> bool:
 	for i in range(1, parts.size()):
 		if Geometry2D.is_point_in_polygon(local, PackedVector2Array(parts[i].points)):
 			parts.remove_at(i)
-			_write_parts(entity, parts, "已删除附加轮廓")
+			commit_parts(entity, parts, "已删除附加轮廓")
 			return true
 	return false
 
@@ -163,24 +163,12 @@ func finish() -> void:
 		var ring := local.map(func(p): return entity.geometry_point_from_world(cvs.to_layer_world(index, p)))
 		var parts := entity.geometry_parts()
 		var hint := "已添加附加轮廓" if adding_part else "已添加孔洞"
-		if adding_part:
-			parts.append({"points": ring, "holes": []})
-		else:
-			var placed := false
-			for part in parts:
-				if not ring.is_empty() and Geometry2D.is_point_in_polygon(ring[0], PackedVector2Array(part.points)):
-					part.holes.append(ring)
-					placed = true
-					break
-			if not placed:
-				cvs._hint("孔洞的起点必须在某个外轮廓里。")
-				return
-		var issue := Geometry.parts_problem(parts)
+		var issue := Geometry.add_ring(parts, ring, adding_part)
 		if issue != "":
 			cvs._hint(issue)
 			return
 		_clear()
-		_write_parts(entity, parts, hint)
+		commit_parts(entity, parts, hint)
 		return
 	var issue := Geometry.problem(local.map(func(p): return p - local[0]), visual) if not local.is_empty() \
 		else Geometry.problem(local, visual)
@@ -192,7 +180,7 @@ func finish() -> void:
 		_clear()
 		cvs._hint("已绘制几何实体（Ctrl+Z 撤销）。")
 
-func _write_parts(entity: EntityNode, parts: Array, hint: String) -> void:
+func commit_parts(entity: EntityNode, parts: Array, hint: String) -> void:
 	var before: Dictionary = cvs._undo_history_ctrl.inst_rows([entity])
 	if not before.get("ok", false):
 		cvs.push_undo()
