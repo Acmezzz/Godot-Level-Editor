@@ -3,7 +3,7 @@ extends RefCounted
 ##
 ## 只有两个可写 kind：
 ## input —— type: string / int / float / bool / color / vector2（dims 2|3）/ range / asset_ref /
-##          array / port_ref / viewport_ref / edge_ref
+##          array / port_ref / viewport_ref / edge_ref / curve
 ## choice —— options[] 直给，或 source 从内容库 / 清单实体 / 地图列表动态取；multiple: true 切勾选组
 ##
 ## string 可加 multiline: true 切 TextEdit；range 读 min/max/step（无 min/max 时退到 HSlider 默认）；
@@ -18,6 +18,9 @@ const Kit := preload("res://src/ui/ui_kit.gd")
 const Th := preload("res://src/ui/ui_theme.gd")
 const RefFields := preload("res://src/content/ref_fields.gd")
 const CellGraph := preload("res://src/map/cell_graph.gd")
+
+const Keyframes := preload("res://src/content/keyframe_curve.gd")
+const CurveField := preload("res://src/ui/keyframe_curve_field.gd")
 
 const KIND_INPUT := "input"
 const KIND_CHOICE := "choice"
@@ -112,7 +115,7 @@ static func default_for(decl: Dictionary) -> Variant:
 			return [lo, lo, lo] if dims == 3 else [lo, lo]
 		"color": return "#ffffff"
 		"choice": return [] if bool(decl.get("multiple", false)) else ""
-		"array": return []
+		"array", "curve": return []
 		"record", "condition": return {}
 		_: return ""
 
@@ -339,6 +342,14 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 					"编辑器不会改写它，请游戏侧或手工修正")
 			var items: Array = value if value is Array else []
 			return _build_array(decl, items, on_set, option_resolver, key_mode, frame_pick)
+		"curve":
+			if _is_unset(value):
+				value = []
+			if not Keyframes.valid(value):
+				return _readonly(decl, value, "关键帧请使用不重复的递增时间、数值和支持的插值方式。", "")
+			var editor := CurveField.new(value, func(read: Callable, initial: Variant):
+				return _value_commit(read, initial, on_set))
+			return {"ctl": editor, "commit": editor.commit}
 		"viewport_ref":
 			return _build_viewport_ref(decl, value, on_set, option_resolver)
 		"port_ref":

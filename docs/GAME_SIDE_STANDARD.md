@@ -620,6 +620,17 @@ choice 的 `source` 取值：`content:<kind>`（列该目录内容条目）、`e
 `map`（地图列表）、`audio:`（音频池，值=音频码）、`asset:<kind>[:id,id]`（资产表，值=资产 id）、
 `port:<类型,类型>`（配对图优先的实例端口，值=`{map, inst, port}`）、`cell:`（当前图 `meta.cellGraph` 的 cell_id，值=格 id）、
 `viewport:`（清单 `viewports` 的画幅 id，值=画幅 id）。
+**连续参数（`type: "curve"`）**：实例属性、功能、条件、步骤和屏幕模块可声明数值曲线。例如：
+
+```json
+{"id":"zoom","kind":"input","type":"curve","default":[{"time":0,"value":1,"mode":"smooth"},{"time":2,"value":1.5}]}
+```
+
+值是以 `time` 严格递增排序的数组，时间非负，时间和数值都必须是有限数字；空数组表示没有关键帧。
+每点的 `mode` 控制从该点到下一点的插值：省略或 `linear` 为线性，`hold` 在下一点之前保持原值，
+`smooth` 用比例 `u*u*(3-2*u)` 做缓入缓出。`u = (当前时间 - 左时间) / (右时间 - 左时间)`。
+曲线的时间单位、零点、区间外行为、循环，以及将数值用在什么参数上，由消费曲线的游戏模块定义。编辑器存储各控制点和插值方式。
+
 值的 JSON 形态与声明不符时只读展示（vector2/range/int/float/choice 一律如此），
 **绝不自动改写**。
 

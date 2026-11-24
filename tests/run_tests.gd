@@ -1,6 +1,7 @@
 extends SceneTree
 ## 测试入口（headless）：godot --headless --path . --script res://tests/run_tests.gd
 ## 发现 res://tests/ 下所有 test_*.gd，逐个实例化并运行 test_* 方法。
+## 只跑一个用例：-- test_validators.gd::test_curve_field_authoring
 ## 无断言或运行期脚本异常均判失败。
 ## 退出码：失败用例 > 0 时 1，否则 0（门禁式用法）。
 
@@ -16,9 +17,13 @@ func _init() -> void:
 			if str(f).begins_with("test_") and str(f).ends_with(".gd"):
 				suites.append("res://tests/" + str(f))
 	suites.sort()
+	var args := OS.get_cmdline_user_args()
+	var only := args[0].split("::") if not args.is_empty() else PackedStringArray()
 	var passed := 0
 	var failed := 0
 	for path in suites:
+		if not only.is_empty() and path.get_file() != only[0]:
+			continue
 		var s = load(path)
 		if s == null or not (s is GDScript):
 			print("SUITE-LOAD-FAIL ", path)
@@ -27,7 +32,7 @@ func _init() -> void:
 		var inst = (s as GDScript).new()
 		for m in inst.get_method_list():
 			var mname: String = str(m.name)
-			if not mname.begins_with("test_"):
+			if not mname.begins_with("test_") or (only.size() == 2 and mname != only[1]):
 				continue
 			inst.failures.clear()
 			var n0: int = inst.assert_count
@@ -47,6 +52,9 @@ func _init() -> void:
 				print("PASS  ", path.get_file(), " :: ", mname)
 			else:
 				failed += 1
+	if not only.is_empty() and passed + failed == 0:
+		print("No matching test: ", args[0])
+		failed = 1
 	OS.remove_logger(capture)
 	print("TESTS-DONE passed=%d failed=%d" % [passed, failed])
 	quit(1 if failed > 0 else 0)

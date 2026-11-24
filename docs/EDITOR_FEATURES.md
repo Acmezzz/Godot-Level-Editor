@@ -108,7 +108,7 @@ src/
 	├── steps_panel.gd      演出子面板：列表/时间轴双视图 + 步骤表单（content_editor 拆出）
 	├── timeline_view.gd    演出时间轴视图：横轴时间纵轴轨道，拖块改 at/duration/轨道，重叠描红
 	├── content_preview.gd  内容编辑器的中列只读地图预览（自绘缩放/平移/点选）
-	├── field_widgets.gd    声明式字段控件工厂：input（string/int/float/bool/color/vector2/range/asset_ref/array/port_ref/viewport_ref/edge_ref）/ choice，认不出的只读展示
+	├── field_widgets.gd    声明式字段控件工厂：input（string/int/float/bool/color/vector2/range/asset_ref/array/port_ref/viewport_ref/edge_ref/curve）/ choice，认不出的只读展示
 	└── asset_panel.gd      资产目录：图鉴详情、自带功能挂载、实例分布清点、删除检查
 ```
 
@@ -555,7 +555,7 @@ Shift + 左键选已有顶点，再点同层位置，可在所选顶点之后插
 
 - **功能由项目侧实现**，编辑器只暴露「可编辑内容」接口。
 - 功能在清单顶层 `functions` 声明：`{fnId: {name, code, fields:[...], triggers:[...], timing:{mode}, view:{}}}`。
-  字段按 `kind` 两分支：`input`（string/int/float/bool/color/vector2/range/asset_ref/array/port_ref/viewport_ref/edge_ref；
+  字段按 `kind` 两分支：`input`（string/int/float/bool/color/vector2/range/asset_ref/array/port_ref/viewport_ref/edge_ref/curve；
   string 可 `multiline`；array 用 `of` 指元素类型、可增删行，`of: "record"` + `fields` 声明子字段即**结构化行**
   ——每行带 ↑↓/复制/删除，子字段可再嵌 array，限深 4）
   与 `choice`（`options[]` 或 `source` 动态选项，`multiple: true` 切勾选组）；认不出的声明只读展示，绝不提供可写控件。
@@ -938,7 +938,7 @@ Shift + 左键选已有顶点，再点同层位置，可在所选顶点之后插
 | 资产 `code`（`kind=entity`）重复 | 错误 |
 | 实体挂载了未声明的功能（实体字段**不查 kind**，kind 只约束功能/条件/步骤声明） | 错误 |
 | 功能/步骤/音频/时机**条目码**池内重复；**字段码跨池/跨功能同码**（三池一个码空间）报错 | 错误 |
-| 字段 `type` 不在 `string`/`int`/`float`/`bool`/`color`/`vector2`/`range`/`asset_ref`/`array`/`port_ref`/`viewport_ref`/`edge_ref` | 错误 |
+| 字段 `type` 不在 `string`/`int`/`float`/`bool`/`color`/`vector2`/`range`/`asset_ref`/`array`/`port_ref`/`viewport_ref`/`edge_ref`/`curve` | 错误 |
 | 功能/条件/步骤/音频/时机 id 空或重复（数组写法）/ 步骤条目（dict 写法值）不是对象 / 功能 id 不是合法内容目录名（只允许字母/数字/`_`/`-`，**不允许点号**，与 `ContentStore.is_valid_kind` 同规则） | 错误 |
 | 功能引用未声明的条件 | 错误 |
 | 功能 `triggers` 不是数组或引用未声明的时机 / `timing` 不是对象或 `timing.mode` 不在 `instant`/`duration`/`continuous` | 错误 |
@@ -1080,7 +1080,7 @@ godot --headless --path "<编辑器工程>" --script res://tools/migrate_project
   游戏侧 `MapLoader` 只读，不反向写回，避免格式分叉。
 - 内容系统只做「绑定 + 内容字段编辑」，功能行为完全在项目侧；编辑器不校验内容语义。
 - 时间轴只做条块摆放（at/duration/track）：时间基随功能声明（`timebase: seconds/frames/beats`——
-  帧级数据 = frames 基的步骤数组，格斗 hitbox/谱面音符按声明帧/拍摆块）；不做关键帧曲线、嵌套时间轴、音频波形。
+  帧级数据 = frames 基的步骤数组，格斗 hitbox/谱面音符按声明帧/拍摆块）；时间轴本身不做嵌套时间轴或全局曲线轨。声明为 `curve` 的字段有独立关键帧图：单击加点、拖动改值、手填精确时间/数值，并可逐段选择线性、保持或缓入缓出。曲线由游戏模块消费。
 - 等距（`gridProjection: isometric`）画布已全对齐：网格线/幽灵/选区框/实体锚点换算走 GridSpace 格原语（菱形口径）；
   斜坡碰撞可视化按菱形包围盒近似。内容编辑器中列预览（R19）**地形**已走同一套格多边形+切片 UV（含 `alt`），
   网格线与实体落点也按生效格空间算；层的 `offset`/`scale` 在预览里同样作用于地形与实例（同一 `MapViewData.layer_transform`，

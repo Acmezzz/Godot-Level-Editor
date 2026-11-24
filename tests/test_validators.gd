@@ -272,3 +272,55 @@ func test_screen_playtest_and_map_pairs() -> void:
 	eq(_errs_of(m).size(), 0, "screen launch does not require a project-content entry or an open map")
 	record.fields[1]["mapField"] = "missing"
 	eq(_errs_of(m).size(), 2, "reject a missing sibling map and a mismatched coordinate layer")
+
+
+func test_curve_field_authoring() -> void:
+	var widgets := preload("res://src/ui/field_widgets.gd")
+	var curve := preload("res://src/content/keyframe_curve.gd")
+	var store := preload("res://src/content/content_store.gd")
+	var manifest := _good()
+	var field := {"id": "zoom", "kind": "input", "type": "curve", "code": "A111"}
+	manifest.functions.f1.fields = [field]
+	eq(_errs_of(manifest), [], "a game can expose a continuous parameter")
+	var project := OS.get_user_data_dir().path_join("curve-test-%s" % Time.get_ticks_usec())
+	manifest["_dir"] = project
+	var cid := "project-camera"
+	var built := widgets.build(field, null, func(value):
+		return store.write(manifest, "f1", cid, {"scope": "project", "function": "F111", "fields": {"A111": value}}))
+	var editor: Control = built.ctl
+	var graph: Control = editor.get_node("KeyframeGraph")
+	graph.size = Vector2(200, 120)
+	for uv in [Vector2(0.25, 0.2), Vector2(0.75, 0.8)]:
+		var mouse := InputEventMouseButton.new()
+		mouse.button_index = MOUSE_BUTTON_LEFT
+		mouse.position = Vector2(9, 9) + (graph.size - Vector2(18, 18)) * Vector2(uv.x, 1.0 - uv.y)
+		mouse.pressed = true
+		graph.gui_input.emit(mouse)
+		mouse.pressed = false
+		graph.gui_input.emit(mouse)
+	var first := InputEventMouseButton.new()
+	first.button_index = MOUSE_BUTTON_LEFT
+	first.position = Vector2(9, 9) + (graph.size - Vector2(18, 18)) * Vector2(0.25, 0.8)
+	first.pressed = true
+	graph.gui_input.emit(first)
+	first.pressed = false
+	graph.gui_input.emit(first)
+	var mode: OptionButton = editor.find_child("KeyframeMode", true, false)
+	mode.item_selected.emit(2)
+	var payload := store.read(manifest, "f1", cid)
+	var saved: Array = payload.get("fields", {}).get("A111", [])
+	ok(curve.valid(saved) and saved.size() == 2, "authored points survive the content store")
+	if saved.size() == 2:
+		eq(saved[0].mode, "smooth", "the selected segment keeps its interpolation")
+		ok(is_equal_approx(curve.interpolate(saved[0], saved[1], 0.25), 0.29375), "the stored segment gives the authored easing")
+	editor.free()
+	var file := store.path_for(manifest, "f1", cid)
+	var dir := file.get_base_dir()
+	var history := dir.path_join(".history")
+	DirAccess.remove_absolute(file)
+	for snapshot in DirAccess.get_files_at(history):
+		DirAccess.remove_absolute(history.path_join(snapshot))
+	DirAccess.remove_absolute(history)
+	DirAccess.remove_absolute(dir)
+	DirAccess.remove_absolute(store.root_dir(manifest))
+	DirAccess.remove_absolute(project)

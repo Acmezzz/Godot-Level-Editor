@@ -1258,6 +1258,8 @@ func _open_batch(fn_id: String) -> void:
 		if commit is Callable and (commit as Callable).is_valid():
 			commit.call()
 		# 控件族与 _set_field 一致：CheckBox / OptionButton / LineEdit / SpinBox / 行内多控件
+		if fd.get("type") == "curve" and ctl.has_method("value"):
+			return {"v": ctl.call("value")}
 		if ctl is CheckBox:
 			return {"v": (ctl as CheckBox).button_pressed}
 		if ctl is OptionButton:

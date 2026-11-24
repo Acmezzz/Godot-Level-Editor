@@ -18,7 +18,8 @@ const WorldLayout := preload("res://src/project/world_layout.gd")
 const MapGenerators := preload("res://src/project/map_generators.gd")
 
 ## input 字段类型白名单（与 field_widgets 一一对应）：新增类型必须同时有控件分支。
-const INPUT_TYPES := ["string", "int", "float", "bool", "color", "vector2", "range", "asset_ref", "array", "port_ref", "viewport_ref", "edge_ref"]
+const Keyframes := preload("res://src/content/keyframe_curve.gd")
+const INPUT_TYPES := ["string", "int", "float", "bool", "color", "vector2", "range", "asset_ref", "array", "port_ref", "viewport_ref", "edge_ref", "curve"]
 
 ## 资产 id 同时用作地图瓦片条目的第 3 位（磁盘引用）——必须存在且唯一。
 static func validate(data: Dictionary, project_dir := "") -> Array[Dictionary]:
@@ -701,6 +702,8 @@ static func _check_condition_fields(fields: Variant, path: String, conditions: D
 		if not fd is Dictionary:
 			continue
 		var child := path + "." + str(fd.get("id", "?"))
+		if fd.get("kind") == "input" and fd.get("type") == "curve" and fd.has("default") and not Keyframes.valid(fd.default):
+			_add(issues, "error", child + ".default", "curve keys require increasing nonnegative times, finite values and a supported mode")
 		if fd.has("pickSpace"):
 			var point: bool = fd.get("type") == "vector2" or (fd.get("type") == "array" and fd.get("of") == "vector2")
 			if fd.pickSpace not in ["map", "layer"] or fd.get("kind") != "input" or not point or fd.get("dims", 2) != 2:

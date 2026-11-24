@@ -10,6 +10,7 @@ extends RefCounted
 ## 调用方（内容编辑器）先显示「命中 / 跳过 / 冲突」，确认后逐条写内容文件；
 ## 每条的写入仍走 ContentStore 既有路径（.history 备份随之保留）。
 
+const Keyframes := preload("res://src/content/keyframe_curve.gd")
 const ContentStore := preload("res://src/content/content_store.gd")
 const FunctionDecls := preload("res://src/content/function_decl.gd")
 
@@ -191,6 +192,8 @@ static func _value_ok(typ: String, v) -> bool:
 			return v is String or v is Array
 		"asset_ref":
 			return v is String
+		"curve":
+			return Keyframes.valid(v)
 		"array":
 			return v is Array
 		_:
