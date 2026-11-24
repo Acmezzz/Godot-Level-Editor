@@ -217,7 +217,8 @@
 - 「实景编辑格图」在根空间或未绑层的格图空间描点时用 `collision` 映射；绑层的空间使用同层 `placement`。编辑器反算为空间局部顶点。切换简单有向邻接使用 `targets.cell` 的格 ID，应用后游戏应从新快照更新格的显示和拾取区域。
 - 游戏可为格图顶点提供 `targets.cellVertex: {"cell":"upper:1,4","index":0}`，下标按该格的 `polygon` 顺序从 0 开始。移动与插点的落点沿用该格空间的映射，删除只需顶点目标。应用后应按最新多边形更新顶点下标与命中区。
 - 实景删除整格使用 `targets.cell`。确认后编辑器移除该格及本图有关的邻接和独立边；游戏重新出图时不再返回已删除格的拾取区。
-- 实景也可用两个 `targets.cell` 创建独立有向边。类型和属性根据 `cellGraphEdgeTypes` 声明生成，写入现有 `meta.cellGraph.edges`。编辑已有边时，以 `targets.cell` 选起点，再从其出边选中稳定 ID；改接本图终点保留该 ID，移除原跨图目标。无需提供新的拾取目标格式。
+- 实景可用两个 `targets.cell` 创建独立有向边。类型和属性根据 `cellGraphEdgeTypes` 声明生成，写入 `meta.cellGraph.edges`。编辑已有边时，选起点后从它的出边选中稳定 ID，改接保留该 ID。
+- 跨图终点沿用 `mapFrame`：目标请求的 `subject.map` 是目标地图的已保存快照，`stagedContent` 为空，`camera` 按目标地图范围取景。同一个 `targets.cell` 格 ID 按该次请求的地图解释。源图应用后存储 `toMap`（目标地图码）与 `to`（格 ID）；改接回本图时移除 `toMap`。
 - 旋转 90°、水平翻转或删除整实例也可通过 `targets.entity` 或该实例的 `targets.vertex` 选中，不需要 `placement`。重新出图时使用快照中的实例变换，并移除已删除实例的拾取区域。
 - 「复制实例到选点」用同样的实例目标选原件，再用 `placement` 取新锚点，可跨图层。游戏应从新快照的 `map.objects` 和 `stagedContent` 读取副本；副本沿用普通复制的实例和内容身份规则。
 - 绘制附加外环或孔洞时，以实例或任一顶点选定闭合实体，在同层 placement 上描点。删除附加外环或孔洞时用该环的任一 targets.vertex；删除外环也会移除它所含的孔洞。游戏应给可编辑环提供可见的顶点目标，尤其是孔洞边缘，不需要新增目标类型。

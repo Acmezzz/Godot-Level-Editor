@@ -158,6 +158,8 @@ static func open(app, capability: String, options: Dictionary, snapshot: Callabl
 		frame.mouse_filter = Control.MOUSE_FILTER_STOP
 		var is_current := func() -> bool:
 			return keep.call() and (not picks.current.is_valid() or picks.current.call())
+		if options.has("bind_current"):
+			options.bind_current.call(pop, func(): return is_current.call() and frame.texture != null)
 		var set_draft_action := func():
 			var option: Dictionary = draw_shape.call(picks.draft)
 			notice.text = option.text
@@ -273,7 +275,7 @@ static func open(app, capability: String, options: Dictionary, snapshot: Callabl
 	confirm.visible = mode != ""
 	actions.add_child(confirm)
 	body.add_child(actions)
-	app._open_popup(pop, Vector2i(740, 600))
+	app._open_popup(pop, Vector2i(740, 600), options.get("parent"))
 
 static func _image_rect(frame: TextureRect) -> Rect2:
 	var image_size := frame.texture.get_size()

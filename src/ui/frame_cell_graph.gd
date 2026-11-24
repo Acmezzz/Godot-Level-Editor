@@ -25,6 +25,10 @@ var edge_delete := CheckBox.new()
 var new_type_row: Control
 var existing_edge_row: Control
 var edge_form := VBoxContainer.new()
+var destination_map := OptionButton.new()
+var destination_button := Button.new()
+var destination_row: Control
+var destination_current := Callable()
 var edge_draft := {"props": {}}
 var edge_commits := []
 var points := []
@@ -40,7 +44,7 @@ func _init(cvs: EditorCanvas) -> void:
 	canvas = cvs
 	clear()
 
-func controls() -> Control:
+func controls(maps: Array) -> Control:
 	var form := Kit.vbox(5)
 	var row := Kit.hbox(8)
 	id_field.name = "FrameGraphCellId"
@@ -81,11 +85,23 @@ func controls() -> Control:
 	edge_delete.toggled.connect(func(enabled: bool):
 		edge_form.visible = not enabled
 		_update_edge_status()
+		_update_destination_controls()
 		controls_changed.emit())
 	existing_edge_row = Kit.hbox(8)
 	existing_edge_row.add_child(edge_picker)
 	existing_edge_row.add_child(edge_delete)
 	edge_controls.add_child(existing_edge_row)
+	destination_map.name = "FrameGraphDestinationMap"
+	destination_map.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	for map in maps:
+		destination_map.add_item("%s · %s" % [map.name, map.code])
+		destination_map.set_item_metadata(destination_map.item_count - 1, map.code)
+	destination_button.name = "FrameGraphPickDestination"
+	destination_button.text = "在目标图实景选终点…"
+	destination_row = Kit.hbox(8)
+	destination_row.add_child(destination_map)
+	destination_row.add_child(destination_button)
+	edge_controls.add_child(destination_row)
 	var scroll := ScrollContainer.new()
 	scroll.custom_minimum_size.y = 92
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -117,6 +133,7 @@ func clear() -> void:
 	screen.clear()
 	from = ""
 	pending.clear()
+	destination_current = Callable()
 	vertex_cell = {}
 	vertex_index = -1
 	vertex_edit = VertexEdit.MOVE
@@ -149,6 +166,25 @@ func clear() -> void:
 			status = "点顶点后选新位置。Shift + 点顶点可在其后插点；Ctrl + 点顶点可删除。右键重选。"
 		Tool.REMOVE_CELL:
 			status = "点击要删除的格，再确认。右键重选。"
+	if destination_row != null:
+		_update_destination_controls()
+
+func _update_destination_controls() -> void:
+	destination_row.visible = destination_map.item_count > 0 and not from.is_empty() and (
+		tool == Tool.EDGE or (tool == Tool.EDIT_EDGE and pending.has("id") and not edge_delete.button_pressed))
+
+func set_destination(code: String, cell: String, current: Callable) -> bool:
+	destination_current = current
+	screen.resize(1)
+	if tool == Tool.EDGE:
+		pending = {"from": from, "to": cell, "toMap": code}
+		status = "新建连接 %s → %s · 可应用。" % [from, _edge_destination(pending)]
+	else:
+		edge_draft["to"] = cell
+		edge_draft["toMap"] = code
+		_update_edge_status()
+	controls_changed.emit()
+	return true
 
 func ready() -> bool:
 	return not pending.is_empty()
@@ -305,9 +341,11 @@ func _pick_link(pixel: Vector2, regions: Array) -> void:
 	if from.is_empty():
 		from = hit.value
 		screen.append(pixel)
+		_update_destination_controls()
 		status = "起点 %s · 请选择终点格。" % from
 		return
 	pending.clear()
+	destination_current = Callable()
 	screen.resize(1)
 	if hit.value == from and tool == Tool.NEIGHBOR:
 		status = "终点不能与起点相同。"
@@ -330,6 +368,7 @@ func _pick_edge_edit(pixel: Vector2, regions: Array) -> void:
 			return
 		edge_draft["to"] = hit.value
 		edge_draft.erase("toMap")
+		destination_current = Callable()
 		screen.resize(1)
 		screen.append(pixel)
 		_update_edge_status()
@@ -352,6 +391,7 @@ func _pick_edge_edit(pixel: Vector2, regions: Array) -> void:
 
 func _select_existing_edge(index: int) -> void:
 	pending.clear()
+	destination_current = Callable()
 	screen.resize(1)
 	_reset_edge_delete()
 	edge_delete.disabled = index == 0
@@ -367,6 +407,7 @@ func _select_existing_edge(index: int) -> void:
 				_update_edge_status()
 				break
 	_show_edge_properties(str(edge_draft.get("type", "")))
+	_update_destination_controls()
 	controls_changed.emit()
 
 func _reset_edge_delete() -> void:
@@ -379,9 +420,13 @@ func _edge_destination(edge: Dictionary) -> String:
 
 func _update_edge_status() -> void:
 	status = "确认删除独立边 %s。" % edge_draft.id if edge_delete.button_pressed else \
-		"%s → %s · %s。可改属性或点选本图新终点。" % [from, _edge_destination(edge_draft), edge_draft.id]
+		"%s → %s · %s。可改属性或重新选择终点。" % [from, _edge_destination(edge_draft), edge_draft.id]
 
 func apply() -> bool:
+	if destination_current.is_valid() and not (tool == Tool.EDIT_EDGE and edge_delete.button_pressed) \
+			and not destination_current.call():
+		canvas._hint("目标地图已变更，请重新选择终点。")
+		return false
 	var graph := canvas.cell_graph().duplicate(true)
 	if tool == 0:
 		var space: Dictionary = graph.get("spaces", {}).get(pending.get("space", ""), {})
@@ -415,8 +460,8 @@ func apply() -> bool:
 		var id := Id.new_inst_code()
 		while edges.any(func(edge): return edge is Dictionary and edge.get("id") == id):
 			id = Id.new_inst_code()
-		edges.append({"id": id, "from": pending.from, "to": pending.to,
-			"type": edge_type.get_selected_metadata(), "props": edge_draft.props.duplicate(true)})
+		edges.append(pending.merged({"id": id, "type": edge_type.get_selected_metadata(),
+			"props": edge_draft.props.duplicate(true)}))
 	elif tool == Tool.EDIT_EDGE:
 		if not _layer_editable(Graph.layer_of_cell(graph, pending.from)):
 			return false

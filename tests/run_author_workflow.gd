@@ -12,7 +12,7 @@ const GraphEditor = preload("res://src/ui/cell_graph_editor.gd")
 const WorldLayout = preload("res://src/project/world_layout.gd")
 var failures := 0
 func _initialize():
-	create_timer(90.0).timeout.connect(func():
+	create_timer(180.0).timeout.connect(func():
 		printerr("FLOW FAIL: workflow timed out")
 		quit(1))
 	run.call_deferred()
@@ -2758,12 +2758,68 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 	delete_pop.hide()
 	check(await cvs.undo() and cvs.map_root == root_before_delete and cvs.cell_graph() == graph_before_delete,
 		"one undo restores the cell and its connections without rebuilding the map")
+	var destination := Maps.new_map("frame_pick_destination", 10, 10, "orthogonal")
+	destination.meta.cellGraph = {"cells": [{"id": "remote", "polygon": [[20, 20], [30, 22], [22, 31]], "neighbors": []}]}
+	var destination_code: String = destination.meta.code
+	check(Maps.write(manifest, "frame_pick_destination", destination), "save a second map with a projected graph cell")
+	app._layout_ctrl._on_map_menu_id(23)
+	edge_pop = await _render_pick_frame(app)
+	if edge_pop == null:
+		return
+	edge_tools = edge_pop.find_child("MapGamePreviewTool", true, false)
+	edge_tools.select(2)
+	edge_tools.item_selected.emit(2)
+	_click_pick_frame(edge_pop, Vector2(0.15, 0.24))
+	var map_picker: OptionButton = edge_pop.find_child("FrameGraphDestinationMap", true, false)
+	var pick_destination: Button = edge_pop.find_child("FrameGraphPickDestination", true, false)
+	select_metadata(map_picker, destination_code)
+	pick_destination.pressed.emit()
+	var target_pop := await _render_pick_frame(app)
+	if target_pop == null or target_pop == edge_pop:
+		check(false, "open a separate target frame while preserving the source")
+		return
+	var confirm_target := _click_pick_frame(target_pop, Vector2(0.15, 0.24))
+	check(not confirm_target.disabled and cvs.cell_graph() == graph_before_delete,
+		"picking in the second map does not modify the open map")
+	confirm_target.pressed.emit()
+	await process_frame
+	apply = edge_pop.find_child("MapGamePreviewConfirmPick", true, false)
+	check(not apply.disabled and cvs.cell_graph() == graph_before_delete, "confirming the remote cell only updates the new edge draft")
+	apply.pressed.emit()
+	if await _wait_for_pick_frame(edge_pop) == null:
+		return
+	var new_edge: Dictionary = cvs.cell_graph().edges.back()
+	check(new_edge.toMap == destination_code and new_edge.to == "remote" and new_edge.from == "entry" and new_edge.id != edge_id,
+		"new edge stores the target map and cell together")
+	check(await cvs.undo() and cvs.cell_graph() == graph_before_delete, "one undo removes the cross-map edge")
+	edge_pop.find_child("MapGamePreviewRender", true, false).pressed.emit()
+	if await _wait_for_pick_frame(edge_pop) == null:
+		return
+	edge_tools.select(3)
+	edge_tools.item_selected.emit(3)
+	_click_pick_frame(edge_pop, Vector2(0.15, 0.24))
+	select_metadata(edge_pop.find_child("FrameExistingEdge", true, false), edge_id)
+	pick_destination.pressed.emit()
+	target_pop = await _render_pick_frame(app)
+	if target_pop == null or target_pop == edge_pop:
+		check(false, "reopen the destination picker for an existing edge")
+		return
+	_click_pick_frame(target_pop, Vector2(0.15, 0.24)).pressed.emit()
+	await process_frame
+	check(cvs.cell_graph() == graph_before_delete, "remote retargeting preserves the original until source confirmation")
+	apply.pressed.emit()
+	if await _wait_for_pick_frame(edge_pop) == null:
+		return
+	edge_pop.hide()
+	check(cvs.cell_graph().edges[0].toMap == destination_code and cvs.cell_graph().edges[0].to == "remote",
+		"the existing edge now targets the second map")
 	var saved: Dictionary = await app._map_file_ctrl.commit_document("保存实景落点及连接")
 	check(saved.get("status") == "ok", "publish positions and port selected from the game frame")
 	await app._load_map_file(path)
 	check(cvs.extract().tiles == final_tiles and cvs.extract().spawn == [5, 3], "mapped tile edits and spawn survive save and reopen")
-	check(cvs.cell_graph().edges[0].id == edge_id and cvs.cell_graph().edges[0].props.cost == 2,
-		"the edited edge retains its original ID and new cost after reopening")
+	check(cvs.cell_graph().edges[0].id == edge_id and cvs.cell_graph().edges[0].props.cost == 2
+		and cvs.cell_graph().edges[0].toMap == destination_code and cvs.cell_graph().edges[0].to == "remote",
+		"the edited edge retains its original ID, new cost, and cross-map destination after reopening")
 	var report := await launch_and_read(app, false)
 	var result: Dictionary = report.get("result", {})
 	var picks: Array = result.get("picks", [])
@@ -2776,10 +2832,9 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 		and result.get("switchCopies", []).size() == 1 and result.switchCopies[0].code == copy_code
 		and result.switchCopies[0].layer == upper and result.switchCopies[0].target.inst == doors[1].code
 		and result.switchCopies[0].message == "Draft copied from the game frame"
-		and result.get("authoredRoute") == "exit-floor"
+		and result.get("authoredRoute") == "remote" and result.get("arrivalMap") == destination_code
 		and result.get("authoredEdge") == authored_edge.get("id")
-		and absf(float(result.arrivalVertex[0]) - 127.6522) < 0.04
-		and absf(float(result.arrivalVertex[1]) - 78.6087) < 0.04
+		and result.get("arrivalVertex") == [20.0, 20.0]
 		and result.get("contours", []).size() == 1 and result.contours[0].props == compound,
 		"game reloads both view positions and the projected polygon, and opens the selected door: " + str(report))
 

@@ -9,6 +9,12 @@ const Geometry := preload("res://src/map/object_geometry.gd")
 const GridBrush := preload("res://src/ui/frame_grid_brush.gd")
 const ObjectEdit := preload("res://src/ui/frame_object_edit.gd")
 const CellGraphEdit := preload("res://src/ui/frame_cell_graph.gd")
+const Maps := preload("res://src/map/map_store.gd")
+const RefIndex := preload("res://src/project/reference_index.gd")
+const Recovery := preload("res://src/map/recovery.gd")
+const ViewData := preload("res://src/map/map_view_data.gd")
+const Graph := preload("res://src/map/cell_graph.gd")
+const Layout := preload("res://src/project/screen_layout.gd")
 const CAPABILITY := "mapFrame"
 
 static func available(app) -> bool:
@@ -76,9 +82,65 @@ static func open_cell_graph(app) -> void:
 	if not available(app):
 		return
 	var editor := CellGraphEdit.new(app.canvas)
+	var index := Maps.code_index(app.manifest)
+	var maps := []
+	for name in index.names:
+		var code: String = index.by_name.get(name, "")
+		if code != "" and code != app.canvas.cur_map_code() and RefIndex.resolve_graph_map(index, code).status == "ok":
+			maps.append({"name": name, "code": code})
+	var controls := editor.controls(maps)
+	var bind_current := func(parent: Window, current: Callable):
+		editor.destination_button.pressed.connect(func(): _open_cell_destination(app, editor, parent, current))
 	_open(app, "cellGraphEdit", Callable(), {"title": "实景编辑格图", "interaction": editor,
-		"tools": CellGraphEdit.TOOLS, "controls": editor.controls(), "controls_changed": editor.controls_changed,
+		"tools": CellGraphEdit.TOOLS, "controls": controls, "controls_changed": editor.controls_changed,
+		"bind_current": bind_current,
 		"confirm_label": "应用格图调整", "refresh_on_apply": true})
+
+static func _open_cell_destination(app, editor, parent: Window, source_current: Callable) -> void:
+	if not source_current.call() or not editor.destination_row.visible:
+		return
+	var manifest: Dictionary = app.manifest
+	var code: String = editor.destination_map.get_selected_metadata()
+	var source := [editor.tool, editor.from, editor.pending.get("id", "")]
+	var valid := func() -> bool:
+		return source_current.call() and editor.destination_row.visible \
+			and source == [editor.tool, editor.from, editor.pending.get("id", "")]
+	var rendered := {}
+	var capture := func(preset: String) -> Dictionary:
+		var resolved := RefIndex.resolve_graph_map(Maps.code_index(manifest), code)
+		if resolved.status != "ok":
+			return {"error": "目标地图不可读或地图码不唯一。"}
+		var path := Maps.path_for(manifest, resolved.key)
+		var result := Maps.read_path(path, manifest)
+		if not result.ok or result.data.meta.code != code:
+			return {"error": "目标地图不可读或地图码已变更。"}
+		var map: Dictionary = result.data
+		var cells := Graph.cell_ids(Graph.graph_of(map.meta))
+		if cells.is_empty():
+			return {"error": "请先在目标地图创建格并保存。"}
+		var digest: String = result.digest
+		var current := func() -> bool:
+			var now := RefIndex.resolve_graph_map(Maps.code_index(manifest), code)
+			return now.status == "ok" and Maps.path_for(manifest, now.key) == path and Recovery.digest(path) == digest
+		rendered.assign({"cells": cells, "current": current})
+		var default_size: Vector2 = app.canvas.get_viewport_rect().size
+		var size: Vector2 = Layout.sizes(manifest).get(preset, default_size)
+		var bounds := ViewData.scene_bounds(map, manifest)
+		var center := bounds.get_center()
+		var zoom := minf(size.x / bounds.size.x, size.y / bounds.size.y) * 0.9
+		return {"subject": {"map": map, "manifest": app._manifest_write_payload(manifest), "viewportId": preset,
+			"camera": {"center": [center.x, center.y], "zoom": zoom}, "stagedContent": []},
+			"default_size": default_size, "current": current}
+	var choose := func(cell: String) -> Dictionary:
+		if not rendered.cells.has(cell):
+			return {"text": "请选择目标地图已有的格。"}
+		var current: Callable = rendered.current
+		return {"text": "终点：%s / %s" % [code, cell],
+			"apply": func(): return editor.set_destination(code, cell, current)}
+	FrameDialog.open(app, CAPABILITY, {"title": "跨地图选择终点 · " + code, "button": "渲染目标地图",
+		"hint": "目标地图使用已保存版本。确认选点后，回到起点地图应用连接。",
+		"prefix": "MapGamePreview", "default_label": "当前画布大小", "pick_mode": "cell", "pick": choose,
+		"parent": parent}, capture, valid)
 
 static func open_reference(app, decl: Dictionary, resolve: Callable, commit: Callable) -> void:
 	var mode := FieldWidgets.pick_mode(decl)

@@ -87,7 +87,7 @@ func _ready() -> void:
 			var arrival := Vector2.ZERO if route.is_empty() else Vector2(_cells[route].polygon[0])
 			_report("ready", "", {"picks": lanes, "opened": _activate_switch(map, manifest), "contours": contours,
 				"playerStart": [player.position.x, player.position.y], "switchCopies": copies, "authoredRoute": route,
-				"authoredEdge": _traversed_edge, "arrivalVertex": [arrival.x, arrival.y]})
+				"authoredEdge": _traversed_edge, "arrivalMap": _board_code, "arrivalVertex": [arrival.x, arrival.y]})
 		elif map.get("meta", {}).get("name") == "rule_hex" and not map.meta.get("cellGraph", {}).is_empty():
 			var route := _check_floor_route(map)
 			if route.is_empty():
@@ -210,7 +210,7 @@ func _render_preview(path: String) -> void:
 	if capability == "screenLayout":
 		_compose_screen_frame(surface, subject, size, str(request.get("locale", "")))
 	elif capability == "mapFrame":
-		if subject.get("map", {}).get("meta", {}).get("name") == "frame_pick":
+		if subject.get("map", {}).get("meta", {}).get("name") in ["frame_pick", "frame_pick_destination"]:
 			_compose_pick_frame(surface, size, path.get_base_dir(), request)
 		else:
 			_compose_map_frame(surface, subject, size)

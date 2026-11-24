@@ -20,8 +20,13 @@ func _set_badge(p: PanelContainer, text: String, color: Color) -> void:
 ## 统一的弹窗挂载：挂到窗口根（不再挂进资产栏，避免被布局裁切与节点泄漏），
 ## 居中显示，关闭后自动释放。所有弹窗面板都必须走这里。
 
-func _open_popup(pop: PopupPanel, size := Vector2i.ZERO) -> void:
-	app.add_child(pop)
+func _open_popup(pop: PopupPanel, size := Vector2i.ZERO, parent: Window = null) -> void:
+	if parent == null:
+		app.add_child(pop)
+	else:
+		pop.transient = true
+		pop.exclusive = true
+		parent.add_child(pop)
 	pop.popup_hide.connect(func(): pop.queue_free())
 	# 先按内容算出最小尺寸（此刻子控件还没排版，直接量会偏小），
 	# 再用 popup_centered() 让引擎按最小尺寸开窗——不带参数的 popup_centered()

@@ -991,8 +991,8 @@ func _build_theme() -> void:
 func _set_badge(p: PanelContainer, text: String, color: Color) -> void:
 	_layout_ctrl._set_badge(p, text, color)
 
-func _open_popup(pop: PopupPanel, popup_size := Vector2i.ZERO) -> void:
-	_layout_ctrl._open_popup(pop, popup_size)
+func _open_popup(pop: PopupPanel, popup_size := Vector2i.ZERO, parent: Window = null) -> void:
+	_layout_ctrl._open_popup(pop, popup_size, parent)
 
 func _popup_body(title: String, subtitle := "") -> Dictionary:
 	return _layout_ctrl._popup_body(title, subtitle)

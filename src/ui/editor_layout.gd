@@ -820,8 +820,8 @@ func _build_theme() -> void:
 	_popups_ctrl._build_theme()
 func _set_badge(p: PanelContainer, text: String, color: Color) -> void:
 	_popups_ctrl._set_badge(p, text, color)
-func _open_popup(pop: PopupPanel, size := Vector2i.ZERO) -> void:
-	_popups_ctrl._open_popup(pop, size)
+func _open_popup(pop: PopupPanel, size := Vector2i.ZERO, parent: Window = null) -> void:
+	_popups_ctrl._open_popup(pop, size, parent)
 func _popup_body(title: String, subtitle := "") -> Dictionary:
 	return _popups_ctrl._popup_body(title, subtitle)
 func _open_shortcut_help() -> void:
