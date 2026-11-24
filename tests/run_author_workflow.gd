@@ -2259,6 +2259,8 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 	var upper: String = map.meta.layers[1].id
 	map.meta.layers[1].offset = [48, 16]
 	map.meta.layers[1].scale = 1.5
+	map.meta.cellGraph = {"spaces": {"upper-side": {"layer": upper, "origin": [40, 30], "axisX": [2, 0]}},
+		"cells": [{"id": "entry", "polygon": [[20, 20], [30, 22], [22, 31]], "neighbors": []}]}
 	map.objects = [{"asset": "switch", "code": "PICK", "layer": primary, "x": 0, "y": 0}]
 	map.collision = [{"x": 1, "y": 1, "type": "solid", "material": "ice"}]
 	check(Maps.write(manifest, "frame_pick", map), "make a map with two game view lanes")
@@ -2601,6 +2603,40 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 	check(await cvs.undo() and not cvs._ent_by_code_index().has(copy_code) and cvs.map_root == root,
 		"undo removes just the copy in place")
 	check(await cvs.redo() and cvs._ent_by_code_index().has(copy_code), "redo restores the same copy ID")
+	app._layout_ctrl._on_map_menu_id(23)
+	var graph_pop := await _render_pick_frame(app)
+	if graph_pop == null:
+		return
+	var graph_id: LineEdit = graph_pop.find_child("FrameGraphCellId", true, false)
+	var graph_space: OptionButton = graph_pop.find_child("FrameGraphSpace", true, false)
+	select_metadata(graph_space, "upper-side")
+	graph_id.text = "exit-floor"
+	check(_click_pick_frame(graph_pop, Vector2(0.15, 0.25)).disabled, "cannot draw a layer-bound cell from a different view")
+	_click_pick_frame(graph_pop, Vector2(0.65, 0.25))
+	_click_pick_frame(graph_pop, Vector2(0.75, 0.25))
+	apply = _click_pick_frame(graph_pop, Vector2(0.65, 0.35))
+	check(not apply.disabled and cvs.cell_graph().cells.size() == 1, "mapped polygon stays a draft")
+	apply.pressed.emit()
+	if await _wait_for_pick_frame(graph_pop) == null:
+		return
+	var drawn: Dictionary = cvs.cell_graph().cells.back()
+	check(drawn.id == "exit-floor" and drawn.space == "upper-side"
+		and Vector2(drawn.polygon[0][0], drawn.polygon[0][1]).distance_to(Vector2(44.0 / 7, 78.0 / 7)) < 0.02,
+		"perspective picks are converted to the selected space's local polygon")
+	var graph_tools: OptionButton = graph_pop.find_child("MapGamePreviewTool", true, false)
+	graph_tools.select(1)
+	graph_tools.item_selected.emit(1)
+	_click_pick_frame(graph_pop, Vector2(0.15, 0.24))
+	apply = _click_pick_frame(graph_pop, Vector2(0.68, 0.28))
+	check(not apply.disabled and cvs.cell_graph().cells[0].neighbors.is_empty(), "link stays a draft across the two views")
+	apply.pressed.emit()
+	if await _wait_for_pick_frame(graph_pop) == null:
+		return
+	graph_pop.hide()
+	check(cvs.cell_graph().cells[0].neighbors == ["exit-floor"] and cvs.cell_graph().cells[1].neighbors.is_empty(),
+		"only the selected outgoing direction is added")
+	check(await cvs.undo() and cvs.cell_graph().cells[0].neighbors.is_empty(), "undo removes the authored link")
+	check(await cvs.redo() and cvs.cell_graph().cells[0].neighbors == ["exit-floor"], "redo restores the same link")
 	var saved: Dictionary = await app._map_file_ctrl.commit_document("保存实景落点及连接")
 	check(saved.get("status") == "ok", "publish positions and port selected from the game frame")
 	await app._load_map_file(path)
@@ -2617,6 +2653,7 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 		and result.get("switchCopies", []).size() == 1 and result.switchCopies[0].code == copy_code
 		and result.switchCopies[0].layer == upper and result.switchCopies[0].target.inst == doors[1].code
 		and result.switchCopies[0].message == "Draft copied from the game frame"
+		and result.get("authoredRoute") == "exit-floor"
 		and result.get("contours", []).size() == 1 and result.contours[0].props == compound,
 		"game reloads both view positions and the projected polygon, and opens the selected door: " + str(report))
 

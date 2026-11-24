@@ -65,6 +65,16 @@ static func open(app, capability: String, options: Dictionary, snapshot: Callabl
 		picks.apply = Callable()
 		confirm.disabled = true
 		frame.queue_redraw()
+	if options.has("controls"):
+		var controls: Control = options.controls
+		body.add_child(controls)
+		body.move_child(controls, frame.get_index())
+		options.controls_changed.connect(func():
+			if frame.texture != null:
+				notice.text = interaction.message()
+				confirm.disabled = not interaction.ready()
+				picks.apply = interaction.apply
+				frame.queue_redraw())
 	if options.has("tools"):
 		var tools := OptionButton.new()
 		tools.name = options.prefix + "Tool"

@@ -83,8 +83,9 @@ func _ready() -> void:
 			var grid: Grid = Grid.resolve(map.meta, manifest).grid
 			player.position = grid.cell_center_px(start)
 			add_child(player)
+			var route := _current if _load_board(map, "entry") and _advance_board() else ""
 			_report("ready", "", {"picks": lanes, "opened": _activate_switch(map, manifest), "contours": contours,
-				"playerStart": [player.position.x, player.position.y], "switchCopies": copies})
+				"playerStart": [player.position.x, player.position.y], "switchCopies": copies, "authoredRoute": route})
 		elif map.get("meta", {}).get("name") == "rule_hex" and not map.meta.get("cellGraph", {}).is_empty():
 			var route := _check_floor_route(map)
 			if route.is_empty():
@@ -331,6 +332,26 @@ func _compose_pick_frame(surface: SubViewport, size: Vector2i, dir: String, requ
 				weights.append(-1.0 / vertex.z)
 			region.placement.reciprocalW = weights
 			region.collision.reciprocalW = weights
+		var graph: Dictionary = map.meta.get("cellGraph", {})
+		for cell: Dictionary in graph.get("cells", []):
+			var space: Dictionary = graph.get("spaces", {}).get(cell.get("space", ""), {})
+			if (i == 0 and not space.get("layer", "").is_empty()) or (i == 1 and space.get("layer", "") != layer):
+				continue
+			var basis := Transform2D(_vector(space.get("axisX", [1, 0])), _vector(space.get("axisY", [0, 1])),
+				_vector(space.get("origin", [0, 0])))
+			var screen := PackedVector2Array(region.screen.map(func(v): return Vector2(v[0], v[1])))
+			var projected := PackedVector2Array()
+			for point in cell.polygon:
+				var uv := (basis * _vector(point) - (root if i == 0 else local)) / 32.0
+				var w := Vector3(1.0 - uv.x - uv.y, uv.x * (2.0 if i == 1 else 1.0), uv.y)
+				projected.append((screen[0] * w.x + screen[1] * w.y + screen[2] * w.z) / (w.x + w.y + w.z))
+			var indices := Geometry2D.triangulate_polygon(projected)
+			for j in range(0, indices.size(), 3):
+				var tri := []
+				for k in 3:
+					var p: Vector2 = projected[indices[j + k]]
+					tri.append([p.x, p.y])
+				regions.append({"screen": tri, "targets": {"cell": cell.id}})
 		for row in map.objects:
 			if i == 0 and row.get("code") == "PICK":
 				var center := Vector2(size) * Vector2(0.11, 0.34)

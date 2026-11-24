@@ -8,6 +8,7 @@ const Assets := preload("res://src/assets/asset_decl.gd")
 const Geometry := preload("res://src/map/object_geometry.gd")
 const GridBrush := preload("res://src/ui/frame_grid_brush.gd")
 const ObjectEdit := preload("res://src/ui/frame_object_edit.gd")
+const CellGraphEdit := preload("res://src/ui/frame_cell_graph.gd")
 const CAPABILITY := "mapFrame"
 
 static func available(app) -> bool:
@@ -70,6 +71,14 @@ static func open_spawn(app) -> void:
 			"apply": func(): return canvas.set_spawn_cell(cell)}
 	_open(app, "collision", choose, {"title": "实景设置出生点", "confirm_label": "应用出生点",
 		"initial": "渲染后，点击有根空间映射的地点，再确认出生点。"})
+
+static func open_cell_graph(app) -> void:
+	if not available(app):
+		return
+	var editor := CellGraphEdit.new(app.canvas)
+	_open(app, "cellGraphEdit", Callable(), {"title": "实景编辑格图", "interaction": editor,
+		"tools": CellGraphEdit.TOOLS, "controls": editor.controls(), "controls_changed": editor.controls_changed,
+		"confirm_label": "应用格图调整", "refresh_on_apply": true})
 
 static func open_reference(app, decl: Dictionary, resolve: Callable, commit: Callable) -> void:
 	var mode := FieldWidgets.pick_mode(decl)
