@@ -204,7 +204,7 @@ func _build_global_bar() -> PanelContainer:
 	var cfg: Button = app.UiKitScript.button("试玩配置", func(): app._playtest_ctrl.open_configuration(), "ghost")
 	cfg.tooltip_text = "每图初始能力 / 血量"
 	bar.add_child(cfg)
-	var play = app.UiKitScript.button("▶  试玩", app._on_play, "primary")
+	var play = app.UiKitScript.button("▶  试玩", app._playtest_ctrl.on_play, "primary")
 	play.tooltip_text = "保存并启动游戏（当前地图）"
 	bar.add_child(play)
 	return panel_wrap
@@ -213,9 +213,9 @@ func _build_global_bar() -> PanelContainer:
 func _on_map_menu_id(id: int) -> void:
 	match id:
 		1:
-			app._on_new()
+			app._map_file_ctrl.on_new()
 		2:
-			app._on_open()
+			app._map_file_ctrl.on_open()
 		3:
 			app._on_save()
 		5:
@@ -225,13 +225,13 @@ func _on_map_menu_id(id: int) -> void:
 			app._open_tile_replace()
 		10:
 			# 顶栏名字输入框已删：改名只能从菜单进弹窗
-			app._on_rename()
+			app._map_file_ctrl.on_rename()
 		11:
 			# 整图复制（C2）：先填新名，计划预览失败留在弹窗里
-			app._on_duplicate_map()
+			app._map_file_ctrl.on_duplicate()
 		13:
 			# B1-2：另存副本并把实例/出生点换算到新投影（原图不动）
-			app._on_convert_projection()
+			app._map_file_ctrl.on_convert_projection()
 		14:
 			MapGamePreview.open(app)
 		22:

@@ -1720,7 +1720,7 @@ func author_projection_copy(app, manifest: Dictionary) -> void:
 	var source_hash := FileAccess.get_sha256(source_path)
 	var copy_path := Maps.path_for(manifest, "projection_copy")
 	await app._load_map_file(source_path)
-	app._on_convert_projection()
+	app._map_file_ctrl.on_convert_projection()
 	var popups := collect(app, "PopupPanel").filter(func(p): return p.visible)
 	if popups.is_empty():
 		check(false, "opened projection copy dialog")
@@ -1753,7 +1753,7 @@ func author_rule_grids(app, manifest: Dictionary) -> void:
 	for sample in cases:
 		var name: String = "rule_" + sample[0]
 		var route: Array = sample[4]
-		app._on_new()
+		app._map_file_ctrl.on_new()
 		var popups := collect(app, "PopupPanel").filter(func(p): return p.visible)
 		if popups.is_empty():
 			check(false, "open new-map dialog for " + name)
@@ -1850,7 +1850,7 @@ func author_basis_copy(app, manifest: Dictionary) -> void:
 	var source: Dictionary = app.canvas.extract()
 	var door_code: String = source.objects[0].code
 	var source_anchor: Vector2 = app.canvas._ent_by_code_index()[door_code].position
-	app._on_convert_projection()
+	app._map_file_ctrl.on_convert_projection()
 	var popups := collect(app, "PopupPanel").filter(func(p): return p.visible)
 	if popups.is_empty():
 		check(false, "open custom grid conversion")
@@ -2958,7 +2958,7 @@ func _play_saved_signal_view(app, manifest_path: String) -> void:
 
 func _author_relay_map(app, manifest: Dictionary) -> void:
 	app._set_mode("map")
-	app._on_new()
+	app._map_file_ctrl.on_new()
 	var popup := _visible_popup(app)
 	popup.find_child("NewMapName", true, false).text = "relay_deck"
 	select_metadata(popup.find_child("NewMapProjection", true, false), "isometric")

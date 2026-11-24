@@ -43,7 +43,7 @@ func run() -> void:
 	app.manifest = manifest
 	app._build_editor_ui()
 	app._set_mode("map")
-	app._on_new()
+	app._map_file_ctrl.on_new()
 	var create := visible_popup()
 	create.find_child("NewMapName", true, false).text = "foundry"
 	press(create, "确定")

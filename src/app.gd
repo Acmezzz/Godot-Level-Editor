@@ -139,33 +139,6 @@ func _on_save() -> bool:
 	# 清单 → 内容 → 地图一次写完（只写地图会留下指向未落盘内容的引用）。
 	return await _map_file_ctrl.save_all()
 
-func _on_new() -> void:
-	_map_file_ctrl.on_new()
-
-func _on_open() -> void:
-	_map_file_ctrl.on_open()
-
-## 顶栏名字输入框已删：改名走地图菜单弹窗
-func _on_rename() -> void:
-	_map_file_ctrl.on_rename()
-
-## 整图复制（C2）：新图名 → 计划预览 → 先内容后地图
-func _on_duplicate_map() -> void:
-	_map_file_ctrl.on_duplicate()
-
-## B1-2：另存副本并转换投影（实例/出生点换算；瓦片/碰撞保留原格号待核对）
-func _on_convert_projection() -> void:
-	_map_file_ctrl.on_convert_projection()
-
-func _maybe_autosave() -> void:
-	_map_file_ctrl.maybe_autosave()
-
-func _on_play(spawn_tiles := Vector2i(-1, -1)) -> void:
-	_playtest_ctrl.on_play(spawn_tiles)
-
-func _poll_playtest() -> void:
-	_playtest_ctrl.poll_playtest()
-
 ## E2：按区域选区批量替换瓦片（弹窗在 ui/tile_replace_dialog.gd）
 func _open_tile_replace() -> void:
 	if _tile_replace_ctrl == null:
@@ -465,11 +438,11 @@ func _shortcut_input(event: InputEvent) -> void:
 				return
 	# Ctrl+N/O 新建/打开
 	if ctrl and k == KEY_N:
-		_on_new()
+		_map_file_ctrl.on_new()
 		get_viewport().set_input_as_handled()
 		return
 	if ctrl and k == KEY_O:
-		_on_open()
+		_map_file_ctrl.on_open()
 		get_viewport().set_input_as_handled()
 		return
 	if k == KEY_ESCAPE and canvas.world_region_mode and not canvas._paste_mode:
@@ -651,8 +624,8 @@ func _process(_delta: float) -> void:
 	# 自动保存与试玩轮询都必须跳过，否则每帧在 nil 上调方法。
 	if _map_file_ctrl == null:
 		return
-	_maybe_autosave()
-	_poll_playtest()
+	_map_file_ctrl.maybe_autosave()
+	_playtest_ctrl.poll_playtest()
 
 # 按实例码找实例节点（层栈化后跨全部层容器查）
 func _ent_by_id(id: String) -> EntityNode:
