@@ -3,8 +3,9 @@ extends RefCounted
 
 const Functions := preload("res://src/content/function_decl.gd")
 const Store := preload("res://src/content/content_store.gd")
+const Keyframes := preload("res://src/content/keyframe_curve.gd")
 
-const TYPES := ["int", "float", "bool", "string", "asset_ref", "array"]
+const TYPES := ["int", "float", "bool", "string", "asset_ref", "vector2", "curve", "array"]
 const CHOICE_SOURCES := ["map", "view:", "audio:"]
 
 static func issues(manifest: Dictionary) -> Array[Dictionary]:
@@ -110,11 +111,13 @@ static func _shape(field: Dictionary, depth: int) -> bool:
 	var type: String = str(field.get("type", ""))
 	if field.get("kind") != "input" or type not in TYPES:
 		return false
+	if type == "vector2":
+		return field.get("dims", 2) in [2, 3]
 	if type != "array":
 		return true
 	if field.get("of") == "record":
 		return depth < 4 and field.get("fields") is Array and not field.fields.is_empty()
-	return _shape(_array_element(field), depth + 1) if field.get("of") != "array" else false
+	return field.get("of") not in ["array", "curve"] and _shape(_array_element(field), depth + 1)
 
 static func valid_value(field: Dictionary, value: Variant) -> bool:
 	if field.get("kind") == "choice":
@@ -124,18 +127,17 @@ static func valid_value(field: Dictionary, value: Variant) -> bool:
 	match field.get("type"):
 		"bool": return value is bool
 		"string", "asset_ref": return value is String
+		"vector2":
+			return value is Array and value.size() == int(field.get("dims", 2)) \
+				and value.all(func(component): return _bounded_number(field, component))
+		"curve": return Keyframes.valid(value)
 		"array":
 			var element := _array_element(field)
 			return value is Array and value.all(func(item): return valid_value(element, item))
 		"record":
 			return value is Dictionary and field.fields.all(func(sub):
 				return sub is Dictionary and valid_value(sub, value.get(sub.get("id", ""), default_value(sub))))
-		"int", "float":
-			var type: String = field.type
-			var lo = field.get("min", -999999)
-			var hi = field.get("max", 999999)
-			return _number(lo, type) and _number(hi, type) and _number(value, type) \
-				and lo <= value and value <= hi and absf(lo) <= 1e9 and absf(hi) <= 1e9
+		"int", "float": return _bounded_number(field, value, field.type)
 	return false
 
 static func _array_element(field: Dictionary) -> Dictionary:
@@ -143,8 +145,13 @@ static func _array_element(field: Dictionary) -> Dictionary:
 	return load("res://src/content/ref_fields.gd").array_element_decl(field)
 
 static func _number(value: Variant, type: String) -> bool:
-	return (value is int or value is float) and is_finite(float(value)) \
-		and (type != "int" or value == floorf(value))
+	return Keyframes.number(value) and (type != "int" or value == floorf(value))
+
+static func _bounded_number(field: Dictionary, value: Variant, type := "float") -> bool:
+	var lo = field.get("min", -999999)
+	var hi = field.get("max", 999999)
+	return _number(lo, type) and _number(hi, type) and _number(value, type) \
+		and lo <= value and value <= hi and absf(lo) <= 1e9 and absf(hi) <= 1e9
 
 static func default_value(field: Dictionary) -> Variant:
 	if field.has("default"):
@@ -154,14 +161,19 @@ static func default_value(field: Dictionary) -> Variant:
 	match field.get("type"):
 		"bool": return false
 		"string", "asset_ref": return ""
-		"array": return []
+		"array", "curve": return []
 		"record": return {}
-		_:
-			var lo = field.get("min", -999999)
-			var hi = field.get("max", 999999)
-			if _number(lo, "float") and _number(hi, "float") and lo <= hi:
-				return clampf(0, lo, hi)
-			return 0
+		"vector2":
+			var point := []
+			point.resize(int(field.get("dims", 2)))
+			point.fill(_default_number(field))
+			return point
+		_: return _default_number(field)
+
+static func _default_number(field: Dictionary) -> float:
+	var lo = field.get("min", -999999)
+	var hi = field.get("max", 999999)
+	return clampf(0, lo, hi) if Keyframes.number(lo) and Keyframes.number(hi) and lo <= hi else 0.0
 
 static func _issue(path: String, message: String) -> Dictionary:
 	return {"severity": "warning", "path": path, "message": message}

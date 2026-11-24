@@ -333,7 +333,8 @@
 ### 从游戏生成可编辑地图
 
 `mapGenerators` 使用稳定 ID，`fields` 按数组顺序显示，可为空。支持 `kind: "input"` 的
-`int`、`float`、`bool`、`string`、`asset_ref` 及其数组，也支持单选、多选和 `array` / `of: "record"`。
+`int`、`float`、`bool`、`string`、`asset_ref`、`vector2` 及其数组，也支持单选、多选、`curve` 和 `array` / `of: "record"`。
+坐标按声明的二维或三维数值数组传递；路径可用有序坐标数组。曲线沿用内容字段的关键帧格式，生成器自行决定其单位和用途。
 选项可直接声明 `options`，或引用项目资产、实体类型、内容、地图、屏幕或音频；生成参数不依赖当前地图上的实例。
 记录列表按作者顺序传递，子字段使用 ID；未显式填写的记录子字段可由生成器按声明采用默认值。
 每个字段可指定 `name`、`default`，数值可设 `min`、`max`。例如：

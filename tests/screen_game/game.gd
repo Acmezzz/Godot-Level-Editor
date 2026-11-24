@@ -179,10 +179,12 @@ func _show_content(target: Dictionary, content_board: String) -> void:
 	if kind == "course_rules":
 		var placements: Array = fields.get("PLAC", []).map(func(row):
 			return {"asset": row.ASST, "column": row.COLM})
-		var map := _course_map({"projection": fields.PROJ, "placements": placements},
+		var map := _course_map({"projection": fields.PROJ, "placements": placements,
+			"route": fields.WPNT, "elevation": fields.ELEV},
 			{"version": 1, "name": "Runtime Course", "code": "RUNTIME"})
 		_draw_relay(self, map, _relay_camera(size))
 		runtime_course["runtimeCourse"] = map.objects.map(func(row): return int(row.x))
+		runtime_course["runtimeRows"] = map.objects.map(func(row): return int(row.y))
 		var next_button := Button.new()
 		next_button.text = "Finish procedural course"
 		next_button.position = Vector2(16, 16)
@@ -399,8 +401,11 @@ func _generate_course(dir: String, request: Dictionary) -> void:
 func _course_map(parameters: Dictionary, target: Dictionary) -> Dictionary:
 	var objects := []
 	for row in parameters.placements:
+		var index := objects.size()
+		var waypoint: Array = parameters.route[index] if index < parameters.route.size() else [0, 2]
+		var offset: float = parameters.elevation[0].value if not parameters.elevation.is_empty() else 0.0
 		objects.append({"asset": row.asset, "code": "R%03d" % objects.size(),
-			"layer": "base", "x": row.column, "y": 2})
+			"layer": "base", "x": row.column + waypoint[0], "y": waypoint[1] + offset})
 	if parameters.projection == "isometric" and not objects.is_empty():
 		objects.resize(1)
 		objects[0]["props"] = {"landing": [16, 48]}

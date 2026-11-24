@@ -43,7 +43,7 @@ func run() -> void:
 			"contentTypes": ["round_rules"], "contentMapContext": "inherit"},
 			"course": {"name": "Generated course rules", "contentTypes": ["course_rules"]}},
 		"mapGenerators": {"course": {"contentType": "course_rules",
-			"parameterFields": ["projection", "placements"]}},
+			"parameterFields": ["projection", "placements", "route", "elevation"]}},
 		"preview": {"version": 1, "executable": OS.get_executable_path(), "capabilities": ["generateMap", "mapFrame"],
 			"args": ["--rendering-method", "gl_compatibility", "--audio-driver", "Dummy", "--path", "%projectpath%", "--"]},
 		"screenModules": {"course-door": {"outputs": {"accepted": {"name": "Enter", "arrivalPorts": ["arrival"]}},
@@ -57,6 +57,10 @@ func run() -> void:
 			{"id": "placements", "code": "PLAC", "kind": "input", "type": "array", "of": "record", "fields": [
 				{"id": "asset", "code": "ASST", "kind": "input", "type": "asset_ref", "assetKind": "entity"},
 				{"id": "column", "code": "COLM", "kind": "input", "type": "int", "min": 1, "max": 10}]},
+			{"id": "route", "code": "WPNT", "kind": "input", "type": "array", "of": "vector2",
+				"min": 0, "max": 7, "step": 1},
+			{"id": "elevation", "code": "ELEV", "kind": "input", "type": "curve",
+				"default": [{"time": 0, "value": 0}]},
 			{"id": "next", "code": "CNXT", "kind": "input", "type": "flow_target",
 				"maps": true, "screens": true, "contentTypes": ["signal"]}]},
 			"sequence": {"code": "SEQN", "name": "Sequence", "steps": true},
@@ -128,6 +132,15 @@ func run() -> void:
 	for i in 2:
 		choose(assets[i + 1], "relay")
 		columns[i].value = 3 + 2 * i
+	var route_field: Control = collect(form, "HBoxContainer").filter(func(row):
+		return row.get_meta("field_id", "") == "route")[0]
+	press(route_field, "+ 添加")
+	press(route_field, "+ 添加")
+	var route_axes := collect(route_field, "SpinBox")
+	route_axes[1].value = 2
+	route_axes[3].value = 3
+	var curve: Control = form.find_child("KeyframeGraph", true, false).get_parent()
+	collect(curve, "SpinBox")[1].value = 1
 	press(form, "保存")
 	form.hide()
 	var rules := {"function": "course_rules", "content": "project-course-rules"}
@@ -185,8 +198,10 @@ func run() -> void:
 	var canvas: EditorCanvas = app.canvas
 	check(canvas.extract().objects.map(func(row): return int(row.x)) == [3, 5],
 		"the generated placements match the two authored record rows")
+	check(canvas.extract().objects.map(func(row): return int(row.y)) == [3, 4],
+		"the game generator uses both the authored route and elevation curve")
 	var snapshot: Dictionary = canvas.extract().meta.generatorSource.parameters
-	check(snapshot.size() == 2 and snapshot.has_all(["projection", "placements"]),
+	check(snapshot.size() == 4 and snapshot.has_all(["projection", "placements", "route", "elevation"]),
 		"generation snapshots only selected fields")
 	var pawn: EntityNode = canvas._ent_by_code_index()["R000"]
 	var pawn_code := pawn.code
@@ -594,6 +609,7 @@ func run() -> void:
 		and result.get("handoffTargets") == route
 		and result.get("endingActor") == pawn_code and result.get("endingBoard") == map_code
 		and result.get("runtimeCourse", []).map(func(x): return int(x)) == [3, 5] and result.get("board") == copy_code
+		and result.get("runtimeRows", []).map(func(y): return int(y)) == [3, 4]
 		and result.get("roundRules") == copy_rules.content and result.get("roundInputs") == 3
 		and result.get("roundHost") == copy_host
 		and result.get("roundRelayPort") == upstream_port
