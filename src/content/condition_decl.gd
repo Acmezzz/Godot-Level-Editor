@@ -7,7 +7,6 @@ extends RefCounted
 ## 固定条件参数写进内容 fields；可配置条件组每行有自己的 fields。两者都用字段码做键，
 ## 编辑器负责填参和引用，条件判定由游戏执行。
 
-const ContentId := preload("res://src/content/content_id.gd")
 const PoolPrint := preload("res://src/content/declaration_pool.gd")
 
 ## 归一化结果缓存：指纹 = 项目目录 + conditions 池的递归结构哈希（F1/P03：避免每次访问重扫整池）。
@@ -66,30 +65,9 @@ static func row_schema(m: Dictionary, field: Dictionary, row: Dictionary) -> Dic
 		return {}
 	return condition_decl(m, id)
 
-## 已占用字段码集合（三池同空间：功能+条件+步骤——步骤池后加，条件补码同样要避开它）。
-## 条件字段与功能字段共存于同一份内容 fields（键=字段码），码必须同空间唯一。
-static func taken_field_codes(m: Dictionary) -> Dictionary:
-	return ContentId.field_codes(m)
-
-## 补发条件字段缺失码（避开功能与条件字段已占用的码），就地修改，返回是否有改动。
-## 只补「空」的，不碰重复码（与 function_decl.ensure_codes 同一纪律——重复由校验报错）。
-## 只在 FunctionDecl.ensure_codes 之后调用：功能字段码已定，条件字段避开它们。
 static func ensure_codes(m: Dictionary) -> bool:
-	var changed := false
-	var seen := taken_field_codes(m)
-	for pair in PoolPrint.items(m.get("conditions", null)):
-		var d: Dictionary = pair.body
-		for fd in d.get("fields", []) if d.get("fields", []) is Array else []:
-			if not (fd is Dictionary):
-				continue
-			if str((fd as Dictionary).get("code", "")) == "":
-				var fcode := ContentId.new_fn_code()
-				while seen.has(fcode):
-					fcode = ContentId.new_fn_code()
-				(fd as Dictionary)["code"] = fcode
-				seen[fcode] = true
-				changed = true
-	return changed
+	var rows := PoolPrint.items(m.get("conditions"))
+	return PoolPrint.ensure_field_codes(m, rows)
 
 ## 条件池的码表段（Markdown）；无条件声明时返回空串，由调用方拼在功能码表之后。
 static func codes_doc(m: Dictionary) -> String:

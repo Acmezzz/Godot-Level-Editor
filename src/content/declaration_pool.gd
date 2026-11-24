@@ -59,3 +59,17 @@ static func allocate_code(occupied: Dictionary) -> String:
 		code = ContentId.new_fn_code()
 	occupied[code] = true
 	return code
+
+## Function, condition and step fields share a code space.
+static func ensure_field_codes(manifest: Dictionary, rows: Array) -> bool:
+	var occupied := ContentId.field_codes(manifest)
+	var changed := false
+	for row in rows:
+		var fields = row.body.get("fields", [])
+		if not fields is Array:
+			continue
+		for field in fields:
+			if field is Dictionary and str(field.get("code", "")) == "":
+				field["code"] = allocate_code(occupied)
+				changed = true
+	return changed

@@ -6,7 +6,6 @@ extends RefCounted
 ## `steps: [{step: <步骤码>, fields: {<字段码>: 值}}]`，每步引用步骤池条目；
 ## 步骤字段与功能/条件字段共用一个码空间。运行时游戏侧按序解释执行。
 
-const ContentId := preload("res://src/content/content_id.gd")
 const PoolPrint := preload("res://src/content/declaration_pool.gd")
 
 ## 归一化结果缓存：指纹 = 项目目录 + steps 池的递归结构哈希（F1/P03：避免每次访问重扫整池）。
@@ -62,17 +61,8 @@ static func step_by_code(m: Dictionary, code: String) -> Dictionary:
 ## 在 FunctionDecl / ConditionDecl 的 ensure_codes 之后调用。
 static func ensure_codes(m: Dictionary) -> bool:
 	var rows := PoolPrint.items(m.get("steps"))
-	var changed := PoolPrint.ensure_entry_codes(rows)
-	var seen := ContentId.field_codes(m)
-	for pair in rows:
-		var d: Dictionary = pair.body
-		for fd in d.get("fields", []) if d.get("fields", []) is Array else []:
-			if not (fd is Dictionary):
-				continue
-			if str((fd as Dictionary).get("code", "")) == "":
-				(fd as Dictionary)["code"] = PoolPrint.allocate_code(seen)
-				changed = true
-	return changed
+	var entries_changed := PoolPrint.ensure_entry_codes(rows)
+	return PoolPrint.ensure_field_codes(m, rows) or entries_changed
 
 ## 步骤池的码表段（Markdown）；无步骤声明时返回空串，由调用方拼在码表末尾。
 static func codes_doc(m: Dictionary) -> String:

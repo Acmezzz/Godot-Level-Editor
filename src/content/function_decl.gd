@@ -21,17 +21,8 @@ static func _key(m: Dictionary) -> String:
 ## 由校验报出来让人决定改哪个；这里替用户改一个反而会悄悄改变既有引用指向。
 static func ensure_codes(m: Dictionary) -> bool:
 	var rows := PoolPrint.items(m.get("functions"))
-	var changed := PoolPrint.ensure_entry_codes(rows)
-	var seen := ContentId.field_codes(m)
-	for pair in rows:
-		var d: Dictionary = pair.body
-		for fd in d.get("fields", []) if d.get("fields", []) is Array else []:
-			if not (fd is Dictionary):
-				continue
-			if str((fd as Dictionary).get("code", "")) == "":
-				(fd as Dictionary)["code"] = PoolPrint.allocate_code(seen)
-				changed = true
-	return changed
+	var entries_changed := PoolPrint.ensure_entry_codes(rows)
+	return PoolPrint.ensure_field_codes(m, rows) or entries_changed
 
 ## 重复的功能码 / 字段码（校验用，不改数据）：[{scope, code}]
 static func duplicate_codes(m: Dictionary) -> Array:

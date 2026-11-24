@@ -6,12 +6,6 @@ extends RefCounted
 ## 内容段 6 位。名字（地图名/类型名）只是展示层，不进 ID。
 ## 不挂 class_name，按项目惯例用 preload 引用。
 
-const ContentStore := preload("res://src/content/content_store.gd")
-# 注意：preload 链 content_id → content_store → map_store → manifest 是一条**闭环**
-# （manifest 又 preload 声明域家族）。当前能解析靠的是跨脚本全是运行期方法调用——
-# 任何人在 const 初始化器里解引用预载脚本的成员（如 const X = ContentId.LAYER_LEN）即爆
-# cyclic reference。给这条链加成员常量前先想清楚。
-
 ## 可打印且不含 I/O/0/1 的字符集，长度 32，恰好覆盖 randi() 的低 5 位。
 const CHARS := "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 const LAYER_LEN := 4    # 地图/实体/实例段
@@ -77,14 +71,15 @@ static func content_id(map_code: String, ent_code: String, inst_code: String, fn
 static func unique(m: Dictionary, fn_id: String, candidate: String, max_tries := 32) -> String:
 	if candidate == "":
 		return ""
+	var store := load("res://src/content/content_store.gd") as GDScript
 	var taken := {}
-	for id in ContentStore.list_ids(m, fn_id):
+	for id in store.list_ids(m, fn_id):
 		taken[str(id)] = true
 	# 最后一段是内容码；用 rfind 定位，前缀里即使有连字符也不会被切开。
 	var cut := candidate.rfind("-")
 	var prefix := candidate if cut < 0 else candidate.substr(0, cut)
 	for i in maxi(max_tries, 1):
 		var id := candidate if i == 0 else prefix + "-" + _code(CONTENT_LEN)
-		if not taken.has(id) and ContentStore.is_valid_id(id):
+		if not taken.has(id) and store.is_valid_id(id):
 			return id
 	return ""
