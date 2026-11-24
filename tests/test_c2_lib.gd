@@ -1,7 +1,7 @@
 extends "res://tests/_suite_base.gd"
 ## C2（§7.4）：内容库批量引用扫描——实例绑定 + 内容入边一次读盘，筛选与行详情共用。
 
-const ProjectAudit := preload("res://src/project/project_audit.gd")
+const ReferenceUsage := preload("res://src/project/reference_usage.gd")
 const MapStore := preload("res://src/map/map_store.gd")
 const ContentStore := preload("res://src/content/content_store.gd")
 
@@ -37,7 +37,7 @@ func test_bulk_edges_instances_and_contents() -> void:
 		{"code": "AAAA", "asset": "npc", "x": 0, "y": 0, "functions": [{"fn": "FN01", "content": "C1"}, {"fn": "FN01", "content": "C1"}]},
 		{"code": "BBBB", "asset": "npc", "x": 1, "y": 0, "functions": [{"fn": "FN01", "content": "C1"}]}]
 	ok(MapStore.write(m, "m1", md), "write map")
-	var bulk := ProjectAudit.content_edges_bulk(m, "dlg", ["C1", "C2", "C3"], "m1",
+	var bulk := ReferenceUsage.content_edges_bulk(m, "dlg", ["C1", "C2", "C3"], "m1",
 		[{"cid": "C1", "code": "AAAA"}, {"cid": "C1", "code": "LIVE1"}])
 	var refs: Dictionary = bulk.get("refs", {})
 	var c1: Dictionary = refs.get("C1", {})

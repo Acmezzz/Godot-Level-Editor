@@ -3,7 +3,6 @@ extends RefCounted
 
 const TopBarNavScript := preload("res://src/ui/top_bar_nav.gd")
 const CollisionTypes := preload("res://src/assets/collision_types.gd")
-const IssuesDrawer := preload("res://src/ui/issues_drawer.gd")
 const LayerPanel := preload("res://src/ui/layer_panel.gd")
 const Popups := preload("res://src/ui/popups.gd")
 const MapGamePreview := preload("res://src/ui/map_game_preview.gd")
@@ -12,7 +11,6 @@ const MapFlowDialog := preload("res://src/ui/map_flow_dialog.gd")
 
 var app   # 宿主引用
 ## 拆分出的子控制器
-var _issues_ctrl   # issues_drawer.gd：问题抽屉
 var _layer_ctrl   # layer_panel.gd：层下拉+层管理
 var _popups_ctrl   # popups.gd：弹窗外壳/主题/速查
 # 状态栏的常驻指示（与左侧消息分离，避免互相覆盖）
@@ -45,7 +43,6 @@ var _sel_state: Label
 var _sel_eye: Button
 func _init(host) -> void:
 	app = host
-	_issues_ctrl = IssuesDrawer.new(app)
 	_layer_ctrl = LayerPanel.new(self)
 	_popups_ctrl = Popups.new(self)
 func _build_editor_ui() -> void:
@@ -123,7 +120,6 @@ func _build_editor_ui() -> void:
 	app._canvas_dock_slot.add_theme_stylebox_override("panel", app.UiThemeScript.flat(app.UiThemeScript.BG_BASE, 0))
 	mid_col.add_child(app._canvas_dock_slot)
 
-	root.add_child(_issues_ctrl.build())
 	root.add_child(_build_status_bar())
 
 	app.canvas.cursor_info.connect(_on_cursor)
@@ -189,7 +185,6 @@ func _build_global_bar() -> PanelContainer:
 	map_menu.add_item("跨层搬动选项…", 19)
 	map_menu.add_item("最近试玩反馈…", 21)
 	map_menu.add_separator()
-	map_menu.add_item("检查项目完整性", 30)
 	map_menu.add_item("切换项目…", 20)
 	map_menu.id_pressed.connect(_on_map_menu_id)
 	app._map_btn.pressed.connect(func():
@@ -268,8 +263,6 @@ func _on_map_menu_id(id: int) -> void:
 			app._switch_project()
 		21:
 			app._playtest_ctrl.open_play_report()
-		30:
-			_issues_ctrl.run_audit()
 
 func _world_region_options(moving: bool) -> void:
 	var cvs: EditorCanvas = app.canvas

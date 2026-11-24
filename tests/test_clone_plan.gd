@@ -6,7 +6,7 @@ const ClonePlan := preload("res://src/content/clone_plan.gd")
 const ContentStore := preload("res://src/content/content_store.gd")
 const MapStore := preload("res://src/map/map_store.gd")
 const FunctionDecls := preload("res://src/content/function_decl.gd")
-const Audit := preload("res://src/project/project_audit.gd")
+const Audit := preload("res://src/project/reference_usage.gd")
 
 const TMP := "user://test_clone_plan_tmp"
 

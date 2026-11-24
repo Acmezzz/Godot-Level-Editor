@@ -8,7 +8,8 @@ const ClonePlan := preload("res://src/content/clone_plan.gd")
 const MapStore := preload("res://src/map/map_store.gd")
 const ScreenLayout := preload("res://src/project/screen_layout.gd")
 const References := preload("res://src/project/reference_index.gd")
-const Audit := preload("res://src/project/project_audit.gd")
+const Usage := preload("res://src/project/reference_usage.gd")
+const ScreenReferences := preload("res://src/project/screen_reference_validation.gd")
 
 func test_screen_module_declared_references() -> void:
 	var field := {"id": "links", "kind": "input", "type": "array", "of": "record", "fields": [
@@ -30,25 +31,21 @@ func test_screen_module_declared_references() -> void:
 		"multi-choice content references are indexed individually")
 	eq(References.view_asset_refs(manifest, "actor").map(func(ref): return ref.path),
 		[prefix + "actors[0]"], "typed asset arrays participate in the same deletion index as layout art")
-	eq(Audit.view_inbound_refs(manifest, "next", []).refs,
+	eq(Usage.view_inbound_refs(manifest, "next", []).refs,
 		["menu · " + prefix + "screen"], "nested declared default is a live reference")
-	eq(Audit.view_inbound_refs(manifest, "menu", []).refs, [], "self-reference does not block removing a view")
-	var issues := Audit.view_reference_issues(manifest, "menu")
+	eq(Usage.view_inbound_refs(manifest, "menu", []).refs, [], "self-reference does not block removing a view")
+	var issues := ScreenReferences.view_reference_issues(manifest, "menu")
 	eq(issues.map(func(issue): return issue.path), [prefix + "flow[0]", prefix + "flow[1]"],
 		"an entity asset does not need to meet the layout image rules")
-	eq(Audit.view_reference_issues(manifest, "next"), [], "saving one screen does not validate unrelated screens")
+	eq(ScreenReferences.view_reference_issues(manifest, "next"), [], "saving one screen does not validate unrelated screens")
 	manifest.assets.clear()
 	manifest.views.pop_back()
-	var broken := Audit.view_reference_issues(manifest)
+	var broken := ScreenReferences.view_reference_issues(manifest)
 	var hit := broken.filter(func(issue): return issue.path == prefix + "screen")
-	if hit.size() == 1:
-		eq(hit[0].jump, {"type": "view", "id": "menu", "element": "widget-1", "field": "links", "hotspot": -1},
-			"jump opens the affected element and root control for the nested reference")
-	else:
-		ok(false, "removed screen reports the precise broken reference")
+	eq(hit.size(), 1, "removed screen reports the precise broken reference")
 	ok(broken.any(func(issue): return issue.path == prefix + "actors[0]"), "removed asset is diagnosed")
 	props.links[0]["screen"] = ""
-	eq(Audit.view_inbound_refs(manifest, "next", []).refs, [],
+	eq(Usage.view_inbound_refs(manifest, "next", []).refs, [],
 		"explicit empty override releases the default; matching free text does not count")
 
 func test_screen_layout_image_fit():

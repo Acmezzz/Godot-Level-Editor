@@ -165,7 +165,7 @@ func test_screen_module_spatial_integrity() -> void:
 	_wipe()
 	DirAccess.make_dir_recursive_absolute(TMP.path_join("content"))
 	var Maps := preload("res://src/map/map_store.gd")
-	var Audit := preload("res://src/project/project_audit.gd")
+	var Audit := preload("res://src/project/screen_reference_validation.gd")
 	var map := Maps.new_map("Deck", 12, 12)
 	var code: String = map.meta.code
 	var layer: String = map.meta.layers[0].id

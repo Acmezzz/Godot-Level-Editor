@@ -5,7 +5,6 @@ extends SceneTree
 ## 用法：godot --headless --path . --script res://tools/perf_sample.gd
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
 const MapStore := preload("res://src/map/map_store.gd")
-const ProjectAudit := preload("res://src/project/project_audit.gd")
 
 const TMP := "user://perf_sample_project"
 const MAPS := [["小图", 10000], ["大图", 100000]]
@@ -38,7 +37,6 @@ func _run() -> void:
 	_measure_write(m, "大图")
 	_measure_serialize(m, "大图")
 	_measure_lookups(m)
-	_measure_audit(m)
 	_report()
 	_clean(TMP)
 	quit(0)
@@ -115,12 +113,6 @@ func _measure_lookups(m: Dictionary) -> void:
 		var t2 := Time.get_ticks_usec()
 		MapStore.code_map(m)
 		_add("地图码表重建(热)", Time.get_ticks_usec() - t2)
-
-func _measure_audit(m: Dictionary) -> void:
-	for i in REPS_HEAVY:
-		var t0 := Time.get_ticks_usec()
-		ProjectAudit.audit(m)
-		_add("全项目自检", Time.get_ticks_usec() - t0)
 
 func _add(key: String, us: int) -> void:
 	if not _samples.has(key):

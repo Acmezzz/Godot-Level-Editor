@@ -2,7 +2,8 @@ extends SceneTree
 ## Run separately; this workflow needs frames for real workbench popup and map lifecycles.
 const RuntimeFixture := "res://tests/runtime_fixture/"
 const References := preload("res://src/project/reference_index.gd")
-const Audit := preload("res://src/project/project_audit.gd")
+const Usage := preload("res://src/project/reference_usage.gd")
+const ScreenReferences := preload("res://src/project/screen_reference_validation.gd")
 const Edge := preload("res://src/map/edge_ref.gd")
 const Store = preload("res://src/content/content_store.gd")
 const Maps = preload("res://src/map/map_store.gd")
@@ -778,7 +779,7 @@ func run():
 		check(FileAccess.get_sha256(path) == before_render, "rendering an unsaved layout does not write the manifest")
 	press(pop, "保存参考视图")
 	await process_frame
-	check(References.inbound_content(manifest, "ending", "project-finish").edges.views.size() == 2,
+	check(Usage.inbound_content(manifest, "ending", "project-finish").edges.views.size() == 2,
 		"both hotspot and layout button are included in the deletion reference index")
 	var saved_layout: Dictionary = manifest.views[0].layout
 	check(saved_layout.viewport == "portrait" and saved_layout.elements[0].text == "Continue"
@@ -790,14 +791,14 @@ func run():
 		"localized text persists without overwriting the source text")
 	check(saved_layout.elements[0].get("imageAsset") == "button-art" and saved_layout.elements[0].get("imageFit") == "cover",
 		"the layout saves a stable image asset ID and its fit without embedding a file path")
-	check(Audit.asset_deletion_usage(manifest, "button-art", {}, []).views.size() == 1,
+	check(Usage.asset_deletion_usage(manifest, "button-art", {}, []).views.size() == 1,
 		"asset deletion sees the saved layout reference")
 	var stale_view := manifest.duplicate(true)
 	stale_view.views[0].hotspots[0].target.content = "project-missing"
 	stale_view.views[0].layout.elements[0].imageAsset = "missing-image"
-	check(Audit.audit(stale_view).any(func(issue): return str(issue.get("path", "")).begins_with("views[0].hotspots")),
+	check(ScreenReferences.view_reference_issues(stale_view).any(func(issue): return str(issue.get("path", "")).begins_with("views[0].hotspots")),
 		"audit locates a stale reference-view hotspot")
-	check(Audit.audit(stale_view).any(func(issue): return issue.path == "views[0].layout.elements[0].imageAsset"),
+	check(ScreenReferences.view_reference_issues(stale_view).any(func(issue): return issue.path == "views[0].layout.elements[0].imageAsset"),
 		"audit locates a stale layout image by its exact field")
 	var entry_report := await launch_and_read(app, true)
 	app._playtest_ctrl.open_play_report()
@@ -1061,10 +1062,6 @@ func run():
 		and board_report.get("result", {}).get("reactions") == {"TUCH":["entered"],"LEAV":["exited"]},
 		"separate game process follows editor-authored directed edge: " + str(board_report))
 	var reopened := Maps.read(manifest, "board")
-	check(Audit._ref_checks(reopened, manifest, "board").is_empty(), "saved port is accepted by project audit")
-	var stale := reopened.duplicate(true)
-	stale.objects[0].props.target.port = "removed"
-	check(not Audit._ref_checks(stale, manifest, "board").is_empty(), "audit flags missing port on an existing instance")
 	var cells: Array = reopened.get("meta", {}).get("cellGraph", {}).get("cells", [])
 	check(cells.size() == 2 and cells[1].neighbors == ["a"], "graph and directed link reopened from disk")
 	var saved_edges: Array = reopened.meta.cellGraph.get("edges", [])
@@ -1075,13 +1072,6 @@ func run():
 	check(saved_edges.size() == 3 and saved_edges[2].id == exit_id and saved_edges[2].from == "a"
 		and saved_edges[2].toMap == "RMT2" and saved_edges[2].to == "b",
 		"remote endpoint pair and ID survive save and target rename")
-	check(not Audit.audit(manifest).any(func(issue): return str(issue.path).contains("cellGraph.edges[2]")),
-		"project audit accepts a renamed target identified by code")
-	var bad_source := reopened.duplicate(true)
-	bad_source.meta.cellGraph.edges[2].to = "missing"
-	var broken := Audit._graph_target_checks(bad_source, manifest, "board", [], {})
-	check(broken.size() == 1 and str(broken[0].path).ends_with("edges[2].to"),
-		"remote cell loss is reported on the source edge")
 	check(cells.size() == 2 and Vector2(cells[1].polygon[2][0], cells[1].polygon[2][1]).is_equal_approx(moved),
 		"visually dragged vertex is written in local coordinates and survives reopen")
 	var frame: Dictionary = reopened.meta.cellGraph.spaces.upper
@@ -1094,7 +1084,6 @@ func run():
 	check(reactions.size() == 2 and reactions[0].bindingId != reactions[1].bindingId
 		and reactions[0].content != reactions[1].content and reactions[0].order == 1
 		and reactions[1].get("mounted", false), "distinct binding identities and content survive reopening")
-	check(Audit._binding_checks(reopened, manifest, "board").is_empty(), "audit accepts repeated rows and unique mount")
 	if is_instance_valid(pop):
 		pop.hide()
 	await process_frame
@@ -3259,24 +3248,9 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 		"game reloads both view positions and the projected polygon, and opens the selected door: " + str(report))
 	var upper_index: int = cvs._layer_index_of(upper)
 	await cvs.layer_del(upper_index)
-	var problems := Audit._ref_checks(cvs.extract(), manifest, "frame_pick")
-	check(problems.any(func(issue): return issue.jump.get("code") == "PICK" and issue.jump.get("prop") == "motion_layer")
-		and cvs._ent_by_code_index()["PICK"].props.motion_layer == upper,
-		"a missing layer is locatable and preserves the original reference")
-	check(await cvs.undo() and not Audit._ref_checks(cvs.extract(), manifest, "frame_pick").any(
-		func(issue): return issue.jump.get("prop") == "motion_layer"), "undo restores the referenced layer")
-	var campaign := Store.read(manifest, "campaign", "project-acceptance")
-	campaign.steps[2].fields.BRCH[0].DEST = "missing-content"
-	var findings := Audit._content_ref_checks(manifest, "campaign", "project-acceptance", campaign)
-	var nested := findings.filter(func(issue): return issue.path.ends_with("steps[2].routes#0.destination"))
-	check(nested.size() == 1, "nested branch issue retains its exact path")
-	if nested.size() == 1:
-		await app._layout_ctrl._issues_ctrl._jump_to(nested[0])
-		var issue_steps = editor._steps
-		check(issue_steps._steps_sel == 2 and issue_steps._steps_form.get_children().any(
-			func(row): return row.get_meta("field_id", "") == "routes" and row.get_meta("issue_highlight", false)),
-			"the issue drawer opens the owning step and marks the outer branch field")
-		issue_steps._teardown_steps_host()
+	check(cvs._ent_by_code_index()["PICK"].props.motion_layer == upper,
+		"deleting a layer preserves the original reference")
+	check(await cvs.undo() and cvs._layer_index_of(upper) >= 0, "undo restores the referenced layer")
 	var campaign_source := Store.read(manifest, "campaign", "project-acceptance")
 	var campaign_copy := await _copy_library_draft(app, editor._library, "campaign", "project-acceptance")
 	collect(campaign_copy, "LineEdit")[1].text = "campaign-copy"
@@ -3486,19 +3460,6 @@ func author_signal_room(app, project: String) -> void:
 		"only the unreferenced view is removed")
 	check(not app.map_loaded and Store.read(manifest, "signal", "project-watch").get("fields", {}).get("PANE") == "watch-deck",
 		"the start content stores a chosen screen without creating a map")
-	var changed := manifest.duplicate(true)
-	changed.views = manifest.get("views", []).filter(func(view): return view.view_id != "watch-deck")
-	var broken_screen := Audit.audit(changed).filter(
-		func(issue): return issue.path == "signal/project-watch.screen" and issue.message.contains("watch-deck"))
-	check(broken_screen.size() == 1,
-		"a missing referenced screen is reported against its content field")
-	if broken_screen.size() == 1:
-		await app._layout_ctrl._issues_ctrl._jump_to(broken_screen[0])
-		var issue_form := _visible_popup(app)
-		check(collect(issue_form, "LineEdit")[1].text == "project-watch" and collect(issue_form, "HBoxContainer").any(
-			func(row): return row.get_meta("field_id", "") == "screen" and row.get_meta("issue_highlight", false)),
-			"the issue drawer opens the shared content and marks the screen field without an active map")
-		issue_form.hide()
 	var watch_source := Store.read(manifest, "signal", "project-watch")
 	var abandoned := await _copy_library_draft(app, library, "signal", "project-watch")
 	collect(abandoned, "LineEdit")[1].text = "discarded-watch"

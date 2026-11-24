@@ -11,7 +11,8 @@ const LayoutForm := preload("res://src/ui/screen_layout_form.gd")
 const GamePreview := preload("res://src/project/game_preview.gd")
 const FrameDialog := preload("res://src/ui/game_frame_dialog.gd")
 const References := preload("res://src/project/reference_index.gd")
-const Audit := preload("res://src/project/project_audit.gd")
+const Usage := preload("res://src/project/reference_usage.gd")
+const ScreenReferences := preload("res://src/project/screen_reference_validation.gd")
 const StartupTargets := preload("res://src/project/startup_targets.gd")
 
 static func open(app, view_id := "", jump := {}) -> void:
@@ -334,7 +335,7 @@ static func open(app, view_id := "", jump := {}) -> void:
 		var block_reason := func() -> String:
 			var staged: Array = app.project_shell.content_editor.staged_rows_current_doc()
 			var live: Dictionary = app.canvas.extract() if app.map_loaded else {}
-			var uses := Audit.view_inbound_refs(source, key, staged, live, app.cur_map_name)
+			var uses := Usage.view_inbound_refs(source, key, staged, live, app.cur_map_name)
 			if not uses.refs.is_empty():
 				return "视图仍被引用：" + "、".join(uses.refs.slice(0, 3)) + "。请先修改引用字段。"
 			if not uses.bad.is_empty():
@@ -447,7 +448,7 @@ static func open(app, view_id := "", jump := {}) -> void:
 		if not errors.is_empty():
 			notice.text = "%s：%s" % [errors[0].path, errors[0].message]
 			return {}
-		var problems := Audit.view_reference_issues(candidate, key)
+		var problems := ScreenReferences.view_reference_issues(candidate, key)
 		if not problems.is_empty():
 			notice.text = "%s：%s" % [problems[0].path, problems[0].message]
 			return {}

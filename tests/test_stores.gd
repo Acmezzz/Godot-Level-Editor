@@ -3,7 +3,7 @@ extends "res://tests/_suite_base.gd"
 
 const MapStore := preload("res://src/map/map_store.gd")
 const ContentStore := preload("res://src/content/content_store.gd")
-const ProjectAudit := preload("res://src/project/project_audit.gd")
+const ReferenceUsage := preload("res://src/project/reference_usage.gd")
 const Recovery := preload("res://src/map/recovery.gd")
 const ReferenceIndex := preload("res://src/project/reference_index.gd")
 
@@ -36,7 +36,7 @@ func test_asset_deletion_usage_covers_tiles_nested_refs_and_bad_maps() -> void:
 		"objects": [{"asset": "owner", "props": {"rows": [{"target": "used"}]}}]}
 	DirAccess.make_dir_recursive_absolute(m._maps_dir)
 	ok(MapStore.write_text(m._maps_dir.path_join("bad.json"), "{"), "写入损坏地图夹具")
-	var usage := ProjectAudit.asset_deletion_usage(m, "used", live, [])
+	var usage := ReferenceUsage.asset_deletion_usage(m, "used", live, [])
 	eq(usage.live, 2, "瓦片和嵌套实例引用均计入")
 	eq(usage.bad.size(), 1, "不可读地图使扫描不完整")
 	_wipe()
@@ -65,22 +65,6 @@ func test_duplicate_map_reissue_code() -> void:
 	var c2 := str((d2.get("meta", {}) as Dictionary).get("code", ""))
 	ok(c2 != "", "复制图有码")
 	ok(c2 != c1, "复制图重发码（项目内唯一）")
-	_wipe()
-
-func test_content_drift_audit() -> void:
-	_wipe()
-	var m := _fake_manifest()
-	m["functions"] = [{"id": "f1", "name": "F", "code": "CURCOD", "fields": []}]
-	ok(ContentStore.write(m, "f1", "A1B2", {"name": "ok", "function": "CURCOD", "fields": {}}), "一致内容写入")
-	ok(ContentStore.write(m, "f1", "C3D4", {"name": "drift", "function": "OLDCODE", "fields": {}}), "漂移内容写入")
-	var all := ProjectAudit._content_checks(m)
-	var drift := 0
-	for e in all:
-		var msg := str(e.get("message", ""))
-		if str(e.get("path", "")) == "f1/C3D4" and msg.contains("码漂移"):
-			drift += 1
-	eq(drift, 1, "码漂移警告")
-	eq(all.size(), 1, "只报告功能码漂移")
 	_wipe()
 
 func test_content_write_read_roundtrip() -> void:
@@ -257,13 +241,7 @@ func test_map_code_conflict_lists_all_paths() -> void:
 	var conf := MapStore.code_conflicts(m)
 	ok(conf.has("ZZZZ"), "检出重复码")
 	eq((conf.get("ZZZZ", []) as Array).size(), 2, "列出两个文件")
-	var all := ProjectAudit.audit(m)
-	var found := 0
-	for e in all:
-		if str(e.get("message", "")).contains("地图码重复") and str(e.get("message", "")).contains("a.json") \
-				and str(e.get("message", "")).contains("b.json"):
-			found += 1
-	eq(found, 1, "审计报告给出两条路径")
+	eq(ReferenceIndex.resolve_map(m, "ZZZZ").status, "ambiguous", "拒绝歧义地图引用")
 	b.meta.code = MapStore.allocate_code(m)
 	ok(MapStore.write(m, "b", b) and MapStore.code_conflicts(m).is_empty(), "显式换码可以恢复唯一性")
 	_wipe()

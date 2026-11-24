@@ -27,7 +27,7 @@ const AssetDecl := preload("res://src/assets/asset_decl.gd")
 const FieldWidgets := preload("res://src/ui/field_widgets.gd")
 const FunctionDecls := preload("res://src/content/function_decl.gd")
 const RefFields := preload("res://src/content/ref_fields.gd")
-const ProjectAudit := preload("res://src/project/project_audit.gd")
+const ReferenceUsage := preload("res://src/project/reference_usage.gd")
 const StartupTargets := preload("res://src/project/startup_targets.gd")
 const CellGraph := preload("res://src/map/cell_graph.gd")
 const ReferenceIndex := preload("res://src/project/reference_index.gd")   # B2：删除入边全景统一入口
@@ -1073,7 +1073,7 @@ func _open_lib(i: int) -> void:
 				if fcode != "" and str((fb as Dictionary).get("fn", "")) != fcode:
 					continue
 				live_binds.append({"cid": str((fb as Dictionary).get("content", "")), "code": str((ent_row as Dictionary).get("code", ""))})
-	var bulk := ProjectAudit.content_edges_bulk(manifest, fn_id, ids, app.canvas.cur_map_name, live_binds)
+	var bulk := ReferenceUsage.content_edges_bulk(manifest, fn_id, ids, app.canvas.cur_map_name, live_binds)
 
 	var list := ItemList.new()
 	list.custom_minimum_size = Vector2(0, 200)
@@ -1442,7 +1442,7 @@ func _share_rebind(i: int, fn_id: String, cid: String) -> void:
 	if i < 0 or i >= rows.size() or not rows[i] is Dictionary:
 		return
 	var target := {"entity": _current_spr(), "binding": rows[i], "doc": _doc_key(), "scope": _content_scope_guard()}
-	var bulk := ProjectAudit.content_edges_bulk(manifest, fn_id, [cid], app.canvas.cur_map_name, [])
+	var bulk := ReferenceUsage.content_edges_bulk(manifest, fn_id, [cid], app.canvas.cur_map_name, [])
 	var inst: Dictionary = ((bulk.get("refs", {}) as Dictionary).get(cid, {}) as Dictionary).get("instances", {})
 	var parts: Array[String] = []
 	var total := 0
@@ -1492,13 +1492,13 @@ func _delete_blocked_reason(fn_id: String, cid: String) -> String:
 	for row2 in staged_rows_for_current_doc():
 		if row2.fn_id == fn_id and row2.cid == cid:
 			continue
-		if not ProjectAudit.content_link_paths(manifest, str(row2.fn_id), row2.data, fn_id, cid).is_empty():
+		if not ReferenceUsage.content_link_paths(manifest, str(row2.fn_id), row2.data, fn_id, cid).is_empty():
 			staged_refs.append("%s/%s" % [row2.fn_id, row2.cid])
 	var cur_map := str(app.cur_map_name) if app.map_loaded else ""
 	# B2（§7.2）：删除入边全景统一走 ReferenceIndex.inbound_content——
 	# 磁盘地图/内容/草稿三路入边 + 读不全源，审计与删除共用同一套解析结果。
 	var live_map: Dictionary = app.canvas.extract() if _map_ready() else {}
-	var ref: Dictionary = ReferenceIndex.inbound_content(manifest, fn_id, cid, cur_map, live_codes, live_map)
+	var ref: Dictionary = ReferenceUsage.inbound_content(manifest, fn_id, cid, cur_map, live_codes, live_map)
 	if not bool(ref.get("complete", false)):
 		return " 删除中止：检查范围不完整——%s。先修好这些文件再试" % \
 			"；".join(PackedStringArray((ref.get("unreadable_sources", []) as Array).map(

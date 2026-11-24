@@ -6,7 +6,6 @@ const EdgeRef := preload("res://src/map/edge_ref.gd")
 const RefFields := preload("res://src/content/ref_fields.gd")
 const ManifestValidation := preload("res://src/project/manifest_validation.gd")
 const ClonePlan := preload("res://src/content/clone_plan.gd")
-const ProjectAudit := preload("res://src/project/project_audit.gd")
 const GridSpace := preload("res://src/canvas/grid_space.gd")
 
 ## 无向边：两端点顺序无关，同一格对只得到一条 ID
@@ -216,20 +215,3 @@ func test_shared_vertices_define_edge() -> void:
 				s3 += 1
 				break
 	eq(s3, 2, "三角格共边也是 2 个公共顶点")
-
-## 审计：两格不相邻 / cell 不自洽 / 坏值 = 警告；真边不报
-func test_audit_edge_ref() -> void:
-	var m := {"_maps_dir": "", "assets": [{"id": "gate", "kind": "entity",
-		"fields": [{"id": "E", "type": "edge_ref"}]}]}
-	var data := {"meta": {"code": "AAAA"}, "objects": [
-		{"code": "G1", "asset": "gate", "props": {"E": EdgeRef.value_of("", Vector2i(1, 1), Vector2i(2, 1))}},
-		{"code": "G2", "asset": "gate", "props": {"E": EdgeRef.value_of("", Vector2i(1, 1), Vector2i(5, 5))}},
-		{"code": "G3", "asset": "gate", "props": {"E": {"map": "", "cell": [9, 9],
-			"edge": EdgeRef.canonical_edge(Vector2i(1, 1), Vector2i(2, 1))}}},
-		{"code": "G4", "asset": "gate", "props": {"E": "junk"}},
-	]}
-	var out := ProjectAudit._ref_checks(data, m, "m1")
-	eq(out.size(), 3, "坏三条各报一次：%s" % str(out))
-	for e in out:
-		eq(str((e as Dictionary).get("severity")), "warning", "warning 级")
-		ok(not e.has("fix"), "悬空引用只报告，不修改地图")

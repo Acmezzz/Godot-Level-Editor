@@ -3,7 +3,8 @@ extends SceneTree
 
 const Manifest := preload("res://src/project/manifest.gd")
 const Maps := preload("res://src/map/map_store.gd")
-const Audit := preload("res://src/project/project_audit.gd")
+const Usage := preload("res://src/project/reference_usage.gd")
+const ScreenReferences := preload("res://src/project/screen_reference_validation.gd")
 const Views := preload("res://src/ui/reference_view_library.gd")
 const Flow := preload("res://src/content/rel_graph.gd")
 const Store := preload("res://src/content/content_store.gd")
@@ -238,20 +239,15 @@ func run() -> void:
 	check(pawn_code in delete_reason, "an unsaved content destination protects the referenced item")
 	choose(exit_picker, JSON.stringify({"view": "results"}))
 	app.project_shell.content_editor.commit_fields()
-	var live_uses := Audit.view_inbound_refs(manifest, "results", [], canvas.extract(), "course")
+	var live_uses := Usage.view_inbound_refs(manifest, "results", [], canvas.extract(), "course")
 	check(live_uses.refs.any(func(ref): return pawn_code in ref and "exit_target" in ref),
 		"a live map instance prevents deleting its destination")
 	app._set_mode("map")
 	var published: Dictionary = await app._map_file_ctrl.commit_document("保存教学关卡")
 	check(published.get("status") == "ok", "publish the destination map")
-	var saved_uses := Audit.view_inbound_refs(manifest, "results", [])
+	var saved_uses := Usage.view_inbound_refs(manifest, "results", [])
 	check(saved_uses.refs.any(func(ref): return pawn_code in ref and "exit_target" in ref),
 		"the saved map instance protects the same destination")
-	var orphan_manifest := manifest.duplicate(true)
-	orphan_manifest.views = []
-	check(Audit._ref_checks(canvas.extract(), orphan_manifest, "course").any(func(issue):
-		return issue.jump.code == pawn_code and issue.jump.prop == "exit_target"),
-		"map audit pinpoints the instance if the destination is externally removed")
 	app._set_mode("content", pawn_code)
 	exit_picker = app.project_shell.content_editor.root.find_child("InstanceValue_exit_target", true, false)
 	choose(exit_picker, "")
@@ -288,9 +284,6 @@ func run() -> void:
 	var retiring := {"map": map_code, "inst": "R001", "port": "door"}
 	choose(map_flow.find_child("MapFlow_retry", true, false), JSON.stringify(retiring))
 	press(map_flow, "应用")
-	check(Audit._ref_checks(canvas.extract(), orphan_manifest, "course").any(func(issue):
-		return issue.jump.type == "map_flow" and issue.jump.field == "completed"),
-		"map audit pinpoints the missing map-level destination")
 	published = await app._map_file_ctrl.commit_document("保存地图级出口")
 	check(published.get("status") == "ok", "publish the map-level completion outlet")
 	app._set_mode("content", pawn_code)
@@ -463,16 +456,6 @@ func run() -> void:
 	check(Store.read(manifest, "sequence", "project-epilogue").steps[0].fields == {
 		"BRD1": map_code, "ROUT": route},
 		"the timeline keeps the paired map and the graph-authored destinations in order")
-	var findings := Audit.audit(manifest)
-	var host_issues := findings.filter(func(issue): return issue.path.begins_with("sequence/project-epilogue.host"))
-	check(host_issues.size() == 1 and host_issues[0].map == "course",
-		"the same results chain resolves the host on the copy and flags it only on the original board")
-	check(not findings.any(func(issue): return issue.get("path", "").begins_with("round_host/")),
-		"the bound rules validate their local host against the owning map")
-	check(not findings.any(func(issue): return issue.get("path", "").begins_with("signal/project-finished.actor")),
-		"the timeline outlet propagates the selected map to the ending's local actor reference")
-	check(not findings.any(func(issue): return issue.get("path", "").begins_with("signal/%s.actor" % local_signal.content)),
-		"the copied instance outlet propagates its board to the local signal")
 	var graph := Flow.build_project(manifest)
 	check(graph.edges.any(func(edge):
 		return edge.from == "@map\u0001" + map_code and edge.to == "@view\u0001results" and edge.field == "completed"),
@@ -565,12 +548,12 @@ func run() -> void:
 	check(copy.objects[0].props.get("signal_port") == remote_port
 		and copy.objects[-1].props.get("signal_port") == remote_port,
 		"the original and copy keep the same explicit port on the other map")
-	var inbound := Audit.view_inbound_refs(manifest, "instructions", [])
+	var inbound := Usage.view_inbound_refs(manifest, "instructions", [])
 	check(not inbound.refs.is_empty() and "welcome" in inbound.refs[0], "the destination screen has the expected inbound reference")
 	var broken := manifest.duplicate(true)
 	var welcome: Dictionary = broken.views.filter(func(row): return row.view_id == "welcome")[0]
 	welcome.layout.elements[0].outputs.accepted.view = "missing-screen"
-	check(Audit.view_reference_issues(broken, "welcome").any(func(issue): return issue.path.ends_with(".outputs.accepted")),
+	check(ScreenReferences.view_reference_issues(broken, "welcome").any(func(issue): return issue.path.ends_with(".outputs.accepted")),
 		"diagnostics identify the particular missing destination")
 	press(app.project_shell, "启动入口…")
 	var startup := popup()
@@ -632,13 +615,7 @@ func run() -> void:
 		and app.manifest.startup.target == {"view": "welcome"},
 		"the selected arrival starts the normal map flow without changing project startup: %s" % [report])
 	var arrival := {"map": copy_code, "inst": new_host_code, "port": "door"}
-	var broken_startup: Dictionary = app.manifest.duplicate(true)
-	broken_startup.startup.target = {"map": copy_code, "inst": "retired-door", "port": "door"}
-	var issues := Audit.audit(broken_startup).filter(func(issue): return issue.path == "startup.target")
-	if not check(issues.size() == 1 and issues[0].jump.type == "startup", "a missing entrance links to startup settings"):
-		quit(1)
-		return
-	await app._layout_ctrl._issues_ctrl._jump_to(issues[0])
+	press(app.project_shell, "启动入口…")
 	startup = popup()
 	choose(startup.find_child("StartupTarget", true, false), arrival)
 	press(startup, "保存启动入口")
@@ -661,11 +638,6 @@ func run() -> void:
 	end = Time.get_ticks_msec() + 2000
 	while Playtest.is_alive(controller._play_pid) and Time.get_ticks_msec() < end:
 		await create_timer(0.05).timeout
-	var missing_board: Dictionary = app.manifest.duplicate(true)
-	missing_board.startup.target = timeline_target
-	check(Audit.audit(missing_board).any(func(issue):
-		return issue.path == "startup.contentMap" and issue.jump.type == "startup"),
-		"a content startup without its board links to startup settings")
 	app.project_shell.content_editor._library.open()
 	press(popup(), "流程关系…")
 	await process_frame

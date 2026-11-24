@@ -11,7 +11,7 @@ const Kit := preload("res://src/ui/ui_kit.gd")
 const Th := preload("res://src/ui/ui_theme.gd")
 const FunctionDecls := preload("res://src/content/function_decl.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
-const ProjectAudit := preload("res://src/project/project_audit.gd")   # 使用统计（C3）
+const ReferenceUsage := preload("res://src/project/reference_usage.gd")   # 使用统计（C3）
 
 var manifest := {}
 var save_manifest: Callable
@@ -483,7 +483,7 @@ func _dist_map_section(map_name: String, rows: Array) -> Control:
 func _dist_head_text(map_name: String, n: int, open: bool) -> String:
 	return ("▾ " if open else "▸ ") + "%s × %d" % [map_name, n]
 
-## 全项目使用统计（C3）：唯一实现是 ProjectAudit.asset_usage（与引用自检共用读盘），
+## 全项目使用统计（C3）：唯一实现是 ReferenceUsage.asset_usage（与引用自检共用读盘），
 ## 这里只补「当前图以画布内存为底」的差异——磁盘底册+内存补丁的混合体
 ## 会让新增未保存的实例不出现、已删除的还留着。
 func _usage(sid: String) -> Dictionary:
@@ -497,7 +497,7 @@ func _usage(sid: String) -> Dictionary:
 				continue
 			var c: Vector2i = n.cell()
 			live_rows.append({"id": n.code, "x": c.x, "y": c.y})
-	return ProjectAudit.asset_usage(manifest, sid, cur, live_rows)
+	return ReferenceUsage.asset_usage(manifest, sid, cur, live_rows)
 
 ## 分布行（只读）：id · 坐标。值在内容编辑器按实例填，这里不再提供第二套编辑入口
 ## （旧 props.stats 双写就是两个编辑面各写各的造成的分裂）。
@@ -525,7 +525,7 @@ func _deletion_usage(sid: String) -> Dictionary:
 	var staged: Array = []
 	if host.project_shell != null and host.project_shell.content_editor != null:
 		staged = host.project_shell.content_editor.staged_rows_current_doc()
-	return ProjectAudit.asset_deletion_usage(manifest, sid, live, staged)
+	return ReferenceUsage.asset_deletion_usage(manifest, sid, live, staged)
 
 func _delete_asset_checked(sid: String) -> void:
 	if bool(_edef.get("builtin", false)):

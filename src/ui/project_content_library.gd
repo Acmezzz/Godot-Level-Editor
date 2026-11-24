@@ -599,17 +599,6 @@ static func _flow_node_label(item: Dictionary, short := false) -> String:
 		RelGraph.MAP_KIND: return "地图 · %s [%s]" % [item.name, item.cid]
 	return "%s · %s" % [item.name, item.cid] if short else "%s · %s · %s" % [item.fn_id, item.name, item.cid]
 
-func open_issue(jump: Dictionary) -> void:
-	var fn: String = jump.fn
-	var cid: String = jump.id
-	var field: String = jump.field
-	var context: String = jump.context
-	var step_index: int = jump.step_index
-	if step_index >= 0 and Functions.fn_has_steps(manifest, fn):
-		host._steps.open_content(fn, cid, context, step_index, field)
-	elif host.commit_fields():
-		_open_item(fn, cid, context, field)
-
 func _open_item(kind: String, cid: String, context := "", field := "", draft := {}) -> void:
 	var fn := Functions.function_decl(manifest, kind)
 	if fn.is_empty():

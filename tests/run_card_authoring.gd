@@ -5,7 +5,6 @@ const Manifest := preload("res://src/project/manifest.gd")
 const Maps := preload("res://src/map/map_store.gd")
 const Store := preload("res://src/content/content_store.gd")
 const Flow := preload("res://src/content/rel_graph.gd")
-const Audit := preload("res://src/project/project_audit.gd")
 const Editor := preload("res://src/editor.tscn")
 var app
 var failures := 0
@@ -113,11 +112,6 @@ func run() -> void:
 		func(kind, id, data): return Store.write_ex(manifest, kind, id, data, "").ok,
 		tail.fn_id, tail.cid, tail.step, tail.field, "project-courier", tail.multi, tail.value, tail)
 	check(result.status == "ok", "flow graph may append a repeated card")
-	var bad := Store.read(manifest, "encounter", "project-harbor").duplicate(true)
-	bad.fields.ORDR[1] = "missing-card"
-	check(Audit._content_ref_checks(manifest, "encounter", tail.cid, bad).any(func(issue):
-		return issue.path.ends_with(".deal_order#1") and issue.jump.field == "deal_order"),
-		"self-check identifies the broken list position")
 	var startup := await open_project_flow_slots()
 	var option: OptionButton = startup.find_child("FlowTarget", true, false)
 	check(option.item_count == 2, "only declared startup content types are offered")
@@ -138,10 +132,6 @@ func run() -> void:
 	check(app.manifest.projectContentSlots.scoring.target == rule_target
 		and form._delete_blocked_reason("score_rules", "project-double").contains("项目规则"),
 		"the published project rule survives reloading and protects its referenced content")
-	var broken_slot: Dictionary = app.manifest.duplicate(true)
-	broken_slot.projectContentSlots.scoring.target.content = "missing-rule"
-	check(Audit.audit(broken_slot).any(func(issue): return issue.get("jump", {}) == {"type": "project_slot", "id": "scoring"}),
-		"project audit identifies the specific slot with missing rules")
 	press(app.project_shell, "试玩项目")
 	var controller = app._playtest_ctrl
 	var end := Time.get_ticks_msec() + 12000

@@ -4,7 +4,6 @@ extends SceneTree
 const Manifest := preload("res://src/project/manifest.gd")
 const Maps := preload("res://src/map/map_store.gd")
 const Clone := preload("res://src/content/clone_plan.gd")
-const Audit := preload("res://src/project/project_audit.gd")
 const Editor := preload("res://src/editor.tscn")
 var app
 var failures := 0
@@ -99,11 +98,6 @@ func run() -> void:
 	check(cloned_routes.size() == 2 and cloned_routes[0].map == "COPY" and cloned_routes[1].map == "COPY"
 		and cloned_routes[0].inst != sink_a and cloned_routes[1].inst != sink_b,
 		"map duplication remaps each link to the copied depots")
-	var bad_map := map.duplicate(true)
-	var bad_factory: Dictionary = bad_map.objects.filter(func(row): return row.asset == "works")[0]
-	bad_factory.props.routes[1].port = "alarm"
-	check(Audit._ref_checks(bad_map, manifest, "foundry").any(func(issue): return "routes#1" in issue.path),
-		"map audit identifies the specific incompatible link")
 	app._set_mode("content")
 	press(app.project_shell, "启动入口…")
 	var startup := visible_popup()

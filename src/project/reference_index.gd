@@ -8,7 +8,6 @@ extends RefCounted
 const MapStore := preload("res://src/map/map_store.gd")
 const ScreenLayout := preload("res://src/project/screen_layout.gd")
 const FlowTarget := preload("res://src/content/flow_target.gd")
-const ProjectSlots := preload("res://src/project/project_content_slots.gd")
 
 ## 按稳定地图码解析，返回对应文件名。
 static func resolve_map(manifest: Dictionary, code: String) -> Dictionary:
@@ -225,29 +224,3 @@ static func view_image_refs(manifest: Dictionary) -> Array:
 					"path": "views[%d].layout.elements[%d].imageAsset" % [i, j],
 					"element": str(row.get("id", ""))})
 	return out
-
-## 入边全景（§7.2 inbound）：内容 (fn_id, cid) 的全部入边，破坏性检查共用这一个入口。
-## edges = {instances: {地图名: [实例码]}, contents: [{kind,id,field}], views: [热点引用], drafts: [草稿键]}；
-## complete=false 时 unreadable_sources 列出读不全的源（删除/清理必须拦截，D07 口径）。
-## 暂存（会话内未落盘）的入边由调用方自行并入（见 content_form._delete_blocked_reason）。
-static func inbound_content(manifest: Dictionary, fn_id: String, cid: String,
-		cur_map := "", live_codes: Array = [], live_map := {}) -> Dictionary:
-	var PA = load("res://src/project/project_audit.gd")   # 懒加载：project_audit 反向 preload 本模块，避免环
-	var usage: Dictionary = PA.content_usage(manifest, fn_id, cid, cur_map, live_codes, live_map)
-	var unreadable: Array = []
-	for u in (usage.get("unreadable", []) as Array):
-		unreadable.append("地图 %s 读不出来" % str(u))
-	for bc in (usage.get("bad_contents", []) as Array):
-		unreadable.append(str(bc))
-	var target := {"function": fn_id, "content": cid}
-	return {
-		"complete": unreadable.is_empty(),
-		"unreadable_sources": unreadable,
-		"edges": {
-			"instances": usage.get("by_map", {}),
-			"contents": PA.content_inbound_refs(manifest, fn_id, cid),
-			"views": view_content_refs(manifest).filter(func(ref): return ref.fn == fn_id and ref.cid == cid),
-			"project_slots": ProjectSlots.references(manifest).filter(func(ref): return ref.target == target),
-			"drafts": PA.draft_inbound_refs(manifest, cid, fn_id),
-		},
-	}
