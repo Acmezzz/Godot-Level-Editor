@@ -6,6 +6,7 @@ const ClonePlan := preload("res://src/content/clone_plan.gd")
 const ContentStore := preload("res://src/content/content_store.gd")
 const MapStore := preload("res://src/map/map_store.gd")
 const FunctionDecls := preload("res://src/content/function_decl.gd")
+const Audit := preload("res://src/project/project_audit.gd")
 
 const TMP := "user://test_clone_plan_tmp"
 
@@ -162,6 +163,38 @@ func test_content_clone_independent() -> void:
 	# 实例行里的功能绑定换成新内容 ID
 	var a2: Dictionary = (plan.map_patch.objects as Array)[0]
 	eq(str((a2.functions as Array)[0].content), new_cid, "行绑定内容换成副本 ID")
+	_wipe()
+
+func test_condition_parameters_keep_content_and_asset_dependencies() -> void:
+	_wipe()
+	var m := _manifest()
+	m.functions.append({"id": "ending", "code": "FN02"})
+	m.functions[0].fields.append({"id": "predicates", "code": "PRED", "kind": "input",
+		"type": "array", "of": "condition", "allowedConditions": ["gate"]})
+	m["conditions"] = {"gate": {"fields": [
+		{"id": "ending", "code": "DEST", "kind": "choice", "source": "content:ending"},
+		{"id": "icon", "code": "ICON", "kind": "input", "type": "asset_ref"},
+	]}}
+	var node := {"fields": {"PRED": [{"condition": "gate",
+		"fields": {"DEST": "target", "ICON": "guard"}, "negate": true}]}}
+	ok(ContentStore.write(m, "dlg", "root", node), "保存条件参数")
+	ok(ContentStore.write(m, "ending", "target", {}), "保存引用目标")
+	var refs := Audit.content_inbound_refs(m, "ending", "target")
+	ok(refs.any(func(ref): return ref.kind == "dlg" and ref.id == "root" \
+		and ref.field == "predicates#0.fields.ending"), "删除保护找到条件参数中引用的内容")
+	var assets := Audit.asset_content_refs(m, "guard")
+	ok(assets.any(func(ref): return ref.kind == "dlg" and ref.id == "root" \
+		and ref.field == "predicates#0.fields.icon"), "删除保护找到条件参数中引用的资产")
+	var rows := [{"code": "AAAA", "functions": [{"fn": "FN01", "content": "root"},
+		{"fn": "FN02", "content": "target"}]}]
+	var plan := ClonePlan.build({"manifest": m, "data": {"objects": rows}}, {}, PackedStringArray())
+	eq(plan.status, "ok", "条件和被引用内容随同一组复制")
+	var copied: Array = plan.pending_contents.filter(func(row): return row.fn_id == "dlg")
+	if not copied.is_empty() and plan.content_map.has("ending"):
+		eq(copied[0].data.fields.PRED[0].fields.DEST, plan.content_map.ending.target, "参数改指向副本")
+		eq(copied[0].data.fields.PRED[0].fields.ICON, "guard", "保留共享资产引用")
+	else:
+		ok(false, "复制计划包含源和目标")
 	_wipe()
 
 func test_clone_separates_same_id_and_prefers_staged() -> void:

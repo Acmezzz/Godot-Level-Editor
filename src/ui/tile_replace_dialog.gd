@@ -26,7 +26,11 @@ func open() -> void:
 		return
 	# 选区里出现过的瓦片资产 = 源候选（只替换用户看得到的那一类，不误伤其它瓦片）
 	# 用 sources_in：collect 在 src 为空时按契约返回空表（以前的入口因此永远空手，V4 P1）
-	var src_ids: Array = TileReplace.sources_in(app.canvas, sel)
+	var selection_layer: String = app.canvas._region_layer
+	if selection_layer == "" and app.canvas._region_ops_ctrl._mixed_tile_grids():
+		app._set_status("混合格系地图请先在要替换的瓦片层框选。")
+		return
+	var src_ids: Array = TileReplace.sources_in(app.canvas, sel, selection_layer)
 	if src_ids.is_empty():
 		app._set_status(" 选区里没有瓦片可替换（只对瓦片层生效）")
 		return
@@ -63,7 +67,7 @@ func open() -> void:
 	var atlas_rev: int = canvas.atlas_rev
 	var current := func() -> bool:
 		return app.map_loaded and app.canvas == canvas and is_same(canvas.map_data, live) \
-			and canvas._region_sel == sel and canvas.atlas_rev == atlas_rev
+			and canvas._region_sel == sel and canvas._region_layer == selection_layer and canvas.atlas_rev == atlas_rev
 	var apply_btn: Button = Kit.button("替换", func():
 		pop.hide()
 		if current.call():
@@ -101,7 +105,7 @@ func open() -> void:
 			var md = cell_opt.get_item_metadata(cell_opt.selected)
 			if md is Vector2i:
 				dst_cell = md
-		var cells: Array = TileReplace.collect(app.canvas, sel, src_id)
+		var cells: Array = TileReplace.collect(app.canvas, sel, src_id, Vector2i(-1, -1), selection_layer)
 		var plan: Dictionary = TileReplace.plan(app.manifest, cells, dst_id, dst_cell)
 		var available := []
 		var target_source: int = canvas.source_of_asset(dst_id)

@@ -12,6 +12,11 @@ const TriggerDecls := preload("res://src/content/trigger_decl.gd")
 const CollisionTypes := preload("res://src/assets/collision_types.gd")
 const ContentStore := preload("res://src/content/content_store.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
+const CellGraph := preload("res://src/map/cell_graph.gd")
+const ScreenLayout := preload("res://src/project/screen_layout.gd")
+const GamePreview := preload("res://src/project/game_preview.gd")
+const WorldLayout := preload("res://src/project/world_layout.gd")
+const MapGenerators := preload("res://src/project/map_generators.gd")
 
 ## input 字段类型白名单（与 field_widgets 一一对应）：新增类型必须同时有控件分支。
 const INPUT_TYPES := ["string", "int", "float", "bool", "color", "vector2", "range", "asset_ref", "array", "port_ref", "viewport_ref", "edge_ref"]
@@ -34,6 +39,7 @@ static func validate(data: Dictionary, project_dir := "") -> Array[Dictionary]:
 		_validate_conditions(data, issues)
 	if data.has("steps"):
 		_validate_steps(data, issues)
+	_validate_content_field_shapes(data, issues)
 	if data.has("audio"):
 		_validate_audio(data, issues)
 	if data.has("triggers"):
@@ -41,6 +47,9 @@ static func validate(data: Dictionary, project_dir := "") -> Array[Dictionary]:
 	if data.has("collisionTypes"):
 		_validate_collision_types(data, issues)
 	_validate_playtest(data, issues)
+	issues.append_array(GamePreview.declaration_issues(data))
+	issues.append_array(WorldLayout.issues(data))
+	issues.append_array(MapGenerators.issues(data))
 	# tileSize：正整数像素（正方形格）或 [w,h] 两正整数（矩形格，B1：拒绝零/负/非整数）
 	var tile_size = data.get("tileSize", 16)
 	if tile_size is Array:
@@ -74,6 +83,8 @@ static func validate(data: Dictionary, project_dir := "") -> Array[Dictionary]:
 		_add(issues, "warning", "assets",
 			"mixed gridProjection: canvas renders isometric if ANY tile asset declares it; orthogonal assets will misalign (" + "; ".join(detail) + ")")
 	_validate_top_level(data, issues)
+	for issue in CellGraph.validate_edge_types(data):
+		_add(issues, "error", issue.path, issue.message)
 	return issues
 
 ## 顶层可选键结构校验（缺键走缺省，存在即校验形态）。
@@ -131,6 +142,8 @@ static func _validate_functions(data: Dictionary, issues: Array[Dictionary]) -> 
 	var norm: Dictionary = FunctionDecls.functions(data)
 	for fid in norm:
 		var d: Dictionary = norm[fid]
+		if d.has("repeatable") and not d.repeatable is bool:
+			_add(issues, "error", "functions.%s.repeatable" % fid, "must be a boolean")
 		# 缺码不是错误：load_from 在 validate 之后调 ensure_codes 补发（新声明补码的正常路径）。
 		# 只有「重复」是错误——上面 duplicate_codes 已报。
 		var fseen := {}
@@ -324,6 +337,9 @@ static func _validate_audio(data: Dictionary, issues: Array[Dictionary]) -> void
 		codes[c] = true
 		if str(body.get("path", "")) == "":
 			_add(issues, "warning", "audio.%s" % aid, "audio path is empty")
+		if body.has("previewPath") and (not body.previewPath is String
+				or AudioDecls.preview_relative_path(body.previewPath) == ""):
+			_add(issues, "error", "audio.%s.previewPath" % aid, "must be a non-empty project-relative audio path")
 
 ## 时机池：id 非空唯一（array 写法查重）、码池内唯一（重复 = 静默别名，报错）。
 ## 时机不含字段，字段码空间完全不碰它。
@@ -408,6 +424,13 @@ static func _validate_playtest(data: Dictionary, issues: Array[Dictionary]) -> v
 		_add(issues, "error", "playtest.executable", "must be a path string")
 	elif exe is String and (exe as String).strip_edges() == "" and pt2.has("executable"):
 		_add(issues, "warning", "playtest.executable", "empty executable: falls back to playCommand")
+	for feature in ["report", "projectEntry"]:
+		if not pt2.has(feature):
+			continue
+		if not pt2[feature] is bool:
+			_add(issues, "error", "playtest." + feature, "must be a boolean")
+		elif pt2[feature] and (not exe is String or str(exe).strip_edges() == ""):
+			_add(issues, "error", "playtest." + feature, "requires a structured executable launch")
 	var args = pt2.get("args", null)
 	if args != null:
 		if not (args is Array):
@@ -627,6 +650,59 @@ static func _is_positive_integer(v) -> bool:
 static func _add(issues: Array[Dictionary], severity: String, path: String, message: String) -> void:
 	issues.append({"severity": severity, "path": path, "message": message})
 
+## 可配置条件使用已声明的叶条件池；不允许条件声明递归引用自己。
+static func _validate_content_field_shapes(data: Dictionary, issues: Array[Dictionary]) -> void:
+	var conditions := ConditionDecls.conditions(data)
+	for section in ["functions", "steps", "conditions"]:
+		var pool: Dictionary
+		match section:
+			"functions": pool = FunctionDecls.functions(data)
+			"steps": pool = StepDecls.steps(data)
+			_: pool = conditions
+		for id in pool:
+			_check_condition_fields(pool[id].get("fields"), "%s.%s.fields" % [section, id],
+				conditions, section != "conditions", issues)
+
+static func _check_condition_fields(fields: Variant, path: String, conditions: Dictionary,
+		allow_rows: bool, issues: Array[Dictionary], depth := 0) -> void:
+	if not fields is Array or depth > 4:
+		return
+	for fd in fields:
+		if not fd is Dictionary:
+			continue
+		var child := path + "." + str(fd.get("id", "?"))
+		if fd.has("contentMapContext"):
+			var mode = fd.contentMapContext
+			var at := child + ".contentMapContext"
+			if not mode is String or str(mode) not in ["independent", "inherit", "paired"]:
+				_add(issues, "error", at, "must be independent, inherit or paired")
+			elif not str(fd.get("source", "")).begins_with("content:"):
+				_add(issues, "error", at, "requires a content: choice source")
+			elif mode == "paired":
+				var pair := str(fd.get("mapField", ""))
+				if pair == "" or not fields.any(func(sibling):
+					return sibling is Dictionary and str(sibling.get("id", "")) == pair \
+						and (sibling.get("type") == "map_ref" or sibling.get("source") == "map") \
+						and not bool(sibling.get("multiple", false)) and sibling.get("type") != "array"):
+					_add(issues, "error", at, "paired requires mapField naming a single map choice in the same row")
+		if fd.get("type") != "array":
+			continue
+		if fd.get("of") == "record":
+			_check_condition_fields(fd.get("fields"), child, conditions, allow_rows, issues, depth + 1)
+		elif fd.get("of") == "condition":
+			var allowed = fd.get("allowedConditions")
+			if not allow_rows:
+				_add(issues, "error", child, "condition declarations must not contain condition arrays")
+			elif fd.get("kind") != "input" or not allowed is Array or allowed.is_empty():
+				_add(issues, "error", child, "array of condition requires input kind and non-empty allowedConditions")
+			else:
+				var seen := {}
+				for id in allowed:
+					if not id is String or not conditions.has(id) or seen.has(id):
+						_add(issues, "error", child + ".allowedConditions", "unknown or duplicate condition: " + str(id))
+					else:
+						seen[id] = true
+
 ## C1（§7.4）：array 字段声明校验。of: record 要求 fields 数组：子字段对象、id 非空唯一、
 ## kind=input/choice、type 合法（input 的 type 走 INPUT_TYPES 白名单）；嵌套 record 递归（限深 4）。
 ## 已有标量数组（of 缺省或标量/choice）不受影响——只新增 record 形的报错，不改旧声明语义。
@@ -719,7 +795,7 @@ static func _validate_viewports(data: Dictionary, issues: Array[Dictionary]) -> 
 				_add(issues, "error", p + "." + k, "must be a positive number")
 			elif v <= 0:
 				_add(issues, "error", p + "." + k, "must be a positive number")
-## C5：只读参考 views（[{view_id, image, pixel_size, hotspots}]）：view_id 非空唯一、
+## C5：项目参考 views（[{view_id, image, pixel_size, hotspots}]）：view_id 非空唯一、
 ## image/pixel_size/hotspots 可选但类型必对（image 字符串、pixel_size 正数、hotspots 数组）。
 ## hotspot = {rect: [nx, ny, nw, nh] 全部 0..1, target: 对象（目标身份，编辑器不解释）}。
 static func _validate_views(data: Dictionary, issues: Array[Dictionary]) -> void:
@@ -730,6 +806,7 @@ static func _validate_views(data: Dictionary, issues: Array[Dictionary]) -> void
 		_add(issues, "error", "views", "must be an array of {view_id, image, pixel_size, hotspots}")
 		return
 	var seen := {}
+	var viewports := ScreenLayout.sizes(data)
 	for j in (vs as Array).size():
 		var e = (vs as Array)[j]
 		var p := "views[%d]" % j
@@ -740,6 +817,8 @@ static func _validate_views(data: Dictionary, issues: Array[Dictionary]) -> void
 		if vid == "" or seen.has(vid):
 			_add(issues, "error", p + ".view_id", "must be non-empty and unique (seen: %s)" % vid)
 		seen[vid] = true
+		if e.has("layout"):
+			ScreenLayout.validate(e.layout, viewports, p + ".layout", issues)
 		var img = (e as Dictionary).get("image", null)
 		if img != null and not (img is String):
 			_add(issues, "error", p + ".image", "must be a string")

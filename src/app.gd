@@ -497,6 +497,13 @@ func _shortcut_input(event: InputEvent) -> void:
 		_set_status(" 已取消区域粘贴预览")
 		get_viewport().set_input_as_handled()
 		return
+	if canvas._geometry_draw.active() and k in [KEY_ESCAPE, KEY_ENTER, KEY_KP_ENTER]:
+		if k == KEY_ESCAPE:
+			canvas._geometry_draw.cancel()
+		else:
+			canvas._geometry_draw.finish()
+		get_viewport().set_input_as_handled()
+		return
 	match k:
 		KEY_F:
 			if canvas.flip_selected():
@@ -610,6 +617,9 @@ func _paste() -> void:
 		return
 	# 区域剪贴板走幽灵预览（左键落位），实体剪贴板直接贴到光标处
 	if canvas._last_copy_region and not canvas._region_clip.is_empty():
+		if not canvas._region_ops_ctrl.region_clip_matches():
+			_set_status("当前瓦片层或格几何与区域剪贴板不兼容")
+			return
 		canvas._paste_mode = true
 		canvas.queue_redraw()
 		_set_status("区域粘贴预览：左键落位，右键或 Esc 取消")
@@ -681,6 +691,8 @@ var asset_panel = null
 ## 三个面板是平级关系，顶栏三个入口直接切，Esc 回关卡编辑器。
 ## E1：离开画布/内容时记快照，归来按身份校验恢复（目标已删则显示空态）。
 func _set_mode(mode: String, focus_sid := "") -> void:
+	if canvas != null and mode != "map":
+		canvas._geometry_draw.cancel()
 	# 选点会话只属于画布：切模式即中止（不提交、不回原视图、不触发取消回调——
 	# 用户已经明确要去的那个视图才是落点）
 	if mode != "map" and canvas != null and canvas.pick_mode_active:
@@ -747,7 +759,7 @@ func _begin_canvas_pick(owner: String, accept: String, hint: String,
 	_set_mode("map")
 	canvas.begin_pick_mode(owner, accept, hint, want_types)
 	_layout_ctrl._refresh_pick_bar()
-	var what := "一条格边" if accept == "edge" else ("一格" if accept == "cell" else "实例")
+	var what := "一条格边" if accept == "edge" else ("一格" if accept == "cell" else ("端口" if accept == "port" else "实例"))
 	_set_status(hint + "：左键点%s，确认提交；Esc 取消" % what)
 	return true
 
@@ -768,6 +780,10 @@ func _end_canvas_pick(confirm: bool) -> void:
 			canvas.focus_cell_id(code)
 		elif str(canvas.pick_mode_accept) == "edge":
 			canvas.focus_edge(str(EdgeRef.edge_of(JSON.parse_string(code))))
+		elif str(canvas.pick_mode_accept) == "port":
+			var port = JSON.parse_string(code)
+			if port is Dictionary:
+				canvas.focus_entity_code(str(port.inst))
 		else:
 			canvas.focus_entity_code(code)
 	# 回原视图但不重建表单（静默恢复）：控件与焦点都还在，只有内容视图的
@@ -784,6 +800,9 @@ func _end_canvas_pick(confirm: bool) -> void:
 
 ## 选点结果显示：格边给「(x,y)-(x,y)」，其余原样（至少别把整串 JSON 糊在状态栏）。
 func _pick_label(code: String) -> String:
+	if str(canvas.pick_mode_accept) == "port" and code != "":
+		var port = JSON.parse_string(code)
+		return "%s · %s" % [port.inst, port.port] if port is Dictionary else code
 	if str(canvas.pick_mode_accept) != "edge":
 		return code
 	var e := str(EdgeRef.edge_of(JSON.parse_string(code)))
@@ -823,9 +842,9 @@ func _manifest_write_payload(source: Dictionary) -> Dictionary:
 			asset.erase("atlas_abs")
 	return preload("res://src/assets/builtin_kinds.gd").strip_from(out)
 
-func _save_manifest_file_async(guard := Callable(), snapshot := {}, publish_assets := false) -> bool:
+func _save_manifest_file_async(guard := Callable(), snapshot := {}, publish_key := "") -> bool:
 	var source := manifest
-	var baseline := JSON.stringify(_manifest_write_payload(source), "\t") if publish_assets else ""
+	var baseline := JSON.stringify(_manifest_write_payload(source), "\t") if publish_key != "" else ""
 	var out := _manifest_write_payload(source if snapshot.is_empty() else snapshot)
 	var txt := JSON.stringify(out, "\t")
 	var p := str(source.get("_dir", "")).path_join("editor/editor_manifest.json")
@@ -840,7 +859,7 @@ func _save_manifest_file_async(guard := Callable(), snapshot := {}, publish_asse
 			"清单文件在编辑器打开后被外部修改过。\n覆盖保存将丢失外部改动。", "覆盖保存"):
 			_set_status(" 已取消保存（保留磁盘上的外部改动）")
 			return false
-	var expected_live := baseline if publish_assets else txt
+	var expected_live := baseline if publish_key != "" else txt
 	if (guard.is_valid() and not guard.call()) or not is_same(manifest, source) \
 			or JSON.stringify(_manifest_write_payload(manifest), "\t") != expected_live:
 		_set_status(" 清单保存中止：确认期间工作副本已变化")
@@ -852,8 +871,8 @@ func _save_manifest_file_async(guard := Callable(), snapshot := {}, publish_asse
 	if not MapStore.write_text(p, txt):
 		_set_status(" 清单写入失败: " + p)
 		return false
-	if publish_assets:
-		manifest["assets"] = (snapshot.get("assets", []) as Array).duplicate(true)
+	if publish_key != "":
+		manifest[publish_key] = snapshot[publish_key].duplicate(true)
 	# 新补发的执行码已经随清单落盘，标记清掉（D6：避免每次内容视图 Ctrl+S 都重写清单）
 	manifest.erase("_codes_issued")
 	manifest.erase("_codes_issued_now")

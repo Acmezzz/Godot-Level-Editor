@@ -322,6 +322,7 @@ func _draw_collision(gs: GridSpace, origin: Vector2, scale_px: float, mw: int, m
 
 func _draw_tiles(li: int, lid: String, gs: GridSpace, origin: Vector2, s: float, mw: int, mh: int) -> void:
 	var cvs = host.app.canvas
+	gs = cvs.tile_grid_for_layer(li)
 	var xf := MapViewData.layer_transform(cvs.map_data, lid)
 	var texs: Array = cvs.atlas_texs
 	for row: Array in _tiles(li, lid):
@@ -354,7 +355,7 @@ func _tiles(li: int, layer_id: String) -> Array:
 	if not host._map_ready():
 		return []
 	var rev := [host.app.canvas.get_instance_id(), host.app.canvas.tile_rev]
-	if _tiles_rev.get(li, -1) == rev:
+	if _tiles_rev.get(li, []) == rev:
 		return _tiles_cache.get(li, [])
 	var out: Array = []
 	var stack: Array = host.app.canvas.layer_tiles

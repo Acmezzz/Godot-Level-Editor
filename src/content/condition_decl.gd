@@ -4,7 +4,8 @@ extends RefCounted
 ##
 ## 条件库模型（游戏侧契约）：条件 = 一段游戏侧代码 + 暴露的可调字段（接口）。
 ## 功能声明用 `conditions: [条件 id, ...]` 引用条件（同清单内按 id 引用，同挂载模型）；
-## 条件参数与功能参数共存于同一份内容 fields（键=字段码），编辑器只渲染填参，不解释语义。
+## 固定条件参数写进内容 fields；可配置条件组每行有自己的 fields。两者都用字段码做键，
+## 编辑器负责填参和引用，条件判定由游戏执行。
 
 const ContentId := preload("res://src/content/content_id.gd")
 const PoolPrint := preload("res://src/core/pool_fingerprint.gd")
@@ -64,6 +65,25 @@ static func condition_fields(m: Dictionary, cond_id: String) -> Array:
 static func condition_name(m: Dictionary, cond_id: String) -> String:
 	return str(condition_decl(m, cond_id).get("name", cond_id))
 
+## 条件行保存人类 ID，与固定条件的 declarations.conditions 使用同一身份。
+static func allowed_rows(m: Dictionary, field: Dictionary) -> Array:
+	var allowed = field.get("allowedConditions")
+	if not allowed is Array:
+		return []
+	var all := conditions(m)
+	var rows: Array = []
+	for id in allowed:
+		if id is String and all.has(id):
+			rows.append(all[id])
+	return rows
+
+static func row_schema(m: Dictionary, field: Dictionary, row: Dictionary) -> Dictionary:
+	var id = row.get("condition")
+	var allowed = field.get("allowedConditions")
+	if not id is String or not allowed is Array or not allowed.has(id):
+		return {}
+	return condition_decl(m, id)
+
 ## 已占用字段码集合（三池同空间：功能+条件+步骤——步骤池后加，条件补码同样要避开它）。
 ## 条件字段与功能字段共存于同一份内容 fields（键=字段码），码必须同空间唯一。
 static func taken_field_codes(m: Dictionary) -> Dictionary:
@@ -98,7 +118,7 @@ static func codes_doc(m: Dictionary) -> String:
 	L.append("## 条件")
 	L.append("")
 	L.append("条件按 id 被功能声明引用（清单内人类名，条件本身无执行码）；")
-	L.append("条件字段与功能字段共用一个码空间，值都存在同一份内容 fields 里。")
+	L.append("条件字段与功能字段共用一个码空间。固定条件使用内容 fields，可配置条件组使用各行的 fields。")
 	L.append("")
 	for cid in conds:
 		var d: Dictionary = conds[cid]

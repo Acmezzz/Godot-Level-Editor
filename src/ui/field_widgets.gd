@@ -2,12 +2,14 @@ extends RefCounted
 ## 声明式字段控件工厂：清单字段声明 → 控件。
 ##
 ## 只有两个可写 kind：
-## input —— type: string / int / float / bool / color / vector2 / range / asset_ref / array
+## input —— type: string / int / float / bool / color / vector2（dims 2|3）/ range / asset_ref /
+##          array / port_ref / viewport_ref / edge_ref
 ## choice —— options[] 直给，或 source 从内容库 / 清单实体 / 地图列表动态取；multiple: true 切勾选组
 ##
 ## string 可加 multiline: true 切 TextEdit；range 读 min/max/step（无 min/max 时退到 HSlider 默认）；
 ## asset_ref 读 `assetKind`（按资产 kind 过滤）与可选 `of`（逗号分隔 id 白名单）。
-## array 读 of（基础类型或 choice，不嵌套 array）与可选 min/max（数字元素界限，透传给行控件）。
+## array 读 of（基础类型 / choice / record）、可选 min/max（数字元素界限，透传给行控件）；
+## of: "record" 走 C1 结构化行容器，子字段在 fields 里声明并可再嵌 array（限深 4）。
 ## 认不出的声明一律只读展示 + 黄色提示，绝不提供可写控件。
 ## 旧实现把未知类型落进 LineEdit：数组 [1,2,3] 被 str() 成 "[1, 2, 3]"，用户一碰
 ## 就把数组写成它的打印形式，是静默数据损坏。这里改成结构可见、不可写。
@@ -18,9 +20,11 @@ const ContentStore := preload("res://src/content/content_store.gd")
 const MapStore := preload("res://src/map/map_store.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
 const RefFields := preload("res://src/content/ref_fields.gd")
+const CellGraph := preload("res://src/map/cell_graph.gd")
 
 const KIND_INPUT := "input"
 const KIND_CHOICE := "choice"
+const KIND_CONDITION := "condition_row"
 const KIND_RECORD := "record"   # C1：array of record 的行控件种类（仅作数组元素，不作顶层字段类型）
 
 ## 值是否「未填」：null 或空串（数组/字典不算未填——比较时要避开 Variant 类型错误）
@@ -41,7 +45,7 @@ static func wants_canvas_pick(decl: Dictionary) -> bool:
 		return true
 	# C4：有限格图 cell_id 字段——格是多边形，画布按多边形命中（accept="cell"）
 	# §7.4：格边字段——画布按最近共边命中（accept="edge"）
-	return wants_cell_pick(decl) or wants_edge_pick(decl)
+	return pick_mode(decl) != "entity"
 
 ## C4：choice 来源是 `cell:` 的字段可在画布上按格图多边形点选。
 static func wants_cell_pick(decl: Dictionary) -> bool:
@@ -51,8 +55,28 @@ static func wants_cell_pick(decl: Dictionary) -> bool:
 static func wants_edge_pick(decl: Dictionary) -> bool:
 	return type_of(decl) == "edge_ref"
 
+static func pick_mode(decl: Dictionary) -> String:
+	if type_of(decl) == "port_ref":
+		return "port"
+	if wants_cell_pick(decl):
+		return "cell"
+	if wants_edge_pick(decl):
+		return "edge"
+	return "entity"
+
+static func decode_pick(mode: String, code: String) -> Variant:
+	return JSON.parse_string(code) if mode in ["edge", "port"] else code
+
 ## 画布选点的候选类型白名单（声明的 of 过滤；空 = 不限实体类型）。
 static func canvas_pick_types(decl: Dictionary) -> Array:
+	match pick_mode(decl):
+		"port":
+			return Array(str(decl.get("of", "")).split(",", false))
+		"cell":
+			var space = CellGraph.cell_source_space(decl)
+			return [] if space == null else [space]
+		"edge":
+			return []
 	var d := RefFields.describe(decl)
 	return Array((d.get("filter", {}) as Dictionary).get("ids", []))
 
@@ -73,7 +97,7 @@ static func default_for(decl: Dictionary) -> Variant:
 		"color": return "#ffffff"
 		"choice": return [] if bool(decl.get("multiple", false)) else ""
 		"array": return []
-		"record": return {}
+		"record", "condition": return {}
 		_: return ""
 
 ## 声明里能读到的说明性信息（E1）：字段 id / 执行码 / 类型与范围 / 缺省值。
@@ -135,6 +159,8 @@ static func build(decl: Dictionary, value, on_set: Callable,
 		return _build_choice(decl, value, on_set, option_resolver, key_mode)
 	if kind == KIND_INPUT:
 		return _build_input(decl, value, on_set, option_resolver, key_mode)
+	if kind == KIND_CONDITION:
+		return _build_condition_row(decl, value, on_set, option_resolver)
 	if kind == KIND_RECORD:
 		return _build_record(decl, value, on_set, option_resolver, key_mode)
 	var why := "声明缺 kind（应写 \"input\" 或 \"choice\"）" if kind == "" \
@@ -163,7 +189,10 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 				return _readonly(decl, value, "值类型不符：声明 %s，实际是 %s" % [typ, type_name(value)],
 					"编辑器不会改写它，请游戏侧或手工修正")
 			var sp := SpinBox.new()
-			sp.step = 1.0 if typ == "int" else 0.1
+			var increment = decl.get("step", 0.1)
+			sp.step = 1.0 if typ == "int" else (
+				float(increment) if (increment is int or increment is float)
+				and is_finite(float(increment)) and float(increment) > 0.0 else 0.1)
 			sp.min_value = float(decl.get("min", -999999))
 			sp.max_value = float(decl.get("max", 999999))
 			sp.value = float(value) if (value is int or value is float) else 0.0
@@ -230,7 +259,7 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 			var commit_v := _value_commit(func(): return pending.v.duplicate(), pending.v.duplicate(), on_set)
 			for axis in dims:
 				var sp := SpinBox.new()
-				sp.step = 0.1
+				sp.step = maxf(float(decl.get("step", 0.1)), 0.000001)
 				sp.min_value = float(decl.get("min", -999999))
 				sp.max_value = float(decl.get("max", 999999))
 				sp.value = pending.v[axis]
@@ -283,9 +312,9 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 			box.add_child(num)
 			return {"ctl": box, "commit": commit2}
 		"array":
-			# array.of ∈ 基础类型/choice（不嵌套 array）；非数组值只读展示——commit() 不能把坏值悄悄写成 []
+			# array.of ∈ 基础类型/choice/record（record 子字段可再嵌 array，限深 4）；非数组值只读展示——commit() 不能把坏值悄悄写成 []
 			var of := str(decl.get("of", ""))
-			var ok_of: Array = ["string", "int", "float", "bool", "color", "vector2", "range", "asset_ref", "choice", "record"]
+			var ok_of: Array = ["string", "int", "float", "bool", "color", "vector2", "range", "asset_ref", "choice", "record", "condition"]
 			if not ok_of.has(of):
 				return _readonly(decl, value, "array.of 未声明（应写基础类型或 choice）",
 					"补全声明后重新加载清单即可恢复编辑")
@@ -344,6 +373,9 @@ static func _elem_decl(decl: Dictionary) -> Dictionary:
 				d[k] = (decl.get(k) as Variant).duplicate(true) if (decl.get(k) is Array or decl.get(k) is Dictionary) \
 					else decl.get(k)
 		return d
+	if of == "condition":
+		return {"kind": KIND_CONDITION, "type": "condition", "source": "editor:condition-schema",
+			"allowedConditions": decl.get("allowedConditions", [])}
 	# C1：of: record —— 元素控件是记录表单（子字段声明在 fields 里，逐元素独立副本）
 	if of == "record":
 		return {"kind": KIND_RECORD, "type": "record",
@@ -366,8 +398,9 @@ static func _elem_decl(decl: Dictionary) -> Dictionary:
 static func _build_array(decl: Dictionary, items: Array, on_set: Callable,
 		option_resolver: Callable, key_mode := "id") -> Dictionary:
 	var elem := _elem_decl(decl)
-	var rec := str(elem.get("type", "")) == "record"
+	var rec := str(elem.get("type", "")) in ["record", "condition"]
 	var wrap := VBoxContainer.new()
+	wrap.set_meta("array_field", str(decl.get("id", "")))
 	wrap.add_theme_constant_override("separation", 4)
 	var rows_box := VBoxContainer.new()
 	rows_box.add_theme_constant_override("separation", 4)
@@ -379,23 +412,32 @@ static func _build_array(decl: Dictionary, items: Array, on_set: Callable,
 	var collect := func() -> Array:
 		var out: Array = []
 		for r in rows:
-			var c: Callable = r.get("commit", Callable())
-			if c.is_valid():
-				c.call()
 			var value = (r.state as Dictionary).get("v")
 			out.append(value.duplicate(true) if value is Dictionary or value is Array else value)
 		return out
-	var commit := _value_commit(collect, items.duplicate(true), on_set)
+	var save := _value_commit(collect, items.duplicate(true), on_set)
+	var commit := func() -> bool:
+		for r in rows:
+			var nested: Callable = r.get("commit", Callable())
+			if nested.is_valid():
+				var result = nested.call()
+				if result is bool and not result:
+					return false
+		return save.call()
 	var done := func(): commit.call()
 	var add_row := func(v, at := -1) -> void:
 		var r := {"state": {"v": v}, "commit": Callable(), "line": null}
-		var line := HBoxContainer.new()
+		var line: BoxContainer = VBoxContainer.new() if rec else HBoxContainer.new()
 		line.add_theme_constant_override("separation", 4)
 		var built := build(elem, v, func(v2): (r.state as Dictionary)["v"] = v2, option_resolver, key_mode)
 		r["commit"] = built.commit
-		line.add_child(built.ctl)
+		var tools: BoxContainer = line
 		if rec:
-			line.add_child(_row_tools(ctx, r))
+			tools = Kit.hbox(4)
+			tools.alignment = BoxContainer.ALIGNMENT_END
+			tools.add_child(_row_tools(ctx, r))
+			line.add_child(tools)
+		line.add_child(built.ctl)
 		var del := Button.new()
 		del.text = "×"
 		del.focus_mode = Control.FOCUS_NONE
@@ -406,7 +448,7 @@ static func _build_array(decl: Dictionary, items: Array, on_set: Callable,
 			rows.erase(r)
 			line.queue_free()
 			done.call())
-		line.add_child(del)
+		tools.add_child(del)
 		# 行容器子序与 rows 数组一致：插行 = add_child + move_child 到目标行号
 		if at < 0 or at >= rows.size():
 			rows.append(r)
@@ -473,6 +515,90 @@ static func _row_dup(ctx: Dictionary, r: Dictionary, done: Callable) -> void:
 	var copy = v.duplicate(true) if (v is Dictionary or v is Array) else v
 	(ctx.get("add", Callable()) as Callable).call(copy, i + 1)
 	done.call()
+
+## 条件参数存入各行自己的 fields；未选择或过期的条件不会自动替换。
+static func _build_condition_row(decl: Dictionary, value: Variant, on_set: Callable,
+		resolve: Callable) -> Dictionary:
+	if not value is Dictionary:
+		return _readonly(decl, value, "条件行不是对象", "保留原值；可删除该行后重新添加")
+	var box := Kit.vbox(4)
+	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var picker := OptionButton.new()
+	picker.add_item("选择条件…")
+	picker.set_item_metadata(0, "")
+	picker.set_item_disabled(0, true)
+	box.add_child(picker)
+	var params := Kit.vbox(4)
+	box.add_child(params)
+	var choices := {}
+	if resolve.is_valid():
+		for option in resolve.call(decl):
+			var id := str(option.id)
+			choices[id] = option
+			picker.add_item(str(option.name))
+			picker.set_item_metadata(picker.item_count - 1, id)
+	var state := {"row": value.duplicate(true), "params": Callable()}
+	var push := _value_commit(func(): return state.row.duplicate(true), value.duplicate(true), on_set)
+	var initial := str(value.get("condition", ""))
+	var selected := 0
+	for i in range(1, picker.item_count):
+		if picker.get_item_metadata(i) == initial:
+			selected = i
+			break
+	if initial != "" and selected == 0:
+		picker.add_item("（不可用）" + initial)
+		selected = picker.item_count - 1
+		picker.set_item_disabled(selected, true)
+	picker.select(selected)
+	var render := func():
+		state.params = Callable()
+		for child in params.get_children():
+			params.remove_child(child)
+			child.queue_free()
+		var id := str(state.row.get("condition", ""))
+		if not choices.has(id):
+			return
+		var values = state.row.get("fields", {})
+		if not values is Dictionary:
+			params.add_child(Kit.hint_label("条件参数不是对象，原值已保留；请删除此行后重建。", 300))
+			return
+		var negate := CheckBox.new()
+		negate.text = "取反"
+		negate.button_pressed = bool(state.row.get("negate", false))
+		negate.toggled.connect(func(on: bool):
+			if on:
+				state.row["negate"] = true
+			else:
+				state.row.erase("negate")
+			push.call())
+		params.add_child(negate)
+		if not choices[id].fields.is_empty():
+			var built := _build_record(choices[id], values, func(fields: Dictionary):
+				state.row["fields"] = fields
+				return push.call(), resolve, "code")
+			params.add_child(built.ctl)
+			state.params = built.commit
+	render.call()
+	picker.item_selected.connect(func(i: int):
+		var id := str(picker.get_item_metadata(i))
+		if not choices.has(id) or id == str(state.row.get("condition", "")):
+			return
+		var previous: Dictionary = state.row
+		state.row = {"condition": id, "fields": {}}
+		if not push.call():
+			state.row = previous
+			for j in picker.item_count:
+				if str(picker.get_item_metadata(j)) == str(previous.get("condition", "")):
+					picker.select(j)
+					return
+			picker.select(0)
+			return
+		render.call())
+	return {"ctl": box, "commit": func() -> bool:
+		var commit: Callable = state.params
+		if commit.is_valid() and not bool(commit.call()):
+			return false
+		return bool(push.call())}
 
 ## record（C1）：记录表单 = 子字段递归构建。值是字典；子字段存储键按宿主池规则
 ## （key_mode："code" = 字段码，缺码退回 id）。兄弟配对字段作用域 = 当前记录行
@@ -667,20 +793,26 @@ static func _build_viewport_ref(decl: Dictionary, value, on_set: Callable, optio
 	if not (value is Dictionary):
 		value = {}
 	var cur: Dictionary = (value as Dictionary).duplicate(true)
-	var emit := func(): on_set.call(cur.duplicate(true))
+	var commit := _value_commit(func(): return cur.duplicate(true), cur.duplicate(true), on_set)
 	var wrap := Kit.vbox(4)
 	var d2: Dictionary = decl.duplicate(true)
 	d2["kind"] = KIND_CHOICE
 	d2["source"] = "viewport:"
 	var vp_id := str(cur.get("viewport", ""))
-	var vpb := _build_choice(d2, vp_id, func(v2):
+	var key := "rect" if is_rect else "point"
+	var dims := 4 if is_rect else 2
+	var fallback := [0.0, 0.0, 1.0, 1.0] if is_rect else [0.0, 0.0]
+	var arr = cur.get(key, fallback)
+	var vpb := _build_choice(d2, vp_id, func(v2) -> bool:
 		cur["viewport"] = str(v2)
-		emit.call(), option_resolver)
+		if not cur.has(key):
+			cur[key] = fallback.duplicate()
+		return commit.call(), option_resolver)
 	wrap.add_child(vpb.ctl)
 	# 归一化坐标 0..1：point 两轴 / rect 四轴（SpinBox 即改即写，幂等由下游保证）
-	var dims := 4 if is_rect else 2
-	var key := "rect" if is_rect else "point"
-	var arr: Array = (cur.get(key, [0.0, 0.0, 1.0, 1.0] if is_rect else [0.0, 0.0]) as Array)
+	if not arr is Array or arr.size() != dims or not arr.all(func(v): return (v is int or v is float) and is_finite(float(v)) and float(v) >= 0.0 and float(v) <= 1.0):
+		wrap.free()
+		return _readonly(decl, value, "画幅坐标格式无效", "保留原值，修正源数据后重读")
 	var row := Kit.hbox(4)
 	for d in dims:
 		var sp := SpinBox.new()
@@ -689,12 +821,12 @@ static func _build_viewport_ref(decl: Dictionary, value, on_set: Callable, optio
 		sp.step = 0.01
 		sp.value = float(arr[d]) if d < arr.size() else 0.0
 		sp.value_changed.connect(func(v3):
-			var a2: Array = (cur.get(key, [0.0, 0.0, 1.0, 1.0] if is_rect else [0.0, 0.0]) as Array).duplicate()
+			var a2: Array = (cur.get(key, fallback) as Array).duplicate()
 			while a2.size() <= d:
 				a2.append(0.0)
 			a2[d] = v3
 			cur[key] = a2
-			emit.call())
+			commit.call())
 		row.add_child(sp)
 	wrap.add_child(row)
-	return {"ctl": wrap, "commit": emit}
+	return {"ctl": wrap, "commit": commit}

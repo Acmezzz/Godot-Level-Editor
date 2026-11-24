@@ -1,5 +1,11 @@
 # 未修复项说明（供后续讨论）
 
+> **历史快照提示**：本文记录的是 V3 审查当时未落地的四项。其中多数已在后续轮次修复或重新判定：
+> 预览取景已改用 `MapViewData.scene_bounds`（`src/ui/content_preview.gd`）；格边判据已由
+> `GridSpace.edge_between` / `EdgeRef` 统一，项目自检也已补 `edge_ref` 检查（`src/project/project_audit.gd`）；
+> `DocumentSession` / `DocumentCommit` 已落地。阅读当前缺口请以 [V6-COMPREHENSIVE-REVIEW.md](V6-COMPREHENSIVE-REVIEW.md) 为准，
+> 本文仅保留当时的决策理由作为背景。
+
 本文对应 [V3-EDITOR_AUDIT.md](V3-EDITOR_AUDIT.md) §7「尚未落地」的四项，说明为什么本轮没有修，
 以及如果要继续，需要先确定什么。
 

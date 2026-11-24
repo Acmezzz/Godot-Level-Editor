@@ -6,6 +6,7 @@ class_name FunctionDecl
 ## 归一化结果缓存：content_editor 重建右栏时逐字段调用 function_fields 等，
 ## 全量重扫是纯浪费。指纹 = 项目目录 + functions 池的递归结构哈希（F1/P03：
 ## 原先 JSON.stringify 整池是每次访问的成本，池越大越慢；见 pool_fingerprint.gd）。
+const ContentId := preload("res://src/content/content_id.gd")
 const PoolPrint := preload("res://src/core/pool_fingerprint.gd")
 
 static var _cache: Dictionary = {}
@@ -34,11 +35,11 @@ static func _decl_items(decl) -> Array:
 ## 只补「空」的，**不碰重复码**——重复是真实错误（两个声明同码 = 静默别名），
 ## 由校验报出来让人决定改哪个；这里替用户改一个反而会悄悄改变既有引用指向。
 static func ensure_codes(m: Dictionary) -> bool:
-	var Decls := preload("res://src/content/content_id.gd")
 	var changed := false
-	# 占用表 = 三池字段码全量 + 本池条目码。字段码是全局码空间（校验跨池同码报错），
-	# 功能是首池——补码不避条件/步骤已占码，造出的坏码会随清单落盘、下次启动校验拒载
-	var seen := Decls.field_codes(m)
+	# 占用表 = 三池字段码全量（功能+条件+步骤）。字段码是全局码空间（校验跨池同码报错），
+	# 补字段码必然避开条件/步骤已占的码；条目码另用 seen_fn 做**池内**查重，
+	# 因为条目码的查重口径本来就是池内（功能 fn 与步骤 step 写在不同字段，同值不构成冲突）。
+	var seen := ContentId.field_codes(m)
 	var seen_fn := {}   # 条目码查重是池内的（steps/audio 各自池内查重）
 	for pair in _decl_items(m.get("functions", null)):
 		var c0 := str((pair.body as Dictionary).get("code", ""))
@@ -47,9 +48,9 @@ static func ensure_codes(m: Dictionary) -> bool:
 	for pair in _decl_items(m.get("functions", null)):
 		var d: Dictionary = pair.body
 		if str(d.get("code", "")) == "":
-			var code := Decls.new_fn_code()
+			var code := ContentId.new_fn_code()
 			while seen_fn.has(code):
-				code = Decls.new_fn_code()
+				code = ContentId.new_fn_code()
 			d["code"] = code
 			seen_fn[code] = true
 			changed = true
@@ -57,9 +58,9 @@ static func ensure_codes(m: Dictionary) -> bool:
 			if not (fd is Dictionary):
 				continue
 			if str((fd as Dictionary).get("code", "")) == "":
-				var fcode := Decls.new_fn_code()
+				var fcode := ContentId.new_fn_code()
 				while seen.has(fcode):
-					fcode = Decls.new_fn_code()
+					fcode = ContentId.new_fn_code()
 				(fd as Dictionary)["code"] = fcode
 				seen[fcode] = true
 				changed = true
@@ -178,6 +179,41 @@ static func fn_id_of(m: Dictionary, code: String) -> String:
 	functions(m)
 	return str(_by_code.get(code, ""))
 
+## A repeatable function executes once per binding row; absence retains the single-row authoring policy.
+static func is_repeatable(m: Dictionary, fn_id: String) -> bool:
+	var value = function_decl(m, fn_id).get("repeatable")
+	return value is bool and value
+
+## IDs are unique within an instance, so cloning a map or entity can preserve them.
+static func new_binding_id(rows: Array) -> String:
+	var used := {}
+	for row in rows:
+		if row is Dictionary and row.get("bindingId") is String:
+			used[row.bindingId] = true
+	var id := ContentId.new_inst_code() + ContentId.new_inst_code()
+	while used.has(id):
+		id = ContentId.new_inst_code() + ContentId.new_inst_code()
+	return id
+
+## -1 = absent, -2 = ambiguous. A single legacy unmarked row is the inherited binding.
+static func mounted_index(rows: Array, fn_code: String) -> int:
+	var matched := -1
+	var marked := -1
+	var count := 0
+	for i in rows.size():
+		var row = rows[i]
+		if not row is Dictionary or str(row.get("fn", "")) != fn_code:
+			continue
+		matched = i
+		count += 1
+		if row.get("mounted") is bool and row.mounted:
+			if marked >= 0:
+				return -2
+			marked = i
+	if marked >= 0:
+		return marked
+	return (-2 if count > 1 else matched)
+
 ## 资产类型的自带功能（挂载）：清单 assets[].functions = 功能 id 数组，声明顺序即默认执行顺序。
 ## 返回 [{id, code}]；挂载了未声明功能的 id 被过滤（校验层报错误），保证返回的都可用。
 ## 重复挂载的同功能只保留第一条（C09）：同码两条会让实例补出两条同码绑定，
@@ -203,37 +239,27 @@ static func entity_mounts(m: Dictionary, sid: String) -> Array:
 ## 给一行实例绑定补齐类型挂载（C09）：放置和载图时在**工作副本**上调用，
 ## 与选中事件彻底解耦——没被点开过的实例也补齐。
 ## 只在「该功能码一条绑定都没有」时追加唯一继承行 `mounted: true`；
-## 同码已有多条（旧图/库复用/手工）不猜哪条是继承行，留给作者确认（返回 ambiguous）。
+## 同码多条且标记不唯一时不猜继承行（返回 ambiguous）。
 ## 返回 {functions, changed, ambiguous}；functions 与传入数组不共享引用。
 static func fill_bindings(m: Dictionary, asset_id: String, fns: Array) -> Dictionary:
 	var out: Array = fns.duplicate(true)
 	var mounts := entity_mounts(m, asset_id)
 	if mounts.is_empty():
 		return {"functions": out, "changed": false, "ambiguous": []}
-	var counts := {}
-	var marked := {}
-	for f in out:
-		if not (f is Dictionary):
-			continue
-		var code := str((f as Dictionary).get("fn", ""))
-		if code == "":
-			continue
-		counts[code] = int(counts.get(code, 0)) + 1
-		if bool((f as Dictionary).get("mounted", false)):
-			marked[code] = true
 	var changed := false
 	var ambiguous: Array = []
 	for mt in mounts:
-		var code := str((mt as Dictionary).get("code", ""))
-		if code == "":
-			continue
-		var n := int(counts.get(code, 0))
-		if n == 0:
-			out.append({"fn": code, "content": "", "name": "", "order": 0,
-				"parallel": false, "mounted": true})
-			changed = true
-		elif n > 1 and not marked.has(code):
+		var code := str(mt.code)
+		var i := mounted_index(out, code)
+		if i == -2:
 			ambiguous.append(code)
+		elif i == -1:
+			var row := {"fn": code, "content": "", "name": "", "order": 0,
+				"parallel": false, "mounted": true}
+			if is_repeatable(m, str(mt.id)):
+				row["bindingId"] = new_binding_id(out)
+			out.append(row)
+			changed = true
 	if not changed:
 		return {"functions": out, "changed": false, "ambiguous": ambiguous}
 	for k in out.size():

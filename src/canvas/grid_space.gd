@@ -96,17 +96,9 @@ func tri_polygon(i: int, row: int) -> PackedVector2Array:
 		out.append(to_px(p))
 	return out
 
-## 像素 → 三角格号。先按平行四边形列反算连续格，再按「x+y ≤ 1」判定落在哪半格。
-## 返回 Vector2i(三角列 i, row)。六边/无法判定返回 ZERO（调用方应走 pick_cell）。
+## 像素 → 三角格号。先反算连续格，复用统一的半格判定。
 func pick_tri(px: Vector2) -> Vector2i:
-	var g := to_grid(px)
-	var c := floori(g.x)
-	var row := floori(g.y)
-	var fx := g.x - float(c)
-	var fy := g.y - float(row)
-	# 局部坐标在单位正方形内；对角线 x+y=1 分割左下/右上
-	var odd := fx + fy > 1.0
-	return Vector2i(c * 2 + (1 if odd else 0), row)
+	return _triangle_cell(to_grid(px))
 
 ## 三角格的共边邻格（每个三角形 3 条边 → 3 个邻格）。
 ## 偶半格 (0,0),(1,0),(0,1)：底边 y=row → 同列奇半格的上方一格；左边 x=c → 左邻列的奇半格；
@@ -140,16 +132,16 @@ func tri_tex_rect(i: int, row: int, cs: Vector2i) -> Rect2:
 	return Rect2(mn, mx - mn)
 
 ## 连续格坐标（平行四边形列口径，to_grid/连续拖动用）→ **本拓扑的格号**。
-## 三角拓扑要把平行四边形列折成半格列（c·2 + 上半格?1:0）——实体所在格、框选命中
-## 与区域选区必须同一口径，否则三角图上「实例算出的格」和「框选出的格」差一倍（V4 P1）。
+## 三角拓扑把平行四边形列折成半格列。需要六边形内轮廓命中时使用 pick_cell。
 func cell_of_continuous(g: Vector2) -> Vector2i:
 	if is_tri():
-		var c := floori(g.x)
-		var row := floori(g.y)
-		var fx := g.x - float(c)
-		var fy := g.y - float(row)
-		return Vector2i(c * 2 + (1 if fx + fy > 1.0 else 0), row)
+		return _triangle_cell(g)
 	return Vector2i(floori(g.x), floori(g.y))
+
+static func _triangle_cell(g: Vector2) -> Vector2i:
+	var column := floori(g.x)
+	var row := floori(g.y)
+	return Vector2i(column * 2 + (1 if g.x - column + g.y - row > 1.0 else 0), row)
 
 ## 本拓扑格号 → 连续格坐标的**格原点**（三角拓扑取所在平行四边形列，半格奇偶丢失是
 ## 连续坐标的固有粒度：实例位置本身是浮点，落位仍以它为准）。
@@ -259,6 +251,26 @@ static func resolve(meta: Dictionary, manifest: Dictionary) -> Dictionary:
 	elif str(tp.get("topology", "quads")) == "triangles":
 		grid.set_topology("triangles")
 	return {"grid": grid, "issues": issues}
+
+## A tile layer may own its coordinate system. Its declaration has no inherited basis/topology.
+static func resolve_tile_layer(layer: Dictionary, manifest: Dictionary, root: GridSpace) -> Dictionary:
+	if not layer.has("tileGrid"):
+		return {"grid": root, "issues": []}
+	var own = layer.tileGrid
+	if not own is Dictionary:
+		return {"grid": root, "issues": [{"path": "tileGrid", "message": "必须是格空间对象"}]}
+	if not own.get("gridProjection") is String or str(own.gridProjection) not in ["orthogonal", "isometric", "hexagonal"]:
+		return {"grid": root, "issues": [{"path": "tileGrid.gridProjection", "message": "必须显式选择正交、等距或六边形"}]}
+	var resolved := resolve(own, manifest)
+	var issues: Array[Dictionary] = []
+	for issue in resolved.issues:
+		issues.append({"path": issue.path.replace("meta.", "tileGrid."), "message": issue.message})
+	return {"grid": resolved.grid if issues.is_empty() else root, "issues": issues}
+
+## Stable across JSON round trips; layer transforms do not affect local grid geometry.
+func geometry_key() -> String:
+	var geometry := [basis_u.x, basis_u.y, basis_v.x, basis_v.y] if has_basis else [projection, tile.x, tile.y]
+	return JSON.stringify([topology, geometry], "", true, true)
 
 ## 格坐标（浮点，含格内分数）→ 像素。正交 = 左上角系；等距 = 菱形顶点系；六边 = 格中心系（仅整数格有格中心语义）。
 func to_px(g: Vector2) -> Vector2:
@@ -371,6 +383,17 @@ func to_continuous_grid(px: Vector2) -> Vector2:
 	var off := 0.5 if posmod(floori(gy), 2) == 1 else 0.0
 	return Vector2((px.x - w * 0.5) / w - off, gy)
 
+## 实例连续格坐标与图层局部锚点互换。排序偏移由实例节点单独处理。
+func object_anchor_px(coordinates: Vector2, unit: Vector2) -> Vector2:
+	if is_hex_geom():
+		return to_px(coordinates) + (unit - Vector2(0.5, 0.5)) * Vector2(tile)
+	return to_px(coordinates + unit)
+
+func object_anchor_grid(point: Vector2, unit: Vector2) -> Vector2:
+	if is_hex_geom():
+		return to_continuous_grid(point - (unit - Vector2(0.5, 0.5)) * Vector2(tile))
+	return to_grid(point) - unit
+
 ## 拓扑格号位移 → 像素平移（只给区域移动/粘贴用的 **cell 索引** 换算）。
 ## 三角拓扑的格号 x 是**三角列**（两列共用一个平行四边形列），所以要先折半再走 to_px；
 ## 直接 to_px(delta) 会把 1 个三角列当成 1 个整列（V4 P1：两种列混用）。
@@ -380,13 +403,25 @@ func delta_px(d: Vector2i) -> Vector2:
 		return to_px(Vector2(float(d.x) * 0.5, float(d.y))) - to_px(Vector2.ZERO)
 	return to_px(Vector2(d)) - to_px(Vector2.ZERO)
 
-## R22：区域移动/粘贴的格平移原语——经像素几何换算（六边 odd-r 行错位、三角半格列由
-## delta_px 折算）。正交/等距/斜基与直接相加等价；六边/三角按「格中心 + 像素位移」
-## 回拾取，跨奇偶行/半格列的平移不再破坏几何。delta=(0,0) 恒等。
-func shift_cell(c: Vector2i, delta: Vector2i) -> Vector2i:
-	if delta == Vector2i.ZERO:
-		return c
-	return pick_cell(cell_center_px(c) + delta_px(delta))
+## 区域偏移使用六边形轴坐标，避免奇偶行切换时形状变形。
+func _region_axes(c: Vector2i) -> Vector2i:
+	return Vector2i(c.x - floori(float(c.y) * 0.5), c.y) if is_hex_geom() else c
+
+func relative_cell(c: Vector2i, origin: Vector2i) -> Vector2i:
+	return _region_axes(c) - _region_axes(origin)
+
+func cell_from_offset(origin: Vector2i, offset: Vector2i) -> Vector2i:
+	var q := _region_axes(origin) + offset
+	return Vector2i(q.x + floori(float(q.y) * 0.5), q.y) if is_hex_geom() else q
+
+## 三角形只做保朝向的整列平移。目标半列与来源不同时吸附到同一完整列。
+func region_origin(origin: Vector2i, parity: int) -> Vector2i:
+	if is_tri() and parity >= 0 and posmod(origin.x, 2) != parity:
+		origin.x = floori(float(origin.x) * 0.5) * 2 + parity
+	return origin
+
+func region_origin_px(c: Vector2i) -> Vector2:
+	return to_px(cell_origin_continuous(c))
 
 ## cell 的中心像素（正交 = 方形中心；等距 = 菱形中心；六边 = 格中心，与 TileMapLayer.map_to_local 口径一致）
 func cell_center_px(c: Vector2i) -> Vector2:
@@ -591,9 +626,11 @@ func up_neighbors(c: Vector2i) -> Array:
 	return [c + Vector2i(1 if odd else 0, -1), c + Vector2i(0 if odd else -1, -1)]
 
 ## 两格之间的共边线段（§4.2：格边的**几何**归 GridSpace，身份串归 EdgeRef）。
-## 返回两格多边形的公共顶点（真正的分界线）；退化/非邻格时退回两格中心连线（仍给 2 点）。
+## 只返回真正的共边。非邻格或几何退化时返回空。
 ## 点选/下拉/悬停/审计全走这里，避免「同一条边在几处各自算」。
 func edge_between(a: Vector2i, b: Vector2i) -> PackedVector2Array:
+	if not neighbors_any(a).has(b):
+		return PackedVector2Array()
 	var pa := cell_polygon(a)
 	var pb := cell_polygon(b)
 	var shared := PackedVector2Array()
@@ -604,7 +641,7 @@ func edge_between(a: Vector2i, b: Vector2i) -> PackedVector2Array:
 				break
 	if shared.size() == 2:
 		return shared
-	return PackedVector2Array([cell_center_px(a), cell_center_px(b)])
+	return PackedVector2Array()
 
 ## 两格之间经过的格序列（E13：快速拖动时鼠标事件会跳格，涂/擦要补上中间格）。
 ## 像素线段按 1/4 格采样再 pick_cell——投影无关（正交/等距/六边都按真实轮廓命中），

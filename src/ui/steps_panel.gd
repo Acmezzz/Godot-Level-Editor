@@ -17,10 +17,15 @@ const StepTimeline := preload("res://src/content/step_timeline.gd")
 const FunctionDecls := preload("res://src/content/function_decl.gd")
 const RefFields := preload("res://src/content/ref_fields.gd")
 const TimelineClock := preload("res://src/content/timeline_clock.gd")
+const AudioPreview := preload("res://src/ui/timeline_audio_preview.gd")
 const AudioDecls := preload("res://src/content/audio_decl.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
 const EntityNodeRef := preload("res://src/canvas/entity_node.gd")
 const SessionContext := preload("res://src/ui/session_context.gd")
+const GamePreview := preload("res://src/project/game_preview.gd")
+const FrameDialog := preload("res://src/ui/game_frame_dialog.gd")
+const MapGamePreview := preload("res://src/ui/map_game_preview.gd")
+const TIMELINE_FRAME := "timelineFrame"
 
 var host   # content_editor 宿主
 var app    # 根应用（= host.app）
@@ -59,7 +64,9 @@ func _refresh_status_only() -> void:
 func _resolve_fn(f: Dictionary) -> Dictionary:
 	return host._resolve_fn(f)
 func _resolve_options(decl: Dictionary) -> Array:
-	return host._resolve_options(decl)
+	if _project_target:
+		return host._form.project_reference_options(decl, _reference_context)
+	return host._form._resolve_options(decl, _project_scope)
 func _rebuild_right() -> void:
 	host._rebuild_right()
 
@@ -76,6 +83,10 @@ var _steps_cid := ""          # 该绑定的内容 ID（身份校验：绑定换
 ## R05：工作副本对应磁盘摘要（写回基线；暂存条目 digest 为空 = 不比对）。
 var _steps_base := ""
 ## R23：面板令牌的地图身份——切图后旧面板对不上就不再写值。
+var _project_manifest: Dictionary = {}
+var _project_target := false
+var _project_scope := false
+var _reference_context := ""
 var _steps_map := ""
 var _steps_rev := 0           # 结构版本：增删/排序后递增，过期控件回调据此丢弃（D1）
 var _steps_sel := -1          # 当前选中步骤下标；-1 = 无
@@ -97,7 +108,9 @@ var _steps_clock_missing: Array = []   # 声明了但解析不到的参考项（
 var _steps_preview_asset := ""         # frameAssetField 解析出的资产码（帧基预览用）
 var _steps_preview_frames: Array = []   # 该资产的帧序列（相对路径）
 var _steps_preview_idx := -1            # 当前预览帧（播放头所在帧）
-var _steps_audio := ""                  # audioField 解析出的音频码（只显示，不播放）
+var _steps_audio: Dictionary = {}
+var _audio_preview: Node
+var _audio_button: Button
 var _steps_frame_holder: Control = null  # 参考帧预览行（播放头移动时只刷这一行）
 var _steps_playhead_label: Label = null  # 播放头读数（原始单位 → 秒；负秒 = 音频起点前）
 ## E1：按 (功能码, 内容 ID) 记住上次的步骤下标/视图/播放头——关掉再开回到原处。
@@ -121,12 +134,34 @@ func _open_steps_editor(i: int) -> void:
 	# 缺 steps 声明就不该有演出入口（从旧版本/脚本调用来的也挡掉）
 	if not FunctionDecls.fn_has_steps(manifest, fn_id):
 		return
+	_project_target = false
+	_project_scope = false
+	_project_manifest = {}
 	_steps_i = i
 	_steps_fn_id = fn_id
 	_steps_ent = str(host._selected_ent)
 	_steps_cid = str(f.get("content", ""))
 	_steps_binding = f
 	_steps_map = _current_map_key()
+	_mount_target()
+
+func open_content(fn_id: String, cid: String, context := "") -> void:
+	if not host.commit_fields() or not FunctionDecls.fn_has_steps(manifest, fn_id) or cid == "":
+		return
+	_project_target = true
+	_project_scope = true
+	_reference_context = context
+	_project_manifest = manifest
+	_steps_i = 0
+	_steps_fn_id = fn_id
+	_steps_ent = ""
+	_steps_cid = cid
+	_steps_binding = {}
+	_steps_map = ""
+	_mount_target()
+
+func _mount_target() -> void:
+	var fn_id := _steps_fn_id
 	_steps_rev = 0
 	# 时间轴视图对象每次开面板都是新建的：版本缓存必须同样归零，
 	# 否则「0 == 0」会跳过 set_steps，再开一次时间轴页签就是空白。
@@ -138,7 +173,7 @@ func _open_steps_editor(i: int) -> void:
 	_steps_preview_asset = ""
 	_steps_preview_frames = []
 	_steps_preview_idx = -1
-	_steps_audio = ""
+	_steps_audio = {}
 	# E1：同一份内容再开 → 恢复步骤/视图/播放头（下标在 _rebuild 里按当前步数收敛）
 	var mem: Dictionary = _steps_mem.get(_mem_key(FunctionDecls.fn_code(manifest, fn_id), _steps_cid), {})
 	_steps_sel_expect = ""
@@ -177,6 +212,8 @@ func _steps_mount(mem: Dictionary) -> void:
 			"演出编辑：%s" % FunctionDecls.function_name(manifest, _steps_fn_id),
 			"步骤按 at/duration/track 排布；列表保序、时间轴可拖")
 		_steps_pop = shell.pop
+		if GamePreview.supports(manifest, TIMELINE_FRAME):
+			FrameDialog.keep_on_focus_loss(_steps_pop)
 		body = shell.body
 	# 搬家会换 TimelineView 实例：版本缓存必须归零，否则新视图跳过 set_steps 显示空白
 	_steps_tl_rev = -1
@@ -187,6 +224,17 @@ func _steps_mount(mem: Dictionary) -> void:
 		_build_steps_head(head)
 	else:
 		_build_steps_popup_head(body)
+	if _project_target:
+		var select: OptionButton = host._form.reference_context_selector(_reference_context, func(key: String) -> bool:
+			if not _steps_identity_ok() or not _flush_pending():
+				return false
+			_reference_context = key
+			_rebuild_steps_all()
+			return true)
+		if select.item_count > 1:
+			body.add_child(Kit.field_row("本图候选", select, 96))
+		else:
+			select.free()
 	_build_steps_tabs(body)
 	body.add_child(_steps_list)
 	body.add_child(_steps_tl_box)
@@ -199,7 +247,18 @@ func _steps_mount(mem: Dictionary) -> void:
 	# 视图按起手时的结构版本发请求：宿主据此丢弃过期拖拽（D1）
 	_steps_tl.step_change_requested.connect(func(idx: int, revision: int, patch: Dictionary):
 		_on_step_change_requested(idx, revision, patch))
-	_steps_tl.playhead_changed.connect(func(v: float): _on_playhead_changed(v))
+	_audio_preview = AudioPreview.new()
+	_steps_tl.add_child(_audio_preview)
+	_audio_preview.position_changed.connect(_set_preview_position)
+	_audio_preview.transport_changed.connect(_sync_transport_button)
+	_steps_tl.playhead_changed.connect(func(v: float):
+		_audio_preview.seek(v)
+		_on_playhead_changed(v))
+	var timeline := _steps_tl
+	var transport := _audio_preview
+	timeline.visibility_changed.connect(func():
+		if is_instance_valid(transport) and not timeline.is_visible_in_tree():
+			transport.stop())
 	_steps_scroll = ScrollContainer.new()
 	_steps_scroll.custom_minimum_size = Vector2(0, 120)
 	_steps_scroll.add_child(_steps_tl)
@@ -209,9 +268,16 @@ func _steps_mount(mem: Dictionary) -> void:
 		if slot != null:
 			slot.visible = true
 	else:
-		_steps_pop.popup_hide.connect(func():
-			# E1：关面板前记下定位，下次打开同一份内容时回到原处
-			_steps_remember()
+		var mounted := _steps_pop
+		mounted.popup_hide.connect(func():
+			# 主动拆卸或切画布选点时，调用方已处理提交与定位。
+			if _steps_pop == mounted:
+				if _steps_identity_ok() and not _flush_pending():
+					app._set_status("关闭演出时未能保存当前步骤，请重开检查。")
+				_steps_remember()
+				_steps_pop = null
+			_stop_audio_preview()
+			_pending_commits.clear()
 			if host._is_view_visible():
 				_rebuild_right())
 	_rebuild_steps_all()
@@ -352,6 +418,10 @@ func _dock_and_show(where: String) -> void:
 
 ## 拆掉当前宿主里的内容（控件归宿主所有；控制器状态不动）
 func _teardown_steps_host() -> void:
+	_stop_audio_preview()
+	_audio_preview = null
+	_audio_button = null
+	_pending_commits.clear()
 	if _steps_pop != null and is_instance_valid(_steps_pop):
 		var old_pop: PopupPanel = _steps_pop
 		_steps_pop = null
@@ -380,6 +450,8 @@ func _teardown_steps_host() -> void:
 ## 收起停靠面板（相当于关弹窗：先记定位）。形态记忆保留——下次「编辑演出」仍停靠。
 ## 只有内容页在屏上才重建右栏（刷新「演出步骤」摘要）；在画布上收起不该动表单。
 func _steps_close_dock() -> void:
+	if not host.commit_fields():
+		return
 	_steps_remember()
 	_teardown_steps_host()
 	if host._is_view_visible():
@@ -471,7 +543,56 @@ func _build_steps_tabs(parent: Control) -> void:
 		b.button_group = grp
 		b.set_meta("view", str(pair[1]))
 		_steps_tabs.add_child(b)
+	if GamePreview.supports(manifest, TIMELINE_FRAME):
+		var render := Kit.button("游戏演出画面…", _open_game_frame, "ghost")
+		render.name = "TimelineGamePreview"
+		render.tooltip_text = "用游戏渲染播放头所在时刻；使用已应用的步骤和当前暂存内容。"
+		_steps_tabs.add_child(render)
 	parent.add_child(_steps_tabs)
+
+func _open_game_frame() -> void:
+	if not _steps_identity_ok() or not is_instance_valid(_steps_tl):
+		return
+	_stop_audio_preview()
+	var timeline := _steps_tl
+	var current_manifest := manifest
+	var session = app._map_file_ctrl.sess
+	var generation: int = session.generation
+	var valid := func() -> bool:
+		return is_instance_valid(timeline) and is_same(_steps_tl, timeline) \
+			and is_same(manifest, current_manifest) and _steps_identity_ok() and not session.stale(generation)
+	var capture := func(preset: String) -> Dictionary:
+		# Read without updating the form's optimistic write baseline.
+		var data: Dictionary = host.read_content_staged(_steps_fn_id, _steps_cid) if _steps_cid != "" else _steps_data()
+		if data.is_empty():
+			return {"error": "演出内容无法读取。"}
+		var raw := timeline.playhead
+		var r := TimelineClock.from_decl(manifest, _steps_fn_id, data)
+		var clock := TimelineClock.new(r.get("timebase", "seconds"), r.get("cfg", {}))
+		var moment := {"value": raw, "unit": clock.timebase, "seconds": null}
+		var seconds := clock.seconds_at(raw)
+		if clock.is_ready() and is_finite(seconds):
+			moment["seconds"] = seconds
+		var subject := {"function": _steps_fn_id, "content": _steps_cid, "data": data, "time": moment,
+			"manifest": app._manifest_write_payload(manifest), "viewportId": preset}
+		if not _project_target and app.map_loaded:
+			var context := MapGamePreview.map_context(app)
+			if context.is_empty():
+				return {"error": "地图正在重建，请稍后重试。"}
+			subject.merge(context)
+			subject["instance"] = _steps_ent
+			subject["bindingId"] = str(_steps_binding.get("bindingId", ""))
+			subject["bindingIndex"] = _steps_i
+		var revision: int = session.revision
+		var matches := func() -> bool:
+			return session.revision == revision and timeline.playhead == raw \
+				and (_steps_cid == "" or host.read_content_staged(_steps_fn_id, _steps_cid) == data)
+		return {"subject": subject, "default_size": Vector2(1280, 720), "current": matches,
+			"summary": " · %.3f %s" % [raw, clock.timebase]}
+	FrameDialog.open(app, TIMELINE_FRAME, {"title": "游戏演出画面预览", "button": "渲染播放头",
+		"hint": "取当前播放头、已应用的演出内容和本图暂存数据，交给游戏渲染一帧。",
+		"prefix": "TimelineGamePreview", "default_label": "默认 1280 × 720",
+		"initial": "关闭此窗口可回到时间轴，移动播放头后再取样。"}, capture, valid)
 
 func _set_steps_view(mode: String) -> void:
 	if mode != "list" and mode != "timeline":
@@ -487,7 +608,7 @@ func _sync_steps_tabs() -> void:
 		return
 	for c in _steps_tabs.get_children():
 		var b := c as Button
-		if b != null:
+		if b != null and b.has_meta("view"):
 			b.button_pressed = str(b.get_meta("view", "")) == _steps_view
 
 ## 时间轴名称回调：未知码原样返回（视图据此画 ⚠）。
@@ -520,6 +641,8 @@ func _steps_pick_tl(idx: int) -> void:
 ## （换实例/换内容 = 数据源失效）。空绑定也必须过实例这一关：下标 i 在另一个实例上
 ## 可能照样合法，只比下标会把值写进别人的内容。
 func _steps_identity_ok() -> bool:
+	if _project_target:
+		return is_same(_project_manifest, app.manifest) and _steps_cid != ""
 	if _steps_map != "" and _steps_map != _current_map_key():
 		return false   # R23：切图后旧面板令牌失效（同码实例/同类空绑定也判失效）
 	if _steps_ent != "" and str(host._selected_ent) != _steps_ent:
@@ -553,7 +676,9 @@ func _steps_data() -> Dictionary:
 	# R05：读工作副本时记下磁盘摘要（写回基线）；staged 条目 digest 为空（不比对）。
 	var rd: Dictionary = host.read_content_staged_ex(_steps_fn_id, _steps_cid)
 	_steps_base = str(rd.get("digest", ""))
-	return (rd.get("data", {}) as Dictionary) if rd.get("data", null) is Dictionary else {}
+	var data: Dictionary = rd.get("data", {})
+	_project_scope = _project_target or data.get("scope") == "project"
+	return data
 
 ## 工作副本写回：**首次实际改动时才预留内容 ID**（D1）；内容写盘失败给可见反馈。
 func _steps_write(data: Dictionary) -> bool:
@@ -635,7 +760,10 @@ func _sync_steps_clock(data: Dictionary) -> void:
 		_steps_clock_missing = []
 		_steps_preview_asset = ""
 		_steps_preview_frames = []
-		_steps_audio = ""
+		_steps_audio = {}
+		_stop_audio_preview()
+		if is_instance_valid(_steps_tl):
+			_steps_tl.set_reference_audio(0.0, PackedVector2Array())
 		return
 	var r: Dictionary = TimelineClock.from_decl(manifest, _steps_fn_id, data)
 	_steps_clock = TimelineClock.new(str(r.get("timebase", "seconds")), r.get("cfg", {}))
@@ -650,10 +778,50 @@ func _sync_steps_clock(data: Dictionary) -> void:
 		var fr = ad.get("frames", null)
 		if fr is Array:
 			_steps_preview_frames = fr
-	# 音频：只显示已选音频名，不加载不播放（D2 只做对齐参考）
-	_steps_audio = str(fields.get(str(refs.get("audioField", "")), ""))
-	if _steps_tl != null and is_instance_valid(_steps_tl):
+	var audio_value := str(fields.get(str(refs.get("audioField", "")), ""))
+	_steps_audio = AudioDecls.from_value(manifest, audio_value)
+	if audio_value != "" and _steps_audio.is_empty():
+		_steps_clock_missing.append("音频码无法解析：%s" % audio_value)
+	if is_instance_valid(_steps_tl):
 		_steps_tl.set_clock(_steps_clock)
+		if not _steps_audio.is_empty():
+			_audio_preview.configure(str(manifest.get("_dir", "")), _steps_audio, _steps_clock)
+			if _audio_preview.is_available():
+				_steps_tl.set_reference_audio(_audio_preview.length, _audio_preview.waveform)
+			else:
+				_steps_tl.set_reference_audio(0.0, PackedVector2Array())
+		else:
+			_stop_audio_preview()
+			_steps_tl.set_reference_audio(0.0, PackedVector2Array())
+
+func _stop_audio_preview() -> void:
+	if is_instance_valid(_audio_preview):
+		_audio_preview.stop()
+
+func _sync_transport_button() -> void:
+	if is_instance_valid(_audio_button):
+		_audio_button.text = "暂停试听" if is_instance_valid(_audio_preview) and _audio_preview.active else "试听"
+
+func _set_preview_position(value: float) -> void:
+	if not is_instance_valid(_steps_tl) or not _steps_identity_ok():
+		_stop_audio_preview()
+		return
+	_steps_tl.playhead = value
+	_steps_tl.queue_redraw()
+	_steps_tl.follow_playhead()
+	_on_playhead_changed(value)
+
+func _toggle_audio_preview() -> void:
+	if not _steps_identity_ok() or not is_instance_valid(_audio_preview):
+		return
+	if _audio_preview.active:
+		_audio_preview.stop()
+	elif not _audio_preview.play_from(_steps_tl.playhead):
+		app._set_status("播放头已到音频末尾；请先回到起点或选一处拍点。")
+
+func _rewind_audio_preview() -> void:
+	_set_preview_position(0.0)
+	_audio_preview.seek(0.0)
 
 ## 播放头移动：帧基下换算成整数帧号给表单预览；秒/拍基只显示时间换算。
 ## 只刷参考帧行与读数——整表重建会清掉用户正在输入的控件。
@@ -780,6 +948,7 @@ func _rebuild_steps_form(arr: Array) -> void:
 	_pending_commits.clear()
 	_steps_frame_holder = null   # 参考帧行随旧表单一起释放
 	_steps_playhead_label = null
+	_audio_button = null
 	for c in box.get_children():
 		box.remove_child(c)
 		c.queue_free()
@@ -878,7 +1047,7 @@ func _step_field_row(fd: Dictionary, sfd: Dictionary, siblings: Array, shown: Di
 	var tip := FieldWidgets.decl_tooltip(fd)
 	if tip != "":
 		row.tooltip_text = tip
-	if FieldWidgets.wants_canvas_pick(fd):
+	if FieldWidgets.wants_canvas_pick(fd) and (not _project_scope or tk != "") and host._form.can_pick_on_canvas(tk):
 		var pick := Kit.button("画布选…", func(): _pick_step_ref(fd, apply), "ghost")
 		pick.tooltip_text = "临时切到画布点一个实例；确认才写入这一步，取消不改当前值" \
 			if not FieldWidgets.wants_edge_pick(fd) else "临时切到画布点一条格边；确认才写入这一步，取消不改当前值"
@@ -894,18 +1063,21 @@ func _step_field_row(fd: Dictionary, sfd: Dictionary, siblings: Array, shown: Di
 ## C4 cell: 的 choice = 格图一格（值就是 cell_id 字符串）——与内容表单同一路径。
 func _pick_step_ref(fd: Dictionary, apply: Callable) -> void:
 	var fname := str(fd.get("name", str(fd.get("id", ""))))
-	var is_cell := FieldWidgets.wants_cell_pick(fd)
-	var is_edge := FieldWidgets.wants_edge_pick(fd)
+	var mode := FieldWidgets.pick_mode(fd)
+	var is_cell := mode == "cell"
+	var is_edge := mode == "edge"
 	var of := FieldWidgets.canvas_pick_types(fd)
 	var hint := ("第 %d 步「%s」选一格（格图）" % [_steps_sel + 1, fname]) if is_cell \
 		else (("第 %d 步「%s」选一条格边（靠近格边点）" % [_steps_sel + 1, fname]) if is_edge \
 		else ("第 %d 步「%s」选目标实例" % [_steps_sel + 1, fname] + \
 			("（限定类型：%s）" % ",".join(PackedStringArray(of)) if not of.is_empty() else "")))
+	if mode == "port":
+		hint = "第 %d 步「%s」选目标端口" % [_steps_sel + 1, fname]
 	var on_ok := func(code: String):
 		if code == "":
 			return
-		var value = JSON.parse_string(code) if is_edge else code
-		if not is_edge or value is Dictionary:
+		var value = FieldWidgets.decode_pick(mode, code)
+		if value != null:
 			apply.call(value)
 		_reopen_after_pick()
 	var on_cancel := func(_code: String):
@@ -921,8 +1093,7 @@ func _pick_step_ref(fd: Dictionary, apply: Callable) -> void:
 	_steps_pop = null
 	if old != null and is_instance_valid(old):
 		old.hide()
-	app._begin_canvas_pick("steps", "cell" if is_cell else ("edge" if is_edge else "entity"),
-		hint, on_ok, on_cancel, [] if (is_cell or is_edge) else of)
+	app._begin_canvas_pick("steps", mode, hint, on_ok, on_cancel, of)
 
 ## 选点归来：重开同一个绑定行的演出面板（步骤/视图/播放头由 _steps_mem 恢复）。
 ## 期间实例/绑定换了（身份校验失败）就不重开——对着另一条绑定弹出旧面板更糟。
@@ -933,7 +1104,10 @@ func _reopen_after_pick() -> void:
 	if _steps_dock_where != "popup" and _steps_list != null and is_instance_valid(_steps_list):
 		_rebuild_steps_all()
 		return
-	_open_steps_editor(_steps_i)
+	if _project_target:
+		open_content(_steps_fn_id, _steps_cid)
+	else:
+		_open_steps_editor(_steps_i)
 
 ## 时间换算读数（D2）：非秒基下显示「= 起 .. 止 s」，秒基返回空串。
 ## 只做对齐参考；缺项（时钟不可用）时不显示，避免给出假秒数。
@@ -1090,11 +1264,23 @@ func _steps_clock_box(arr: Array, shown: Dictionary) -> Control:
 	# 参考帧预览（帧基专有）：播放头帧号取整，越界显式提示（从第 0 帧计数）
 	if tb == "frames" and not _steps_preview_frames.is_empty():
 		box.add_child(_steps_frame_preview())
-	if _steps_audio != "":
-		var an := AudioDecls.audio_decl(manifest, _steps_audio)
-		var sec0: float = float(_steps_clock.seconds_at(0.0))
-		box.add_child(Kit.hint_label("♪ 参考音频：%s（只对齐，不播放；0 %s 对应 %.3f s）" % [
-			str(an.get("name", _steps_audio)), "秒" if tb == "seconds" else ("帧" if tb == "frames" else "拍"), sec0], 320))
+	if not _steps_audio.is_empty() and is_instance_valid(_audio_preview):
+		box.add_child(Kit.hint_label("♪ %s · 0 %s 对应 %.3f s" % [
+			str(_steps_audio.get("name", "")), unit, _steps_clock.seconds_at(0.0)], 320))
+		if _audio_preview.is_available() and _steps_view == "timeline":
+			var transport := Kit.hbox(6)
+			_audio_button = Kit.button("试听", _toggle_audio_preview)
+			transport.add_child(_audio_button)
+			_sync_transport_button()
+			transport.add_child(Kit.button("回到起点", _rewind_audio_preview, "ghost"))
+			if _steps_sel >= 0:
+				var place := Kit.button("步骤移到播放头", func():
+					var at := snappedf(_steps_tl.playhead, _steps_clock.snap_step())
+					_apply_time_patch(shown, {"at": at}, []), "ghost")
+				transport.add_child(place)
+			box.add_child(transport)
+		elif _audio_preview.error != "":
+			box.add_child(Kit.hint_label(_audio_preview.error, 320))
 	return box
 
 ## 参考帧预览：帧基下按播放头帧索引显示该资产声明的一帧；无播放头时显示第 0 帧。
@@ -1242,7 +1428,20 @@ func _set_step_field(shown: Dictionary, key: String, value, rev := -1, check_pai
 		_steps_list_snapshot[si] = st.duplicate(true)
 	if is_instance_valid(_steps_tl) and _steps_tl.steps == previous:
 		_steps_tl.steps[si] = st.duplicate(true)
+	var preview = FunctionDecls.function_decl(manifest, _steps_fn_id).get("timePreview")
+	if preview is Dictionary and preview.has("tempoStep") and preview.has("bpmField"):
+		var tempo := StepDecls.step_decl(manifest, str(preview.tempoStep))
+		if str(tempo.get("code", "")) == str(st.get("step", "")):
+			for fd in tempo.get("fields", []):
+				if fd is Dictionary and fd.get("id") == preview.bpmField and fd.get("code") == key:
+					_refresh_tempo_controls.call_deferred(_steps_form, _steps_rev, si)
+					break
 	return true
+
+func _refresh_tempo_controls(form: Control, revision: int, index: int) -> void:
+	if is_instance_valid(form) and form.is_visible_in_tree() and is_instance_valid(_steps_tl) \
+			and form == _steps_form and revision == _steps_rev and index == _steps_sel:
+		_rebuild_steps_form_from_data()
 
 ## 添加步骤：追加到末尾并选中。
 func _reload_steps() -> void:

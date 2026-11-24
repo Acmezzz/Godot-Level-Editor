@@ -114,6 +114,28 @@ func test_whole_map_copy_keeps_edge_local() -> void:
 	var e_third: Dictionary = (rows[1] as Dictionary).props.E
 	eq(str(e_third.get("map")), "MAP9", "显式第三图原样保留")
 
+func test_nested_paired_port_and_edge_keep_their_resolved_map() -> void:
+	var m := {"assets": [{"id": "gate", "kind": "entity", "fields": [
+		{"id": "links", "type": "array", "of": "record", "fields": [
+			{"id": "target_map", "type": "map_ref"},
+			{"id": "instance", "type": "entity_ref", "mapField": "target_map"},
+			{"id": "port", "type": "port_ref", "mapField": "target_map"},
+			{"id": "edge", "type": "edge_ref", "mapField": "target_map"}]}]}]}
+	var row := {"asset": "gate", "code": "SELF", "props": {"links": [
+		{"target_map": "MAP9", "instance": "SELF", "port": {"map": "", "inst": "SELF", "port": "in"},
+			"edge": EdgeRef.value_of("", Vector2i(1, 1), Vector2i(2, 1))},
+		{"target_map": "", "instance": "SELF", "port": {"map": "", "inst": "SELF", "port": "in"},
+			"edge": EdgeRef.value_of("", Vector2i(1, 1), Vector2i(2, 1))}]}}
+	var dst := {"meta": {"code": "MAP2"}}
+	var copy := ClonePlan.remap_row(row, {"SELF": "NEW1"}, {}, m, "MAP1", {"SELF": true},
+		[], dst, "target", "MAP1", "source")
+	var foreign: Dictionary = copy.props.links[0]
+	var local: Dictionary = copy.props.links[1]
+	eq([foreign.port.map, foreign.port.inst, foreign.edge.map], ["MAP9", "SELF", "MAP9"],
+		"跨图配对优先：即使实例同码也不重映射")
+	eq([local.target_map, local.port.map, local.port.inst, local.edge.map], ["MAP2", "MAP2", "NEW1", "MAP1"],
+		"端口随复制对象走，格边留在源图，避免与配对地图冲突")
+
 ## 候选：只列「两侧都有瓦片」的相邻格对，按规范边去重（两条相反方向的边只出一项）
 func test_edge_candidates_of_occupied_cells() -> void:
 	# 3 个格连成一条横线：两条边；再放对角格（不相邻）不产生边

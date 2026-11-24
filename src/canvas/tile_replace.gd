@@ -12,12 +12,14 @@ extends RefCounted
 
 ## 选区里出现过的瓦片资产 id（去重，按首见顺序）。入口用它列出「源资产」候选——
 ## 不能再用 collect(cvs, sel, "") 反推：collect 的 src_asset 为空时按契约返回空表。
-static func sources_in(cvs, sel: Rect2i) -> Array:
+static func sources_in(cvs, sel: Rect2i, selection_layer := "") -> Array:
 	var out: Array = []
 	if sel.size.x <= 0 or sel.size.y <= 0:
 		return out
 	var seen := {}
 	for li in cvs.layer_tiles.size():
+		if selection_layer != "" and cvs.layer_id(li) != selection_layer:
+			continue
 		var layer: TileMapLayer = cvs.layer_tiles[li]
 		if layer == null or not is_instance_valid(layer):
 			continue
@@ -32,13 +34,13 @@ static func sources_in(cvs, sel: Rect2i) -> Array:
 
 ## 扫描选区：只收匹配 src_asset（且给定 src_cell 时匹配该切片）的瓦片格。
 ## 返回 [{c, layer: 层id, src: TileSet source_id, atlas, alt}]——供计划与预览共用。
-static func collect(cvs, sel: Rect2i, src_asset: String, src_cell := Vector2i(-1, -1)) -> Array:
+static func collect(cvs, sel: Rect2i, src_asset: String, src_cell := Vector2i(-1, -1), selection_layer := "") -> Array:
 	var out: Array = []
 	if src_asset == "" or sel.size.x <= 0 or sel.size.y <= 0:
 		return out
 	for li in cvs.layer_tiles.size():
 		var lid: String = cvs.layer_id(li)
-		if lid == "":
+		if lid == "" or (selection_layer != "" and lid != selection_layer):
 			continue
 		var layer: TileMapLayer = cvs.layer_tiles[li]
 		# P05：只走该层实际存在的格再按选区过滤，不按面积 × 层数扫描

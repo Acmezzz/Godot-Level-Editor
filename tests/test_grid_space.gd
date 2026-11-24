@@ -4,6 +4,39 @@ extends "res://tests/_suite_base.gd"
 const GridSpaceScript := preload("res://src/canvas/grid_space.gd")
 const CollisionTypes := preload("res://src/assets/collision_types.gd")
 const MapViewData := preload("res://src/map/map_view_data.gd")
+const MapResize := preload("res://src/ui/map_resize.gd")
+const LayerConvert := preload("res://src/map/tile_layer_convert.gd")
+
+func test_tile_layer_migration_reports_conflicts_without_mutating_source() -> void:
+	var tri := GridSpaceScript.new()
+	tri.set_topology("triangles")
+	var ortho := GridSpaceScript.new()
+	var cells := [[2, 1, "art", 3, 4, 5], [3, 1, "art", 2, 0, 0], [5, 1, "art", 0, 0, 0]]
+	var before := cells.duplicate(true)
+	var center := LayerConvert.plan(cells, tri, ortho, Vector2i(2, 3), true)
+	eq(center.collisions, 1, "adjacent half-cells can share a target cell")
+	eq(center.outside, 1, "target map width excludes the third half-cell's center")
+	ok(center.examples.size() == 2, "show each failure when the list is short")
+	var indexed := LayerConvert.plan(cells, tri, ortho, Vector2i(8, 3), false)
+	eq(indexed.rows, before, "preserve source indices and the entire tile row")
+	var converted := LayerConvert.plan([cells[0]], tri, ortho, Vector2i(8, 3), true)
+	eq(converted.rows, [[1, 1, "art", 3, 4, 5]], "center mode moves the index and keeps atlas/alt")
+	eq(cells, before, "neither plan modifies source data")
+
+func test_tile_layer_grid_does_not_inherit_topology_or_crop_by_root_columns() -> void:
+	var ground := {"id": "lower"}
+	var upper := {"id": "upper", "tileGrid": {"gridProjection": "orthogonal", "gridTopology": "triangles"}}
+	var root := GridSpaceScript.new(Vector2i(16, 16), "hexagonal")
+	eq(GridSpaceScript.resolve_tile_layer(ground, {}, root).grid, root, "absence inherits the exact root grid")
+	var own := GridSpaceScript.resolve_tile_layer(upper, {}, root)
+	ok(own.issues.is_empty() and own.grid.is_tri() and not own.grid.is_hex_geom(), "triangle layer on a hex map")
+	var invalid := GridSpaceScript.resolve_tile_layer({"tileGrid": {"gridTopology": "triangles"}}, {}, root)
+	ok(not invalid.issues.is_empty(), "standalone layer grid requires an explicit projection")
+	var d := {"meta": {"w": 10, "h": 8, "layers": [ground, upper]}, "tiles": {
+		"lower": [[7, 2, "art", 0, 0, 0]], "upper": [[7, 2, "art", 0, 0, 0], [8, 2, "art", 0, 0, 0]]}}
+	var cropped := MapResize.plan(d, 4, 8, false)
+	eq(cropped.crop.tiles, 2, "the root and independent layer use separate column counts")
+	eq(cropped.map.tiles.upper, [[7, 2, "art", 0, 0, 0]], "the last valid half-column is preserved")
 
 func test_grid_orthogonal() -> void:
 	var g = GridSpaceScript.new(Vector2i(16, 16), "orthogonal")
@@ -51,9 +84,9 @@ func test_grid_primitives_ortho() -> void:
 		if segs[k].x == segs[k + 1].x:
 			has_vert = true
 	ok(has_vert, "正交格线含竖线")
-	# R22：shift_cell 正交下与原始格号相加严格等价
-	eq(g.shift_cell(Vector2i(3, 4), Vector2i(2, -1)), Vector2i(5, 3), "正交 shift = 直接相加")
-	eq(g.shift_cell(Vector2i(-2, 0), Vector2i(1, 3)), Vector2i(-1, 3), "正交 shift 负格号也等价")
+	var offset := g.relative_cell(Vector2i(5, 3), Vector2i(3, 4))
+	eq(offset, Vector2i(2, -1), "正交区域相对位置等于坐标差")
+	eq(g.cell_from_offset(Vector2i(-2, 0), offset), Vector2i(0, -1), "正交区域允许负坐标往返")
 
 func test_grid_primitives_iso() -> void:
 	var g = GridSpaceScript.new(Vector2i(16, 16), "isometric")
@@ -87,10 +120,14 @@ func test_grid_hex() -> void:
 	eq(gp, PackedVector2Array([Vector2(0, 0), Vector2(32, 0), Vector2(32, 16), Vector2(0, 16)]), "六边格矩形 = 四角 cell 包围盒")
 	var segs: PackedVector2Array = g.grid_lines(Rect2(0, 0, 48, 48), Rect2i(0, 0, 3, 3))
 	ok(segs.size() == 80, "六边格线 40 段 = 80 点")
-	# R22：shift_cell 经像素几何平移——odd-r 行错位在平移里保持（奇行跨奇数行数列 +1）
-	eq(g.shift_cell(Vector2i(0, 0), Vector2i(0, 1)), Vector2i(0, 1), "六边 shift (0,1) 命中 (0,1)")
-	eq(g.shift_cell(Vector2i(3, 1), Vector2i(0, 1)), Vector2i(4, 2), "六边奇行跨行平移列补偿 +1")
-	eq(g.shift_cell(Vector2i(3, 0), Vector2i(0, 1)), Vector2i(3, 1), "六边偶行跨行平移列不变")
+	var origin := Vector2i(3, 0)
+	var target := Vector2i(6, 3)
+	var delta := g.region_origin_px(target) - g.region_origin_px(origin)
+	for cell in [origin, Vector2i(3, 1), Vector2i(4, 2), Vector2i(2, 3)]:
+		var offset := g.relative_cell(cell, origin)
+		var shifted := g.cell_from_offset(target, offset)
+		eq(g.region_origin_px(shifted) - g.region_origin_px(cell), delta, "六边跨奇偶行保持刚体平移")
+		eq(g.cell_from_offset(origin, g.relative_cell(shifted, target)), cell, "六边区域偏移可逆")
 
 func test_grid_rect_cells() -> void:
 	var g = GridSpaceScript.new(Vector2i(32, 16), "orthogonal")
@@ -258,8 +295,10 @@ func test_grid_triangles() -> void:
 	ok(g.grid_lines(Rect2(-8, -8, 48, 48), Rect2i(0, 0, 2, 2)).size() >= 12, "三角网格线含外框/内线/对角线")
 	# V4 P1：三角列与连续格列不能混用——位移/所在格/范围/边界全部折半
 	eq(g.delta_px(Vector2i(2, 0)), Vector2(16, 0), "两个三角列 = 一个平行四边形列宽")
-	eq(g.shift_cell(Vector2i(0, 0), Vector2i(2, 0)), Vector2i(2, 0), "三角位移 (2,0) = 同排下一个偶半格")
-	eq(g.shift_cell(Vector2i(0, 0), Vector2i(0, 1)), Vector2i(0, 1), "三角竖移一格")
+	var tri_origin := g.region_origin(Vector2i(3, 1), 0)
+	eq(tri_origin, Vector2i(2, 1), "目标半格吸附到源朝向")
+	var tri_offset := g.relative_cell(Vector2i(1, 2), Vector2i.ZERO)
+	eq(g.cell_from_offset(tri_origin, tri_offset), Vector2i(3, 3), "三角平移保留每格朝向")
 	eq(g.cell_of_continuous(Vector2(0.25, 0.25)), Vector2i(0, 0), "连续坐标左下 → 偶半格")
 	eq(g.cell_of_continuous(Vector2(0.75, 0.75)), Vector2i(1, 0), "连续坐标右上 → 奇半格")
 	eq(g.cell_origin_continuous(Vector2i(3, 2)), Vector2(1, 2), "三角列 3 → 平行四边形列 1")

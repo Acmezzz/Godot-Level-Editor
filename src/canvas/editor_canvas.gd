@@ -21,6 +21,7 @@ const TriTileViewScript := preload("res://src/canvas/tri_tile_view.gd")   # B3�
 const MapFormat := preload("res://src/map/map_format.gd")   # 格式版本/瓦片变换位（v7）
 const FunctionDeclsRef := preload("res://src/content/function_decl.gd")   # 挂载补齐（C09）
 const CellGraphScript := preload("res://src/map/cell_graph.gd")   # C4：有限格图（多边形命中）
+const MapViewData := preload("res://src/map/map_view_data.gd")
 const EdgeRefScript := preload("res://src/map/edge_ref.gd")   # §7.4：格边身份（规范代表边）
 const RefFieldsScript := preload("res://src/content/ref_fields.gd")   # §7.4：边候选与内容表单共用口径
 
@@ -67,8 +68,9 @@ var map_root: Node2D
 # 树序 = 栈序（底→顶），碰撞网格与红叠加在栈外（永远画在最上）。
 var layer_tiles: Array = []
 var layer_ents: Array = []
-## B3 三角拓扑：每层一个自绘视图（与 layer_tiles 同序；非三角拓扑时为空）
+## 需要自绘的瓦片层在对应下标拥有绘制视图；原生瓦片层对应 null。
 var tri_views: Array = []
+var tile_grids: Array[GridSpace] = []
 var spawn: Marker2D
 var tile_set: TileSet
 var atlas_tex: Texture2D
@@ -208,6 +210,7 @@ var _active_lid_before := ""
 
 # —— 装载地图数据 ——
 func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty := false) -> void:
+	_geometry_draw.cancel()
 	# E1：同图重建（撤销恢复/尺寸调整）按层码找回原激活层——必须在换掉 map_data
 	# **之前**取层码，否则读到的是新图的层栈配旧下标。
 	var same_map_reload := str(cur_map_name) == map_name and keep_cam
@@ -235,6 +238,7 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	# undo（keep_dirty=true）恢复的是同一张图，保留锁定状态不被误清。
 	_paste_mode = false
 	_region_sel = Rect2i(-1, 0, 0, 0)
+	_region_layer = ""
 	# 剪贴板是纯数据快照（E12）：切图后仍可用，不随载图清空
 	# （区域剪贴板自带源图名/码，跨图粘贴时据此补配对地图字段）。
 	_collision_meta.clear()
@@ -276,9 +280,7 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	var meta: Dictionary = data.get("meta", {})
 	# 分层身份码：地图段。老图没有就补发（保存在 meta.code，地图改名不影响它）。
 	# 统一走项目级分配器，避免新图与缺码老图撞上同码后互相覆盖（D08）。
-	if str(meta.get("code", "")) == "":
-		if MapStoreRef.ensure_code(manifest, data):
-			map_data = data
+	var issued_map_code := MapStoreRef.ensure_code(manifest, data)
 	# 图层栈：meta.layers 缺失/为空时补默认两层（资产层/FL）——不是旧数据迁移，
 	# 是新建图的同款默认；层词汇逐图声明。
 	var dl = meta.get("layers", null)
@@ -315,10 +317,13 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	layer_tiles.clear()
 	layer_ents.clear()
 	tri_views.clear()
+	tile_grids.clear()
 	_layer_has_tiles.clear()   # 层栈整体重建：按层下标的瓦片存在缓存全部作废
 	var L := layers_decl()
 	for li in L.size():
 		var ld: Dictionary = L[li] if L[li] is Dictionary else {}
+		var layer_grid: GridSpace = GridSpaceScript.resolve_tile_layer(ld, manifest, grid).grid
+		tile_grids.append(layer_grid)
 		var ly := bool(ld.get("ySort", false))
 		var root := Node2D.new()
 		root.name = "Layer%d" % li
@@ -334,31 +339,31 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 		ysp.add_child(tn)
 		# B3：三角拓扑（半格三角）与斜基（gridBasis 平行四边形）都没有原生 tile_shape，
 		# 叠一个自绘视图；数据仍住在 tn（V4 P1：斜基此前走原生预设，格线与瓦片错位）
-		if grid != null and (grid.is_tri() or grid.has_basis):
+		var custom_view: bool = layer_grid != null and (layer_grid != grid or layer_grid.is_tri() or layer_grid.has_basis)
+		if custom_view:
 			var tv := TriTileViewScript.new()
 			tv.name = "TriTiles"
-			tv.setup(tn, grid, self)
+			tv.setup(tn, layer_grid, self)
 			ysp.add_child(tv)
 			tri_views.append(tv)
 			tn.visible = false   # 数据节点不显示；可见性由自绘层跟随层显隐
+		else:
+			tri_views.append(null)
 		var above := Node2D.new()
 		above.name = "Above"
 		root.add_child(below)
 		root.add_child(ysp)
 		root.add_child(above)
 		# 层参数预览：offset/scale 作用在层容器；parallax 在 _update_cam 里叠加相机位移
-		var off = ld.get("offset", null)
-		if off is Array and (off as Array).size() >= 2:
-			root.position = Vector2(float((off as Array)[0]), float((off as Array)[1]))
-		var sc = ld.get("scale", null)
-		if sc is int or sc is float:
-			root.scale = Vector2.ONE * float(sc)
+		root.transform = MapViewData.layer_transform_of(ld)
 		root.set_meta("parallax", float(ld.get("parallax", 1.0)))
 		# 层混合模式（v7/E11）：材质挂到**实际绘制内容的子节点**（Below/YSort/Above/瓦片层），
 		# 根节点只是容器不画东西——挂根上子节点不继承，混合模式等于没生效。
 		var blend := str(ld.get("blend", "mix"))
 		if blend == "add" or blend == "mul":
-			for dn in [below, ysp, tn, above]:
+			for dn in [below, ysp, tn, above, tri_views.back()]:
+				if dn == null:
+					continue
 				var mat := CanvasItemMaterial.new()
 				mat.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD if blend == "add" \
 					else CanvasItemMaterial.BLEND_MODE_MUL
@@ -433,6 +438,7 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	# 位置 = 浮点格坐标 + anchor 换算；transform/visible/zPolicy 缺省整键省略。
 	# 行→节点转换与撤销差量共用一份（_undo_history_ctrl._node_from_row），这里只补 C09 挂载。
 	var mount_filled := false
+	var issued_instance_code := false
 	for e in data.get("objects", []):
 		if not (e is Dictionary):
 			continue
@@ -440,6 +446,7 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 		if aid == "":
 			continue
 		var n: EntityNode = _undo_history_ctrl._node_from_row(e)
+		issued_instance_code = issued_instance_code or (n.code != "" and str(e.get("code", "")) == "")
 		# C09：载图即补齐类型挂载（只在工作副本上，不碰选中事件）；缺的补一条 mounted 行并标脏
 		if n.is_entity():
 			var fill := FunctionDeclsRef.fill_bindings(manifest, aid, n.functions)
@@ -467,7 +474,7 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	# keep_dirty：撤销/重做恢复路径不抹脏标记（快照恢复后内容与磁盘
 	# 不一致就是脏的），普通载入清零；emit 只在这里发一次，undo/redo 不再自己发。
 	# C09：载图补齐过挂载 → 工作副本与磁盘不一致，必须标脏，等作者保存。
-	modified_flag = keep_dirty or mount_filled
+	modified_flag = keep_dirty or mount_filled or issued_map_code or issued_instance_code
 	if mount_filled:
 		_hint("已给实例补齐类型自带功能（挂载）——保存后写入地图")
 	# 换图后层数可能变少：激活层钳回合法区间（0..层栈数，含碰撞元层下标）。
@@ -555,7 +562,13 @@ func _entity_hit_on(li: int, pos: Vector2) -> EntityNode:
 	return _selection_ops_ctrl._entity_hit_in(_layer_entities(li), pos, li)
 
 func _cell_of(pos: Vector2) -> Vector2i:
-	return grid.pick_cell(_active_local(pos))
+	return _active_cell(pos)
+
+func tile_grid_for_layer(i: int) -> GridSpace:
+	return tile_grids[i] if i >= 0 and i < tile_grids.size() else grid
+
+func has_independent_tile_grid(i: int) -> bool:
+	return tile_grid_for_layer(i) != grid
 
 ## —— 层局部坐标（E02）——
 ## 层参数 offset/scale/parallax 作用在层容器上：瓦片格号、实例 position、poly 点集
@@ -635,7 +648,7 @@ func _freeze_projection() -> void:
 
 ## 活动层局部格号（坐标栏/涂刷路径共用）
 func _active_cell(pos: Vector2) -> Vector2i:
-	return grid.pick_cell(_active_local(pos))
+	return tile_grid_for_layer(active_layer).pick_cell(_active_local(pos))
 
 ## 地图已装载且 root 有效（E14：无图时输入/绘制提前返回，不碰坐标换算）
 func is_map_ready() -> bool:
@@ -745,7 +758,7 @@ func _pick_tile(pos: Vector2) -> void:
 		var tn: TileMapLayer = layer_tiles[li]
 		if tn == null or not is_instance_valid(tn):
 			continue
-		var c: Vector2i = grid.pick_cell(to_layer_local(li, pos))
+		var c: Vector2i = tile_grid_for_layer(li).pick_cell(to_layer_local(li, pos))
 		var ac := tn.get_cell_atlas_coords(c)
 		if ac == Vector2i(-1, -1):
 			continue
@@ -845,6 +858,7 @@ var _clipboard: Array = []       # 实例复制模板 [{asset, code, dx, dy, tra
 @warning_ignore("unused_private_class_variable")
 var _clipboard_source := {}      # 源图身份和复制时的内容工作副本
 var _region_sel := Rect2i(-1, 0, 0, 0)  # 区域框选结果（瓦片层 Ctrl+C 用）
+var _region_layer := ""  # 非空表示选区格号属于该瓦片层，而不是地图根空间。
 var _region_clip := {}           # 区域快照 {tiles:{层id:[...]}, collision[], entities[], size}
 var _paste_mode := false         # 区域粘贴预览态（幽灵跟随鼠标）
 # 区域拖动搬迁（框选后按住区内拖动）：按下只快照，松手才擦源写目标
@@ -863,6 +877,7 @@ var _undo_history_ctrl   # UndoHistory：快照式撤销/重做控制器
 var _canvas_draw_ctrl   # CanvasDraw：绘制控制器
 var _canvas_input_ctrl   # CanvasInput：鼠标输入路由控制器
 var _tool_ops_ctrl   # ToolOps：左键/右键语义执行控制器
+var _geometry_draw := preload("res://src/canvas/geometry_draw_tool.gd").new(self)
 ## E2 连线：引用端点拖动（跨控制器读写，分析器看不到类内使用）
 var _ref_ops_ctrl   # RefOps：实例引用字段统一写入口
 @warning_ignore("unused_private_class_variable")
@@ -895,7 +910,7 @@ func commit_selection(n: EntityNode, multi: Array = []) -> void:
 func begin_pick_mode(owner: String, accept: String, hint: String, want_types: Array = []) -> void:
 	pick_mode_active = true
 	pick_mode_owner = owner
-	pick_mode_accept = accept if accept in ["any", "cell", "edge"] else "entity"
+	pick_mode_accept = accept if accept in ["any", "cell", "edge", "port"] else "entity"
 	pick_mode_code = ""
 	pick_mode_hover = ""
 	pick_mode_hint = hint
@@ -914,9 +929,50 @@ func end_pick_mode() -> void:
 
 ## 选点模式下光标处的候选实例码（"" = 不可选）。命中口径与普通选择一致；
 ## accept=entity 时跳过场景实例（它们没有实例码，不能进引用字段）。
+func port_markers() -> Array:
+	var out: Array = []
+	var map_key := cur_map_code()
+	if map_key == "":
+		map_key = cur_map_name
+	var declarations := {}
+	for node in ents_all():
+		var ent := node as EntityNode
+		if ent == null or ent.code == "" or not ent.is_entity() or not ent.is_visible_in_tree():
+			continue
+		if not declarations.has(ent.asset):
+			declarations[ent.asset] = RefFieldsScript.ports_of(AssetDecl.by_id(manifest, ent.asset))
+		for port in declarations[ent.asset]:
+			if not port is Dictionary or str(port.get("id", "")) == "":
+				continue
+			if not pick_mode_types.is_empty() and not pick_mode_types.has(str(port.get("type", ""))):
+				continue
+			var point := port_position(ent, port)
+			out.append({"pos": point, "label": str(port.id),
+				"value": JSON.stringify({"map": map_key, "inst": ent.code, "port": port.id})})
+	return out
+
+func is_local_port_map(key: String) -> bool:
+	return RefFieldsScript.map_key_local(key, cur_map_name, cur_map_code())
+
+func port_position(ent: EntityNode, port: Dictionary) -> Vector2:
+	var basis := Transform2D(ent.data_rotation(), ent.data_scale(), 0.0, Vector2.ZERO)
+	var flip := Vector2(-1 if ent.flipped_h() else 1, -1 if ent.flipped_v() else 1)
+	var offset := Vector2(float(port.x), float(port.y)) * flip
+	var layer := ent.get_parent() as Node2D
+	return layer.to_global(ent.position - ent.sort_anchor() + basis.basis_xform(offset))
+
 func pick_candidate_at(pos: Vector2) -> String:
+	if pick_mode_accept == "port":
+		var distance := pow(11.0 / maxf(zoom, 0.01), 2.0)
+		var nearest := ""
+		for marker in port_markers():
+			var d := pos.distance_squared_to(marker.pos)
+			if d <= distance:
+				distance = d
+				nearest = str(marker.value)
+		return nearest
 	if pick_mode_accept == "cell":
-		return pick_cell_id_at(pos)
+		return pick_cell_id_at(pos, pick_mode_types[0] if not pick_mode_types.is_empty() else null)
 	if pick_mode_accept == "edge":
 		var pe := pick_edge_at(pos)
 		if pe.is_empty():
@@ -935,28 +991,46 @@ func pick_candidate_at(pos: Vector2) -> String:
 	return n.code
 
 ## —— C4：有限格图（meta.cellGraph）接入画布 ——
-## 格图声明的多边形在**根空间**（与出生点同系，不进 v7 整数格）。命中走
-## CellGraph.pick_cell；画布只读不写格图（格图是游戏侧契约）。
+## 格图多边形先从格的局部空间转到地图根空间，再走命中及高亮。
 func cell_graph() -> Dictionary:
 	var meta: Dictionary = map_data.get("meta", {}) if map_data is Dictionary else {}
 	return CellGraphScript.graph_of(meta)
 
 ## 光标世界坐标 → 命中的 cell_id（无格图/未命中返回 ""）。
-func pick_cell_id_at(world: Vector2) -> String:
+func pick_cell_id_at(world: Vector2, space_filter: Variant = null) -> String:
 	var g := cell_graph()
 	if g.is_empty():
 		return ""
 	var lp := world
 	if is_map_ready():
 		lp = map_root.get_global_transform().affine_inverse() * world
-	return CellGraphScript.pick_cell(g, lp)
+	return CellGraphScript.pick_cell(g, lp, space_filter, _cell_layer_frames(g))
+
+func _cell_layer_frames(g: Dictionary) -> Dictionary:
+	var layers := CellGraphScript.bound_layers(g)
+	if layers.is_empty():
+		return {}
+	if not is_map_ready():
+		return MapViewData.layer_transforms(map_data.get("meta", {}).get("layers"))
+	var frames := {}
+	var to_root := map_root.get_global_transform().affine_inverse()
+	for lid in layers:
+		var i := _layer_index_of(lid)
+		if i >= 0:
+			frames[lid] = to_root * layer_xform(i)
+	return frames
+
+func cell_polygon_world(id: String) -> PackedVector2Array:
+	var g := cell_graph()
+	var poly := CellGraphScript.polygon_of(g, id, _cell_layer_frames(g))
+	return map_root.get_global_transform() * poly if is_map_ready() else poly
 
 ## cell_id → 世界重心（选点确认后把相机对到这一格）。
 func cell_centroid_world(id: String) -> Vector2:
 	var g := cell_graph()
 	if g.is_empty() or id == "":
 		return Vector2.ZERO
-	var c := CellGraphScript.centroid_of(g, id)
+	var c := CellGraphScript.centroid_of(g, id, _cell_layer_frames(g))
 	if not is_map_ready():
 		return c
 	return map_root.get_global_transform() * c
@@ -965,7 +1039,12 @@ func cell_centroid_world(id: String) -> Vector2:
 func focus_cell_id(id: String) -> bool:
 	if id == "" or cell_graph().is_empty() or CellGraphScript.polygon_of(cell_graph(), id).is_empty():
 		return false
-	cam_pos = cell_centroid_world(id)
+	var target := cell_centroid_world(id)
+	var li := _layer_index_of(CellGraphScript.layer_of_cell(cell_graph(), id))
+	var root := _layer_ents_or_collision(li) if li >= 0 else null
+	var par := float(root.get_meta("parallax", 1.0)) if root != null else 1.0
+	if not is_zero_approx(par):
+		cam_pos += (target - cam_pos) / par
 	_update_cam()
 	queue_redraw()
 	return true
@@ -988,7 +1067,7 @@ func pick_edge_at(world: Vector2, tol := 0.0) -> Dictionary:
 	var best_d := INF
 	# §4.2：边几何统一走 GridSpace.edge_between（与下拉/审计/导出同一份公共顶点）
 	for nb: Vector2i in grid.neighbors_any(c):
-		var seg: PackedVector2Array = grid.edge_between(c, nb)
+		var seg := _bounded_edge(c, nb)
 		if seg.size() != 2:
 			continue
 		var d := _dist_to_seg(lp, seg[0], seg[1])
@@ -1007,7 +1086,7 @@ static func _dist_to_seg(p: Vector2, a: Vector2, b: Vector2) -> float:
 	return p.distance_to(a + ab * t)
 
 ## 边 ID → 世界空间线段（画布高亮用）：取两格多边形的**公共顶点**（真正的分界线）。
-## 退化/取不到公共边（坏格号）时退回两格中心连线。无效边返回空数组。
+## 无效或越界的边返回空数组。
 func edge_segment_world(edge: String) -> PackedVector2Array:
 	var loc := _edge_segment_local(edge)
 	if loc.size() != 2:
@@ -1022,8 +1101,7 @@ func _edge_segment_local(edge: String) -> PackedVector2Array:
 		return PackedVector2Array()
 	var a := Vector2i(int(ends[0][0]), int(ends[0][1]))
 	var b := Vector2i(int(ends[1][0]), int(ends[1][1]))
-	return grid.edge_between(a, b)
-	return PackedVector2Array([grid.cell_center_px(a), grid.cell_center_px(b)])
+	return _bounded_edge(a, b)
 
 ## 该边当前是否仍成立（两端格在声明地图里仍是共边）。声明地图 = 本图时查本图 grid。
 func edge_is_live(edge: String, map_code := "") -> bool:
@@ -1034,10 +1112,12 @@ func edge_is_live(edge: String, map_code := "") -> bool:
 		return false
 	if map_code != "" and map_code != cur_map_code():
 		return true   # 跨图边：本图拓扑无从判定，交给项目自检
-	var a := Vector2i(int(ends[0][0]), int(ends[0][1]))
-	var b := Vector2i(int(ends[1][0]), int(ends[1][1]))
-	return EdgeRefScript.is_real_edge(edge, a, grid.neighbors_any(a)) \
-		and grid.neighbors_any(b).has(a)
+	return not _edge_segment_local(edge).is_empty()
+
+func _bounded_edge(a: Vector2i, b: Vector2i) -> PackedVector2Array:
+	var meta: Dictionary = map_data.get("meta", {})
+	return EdgeRefScript.segment(grid, a, b, int(meta.get("w", K.DEFAULT_MAP_W)),
+		int(meta.get("h", K.DEFAULT_MAP_H)))
 
 ## 本图地图码（meta.code；老图可能为空）。
 func cur_map_code() -> String:
@@ -1060,7 +1140,14 @@ func focus_edge(edge: String) -> bool:
 func _edge_candidates() -> Array:
 	if not is_map_ready():
 		return []
-	return RefFieldsScript.edge_candidates_of(map_data, manifest)
+	var occ := {}
+	for layer: TileMapLayer in layer_tiles:
+		for cell in layer.get_used_cells():
+			occ[cell] = true
+	for lid in _unresolved_tiles:
+		for cell in _unresolved_tiles[lid]:
+			occ[cell] = true
+	return RefFieldsScript.occupied_edge_options(grid, map_data.get("meta", {}), occ)
 
 ## 框选集合提交：首成员作单选，整组进多选，一次 emit
 func commit_multi(multi: Array) -> void:
@@ -1234,6 +1321,14 @@ func _mark(ents_changed := true) -> void:
 			(tv as Node).refresh()
 	modified.emit()
 
+func apply_cell_graph(graph: Dictionary) -> void:
+	push_undo()
+	map_data.meta["cellGraph"] = graph.duplicate(true)
+	modified_flag = true
+	map_rev += 1
+	modified.emit()
+	queue_redraw()
+
 ## P01：只改瓦片（地形/装饰）——碰撞数据没动，红块不必重建。
 ## 方形瓦片由 TileMapLayer 自己在 set_cell/erase_cell 后重绘；
 ## 三角拓扑下叠的自绘层仍需重建（数据住在 TileMapLayer 里，自绘层读不到变更通知）。
@@ -1372,11 +1467,7 @@ func cancel_preview_gesture() -> bool:
 			_resize_node = null
 			_resize_moved = false
 		Gesture.ENTITY_VERTEX:
-			if _vertex_node != null and is_instance_valid(_vertex_node):
-				_vertex_node.points_write(_vertex_orig)
-				_vertex_node.refresh_visual()
-			_vertex_node = null
-			_vertex_moved = false
+			_selection_ops_ctrl._cancel_vertex_drag()
 		Gesture.SPAWN_DRAG:
 			if spawn != null and is_instance_valid(spawn):
 				spawn.position = _spawn_origin
@@ -1421,9 +1512,9 @@ var _resize_orig: Dictionary = {}     # 起手时的 {wf, hf, w, h}
 var _resize_origin := Vector2.ZERO    # 起手时 rect 左上角快照（center 锚点下 rect 原点随尺寸漂移，必须冻结）
 var _resize_moved := false
 var _vertex_node: EntityNode = null   # R-02 顶点把手拖拽的目标实例（poly/path）
-var _vertex_idx := -1                 # 拖拽中的顶点下标
-var _vertex_orig: Array = []          # 起手点集快照（Vector2 数组）
-var _vertex_moved := false
+var _vertex_key := Vector2i(-1, -1)    # (环, 点)
+var _vertex_orig: Dictionary = {}     # 取消时恢复原始属性，包括未显式写入的缺省点集
+var _vertex_rings: Array = []         # 起手的解析点集
 ## 出生点拖动起手位置（E05：起手中断要能归位，不能留在半途格）
 var _spawn_origin := Vector2.ZERO
 ## 笔画上一格（E13）：快速涂/擦时鼠标事件会跳格，逐帧按格路径补涂中间格
@@ -1540,12 +1631,12 @@ func _finish_entity_resize() -> void:
 	_selection_ops_ctrl._finish_entity_resize()
 
 ## —— R-02 顶点编辑转发 ——
-func _vertex_worlds(n: EntityNode) -> Array:
-	return _selection_ops_ctrl._vertex_worlds(n)
-func _vertex_handle_hit(pos: Vector2) -> int:
+func _vertex_world_rings(n: EntityNode) -> Array:
+	return _selection_ops_ctrl._vertex_world_rings(n)
+func _vertex_handle_hit(pos: Vector2) -> Vector2i:
 	return _selection_ops_ctrl._vertex_handle_hit(pos)
-func _begin_vertex_drag(n: EntityNode, idx: int) -> void:
-	_selection_ops_ctrl._begin_vertex_drag(n, idx)
+func _begin_vertex_drag(n: EntityNode, key: Vector2i) -> void:
+	_selection_ops_ctrl._begin_vertex_drag(n, key)
 func _move_vertex_preview(pos: Vector2) -> void:
 	_selection_ops_ctrl._move_vertex_preview(pos)
 func _finish_vertex_drag() -> void:
@@ -1589,9 +1680,6 @@ func cut_region() -> void:
 func _paste_region(origin: Vector2i) -> void:
 	_region_ops_ctrl._paste_region(origin)
 
-func _cell_rect(a: Vector2, b: Vector2) -> Rect2i:
-	# 区域框选几何归 RegionOps（E03：松手转发曾错发到选区控制器，调用必炸）
-	return _region_ops_ctrl._cell_rect(a, b)
 ## —— 拆到 src/core/undo_history.gd 的委托（调用点保持不变） ——
 ## §7.5 阶段一：_snapshot/_restore/_push_undo 三个薄转发**已删除**——撤销状态归控制器，
 ## 调用方一律走 canvas.undo()/redo()/push_undo() 或 canvas._undo_history_ctrl 的差量入口。
@@ -1724,8 +1812,6 @@ func _load_snap_layers(snap: Dictionary, active_id: String) -> void:
 	await _layer_ops_ctrl._load_snap_layers(snap, active_id)
 func make_object(aid: String) -> EntityNode:
 	return _entity_factory_ctrl.make_object(aid)
-func set_entity_sizes(sizes: Dictionary) -> void:
-	_entity_factory_ctrl.set_entity_sizes(sizes)
 func entity_display_size(aid: String) -> Vector2:
 	return _entity_factory_ctrl.entity_display_size(aid)
 func is_placeable(aid: String) -> bool:

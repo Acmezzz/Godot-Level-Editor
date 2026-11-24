@@ -3,7 +3,8 @@ extends RefCounted
 ## 加载清单时自动并入 assets[]（标记 builtin=true），保存清单时再剥掉，
 ## 这样编辑器开箱可用，又不会污染游戏工程的 editor_manifest.json。
 ##
-## 呈现由 `visual` 声明决定（mode/color/alpha），编辑器据此画占位，
+## 呈现由 `visual` 声明决定：`mode:"rect"` 让画布在无贴图时画半透明矩形，
+## `type` 缺省 `rect`（几何种类与校验读它），color/alpha 定色；编辑器据此画占位，
 ## 不再靠"id == trigger_zone"这类硬编码分支。
 
 ## 内置种类定义（assets[] 条目同形）。

@@ -4,6 +4,11 @@ extends RefCounted
 
 var host   # editor_layout 宿主
 var app    # 根应用（= host.app）
+const BasisFields := preload("res://src/ui/grid_basis_fields.gd")
+const TILE_GRID_PRESETS := [
+	["沿用地图格", {}], ["独立正交", {"gridProjection": "orthogonal"}],
+	["独立等距", {"gridProjection": "isometric"}], ["独立六边", {"gridProjection": "hexagonal"}],
+	["独立三角", {"gridProjection": "orthogonal", "gridTopology": "triangles"}]]
 
 func _init(h) -> void:
 	host = h
@@ -110,7 +115,6 @@ func _open_layer_manager() -> void:
 	scroll.custom_minimum_size = Vector2(0, 0)
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	scroll.max_size.y = 360.0
 	_layer_mgr_body.add_child(scroll)
 	_layer_mgr_rows = app.UiKitScript.vbox(2)
 	_layer_mgr_rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -125,7 +129,7 @@ func _open_layer_manager() -> void:
 		await app.canvas.layer_add(_layer_mgr_input.text)
 		_layer_mgr_input.clear()
 		_rebuild_layer_mgr()
-		app._sync_ui()), "primary")
+		app._sync_ui(), "primary"))
 	_layer_mgr_body.add_child(row)
 	var close_btn: Button = app.UiKitScript.button("关闭", func(): _layer_mgr.hide(), "plain")
 	close_btn.size_flags_horizontal = Control.SIZE_SHRINK_END
@@ -143,6 +147,9 @@ func _rebuild_layer_mgr() -> void:
 		_layer_mgr_rows.remove_child(c)
 		c.queue_free()
 	var decl: Array = app.canvas.layers_decl()
+	var scroll := _layer_mgr_rows.get_parent() as ScrollContainer
+	if scroll != null:
+		scroll.custom_minimum_size.y = clampf(decl.size() * 54.0, 54.0, 360.0)
 	if decl.is_empty():
 		_layer_mgr_rows.add_child(app.UiKitScript.hint_label(
 			"还没有图层——下方输入名字后点「新建层」。", app.POPUP_BODY_W))
@@ -208,6 +215,44 @@ func _layer_mgr_row(i: int, decl: Dictionary) -> Control:
 			return
 		await app.canvas.layer_set_blend(at, str(blend_opt.get_item_metadata(idx))))
 	row.add_child(blend_opt)
+	var tile_grid := OptionButton.new()
+	tile_grid.name = "LayerTileGrid_" + lid
+	tile_grid.allow_reselect = true
+	tile_grid.tooltip_text = "独立瓦片格系。仅空瓦片层可切换；碰撞、出生点与实例坐标仍沿用地图格系。"
+	var configured: Dictionary = decl.get("tileGrid", {}) if decl.get("tileGrid") is Dictionary else {}
+	var chosen := -1
+	for preset in TILE_GRID_PRESETS:
+		var slot := tile_grid.item_count
+		tile_grid.add_item(preset[0])
+		tile_grid.set_item_metadata(slot, preset[1])
+		if configured == preset[1]:
+			chosen = slot
+	tile_grid.add_item("自定义格系…")
+	var custom_at := tile_grid.item_count - 1
+	if chosen < 0:
+		chosen = custom_at
+	tile_grid.select(chosen)
+	tile_grid.disabled = app.canvas.layer_has_tiles(i)
+	tile_grid.item_selected.connect(func(idx: int):
+		if idx == custom_at:
+			_layer_mgr.hide()
+			_open_custom_grid(lid, configured)
+			return
+		var at := _idx_of_lid(lid)
+		if at >= 0:
+			var result: String = await app.canvas._layer_ops_ctrl.layer_set_tile_grid(at, tile_grid.get_item_metadata(idx))
+			if result != "":
+				app._set_status(result)
+		_rebuild_layer_mgr()
+		app._sync_ui())
+	row.add_child(tile_grid)
+	var convert = app.UiKitScript.button("迁移格系…", func():
+		_layer_mgr.hide()
+		_open_grid_conversion(lid, configured), "ghost")
+	convert.name = "ConvertTileGrid_" + lid
+	convert.disabled = not app.canvas.layer_has_tiles(i)
+	convert.tooltip_text = "预览瓦片落点并复制到新层；保留源层。"
+	row.add_child(convert)
 	var up = app.UiKitScript.button("↑", func():
 		var at := _idx_of_lid(lid)
 		if at > 0:
@@ -235,21 +280,159 @@ func _layer_mgr_row(i: int, decl: Dictionary) -> Control:
 			app._set_status("至少保留一个图层")
 		_rebuild_layer_mgr()
 		app._sync_ui(), "ghost")
-	del.tooltip_text = "删除该层（层上瓦片与实体一并删除）"
+	del.tooltip_text = "删除该层及其瓦片、实体；绑定的格图空间会解绑并保留静态位置"
 	row.add_child(del)
 	return row
+
+func _open_grid_conversion(lid: String, initial: Dictionary) -> void:
+	var cvs = app.canvas
+	var source: Dictionary = cvs.map_data
+	var at := _idx_of_lid(lid)
+	if at < 0:
+		return
+	var shell: Dictionary = app._popup_body("迁移瓦片到新格系",
+		"副本插在源层上方，只带瓦片和图层显示参数。实例、碰撞、格图和现有引用留在原处。")
+	var pop: PopupPanel = shell.pop
+	var body: VBoxContainer = shell.body
+	var kit = app.UiKitScript
+	var title := LineEdit.new()
+	title.name = "ConvertedLayerName"
+	title.text = cvs.layer_name(at) + "（转换）"
+	body.add_child(kit.field_row("新层名", title))
+	var grids := OptionButton.new()
+	grids.name = "LayerConversionGrid"
+	for preset in TILE_GRID_PRESETS:
+		grids.add_item(preset[0])
+		grids.set_item_metadata(grids.item_count - 1, preset[1])
+	grids.add_item("自定义斜四边格")
+	grids.add_item("自定义斜三角格")
+	grids.select(1)
+	body.add_child(kit.field_row("目标格系", grids))
+	var custom := VBoxContainer.new()
+	body.add_child(custom)
+	var parsed := GridSpace.parse_basis(initial)
+	var basis := BasisFields.add_to(custom, "LayerConversion", cvs.grid.tile,
+		initial.get("gridBasis", []) if parsed.ok else [])
+	basis.enabled.button_pressed = true
+	basis.enabled.hide()
+	custom.hide()
+	var by_center := CheckBox.new()
+	by_center.name = "LayerConversionByCenter"
+	by_center.text = "按源格像素中心拾取目标格"
+	by_center.button_pressed = true
+	body.add_child(by_center)
+	body.add_child(kit.hint_label("取消勾选则保留格号。若有越界或多格重叠，整批不会应用。", 420))
+	var status: Label = kit.hint_label("", 420)
+	body.add_child(status)
+	var frozen := {"plan": {}}
+	var publish: Button = kit.button("检查瓦片迁移", Callable(), "primary")
+	body.add_child(publish)
+	var reset := func():
+		frozen.plan = {}
+		publish.text = "检查瓦片迁移"
+		status.text = ""
+	title.text_changed.connect(func(_s: String): reset.call())
+	grids.item_selected.connect(func(i: int):
+		custom.visible = i >= TILE_GRID_PRESETS.size()
+		reset.call())
+	by_center.toggled.connect(func(_enabled: bool): reset.call())
+	for field: LineEdit in basis.axes:
+		field.text_changed.connect(func(_s: String): reset.call())
+	publish.pressed.connect(func():
+		if app.canvas != cvs or not is_same(cvs.map_data, source):
+			status.text = "地图已切换，请重新打开图层设置。"
+			return
+		if frozen.plan.has("snapshot"):
+			publish.disabled = true
+			if await cvs._layer_ops_ctrl.apply_tile_layer_copy(frozen.plan):
+				if is_instance_valid(pop):
+					pop.hide()
+				app._sync_ui()
+				app._set_status("已生成迁移图层。可撤销，保存地图后写盘。")
+			elif is_instance_valid(publish):
+				reset.call()
+				publish.disabled = false
+				status.text = "地图已有改动，请重新检查。"
+			return
+		var spec: Dictionary
+		if grids.selected < TILE_GRID_PRESETS.size():
+			spec = grids.get_selected_metadata().duplicate(true)
+		else:
+			var read := BasisFields.read(basis)
+			if not read.ok:
+				status.text = read.error
+				read.field.grab_focus()
+				return
+			spec = {"gridProjection": "orthogonal", "gridBasis": read.value}
+			if grids.selected == TILE_GRID_PRESETS.size() + 1:
+				spec["gridTopology"] = "triangles"
+		var plan: Dictionary = cvs._layer_ops_ctrl.prepare_tile_layer_copy(lid, title.text.strip_edges(), spec,
+			by_center.button_pressed)
+		if plan.has("error"):
+			status.text = plan.error
+		elif not plan.has("snapshot"):
+			status.text = "无法应用：越界 %d，重叠 %d。\n%s" % [plan.outside, plan.collisions, "\n".join(plan.examples)]
+		else:
+			status.text = "新层将写入 %d 格，其中 %d 格的格号改变。源层保持原样。" % [plan.count, plan.moved]
+			frozen.plan = plan
+			publish.text = "创建迁移图层"
+		pop.size = pop.get_contents_minimum_size().ceil().min(Vector2i(app.get_viewport_rect().size) - Vector2i(40, 40)))
+	app._open_popup(pop)
+
+func _open_custom_grid(lid: String, initial: Dictionary) -> void:
+	var cvs = app.canvas
+	var source: Dictionary = cvs.map_data
+	var shell: Dictionary = app._popup_body("图层自定义格系", "双基以图层局部像素为单位；支持四边格和三角格。")
+	var pop: PopupPanel = shell.pop
+	var body: VBoxContainer = shell.body
+	var kit = app.UiKitScript
+	var topology := OptionButton.new()
+	topology.name = "LayerCustomTopology"
+	topology.add_item("四边格")
+	topology.add_item("三角格")
+	topology.select(1 if initial.get("gridTopology") == "triangles" else 0)
+	body.add_child(kit.field_row("格拓扑", topology))
+	var parsed := GridSpace.parse_basis(initial)
+	var basis := BasisFields.add_to(body, "LayerCustom", cvs.grid.tile,
+		initial.get("gridBasis", []) if parsed.ok else [])
+	basis.enabled.button_pressed = true
+	basis.enabled.hide()
+	var status: Label = kit.hint_label("", 380)
+	body.add_child(status)
+	body.add_child(kit.button("应用图层格系", func():
+		var at := _idx_of_lid(lid)
+		if at < 0 or app.canvas != cvs or not is_same(cvs.map_data, source):
+			status.text = "地图或图层已经改变，请重新打开设置。"
+			return
+		var read := BasisFields.read(basis)
+		if not read.ok:
+			status.text = read.error
+			read.field.grab_focus()
+			return
+		var spec := {"gridProjection": "orthogonal", "gridBasis": read.value}
+		if topology.selected == 1:
+			spec["gridTopology"] = "triangles"
+		var error: String = await cvs._layer_ops_ctrl.layer_set_tile_grid(at, spec)
+		if error != "":
+			if is_instance_valid(status):
+				status.text = error
+			return
+		if is_instance_valid(pop):
+			pop.hide()
+		app._sync_ui(), "primary"))
+	app._open_popup(pop)
 
 ## 数字字段（回车提交；非法输入回填当前值）
 func _num_field(init: float, tip: String, cb: Callable) -> LineEdit:
 	var f := LineEdit.new()
-	f.text = "%g" % init
+	f.text = str(init)
 	f.tooltip_text = tip
 	f.custom_minimum_size.x = 48
 	f.text_submitted.connect(func(s: String):
-		if s.is_valid_float():
+		if s.is_valid_float() and is_finite(float(s)):
 			cb.call(float(s))
 		else:
-			f.text = "%g" % init)
+			f.text = str(init))
 	return f
 
 ## 当前层的偏移分量（提交时现读，避免闭包里留过期快照）

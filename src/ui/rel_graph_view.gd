@@ -3,7 +3,7 @@ extends Control
 ##
 ## 布局 = 简单分层：入度为 0 的节点放左列，其余按 BFS 深度向右；
 ## 每列上下居中排开。不做力导向（规模小、可读性优先）。
-## 点击节点 → 回调宿主（跳去那条内容）；点击边标签不处理（边只是呈现）。
+## 点击节点 → 回调宿主（跳去那条内容）；点击边 → 回调宿主（定位或编辑字段）。
 ## 循环引用合法（游戏允许），BFS 用已访问集截断，不会无限展开。
 
 const RelGraph := preload("res://src/content/rel_graph.gd")
@@ -12,9 +12,10 @@ var data := {}
 var on_pick: Callable = Callable()   # Callable(key)
 var on_edge: Callable = Callable()   # Callable(edge Dictionary)
 var highlighted := ""
+var expand_layout := false  # 项目图允许滚动，保证远列与长列可达
 
 var _pos := {}        # key -> 中心点（局部坐标）
-var _segs: Array = [] # [{a, b, edge, i}]：边段缓存（绘制与命中共用）
+var _segs: Array = [] # [{path, edge}]：边段缓存（绘制与命中共用）
 var _radius := 26.0
 var _hover := ""
 var _hover_edge := -1
@@ -36,6 +37,8 @@ func _layout() -> void:
 	_hover_edge = -1
 	var nodes: Array = data.get("nodes", [])
 	if nodes.is_empty():
+		if expand_layout:
+			custom_minimum_size = Vector2.ZERO
 		return
 	var edges: Array = data.get("edges", [])
 	var indeg := {}
@@ -62,8 +65,10 @@ func _layout() -> void:
 	var q: Array = roots.duplicate()
 	for r in roots:
 		layer[r] = 0
-	while not q.is_empty():
-		var k2: String = str(q.pop_front())
+	var cursor := 0
+	while cursor < q.size():
+		var k2 := str(q[cursor])
+		cursor += 1
 		var d0 := int(layer.get(k2, 0))
 		for t in (outg.get(k2, []) as Array):
 			var tk := str(t)
@@ -83,12 +88,20 @@ func _layout() -> void:
 			cols[int(layer[k4])] = []
 		(cols[int(layer[k4])] as Array).append(k4)
 	var col_w := _radius * 3.4
+	var step := _radius * 2.6
+	var height := size.y
+	if expand_layout:
+		var max_rows := 0
+		for column in cols.values():
+			max_rows = maxi(max_rows, column.size())
+		var min_size := Vector2(col_w * cols.size() + _radius, step * max_rows + _radius * 1.6)
+		custom_minimum_size = min_size
+		height = maxf(height, min_size.y)
 	for c in cols:
 		var arr: Array = cols[c]
-		var step := _radius * 2.6
 		var h := step * maxf(0.0, float(arr.size() - 1))
 		for i in arr.size():
-			_pos[str(arr[i])] = Vector2(col_w * int(c) + _radius, size.y * 0.5 - h * 0.5 + step * i)
+			_pos[str(arr[i])] = Vector2(col_w * int(c) + _radius, height * 0.5 - h * 0.5 + step * i)
 	# 边段缓存（绘制与点击命中共用）：多行管道 → 目标列靠左的单行下移 14px 错开
 	_segs.clear()
 	var lanes := {}
@@ -101,7 +114,7 @@ func _layout() -> void:
 		var pair := "%s>%s" % [str(ed2.get("from", "")), str(ed2.get("to", ""))]
 		var lane := int(lanes.get(pair, 0))
 		lanes[pair] = lane + 1
-		_segs.append({"a": a2, "b": b2, "edge": ed2, "lane": lane})
+		_segs.append({"path": _edge_path(a2, b2, lane), "edge": ed2})
 
 func _draw() -> void:
 	var nodes: Array = data.get("nodes", [])
@@ -111,24 +124,20 @@ func _draw() -> void:
 	# 边先画（节点压在上面）；同起终多行时按 lane 错开
 	for si in _segs.size():
 		var seg: Dictionary = _segs[si]
-		var a: Vector2 = seg.get("a", Vector2.ZERO)
-		var b: Vector2 = seg.get("b", Vector2.ZERO)
-		var lane := int(seg.get("lane", 0))
-		if lane > 0:
-			a += Vector2(0, 14.0 * lane)
-			b += Vector2(0, 14.0 * lane)
+		var path: PackedVector2Array = seg.path
 		var ed: Dictionary = seg.get("edge", {})
 		var hot: bool = si == _hover_edge
 		var col := Color(1.0, 0.85, 0.3, 0.9) if hot else Color(0.4, 0.85, 0.95, 0.55)
-		draw_line(a, b, col, 2.4 if hot else 1.4, true)
-		# 箭头（指向目标）
-		var dir := (b - a).normalized()
-		var tip: Vector2 = b - dir * _radius
+		draw_polyline(path, col, 2.4 if hot else 1.4, true)
+		var tip := path[path.size() - 1]
+		var dir := (tip - path[path.size() - 2]).normalized()
+		if path.size() == 2:
+			tip -= dir * _radius
 		var left := tip - dir.rotated(0.45) * 8.0
 		var right := tip - dir.rotated(-0.45) * 8.0
 		draw_colored_polygon(PackedVector2Array([tip, left, right]), Color(col, 0.9))
 		# 字段名标在边中点
-		var mid: Vector2 = (a + b) * 0.5
+		var mid := (path[0] + path[1]) * 0.5 if path.size() == 2 else (path[1] + path[2]) * 0.5
 		draw_string(font, mid + Vector2(-12, -4), str(ed.get("label", "")),
 			HORIZONTAL_ALIGNMENT_LEFT, -1, 10,
 			Color(1.0, 0.85, 0.3, 0.95) if hot else Color(0.55, 0.9, 1.0, 0.75))
@@ -163,24 +172,26 @@ func _node_at(p: Vector2) -> String:
 			return str(k)
 	return ""
 
-## 命中：光标最近的边段（距离 ≤ 6px，排除落在节点上的部分）；没命中返回 -1。
+func _edge_path(a: Vector2, b: Vector2, lane: int) -> PackedVector2Array:
+	if a == b:
+		var outer := _radius * 1.45 + lane * 10.0
+		return PackedVector2Array([a + Vector2(0, -_radius), a + Vector2(0, -outer),
+			a + Vector2(outer, -outer), a + Vector2(outer, 0), a + Vector2(_radius, 0)])
+	var offset := Vector2(0, 14.0 * lane)
+	return PackedVector2Array([a + offset, b + offset])
+
+## 命中：光标最近的边段（距离 ≤ 6px）。调用方先处理节点命中。
 func _edge_at(p: Vector2) -> int:
 	var best := -1
 	var best_d := 6.0
-	for si in _segs.size():
-		var seg: Dictionary = _segs[si]
-		var a: Vector2 = seg.get("a", Vector2.ZERO)
-		var b: Vector2 = seg.get("b", Vector2.ZERO)
-		var lane := int(seg.get("lane", 0))
-		if lane > 0:
-			a += Vector2(0, 14.0 * lane)
-			b += Vector2(0, 14.0 * lane)
-		var q := Geometry2D.get_closest_point_to_segment(p, a, b)
-		var d := p.distance_to(q)
-		# 节点圆内的线段不抢点击（点节点附近的边逻辑上应选节点）
-		if d < best_d and _node_at(q) == "":
-			best_d = d
-			best = si
+	for i in _segs.size():
+		var path: PackedVector2Array = _segs[i].path
+		for j in range(1, path.size()):
+			var q := Geometry2D.get_closest_point_to_segment(p, path[j - 1], path[j])
+			var d := p.distance_to(q)
+			if d < best_d:
+				best_d = d
+				best = i
 	return best
 
 func _gui_input(event: InputEvent) -> void:

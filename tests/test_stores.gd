@@ -253,7 +253,11 @@ func test_map_code_conflict_lists_all_paths() -> void:
 	a.meta["code"] = "ZZZZ"
 	b.meta["code"] = "ZZZZ"
 	ok(MapStore.write(m, "a", a), "a 写入")
-	ok(MapStore.write(m, "b", b), "b 写入")
+	ok(not MapStore.write(m, "b", b) and not FileAccess.file_exists(MapStore.path_for(m, "b")), "编辑器拒绝写入相同地图码")
+	ok(MapStore.write_json(MapStore.path_for(m, "b"), b), "模拟外部工具写入重复地图码")
+	ok(not MapStore.write(m, "a", a), "已有歧义也不能持续发布")
+	ok(MapStore.rename_map(m, "a", "a2").contains("地图码") and not FileAccess.file_exists(MapStore.path_for(m, "a2")),
+		"改名只豁免自己的原路径，拒绝第三方同码")
 	var conf := MapStore.code_conflicts(m)
 	ok(conf.has("ZZZZ"), "检出重复码")
 	eq((conf.get("ZZZZ", []) as Array).size(), 2, "列出两个文件")
@@ -264,6 +268,8 @@ func test_map_code_conflict_lists_all_paths() -> void:
 				and str(e.get("message", "")).contains("b.json"):
 			found += 1
 	eq(found, 1, "审计报告给出两条路径")
+	b.meta.code = MapStore.allocate_code(m)
+	ok(MapStore.write(m, "b", b) and MapStore.code_conflicts(m).is_empty(), "显式换码可以恢复唯一性")
 	_wipe()
 
 ## V4 §4.2-4：地图键解析六态——不合法键 / 图在但读不出，都不能压成 missing

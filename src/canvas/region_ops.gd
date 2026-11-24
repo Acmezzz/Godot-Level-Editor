@@ -23,11 +23,20 @@ func _init(c) -> void:
 func _in_region_sel(pos: Vector2) -> bool:
 	if cvs._region_sel.size.x <= 0 or cvs._region_sel.size.y <= 0:
 		return false
+	if cvs._region_layer != "":
+		return cvs._region_layer == cvs.layer_id(cvs.active_layer) and cvs._region_sel.has_point(cvs._active_cell(pos))
+	if _mixed_tile_grids():
+		return false
 	return cvs._region_sel.has_point(cvs.root_cell(pos))
 
-## 实体的「所在格」判定：由资产的 anchor 统一（top_left 型 = 矩形左上格，
-## center 型 = 中心格）。区域复制/剪切/框入/拖动四处共用，防止复制进了剪贴板、
-## 剪切却漏删（或反之）的错位。
+func select_region(a: Vector2, b: Vector2) -> void:
+	cvs._region_layer = cvs.layer_id(cvs.active_layer) if _mixed_tile_grids() else ""
+	cvs._region_sel = _cell_rect(a, b)
+	var scope := "仅当前瓦片层" if cvs._region_layer != "" else "地图根格"
+	cvs._hint("已框选 %d×%d（%s；Ctrl+C 复制，拖空白处重选）" % [
+		cvs._region_sel.size.x, cvs._region_sel.size.y, scope])
+
+## 区域复制、剪切、框选和拖动都按实体视觉矩形左上角拾格。
 func _ent_cell(n: EntityNode) -> Vector2i:
 	return n.cell()
 
@@ -106,7 +115,7 @@ func _snapshot_region(sel: Rect2i) -> Dictionary:
 			continue
 		var ec := _ent_cell(n)
 		if sel.has_point(ec):
-			snap["ents"].append(_ent_template(n, Vector2(sel.position)))
+			snap["ents"].append(_ent_template(n, sel.position))
 	return snap
 
 ## 一个实例的数据模板（复制/区域快照共用）：相对偏移（格，浮点——保留亚格位置）+ 全部数据字段，
@@ -118,6 +127,7 @@ func _ent_template(n: EntityNode, at: Vector2i) -> Dictionary:
 	return {
 		"dx": snappedf(g.x, 0.001),
 		"dy": snappedf(g.y, 0.001),
+		"pixel_offset": n.position - n.sort_anchor() - cvs.grid.region_origin_px(at),
 		"asset": n.asset,
 		"code": n.code,
 		"layer": n.layer_id,
@@ -134,10 +144,20 @@ func _begin_region_move(pos: Vector2) -> void:
 	if cvs.is_layer_locked(cvs.active_layer):
 		cvs._hint("当前图层已锁定：解锁后再移动区域")
 		return
-	if cvs._any_layer_locked():
+	var lid: String = cvs._region_layer
+	if _mixed_tile_grids() and (lid == "" or lid != cvs.layer_id(cvs.active_layer)):
+		cvs._hint("请选择瓦片层并在该层框选后再移动。")
+		return
+	if lid == "" and cvs._any_layer_locked():
 		cvs._hint("有图层处于锁定状态：解锁后再移动区域")
 		return
-	cvs._move_snap = _snapshot_region(cvs._region_sel)
+	if lid == "":
+		cvs._move_snap = _snapshot_region(cvs._region_sel)
+	else:
+		var rows := _tile_rows_in_rect(cvs._layer_node(cvs.active_layer), lid, cvs._region_sel)
+		if rows.is_empty():
+			return
+		cvs._move_snap = {"tiles": {lid: rows}, "tile_layer": lid}
 	cvs._move_from = cvs._region_sel.position
 	cvs._move_grab = pos
 	cvs._move_cell_delta = Vector2i.ZERO
@@ -145,11 +165,39 @@ func _begin_region_move(pos: Vector2) -> void:
 
 
 func _move_region_preview(pos: Vector2) -> void:
-	var d: Vector2i = cvs.root_cell(pos) - cvs.root_cell(cvs._move_grab)
+	var lid: String = cvs._move_snap.get("tile_layer", "")
+	var grid: GridSpace = cvs.grid
+	var d: Vector2i
+	if lid != "":
+		var li: int = cvs._layer_index_of(lid)
+		if li < 0:
+			return
+		grid = cvs.tile_grid_for_layer(li)
+		d = grid.pick_cell(cvs.to_layer_local(li, pos)) - grid.pick_cell(cvs.to_layer_local(li, cvs._move_grab))
+	else:
+		d = cvs.root_cell(pos) - cvs.root_cell(cvs._move_grab)
+	d = grid.region_origin(cvs._move_from + d, posmod(cvs._move_from.x, 2)) - cvs._move_from
 	if d != cvs._move_cell_delta:
 		cvs._move_cell_delta = d
 		cvs.queue_redraw()
 
+
+func _check_region_bounds(snapshot: Dictionary, source: Vector2i, target: Vector2i, relative: bool, grid: GridSpace = null) -> bool:
+	if grid == null:
+		grid = cvs.grid
+	var meta: Dictionary = cvs.map_data.get("meta", {})
+	var w := int(meta.get("w", 0))
+	var h := int(meta.get("h", 0))
+	var groups: Array = (snapshot.get("tiles", {}) as Dictionary).values()
+	groups.append(snapshot.get("collision", []))
+	for rows in groups:
+		for row in rows:
+			var cell := Vector2i(int(row[0]), int(row[1]))
+			var offset: Vector2i = cell if relative else grid.relative_cell(cell, source)
+			if not grid.cell_in_map(grid.cell_from_offset(target, offset), w, h):
+				cvs._hint("区域操作已取消：目标的瓦片或碰撞超出地图")
+				return false
+	return true
 
 func _finish_region_move() -> void:
 	var active: bool = cvs._move_active
@@ -159,6 +207,12 @@ func _finish_region_move() -> void:
 	cvs._move_snap = {}
 	cvs._move_cell_delta = Vector2i.ZERO
 	if not active or delta == Vector2i.ZERO:
+		return
+	if snap.has("tile_layer"):
+		_finish_layer_move(snap, from, delta)
+		return
+	if not _check_region_bounds(snap, from, from + delta, false):
+		cvs.queue_redraw()
 		return
 	cvs.push_undo()
 	# 先清源（各层瓦片 + 碰撞），再写目标；实例按数据坐标平移（保持浮点位）
@@ -176,13 +230,13 @@ func _finish_region_move() -> void:
 			continue   # 层已不在（撤销/切图窗口）：跳过，不写回不存在的层
 		for t2 in (snap.get("tiles", {})[lid2] as Array):
 			var row: Array = t2.duplicate(true)
-			var dest: Vector2i = cvs.grid.shift_cell(Vector2i(int(row[0]), int(row[1])), delta)
+			var dest: Vector2i = cvs.grid.cell_from_offset(from + delta, cvs.grid.relative_cell(Vector2i(int(row[0]), int(row[1])), from))
 			row[0] = dest.x
 			row[1] = dest.y
 			cvs.write_tile_row(str(lid2), cvs.layer_tiles[li2], row)
 	for t in snap.get("collision", []):
 		var ta := t as Array
-		var cc2: Vector2i = cvs.grid.shift_cell(Vector2i(int(ta[0]), int(ta[1])), delta)
+		var cc2: Vector2i = cvs.grid.cell_from_offset(from + delta, cvs.grid.relative_cell(Vector2i(int(ta[0]), int(ta[1])), from))
 		if ta.size() >= 4:
 			# 整行搬移：raw 以源行为准（空字典也显式传入），目标格原有扩展键不保留
 			var raw_m: Dictionary = (ta[4] as Dictionary).duplicate(true) \
@@ -190,21 +244,55 @@ func _finish_region_move() -> void:
 			cvs.set_collision_cell(cc2, true, str(ta[2]), str(ta[3]), raw_m)
 		else:
 			cvs.set_collision_cell(cc2, true, "solid", "", {})
-	# 实例：区块内的实例原地平移（保持身份码与层归属，不重建节点）。
-	# 平移量与瓦片同一口径：**本层局部格**位移。层 offset/scale 作用在整层上，
-	# 层内格号平移永远是 grid_dir_px(delta)——再按世界位移逆变换会除以层缩放，
-	# 同一块区域里瓦片走 d 格、实例只走 d/scale 格（V4 P1）。
+	# 与瓦片使用同一刚体平移；六边跨奇偶行不能用独立行号差换像素。
+	var displacement: Vector2 = cvs.grid.region_origin_px(from + delta) - cvs.grid.region_origin_px(from)
 	for e in cvs.ents_all():
 		var n := e as EntityNode
-		if n != null and n.asset != "" and cvs._region_sel.has_point(n.cell()):
-			# position 是层局部坐标，格位移也按层局部算：不再过一次世界位移逆变换
-			n.position += cvs.grid_dir_px(delta.x, delta.y)
-	# 选区跟着搬到新位置，方便接着拖第二下（六边/三角走同一格平移原语，不能格号直加）
-	cvs._region_sel.position = cvs.grid.shift_cell(from, delta)
+		if n != null and n.asset != "" and cvs._region_sel.has_point(_ent_cell(n)):
+			n.position += displacement
+	if cvs.grid.is_hex_geom() and posmod(delta.y, 2) == 1:
+		# odd-r 矩形移奇数行后不再是矩形，清框避免再次移动时捎上邻格。
+		cvs._region_sel = Rect2i(-1, 0, 0, 0)
+	else:
+		cvs._region_sel.position = from + delta
 	cvs._mark()
 	cvs.queue_redraw()
 	cvs._hint("已移动区域 %dx%d 偏移 (%d,%d)（Ctrl+Z 撤销）" % [
 		cvs._region_sel.size.x, cvs._region_sel.size.y, delta.x, delta.y])
+
+func _finish_layer_move(snap: Dictionary, from: Vector2i, delta: Vector2i) -> void:
+	var lid: String = snap.tile_layer
+	var li: int = cvs._layer_index_of(lid)
+	if li < 0 or cvs.is_layer_locked(li):
+		return
+	var grid: GridSpace = cvs.tile_grid_for_layer(li)
+	if not _check_region_bounds(snap, from, from + delta, false, grid):
+		cvs.queue_redraw()
+		return
+	cvs.push_undo()
+	var layer: TileMapLayer = cvs._layer_node(li)
+	for row in snap.tiles[lid]:
+		cvs.erase_tile(lid, layer, Vector2i(row[0], row[1]))
+	for row in snap.tiles[lid]:
+		var relative := grid.relative_cell(Vector2i(row[0], row[1]), from)
+		_write_layer_tile(lid, layer, row, grid.cell_from_offset(from + delta, relative))
+	if grid.is_hex_geom() and posmod(delta.y, 2) == 1:
+		cvs._region_sel = Rect2i()
+		cvs._region_layer = ""
+	else:
+		cvs._region_sel.position = from + delta
+	_layer_region_changed("已移动当前层瓦片（Ctrl+Z 撤销）")
+
+func _write_layer_tile(lid: String, layer: TileMapLayer, row: Array, cell: Vector2i) -> void:
+	var placed := row.duplicate()
+	placed[0] = cell.x
+	placed[1] = cell.y
+	cvs.write_tile_row(lid, layer, placed)
+
+func _layer_region_changed(message: String) -> void:
+	cvs._mark_tiles()
+	cvs.queue_redraw()
+	cvs._hint(message)
 
 ## 按模板重建一个实例节点（层按模板里的层码找，找不到落最底层）。
 ## 区域拖动/区域粘贴共用这一个入口，避免两处各写一遍落层逻辑。
@@ -233,6 +321,8 @@ func _instantiate(t: Dictionary, origin: Vector2i, lnames := {}, missed: Array =
 	# 不能直接拿三角列号当连续 x（V4 P1）
 	var org_c: Vector2 = cvs.grid.cell_origin_continuous(origin)
 	n.apply_grid(org_c.x + float(t.get("dx", 0.0)), org_c.y + float(t.get("dy", 0.0)))
+	if cvs.grid.is_hex_geom() and t.get("pixel_offset") is Vector2:
+		n.position = cvs.grid.region_origin_px(origin) + (t.pixel_offset as Vector2) + n.sort_anchor()
 	var ei: int = cvs._layer_index_of(n.layer_id)
 	cvs._place_in_layer(n, maxi(ei, 0))
 	# 新实例按需发码（场景实例不产码）；旧码只作为引用重映射的键
@@ -254,13 +344,16 @@ func copy_region() -> bool:
 	if cvs._region_sel.size.x <= 0:
 		cvs._hint("先框选一块区域再复制")
 		return false
+	if _mixed_tile_grids():
+		return _copy_layer_region()
 	var source: Dictionary = cvs.copy_content_source()
 	if source.is_empty():
 		return false
 	# 层栈剪贴板：tiles = {层id: [[dx,dy,资产id,ax,ay,alt]...]}，碰撞/实体照旧（实体带 layer）
 	# 源图身份随剪贴板带走（C2）：跨图粘贴时配对地图字段据此补源图键。
 	cvs._region_clip = {"tiles": {}, "collision": [], "size": cvs._region_sel.size,
-		"map": source.map, "map_code": str(source.meta.get("code", "")), "staged": source.staged}
+		"map": source.map, "map_code": str(source.meta.get("code", "")), "staged": source.staged,
+		"tri": cvs.grid.is_tri(), "hex": cvs.grid.is_hex_geom(), "parity": posmod(cvs._region_sel.position.x, 2)}
 	# 层名凭据：粘贴时同图按 id 直配，跨图按层名重映射（谁的名字谁带走）
 	var lnames := {}
 	for li2 in cvs.layer_count():
@@ -273,12 +366,13 @@ func copy_region() -> bool:
 		var tn: TileMapLayer = cvs.layer_tiles[li]
 		var cells := _tile_rows_in_rect(tn, lid, cvs._region_sel)
 		for row in cells:
-			row[0] = int(row[0]) - cvs._region_sel.position.x
-			row[1] = int(row[1]) - cvs._region_sel.position.y
+			var offset: Vector2i = cvs.grid.relative_cell(Vector2i(int(row[0]), int(row[1])), cvs._region_sel.position)
+			row[0] = offset.x
+			row[1] = offset.y
 		if not cells.is_empty():
 			cvs._region_clip["tiles"][lid] = cells
 	for c2 in _used_in_rect(cvs.collision, cvs._region_sel):
-		var d2: Vector2i = c2 - cvs._region_sel.position
+		var d2: Vector2i = cvs.grid.relative_cell(c2, cvs._region_sel.position)
 		var cm = cvs._collision_meta.get(c2, null)
 		if cm != null:
 			var raw1: Dictionary = cm["raw"].duplicate(true) \
@@ -294,7 +388,7 @@ func copy_region() -> bool:
 			continue
 		var ec: Vector2i = _ent_cell(n)
 		if cvs._region_sel.has_point(ec):
-			ents_clip.append(_ent_template(n, Vector2(cvs._region_sel.position)))
+			ents_clip.append(_ent_template(n, cvs._region_sel.position))
 	cvs._region_clip["ents"] = ents_clip
 	cvs._last_copy_region = true
 	var tcount := 0
@@ -315,6 +409,19 @@ func cut_region() -> void:
 		return
 	if cvs._region_sel.size.x <= 0:
 		cvs._hint("先框选一块区域再剪切")
+		return
+	if _mixed_tile_grids():
+		var li: int = cvs.active_layer
+		if cvs.is_layer_locked(li):
+			cvs._hint("当前图层已锁定：解锁后再剪切瓦片。")
+			return
+		if _copy_layer_region():
+			cvs.push_undo()
+			var lid: String = cvs.layer_id(li)
+			var layer: TileMapLayer = cvs._layer_node(li)
+			for row in _tile_rows_in_rect(layer, lid, cvs._region_sel):
+				cvs.erase_tile(lid, layer, Vector2i(row[0], row[1]))
+			_layer_region_changed("已剪切当前层瓦片（Ctrl+Z 撤销）")
 		return
 	if cvs._any_layer_locked():
 		cvs._hint("有图层处于锁定状态：解锁后再剪切区域")
@@ -354,11 +461,74 @@ func cut_region() -> void:
 	cvs._hint("已剪切区域 %dx%d（Ctrl+V 粘贴 / Ctrl+Z 撤销）" % [cvs._region_sel.size.x, cvs._region_sel.size.y])
 
 
+func region_clip_matches() -> bool:
+	if cvs._region_clip.has("tile_rows"):
+		var li: int = cvs.active_layer
+		return cvs.layer_id(li) != "" and not cvs._is_grid_layer(li) and cvs.place_kind != "object" \
+			and cvs.tile_grid_for_layer(li).geometry_key() == cvs._region_clip.geometry
+	return not _mixed_tile_grids() and bool(cvs._region_clip.get("tri", false)) == cvs.grid.is_tri() \
+		and bool(cvs._region_clip.get("hex", false)) == cvs.grid.is_hex_geom()
+
+func _mixed_tile_grids() -> bool:
+	for tile_grid in cvs.tile_grids:
+		if tile_grid != cvs.grid:
+			return true
+	return false
+
+func _copy_layer_region() -> bool:
+	var li: int = cvs.active_layer
+	var lid: String = cvs.layer_id(li)
+	if lid == "" or lid != cvs._region_layer:
+		cvs._hint("请先在当前瓦片层框选。")
+		return false
+	var rows := _tile_rows_in_rect(cvs._layer_node(li), lid, cvs._region_sel)
+	if rows.is_empty():
+		cvs._hint("当前层的选区没有瓦片。")
+		return false
+	var grid: GridSpace = cvs.tile_grid_for_layer(li)
+	var base: Vector2i = cvs._region_sel.position
+	for row in rows:
+		var delta := grid.relative_cell(Vector2i(row[0], row[1]), base)
+		row[0] = delta.x
+		row[1] = delta.y
+	cvs._region_clip = {"tile_rows": rows, "geometry": grid.geometry_key(),
+		"parity": posmod(base.x, 2), "size": cvs._region_sel.size}
+	cvs._last_copy_region = true
+	cvs._hint("已复制当前层 %d 格瓦片；可粘贴到相同格几何的瓦片层。" % rows.size())
+	return true
+
+func _paste_layer_region(origin: Vector2i) -> void:
+	var li: int = cvs.active_layer
+	if not region_clip_matches() or cvs.is_layer_locked(li):
+		cvs._hint("请选择格几何相同且未锁定的瓦片层再粘贴。")
+		return
+	var lid: String = cvs.layer_id(li)
+	var grid: GridSpace = cvs.tile_grid_for_layer(li)
+	var clip: Dictionary = cvs._region_clip
+	var rows: Array = clip.tile_rows
+	origin = grid.region_origin(origin, int(clip.parity))
+	if not _check_region_bounds({"tiles": {lid: rows}}, Vector2i.ZERO, origin, true, grid):
+		return
+	cvs.push_undo()
+	for row in rows:
+		_write_layer_tile(lid, cvs._layer_node(li), row, grid.cell_from_offset(origin, Vector2i(row[0], row[1])))
+	cvs._paste_mode = false
+	_layer_region_changed("已粘贴当前层瓦片（Ctrl+Z 撤销）")
+
 func _paste_region(origin: Vector2i) -> void:
 	if cvs.map_root == null or cvs._region_clip.is_empty():
 		return
+	if cvs._region_clip.has("tile_rows"):
+		_paste_layer_region(origin)
+		return
 	if cvs._any_layer_locked():
 		cvs._hint("有图层处于锁定状态：解锁后再粘贴区域")
+		return
+	if not region_clip_matches():
+		cvs._hint("区域剪贴板与当前格拓扑不兼容，请先转换或单独复制实例")
+		return
+	origin = cvs.grid.region_origin(origin, int(cvs._region_clip.get("parity", -1)))
+	if not _check_region_bounds(cvs._region_clip, Vector2i.ZERO, origin, true):
 		return
 	# 实例：按相对格位重建，落回各自的层（找不到同码层落最底层）；
 	# C2：实例码与附属内容 ID 统一由 ClonePlan 预留——组内引用重映射、组外保留，
@@ -413,12 +583,12 @@ func _paste_region(origin: Vector2i) -> void:
 		var li: int = _paste_layer_index(str(lid), lnames, missed, same_map)
 		for t in ((cvs._region_clip.get("tiles", {}) as Dictionary)[lid]) as Array:
 			var row: Array = t.duplicate(true)
-			var dest: Vector2i = cvs.grid.shift_cell(Vector2i(int(row[0]), int(row[1])), origin)
+			var dest: Vector2i = cvs.grid.cell_from_offset(origin, Vector2i(int(row[0]), int(row[1])))
 			row[0] = dest.x
 			row[1] = dest.y
 			cvs.write_tile_row(cvs.layer_id(li), cvs.layer_tiles[li], row)
 	for t in cvs._region_clip.get("collision", []):
-		var cc: Vector2i = cvs.grid.shift_cell(Vector2i(int(t[0]), int(t[1])), origin)
+		var cc: Vector2i = cvs.grid.cell_from_offset(origin, Vector2i(int(t[0]), int(t[1])))
 		if (t as Array).size() >= 4:
 			# 整行粘贴：扩展键以剪贴板行为准（第 5 位，缺省 = 无扩展键）
 			var raw_p: Dictionary = (t[4] as Dictionary).duplicate(true) \
@@ -487,7 +657,8 @@ func _layer_name_count(nm: String) -> int:
 	return n
 
 func _cell_rect(a: Vector2, b: Vector2) -> Rect2i:
-	var ca: Vector2i = cvs.root_cell(a)
-	var cb: Vector2i = cvs.root_cell(b)
+	var layer_local: bool = cvs._region_layer != ""
+	var ca: Vector2i = cvs._active_cell(a) if layer_local else cvs.root_cell(a)
+	var cb: Vector2i = cvs._active_cell(b) if layer_local else cvs.root_cell(b)
 	return Rect2i(Vector2i(mini(ca.x, cb.x), mini(ca.y, cb.y)),
 		Vector2i(absi(ca.x - cb.x) + 1, absi(ca.y - cb.y) + 1))

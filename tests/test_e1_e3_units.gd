@@ -70,3 +70,12 @@ func test_triangular_resize_boundaries() -> void:
 	eq(d.tiles.L, [[15, 7]], "保留最右三角瓦片")
 	eq(d.collision, [{"x": 15, "y": 7}], "保留最右三角碰撞")
 	eq(d.objects, [{"x": 7.9, "y": 7}], "摆放物仍用连续坐标")
+
+func test_resize_plan_relocates_spawn_using_topology() -> void:
+	var source := {"meta": {"w": 12, "h": 10}, "spawn": [21, 8],
+		"collision": [{"x": 16, "y": 7}, {"x": 15, "y": 7}]}
+	var plan := MapResize.plan(source, 8, 8, true)
+	eq(plan.spawn, {"from": Vector2i(21, 8), "to": Vector2i(15, 7)}, "出生点使用三角半列")
+	eq(plan.map.spawn, [15, 7], "应用精确使用计划给出的出生点")
+	eq(plan.map.collision, [{"x": 15, "y": 7}], "计划只保留界内数据")
+	eq(source.spawn, [21, 8], "预览不修改源地图")

@@ -34,11 +34,11 @@ func test_bulk_edges_instances_and_contents() -> void:
 	var md := MapStore.new_map("m1", 40, 30)
 	(md.get("meta", {}) as Dictionary)["code"] = "M1"
 	md["objects"] = [
-		{"code": "AAAA", "asset": "npc", "x": 0, "y": 0, "functions": [{"fn": "FN01", "content": "C1"}]},
+		{"code": "AAAA", "asset": "npc", "x": 0, "y": 0, "functions": [{"fn": "FN01", "content": "C1"}, {"fn": "FN01", "content": "C1"}]},
 		{"code": "BBBB", "asset": "npc", "x": 1, "y": 0, "functions": [{"fn": "FN01", "content": "C1"}]}]
 	ok(MapStore.write(m, "m1", md), "write map")
 	var bulk := ProjectAudit.content_edges_bulk(m, "dlg", ["C1", "C2", "C3"], "m1",
-		[{"cid": "C1", "code": "LIVE1"}])
+		[{"cid": "C1", "code": "AAAA"}, {"cid": "C1", "code": "LIVE1"}])
 	var refs: Dictionary = bulk.get("refs", {})
 	var c1: Dictionary = refs.get("C1", {})
 	var c2: Dictionary = refs.get("C2", {})

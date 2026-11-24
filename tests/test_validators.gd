@@ -3,6 +3,30 @@ extends "res://tests/_suite_base.gd"
 
 const V := preload("res://src/project/manifest_validation.gd")
 
+func test_object_geometry_rejects_crossing_and_quantized_duplicates() -> void:
+	var geometry := preload("res://src/map/object_geometry.gd")
+	var poly := {"type": "poly"}
+	ok(geometry.problem([[0,0], [10,10], [0,10], [10,0]], poly).contains("自交"), "reject crossed ring")
+	ok(geometry.problem([[0,0], [0.001,0], [10,0], [10,10]], poly).contains("重合"), "check stored precision")
+	eq(geometry.problem([[0,0], [10,0], [10,10], [5,5], [0,10]], poly), "", "accept concave contour")
+	eq(geometry.problem([[0,0], [10,10], [0,10], [10,0]], {"type": "path"}), "", "allow crossings in a path")
+
+func test_geometry_holes_require_strict_containment_and_subtract_fill() -> void:
+	var geometry := preload("res://src/map/object_geometry.gd")
+	var outer := [Vector2(0,0), Vector2(12,0), Vector2(12,10), Vector2(0,10)]
+	var hole := [Vector2(3,2), Vector2(7,2), Vector2(7,7), Vector2(3,7)]
+	var touching := [Vector2(0,1), Vector2(2,1), Vector2(2,4), Vector2(0,4)]
+	eq(geometry.holes_problem(outer, [hole]), "", "valid enclosed ring")
+	ok(geometry.holes_problem(outer, [touching]).contains("接触边界"), "touching exterior is invalid")
+	ok(geometry.holes_problem(outer, [hole, hole]).contains("已有孔洞"), "overlapping holes are invalid")
+	var rings: Array[PackedVector2Array] = [PackedVector2Array(outer), PackedVector2Array(hole)]
+	var strips := geometry.fill_strips(rings)
+	var area := 0.0
+	for quad in strips:
+		for i in quad.size():
+			area += quad[i].cross(quad[(i + 1) % quad.size()]) * 0.5
+	eq(area, 100.0, "the rendered area subtracts the hole")
+
 func _good() -> Dictionary:
 	return {
 		"tileSize": 16,

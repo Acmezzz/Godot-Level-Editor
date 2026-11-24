@@ -52,6 +52,11 @@ func prepare(operation: Dictionary, snap: Dictionary) -> Dictionary:
 	# 3) 地图（只脏图入计划：干净图没有待写项；写前外部改动确认在 hooks.save_map 里）
 	if bool(operation.get("map_dirty", false)) and str(operation.get("map_path", "")) != "":
 		var data: Dictionary = operation.get("map_snapshot", {})
+		if not data.is_empty():
+			var maps := load("res://src/map/map_store.gd")
+			var problem: String = maps.identity_error(m, str(operation.get("map_name", "")), data)
+			if problem != "":
+				return {"status": "failed", "error": problem}
 		var expected := MapFormat.encode(data).sha256_text() if not data.is_empty() else ""
 		var baseline := str(operation.get("map_digest", ""))
 		targets.append({"op": "write", "kind": "map", "id": str(operation.get("map_name", "")),
@@ -324,6 +329,28 @@ func apply_frozen(plan: Dictionary) -> Dictionary:
 	var receipt := {}
 	if targets.is_empty():
 		return {"status": "ok", "written": [], "conflicts": [], "receipt": {}, "targets": []}
+	var maps := load("res://src/map/map_store.gd")
+	var planned_codes := {}
+	for i in targets.size():
+		var target: Dictionary = targets[i]
+		if not target.has("map_data"):
+			continue
+		var move_from := str(target.get("move_from", ""))
+		var problem: String = maps.identity_error(m, str(target.id), target.map_data, move_from)
+		var code := str(target.map_data.get("meta", {}).get("code", ""))
+		if code != "" and planned_codes.has(code):
+			problem = "提交计划中的多个地图目标使用同一个地图码：%s" % code
+		if code != "":
+			planned_codes[code] = true
+		if problem == "" and move_from != "":
+			var old_path: String = maps.path_for(m, move_from)
+			var deletion: Array = targets.filter(func(row): return row.get("kind") == "map" and row.get("op") == "delete" and row.path == old_path)
+			if old_path == "" or deletion.size() != 1 or targets.find(deletion[0]) <= i \
+					or not _matches_file(old_path, false, str(deletion[0].get("baseline", ""))) \
+					or str(maps.read(m, move_from).get("meta", {}).get("code", "")) != code:
+				problem = "改名源文件已变化或不在删除计划中：%s" % move_from
+		if problem != "":
+			return {"status": "failed", "written": [], "error": problem, "targets": _receipts_pending(targets, "")}
 	var journal := _journal_entries(targets)
 	var log_path := Recovery.begin_pending(m, str(plan.get("operation", "")), journal)
 	if log_path == "":
@@ -365,7 +392,7 @@ func apply_frozen(plan: Dictionary) -> Dictionary:
 			var md: Dictionary = tgt.get("map_data", {}) if tgt.get("map_data", null) is Dictionary else {}
 			var MS := load("res://src/map/map_store.gd")
 			if str(MS.path_for(m, str(tgt.get("id", "")))) != path or md.is_empty() \
-					or not MS.write(m, str(tgt.get("id", "")), md):
+					or not MS.write(m, str(tgt.get("id", "")), md, str(tgt.get("move_from", ""))):
 				return _frozen_fail(tgt, targets, receipts, written, log_path,
 					"地图写盘失败（写前校验不过或目标不可写）：%s" % path)
 			written.append(kind)

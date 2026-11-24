@@ -25,7 +25,7 @@ func _apply_tool(pos: Vector2) -> void:
 	if cvs.place_kind == "object" and not cvs._is_grid_layer(cvs.active_layer):
 		_stamp(lp)
 	else:
-		_paint(cvs.grid.pick_cell(lp))
+		_paint(cvs.tile_grid_for_layer(cvs.active_layer).pick_cell(lp))
 
 
 func _brush_cells(c: Vector2i) -> Array:
@@ -93,7 +93,11 @@ func _paint(c: Vector2i) -> void:
 		cvs._hint("当前笔刷的资产不在清单里：左栏重新选一个瓦片")
 		return
 	var lid: String = cvs.layer_id(cvs.active_layer)
+	var tile_grid: GridSpace = cvs.tile_grid_for_layer(cvs.active_layer)
+	var meta: Dictionary = cvs.map_data.get("meta", {})
 	for bc in _brush_cells(c):
+		if tile_grid != cvs.grid and not tile_grid.cell_in_map(bc, int(meta.get("w", 1)), int(meta.get("h", 1))):
+			continue
 		if layer.get_cell_source_id(bc) != src \
 				or layer.get_cell_atlas_coords(bc) != cvs.paint_cell \
 				or MapFormat.alt_of_godot(layer.get_cell_alternative_tile(bc)) != cvs.tile_alt:
@@ -123,7 +127,7 @@ func _erase_hits(pos: Vector2) -> bool:
 	if layer == null:
 		return false
 	var lid: String = cvs.layer_id(cvs.active_layer)
-	for bc in _brush_cells(cvs.grid.pick_cell(lp)):
+	for bc in _brush_cells(cvs.tile_grid_for_layer(cvs.active_layer).pick_cell(lp)):
 		if layer.get_cell_source_id(bc) != -1 or not cvs.unresolved_tile(lid, bc).is_empty():
 			return true
 	return false
@@ -196,10 +200,10 @@ func _erase_at(pos: Vector2) -> void:
 		cvs._mark_ents()
 		return
 	# 碰撞元层擦除走统一入口（类型元数据一并清）——有真实改动才 _mark（热路径同 _paint）
-	erase_cells(_brush_cells(cvs.grid.pick_cell(cvs._active_local(pos))))
+	erase_cells(_brush_cells(cvs._active_cell(pos)))
 
 
-func _stamp(pos: Vector2) -> void:
+func _stamp(pos: Vector2, drawn: Array = []) -> void:
 	if cvs.map_root == null:
 		cvs._hint("无地图：先新建或打开一张地图")
 		return
@@ -235,7 +239,12 @@ func _stamp(pos: Vector2) -> void:
 		n.props = p
 	# poly/path 资产（R-02 几何段）：落下带缺省点集——优先声明 visual.points，
 	# 没声明按类型给最小形状（poly 一格三角形 / path 两点横线），否则是看不见的空实例
-	if n.visual_type() != "rect" and not (n.props.get("points", null) is Array):
+	if not drawn.is_empty():
+		n.refresh_visual()
+		n.position = pos
+		var inverse := n.transform.affine_inverse()
+		n.points_write(drawn.map(func(p): return inverse * p))
+	elif n.visual_type() != "rect" and not (n.props.get("points", null) is Array):
 		var pts: Array = n.points_local()
 		if pts.is_empty():
 			var cw := float(cvs.grid.tile.x)
@@ -247,7 +256,8 @@ func _stamp(pos: Vector2) -> void:
 		n.points_write(pts)
 	n.refresh_visual()   # props 就位后按 sizeFields 定尺寸
 	n.layer_id = cvs.layer_id(cvs.active_layer)
-	n.position = cvs.snap_point(pos, n)
+	if drawn.is_empty():
+		n.position = cvs.snap_point(pos, n)
 	# C09：放置即补齐类型挂载（不依赖选中事件），写出 mounted 继承行
 	if n.is_entity():
 		var fill: Dictionary = FunctionDecls.fill_bindings(cvs.manifest, n.asset, n.functions)
@@ -303,6 +313,9 @@ func generate_collision(strategy := "full", replace := false, one_way_top := fal
 		_hint("碰撞层已锁定：先解锁")
 		return 0
 	var src_idx: int = int(src_override if src_override >= 0 else cvs._collision_source_layer())
+	if cvs.has_independent_tile_grid(src_idx):
+		_hint("独立格系不能直接生成根空间碰撞，请使用格图或自由轮廓。")
+		return 0
 	var src := _layer_node(src_idx) if src_idx >= 0 else null
 	if src == null:
 		_hint("切到一个瓦片层再用自动碰撞（当前是碰撞元层）")
@@ -334,6 +347,8 @@ func count_auto_collision(strategy := "full", replace := false, src_override := 
 	if map_root == null:
 		return 0
 	var src_idx: int = int(src_override if src_override >= 0 else cvs._collision_source_layer())
+	if cvs.has_independent_tile_grid(src_idx):
+		return 0
 	var src := _layer_node(src_idx) if src_idx >= 0 else null
 	if src == null:
 		return 0   # 没有普通瓦片层可作来源（同 generate_collision）

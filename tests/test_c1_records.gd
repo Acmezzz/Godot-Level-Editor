@@ -6,6 +6,48 @@ const FieldWidgets := preload("res://src/ui/field_widgets.gd")
 const RefFields := preload("res://src/content/ref_fields.gd")
 const ClonePlan := preload("res://src/content/clone_plan.gd")
 const MapStore := preload("res://src/map/map_store.gd")
+const ScreenLayout := preload("res://src/project/screen_layout.gd")
+
+func test_screen_layout_image_fit():
+	var bounds := Rect2(0, 0, 100, 100)
+	var clip := Rect2(25, 0, 75, 100)
+	var size := Vector2(200, 100)
+	var cover := ScreenLayout.image_placement(bounds, clip, size, "cover")
+	eq(cover.dest, clip, "cover is clipped at the viewport boundary")
+	eq(cover.source, Rect2(75, 0, 75, 100), "cover crops the corresponding source pixels")
+	var contain := ScreenLayout.image_placement(bounds, bounds, size, "contain")
+	eq(contain.dest, Rect2(0, 25, 100, 50), "contain centers the original aspect ratio")
+	var stretch := ScreenLayout.image_placement(bounds, clip, size, "stretch")
+	eq(stretch.source, Rect2(50, 0, 150, 100), "stretch uses the entire source before clipping")
+
+func test_layout_localized_variant_and_schema() -> void:
+	var button := {"id": "continue", "kind": "button", "anchors": [0.1, 0.2, 0.8, 0.4],
+		"text": "Continue", "textLocales": {"pt": "Continuar", "pt-br": "Avançar"}}
+	var manifest := {"views": [{"view_id": "menu", "layout": {"locales": ["pt", "pt-br"], "elements": [button]}}]}
+	ok(ManifestValidation.validate(manifest).is_empty(), "localized layout is valid")
+	eq(ScreenLayout.display_text(button, "PT_BR"), "Avançar", "normalized exact locale comes first")
+	eq(ScreenLayout.display_text(button, "pt-PT"), "Continuar", "regional tags fall back to their parent")
+	eq(ScreenLayout.display_text(button, "es"), "Continue", "missing translations retain source text")
+	button.textLocales["en"] = "Next"
+	ok(ManifestValidation.validate(manifest).any(func(issue): return str(issue.path).ends_with("textLocales.en")),
+		"an undeclared translated locale is diagnosed at its value")
+
+func test_focus_skips_clipped_target_and_cleans_removed_links() -> void:
+	var layout := {"focusStart": "start", "elements": [
+		{"id": "start", "kind": "button", "anchors": [0, 0, 0.2, 0.2], "focus": {"right": "hidden"}},
+		{"id": "hidden", "kind": "button", "anchors": [0, 0, 0, 0], "offsets": [1000, 0, 1030, 30]},
+		{"id": "fallback", "kind": "button", "anchors": [0.3, 0, 0.5, 0.2]},
+	]}
+	eq(ScreenLayout.focus_step(layout, layout.elements, "start", "right", Vector2(1280, 720)),
+		"hidden", "an explicit visible target wins")
+	eq(ScreenLayout.focus_step(layout, layout.elements, "start", "right", Vector2(720, 720)),
+		"fallback", "a clipped explicit target falls back to visible spatial navigation")
+	var data := {"views": [{"view_id": "menu", "layout": layout}]}
+	layout.elements.remove_at(1)
+	var issues := ManifestValidation.validate(data)
+	ok(issues.any(func(issue): return str(issue.path).ends_with(".focus.right")), "stale input route is rejected")
+	ScreenLayout.clear_focus_links(layout, layout.elements, "hidden")
+	ok(ManifestValidation.validate(data).is_empty(), "deletion cleanup leaves a valid layout")
 
 ## 验收声明样例：配方 = 材料与数量；牌组 = 内容与张数；叙事选项 = 条件与目标
 func _record_decl(subs: Array) -> Dictionary:

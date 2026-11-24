@@ -165,12 +165,14 @@ static func _render(data: Dictionary, manifest: Dictionary, geo: Dictionary,
 	var layer_hidden := {}
 	var layer_blend := {}
 	var layer_ysort := {}
+	var layer_grids := {}
 	for row in layers:
 		if not (row is Dictionary):
 			continue
 		var lid_row := str((row as Dictionary).get("id", ""))
 		order.append(lid_row)
 		layer_ysort[lid_row] = bool(row.get("ySort", false))
+		layer_grids[lid_row] = MapViewData.tile_grid_of(row, manifest, grid)
 		if match_canvas:
 			if (row as Dictionary).get("visible", true) == false:
 				layer_hidden[lid_row] = true
@@ -207,15 +209,16 @@ static func _render(data: Dictionary, manifest: Dictionary, geo: Dictionary,
 			groups[1] = _sorted_objects(groups[1], grid)
 		_draw_object_markers(img, groups[0], grid, extent, xf, geo, blend)
 		var cells = (tiles_data as Dictionary).get(lid, [])
+		var tile_grid: GridSpace = layer_grids.get(lid, grid)
 		if cells is Array:
 			for c in cells:
 				if not c is Array or c.size() < 2:
 					continue
 				var cell := Vector2i(int(c[0]), int(c[1]))
-				if not grid.cell_in_map(cell, mw, mh):
+				if not tile_grid.cell_in_map(cell, mw, mh):
 					continue
-				var poly := _to_out(_xformed(xf, grid.cell_polygon(cell)), bounds, scale)
-				if not _blit_tile(img, poly, c, manifest, grid, atlas_cache, blend):
+				var poly := _to_out(_xformed(xf, tile_grid.cell_polygon(cell)), bounds, scale)
+				if not _blit_tile(img, poly, c, manifest, tile_grid, atlas_cache, blend):
 					var fallback := Color(0.45, 0.70, 0.45)
 					_put_poly_blend(img, poly, fallback, fallback, blend)
 		_draw_object_markers(img, groups[1], grid, extent, xf, geo, blend)

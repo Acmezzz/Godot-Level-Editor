@@ -7,7 +7,9 @@ extends HBoxContainer
 ## 切图是协程，await 完成后触发 after_switch（无论是否真的切成功；项目页用它留在当前视图）。
 
 const Kit := preload("res://src/ui/ui_kit.gd")
+const CellGraphEditor := preload("res://src/ui/cell_graph_editor.gd")
 const MapMenuIdentity := preload("res://src/ui/map_menu_identity.gd")
+const WorldEditor := preload("res://src/ui/world_layout_editor.gd")
 
 var app
 var after_switch: Callable   # 切图后宿主可选回调（项目页用它回到内容视图）
@@ -74,6 +76,10 @@ func _refresh_map_menu() -> void:
 			if nm == app.cur_map_name:
 				_switch_menu.set_item_as_checkable(i, true)
 				_switch_menu.set_item_checked(i, true)
+	_switch_menu.add_separator()
+	_switch_menu.add_item("编辑当前地图格图…", _MENU_CELL_GRAPH)
+	_switch_menu.set_item_disabled(_switch_menu.item_count - 1, not app.map_loaded)
+	_switch_menu.add_item("编辑项目世界布局…", _MENU_WORLD)
 	# 草稿恢复入口（A3）：只列真正有草稿的地图码，避免菜单变成大杂烩
 	var draft_keys: Array = preload("res://src/map/recovery.gd").list_drafts(app.manifest)
 	if draft_keys.is_empty():
@@ -82,6 +88,8 @@ func _refresh_map_menu() -> void:
 	_switch_menu.add_item("恢复草稿…", _MENU_DRAFTS)
 
 const _MENU_DRAFTS := 100000
+const _MENU_CELL_GRAPH := 100001
+const _MENU_WORLD := 100002
 
 ## 草稿列表弹窗：每份草稿给「恢复 / 查看正式图 / 丢弃」三个选择。
 func _open_draft_picker() -> void:
@@ -132,6 +140,12 @@ func draft_pick(draft_key: String, action: String) -> void:
 		after_switch.call()
 
 func _on_map_selected(id: int) -> void:
+	if id == _MENU_WORLD:
+		WorldEditor.open(app)
+		return
+	if id == _MENU_CELL_GRAPH:
+		CellGraphEditor.open(app)
+		return
 	if id == _MENU_DRAFTS:
 		_open_draft_picker()
 		return

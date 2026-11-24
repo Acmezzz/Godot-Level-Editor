@@ -1,6 +1,6 @@
 extends RefCounted
 ## 功能绑定块（附加功能行 + 添加菜单 + 行操作）：从 content_editor.gd 拆出的控制器。宿主 = content_editor 实例（host 引用）。
-## 「添加」菜单只滤掉已绑定的功能（方便选择），数据层不强制唯一——手改 JSON 仍可造成重复绑定。
+## repeatable 声明允许从菜单添加同功能的独立绑定；继承行与附加行分开识别。
 
 const Kit := preload("res://src/ui/ui_kit.gd")
 const Th := preload("res://src/ui/ui_theme.gd")
@@ -11,6 +11,8 @@ const RIGHT_W := 360
 
 var host   # content_editor 宿主
 var app    # 根应用（= host.app）
+var _render_generation := 0
+var _menu_guard := {}
 
 func _init(h) -> void:
 	host = h
@@ -51,6 +53,7 @@ func _open_lib(i: int) -> void:
 ## 附加功能列表：每行 ① 名称 [内容名] ⟳并行 [库] ✕；点行展开内容表单。
 ## 挂载功能与附加功能同一列表同一模型；挂载行只锁「删除」，其余（并行/库/表单）照常。
 func _build_fn_block() -> Control:
+	_render_generation += 1
 	var box := Kit.vbox(6)
 	box.add_child(Kit.section_header("功能", null))
 	var fns := _current_fns()
@@ -68,7 +71,7 @@ func _build_fn_row(i: int, item, total: int, tok: Dictionary = {}) -> Control:
 	var fname := str(f.get("name", ""))
 	var content_id := str(f.get("content", ""))
 	var on := i == _selected_fn
-	# 令牌由调用方按「功能码 + 同码序号」算好传入（§4.1：迟到回调按令牌定位）
+	# 令牌限定实例和本次渲染，防止迟到事件写入另一行。
 
 	var line := Kit.hbox(6)
 	line.add_theme_constant_override("separation", 6)
@@ -135,21 +138,30 @@ func _build_fn_row(i: int, item, total: int, tok: Dictionary = {}) -> Control:
 
 	# 执行顺序 = 数组序：↑↓ 交换相邻绑定，order 随交换统一重排
 	if i > 0:
-		line.add_child(Kit.button("↑", func(): _move_fn(i, -1), "ghost"))
+		line.add_child(Kit.button("↑", func(): _move_token(tok, -1), "ghost"))
 	if total > 1 and i < total - 1:
-		line.add_child(Kit.button("↓", func(): _move_fn(i, 1), "ghost"))
+		line.add_child(Kit.button("↓", func(): _move_token(tok, 1), "ghost"))
 	# 「库」始终在行内：复用是追加一条新绑定，与原行是否已填无关
-	var lib := Kit.button("库", func(): _open_lib(i), "ghost")
-	lib.tooltip_text = "从已有内容复制一条进来（生成新 ID，追加到列表末尾）"
+	var lib := Kit.button("库", func():
+		var at := _fn_index_of(_current_fns(), tok)
+		if at >= 0:
+			_open_lib(at), "ghost")
+	lib.tooltip_text = "复制或共享已有内容，改绑到当前行"
 	line.add_child(lib)
 	# 挂载功能不可删（类型自带，锁只锁删除）；附加功能照常给删除钮
-	if _mount_codes().has(str(ref.get("code", ""))):
+	var mount := _mount_state(_current_fns(), str(ref.get("code", "")))
+	if mount == i:
 		var lock := Kit.text_label("🔒", Th.TEXT_MUTE, Th.FS_META)
 		lock.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		lock.tooltip_text = "类型自带功能：不可删除。改挂载清单去资产目录。"
 		line.add_child(lock)
+	elif mount == -2:
+		var resolve := Kit.button("设为自带", func(): _choose_mount(tok), "ghost")
+		resolve.tooltip_text = "这个功能有多条旧绑定，选择哪一条是继承行"
+		line.add_child(resolve)
 	else:
-		line.add_child(Kit.del_button(func(): _delete_fn(i), "移除这一项（内容条目留在库里）"))
+		line.add_child(Kit.del_button(func():
+			_delete_fn(_fn_index_of(_current_fns(), tok)), "移除这一项（内容条目留在库里）"))
 
 
 	# 行本身是按钮：用一层覆盖按钮承载点击，内部控件仍可单独响应。
@@ -159,7 +171,7 @@ func _build_fn_row(i: int, item, total: int, tok: Dictionary = {}) -> Control:
 	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	row.custom_minimum_size = Vector2(0, 28)
 	row.tooltip_text = "点击展开这一项的内容表单"
-	row.pressed.connect(func(): _pick_fn(i))
+	row.pressed.connect(func(): _pick_fn(_fn_index_of(_current_fns(), tok)))
 	var clear := Th.flat(Color(0, 0, 0, 0), Th.R_INNER)
 	row.add_theme_stylebox_override("normal",
 		Th.box(Th.ACCENT_BG, Th.ACCENT, Th.R_INNER, 4, 3) if on else clear)
@@ -192,30 +204,40 @@ func _build_add_row() -> Control:
 		# PopupMenu 必须进树才能弹出：本控制器是 RefCounted，挂到应用根上
 		app.add_child(_add_menu)
 	btn.pressed.connect(func():
+		_menu_guard = {"entity": _current_spr(), "generation": _render_generation}
 		_populate_add_menu()
 		var at := Vector2i(btn.get_screen_position()) + Vector2i(0, int(btn.size.y))
 		_add_menu.popup(Rect2i(at, Vector2i.ZERO)))
 	return btn
 
-## 添加功能弹层的内容每次弹出前重建：清单可能在会话中被编辑（清单视图）。
-## 已绑定（含挂载自动生成的）的功能不再出现在菜单里——界面层的便利过滤；
-## 数据层不强制唯一（手改 JSON 仍可造出重复绑定，自检不报这条）。
+## 添加菜单里重复功能只在声明允许、继承行无歧义时可选。
 func _populate_add_menu() -> void:
 	_add_menu.clear()
 	var all := _function_index()
-	var bound := {}
-	for f in _current_fns():
+	var fns := _current_fns()
+	var counts := {}
+	for f in fns:
 		if f is Dictionary:
-			bound[str((f as Dictionary).get("fn", ""))] = true
-	for k in all.keys():
+			var code := str(f.get("fn", ""))
+			counts[code] = int(counts.get(code, 0)) + 1
+	for k in all:
 		var d: Dictionary = all[k]
 		var code := str(d.get("code", ""))
-		if bound.has(code):
+		var count := int(counts.get(code, 0))
+		if code.is_empty() or (count > 0 and not FunctionDecls.is_repeatable(manifest, str(k))):
 			continue
-		_add_menu.add_item(str(d.get("name", k)))
-		_add_menu.set_item_metadata(_add_menu.get_item_count() - 1, str(k))
+		_add_menu.add_item(str(d.get("name", k)) + ("（已有 %d 条）" % count if count > 0 else ""))
+		var index := _add_menu.item_count - 1
+		_add_menu.set_item_metadata(index, str(k))
+		if _mount_state(fns, code) == -2:
+			_add_menu.set_item_disabled(index, true)
+			_add_menu.set_item_tooltip(index, "先在现有绑定中选一条作为类型自带行")
 
 func _on_add_menu_id(idx: int) -> void:
+	if _menu_guard.get("entity") != _current_spr() or _menu_guard.get("generation") != _render_generation:
+		return
+	if idx < 0 or idx >= _add_menu.item_count or _add_menu.is_item_disabled(idx):
+		return
 	var fn_id := str(_add_menu.get_item_metadata(idx))
 	_add_fn(fn_id)
 
@@ -229,35 +251,46 @@ func _resolve_fn(f: Dictionary) -> Dictionary:
 	var id := FunctionDecls.fn_id_of(manifest, code)
 	return {"id": id, "code": code, "known": id != ""}
 
-## §4.1：绑定行的稳定令牌 = 功能码 + 同码序号（同 steps_panel._step_token 口径）。
-## 行内回调原先捕获裸下标：期间增删/上下移绑定后，迟到的 toggled/库/删除会落到另一条上。
+## 控件令牌仅在当前实例和右栏渲染中有效；有 ID 的行额外核对持久身份。
 func _fn_token(fns: Array, i: int) -> Dictionary:
-	if i < 0 or i >= fns.size():
-		return {"code": "", "nth": -1}
-	var code := str((fns[i] if fns[i] is Dictionary else {}).get("fn", ""))
-	var nth := 0
-	for k in i:
-		if str((fns[k] if fns[k] is Dictionary else {}).get("fn", "")) == code:
-			nth += 1
-	return {"code": code, "nth": nth}
+	var row: Dictionary = fns[i] if fns[i] is Dictionary else {}
+	return {"code": str(row.get("fn", "")), "id": str(row.get("bindingId", "")),
+		"index": i, "entity": _current_spr(), "generation": _render_generation}
 
-## 令牌 → 当前下标；找不到（那条绑定已被删）返回 -1。调用方据此放弃写入。
 func _fn_index_of(fns: Array, tok: Dictionary) -> int:
-	var code := str(tok.get("code", ""))
-	var want := int(tok.get("nth", -1))
-	if code == "" or want < 0:
+	if tok.get("generation") != _render_generation or tok.get("entity") != _current_spr():
 		return -1
-	var nth := 0
-	for i in fns.size():
-		if str((fns[i] if fns[i] is Dictionary else {}).get("fn", "")) != code:
+	var i := int(tok.get("index", -1))
+	if i < 0 or i >= fns.size() or not fns[i] is Dictionary:
+		return -1
+	var row: Dictionary = fns[i]
+	if str(row.get("fn", "")) != tok.code or str(row.get("bindingId", "")) != tok.id:
+		return -1
+	return i
+
+func _mount_state(fns: Array, code: String) -> int:
+	return FunctionDecls.mounted_index(fns, code) if _mount_codes().has(code) else -1
+
+func _choose_mount(tok: Dictionary) -> void:
+	if not commit():
+		return
+	var fns := _current_fns().duplicate(true)
+	var i := _fn_index_of(fns, tok)
+	if i < 0 or _mount_state(fns, tok.code) != -2:
+		return
+	var repeatable := FunctionDecls.is_repeatable(manifest, FunctionDecls.fn_id_of(manifest, tok.code))
+	for j in fns.size():
+		if not fns[j] is Dictionary or str(fns[j].get("fn", "")) != tok.code:
 			continue
-		if nth == want:
-			return i
-		nth += 1
-	return -1
+		fns[j].erase("mounted")
+		if repeatable and str(fns[j].get("bindingId", "")) == "":
+			fns[j]["bindingId"] = FunctionDecls.new_binding_id(fns)
+	fns[i]["mounted"] = true
+	_write_fns(_current_spr(), fns)
+	_refresh_all()
 
 func _pick_fn(i: int) -> void:
-	if not commit():
+	if i < 0 or not commit():
 		return
 	_selected_fn = -1 if _selected_fn == i else i
 	_rebuild_right()
@@ -274,59 +307,42 @@ func _trigger_options(fn_id: String) -> Array:
 		out.append({"v": code, "t": str(tdef.get("name", str(tid)))})
 	return out
 
-## 以下 setter 都收**稳定令牌**而不是下标（§4.1）：迟到回调按令牌重新定位，
-## 那条绑定已被删（-1）就放弃写入，绝不落到同列表的别人身上。
-func _set_parallel(tok: Dictionary, v: bool) -> void:
-	var spr := _current_spr()
-	var fns := _current_fns()
-	var i := _fn_index_of(fns, tok)
-	if spr == null or i < 0:
+## 切换行设置前保存当前输入，重建时按绑定身份重新读取字段。
+func _patch_setting(tok: Dictionary, key: String, value: Variant) -> void:
+	if _fn_index_of(_current_fns(), tok) < 0 or not commit():
 		return
-	var f: Dictionary = (fns[i] if fns[i] is Dictionary else {}).duplicate(true)
-	f["parallel"] = v
-	fns = fns.duplicate(true)
-	fns[i] = f
-	_write_fns(spr, fns)
+	var fns := _current_fns().duplicate(true)
+	var i := _fn_index_of(fns, tok)
+	if i < 0:
+		return
+	if value == null:
+		fns[i].erase(key)
+	else:
+		fns[i][key] = value
+	_write_fns(_current_spr(), fns)
+	_rebuild_right()
+
+func _set_parallel(tok: Dictionary, v: bool) -> void:
+	_patch_setting(tok, "parallel", v)
 
 func _set_trigger(tok: Dictionary, code: String) -> void:
-	var spr := _current_spr()
-	var fns := _current_fns()
-	var i := _fn_index_of(fns, tok)
-	if spr == null or i < 0:
-		return
-	var f: Dictionary = (fns[i] if fns[i] is Dictionary else {}).duplicate(true)
-	if code == "":
-		f.erase("trigger")
-	else:
-		f["trigger"] = code
-	fns = fns.duplicate(true)
-	fns[i] = f
-	_write_fns(spr, fns)
+	_patch_setting(tok, "trigger", null if code == "" else code)
 
 func _set_enabled(tok: Dictionary, v: bool) -> void:
-	var spr := _current_spr()
-	var fns := _current_fns()
-	var i := _fn_index_of(fns, tok)
-	if spr == null or i < 0:
-		return
-	var f: Dictionary = (fns[i] if fns[i] is Dictionary else {}).duplicate(true)
-	# 缺省 true 省略，不写冗余键
-	if v:
-		f.erase("enabled")
-	else:
-		f["enabled"] = false
-	fns = fns.duplicate(true)
-	fns[i] = f
-	_write_fns(spr, fns)
+	_patch_setting(tok, "enabled", null if v else false)
 
 func _delete_fn(i: int) -> void:
 	var spr := _current_spr()
 	var fns := _current_fns()
 	if spr == null or i < 0 or i >= fns.size():
 		return
+	var tok := _fn_token(fns, i)
 	if not commit():
 		return
 	fns = _current_fns().duplicate(true)
+	i = _fn_index_of(fns, tok)
+	if i < 0 or _mount_state(fns, tok.code) in [i, -2]:
+		return
 	fns.remove_at(i)
 	# order 之后重排：序号是执行顺序的唯一真相，删除后不能留空洞
 	for k in fns.size():
@@ -336,16 +352,26 @@ func _delete_fn(i: int) -> void:
 	_write_fns(spr, fns)
 	_refresh_all()
 
+func _move_token(tok: Dictionary, direction: int) -> void:
+	_move_fn(_fn_index_of(_current_fns(), tok), direction)
+
 ## 绑定行 ↑/↓：交换相邻两条并重排 order（执行顺序 = 数组序）。
 func _move_fn(i: int, dir: int) -> void:
 	var spr := _current_spr()
 	var fns := _current_fns()
 	var j := i + dir
-	if spr == null or j < 0 or j >= fns.size():
+	if spr == null or i < 0 or i >= fns.size() or j < 0 or j >= fns.size():
 		return
+	var tok := _fn_token(fns, i)
 	if not commit():
 		return
 	fns = _current_fns().duplicate(true)
+	i = _fn_index_of(fns, tok)
+	if i < 0:
+		return
+	j = i + dir
+	if j < 0 or j >= fns.size():
+		return
 	var t = fns[i]
 	fns[i] = fns[j]
 	fns[j] = t
@@ -363,13 +389,30 @@ func _move_fn(i: int, dir: int) -> void:
 ## 绑定里写执行码；码由 ensure_codes 在加载清单时补发，这里不可能缺。
 func _add_fn(fn_id: String) -> void:
 	var spr := _current_spr()
-	if spr == null or fn_id == "":
-		return
-	if not commit():
+	var code := FunctionDecls.fn_code(manifest, fn_id)
+	if spr == null or code == "" or not commit() or spr != _current_spr():
 		return
 	var fns := _current_fns().duplicate(true)
-	fns.append({"fn": FunctionDecls.fn_code(manifest, fn_id), "content": "", "name": "",
-		"order": fns.size() + 1, "parallel": false})
+	var repeatable := FunctionDecls.is_repeatable(manifest, fn_id)
+	var matching := []
+	for i in fns.size():
+		if fns[i] is Dictionary and str(fns[i].get("fn", "")) == code:
+			matching.append(i)
+	if not repeatable and not matching.is_empty():
+		return
+	var mounted := _mount_state(fns, code)
+	if mounted == -2:
+		app._set_status("请先标记这项功能的类型自带行。")
+		return
+	var next := {"fn": code, "content": "", "name": "", "order": fns.size() + 1, "parallel": false}
+	if repeatable:
+		if mounted >= 0:
+			fns[mounted]["mounted"] = true
+		for i in matching:
+			if str(fns[i].get("bindingId", "")) == "":
+				fns[i]["bindingId"] = FunctionDecls.new_binding_id(fns)
+		next["bindingId"] = FunctionDecls.new_binding_id(fns)
+	fns.append(next)
 	_selected_fn = fns.size() - 1
 	_write_fns(spr, fns)
 	_refresh_all()

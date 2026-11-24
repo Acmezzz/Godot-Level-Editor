@@ -6,6 +6,7 @@ extends RefCounted
 
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
 const ClonePlan := preload("res://src/content/clone_plan.gd")
+const Geometry := preload("res://src/map/object_geometry.gd")
 
 var cvs   # 宿主引用
 
@@ -439,231 +440,193 @@ func _finish_link_drag() -> void:
 	cvs.queue_redraw()
 
 
-## —— 顶点编辑（R-02 几何段）：选中 poly/path 实例的顶点把手 ——
-## 预览期直写 props.points，收尾恢复原值压撤销再写终值（与尺寸把手同一纪律）。
+## 按部件依次展开：每个部件先外环，再列内环。
+func _geometry_rings(n: EntityNode) -> Array:
+	if not Geometry.closed(n.decl.get("visual", {})):
+		return [n.points_local()]
+	var rings := []
+	for part in n.geometry_parts():
+		rings.append(part.points)
+		rings.append_array(part.holes)
+	return rings
 
-## 顶点世界坐标（把手命中/绘制共用）：局部点先按 flip 镜像（与 PolyView 呈现一致，E10），
-## 再经完整节点链变换（实例 rotation/scale + 所在层 offset/scale/parallax）到世界。
-func _vertex_worlds(n: EntityNode) -> Array:
-	var out := []
-	var mh := (n as EntityNode).flipped_h()
-	var mv := (n as EntityNode).flipped_v()
-	for p: Vector2 in (n as EntityNode).points_local():
-		var q := Vector2(-p.x if mh else p.x, -p.y if mv else p.y)
-		out.append((n as EntityNode).to_global(q))
-	return out
+func _vertex_world_rings(n: EntityNode) -> Array:
+	var worlds := []
+	for ring in _geometry_rings(n):
+		worlds.append(ring.map(n.geometry_point_to_world))
+	return worlds
 
-## 顶点把手命中：返回顶点下标（-1 = 未命中）；半径 = 0.45 格。
-## 与绘制共用 _vertex_worlds（含 flip 镜像，E10：翻转过的手把必须点得中）。
-func _vertex_handle_hit(pos: Vector2) -> int:
-	var n = cvs.selected_entity
-	if n == null or not is_instance_valid(n) or cvs.place_kind != "object":
-		return -1
-	var en := n as EntityNode
-	if en.visual_type() == "rect":
-		return -1
-	var r: float = cvs.grid.cell_max() * 0.45
-	var best := -1
-	var best_d := r
-	var worlds: Array = _vertex_worlds(en)
-	for i in worlds.size():
-		var d := (worlds[i] as Vector2).distance_to(pos)
-		if d <= best_d:
-			best = i
-			best_d = d
+func _vertex_handle_hit(pos: Vector2) -> Vector2i:
+	var en: EntityNode = cvs.selected_entity
+	if not is_instance_valid(en) or cvs.place_kind != "object" or en.visual_type() == "rect":
+		return Vector2i(-1, -1)
+	var best := Vector2i(-1, -1)
+	var distance: float = _handle_radius()
+	var worlds := _vertex_world_rings(en)
+	for ring in worlds.size():
+		for vertex in worlds[ring].size():
+			var d: float = worlds[ring][vertex].distance_to(pos)
+			if d < distance:
+				best = Vector2i(ring, vertex)
+				distance = d
 	return best
 
-## 起手：冻结原点集
-func _begin_vertex_drag(n: EntityNode, idx: int) -> void:
-	if cvs.is_layer_locked(cvs._layer_index_of(n.layer_id)):
-		cvs._hint("实例所在图层已锁定：解锁后再调顶点")
+func _handle_radius() -> float:
+	return 8.0 / maxf(cvs.zoom, 0.01)
+
+func _geometry_editable(en: EntityNode) -> bool:
+	if not is_instance_valid(en) or not en.is_visible_in_tree() or cvs.doc_busy:
+		return false
+	var li: int = cvs._layer_index_of(en.layer_id)
+	return li >= 0 and cvs.is_layer_visible(li) and not cvs.is_layer_locked(li)
+
+func _begin_vertex_drag(n: EntityNode, key: Vector2i) -> void:
+	if not _geometry_editable(n):
+		cvs._hint("当前实例不可编辑：请检查图层是否可见并已解锁。")
 		return
-	cvs._vertex_node = n
-	cvs._vertex_idx = idx
-	cvs._vertex_orig = (n as EntityNode).points_local().duplicate()
-	cvs._vertex_moved = false
 	cvs.begin_gesture(cvs.Gesture.ENTITY_VERTEX, MOUSE_BUTTON_LEFT)
+	cvs._vertex_node = n
+	cvs._vertex_key = key
+	cvs._vertex_orig = n.props.duplicate(true)
+	cvs._vertex_rings = _geometry_rings(n)
 
-## 点集近似相等（拖回起点判定；Array 无 is_equal_approx）
-func _pts_equal(a: Array, b: Array) -> bool:
-	if a.size() != b.size():
-		return false
-	for i in a.size():
-		if not (a[i] as Vector2).is_equal_approx(b[i]):
-			return false
-	return true
-
-## 未翻转局部系 → 节点空间：flip 是镜像（先把输入点镜像回去，写回原值再镜像回）
-func _vertex_to_node_space(n: EntityNode, lp: Vector2) -> Vector2:
-	return Vector2(-lp.x if n.flipped_h() else lp.x, -lp.y if n.flipped_v() else lp.y)
-
-func _vertex_to_data_space(n: EntityNode, node_lp: Vector2) -> Vector2:
-	return Vector2(-node_lp.x if n.flipped_h() else node_lp.x, -node_lp.y if n.flipped_v() else node_lp.y)
-
-## 鼠标世界坐标 → 实例的未翻转局部系（呈现、命中、拖动共用的几何逆变换，E10）
-func _local_of_world(n: EntityNode, world: Vector2) -> Vector2:
-	return _vertex_to_data_space(n, n.to_local(world))
-
-## 拖动预览：顶点 = 鼠标转局部（吃逆变换），flip 镜像回未翻转局部系再写
 func _move_vertex_preview(pos: Vector2) -> void:
-	if cvs._vertex_node == null or not is_instance_valid(cvs._vertex_node):
-		cvs._vertex_node = null
+	var n: EntityNode = cvs._vertex_node
+	if not _geometry_editable(n):
 		return
-	var n := cvs._vertex_node as EntityNode
-	var pts: Array = n.points_local()
-	if cvs._vertex_idx >= pts.size():
+	var key: Vector2i = cvs._vertex_key
+	var original: Array = cvs._vertex_rings[key.x]
+	var lp := n.geometry_point_from_world(pos)
+	if not lp.is_finite():
 		return
-	var lp := _local_of_world(n, pos)
-	var orig: Array = cvs._vertex_orig
-	if cvs._vertex_idx < orig.size() and lp.is_equal_approx(orig[cvs._vertex_idx]):
-		# 拖回起点（E10）：把点集写回起手快照，别停在上一次预览位置。
-		if not _pts_equal(n.points_local(), orig):
-			n.points_write(orig)
-			cvs._vertex_moved = false
-			cvs.queue_redraw()
-		return
-	pts[cvs._vertex_idx] = lp
-	n.points_write(pts)
-	cvs._vertex_moved = true
+	var precision := Vector2(0.01, 0.01)
+	if lp.snapped(precision).is_equal_approx((original[key.y] as Vector2).snapped(precision)):
+		n.props = cvs._vertex_orig.duplicate(true)
+	else:
+		var rings: Array = cvs._vertex_rings.duplicate(true)
+		rings[key.x][key.y] = lp
+		_write_ring(n, rings, key.x)
+	n.refresh_visual()
 	cvs.queue_redraw()
 
-## 收尾：动过才压撤销+置脏（恢复原值→压撤销→写终值 = 一个撤销步）
 func _finish_vertex_drag() -> void:
-	var n = cvs._vertex_node
+	var n: EntityNode = cvs._vertex_node
+	if not is_instance_valid(n):
+		_cancel_vertex_drag()
+		return
+	var key: Vector2i = cvs._vertex_key
+	var candidate := _geometry_rings(n)
+	var unchanged: bool = n.props == cvs._vertex_orig
+	_cancel_vertex_drag()
+	if not unchanged and _geometry_editable(n):
+		_commit_ring(n, candidate, key.x, "顶点已移动")
+
+func _cancel_vertex_drag() -> void:
+	var n: EntityNode = cvs._vertex_node
+	if is_instance_valid(n):
+		n.props = cvs._vertex_orig
+		n.refresh_visual()
 	cvs._vertex_node = null
-	if n == null or not is_instance_valid(n):
-		return
-	if not cvs._vertex_moved:
-		return
-	var idx := int(cvs._vertex_idx)
-	var orig: Array = cvs._vertex_orig
-	var fin: Array = (n as EntityNode).points_local()
-	var fp: Vector2 = fin[idx] if idx < fin.size() else Vector2.ZERO
-	(n as EntityNode).points_write(orig)
-	(n as EntityNode).refresh_visual()
-	var pre: Dictionary = cvs._undo_history_ctrl.inst_rows([n])
-	var via_delta := bool(pre.get("ok", false))
-	if not via_delta:
-		cvs.push_undo()
-	(n as EntityNode).points_write(fin)
-	(n as EntityNode).refresh_visual()
-	if via_delta:
-		cvs._undo_history_ctrl.inst_commit(pre.get("rows", {}))
-	cvs._mark_ents()
-	cvs._hint("顶点已移动（Ctrl+Z 撤销）")
+	cvs._vertex_orig = {}
+	cvs._vertex_rings = []
 	cvs.queue_redraw()
 
-## 双击边加点：最近线段的最近点（超出 0.6 格 = 不算加点意图，返回 false 让位其它交互）。
-## 最近点落在既有顶点 0.35 格内 = 复制点，拒绝（让位顶点拖拽）。
 func _add_vertex_at(pos: Vector2) -> bool:
-	var n = cvs.selected_entity
-	if n == null or not is_instance_valid(n):
+	var en: EntityNode = cvs.selected_entity
+	if not is_instance_valid(en) or en.visual_type() == "rect":
 		return false
-	var en := n as EntityNode
-	if en.visual_type() == "rect":
+	if not _geometry_editable(en):
 		return false
-	# 加点也是写操作（E04）：锁层/隐藏层实例不许改几何
-	if cvs.is_layer_locked(cvs._layer_index_of(en.layer_id)):
-		cvs._hint("实例所在图层已锁定：解锁后再加顶点")
-		return true
-	var pts: Array = en.points_local()
-	if pts.size() < 2:
+	# A click near an existing handle belongs to vertex dragging, not edge insertion.
+	if _vertex_handle_hit(pos).x >= 0:
 		return false
-	# 闭合语义按 visual.type（E16 同口径）：poly 缺省闭合，与呈现一致
-	var closed := en.visual_type() == "poly"
-	var best_seg := -1
-	var best_lp := Vector2.ZERO
-	var best_d := INF
-	var segs := pts.size() if closed else pts.size() - 1
-	var worlds: Array = _vertex_worlds(en)
-	for i in segs:
-		var a: Vector2 = worlds[i]
-		var b: Vector2 = worlds[(i + 1) % pts.size()]
-		var cp: Vector2 = _closest_on_segment(pos, a, b)
-		var d := cp.distance_to(pos)
-		if d < best_d:
-			best_d = d
-			best_seg = i
-			best_lp = _local_of_world(en, cp)
-	if best_seg < 0 or best_d > cvs.grid.cell_max() * 0.6:
+	var rings := _geometry_rings(en)
+	var worlds := _vertex_world_rings(en)
+	var closed := Geometry.closed(en.decl.get("visual", {}))
+	var best := Vector2i(-1, -1)
+	var best_pos := Vector2.ZERO
+	var distance: float = 10.0 / maxf(cvs.zoom, 0.01)
+	for ring in worlds.size():
+		var contour: Array = worlds[ring]
+		var count := contour.size() if closed else contour.size() - 1
+		if contour.size() < 2:
+			continue
+		for i in count:
+			var nearest := Geometry2D.get_closest_point_to_segment(pos, contour[i], contour[(i + 1) % contour.size()])
+			var d := nearest.distance_to(pos)
+			if d < distance:
+				best = Vector2i(ring, i + 1)
+				best_pos = nearest
+				distance = d
+	if best.x < 0:
 		return false
-	for p: Vector2 in pts:
-		if (p as Vector2).distance_to(best_lp) < cvs.grid.cell_max() * 0.35:
-			return false
-	return _vertex_commit(pts, best_seg + 1, best_lp, "已加顶点")
-
-## 右键顶点删点：poly 保底 3 点、path 保底 2 点。
-## E16：poly 未显式声明 closed 时缺省视为闭合（visual.type=poly 的语义就是多边形），
-## 与 PolyView 呈现一致——否则「未声明 closed 的多边形」能被删到只剩两点。
-func _delete_vertex_at(pos: Vector2) -> bool:
-	var n = cvs.selected_entity
-	if n == null or not is_instance_valid(n):
-		return false
-	var en := n as EntityNode
-	if en.visual_type() == "rect":
-		return false
-	# 删点同属写操作（E04）
-	if cvs.is_layer_locked(cvs._layer_index_of(en.layer_id)):
-		cvs._hint("实例所在图层已锁定：解锁后再删顶点")
-		return true
-	var idx := _vertex_handle_hit(pos)
-	if idx < 0:
-		return false
-	var pts: Array = en.points_local()
-	var floor_n := 3 if en.visual_type() == "poly" else 2
-	var closed := en.visual_type() == "poly"
-	if pts.size() <= floor_n:
-		cvs._hint("%s 至少保留 %d 个顶点" % ["多边形" if closed else "折线", floor_n])
-		return true
-	# 撤销一步：恢复原值→压快照→写新值（点击类改动同一纪律）
-	var orig: Array = pts.duplicate()
-	var npts: Array = pts.duplicate()
-	npts.remove_at(idx)
-	(n as EntityNode).points_write(orig)
-	(n as EntityNode).refresh_visual()
-	var pre: Dictionary = cvs._undo_history_ctrl.inst_rows([n])
-	var via_delta := bool(pre.get("ok", false))
-	if not via_delta:
-		cvs.push_undo()
-	(n as EntityNode).points_write(npts)
-	(n as EntityNode).refresh_visual()
-	if via_delta:
-		cvs._undo_history_ctrl.inst_commit(pre.get("rows", {}))
-	cvs._mark_ents()
-	cvs._hint("已删顶点（Ctrl+Z 撤销）")
-	cvs.queue_redraw()
+	rings[best.x].insert(best.y, en.geometry_point_from_world(best_pos))
+	_commit_ring(en, rings, best.x, "已加顶点")
 	return true
 
-## 点击类顶点改动共用：恢复原值→压撤销→按 (idx, lp) 写回新点集
-func _vertex_commit(orig: Array, idx: int, lp: Vector2, hint: String) -> bool:
-	var n = cvs.selected_entity
-	if n == null or not is_instance_valid(n):
+func _delete_vertex_at(pos: Vector2) -> bool:
+	var en: EntityNode = cvs.selected_entity
+	var key := _vertex_handle_hit(pos)
+	if key.x < 0:
 		return false
-	var en := n as EntityNode
-	en.points_write(orig)
-	en.refresh_visual()
-	var pre: Dictionary = cvs._undo_history_ctrl.inst_rows([en])
-	var via_delta := bool(pre.get("ok", false))
-	if not via_delta:
+	if not _geometry_editable(en):
+		cvs._hint("当前实例不可编辑。")
+		return true
+	var rings := _geometry_rings(en)
+	var minimum := Geometry.minimum(en.decl.get("visual", {}))
+	if rings[key.x].size() <= minimum:
+		cvs._hint("此轮廓至少保留 %d 个顶点。" % minimum)
+		return true
+	rings[key.x].remove_at(key.y)
+	_commit_ring(en, rings, key.x, "已删顶点")
+	return true
+
+func _write_ring(en: EntityNode, rings: Array, index: int) -> void:
+	if not Geometry.closed(en.decl.get("visual", {})):
+		en.points_write(rings[0])
+	else:
+		var parts := en.geometry_parts()
+		var cursor := 0
+		for part in parts:
+			if index == cursor:
+				part.points = rings[index]
+				break
+			var hole_index := index - cursor - 1
+			if hole_index >= 0 and hole_index < part.holes.size():
+				part.holes[hole_index] = rings[index]
+				break
+			cursor += 1 + part.holes.size()
+		en.geometry_parts_write(parts)
+
+func _geometry_problem(en: EntityNode, rings: Array) -> String:
+	var visual: Dictionary = en.decl.get("visual", {})
+	if not Geometry.closed(visual):
+		return Geometry.problem(rings[0], visual)
+	var parts := en.geometry_parts()
+	var cursor := 0
+	for part in parts:
+		var hole_count: int = part.holes.size()
+		part.points = rings[cursor]
+		part.holes = rings.slice(cursor + 1, cursor + 1 + hole_count)
+		cursor += 1 + hole_count
+	return Geometry.parts_problem(parts)
+
+func _commit_ring(en: EntityNode, rings: Array, index: int, hint: String) -> void:
+	var issue := _geometry_problem(en, rings)
+	# Keep imported invalid outlines editable so authors can repair them in stages.
+	if not issue.is_empty() and _geometry_problem(en, _geometry_rings(en)).is_empty():
+		cvs._hint(issue)
+		return
+	var before: Dictionary = cvs._undo_history_ctrl.inst_rows([en])
+	if not before.get("ok", false):
 		cvs.push_undo()
-	var npts: Array = orig.duplicate()
-	npts.insert(idx, lp)
-	en.points_write(npts)
+	_write_ring(en, rings, index)
 	en.refresh_visual()
-	if via_delta:
-		cvs._undo_history_ctrl.inst_commit(pre.get("rows", {}))
+	if before.get("ok", false):
+		cvs._undo_history_ctrl.inst_commit(before.rows)
 	cvs._mark_ents()
 	cvs._hint(hint + "（Ctrl+Z 撤销）")
 	cvs.queue_redraw()
-	return true
-
-## 线段最近点
-func _closest_on_segment(p: Vector2, a: Vector2, b: Vector2) -> Vector2:
-	var ab := b - a
-	var t := 0.0
-	if ab.length_squared() > 0.0001:
-		t = clampf((p - a).dot(ab) / ab.length_squared(), 0.0, 1.0)
-	return a + ab * t
 
 
 func copy_selection() -> bool:
@@ -970,6 +933,3 @@ func scale_selected(d: float) -> bool:
 
 func _live_selection() -> Array:
 	return cvs._region_ops_ctrl._live_selection()
-
-func _instantiate(t: Dictionary, origin: Vector2i) -> EntityNode:
-	return cvs._region_ops_ctrl._instantiate(t, origin)

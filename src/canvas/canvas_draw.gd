@@ -4,9 +4,9 @@ extends RefCounted
 var cvs   # 宿主引用
 
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
+const MapViewData := preload("res://src/map/map_view_data.gd")
 const ManifestScript := preload("res://src/project/manifest.gd")   # 出口 role 判定
 const K := preload("res://src/core/constants.gd")
-const CellGraphRef := preload("res://src/map/cell_graph.gd")   # C4：格图多边形高亮
 const EdgeRefRef := preload("res://src/map/edge_ref.gd")   # §7.4：格边高亮/取值
 const TriTileViewScript := preload("res://src/canvas/tri_tile_view.gd")   # 格多边形贴图 UV
 
@@ -17,6 +17,10 @@ func _draw() -> void:
 		return
 	var pos = cvs.get_global_mouse_position()
 	var c = cvs._cell_of(pos)
+	var li: int = cvs.active_layer
+	var paint_grid: GridSpace = cvs.tile_grid_for_layer(li)
+	var layer_frame: Transform2D = cvs.layer_xform(li)
+	var local_mouse_for_grid: Vector2 = cvs._active_local(pos)
 	# 网格覆盖整个地图边界（meta w×h），碰撞/实体放在地形外也有网格
 	var meta0: Dictionary = cvs.map_data.get("meta", {})
 	var map_rect := Rect2i(0, 0, int(meta0.get("w", K.DEFAULT_MAP_W)), int(meta0.get("h", K.DEFAULT_MAP_H)))
@@ -31,10 +35,19 @@ func _draw() -> void:
 		var segs = cvs.grid.grid_lines(vis, map_rect)
 		for k in range(0, segs.size(), 2):
 			cvs.draw_line(segs[k], segs[k + 1], Color(1, 1, 1, 0.07), 1.0, true)
+		if paint_grid != cvs.grid:
+			var local_vis := MapViewData.xform_rect(layer_frame.affine_inverse(), vis)
+			var local_lines := paint_grid.grid_lines(local_vis, map_rect)
+			for k in range(0, local_lines.size(), 2):
+				cvs.draw_line(layer_frame * local_lines[k], layer_frame * local_lines[k + 1],
+					Color(0.3, 0.8, 0.95, 0.22), 1.0, true)
 		
 	# 幽灵预览：只看「手上拿着什么」，没有工具要判断
 	var on_ent: bool = cvs.place_kind == "object" and not cvs._is_grid_layer(cvs.active_layer)
-	if cvs.grid.map_bounds(map_rect).has_point(pos):
+	if cvs._geometry_draw.active():
+		cvs._geometry_draw.draw(pos)
+	elif (on_ent and cvs.grid.map_bounds(map_rect).has_point(local_mouse_for_grid)) \
+			or (not on_ent and paint_grid.cell_in_map(c, map_rect.size.x, map_rect.size.y)):
 		if on_ent:
 			# 摆放模式：手上拿着资产就画它的幽灵，否则画「点这里会选中」的提示框
 			if cvs.stamp_asset != "":
@@ -87,12 +100,12 @@ func _draw() -> void:
 							gpts.append(gpts[0])
 							cvs.draw_polyline(gpts, gcol, 1.5, true)
 			else:
-				var gp = cvs.grid.cell_polygon(c)
+				var gp: PackedVector2Array = layer_frame * cvs.grid.cell_polygon(cvs.grid.pick_cell(local_mouse_for_grid))
 				cvs.draw_polyline(gp + PackedVector2Array([gp[0]]), Color(0.55, 0.85, 1.0, 0.5), 1.0, true)
 		else:
 			# 瓦片 / 碰撞层：笔刷范围轮廓 + 中心格瓦片幽灵（碰撞层不画瓦片图，只画范围）
 			var bcell := Vector2i(c.x - cvs.brush_size / 2, c.y - cvs.brush_size / 2)
-			var bpoly = cvs.grid.grid_polygon(bcell, bcell + Vector2i(cvs.brush_size, cvs.brush_size))
+			var bpoly: PackedVector2Array = layer_frame * paint_grid.grid_polygon(bcell, bcell + Vector2i(cvs.brush_size, cvs.brush_size))
 			var tint := Color(1.0, 0.45, 0.45, 0.55) if cvs._is_grid_layer(cvs.active_layer) else Color(1, 1, 1, 0.5)
 			cvs.draw_polyline(bpoly + PackedVector2Array([bpoly[0]]), tint, 1.0, true)
 			# 无图集（headless 测试/清单缺图）时不画幽灵，避免 draw_texture_rect_region 空纹理警告
@@ -218,9 +231,12 @@ func _draw() -> void:
 			cvs.draw_rect(Rect2(cr - Vector2.ONE * side * 0.5, Vector2.ONE * side), Color(0.85, 0.4, 1.0, 0.9), true)
 		# 顶点把手（R-02）：选中 poly/path 实例画顶点方块（拖动/双击加点/右键删点）
 		if (sn as EntityNode).visual_type() != "rect":
-			var vside := maxf(cvs.grid.cell_max() * 0.3, 6.0)
-			for wp: Vector2 in cvs._vertex_worlds(sn as EntityNode):
-				cvs.draw_rect(Rect2(wp - Vector2.ONE * vside * 0.5, Vector2.ONE * vside), Color(0.85, 0.4, 1.0, 0.9), true)
+			var vside := 7.0 / maxf(cvs.zoom, 0.01)
+			var rings: Array = cvs._vertex_world_rings(sn as EntityNode)
+			for i in rings.size():
+				var tint := Color("#dba8ff") if i == 0 else Color("#63e8d1")
+				for wp: Vector2 in rings[i]:
+					cvs.draw_rect(Rect2(wp - Vector2.ONE * vside * 0.5, Vector2.ONE * vside), tint, true)
 	# 引用指向预览：编辑引用字段时高亮被指实例（青色粗框）
 	if cvs.ref_highlight != "":
 		var hs = cvs._ent_by_code_index().get(cvs.ref_highlight, null)
@@ -263,20 +279,21 @@ func _draw() -> void:
 		cvs.draw_line(Vector2(c4.x, r4.position.y), Vector2(c4.x, r4.end.y), Color(0.35, 0.95, 0.95, 0.25), 1.0)
 	# 无贴图的 visual:rect 资产：按声明画占位矩形，不再读 props.event/mode/once。
 	_draw_visual_rects(zones)
-	# 区域选区轮廓（框选的结果——开关或 Ctrl+拖动，可跨层）。
-	# 选区是 root 空间格号，轮廓画在 root 空间（层偏移不影响框选口径，E02）。
 	if cvs._region_sel.size.x > 0:
-		var rpoly = cvs.grid.grid_polygon(cvs._region_sel.position, cvs._region_sel.end)
-		cvs.draw_polyline(rpoly + PackedVector2Array([rpoly[0]]), Color(1.0, 0.85, 0.3, 0.8), 2.0, true)
+		var selected_li: int = cvs._layer_index_of(cvs._region_layer)
+		if cvs._region_layer == "" or selected_li == cvs.active_layer:
+			_draw_grid_region(cvs._region_sel.position, cvs._region_sel.size, selected_li, Color(1.0, 0.85, 0.3, 0.8))
 	# 区域拖动预览：整块幽灵按当前格偏移跟手，松手才真搬。
 	# 每层瓦片在自己的层局部格里，预览按层变换到世界（E02）。
 	if cvs._move_active and not cvs._move_snap.is_empty():
 		var md: Vector2i = cvs._move_cell_delta
 		# 区域原点按投影几何平移（与 _finish_region_move 同一原语）
-		var morg: Vector2i = cvs.grid.shift_cell(cvs._region_sel.position, md)
+		var morg: Vector2i = cvs._region_sel.position + md
+		var move_li: int = cvs._layer_index_of(cvs._move_snap.get("tile_layer", ""))
 		# tiles = {层id: [[x,y,资产id,ax,ay]...]}——按条目所属层变换到世界
 		for lid2 in (cvs._move_snap.get("tiles", {}) as Dictionary):
 			var lli2: int = cvs._layer_index_of(str(lid2))
+			var move_grid: GridSpace = cvs.tile_grid_for_layer(lli2)
 			for t in (cvs._move_snap.get("tiles", {}) as Dictionary)[lid2]:
 				# 按条目自己的资产 id 取纹理与切片尺寸（预览与真实落笔一致）
 				var aid2 := str((t as Array)[2])
@@ -284,13 +301,13 @@ func _draw() -> void:
 				var tex2: Texture2D = cvs.atlas_texs[ai2] \
 					if ai2 >= 0 and ai2 < (cvs.atlas_texs as Array).size() else null
 				# 幽灵落点与真实搬移同一原语（六边行错位/三角半格列）：不能格号直接相加
-				var dst2: Vector2i = cvs.grid.shift_cell(
-					Vector2i(int((t as Array)[0]), int((t as Array)[1])), md)
+				var dst2: Vector2i = move_grid.cell_from_offset(morg, move_grid.relative_cell(
+					Vector2i(int((t as Array)[0]), int((t as Array)[1])), cvs._region_sel.position))
 				_draw_tile_ghost(tex2, dst2, cvs.asset_cell(aid2),
 					Vector2i(int((t as Array)[3]), int((t as Array)[4])),
 					int((t as Array)[5]) if (t as Array).size() >= 6 else 0, lli2, 0.6)
 		for t in cvs._move_snap.get("collision", []):
-			var mc: Vector2i = cvs.grid.shift_cell(Vector2i(int(t[0]), int(t[1])), md)
+			var mc: Vector2i = cvs.grid.cell_from_offset(morg, cvs.grid.relative_cell(Vector2i(int(t[0]), int(t[1])), cvs._region_sel.position))
 			cvs.draw_colored_polygon(cvs.grid.cell_polygon(mc), Color(1.0, 0.25, 0.25, 0.45))
 		for e0 in cvs._move_snap.get("ents", []):
 			# 快照条目 {dx,dy,asset,...}：按区域原点 + 偏移画（快照只存数据，不存节点）
@@ -303,7 +320,10 @@ func _draw() -> void:
 			var ep: Vector2 = gbase0 \
 				+ Vector2(float(d0.get("dx", 0.0)), float(d0.get("dy", 0.0)))
 			var gu := EntityNode.anchor_unit_of(AssetDecl.by_id(cvs.manifest, gaid))
-			var gr := Rect2(cvs.grid.to_px(ep + gu) - EntityNode.anchor_off_of(gu, gsz0), gsz0)
+			var anchor0: Vector2 = cvs.grid.to_px(ep + gu)
+			if cvs.grid.is_hex_geom():
+				anchor0 = cvs.grid.region_origin_px(morg) + d0.get("pixel_offset", Vector2.ZERO)
+			var gr := Rect2(anchor0 - EntityNode.anchor_off_of(gu, gsz0), gsz0)
 			# 实例幽灵跟随目标层变换（新位置落回各自层）
 			var eli: int = cvs._layer_index_of(str(d0.get("layer", "")))
 			gr = _wrect_local(gr, eli)
@@ -312,11 +332,13 @@ func _draw() -> void:
 				cvs.draw_texture_rect(gtex0, gr, false, Color(1, 1, 1, 0.6))
 			else:
 				cvs.draw_rect(gr, Color(0.6, 1.0, 0.6, 0.35), true)
-		var mpoly = cvs.grid.grid_polygon(morg, morg + cvs._region_sel.size)
-		cvs.draw_polyline(mpoly + PackedVector2Array([mpoly[0]]), Color(0.45, 1.0, 0.75, 0.9), 2.0, true)
+		_draw_grid_region(morg, cvs._region_sel.size, move_li, Color(0.45, 1.0, 0.75, 0.9))
 	# 区域粘贴预览：各层幽灵跟随鼠标，左键落位
-	if cvs._paste_mode and not cvs._region_clip.is_empty():
-		var org = cvs._cell_of(pos)
+	var show_paste: bool = cvs._paste_mode and not cvs._region_clip.is_empty() and cvs._region_ops_ctrl.region_clip_matches()
+	if show_paste and cvs._region_clip.has("tile_rows"):
+		_draw_layer_paste(pos)
+	elif show_paste:
+		var org: Vector2i = cvs.grid.region_origin(cvs._cell_of(pos), int(cvs._region_clip.get("parity", -1)))
 		# 幽灵按**目标层**画，与真实粘贴同一套层重映射（同图按 id、跨图按唯一层名、
 		# 匹配不上落最底层）——否则预览停在源层位置，落位后内容跳到别的层（V4 P1）。
 		var lnames_g: Dictionary = cvs._region_clip.get("layer_names", {})
@@ -327,7 +349,7 @@ func _draw() -> void:
 			var lig: int = cvs._region_ops_ctrl._paste_layer_index(str(lidg), lnames_g, missed_g, same_map_g)
 			for t in ((cvs._region_clip.get("tiles", {}) as Dictionary)[lidg]) as Array:
 				# 落点与真实粘贴同一原语（六边行错位/三角半格列）
-				var tc = cvs.grid.shift_cell(org, Vector2i(int((t as Array)[0]), int((t as Array)[1])))
+				var tc = cvs.grid.cell_from_offset(org, Vector2i(int((t as Array)[0]), int((t as Array)[1])))
 				# 按条目自己的资产 id 取纹理与切片尺寸（同上）
 				var aid3 := str((t as Array)[2])
 				var ai3: int = cvs.source_of_asset(aid3)
@@ -337,7 +359,7 @@ func _draw() -> void:
 					Vector2i(int((t as Array)[3]), int((t as Array)[4])),
 					int((t as Array)[5]) if (t as Array).size() >= 6 else 0, lig, 0.5)
 		for t in cvs._region_clip.get("collision", []):
-			var cc = cvs.grid.shift_cell(org, Vector2i(int(t[0]), int(t[1])))
+			var cc = cvs.grid.cell_from_offset(org, Vector2i(int(t[0]), int(t[1])))
 			cvs.draw_colored_polygon(cvs.grid.cell_polygon(cc), Color(1.0, 0.25, 0.25, 0.35))
 	# 实例幽灵：区域碎片里的实例也预览（按资产声明的实例尺寸，不只是 1 格）
 		for t in cvs._region_clip.get("ents", []):
@@ -347,7 +369,10 @@ func _draw() -> void:
 			# dx/dy 是格坐标（浮点）：与落位后的 apply_grid 同一口径
 			var eg: Vector2 = cvs.grid.cell_origin_continuous(org) + Vector2(float(t.get("dx", 0.0)), float(t.get("dy", 0.0)))
 			var gu2 := EntityNode.anchor_unit_of(AssetDecl.by_id(cvs.manifest, gaid2))
-			var er := Rect2(cvs.grid.to_px(eg + gu2) - EntityNode.anchor_off_of(gu2, gsz), gsz)
+			var anchor2: Vector2 = cvs.grid.to_px(eg + gu2)
+			if cvs.grid.is_hex_geom():
+				anchor2 = cvs.grid.region_origin_px(org) + t.get("pixel_offset", Vector2.ZERO)
+			var er := Rect2(anchor2 - EntityNode.anchor_off_of(gu2, gsz), gsz)
 			# 实例也画在它将要落进去的那一层（同一条重映射规则）
 			var eli2: int = cvs._region_ops_ctrl._paste_layer_index(
 				str(t.get("layer", "")), lnames_g, missed_g, same_map_g)
@@ -365,6 +390,26 @@ func _draw() -> void:
 		cvs.draw_polyline(ppoly + PackedVector2Array([ppoly[0]]), Color(1.0, 0.85, 0.3, 0.9), 2.0, true)
 	# E1 临时选点覆盖层（候选高亮 + 提示条）最后画：必须压在其它叠加之上
 	_draw_pick_mode()
+
+func _draw_grid_region(origin: Vector2i, size: Vector2i, li: int, color: Color) -> void:
+	var frame: Transform2D = cvs.layer_xform(li)
+	var poly: PackedVector2Array = frame * cvs.tile_grid_for_layer(li).grid_polygon(origin, origin + size)
+	if not poly.is_empty():
+		poly.append(poly[0])
+		cvs.draw_polyline(poly, color, 2.0, true)
+
+func _draw_layer_paste(pos: Vector2) -> void:
+	var li: int = cvs.active_layer
+	var grid: GridSpace = cvs.tile_grid_for_layer(li)
+	var clip: Dictionary = cvs._region_clip
+	var origin := grid.region_origin(cvs._active_cell(pos), int(clip.parity))
+	for row in clip.tile_rows:
+		var target := grid.cell_from_offset(origin, Vector2i(row[0], row[1]))
+		var aid: String = row[2]
+		var src: int = cvs.source_of_asset(aid)
+		var tex: Texture2D = cvs.atlas_texs[src] if src >= 0 and src < cvs.atlas_texs.size() else null
+		_draw_tile_ghost(tex, target, cvs.asset_cell(aid), Vector2i(row[3], row[4]), int(row[5]), li, 0.5)
+	_draw_grid_region(origin, clip.size, li, Color(1.0, 0.85, 0.3, 0.9))
 
 ## 幽灵点集归一化：[[x,y],...] → Vector2 数组（R-02）
 func _gpts_vec(raw: Array) -> Array:
@@ -412,8 +457,9 @@ func _draw_tile_ghost(tex: Texture2D, cell: Vector2i, cs: Vector2i, atl: Vector2
 	if tex == null or cs == Vector2i.ZERO:
 		return
 	var tint := Color(1, 1, 1, alpha)
-	if cvs.grid.is_tri() or cvs.grid.has_basis:
-		var poly: PackedVector2Array = cvs.grid.cell_polygon(cell)
+	var tile_grid: GridSpace = cvs.tile_grid_for_layer(li)
+	if tile_grid.is_tri() or tile_grid.has_basis:
+		var poly: PackedVector2Array = tile_grid.cell_polygon(cell)
 		var pts := PackedVector2Array()
 		for p: Vector2 in poly:
 			pts.append(p if li < 0 else cvs.to_layer_world(li, p))
@@ -424,7 +470,7 @@ func _draw_tile_ghost(tex: Texture2D, cell: Vector2i, cs: Vector2i, atl: Vector2
 				cols.append(tint)
 			cvs.draw_polygon(pts, cols, uvs, tex)
 		return
-	cvs.draw_texture_rect_region(tex, _wrect_local(cvs.grid.cell_tex_rect(cell, cs), li),
+	cvs.draw_texture_rect_region(tex, _wrect_local(tile_grid.cell_tex_rect(cell, cs), li),
 		Rect2(Vector2(atl) * Vector2(cs), Vector2(cs)), tint)
 
 ## visual:rect 资产的画布呈现：颜色/alpha 读资产声明，尺寸走实例 rect()。
@@ -441,9 +487,33 @@ func _draw_visual_rects(nodes: Array) -> void:
 		cvs.draw_rect(rect, Color(col, alpha), true)
 		cvs.draw_rect(rect, Color(col, minf(1.0, alpha + 0.5)), false, 1.5)
 
+func _draw_port_links() -> void:
+	var source := cvs.selected_entity as EntityNode
+	if source == null or not is_instance_valid(source):
+		return
+	var fields: Array = source.decl.get("fields", [])
+	for fd in fields:
+		if not fd is Dictionary or fd.get("type") != "port_ref":
+			continue
+		var ref = source.props.get(str(fd.get("id", "")))
+		if not ref is Dictionary or not cvs.is_local_port_map(str(ref.get("map", ""))):
+			continue
+		var target := cvs._ent_by_code_index().get(str(ref.get("inst", ""))) as EntityNode
+		if target == null or not is_instance_valid(target) or not target.is_visible_in_tree():
+			continue
+		for port in target.decl.get("ports", []):
+			if not port is Dictionary or port.get("id") != ref.get("port"):
+				continue
+			var at: Vector2 = cvs.port_position(target, port)
+			var origin: Vector2 = source.get_parent().to_global(source.position - source.sort_anchor())
+			cvs.draw_line(origin, at, Color.GOLD, 1.5, true)
+			cvs.draw_circle(at, 4.0 / maxf(cvs.zoom, 0.01), Color.GOLD)
+			break
+
 ## E2 连线把手：每条本图引用一条线（源锚点 → 落点），源端与落点各一个方块把手。
 ## 拖动中：线跟手、光标下的候选实例高亮。把手画在世界空间（层变换已作用）。
 func _draw_link_handles() -> void:
+	_draw_port_links()
 	var handles: Array = cvs._link_handles()
 	var pos: Vector2 = cvs.get_global_mouse_position()
 	if cvs.gesture == cvs.Gesture.LINK_DRAG:
@@ -496,11 +566,21 @@ func _draw_pick_mode() -> void:
 		_draw_pick_cells(hover)
 	elif cvs.pick_mode_accept == "edge":
 		_draw_pick_edges(hover)
+	elif cvs.pick_mode_accept == "port":
+		var radius: float = 5.0 / maxf(cvs.zoom, 0.01)
+		for marker in cvs.port_markers():
+			var selected: bool = marker.value == cvs.pick_mode_code
+			var hot: bool = marker.value == hover
+			var col := Color.AQUAMARINE if selected or hot else Color(0.85, 0.75, 0.3, 0.8)
+			cvs.draw_circle(marker.pos, radius * (1.6 if selected else 1.0), col)
+			if selected or hot:
+				cvs.draw_string(ThemeDB.fallback_font, marker.pos + Vector2(radius * 2, 0),
+					marker.label, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, col)
 	elif hover != "" and hover != str(cvs.pick_mode_code):
 		var hn = cvs._ent_by_code_index().get(hover, null)
 		if hn != null and is_instance_valid(hn):
 			cvs.draw_rect(_wr(hn as EntityNode).grow(2.0), Color(0.55, 0.95, 1.0, 0.55), false, 1.0)
-	if cvs.pick_mode_accept != "cell" and cvs.pick_mode_accept != "edge" and cvs.pick_mode_code != "":
+	if cvs.pick_mode_accept not in ["cell", "edge", "port"] and cvs.pick_mode_code != "":
 		var hs = cvs._ent_by_code_index().get(cvs.pick_mode_code, null)
 		if hs != null and is_instance_valid(hs):
 			var r: Rect2 = _wr(hs as EntityNode).grow(4.0)
@@ -517,7 +597,13 @@ func _draw_pick_mode() -> void:
 		var shown: String = cvs.pick_mode_code
 		if cvs.pick_mode_accept == "edge":
 			shown = str(EdgeRefRef.edge_of(JSON.parse_string(cvs.pick_mode_code)))
+		if cvs.pick_mode_accept == "port":
+			var port = JSON.parse_string(shown)
+			if port is Dictionary:
+				shown = "%s · %s" % [port.inst, port.port]
 		text += "　已点：%s（左键可换，Enter/确认提交）" % shown
+	elif cvs.pick_mode_accept == "port":
+		text += "　左键点端口，Esc 取消"
 	elif cvs.pick_mode_accept == "cell":
 		text += "　左键点格图里的格子，Esc 取消"
 	elif cvs.pick_mode_accept == "edge":
@@ -536,28 +622,19 @@ func _draw_pick_mode() -> void:
 
 ## C4：格图选点的多边形高亮（根空间多边形 → 世界坐标）。悬停细框、已选粗框填充。
 func _draw_pick_cells(hover: String) -> void:
-	var g: Dictionary = cvs.cell_graph()
-	if g.is_empty():
-		return
-	var xf: Transform2D = cvs.map_root.get_global_transform() if cvs.is_map_ready() else Transform2D.IDENTITY
 	if hover != "" and hover != str(cvs.pick_mode_code):
-		_draw_cell_poly(g, hover, xf, Color(0.55, 0.95, 1.0, 0.55), false, 1.0)
+		_draw_cell_poly(hover, Color(0.55, 0.95, 1.0, 0.55), false, 1.0)
 	if str(cvs.pick_mode_code) != "":
-		_draw_cell_poly(g, str(cvs.pick_mode_code), xf, Color(0.2, 1.0, 0.9, 0.95), true, 2.5)
+		_draw_cell_poly(str(cvs.pick_mode_code), Color(0.2, 1.0, 0.9, 0.95), true, 2.5)
 
-func _draw_cell_poly(g: Dictionary, id: String, xf: Transform2D, col: Color, fill: bool, width: float) -> void:
-	var poly: PackedVector2Array = CellGraphRef.polygon_of(g, id)
-	if poly.size() < 3:
+func _draw_cell_poly(id: String, col: Color, fill: bool, width: float) -> void:
+	var world: PackedVector2Array = cvs.cell_polygon_world(id)
+	if world.size() < 3:
 		return
-	var world := PackedVector2Array()
-	for p in poly:
-		world.append(xf * p)
 	if fill:
 		cvs.draw_colored_polygon(world, Color(col.r, col.g, col.b, 0.15))
-	# 闭合边：draw_polyline 不自动闭口，补上首点
-	var closed := world.duplicate()
-	closed.append(world[0])
-	cvs.draw_polyline(closed, col, width)
+	world.append(world[0])
+	cvs.draw_polyline(world, col, width)
 
 ## §7.4：格边选点高亮（边 ID → 两格中心连线，画成世界空间短线）。
 ## 悬停青色细线，已选粗线 + 两端点方块，便于看清到底指的是哪条分界。

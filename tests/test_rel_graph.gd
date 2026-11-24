@@ -182,3 +182,58 @@ func test_set_edge_string_write_status() -> void:
 	var r3 := RelGraph.set_edge(rd, wr_fail, "dialog", "a", -1, "N100", "c", false)
 	eq(str(r3.get("status", "")), "failed", "写回返回 \"fail\" 判失败")
 	_cleanup()
+
+
+func test_nested_slot_cannot_edit_reordered_rows_with_same_target() -> void:
+	_cleanup()
+	var m := _manifest()
+	m.functions.quest.fields = [
+		{"id": "branches", "code": "BRCH", "kind": "input", "type": "array", "of": "record", "fields": [
+			{"id": "label", "kind": "input", "type": "string"},
+			{"id": "goal", "kind": "choice", "source": "content:dialog"},
+		]},
+	]
+	_write(m, "dialog", "a", {})
+	_write(m, "dialog", "b", {})
+	var rows := [{"label": "first", "goal": "a"}, {"label": "second", "goal": "a"}]
+	_write(m, "quest", "q", {"BRCH": rows})
+	var graph := RelGraph.build_project(m)
+	var slot: Dictionary = graph.slots["quest\u0001q"][0]
+	rows.reverse()
+	_write(m, "quest", "q", {"BRCH": rows})
+	var read := func(fn: String, id: String): return ContentStore.read(m, fn, id)
+	var write := func(fn: String, id: String, data: Dictionary): return ContentStore.write(m, fn, id, data)
+	eq(RelGraph.set_edge(read, write, "quest", "q", -1, slot.field, "b", false, "a", slot).status,
+		"stale", "同一引用值不能掩盖分支已重排")
+	eq(ContentStore.read(m, "quest", "q").fields.BRCH, rows, "两条分支均保持原值")
+	_cleanup()
+
+func test_project_slots_append_repair_and_disconnect() -> void:
+	_cleanup()
+	var m := _manifest()
+	m.functions.quest.fields[0]["multiple"] = true
+	_write(m, "dialog", "a", {})
+	_write(m, "dialog", "b", {})
+	_write(m, "quest", "a", {"N300": ["missing"]})
+	var g := RelGraph.build_project(m)
+	var slots: Array = g.slots["quest\u0001a"]
+	var missing: Dictionary = slots[0]
+	var append: Dictionary = slots[1]
+	var read := func(fn: String, id: String): return ContentStore.read(m, fn, id)
+	var write := func(fn: String, id: String, data: Dictionary): return ContentStore.write(m, fn, id, data)
+	eq(missing.fn, "dialog", "scoped target does not collide with quest of the same ID")
+	eq(missing.value, "missing", "missing target has an editable slot")
+	eq(RelGraph.set_edge(read, write, "quest", "a", -1, "N300", "a", true, "", append).status,
+		"ok", "appending a target keeps existing positions")
+	eq(RelGraph.set_edge(read, write, "quest", "a", -1, "N300", "b", true, "missing", missing).status,
+		"stale", "a graph slot cannot overwrite a newer multi-value list")
+	g = RelGraph.build_project(m)
+	missing = g.slots["quest\u0001a"][0]
+	eq(RelGraph.set_edge(read, write, "quest", "a", -1, "N300", "b", true, "missing", missing).status,
+		"ok", "reroute a missing target")
+	g = RelGraph.build_project(m)
+	var first: Dictionary = g.slots["quest\u0001a"][0]
+	eq(RelGraph.set_edge(read, write, "quest", "a", -1, "N300", "", true, "b", first).status,
+		"ok", "disconnect only the selected reference")
+	eq(ContentStore.read(m, "quest", "a").fields.N300, ["a"], "remaining target survives")
+	_cleanup()

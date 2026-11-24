@@ -31,6 +31,9 @@ const RefFields := preload("res://src/content/ref_fields.gd")
 const Preview := preload("res://src/ui/content_preview.gd")
 const ContentForm := preload("res://src/ui/content_form.gd")
 const FnBind := preload("res://src/ui/fn_bind.gd")
+const ReferenceViewLibrary := preload("res://src/ui/reference_view_library.gd")
+const ViewportLibrary := preload("res://src/ui/viewport_library.gd")
+const ProjectContentLibrary := preload("res://src/ui/project_content_library.gd")
 const StepsPanel := preload("res://src/ui/steps_panel.gd")
 const SessionContext := preload("res://src/ui/session_context.gd")
 const K := preload("res://src/core/constants.gd")
@@ -44,6 +47,7 @@ var app
 ## 拆分出的子控制器
 var _form   # content_form.gd：内容表单/库/写盘
 var _fnbind   # fn_bind.gd：功能绑定行
+var _library: ProjectContentLibrary
 var _steps   # steps_panel.gd：演出子面板
 var manifest := {}
 ## 本控制器是 RefCounted：由 project_shell 把这个根 Control 挂进 _holder
@@ -55,7 +59,7 @@ var _selected_ent := ""
 var _selected_fn := -1
 ## E1：上次展开的功能（执行码）+ 所属实例——切到资产/关卡再回来时按身份恢复展开项。
 ## 只记身份不记节点：实例被删/换绑时自然回落为空。
-var _remembered_fn_code := ""
+var _remembered_binding := {}
 var _remembered_fn_ent := ""
 ## 当前定位所属地图（切图即忘掉上一张图的选中与记忆）
 var _selected_map := ""
@@ -85,6 +89,7 @@ func _init(host) -> void:
 	_form = ContentForm.new(self)
 	_fnbind = FnBind.new(self)
 	_steps = StepsPanel.new(self)
+	_library = ProjectContentLibrary.new(self)
 	manifest = host.manifest
 
 ## 由 project_shell 调用：构建三区骨架并返回可挂进 _holder 的根节点。
@@ -134,6 +139,13 @@ func _build_left() -> Control:
 	_left_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(_left_title)
 	col.add_child(head)
+	col.add_child(Kit.button("项目内容库…", _library.open, "ghost"))
+	col.add_child(Kit.button("参考画幅…", func():
+		if commit_fields():
+			ViewportLibrary.open(app), "ghost"))
+	col.add_child(Kit.button("参考视图…", func():
+		if commit_fields():
+			ReferenceViewLibrary.open(app), "ghost"))
 
 	# E2 筛选：名称/实例码 + 层 + 资产。列表长时按需收窄，不改数据、不动选中。
 	var frow := Kit.vbox(4)
@@ -288,7 +300,7 @@ func refresh_list(focus := "") -> void:
 		_selected_map = map_key
 		_selected_ent = ""
 		_remembered_fn_ent = ""
-		_remembered_fn_code = ""
+		_remembered_binding.clear()
 	# 悬停 id 随切图/删实体失效：留着会指向不存在的实例，清干净
 	if _preview.hover_ent != "" and _find_ent(_preview.hover_ent) == null:
 		_preview.set_hover("")
@@ -310,7 +322,7 @@ func refresh_list(focus := "") -> void:
 			# 同图内上次选中的实例已不存在：明确空态，保留「请重选」的提示
 			_selected_ent = ""
 			_remembered_fn_ent = ""
-			_remembered_fn_code = ""
+			_remembered_binding.clear()
 			_selected_fn = -1
 			_rebuild_rows()
 			_rebuild_right()
@@ -326,23 +338,26 @@ func refresh_list(focus := "") -> void:
 	if _preview != null:
 		_preview.refresh()
 
-## E1：按记住的（实例码, 功能执行码）恢复展开的功能下标；身份对不上返回 -1。
+## E1：恢复展开的绑定；重复功能使用行 ID，旧行用已有的内容身份。
 ## 同一实例被换绑/删功能时退回「未展开」，不猜一个邻近下标。
 func _restore_fn_index() -> int:
 	if _remembered_fn_ent == "" or _remembered_fn_ent != _selected_ent:
 		return -1
-	return SessionContext.fn_index_of(_current_fns(), _remembered_fn_code)
+	return SessionContext.fn_index_of(_current_fns(), str(_remembered_binding.get("fn", "")),
+		str(_remembered_binding.get("bindingId", "")), str(_remembered_binding.get("content", "")))
 
-## E1：记下当前内容页的定位（实例码 + 展开的功能执行码），供切走再回来恢复。
+## E1：记下当前内容页展开的实例及绑定，供切走再回来恢复。
 func remember_context() -> void:
 	if _selected_ent == "":
 		return
 	_remembered_fn_ent = _selected_ent
 	var fns := _current_fns()
 	if _selected_fn >= 0 and _selected_fn < fns.size() and fns[_selected_fn] is Dictionary:
-		_remembered_fn_code = str((fns[_selected_fn] as Dictionary).get("fn", ""))
+		var row: Dictionary = fns[_selected_fn]
+		_remembered_binding = {"fn": row.get("fn", ""), "bindingId": row.get("bindingId", ""),
+			"content": row.get("content", "")}
 	else:
-		_remembered_fn_code = ""
+		_remembered_binding.clear()
 
 ## 只冲刷连续控件值（切视图/离开内容页）：不落 staged 新内容——新 ID/新绑定
 ## 必须等正式保存或试玩（A2），否则来回切视图就凭空生成内容文件。
@@ -443,7 +458,12 @@ func _write_fns(n: EntityNode, fns: Array) -> void:
 	var via_delta := bool(pre.get("ok", false))
 	if not via_delta:
 		app.canvas.push_undo()
-	n.functions = fns.duplicate(true)
+	var updated := fns.duplicate(true)
+	for i in mini(n.functions.size(), updated.size()):
+		# Untouched rows keep their in-memory identity for open step and field controls.
+		if n.functions[i] is Dictionary and updated[i] is Dictionary and n.functions[i] == updated[i]:
+			updated[i] = n.functions[i]
+	n.functions = updated
 	if via_delta:
 		app.canvas._undo_history_ctrl.inst_commit(pre.get("rows", {}))
 	app.canvas._mark_ents()
@@ -595,6 +615,9 @@ func select_inst(code: String) -> void:
 func _clear_all_for_empty() -> void:
 	_selected_ent = ""
 	_selected_fn = -1
+	_pending_commits.clear()
+	_form_sig = ""
+	_form_block = null
 	_preview.set_hover("")
 	_left_title.text = "实例"
 	if _rows_box != null:
@@ -602,7 +625,7 @@ func _clear_all_for_empty() -> void:
 			_rows_box.remove_child(c)
 			c.queue_free()
 		_rows_box.add_child(Kit.empty_state("▦", "没有正在编辑的地图",
-			"先去关卡编辑器新建或打开一张地图"))
+			"可直接开项目内容库，或先新建地图再编辑实例"))
 	_r_name.text = "—"
 	_r_id.text = ""
 	_r_badge.visible = false
@@ -637,7 +660,7 @@ func _form_sig_of(spr: EntityNode) -> String:
 		data = (st as Dictionary).get("data", {}) if st is Dictionary \
 			else (_form._content_read(fn_id, cid) if fn_id != "" else {})
 	# 只列影响表单呈现的量：实例身份/类型/字段值、绑定表、展开的功能、内容数据、定位高亮
-	return JSON.stringify([spr.code, spr.asset, spr.props, fns, _selected_fn, fn_id, cid, data, _field_focus])
+	return JSON.stringify([spr.get_instance_id(), spr.code, spr.asset, spr.props, fns, _selected_fn, fn_id, cid, data, _field_focus])
 
 func reload_content_form() -> void:
 	_form_sig = ""
@@ -720,7 +743,7 @@ func _build_refs_block() -> Control:
 	for fd in fdecls:
 		if fd is Dictionary:
 			var t := str(fd.get("type", ""))
-			if t == "entity_ref" or t == "map_ref" or t == "edge_ref":
+			if t in ["entity_ref", "map_ref", "edge_ref", "port_ref"]:
 				rows.append(fd)
 				if t == "map_ref":
 					map_rows.append(fd)
@@ -742,14 +765,15 @@ func _build_refs_block() -> Control:
 ## 配对地图未填时取所属图（本图）。值不在选项里时由 FieldWidgets 保留原值。
 func _build_ref_row(fd: Dictionary, props: Dictionary, fdecls: Array = []) -> Control:
 	var fid := str(fd.get("id", ""))
-	var is_edge := str(fd.get("type", "")) == "edge_ref"
-	var cur = props.get(fid, null) if is_edge else str(props.get(fid, ""))
+	var object_ref := str(fd.get("type", "")) in ["edge_ref", "port_ref"]
+	var cur = props.get(fid, null) if object_ref else str(props.get(fid, ""))
 	var built: Dictionary
 	var d := fd.duplicate(true)
 	if str(fd.get("type", "")) == "map_ref":
 		d["kind"] = "choice"
 		d["source"] = "map"
-	elif is_edge:
+	elif object_ref:
+		d["kind"] = "input"
 		# §7.4：格边引用 = 对象值 {map, cell, edge}，FieldWidgets 的 edge_ref 分支统一编码成 JSON 走下拉
 		var emap := RefFields.paired_map_value(fd, fdecls, props)
 		if emap != "":
@@ -760,14 +784,21 @@ func _build_ref_row(fd: Dictionary, props: Dictionary, fdecls: Array = []) -> Co
 		var target_map := RefFields.paired_map_value(fd, fdecls, props)
 		if target_map != "":
 			d["_mapKey"] = target_map   # _resolve_options 据此枚举目标图实例
-	built = FieldWidgets.build(d, cur, func(v): _set_prop_ref(fd, v), _resolve_options)
+	var expected_map := str(d.get("_mapKey", ""))
+	var origin := _current_spr()
+	var apply := func(v) -> void:
+		if origin == null or not is_instance_valid(origin) or origin != _current_spr() \
+				or RefFields.paired_map_value(fd, fdecls, origin.props) != expected_map:
+			return
+		_set_prop_ref(fd, v)
+	built = FieldWidgets.build(d, cur, apply, _resolve_options)
 	var row := Kit.field_row(str(fd.get("name", fid)), built.ctl, 96)
 	var tip := FieldWidgets.decl_tooltip(fd)
 	if tip != "":
 		row.tooltip_text = tip
 	# E1：同图实例引用给画布选点（跨图配对字段不给：画布点的是本图实例）
-	if FieldWidgets.wants_canvas_pick(fd):
-		var pick := Kit.button("画布选…", func(): _pick_prop_ref(fd), "ghost")
+	if FieldWidgets.wants_canvas_pick(fd) and _form.can_pick_on_canvas(expected_map):
+		var pick := Kit.button("画布选…", func(): _pick_prop_ref(fd, apply), "ghost")
 		pick.tooltip_text = "临时切到画布点一个实例；确认才写入，取消不改当前值"
 		pick.add_theme_font_size_override("font_size", Th.FS_META)
 		row.add_child(pick)
@@ -788,24 +819,24 @@ func highlight_field(fid: String) -> void:
 
 ## E1：实例 props 引用字段的画布选点。确认后与手选下拉同一写入口（撤销/配对清空规则一致）。
 ## accept 按字段种类走：entity_ref = 实例；§7.4 edge_ref = 格边（值解码回 {map, cell, edge}）。
-func _pick_prop_ref(fd: Dictionary) -> void:
+func _pick_prop_ref(fd: Dictionary, apply: Callable) -> void:
 	var fname := str(fd.get("name", str(fd.get("id", ""))))
-	var is_edge := FieldWidgets.wants_edge_pick(fd)
+	var mode := FieldWidgets.pick_mode(fd)
+	var is_edge := mode == "edge"
 	var of := FieldWidgets.canvas_pick_types(fd)
 	var hint := ("为「%s」选一条格边（靠近格边点）" % fname) if is_edge else ("为「%s」选目标实例" % fname)
+	if mode == "port":
+		hint = "为「%s」选目标端口" % fname
 	if not is_edge and not of.is_empty():
 		hint += "（限定类型：%s）" % ",".join(PackedStringArray(of))
 	var on_ok := func(code: String):
 		if code == "":
 			return
-		if is_edge:
-			var ev = JSON.parse_string(code)
-			_set_prop_ref(fd, ev if ev is Dictionary else {})
-		else:
-			_set_prop_ref(fd, code)
-		_rebuild_right()
-	app._begin_canvas_pick("content", "edge" if is_edge else "entity", hint, on_ok, Callable(),
-		[] if is_edge else of)
+		var value = FieldWidgets.decode_pick(mode, code)
+		if value != null:
+			apply.call(value)
+			_rebuild_right()
+	app._begin_canvas_pick("content", mode, hint, on_ok, Callable(), of)
 
 ## 写实例 props 的引用字段：props 是地图数据，改动进撤销栈；并做指向预览高亮。
 ## E2：与画布连线把手走同一写入口（ref_ops.set_entity_ref）——改配对地图字段时

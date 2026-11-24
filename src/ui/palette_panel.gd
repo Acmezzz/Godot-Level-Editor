@@ -277,8 +277,8 @@ func fill_placeables(cat: String) -> void:
 func fill_entities() -> void:
 	fill_placeables("entities")
 
-## visual 声明 → 占位图标（rect 画成色块；sprite/none 或缺失时画中性灰框）。
-## 缓存：同一 visual 的图标只画一次。
+## visual 声明 → 占位图标：有 color 就按 color/alpha 画色块，没有则画中性灰框；
+## 不区分 type/mode（两者都只影响画布实体呈现，不影响列表图标）。缓存：同一 visual 的图标只画一次。
 var _icon_cache := {}
 
 func _visual_icon(ad: Dictionary) -> Texture2D:

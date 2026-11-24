@@ -30,6 +30,16 @@ func _unhandled_input(event: InputEvent) -> void:
 	if not cvs.is_map_ready():
 		return
 	var pos = cvs.get_global_mouse_position()
+	if cvs._geometry_draw.active() and not cvs.pick_mode_active:
+		if event is InputEventMouseButton and event.button_index in [MOUSE_BUTTON_LEFT, MOUSE_BUTTON_RIGHT]:
+			if event.pressed and not cvs.doc_busy:
+				if event.button_index == MOUSE_BUTTON_LEFT:
+					cvs._geometry_draw.add(pos)
+				else:
+					cvs._geometry_draw.remove_last()
+			return
+		if event is InputEventMouseMotion:
+			cvs.queue_redraw()
 	# E1 临时选点：模式独占左键命中与悬停候选，其余手势（中键平移/滚轮缩放）照常
 	if cvs.pick_mode_active:
 		if event is InputEventMouseMotion:
@@ -77,7 +87,7 @@ func _unhandled_input(event: InputEvent) -> void:
 				MOUSE_BUTTON_LEFT:
 					_on_left_press(pos, b)
 				MOUSE_BUTTON_RIGHT:
-					_on_right_press(pos)
+					_on_right_press(pos, b.shift_pressed, b.alt_pressed)
 		else:
 			# 松手只处理「是这一颗键起的那个手势」，避免中键松手误杀左键起手的平移
 			if b.button_index == MOUSE_BUTTON_MIDDLE and cvs.gesture == cvs.Gesture.PAN \
@@ -138,7 +148,7 @@ func _unhandled_input(event: InputEvent) -> void:
 
 ## 笔画当前格（活动层局部）：涂/擦与坐标栏共用
 func _stroke_cell(pos: Vector2) -> Vector2i:
-	return cvs.grid.pick_cell(cvs._active_local(pos))
+	return cvs._active_cell(pos)
 
 ## 涂刷补格：从上一格到当前格逐格执行 _apply_tool（同一笔只压一次撤销）
 func _paint_path(pos: Vector2) -> void:
@@ -147,7 +157,7 @@ func _paint_path(pos: Vector2) -> void:
 		return
 	var c := _stroke_cell(pos)
 	var cells: Array = [c] if not cvs._stroke_has_last \
-		else cvs.grid.cells_between(cvs._stroke_last_cell, c)
+		else cvs.tile_grid_for_layer(cvs.active_layer).cells_between(cvs._stroke_last_cell, c)
 	cvs._stroke_last_cell = c
 	cvs._stroke_has_last = true
 	for bc: Vector2i in cells:
@@ -169,7 +179,7 @@ func _erase_path(pos: Vector2) -> void:
 		return
 	var c := _stroke_cell(pos)
 	var cells: Array = [c] if not cvs._stroke_has_last \
-		else cvs.grid.cells_between(cvs._stroke_last_cell, c)
+		else cvs.tile_grid_for_layer(cvs.active_layer).cells_between(cvs._stroke_last_cell, c)
 	cvs._stroke_last_cell = c
 	cvs._stroke_has_last = true
 	cvs._tool_ops_ctrl.erase_cells(cvs._tool_ops_ctrl._brush_cells_multi(cells))
@@ -218,8 +228,8 @@ func _on_object_layer_press(pos: Vector2, b: InputEventMouseButton) -> void:
 	if b.double_click and cvs._add_vertex_at(pos):
 		return
 	# 顶点把手（R-02）：选中 poly/path 实例顶点优先于尺寸把手/移动/框选/放置
-	var vi: int = cvs._vertex_handle_hit(pos)
-	if vi >= 0:
+	var vi: Vector2i = cvs._vertex_handle_hit(pos)
+	if vi.x >= 0:
 		cvs._begin_vertex_drag(cvs.selected_entity, vi)
 		return
 	# 尺寸把手（R-04）：选中 sizeFields 实例的右下角把手优先于移动/框选/放置
@@ -291,13 +301,20 @@ func _on_tile_layer_press(pos: Vector2, b: InputEventMouseButton) -> void:
 	cvs._paint_pushed = false
 	cvs._stroke_has_last = false
 	cvs._apply_tool(pos)
-	cvs._stroke_last_cell = cvs.grid.pick_cell(cvs._active_local(pos))
+	cvs._stroke_last_cell = cvs._active_cell(pos)
 	cvs._stroke_has_last = true
 	cvs.begin_gesture(cvs.Gesture.PAINT, MOUSE_BUTTON_LEFT)
 
 
 ## 右键 = 擦除。实体放置模式删实体、其余擦瓦片/碰撞，语义与左键对称。
-func _on_right_press(pos: Vector2) -> void:
+func _on_right_press(pos: Vector2, shift := false, alt := false) -> void:
+	if shift:
+		if alt:
+			if not cvs._geometry_draw.remove_part_at(pos):
+				cvs._hint("选中闭合几何后，点击附加轮廓内部。")
+		elif not cvs._geometry_draw.remove_hole_at(pos):
+			cvs._hint("先选中闭合几何，再 Shift + 右键点击孔洞内部。")
+		return
 	if cvs._paste_mode:
 		cvs._paste_mode = false
 		cvs.queue_redraw()
@@ -383,8 +400,7 @@ func _on_left_release(pos: Vector2) -> void:
 			if cvs.place_kind == "object" and not cvs._is_grid_layer(cvs.active_layer):
 				cvs._box_select(cvs._drag_start, pos)
 			else:
-				cvs._region_sel = cvs._cell_rect(cvs._drag_start, pos)
-				cvs._hint("区域已选 %dx%d（Ctrl+C 复制各层瓦片+实体，拖空白处可重选）" % [cvs._region_sel.size.x, cvs._region_sel.size.y])
+				cvs._region_ops_ctrl.select_region(cvs._drag_start, pos)
 		cvs.Gesture.PAINT, cvs.Gesture.PAN:
 			cvs.end_gesture()
 

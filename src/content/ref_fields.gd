@@ -34,6 +34,7 @@ const CONTENT_PREFIX := "content:"
 const MapStore := preload("res://src/map/map_store.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
 const ReferenceIndex := preload("res://src/project/reference_index.gd")
+const ConditionDecls := preload("res://src/content/condition_decl.gd")
 const EdgeRef := preload("res://src/map/edge_ref.gd")
 
 ## 逗号分隔 id 白名单（空 = 不限）
@@ -149,6 +150,35 @@ static func describe(decl: Dictionary) -> Dictionary:
 static func is_ref(decl: Dictionary) -> bool:
 	return bool(describe(decl).get("is_ref", false))
 
+## 一个数组字段中可继续按声明进入的作用域。value/fields 是原字典引用，
+## path 相对数组字段用于定位；标签含条件类型，供图和审计显示。
+static func nested_scopes(manifest: Dictionary, field: Dictionary, value: Variant) -> Array:
+	var scopes: Array = []
+	if field.get("type") != "array" or not value is Array:
+		return scopes
+	var kind := str(field.get("of", ""))
+	if kind != "record" and kind != "condition":
+		return scopes
+	for i in value.size():
+		var row = value[i]
+		if not row is Dictionary:
+			continue
+		var decls = field.get("fields")
+		var vals: Dictionary = row
+		var label := str(i + 1)
+		var relative := [i]
+		if kind == "condition":
+			var decl := ConditionDecls.row_schema(manifest, field, row)
+			if decl.is_empty() or not row.get("fields") is Dictionary:
+				continue
+			decls = decl.fields
+			vals = row.fields
+			relative.append("fields")
+			label += " · " + str(decl.name)
+		if decls is Array:
+			scopes.append({"decls": decls, "values": vals, "path": relative, "label": label})
+	return scopes
+
 ## C1（§7.4）：递归收集引用字段（含 record 数组子字段）。返回 [{fd, path}]：
 ## 顶层引用 path = [字段 id]；record 行内 = [记录字段 id, "#", 子字段 id]（# = 逐行维度）。
 ## 兄弟配对字段作用域 = 该层声明本身（顶层配对字段在顶层找，记录行的在子字段声明里找）。
@@ -196,7 +226,11 @@ static func port_candidates(manifest: Dictionary, map_key: String, want_types: A
 		return out
 	var data: Dictionary = MapStore.read(manifest, name)
 	var map_code := str((data.get("meta", {}) as Dictionary).get("code", ""))
-	for o in (data.get("objects", []) as Array):
+	return port_options(manifest, map_code if map_code != "" else name, data.get("objects", []), want_types)
+
+static func port_options(manifest: Dictionary, map_key: String, objects: Array, want_types: Array) -> Array:
+	var out: Array = []
+	for o in objects:
 		if not (o is Dictionary):
 			continue
 		var code := str((o as Dictionary).get("code", ""))
@@ -214,7 +248,7 @@ static func port_candidates(manifest: Dictionary, map_key: String, want_types: A
 			var pt := str((p as Dictionary).get("type", ""))
 			if not want_types.is_empty() and not want_types.has(pt):
 				continue
-			var val := {"map": map_code if map_code != "" else name, "inst": code, "port": pid}
+			var val := {"map": map_key, "inst": code, "port": pid}
 			out.append({"v": JSON.stringify(val), "t": "%s · %s" % [code, pid]})
 	return out
 
@@ -246,26 +280,27 @@ static func edge_candidates_of(data: Dictionary, manifest: Dictionary) -> Array:
 			for c0 in (cells as Array):
 				if c0 is Array and (c0 as Array).size() >= 2:
 					occ[Vector2i(int(c0[0]), int(c0[1]))] = true
-	var seen := {}
-	var edges: Array = []
-	for c: Vector2i in occ:
-		for nb: Vector2i in grid.neighbors_any(c):
-			if not occ.has(nb):
-				continue
-			var e := EdgeRef.canonical_edge(c, nb)
-			if seen.has(e):
-				continue
-			seen[e] = true
-			edges.append(e)
-	edges.sort()
+	return occupied_edge_options(grid, meta, occ)
+
+static func occupied_edge_options(grid: GridSpace, meta: Dictionary, occ: Dictionary) -> Array:
+	var w := int(meta.get("w", 120))
+	var h := int(meta.get("h", 56))
 	var code := str(meta.get("code", ""))
+	var options := {}
+	for a: Vector2i in occ:
+		for b: Vector2i in grid.neighbors_any(a):
+			if not occ.has(b):
+				continue
+			var edge := EdgeRef.canonical_edge(a, b)
+			if options.has(edge) or EdgeRef.segment(grid, a, b, w, h).is_empty():
+				continue
+			var value := EdgeRef.value_of(code, a, b)
+			options[edge] = {"v": JSON.stringify(value), "t": edge.replace("|", " — ")}
+	var keys := options.keys()
+	keys.sort()
 	var out: Array = []
-	for e2 in edges:
-		var ends := EdgeRef.parse_edge(str(e2))
-		var a := Vector2i(int(ends[0][0]), int(ends[0][1]))
-		var b := Vector2i(int(ends[1][0]), int(ends[1][1]))
-		out.append({"v": JSON.stringify(EdgeRef.value_of(code, a, b)),
-			"t": "(%d,%d)-(%d,%d)" % [a.x, a.y, b.x, b.y]})
+	for key in keys:
+		out.append(options[key])
 	return out
 
 ## E2：配对地图值是否指向当前图（C1：未填配对地图 = 本图；v7 写地图码，老数据存图名）。
@@ -333,6 +368,11 @@ static func paired_map_value(decl: Dictionary, siblings: Array, values: Dictiona
 	if key == "" or not values.has(key):
 		key = str(pm.get("id", ""))
 	return str(values.get(key, "") if values.get(key, null) != null else "")
+
+## 对象引用自己的地图优先，其次用同一行的配对值；两者为空由调用方取所属图。
+static func object_map_key(value: Dictionary, paired: String) -> String:
+	var key := str(value.get("map", ""))
+	return paired if key == "" else key
 
 ## 地图键（地图码或图名）→ 该图里的实体实例 [{v: 实例码, t: 显示名, asset: 资产 id}]。
 ## want_types 非空时只列这些实体类型（entity_ref 的 of 过滤）。

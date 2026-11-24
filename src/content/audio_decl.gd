@@ -3,8 +3,8 @@ extends RefCounted
 ## 声明域只依赖 manifest 字典本身，全部静态函数。
 ##
 ## 音频模型（游戏侧契约）：音频资产 = 游戏侧声明的 {id, name, path}，
-## 路径解释权在游戏侧——编辑器只把 `audio:` 来源渲染成下拉、值存音频码，
-## 不加载、不播放音频，也不解释语义。BGM/音效的播放时机归功能代码。
+## 内容字段存音频码；编辑器可用项目内 path / previewPath 试听。
+## 游戏里的素材加载和播放时机仍归功能代码。
 
 const ContentId := preload("res://src/content/content_id.gd")
 const PoolPrint := preload("res://src/core/pool_fingerprint.gd")
@@ -52,10 +52,25 @@ static func audio(m: Dictionary) -> Dictionary:
 	_cache_key = key
 	return out
 
-## 单个音频声明；缺失时返回空字典。
-static func audio_decl(m: Dictionary, aid: String) -> Dictionary:
+## 试听路径只读项目内源文件；游戏的运行时路径可以使用自己的资源键。
+static func preview_relative_path(value: String) -> String:
+	var rel := value.strip_edges().replace("\\", "/")
+	if rel.begins_with("res://"):
+		rel = rel.substr(6)
+	return "" if rel.is_absolute_path() or ":" in rel or ".." in rel.split("/") else rel
+
+## 内容字段存执行码。旧内容可能使用人类 ID；码优先，拒绝重复码的歧义。
+static func from_value(m: Dictionary, value: String) -> Dictionary:
+	if value == "":
+		return {}
 	var all := audio(m)
-	return all.get(aid, {}) if all.get(aid, {}) is Dictionary else {}
+	var matched := {}
+	for row in all.values():
+		if row.code == value:
+			if not matched.is_empty():
+				return {}
+			matched = row
+	return matched if not matched.is_empty() else all.get(value, {})
 
 ## 补发音频条目缺失的执行码（池内避开已占用码），就地修改，返回是否有改动。
 ## 只补「空」的，不碰重复码——重复由校验报错（与 function_decl 同一纪律）。
@@ -88,7 +103,7 @@ static func codes_doc(m: Dictionary) -> String:
 	L.append("## 音频")
 	L.append("")
 	L.append("音频资产由游戏工程声明（path 解释权在游戏侧）；编辑器把 `audio:` 来源渲染成")
-	L.append("下拉，内容 fields 里存音频码，编辑器不加载、不播放音频。")
+	L.append("下拉，内容 fields 里存音频码，时间轴可试听项目内的参考音频。")
 	L.append("")
 	L.append("| 码 | 人类 id | 名称 | 路径 |")
 	L.append("|----|---------|------|------|")

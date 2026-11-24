@@ -13,7 +13,6 @@ func _init(c) -> void:
 ## 同名转发属性（读写穿透到 cvs，搬动文本零改动）
 var ent_sizes:
 	get: return cvs.ent_sizes
-	set(v): cvs.ent_sizes = v
 var thumbs:
 	get: return cvs.thumbs
 var manifest:
@@ -34,10 +33,6 @@ var map_root:
 ## 同名包装方法（真实实现经 cvs 转发）
 func _ent_by_code_index() -> Dictionary:
 	return cvs._ent_by_code_index()
-
-## 设置实体的编辑器占位尺寸（像素）；用于画布上画真实占位框
-func set_entity_sizes(sizes: Dictionary) -> void:
-	ent_sizes = sizes
 
 ## 某个资产的编辑器占位尺寸（像素）；0 表示未知（退回 1 格）
 func _size_of(aid: String) -> Vector2:

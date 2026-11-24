@@ -15,6 +15,31 @@ static func counts(d: Dictionary) -> Dictionary:
 
 const GridSpaceScript := preload("res://src/canvas/grid_space.gd")
 
+static func _layer_columns(d: Dictionary, width: int, root_columns: int) -> Dictionary:
+	var columns := {}
+	for layer in d.get("meta", {}).get("layers", []):
+		if layer is Dictionary and layer.get("tileGrid") is Dictionary:
+			columns[str(layer.get("id", ""))] = GridSpaceScript.cell_columns(width,
+				layer.tileGrid.get("gridTopology", "") == "triangles")
+	return columns
+
+static func spawn_change(d: Dictionary, nw: int, nh: int, triangular: bool) -> Dictionary:
+	var spawn: Array = d.get("spawn", [2, 2])
+	var old := Vector2i(int(spawn[0]), int(spawn[1]))
+	var next := old.clamp(Vector2i.ZERO, Vector2i(GridSpaceScript.cell_columns(nw, triangular) - 1, nh - 1))
+	return {} if old == next else {"from": old, "to": next}
+
+static func plan(d: Dictionary, nw: int, nh: int, triangular: bool) -> Dictionary:
+	var result := d.duplicate(true)
+	var count := crop_counts(d, nw, nh, triangular)
+	var spawn := spawn_change(d, nw, nh, triangular)
+	crop_data(result, nw, nh, triangular)
+	if not spawn.is_empty():
+		result["spawn"] = [spawn.to.x, spawn.to.y]
+	result.meta["w"] = nw
+	result.meta["h"] = nh
+	return {"map": result, "crop": count, "spawn": spawn}
+
 static func _keeps_extent(d: Dictionary, nw: int, nh: int) -> bool:
 	var meta: Dictionary = d.get("meta", {})
 	return meta.has("w") and meta.has("h") and nw >= int(meta.w) and nh >= int(meta.h)
@@ -25,6 +50,7 @@ static func crop_counts(d: Dictionary, nw: int, nh: int, triangular := false) ->
 	if _keeps_extent(d, nw, nh):
 		return out
 	var columns := GridSpaceScript.cell_columns(nw, triangular)
+	var layers := _layer_columns(d, nw, columns)
 	for lid in (d.get("tiles", {}) as Dictionary):
 		var cells = (d.get("tiles", {}) as Dictionary)[lid]
 		if not (cells is Array):
@@ -32,7 +58,7 @@ static func crop_counts(d: Dictionary, nw: int, nh: int, triangular := false) ->
 		for c in (cells as Array):
 			if not (c is Array) or (c as Array).size() < 2:
 				continue
-			if outside(int((c as Array)[0]), int((c as Array)[1]), columns, nh):
+			if outside(int((c as Array)[0]), int((c as Array)[1]), layers.get(lid, columns), nh):
 				out.tiles = int(out.tiles) + 1
 	for ce in (d.get("collision", []) as Array):
 		if ce is Dictionary:
@@ -58,6 +84,7 @@ static func crop_data(d: Dictionary, nw: int, nh: int, triangular := false) -> v
 	if _keeps_extent(d, nw, nh):
 		return
 	var columns := GridSpaceScript.cell_columns(nw, triangular)
+	var layers := _layer_columns(d, nw, columns)
 	var tiles_in = d.get("tiles", null)
 	if tiles_in is Dictionary:
 		for lid in (tiles_in as Dictionary):
@@ -67,7 +94,7 @@ static func crop_data(d: Dictionary, nw: int, nh: int, triangular := false) -> v
 			var keep: Array = []
 			for c in (cells as Array):
 				if c is Array and (c as Array).size() >= 2 \
-						and not outside(int((c as Array)[0]), int((c as Array)[1]), columns, nh):
+						and not outside(int((c as Array)[0]), int((c as Array)[1]), layers.get(lid, columns), nh):
 					keep.append(c)
 			(tiles_in as Dictionary)[lid] = keep
 	var coll_in = d.get("collision", null)

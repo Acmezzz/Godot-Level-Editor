@@ -230,18 +230,14 @@ static func anchor_off_of(unit: Vector2, size: Vector2) -> Vector2:
 ## 视觉/命中用 rect() 反向扣回，数据锚点位置不变。
 func world_of_grid(gx: float, gy: float) -> Vector2:
 	if grid_ref != null:
-		if grid_ref.is_hex_geom():
-			return grid_ref.to_px(Vector2(gx, gy)) + _hex_anchor_off() + sort_anchor()
-		return grid_ref.to_px(Vector2(gx, gy) + anchor_unit()) + sort_anchor()
+		return grid_ref.object_anchor_px(Vector2(gx, gy), anchor_unit()) + sort_anchor()
 	return (Vector2(gx, gy) + anchor_unit()) * float(tile_px) + sort_anchor()
 
 ## 世界位置 → 数据 x/y（保留浮点，吸附由调用方决定）。六边走连续反算，保留亚格。
 func grid_of_world(p: Vector2) -> Vector2:
 	var q := p - sort_anchor()
 	if grid_ref != null:
-		if grid_ref.is_hex_geom():
-			return grid_ref.to_continuous_grid(q - _hex_anchor_off())
-		return grid_ref.to_grid(q) - anchor_unit()
+		return grid_ref.object_anchor_grid(q, anchor_unit())
 	return q / float(tile_px) - anchor_unit()
 
 ## 排序点偏移（raw.sortAnchor，像素、相对数据锚点；缺省 0 = 锚点即排序点）
@@ -251,18 +247,12 @@ func sort_anchor() -> Vector2:
 		return Vector2(float((sa as Array)[0]), float((sa as Array)[1]))
 	return Vector2.ZERO
 
-## 六边锚点像素偏移（相对格中心）：把「格内单位坐标」映射为包围盒内的像素偏移。
-func _hex_anchor_off() -> Vector2:
-	return (anchor_unit() - Vector2(0.5, 0.5)) * Vector2(grid_ref.tile)
-
-## 实例「所在格」（区域框选/复制/剪切判定用）：视觉矩形左上角所在格，浮点向下取整。
+## 实例「所在格」（区域框选/复制/剪切判定用）：拾取视觉矩形左上角所在格。
 ## 不走锚点格——bottom_center 这类锚点的格号不是矩形起始格。
 func cell() -> Vector2i:
 	var r := rect()
 	if grid_ref != null:
-		# 连续格坐标 → 格号归 GridSpace：三角拓扑要把平行四边形列折成半格列，
-		# 这里自己 floori 会得到半格数（与框选/选区口径差一倍，V4 P1）
-		return grid_ref.cell_of_continuous(grid_ref.to_continuous_grid(r.position))
+		return grid_ref.pick_cell(r.position)
 	return Vector2i(floori(r.position.x / tile_px), floori(r.position.y / tile_px))
 
 func apply_grid(gx: float, gy: float) -> void:
@@ -324,7 +314,11 @@ func _contains_point_visual(p: Vector2) -> bool:
 	if str(vis.get("type", "rect")) == "path":
 		return _near_polyline(lp, arr, maxf(1.0, float(vis.get("width", 3.0))) * 0.5 + 2.0)
 	if bool(vis.get("closed", true)):
-		return arr.size() >= 3 and Geometry2D.is_point_in_polygon(lp, arr)
+		for part in geometry_parts():
+			var outer := PackedVector2Array(part.points)
+			if outer.size() >= 3 and Geometry2D.is_point_in_polygon(lp, outer) and hole_at(lp, part.holes) < 0:
+				return true
+		return false
 	# 不闭合 poly 按折线判（同 path 口径）
 	return _near_polyline(lp, arr, 2.0)
 
@@ -338,6 +332,16 @@ func _near_polyline(p: Vector2, arr: PackedVector2Array, tol: float) -> bool:
 
 ## 实际几何的轴对齐包围盒（层局部）：框选/并集用
 func aabb() -> Rect2:
+	if visual_type() != "rect":
+		var points := points_local()
+		if visual_type() == "poly" and decl.get("visual", {}).get("closed", true):
+			for part in geometry_parts().slice(1):
+				points.append_array(part.points)
+		if not points.is_empty():
+			var bounds := Rect2(transform * _mirrored_point(points[0]), Vector2.ZERO)
+			for p in points:
+				bounds = bounds.expand(transform * _mirrored_point(p))
+			return bounds.grow(0.5)
 	if is_zero_approx(data_rotation()) and data_scale().is_equal_approx(Vector2.ONE):
 		return rect()
 	var q := quad()
@@ -445,17 +449,79 @@ func _vec2s(raw: Array) -> Array:
 		var a := pt as Array
 		if a != null and a.size() >= 2 \
 				and (a[0] is float or a[0] is int) and (a[1] is float or a[1] is int):
-			out.append(Vector2(float(a[0]), float(a[1])))
+			var p := Vector2(float(a[0]), float(a[1]))
+			if p.is_finite():
+				out.append(p)
 	return out
 
 ## 写回点集（JSON 友好：[[x, y], ...]，数值两位小数）。
 ## props 必须走 setter 回写：meta 缺失时 getter 返回临时字典，直接下标写会丢。
 func points_write(pts: Array) -> void:
-	var out := []
-	for p: Vector2 in pts:
-		out.append([roundf(p.x * 100.0) / 100.0, roundf(p.y * 100.0) / 100.0])
 	var p: Dictionary = props
-	p["points"] = out
+	p["points"] = _encode_points(pts)
+	props = p
+
+func holes_local() -> Array:
+	var out := []
+	var raw = props.get("holes", [])
+	if raw is Array:
+		for row in raw:
+			out.append(_vec2s(row) if row is Array else [])
+	return out
+
+func _encode_points(points: Array) -> Array:
+	var out := []
+	for p: Vector2 in points:
+		out.append([roundf(p.x * 100.0) / 100.0, roundf(p.y * 100.0) / 100.0])
+	return out
+
+func geometry_point_from_world(world: Vector2) -> Vector2:
+	return _mirrored_point(to_local(world))
+
+func geometry_point_to_world(p: Vector2) -> Vector2:
+	return to_global(_mirrored_point(p))
+
+func _mirrored_point(p: Vector2) -> Vector2:
+	return Vector2(-p.x if flipped_h() else p.x, -p.y if flipped_v() else p.y)
+
+func hole_at(local: Vector2, holes: Array) -> int:
+	for i in holes.size():
+		var ring := PackedVector2Array(holes[i])
+		if ring.size() >= 3 and Geometry2D.is_point_in_polygon(local, ring):
+			return i
+	return -1
+
+func geometry_parts() -> Array:
+	var parts := [{"points": points_local(), "holes": holes_local()}]
+	var raw = props.get("parts", [])
+	if raw is Array:
+		for part in raw:
+			if part is Dictionary and part.get("points") is Array:
+				var holes := []
+				var rows = part.get("holes", [])
+				if rows is Array:
+					for row in rows:
+						holes.append(_vec2s(row) if row is Array else [])
+				parts.append({"points": _vec2s(part.points), "holes": holes})
+	return parts
+
+func geometry_parts_write(parts: Array) -> void:
+	var p := props.duplicate()
+	p["points"] = _encode_points(parts[0].points)
+	if parts[0].holes.is_empty():
+		p.erase("holes")
+	else:
+		p["holes"] = parts[0].holes.map(_encode_points)
+	var extra := []
+	for part in parts.slice(1):
+		var row := {"points": _encode_points(part.points)}
+		if not part.holes.is_empty():
+			row["holes"] = part.holes.map(_encode_points)
+		extra.append(row)
+	if extra.is_empty():
+		p.erase("parts")
+	else:
+		p["parts"] = extra
 	props = p
 
 ## poly/path 呈现子节点随声明装配（rect 资产无子节点）；已挂则重绘

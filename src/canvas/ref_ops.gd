@@ -26,7 +26,7 @@ func set_entity_ref(n: EntityNode, fd: Dictionary, value) -> Dictionary:
 	if fid == "":
 		return {"status": "failed", "cleared": []}
 	var props: Dictionary = n.props.duplicate(true)
-	if props.get(fid, null) == value:
+	if is_same(props.get(fid, null), value) or (typeof(props.get(fid)) == typeof(value) and props.get(fid) == value):
 		return {"status": "ok", "cleared": []}
 	# 该字段是否被其它 entity_ref 的 mapField 配对（改目标图 → 旧落点跨图失效）
 	var edef: Dictionary = AssetDecl.by_id(app.manifest, n.asset)
@@ -54,10 +54,9 @@ func set_entity_ref(n: EntityNode, fd: Dictionary, value) -> Dictionary:
 	var via_delta := bool(pre.get("ok", false))
 	if not via_delta:
 		cvs.push_undo()
-	if value == "":
+	var empty: bool = (value is String and value.is_empty()) or (value is Dictionary and value.is_empty())
+	if empty:
 		props.erase(fid)
-	elif value is Dictionary and (value as Dictionary).is_empty():
-		props.erase(fid)   # §7.4：「未设置」的 edge_ref 也是空对象，落盘按缺键
 	else:
 		props[fid] = value
 	var cleared: Array = []
@@ -73,11 +72,11 @@ func set_entity_ref(n: EntityNode, fd: Dictionary, value) -> Dictionary:
 	var target := str(value) if value is String and app.canvas.is_entity_code_local(value) else ""
 	cvs.ref_highlight = target
 	cvs.queue_redraw()
-	if value == "" or (value is Dictionary and (value as Dictionary).is_empty()):
+	if empty:
 		app._set_status("已清空引用「%s」" % str(fd.get("name", fid)))
 	elif value is Dictionary:
 		app._set_status("引用「%s」→ %s（Ctrl+Z 撤销）" % [
-			str(fd.get("name", fid)), str((value as Dictionary).get("edge", ""))])
+			str(fd.get("name", fid)), str(value.get("edge", value.get("port", "")))])
 	else:
 		app._set_status("引用「%s」→ %s（Ctrl+Z 撤销）" % [str(fd.get("name", fid)), str(value)])
 	return {"status": "ok", "cleared": cleared}

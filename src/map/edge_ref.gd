@@ -70,3 +70,9 @@ static func is_real_edge(edge: String, a: Vector2i, neighbors: Array) -> bool:
 	if p1 == a:
 		return neighbors.has(p0)
 	return false
+
+## 持久化的格边身份只依赖地图范围与拓扑，不依赖可变的瓦片占用。
+static func segment(grid: GridSpace, a: Vector2i, b: Vector2i, w: int, h: int) -> PackedVector2Array:
+	if grid == null or not grid.cell_in_map(a, w, h) or not grid.cell_in_map(b, w, h):
+		return PackedVector2Array()
+	return grid.edge_between(a, b)

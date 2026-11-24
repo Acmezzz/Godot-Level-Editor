@@ -8,6 +8,9 @@ extends Node2D
 ## 游戏侧读 objects[].props.points 原样透传；无翻转时局部坐标 = 相对锚点像素。
 
 var node: EntityNode = null   # 宿主 EntityNode（decl/props/flip 从这读）
+const Geometry := preload("res://src/map/object_geometry.gd")
+var _rings: Array[PackedVector2Array] = []
+var _fill: Array[PackedVector2Array] = []
 
 func _draw() -> void:
 	if node == null or not is_instance_valid(node):
@@ -32,12 +35,33 @@ func _draw() -> void:
 	else:
 		# poly 缺省闭合（E16）：未显式声明 closed 时按闭合呈现，
 		# 否则「多边形」会画成一条折线、删点下限也随之错位。
-		_draw_poly(arr, Color(col, alpha), bool(vis.get("closed", true)))
+		if bool(vis.get("closed", true)):
+			_draw_parts(Color(col, alpha), mh, mv)
+		else:
+			draw_polyline(arr, Color(col, alpha), 3.0, true)
 
-func _draw_poly(arr: PackedVector2Array, col: Color, closed: bool) -> void:
-	if closed and arr.size() >= 3:
-		draw_colored_polygon(arr, col)
-		draw_polyline(arr + PackedVector2Array([arr[0]]),
+func _draw_parts(col: Color, mh: bool, mv: bool) -> void:
+	var rings: Array[PackedVector2Array] = []
+	var parts := node.geometry_parts()
+	for part in parts:
+		var contours := [part.points]
+		contours.append_array(part.holes)
+		for contour in contours:
+			if contour.size() < 3:
+				continue
+			var mapped := PackedVector2Array()
+			for p: Vector2 in contour:
+				mapped.append(Vector2(-p.x if mh else p.x, -p.y if mv else p.y))
+			rings.append(mapped)
+	if rings.size() == 1:
+		if not Geometry2D.triangulate_polygon(rings[0]).is_empty():
+			draw_colored_polygon(rings[0], col)
+	else:
+		if rings != _rings:
+			_rings = rings
+			_fill = Geometry.fill_strips(rings) if Geometry.parts_problem(parts).is_empty() else []
+		for shape in _fill:
+			draw_colored_polygon(shape, col)
+	for ring in rings:
+		draw_polyline(ring + PackedVector2Array([ring[0]]),
 			Color(col.r, col.g, col.b, minf(1.0, col.a + 0.5)), 1.5, true)
-	elif not closed and arr.size() >= 2:
-		draw_polyline(arr, col, 3.0, true)

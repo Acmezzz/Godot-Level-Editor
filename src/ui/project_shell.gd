@@ -66,6 +66,9 @@ func _build_top_bar() -> PanelContainer:
 	var save := Kit.button("保存", func(): save_current(), "primary")
 	save.tooltip_text = "保存当前视图对应的数据（Ctrl+S）"
 	bar.add_child(save)
+	if bool(manifest.get("playtest", {}).get("projectEntry", false)):
+		bar.add_child(Kit.button("试玩项目", func():
+			app._map_file_ctrl.on_play(Vector2i(-1, -1), true), "ghost"))
 	return box
 
 ## 底栏：状态消息常驻，与画布状态栏同一套视觉
@@ -116,7 +119,7 @@ func show_view(view: String, focus := "") -> void:
 		"content":
 			# focus 语义在此视图 = 实例 id（右栏定位），空则保留上次选中
 			content_editor.refresh_list(focus)
-			_set_status("点实例挂功能、填内容；改动即时写盘（Esc 回关卡编辑器）")
+			_set_status("编辑实例绑定，或从「项目内容库」创建和保存独立内容（Esc 回关卡编辑器）")
 
 ## 静默切视图（E1 选点归来）：不重建内容表单/不动焦点——表单值在离开时已保留，
 ## 参考值的提交由宿主自己就地更新。只切可见性与按下态。

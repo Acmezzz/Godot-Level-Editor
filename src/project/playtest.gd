@@ -12,8 +12,50 @@ class_name Playtest
 
 ## 日志尾部读取上限（§5：日志按有界尾部读取，不整份载入）
 const TAIL_BYTES := 64 * 1024
+const PROTOCOL := 1
+const MAX_REPORT_BYTES := 64 * 1024
 
-static func launch_tracked(m: Dictionary, map_path: String, extra_args: PackedStringArray = []) -> Dictionary:
+static func request_report(m: Dictionary, map_digest: String) -> Dictionary:
+	var pt = m.get("playtest", {})
+	if not pt is Dictionary or not bool(pt.get("report", false)):
+		return {}
+	var dir := str(m.get("_dir", ""))
+	if dir == "" or str(pt.get("executable", "")).strip_edges() == "":
+		return {}
+	var token := Crypto.new().generate_random_bytes(16).hex_encode()
+	if token.length() != 32:
+		return {}
+	var path := dir.path_join("editor/playtest-reports/" + token + ".json")
+	if DirAccess.make_dir_recursive_absolute(path.get_base_dir()) != OK:
+		return {}
+	return {"version": PROTOCOL, "token": token, "path": path, "mapDigest": map_digest,
+		"manifestDigest": FileAccess.get_sha256(dir.path_join("editor/editor_manifest.json"))}
+
+static func read_report(request: Dictionary) -> Dictionary:
+	if request.is_empty():
+		return {}
+	var f := FileAccess.open(str(request.path), FileAccess.READ)
+	if f == null:
+		return {}
+	if f.get_length() > MAX_REPORT_BYTES:
+		return {"status": "invalid", "message": "加载回执超过大小上限"}
+	var parser := JSON.new()
+	if parser.parse(f.get_as_text()) != OK:
+		return {"status": "invalid", "message": "加载回执不是有效 JSON"}
+	var report = parser.data
+	if not report is Dictionary or report.get("version") != PROTOCOL or report.get("token") != request.token:
+		return {"status": "invalid", "message": "加载回执的版本或试玩标识不匹配"}
+	var result := str(report.get("status", ""))
+	if result == "error":
+		return {"status": "error", "message": str(report.get("message", "")).left(250)}
+	if result != "ready":
+		return {"status": "invalid", "message": "加载回执状态无效"}
+	for key in ["mapDigest", "manifestDigest"]:
+		if str(report.get(key, "")) != str(request[key]):
+			return {"status": "invalid", "message": "游戏加载的磁盘版本与本次试玩不一致"}
+	return report
+
+static func launch_tracked(m: Dictionary, map_path: String, extra_args: PackedStringArray = [], report := {}) -> Dictionary:
 	var pt: Dictionary = m.get("playtest", {}) if m.get("playtest", null) is Dictionary else {}
 	var project_dir := str(m.get("_dir", ""))
 	var exe_rel := str(pt.get("executable", "")).strip_edges()
@@ -23,6 +65,8 @@ static func launch_tracked(m: Dictionary, map_path: String, extra_args: PackedSt
 		spec_args.append(EditorManifest.substitute_vars_raw(str(a), map_path, project_dir))
 	spec_args.append_array(extra_args)
 	if exe_rel != "":
+		if not report.is_empty():
+			spec_args.append("--editor-playtest=" + Marshalls.utf8_to_base64(JSON.stringify(report)))
 		var exe := EditorManifest.substitute_vars_raw(exe_rel, map_path, project_dir)
 		if not FileAccess.file_exists(exe):
 			return {"ok": false, "error": "找不到试玩可执行文件: " + exe,

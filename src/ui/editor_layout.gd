@@ -8,6 +8,8 @@ const EntityNodeScript := preload("res://src/canvas/entity_node.gd")
 const IssuesDrawer := preload("res://src/ui/issues_drawer.gd")
 const LayerPanel := preload("res://src/ui/layer_panel.gd")
 const Popups := preload("res://src/ui/popups.gd")
+const MapGamePreview := preload("res://src/ui/map_game_preview.gd")
+const MapGeneratorDialog := preload("res://src/ui/map_generator_dialog.gd")
 
 var app   # 宿主引用
 ## 拆分出的子控制器
@@ -108,7 +110,7 @@ func _build_editor_ui() -> void:
 	app.canvas.manifest = app.manifest
 	# E2：引用字段写入口需要根 app（状态栏/确认框）——必须在挂树（_ready）之前注入
 	app.canvas.app_host = app
-	app.canvas.set_entity_sizes(app._entity_sizes())
+	app.canvas.ent_sizes = app._entity_sizes()
 	sv.add_child(app.canvas)
 
 	# 没开地图时画布是全空的：铺一层引导，别让人对着一片空白猜
@@ -180,22 +182,29 @@ func _build_global_bar() -> PanelContainer:
 	bar.add_child(app._map_btn)
 	var map_menu := PopupMenu.new()
 	map_menu.add_item("新建地图", 1)
+	map_menu.add_item("从游戏生成地图…", 15)
+	map_menu.add_item("重新生成当前地图…", 16)
 	map_menu.add_item("打开地图…", 2)
 	map_menu.add_item("保存", 3)
 	map_menu.add_separator()
 	map_menu.add_item("重命名地图…", 10)
 	map_menu.add_item("复制整张地图…", 11)
-	map_menu.add_item("另存并转换投影…", 13)
+	map_menu.add_item("另存并转换格空间…", 13)
 	map_menu.add_item("地图历史…", 12)
 	map_menu.add_item("导出当前地图", 4)
 	map_menu.add_item("调整地图尺寸", 5)
 	map_menu.add_item("批量替换瓦片…", 6)
+	map_menu.add_item("关卡游戏画面预览…", 14)
 	map_menu.add_separator()
 	map_menu.add_separator()
 	map_menu.add_item("检查项目完整性", 30)
 	map_menu.add_item("切换项目…", 20)
 	map_menu.id_pressed.connect(_on_map_menu_id)
-	app._map_btn.pressed.connect(func(): _popup_below(map_menu, app._map_btn))
+	app._map_btn.pressed.connect(func():
+		map_menu.set_item_disabled(map_menu.get_item_index(14), not MapGamePreview.available(app))
+		map_menu.set_item_disabled(map_menu.get_item_index(15), not MapGeneratorDialog.available(app))
+		map_menu.set_item_disabled(map_menu.get_item_index(16), not MapGeneratorDialog.can_regenerate(app))
+		_popup_below(map_menu, app._map_btn))
 	bar.add_child(map_menu)
 
 	bar.add_child(app.UiKitScript.spacer())
@@ -242,6 +251,12 @@ func _on_map_menu_id(id: int) -> void:
 		12:
 			# 历史版本（A3）：列出正式保存前的快照，载入只改画布
 			app._on_map_history()
+		14:
+			MapGamePreview.open(app)
+		15:
+			MapGeneratorDialog.open(app)
+		16:
+			MapGeneratorDialog.open(app, true)
 		20:
 			app._switch_project()
 		30:
@@ -287,6 +302,21 @@ func _build_palette_column() -> PanelContainer:
 		btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		asset_row.add_child(btn)
 	v.add_child(asset_row)
+	var geometry := app.UiKitScript.button("绘制轮廓 / 路径", func():
+		if app.canvas != null:
+			app.canvas._geometry_draw.start(), "ghost") as Button
+	geometry.tooltip_text = "先选多边形或路径实体。左键加点，右键撤末点，Enter 完成，Esc 取消。"
+	v.add_child(geometry)
+	var hole := app.UiKitScript.button("绘制孔洞", func():
+		if app.canvas != null:
+			app.canvas._geometry_draw.start_hole(), "ghost") as Button
+	hole.tooltip_text = "选中闭合几何后绘制内环。Shift + 右键点击孔洞可删除。"
+	v.add_child(hole)
+	var part := app.UiKitScript.button("绘制附加轮廓", func():
+		if app.canvas != null:
+			app.canvas._geometry_draw.start_part(), "ghost") as Button
+	part.tooltip_text = "选中闭合实体，绘制不相连的外轮廓。Shift + Alt + 右键删除附加轮廓。"
+	v.add_child(part)
 
 	# 弹层内容按清单重建：每层一行 = 层名 + 👁 + 🔒，显隐/锁定内联在项里（不占额外高度）。
 	# 本控制器是 RefCounted（没有 add_child），弹层挂到窗口根——和所有其他弹窗一致。
@@ -294,7 +324,6 @@ func _build_palette_column() -> PanelContainer:
 	# E3：层多时下拉要有滚动路径（U05）——最高 420px，超出滚动而不是把菜单顶出屏幕
 	var layer_scroll := ScrollContainer.new()
 	layer_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	layer_scroll.max_size.y = 420.0
 	_layer_menu_body = app.UiKitScript.vbox(2)
 	_layer_menu_body.custom_minimum_size = Vector2(196, 0)
 	layer_scroll.add_child(_layer_menu_body)
@@ -638,7 +667,7 @@ func _refresh_pick_bar() -> void:
 		return
 	var code: String = app.canvas.pick_mode_code
 	_pick_ok.disabled = code == ""
-	_pick_label.text = str(app.canvas.pick_mode_hint) + ("　→  %s" % code if code != "" else "　→  （还没点）")
+	_pick_label.text = str(app.canvas.pick_mode_hint) + ("　→  %s" % app._pick_label(code) if code != "" else "　→  （还没点）")
 
 ## 信息条内容：随选中实例刷新；没选中就整条隐藏（不占画布视线）
 func _refresh_sel_bar() -> void:

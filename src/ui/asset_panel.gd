@@ -548,6 +548,11 @@ func _delete_asset_checked(sid: String) -> void:
 	# 内容引用字段与草稿也算引用，删了它们就悬空；停用（保 ID）不需要。
 	var erase_will_dangle: bool = permanent or not scanned_asset
 	var usage := _deletion_usage(sid) if erase_will_dangle else {}
+	var views: Array = usage.get("views", [])
+	if not views.is_empty():
+		host._set_status("参考视图「%s」正在使用此图片（共 %d 处）。请先移除或替换布局中的图片。" %
+			[views[0].view, views.size()])
+		return
 	var bad: Array = usage.get("bad", [])
 	if not bad.is_empty():
 		host._set_status("无法完整检查资产引用：%s（共 %d 处），删除已中止" % [bad[0].get("name", ""), bad.size()])
@@ -595,7 +600,7 @@ func _delete_asset_checked(sid: String) -> void:
 		(candidate.assets as Array).erase(AssetDecl.live_by_id(candidate, sid))
 	elif not preload("res://src/project/asset_scan.gd").disable(candidate, sid):
 		return
-	if not await host._save_manifest_file_async(guard, candidate, true):
+	if not await host._save_manifest_file_async(guard, candidate, "assets"):
 		return
 	_edef = {}
 	refresh_list()

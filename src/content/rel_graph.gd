@@ -16,59 +16,63 @@ const RefFields := preload("res://src/content/ref_fields.gd")
 
 ## 建图。scope_fn = 当前功能 id（只画这个功能的内容条目与其出边）。
 ## extra = 尚未落盘的内容 {cid: data}（A2 staged），并入本功能目录参与建图。
-## 返回 {nodes: [{key, cid, fn_id, name, fields}],
+## 返回 {nodes: [{key, cid, fn_id, name, fields}], slots: {node_key: [可编辑引用槽]},
 ##       edges: [{from, to, field, label, cid, fn_id, step, decl, multi}],
-##       external: [{from, field, value, fn, label, cid, step}]（引用了不存在的内容）,
+##       external: [带原始目标 ID 的可编辑槽]（引用了不存在的内容）,
 ##       bad: 读不出的内容文件}
 ## 节点 key = fn_id + "\u0001" + cid（与 ProjectAudit 的内容键同口径）。
 static func build(manifest: Dictionary, fn_id: String, extra: Dictionary = {}) -> Dictionary:
-	var nodes: Array = []
-	var edges: Array = []
-	var external: Array = []
-	var bad: Array = []
-	if fn_id == "":
-		return {"nodes": nodes, "edges": edges, "external": external, "bad": bad}
-	var items := ContentStore.read_all(manifest, fn_id, bad)
-	# staged 内容（A2 未落盘）覆盖同名条目——表单里刚改的值图里必须立刻可见
-	for cid_x in extra:
-		if extra[cid_x] is Dictionary:
-			items[str(cid_x)] = extra[cid_x]
-	var local_ids := {}
-	for k in ContentStore.list_ids(manifest, fn_id):
-		local_ids[str(k)] = true
-	for k in items:
-		local_ids[str(k)] = true
-	var catalog := {fn_id: local_ids}
-	var decls := _top_decls(manifest, fn_id)
-	for cid in items:
-		var data: Dictionary = items[cid]
-		var key := _key(fn_id, str(cid))
-		nodes.append({"key": key, "cid": str(cid), "fn_id": fn_id,
-			"name": str(data.get("name", "")) if str(data.get("name", "")) != "" else str(cid),
-			"fields": (data.get("fields", {}) as Dictionary).size() if data.get("fields", {}) is Dictionary else 0})
-		var base := {"cid": str(cid), "fn_id": fn_id}
-		# 出边：功能/条件字段
-		var values = data.get("fields", null)
-		if values is Dictionary:
-			_collect(manifest, key, base, decls, values as Dictionary, -1, edges, external, catalog)
-		# 出边：步骤字段（按每步自己的声明）
-		var steps = data.get("steps", null)
-		if steps is Array:
-			base["shown_steps"] = (steps as Array).duplicate(true)
-			for i in (steps as Array).size():
-				var st = (steps as Array)[i]
-				if not (st is Dictionary):
+	return _build(manifest, [fn_id] if fn_id != "" else [], {fn_id: extra}, fn_id)
+
+## 项目图包含所有已声明功能的已保存内容，可从 slots 编辑尚未设置的引用。
+static func build_project(manifest: Dictionary) -> Dictionary:
+	var kinds := FunctionDecls.functions(manifest).keys()
+	kinds.sort()
+	return _build(manifest, kinds, {}, "")
+
+static func _build(manifest: Dictionary, kinds: Array, extra: Dictionary, scope: String) -> Dictionary:
+	var graph := {"nodes": [], "edges": [], "external": [], "bad": [], "slots": {}}
+	var catalog := {}
+	var contents := {}
+	for kind in kinds:
+		var items := ContentStore.read_all(manifest, str(kind), graph.bad)
+		var staged: Dictionary = extra.get(kind, {})
+		for cid in staged:
+			if staged[cid] is Dictionary:
+				items[str(cid)] = staged[cid]
+		contents[kind] = items
+		catalog[kind] = {}
+		for cid in items:
+			catalog[kind][cid] = true
+	for kind in kinds:
+		var fn_id := str(kind)
+		var decls := _top_decls(manifest, fn_id)
+		for cid in contents[kind]:
+			var data: Dictionary = contents[kind][cid]
+			var key := _key(fn_id, str(cid))
+			var values: Dictionary = data.fields if data.get("fields") is Dictionary else {}
+			var label := str(data.get("name", ""))
+			graph.nodes.append({"key": key, "cid": str(cid), "fn_id": fn_id,
+				"name": label if label != "" else str(cid), "fields": values.size()})
+			graph.slots[key] = []
+			var base := {"cid": str(cid), "fn_id": fn_id}
+			_collect(manifest, key, base, decls, values, -1, graph, catalog)
+			var steps = data.get("steps")
+			if not steps is Array:
+				continue
+			base["shown_steps"] = steps.duplicate(true)
+			for i in steps.size():
+				if not steps[i] is Dictionary:
 					continue
-				var sfields = (st as Dictionary).get("fields", null)
-				if not (sfields is Dictionary):
-					continue
-				var step_by := StepDecls.step_by_code(manifest, str((st as Dictionary).get("step", "")))
-				var sdecls = step_by.get("fields", [])
-				if sdecls is Array and not (sdecls as Array).is_empty():
-					_collect(manifest, key, base, sdecls as Array, sfields as Dictionary, i,
-						edges, external, catalog, "步骤%d" % (i + 1))
-	_add_target_nodes(manifest, fn_id, nodes, edges)
-	return {"nodes": nodes, "edges": edges, "external": external, "bad": bad}
+				var row: Dictionary = steps[i]
+				var step_decl := StepDecls.step_by_code(manifest, str(row.get("step", "")))
+				var fields: Dictionary = row.fields if row.get("fields") is Dictionary else {}
+				var sdecls = step_decl.get("fields", [])
+				if sdecls is Array:
+					_collect(manifest, key, base, sdecls, fields, i, graph, catalog, "步骤%d" % (i + 1))
+	if scope != "":
+		_add_target_nodes(manifest, scope, graph.nodes, graph.edges)
+	return graph
 
 static func _top_decls(manifest: Dictionary, fn_id: String) -> Array:
 	var decls := FunctionDecls.function_fields(manifest, fn_id).duplicate()
@@ -81,63 +85,96 @@ static func _top_decls(manifest: Dictionary, fn_id: String) -> Array:
 
 static func declaration_matches(manifest: Dictionary, fn_id: String, edge: Dictionary) -> bool:
 	var step := int(edge.get("step", -1))
-	if step < 0:
-		return _top_decls(manifest, fn_id).has(edge.decl)
-	var row: Dictionary = edge.shown_steps[step]
-	var decl := StepDecls.step_by_code(manifest, str(row.get("step", "")))
-	var fields = decl.get("fields", [])
-	return fields is Array and fields.has(edge.decl)
+	var decls := _top_decls(manifest, fn_id)
+	if step >= 0:
+		var rows = edge.get("shown_steps")
+		if not rows is Array or step >= rows.size() or not rows[step] is Dictionary:
+			return false
+		var decl := StepDecls.step_by_code(manifest, str(rows[step].get("step", "")))
+		if not decl.get("fields") is Array:
+			return false
+		decls = decl.fields
+	var trail: Array = edge.get("trail", [])
+	var values := {}
+	if not trail.is_empty():
+		values[trail[0].field] = edge.get("shown_anchor")
+	for part in trail:
+		var desc := {}
+		for fd in decls:
+			if fd is Dictionary and _field_key(fd) == part.field:
+				desc = fd
+				break
+		var descended := false
+		for scope in RefFields.nested_scopes(manifest, desc, values.get(part.field)):
+			if scope.path != part.branch:
+				continue
+			decls = scope.decls
+			values = scope.values
+			descended = true
+			break
+		if not descended:
+			return false
+	return decls.has(edge.decl)
+
+static func _field_key(fd: Dictionary) -> String:
+	var code := str(fd.get("code", ""))
+	return code if code != "" else str(fd.get("id", ""))
 
 static func _collect(manifest: Dictionary, from_key: String, base: Dictionary, decls: Array,
-		values: Dictionary, step: int, edges: Array, external: Array, catalog: Dictionary,
-		prefix := "") -> void:
-	var own_fn := _fn_of_key(from_key)
+		values: Dictionary, step: int, graph: Dictionary, catalog: Dictionary, prefix := "") -> void:
+	var trail: Array = base.get("trail", [])
+	if trail.size() > 8:
+		return
 	for fd in decls:
-		if not (fd is Dictionary):
+		if not fd is Dictionary:
 			continue
+		var field := _field_key(fd)
+		if field == "":
+			continue
+		var label := str(fd.get("name", field))
+		if prefix != "":
+			label = "%s · %s" % [prefix, label]
+		var shown = values.get(field)
+		var scopes := RefFields.nested_scopes(manifest, fd, shown)
+		if not scopes.is_empty():
+			var anchor = shown.duplicate(true) if trail.is_empty() else base.shown_anchor
+			for scope in scopes:
+				var nested := base.duplicate()
+				nested["trail"] = trail + [{"field": field, "branch": scope.path}]
+				nested["shown_anchor"] = anchor
+				_collect(manifest, from_key, nested, scope.decls, scope.values, step, graph, catalog,
+					"%s %s" % [label, scope.label])
 		var desc := RefFields.describe(fd)
 		if str(desc.get("kind", "")) != "content":
 			continue
-		var key := str((fd as Dictionary).get("code", ""))
-		if key == "":
-			key = str((fd as Dictionary).get("id", ""))
-		if not values.has(key):
-			continue
-		var fname := str((fd as Dictionary).get("name", key))
-		if prefix != "":
-			fname = "%s·%s" % [prefix, fname]
-		var want_fn := str((desc.get("filter", {}) as Dictionary).get("fn", ""))
-		# 声明限定了功能就用它；没限定 = 同功能内的引用（内容 ID 只在功能目录里唯一）
-		var to_fn := want_fn if want_fn != "" else own_fn
-		var shown = values[key]
-		var snapshot = shown.duplicate(true) if shown is Array else shown
+		var to_fn := str(desc.get("filter", {}).get("fn", ""))
+		if to_fn == "":
+			to_fn = str(base.fn_id)
+		var multi := bool(desc.get("many", false))
+		var row := base.duplicate()
+		row.merge({"from": from_key, "field": field, "label": label, "step": step,
+			"decl": fd.duplicate(true), "shown_value": shown.duplicate(true) if shown is Array or shown is Dictionary else shown,
+			"shown_present": values.has(field), "multi": multi, "fn": to_fn})
+		if not catalog.has(to_fn):
+			var ids := {}
+			for id in ContentStore.list_ids(manifest, to_fn):
+				ids[id] = true
+			catalog[to_fn] = ids
 		var refs := _as_list(shown)
-		for index in refs.size():
-			var cid := str(refs[index])
-			if cid == "":
-				continue
-			var row := base.duplicate()
-			row["field"] = key
-			row["label"] = fname
-			row["step"] = step
-			row["decl"] = (fd as Dictionary).duplicate(true)
-			row["shown_value"] = snapshot
-			row["index"] = index
-			row["multi"] = bool(desc.get("many", false))
-			if not catalog.has(to_fn):
-				var ids := {}
-				for id in ContentStore.list_ids(manifest, to_fn):
-					ids[id] = true
-				catalog[to_fn] = ids
-			var exists: bool = catalog[to_fn].has(cid)
-			if exists:
-				row["from"] = from_key
-				row["to"] = _key(to_fn, cid)
-				edges.append(row)
-			else:
-				# 内容不存在（或声明的功能目录不匹配）：不编造节点，单独列出供定位修正
-				external.append({"from": from_key, "field": key, "value": cid, "fn": to_fn,
-					"label": fname, "cid": str(base.get("cid", "")), "step": step})
+		for i in refs.size():
+			var target := str(refs[i])
+			var slot := row.duplicate()
+			slot.merge({"index": i, "value": target})
+			if target != "" and catalog[to_fn].has(target):
+				slot["to"] = _key(to_fn, target)
+				graph.edges.append(slot)
+			elif target != "":
+				graph.external.append(slot)
+			graph.slots[from_key].append(slot)
+		if multi or refs.is_empty():
+			var slot := row.duplicate()
+			slot.merge({"index": -1, "value": ""})
+			graph.slots[from_key].append(slot)
 
 ## 跨功能目标补占位节点：节点身份是 (功能 ID, 内容 ID)，别的功能的条目也要能看见。
 static func _add_target_nodes(manifest: Dictionary, fn_id: String, nodes: Array, edges: Array) -> void:
@@ -160,7 +197,7 @@ static func _add_target_nodes(manifest: Dictionary, fn_id: String, nodes: Array,
 ## read_fn(fn_id, cid) → 内容字典；write_fn(fn_id, cid, data) → bool 或 "ok"/"conflict"/"fail"
 ## （表单的 staged 感知实现，F1/P04 起返回状态串）。
 ## multi 字段（值是数组）：old_cid 指出要替换/移除的元素，其余值原样保留。
-## 返回 {status: ok/noop/missing/failed}。
+## 返回 {status: ok/noop/missing/stale/failed}。
 static func set_edge(read_fn: Callable, write_fn: Callable, fn_id: String, cid: String,
 		step: int, field: String, to_cid: String, multi: bool, old_cid := "", shown: Dictionary = {}) -> Dictionary:
 	if cid == "" or field == "":
@@ -173,21 +210,42 @@ static func set_edge(read_fn: Callable, write_fn: Callable, fn_id: String, cid: 
 		var steps = data.get("steps", null)
 		if not (steps is Array) or step >= (steps as Array).size() or not ((steps as Array)[step] is Dictionary):
 			return {"status": "missing"}
-		if not shown.is_empty() and steps != shown.get("shown_steps"):
+		if not shown.is_empty() and not _same_value(steps, shown.get("shown_steps")):
 			return {"status": "stale"}
 		var st: Dictionary = (steps as Array)[step]
 		if not (st.get("fields", null) is Dictionary):
 			st["fields"] = {}
 		holder = st
 	var fields: Dictionary = holder.get("fields", {}) if holder.get("fields", null) is Dictionary else {}
-	if not shown.is_empty() and (not fields.has(field) or fields[field] != shown.get("shown_value")):
+	var trail: Array = shown.get("trail", [])
+	if not trail.is_empty():
+		if not _same_value(fields.get(trail[0].field), shown.get("shown_anchor")):
+			return {"status": "stale"}
+		for part in trail:
+			var nested = fields.get(part.field)
+			for key in part.branch:
+				if nested is Array and key is int and key >= 0 and key < nested.size():
+					nested = nested[key]
+				elif nested is Dictionary and nested.has(key):
+					nested = nested[key]
+				else:
+					return {"status": "missing"}
+			if not nested is Dictionary:
+				return {"status": "missing"}
+			fields = nested
+	if not shown.is_empty() and (fields.has(field) != bool(shown.get("shown_present", true)) \
+			or not _same_value(fields.get(field), shown.get("shown_value"))):
 		return {"status": "stale"}
 	if multi:
 		var arr: Array = fields.get(field, []) if fields.get(field, null) is Array else []
 		var at := int(shown.get("index", -1)) if not shown.is_empty() else arr.find(old_cid if old_cid != "" else to_cid)
-		if at < 0 or at >= arr.size():
+		if not shown.is_empty() and at == -1:
+			if to_cid == "" or arr.has(to_cid):
+				return {"status": "noop"}
+			arr.append(to_cid)
+		elif at < 0 or at >= arr.size():
 			return {"status": "missing"}
-		if to_cid == "":
+		elif to_cid == "":
 			arr.remove_at(at)
 		else:
 			if str(arr[at]) == to_cid:
@@ -196,13 +254,14 @@ static func set_edge(read_fn: Callable, write_fn: Callable, fn_id: String, cid: 
 		fields[field] = arr
 	else:
 		var cur := str(fields.get(field, "")) if fields.get(field, null) != null else ""
-		if cur == to_cid and (fields.has(field) or to_cid == ""):
+		if cur == to_cid and (to_cid != "" or not fields.has(field)):
 			return {"status": "noop"}
 		if to_cid == "":
 			fields.erase(field)   # 断开：删键，与 C1「未设置」一致
 		else:
 			fields[field] = to_cid
-	holder["fields"] = fields
+	if trail.is_empty():
+		holder["fields"] = fields
 	if not _write_ok(write_fn.call(fn_id, cid, data)):
 		return {"status": "failed"}
 	return {"status": "ok"}
@@ -213,6 +272,9 @@ static func _write_ok(v) -> bool:
 	if v is String:
 		return (v as String) == "ok"
 	return bool(v)
+
+static func _same_value(a: Variant, b: Variant) -> bool:
+	return typeof(a) == typeof(b) and a == b
 
 static func _as_list(v) -> Array:
 	if v is Array:

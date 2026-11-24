@@ -44,9 +44,6 @@ func dirty_cell(cell: Vector2i) -> void:
 func _draw() -> void:
 	if layer == null or not is_instance_valid(layer) or grid == null or cvs == null:
 		return
-	# 三角拓扑与斜基拓扑都走自绘（斜基的平行四边形没有原生 tile_shape）
-	if not grid.is_tri() and not grid.has_basis:
-		return
 	if not _built or _atlas_rev != int(cvs.atlas_rev):
 		_atlas_rev = int(cvs.atlas_rev)
 		_blocks.clear()
@@ -118,7 +115,7 @@ func _build_blocks(cells: Array[Vector2i]) -> void:
 		var cs: Vector2i = cvs.asset_cell(aid)
 		if cs == Vector2i.ZERO:
 			continue
-		var poly: PackedVector2Array = grid.cell_polygon(c)
+		var poly := tile_polygon(grid, c, cs)
 		if poly.size() < 3:
 			continue
 		var tex := texs[src] as Texture2D
@@ -136,6 +133,13 @@ func _build_blocks(cells: Array[Vector2i]) -> void:
 		var blk: Dictionary = _blocks[k]
 		blk.bbox = (blk.bbox as Rect2).merge(bb)
 		(blk.items as Array).append({"poly": poly, "uvs": uvs, "tex": tex})
+
+static func tile_polygon(grid_space: GridSpace, cell: Vector2i, size: Vector2i) -> PackedVector2Array:
+	if grid_space.is_tri() or grid_space.has_basis:
+		return grid_space.cell_polygon(cell)
+	var rect := grid_space.cell_tex_rect(cell, size)
+	return PackedVector2Array([rect.position, Vector2(rect.end.x, rect.position.y),
+		rect.end, Vector2(rect.position.x, rect.end.y)])
 
 static func _white_cols(n: int) -> PackedColorArray:
 	var cols := PackedColorArray()

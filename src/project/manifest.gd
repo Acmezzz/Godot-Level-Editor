@@ -109,13 +109,26 @@ static func load_from(project_dir: String) -> Dictionary:
 	# 功能段 / 字段段：同样补发（保存清单时随 functions写回）。
 	# 磁盘上的执行引用一律用码，人类名零兼容、无回退——查不到就是数据漂移。
 	var issued := false
-	# 分层身份码：资产段。老清单实体资产没有码就补发（R07）——补码必须置 _codes_issued，
-	# 否则新码进了内容/地图引用而清单没写盘，游戏侧查无对应。
+	var taken := {}
 	for a in data.get("assets", []):
-		if a is Dictionary and str((a as Dictionary).get("kind", "")) == "entity" \
-				and str((a as Dictionary).get("code", "")) == "":
-			(a as Dictionary)["code"] = preload("res://src/content/content_id.gd").new_entity_code()
-			issued = true
+		if not a is Dictionary or a.get("kind") != "entity":
+			continue
+		var code := str(a.get("code", ""))
+		if code == "":
+			continue
+		if taken.has(code):
+			return {"_error": "资产身份码冲突：%s 与 %s 都使用 %s" % [
+				taken[code], a.get("id", ""), code], "_warnings": warnings}
+		taken[code] = a.get("id", "")
+	for a in data.get("assets", []):
+		if not a is Dictionary or a.get("kind") != "entity" or str(a.get("code", "")) != "":
+			continue
+		var code := preload("res://src/content/content_id.gd").new_entity_code()
+		while taken.has(code):
+			code = preload("res://src/content/content_id.gd").new_entity_code()
+		a["code"] = code
+		taken[code] = a.get("id", "")
+		issued = true
 	issued = FunctionDecls.ensure_codes(data) or issued
 	# 条件字段码：与功能字段共用一个码空间，避开功能字段已占用的码补发。
 	issued = ConditionDecls.ensure_codes(data) or issued

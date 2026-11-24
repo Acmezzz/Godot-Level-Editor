@@ -19,19 +19,21 @@ const ManifestScript := preload("res://src/project/manifest.gd")
 ##   unreadable——键命中了某个文件，但那份文件读不出来（坏 JSON / 结构校验不过），
 ##                「目标里有没有这个实例/这条边」无从判定，调用方不能据此报悬空。
 static func resolve_map(manifest: Dictionary, map_key: String) -> Dictionary:
+	return resolve_indexed_map(MapStore.code_index(manifest), map_key) if map_key != "" else _unset_map()
+
+static func _unset_map() -> Dictionary:
+	return {"status": "unset", "key": "", "candidates": []}
+
+static func resolve_indexed_map(ci: Dictionary, map_key: String) -> Dictionary:
 	if map_key == "":
-		return {"status": "unset", "key": "", "candidates": []}
-	var ci: Dictionary = MapStore.code_index(manifest)
+		return _unset_map()
 	var names: Array = ci.get("names", [])
 	var unreadable: Array = ci.get("unreadable", [])
 	var by_code: Dictionary = ci.get("by_code", {})
-	var conflicts := {}
-	for c in by_code:
-		if (by_code[c] as Array).size() > 1:
-			conflicts[c] = by_code[c]
+	var candidates: Array = by_code.get(map_key, [])
 	var by_name := names.has(map_key)
-	if by_name and conflicts.has(map_key):
-		return {"status": "ambiguous", "key": "", "candidates": conflicts[map_key]}
+	if by_name and candidates.size() > 1:
+		return {"status": "ambiguous", "key": "", "candidates": candidates}
 	var name := str((ci.get("map") as Dictionary).get(map_key, ""))
 	if by_name and name != "" and name != map_key:
 		# 键既是图名又是别的图的码：两种解释指向不同文件，不猜
@@ -42,8 +44,8 @@ static func resolve_map(manifest: Dictionary, map_key: String) -> Dictionary:
 		if unreadable.has(map_key):
 			return {"status": "unreadable", "key": str(map_key), "candidates": [str(map_key)]}
 		return {"status": "ok", "key": str(map_key), "candidates": [str(map_key)]}
-	if conflicts.has(map_key):
-		return {"status": "ambiguous", "key": "", "candidates": conflicts[map_key]}
+	if candidates.size() > 1:
+		return {"status": "ambiguous", "key": "", "candidates": candidates}
 	if name == "":
 		# 码表里没有：键本身能不能当地图名？不能 = invalid（永远不可能有这张图）
 		if not ManifestScript.is_valid_map_name(map_key):
@@ -53,12 +55,63 @@ static func resolve_map(manifest: Dictionary, map_key: String) -> Dictionary:
 		return {"status": "unreadable", "key": name, "key_code": map_key, "candidates": [name]}
 	return {"status": "ok", "key": name, "key_code": map_key, "candidates": [name]}
 
+## Cross-map graph edges require a stable code, never a file-name fallback.
+static func resolve_graph_map(index: Dictionary, code: String) -> Dictionary:
+	var resolved := resolve_indexed_map(index, code)
+	if resolved.status == "ok" and index.get("by_name", {}).get(resolved.key) != code:
+		return {"status": "missing", "key": "", "candidates": []}
+	return resolved
+
 ## 消费口径：地图键 → 图名（unset/ambiguous/missing 返回 ""，调用方按 status 区分）。
 static func map_name_of(manifest: Dictionary, map_key: String) -> String:
 	return str(resolve_map(manifest, map_key).get("key", ""))
 
+## 只识别编辑器创建的内容目标形态，游戏自己的热点目标由游戏解释。
+static func is_view_content_target(value: Variant) -> bool:
+	return value is Dictionary and value.size() == 2 and value.get("function") is String \
+		and value.get("content") is String
+
+static func view_content_refs(manifest: Dictionary) -> Array:
+	var out := []
+	var views = manifest.get("views")
+	if not views is Array:
+		return out
+	for i in views.size():
+		var view = views[i]
+		if not view is Dictionary:
+			continue
+		_collect_view_targets(view.get("hotspots"), view, "views[%d].hotspots" % i, out)
+		var layout = view.get("layout")
+		if layout is Dictionary:
+			_collect_view_targets(layout.get("elements"), view, "views[%d].layout.elements" % i, out)
+	return out
+
+static func _collect_view_targets(rows: Variant, view: Dictionary, prefix: String, out: Array) -> void:
+	if not rows is Array:
+		return
+	for i in rows.size():
+		var row = rows[i]
+		if row is Dictionary and is_view_content_target(row.get("target")):
+			out.append({"fn": row.target.function, "cid": row.target.content,
+				"view": str(view.get("view_id", "")), "path": "%s[%d].target" % [prefix, i]})
+
+static func view_image_refs(manifest: Dictionary) -> Array:
+	var out := []
+	var views = manifest.get("views", [])
+	for i in (views.size() if views is Array else 0):
+		var view = views[i]
+		if not view is Dictionary or not view.get("layout") is Dictionary:
+			continue
+		var elements = view.layout.get("elements", [])
+		for j in (elements.size() if elements is Array else 0):
+			var row = elements[j]
+			if row is Dictionary and row.get("imageAsset") is String and row.imageAsset != "":
+				out.append({"asset": row.imageAsset, "view": str(view.get("view_id", "")),
+					"path": "views[%d].layout.elements[%d].imageAsset" % [i, j]})
+	return out
+
 ## 入边全景（§7.2 inbound）：内容 (fn_id, cid) 的全部入边，破坏性检查共用这一个入口。
-## edges = {instances: {地图名: [实例码]}, contents: [{kind,id,field}], drafts: [草稿键]}；
+## edges = {instances: {地图名: [实例码]}, contents: [{kind,id,field}], views: [热点引用], drafts: [草稿键]}；
 ## complete=false 时 unreadable_sources 列出读不全的源（删除/清理必须拦截，D07 口径）。
 ## 暂存（会话内未落盘）的入边由调用方自行并入（见 content_form._delete_blocked_reason）。
 static func inbound_content(manifest: Dictionary, fn_id: String, cid: String,
@@ -76,6 +129,7 @@ static func inbound_content(manifest: Dictionary, fn_id: String, cid: String,
 		"edges": {
 			"instances": usage.get("by_map", {}),
 			"contents": PA.content_inbound_refs(manifest, fn_id, cid),
-			"drafts": PA.draft_inbound_refs(manifest, cid),
+			"views": view_content_refs(manifest).filter(func(ref): return ref.fn == fn_id and ref.cid == cid),
+			"drafts": PA.draft_inbound_refs(manifest, cid, fn_id),
 		},
 	}

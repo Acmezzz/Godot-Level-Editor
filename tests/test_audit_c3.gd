@@ -8,6 +8,8 @@ const FunctionDecls := preload("res://src/content/function_decl.gd")
 const V := preload("res://src/project/manifest_validation.gd")
 const ContentId := preload("res://src/content/content_id.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
+const MapResize := preload("res://src/ui/map_resize.gd")
+const Edge := preload("res://src/map/edge_ref.gd")
 
 const TMP := "user://test_audit_c3_tmp"
 
@@ -28,6 +30,96 @@ func _nuke_rec(p: String) -> void:
 
 func _wipe() -> void:
 	_nuke_rec(TMP)
+
+func test_flow_context_follows_nested_routes_without_looping_or_guessing() -> void:
+	_wipe()
+	var m := _fake_manifest()
+	m.assets = [{"id": "door", "kind": "entity"}, {"id": "switch", "kind": "entity"}]
+	m.functions = {"flow": {"name": "Flow", "code": "FLOW", "fields": [
+		{"id": "next", "code": "NEXT", "kind": "choice", "source": "content:flow", "contentMapContext": "inherit"},
+		{"id": "independent", "code": "FREE", "kind": "choice", "source": "content:flow"},
+		{"id": "local", "code": "LOCL", "kind": "choice", "source": "entity_inst:"}]},
+		"entry": {"name": "Entry", "code": "BOOT", "steps": true}}
+	m.steps = {"route": {"name": "Route", "code": "STEP", "fields": [
+		{"id": "routes", "code": "ROWS", "kind": "input", "type": "array", "of": "record", "fields": [
+			{"id": "destination_map", "code": "DMAP", "kind": "choice", "source": "map"},
+			{"id": "destination", "code": "DEST", "kind": "choice", "source": "content:flow",
+				"mapField": "destination_map", "contentMapContext": "paired"}]}]}}
+	var primary := MapStore.new_map("primary", 12, 10, "orthogonal")
+	var spare := MapStore.new_map("spare", 12, 10, "orthogonal")
+	for map in [primary, spare]:
+		var layer: String = map.meta.layers[0].id
+		map.objects = [{"code": "GOAL", "asset": "door", "x": 10, "y": 2, "layer": layer},
+			{"code": "LOAD", "asset": "switch", "x": 2, "y": 2, "layer": layer,
+				"functions": [{"fn": "FLOW", "content": "middle"}]}]
+		ok(MapStore.write(m, map.meta.name, map), "store a map with its own GOAL")
+	ok(ContentStore.write(m, "flow", "middle", {"function": "FLOW", "fields": {"NEXT": "finish", "FREE": "free"}}),
+		"save shared flow with an inherited and an independent branch")
+	ok(ContentStore.write(m, "flow", "finish", {"function": "FLOW", "fields": {"NEXT": "middle", "LOCL": "GOAL"}}),
+		"save a cycle returning to the previous record")
+	ok(ContentStore.write(m, "flow", "free", {"function": "FLOW", "fields": {"LOCL": "GOAL"}}),
+		"save independent flow without an inferred map")
+	ok(ContentStore.write(m, "entry", "boot", {"function": "BOOT", "scope": "project", "steps": [
+		{"step": "STEP", "fields": {"ROWS": [{"DMAP": primary.meta.code, "DEST": "paired-only"}]}}]}),
+		"save explicit map handoff from a standalone flow")
+	ok(ContentStore.write(m, "flow", "paired-only", {"function": "FLOW", "fields": {"LOCL": "GOAL"}}),
+		"save destination reached only by pairing")
+	var crop: Dictionary = MapResize.plan(primary, 8, 8, false).map
+	var result := ProjectAudit.map_change_reference_impacts(m, "primary", primary, crop)
+	var messages := "\n".join(result.added)
+	eq(result.added.size(), 2, "one invalid reference for each route mode: " + messages)
+	ok(messages.contains("flow/finish.local · 地图 primary") and messages.contains("flow/paired-only.local · 地图 primary")
+		and not messages.contains("flow/free") and not messages.contains("spare"), "inheritance only follows declared routes")
+	ok(MapStore.write(m, "primary", crop), "publish the changed map")
+	var audit := ProjectAudit.audit(m)
+	ok(audit.any(func(issue): return str(issue.path).contains("flow/finish.local · 地图 primary")),
+		"project audit sees indirect dangling refs after publish")
+	m.steps.route.fields[0].fields[1].mapField = "not_in_this_row"
+	ok(V.validate(m).any(func(issue): return str(issue.path).ends_with("destination.contentMapContext")),
+		"paired layout rejects a missing sibling map field")
+	_wipe()
+
+func test_map_change_checks_steps_staging_and_recovery_contexts() -> void:
+	_wipe()
+	var m := _fake_manifest()
+	m.assets = [{"id": "door", "kind": "entity"},
+		{"id": "switch", "kind": "entity", "functions": ["route"]}]
+	m.functions = {"route": {"code": "ROUT", "name": "Route", "steps": true, "fields": [
+		{"id": "destination", "code": "DEST", "type": "entity_ref"}]}}
+	m.steps = {"jump": {"code": "JUMP", "name": "Jump", "fields": [
+		{"id": "routes", "code": "ROWS", "type": "array", "of": "record", "fields": [
+			{"id": "map", "code": "MAP1", "type": "map_ref"},
+			{"id": "edge", "code": "EDGE", "type": "edge_ref", "mapField": "map"}]}]}}
+	var live := MapStore.new_map("resize", 12, 10, "orthogonal")
+	var other := MapStore.new_map("other", 12, 10, "orthogonal")
+	var lid: String = live.meta.layers[0].id
+	live.objects = [
+		{"code": "DROP", "asset": "door", "x": 10, "y": 2, "layer": lid},
+		{"code": "HOLD", "asset": "switch", "x": 1, "y": 2, "layer": lid,
+			"functions": [{"fn": "ROUT", "content": "local"}, {"fn": "ROUT", "content": "staged"}]}]
+	ok(MapStore.write(m, "resize", live), "store resize target")
+	var step := {"step": "JUMP", "fields": {"ROWS": [{"MAP1": live.meta.code,
+		"EDGE": Edge.value_of("", Vector2i(7, 3), Vector2i(8, 3))}]}}
+	var local := {"function": "ROUT", "fields": {"DEST": "DROP"}, "steps": [step]}
+	ok(ContentStore.write(m, "route", "local", local), "store bound record")
+	var project := {"function": "ROUT", "scope": "project", "fields": {"DEST": "UNKNOWN"},
+		"steps": [step]}
+	ok(ContentStore.write(m, "route", "project", project), "store standalone flow with explicit map")
+	var source := {"function": "ROUT", "fields": {"DEST": "UNKNOWN"}, "steps": [step]}
+	var draft_path := MapStore.Recovery.write_draft(m, other.meta.code, "other",
+		MapStore.path_for(m, "other"), "", other, [{"fn_id": "route", "id": "future", "data": source}])
+	ok(draft_path != "", "store draft pending flow")
+	var staged := [{"fn_id": "route", "cid": "staged", "data": local}]
+	var crop: Dictionary = MapResize.plan(live, 8, 8, false).map
+	var result := ProjectAudit.map_change_reference_impacts(m, "resize", live, crop, staged)
+	var paths := "\n".join(result.added)
+	eq(result.added.size(), 6, "bound, standalone, staged and draft refs only: " + paths)
+	ok(paths.contains("route/local.destination") and paths.contains("route/project.steps[0].routes#0.edge")
+		and paths.contains("当前暂存 · route/staged.destination")
+		and paths.contains("route/future.steps[0].routes#0.edge") and not paths.contains("UNKNOWN"),
+		"references use coded fields, local binding contexts and explicit cross-map parents")
+	eq(result.unreadable, [], "all input files readable")
+	_wipe()
 
 # ──────────── 挂载去重与补齐（C09） ────────────
 

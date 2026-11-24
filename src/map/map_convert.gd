@@ -1,13 +1,12 @@
 extends RefCounted
-## B1-2：显式投影转换（「另存并转换投影…」用）。只换算有唯一规则的量——
-## 实例与出生点：原格坐标 + 锚点 → 像素锚点 → 目标格系反算同锚点 → 新坐标。
+## 显式格空间转换。只换算有唯一规则的量：
+## 实例按像素锚点反算并舍入至 0.001 格；出生点按像素拾格，越界时移到最近界内格。
 ## 瓦片与碰撞格号在格系变化下没有唯一对应（正交→六边会把多格并成一格），
 ## 因此原样保留并逐项报数，由制作者在副本里核对或清空。
 ## 本模块不写盘、不改入参：新图名、新地图码与副本的实例/内容身份由 C2 管线（duplicate_map）发行。
 
 const GridSpace := preload("res://src/canvas/grid_space.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
-const EdgeRefScript := preload("res://src/map/edge_ref.gd")
 
 const PRESETS := ["orthogonal", "isometric", "hexagonal"]
 
@@ -19,29 +18,30 @@ static func current_projection(data: Dictionary, manifest: Dictionary) -> String
 		return own
 	return GridSpace.project_projection(manifest)
 
-## 产出转换计划：{ok, error, from, projection, document, manual, warnings}。
-## 成功时 document 已换 meta.gridProjection / objects / spawn，其余段原样保留；
+## 成功时 document 带目标投影与双基、换算过的 objects 和 spawn，其余段原样保留；
 ## 图名与地图码仍由调用方改写（本模块不知道副本的文件身份）。
-static func plan(data: Dictionary, manifest: Dictionary, target: String) -> Dictionary:
+static func plan(data: Dictionary, manifest: Dictionary, target: String, target_basis: Array = []) -> Dictionary:
 	if not (target in PRESETS):
 		return {"ok": false, "error": "目标投影必须是 orthogonal / isometric / hexagonal"}
 	var meta: Dictionary = data.get("meta", {}) if data.get("meta", null) is Dictionary else {}
-	var cur := current_projection(data, manifest)
-	if cur == target:
-		return {"ok": false, "error": "目标投影与当前相同：无需转换"}
-	# gridBasis 斜平面优先于投影预设：改 preset 不改变几何，先拒绝免得做出假转换
-	var basis: Array = meta.get("gridBasis", []) if meta.get("gridBasis", null) is Array else []
-	if not basis.is_empty():
-		return {"ok": false, "error": "地图用 gridBasis 斜平面，它优先于投影预设——改投影不改变几何。先移除 gridBasis 再转换"}
-	# 三角拓扑 + 六边投影是非法组合（与校验/画布同一个解析）
-	var tparsed: Dictionary = GridSpace.parse_topology(meta, target)
-	if not bool(tparsed.get("ok", false)):
-		return {"ok": false, "error": "目标投影不支持当前格拓扑：" + str(tparsed.get("why", ""))}
-	var ts := GridSpace.tile_size_of(manifest)
-	var src_g = GridSpace.new(ts, cur, basis)
-	src_g.set_topology(str(GridSpace.parse_topology(meta, cur).get("topology", "quads")))
-	var dst_g = GridSpace.new(ts, target, basis)
-	dst_g.set_topology(str(tparsed.get("topology", "quads")))
+	var next_meta := meta.duplicate()
+	next_meta["gridProjection"] = target
+	next_meta.erase("gridBasis")
+	if not target_basis.is_empty():
+		next_meta["gridBasis"] = target_basis.duplicate(true)
+	var source := GridSpace.resolve(meta, manifest)
+	var destination := GridSpace.resolve(next_meta, manifest)
+	for config in [source, destination]:
+		if not config.issues.is_empty():
+			var issue: Dictionary = config.issues[0]
+			return {"ok": false, "error": "%s：%s" % [issue.path, issue.message]}
+	var src_g: GridSpace = source.grid
+	var dst_g: GridSpace = destination.grid
+	if src_g.projection == dst_g.projection and src_g.has_basis == dst_g.has_basis \
+			and src_g.basis_u == dst_g.basis_u and src_g.basis_v == dst_g.basis_v:
+		return {"ok": false, "error": "目标格空间与当前相同：无需转换"}
+	var w := int(meta.get("w", 1))
+	var h := int(meta.get("h", 1))
 	var warnings: Array = []
 	var objects_out: Array = []
 	var src_objects: Array = data.get("objects", []) if data.get("objects", null) is Array else []
@@ -59,20 +59,30 @@ static func plan(data: Dictionary, manifest: Dictionary, target: String) -> Dict
 		if decl.is_empty():
 			warnings.append("实例 %s 的资产 %s 不在清单：按中心锚点换算" % [str(r.get("code", "?")), aid])
 		var unit := _anchor_unit(decl)
-		var px: Vector2 = _anchor_px(src_g, unit, float(xv), float(yv))
-		var g: Vector2 = _grid_of_px(dst_g, unit, px)
+		var px := src_g.object_anchor_px(Vector2(float(xv), float(yv)), unit)
+		var g := dst_g.object_anchor_grid(px, unit)
+		if not px.is_finite() or not g.is_finite():
+			return {"ok": false, "error": "实例 %s 的锚点换算超出数值范围" % str(r.get("code", "?"))}
+		var rounded_y := snappedf(g.y, 0.001)
+		# 六边错行的横向原点在整数行切换：舍入跨行时抵消半格偏移。
+		var old_row := floori(g.y)
+		var next_row := floori(rounded_y)
+		if dst_g.is_hex_geom() and old_row != next_row:
+			g.x += (posmod(old_row, 2) - posmod(next_row, 2)) * 0.5
 		r["x"] = snappedf(g.x, 0.001)
-		r["y"] = snappedf(g.y, 0.001)
+		r["y"] = rounded_y
 		objects_out.append(r)
 	var spawn = data.get("spawn", [2, 2])
 	var spawn_out: Array = []
 	if spawn is Array and (spawn as Array).size() >= 2 \
 			and (spawn[0] is int or spawn[0] is float) and (spawn[1] is int or spawn[1] is float):
-		# 出生点是格号：原图格中心像素 → 目标格系按格拾取。目标格中心与原像素
-		# 可差最多半格（等距格中心是菱形角点、四格共享），这是格号表达的固有粒度。
+		# 出生点用整数格号表达；目标格中心可与原像素不同。
 		var center: Vector2 = src_g.cell_center_px(Vector2i(int(spawn[0]), int(spawn[1])))
 		var cell: Vector2i = dst_g.pick_cell(center)
-		spawn_out = [cell.x, cell.y]
+		var bounded := cell.clamp(Vector2i.ZERO, Vector2i(GridSpace.cell_columns(w, dst_g.is_tri()) - 1, h - 1))
+		if bounded != cell:
+			warnings.append("出生点换算后越界：%s → %s（最近界内格）。请在副本中确认落点。" % [cell, bounded])
+		spawn_out = [bounded.x, bounded.y]
 	else:
 		warnings.append("出生点缺失或不是两个数字：副本沿用原值 %s" % str(spawn))
 		spawn_out = (spawn as Array).duplicate() if spawn is Array else [2, 2]
@@ -86,21 +96,20 @@ static func plan(data: Dictionary, manifest: Dictionary, target: String) -> Dict
 	if coll_n > 0:
 		manual.append({"kind": "collision", "count": coll_n,
 			"message": "碰撞 %d 格保留原格号：格系无唯一对应，需在副本里核对或清空" % coll_n})
-	# §4.2-3：格边引用在**目标拓扑**下重验。边身份 = 两合法格共享线段，投影变了
-	# 原来的相邻格对可能不再相邻（例如正交 (0,0)-(1,0) 到六边仍相邻，但斜向格对不一定）。
-	# 不静默改写也不删：保留原值并报数，交制作者在副本里重选（审计随后会照常显形）。
-	var stale_edges := _count_stale_edges(data, objects_out, dst_g)
-	if stale_edges > 0:
-		manual.append({"kind": "edges", "count": stale_edges,
-			"message": "格边引用 %d 条在目标拓扑下两格不再相邻：保留原值，需在副本里重选" % stale_edges})
 	var doc: Dictionary = data.duplicate(true)
-	var dmeta: Dictionary = doc.get("meta", {}) if doc.get("meta", null) is Dictionary else {}
-	dmeta["gridProjection"] = target
-	doc["meta"] = dmeta
+	doc["meta"] = next_meta.duplicate(true)
 	doc["objects"] = objects_out
 	doc["spawn"] = spawn_out
-	return {"ok": true, "error": "", "from": cur, "projection": target,
+	return {"ok": true, "error": "", "source_grid": _grid_metadata(meta),
+		"projection": target,
 		"document": doc, "manual": manual, "warnings": warnings}
+
+static func _grid_metadata(meta: Dictionary) -> Dictionary:
+	var out := {}
+	for key in ["gridProjection", "gridBasis", "gridTopology"]:
+		if meta.has(key):
+			out[key] = meta[key]
+	return out.duplicate(true)
 
 static func _anchor_unit(decl: Dictionary) -> Vector2:
 	match str(decl.get("anchor", "center")):
@@ -109,18 +118,6 @@ static func _anchor_unit(decl: Dictionary) -> Vector2:
 		"bottom_center":
 			return Vector2(0.5, 1.0)
 	return Vector2(0.5, 0.5)
-
-## 数据坐标 + 锚点 → 世界锚点像素（与 entity_node.world_of_grid 同口径，不含 sortAnchor）。
-static func _anchor_px(g: GridSpace, unit: Vector2, x: float, y: float) -> Vector2:
-	if g.is_hex_geom():
-		return g.to_px(Vector2(x, y)) + (unit - Vector2(0.5, 0.5)) * Vector2(g.tile)
-	return g.to_px(Vector2(x, y) + unit)
-
-## 世界锚点像素 → 目标格系数据坐标（_anchor_px 的逆）。
-static func _grid_of_px(g: GridSpace, unit: Vector2, p: Vector2) -> Vector2:
-	if g.is_hex_geom():
-		return g.to_continuous_grid(p - (unit - Vector2(0.5, 0.5)) * Vector2(g.tile))
-	return g.to_grid(p) - unit
 
 static func _count_tiles(data: Dictionary) -> int:
 	var n := 0
@@ -131,26 +128,4 @@ static func _count_tiles(data: Dictionary) -> int:
 		var cells = (seg as Dictionary)[lid]
 		if cells is Array:
 			n += (cells as Array).size()
-	return n
-
-## 已换算的实例行里，「两格在目标拓扑下不再相邻」的格边引用条数（§4.2-3）。
-## 只数不修：边身份由拓扑推导，换投影没有唯一对应，改写成什么都是猜。
-static func _count_stale_edges(data: Dictionary, objects_out: Array, dst_g: GridSpace) -> int:
-	var n := 0
-	for row in objects_out:
-		if not (row is Dictionary):
-			continue
-		var props = (row as Dictionary).get("props", null)
-		if not (props is Dictionary):
-			continue
-		for k in (props as Dictionary):
-			var v = (props as Dictionary)[k]
-			if v is Dictionary and (v as Dictionary).has("edge"):
-				var ends := EdgeRefScript.parse_edge(str((v as Dictionary).get("edge", "")))
-				if ends.size() != 2:
-					continue
-				var a := Vector2i(int(ends[0][0]), int(ends[0][1]))
-				var b := Vector2i(int(ends[1][0]), int(ends[1][1]))
-				if not dst_g.neighbors_any(a).has(b):
-					n += 1
 	return n

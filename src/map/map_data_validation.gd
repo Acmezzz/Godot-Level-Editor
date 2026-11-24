@@ -3,6 +3,7 @@ extends RefCounted
 
 const MapFormat := preload("res://src/map/map_format.gd")
 const CellGraph := preload("res://src/map/cell_graph.gd")
+const ViewData := preload("res://src/map/map_view_data.gd")
 const GridSpaceScript := preload("res://src/canvas/grid_space.gd")
 
 ## 原始文档前置检查（D11）：必须在 upgrade() 抬版本号之前跑。
@@ -63,7 +64,7 @@ static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 			var tp: Dictionary = GridSpaceScript.parse_topology(meta, eff_proj)
 			if not bool(tp.get("ok", false)):
 				_add(issues, "error", "meta.gridTopology", str(tp.get("why", "invalid")))
-		layer_ids = _validate_layers(meta, issues)
+		layer_ids = _validate_layers(meta, issues, manifest)
 	var tiles = data.get("tiles", null)
 	if tiles != null and not (tiles is Dictionary):
 		_add(issues, "error", "tiles", "must be an object keyed by layer id")
@@ -102,6 +103,14 @@ static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 	var spawn = data.get("spawn", [2, 2])
 	if not (spawn is Array) or spawn.size() != 2 or not _is_number_pair(spawn):
 		_add(issues, "error", "spawn", "must contain two numeric coordinates")
+	elif not _is_integral_number(spawn[0]) or not _is_integral_number(spawn[1]):
+		_add(issues, "error", "spawn", "must contain two integer cell coordinates")
+	elif meta is Dictionary:
+		var grid: GridSpace = GridSpaceScript.resolve(meta, manifest).get("grid")
+		var w := int(meta.get("w", 120)) if _is_integral_number(meta.get("w", 120)) else 120
+		var h := int(meta.get("h", 56)) if _is_integral_number(meta.get("h", 56)) else 56
+		if grid != null and not grid.cell_in_map(Vector2i(int(spawn[0]), int(spawn[1])), w, h):
+			_add(issues, "warning", "spawn", "spawn is outside the declared map bounds")
 	if data.get("entities", null) is Array:
 		_add(issues, "error", "entities", "retired: use objects[] with asset/transform (run tools/migrate_project.gd)")
 	if data.get("objects", null) is Array:
@@ -130,14 +139,13 @@ static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 				_add(issues, "error", p + ".type", "must be a collision type id string")
 			if cell.has("shape") and not (cell.shape is String):
 				_add(issues, "error", p + ".shape", "must be a shape id string")
-	# C4（§7.4）：有限格图声明校验（meta.cellGraph：{cells: [{id, polygon, neighbors}]}）——
-	# 无重复 id、有效多边形、邻接目标存在。格图是只读参考层，坏声明 = cell_id 引用落空。
+	# 有限格图结构错误阻止读写，游戏声明变动引起的边属性漂移单独报告。
 	if meta is Dictionary and meta.has("cellGraph"):
 		if not meta.cellGraph is Dictionary:
 			_add(issues, "error", "meta.cellGraph", "must be an object")
 		else:
-			for it: Dictionary in CellGraph.validate_graph(meta.cellGraph):
-				_add(issues, "error", str(it.path), str(it.message))
+			for it: Dictionary in CellGraph.validate_graph(meta.cellGraph, manifest, ViewData.layer_transforms(meta.get("layers"))):
+				_add(issues, str(it.get("severity", "error")), str(it.path), str(it.message))
 
 	return issues
 
@@ -145,7 +153,7 @@ static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 ## 返回合法层 id 集（供 tiles 键与 entities.layer 归属校验）；栈本身不合格时返回空集，
 ## 关联检查（tiles 键 ⊆ 层集、entity.layer ∈ 层集）随之跳过，避免连坐噪音。
 
-static func _validate_layers(meta: Dictionary, issues: Array[Dictionary]) -> Dictionary:
+static func _validate_layers(meta: Dictionary, issues: Array[Dictionary], manifest: Dictionary) -> Dictionary:
 	var ids := {}
 	if not meta.has("layers") or not (meta.layers is Array) or (meta.layers as Array).is_empty():
 		_add(issues, "error", "meta.layers", "must be a non-empty array of layer objects")
@@ -156,6 +164,9 @@ static func _validate_layers(meta: Dictionary, issues: Array[Dictionary]) -> Dic
 		if not (ldef is Dictionary):
 			_add(issues, "error", p, "must be an object")
 			continue
+		if ldef.has("tileGrid"):
+			for issue in GridSpaceScript.resolve_tile_layer(ldef, manifest, null).issues:
+				_add(issues, "error", p + "." + issue.path, issue.message)
 		var lid := str(ldef.get("id", ""))
 		if lid == "":
 			_add(issues, "error", p + ".id", "must be a non-empty layer id")
@@ -226,6 +237,34 @@ static func _validate_objects(objects: Array, manifest: Dictionary, layer_ids: D
 				_add(issues, "error", path + "." + key, "must be numeric")
 		if o.has("props") and not (o.props is Dictionary):
 			_add(issues, "error", path + ".props", "must be an object")
+		var visual = known.get(aid, {}).get("visual", {})
+		if visual is Dictionary and visual.get("type") in ["poly", "path"] and o.get("props") is Dictionary \
+				and o.props.has("points"):
+			var raw = o.props.points
+			var problem := preload("res://src/map/object_geometry.gd").problem(raw, visual) if raw is Array \
+				else "顶点必须是数组。"
+			if problem != "":
+				_add(issues, "warning", path + ".props.points", problem)
+		if visual is Dictionary and visual.get("type") in ["poly", "path"] and o.get("props") is Dictionary \
+				and o.props.has("holes"):
+			var geometry := preload("res://src/map/object_geometry.gd")
+			var outer = o.props.get("points", visual.get("points", []))
+			var issue := geometry.holes_problem(outer, o.props.holes) if geometry.closed(visual) and outer is Array \
+				else "孔洞需要闭合外轮廓。"
+			if issue != "":
+				_add(issues, "warning", path + ".props.holes", issue)
+		if visual is Dictionary and visual.get("type") in ["poly", "path"] and o.get("props") is Dictionary \
+				and o.props.has("parts"):
+			var geometry := preload("res://src/map/object_geometry.gd")
+			var extra = o.props.parts
+			var issue := "附加轮廓必须是闭合实体的部件数组。"
+			if geometry.closed(visual) and extra is Array:
+				var parts := [{"points": o.props.get("points", visual.get("points", [])),
+					"holes": o.props.get("holes", [])}]
+				parts.append_array(extra)
+				issue = geometry.parts_problem(parts)
+			if issue != "":
+				_add(issues, "warning", path + ".props.parts", issue)
 		if o.has("layer") and not layer_ids.is_empty() and not layer_ids.has(str(o.layer)):
 			_add(issues, "error", path + ".layer", "unknown layer id: " + str(o.layer))
 		if o.has("transform") and not (o.transform is Dictionary):
@@ -248,6 +287,7 @@ static func _validate_functions(raw, path: String, manifest: Dictionary, issues:
 		return
 	var has_manifest := not manifest.is_empty()
 	var FunctionDecls := preload("res://src/content/function_decl.gd")
+	var ids := {}
 	for i in (raw as Array).size():
 		var item = raw[i]
 		var p := "%s[%d]" % [path, i]
@@ -260,6 +300,16 @@ static func _validate_functions(raw, path: String, manifest: Dictionary, issues:
 		elif has_manifest and FunctionDecls.fn_id_of(manifest, fn_raw) == "":
 			_add(issues, "warning", p + ".fn",
 				"function code is not declared in the manifest: " + fn_raw)
+		if item.has("bindingId"):
+			var id = item.bindingId
+			if not id is String or id.strip_edges() == "":
+				_add(issues, "warning", p + ".bindingId", "must be a non-empty string")
+			elif ids.has(id):
+				_add(issues, "warning", p + ".bindingId", "duplicate binding id in instance: " + id)
+			else:
+				ids[id] = true
+		if item.has("mounted") and not item.mounted is bool:
+			_add(issues, "warning", p + ".mounted", "must be a boolean")
 		for key in ["content", "name"]:
 			if (item as Dictionary).has(key) and not ((item as Dictionary)[key] is String):
 				_add(issues, "error", p + "." + key, "must be a string")

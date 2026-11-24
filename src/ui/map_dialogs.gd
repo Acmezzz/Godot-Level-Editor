@@ -1,6 +1,6 @@
 extends RefCounted
 ## MapDialogs：地图尺寸 / 导出弹窗（从 map_file.gd 拆出，宿主 = app）。
-## 弹窗体零交叉依赖：只读清单常量 + 经 app 访问画布/状态栏/确认框。
+## 缩图确认复用工程审计的声明引用检查；导出复用地图导出器。
 
 const MapExport := preload("res://src/map/map_export.gd")
 const UiKitScript := preload("res://src/ui/ui_kit.gd")
@@ -8,6 +8,7 @@ const K := preload("res://src/core/constants.gd")
 const MapStore := preload("res://src/map/map_store.gd")
 const MapResize := preload("res://src/ui/map_resize.gd")
 const DocumentSession := preload("res://src/project/document_session.gd")
+const Audit := preload("res://src/project/project_audit.gd")
 
 var app   # app 宿主
 
@@ -67,6 +68,9 @@ func open_size_dialog() -> void:
 				int(w_edit.value), int(h_edit.value), int(crop.tiles), int(crop.collision), int(crop.objects)]
 		else:
 			counts_lbl.text = head + "\n目标尺寸不会裁掉数据"
+		var spawn := MapResize.spawn_change(base, int(w_edit.value), int(h_edit.value), triangular)
+		if not spawn.is_empty():
+			counts_lbl.text += "\n出生点将从 %s 移到 %s（最近界内格）" % [spawn.from, spawn.to]
 	w_edit.value_changed.connect(func(_v: float): refresh_counts.call())
 	h_edit.value_changed.connect(func(_v: float): refresh_counts.call())
 	refresh_counts.call()
@@ -109,28 +113,44 @@ func apply_map_size(nw: int, nh: int, pop: PopupPanel, proj: String, triangular:
 		app._set_status(" 地图重建中，请稍后再试")
 		return
 	# 缩小先确认裁剪范围（E3：裁掉多少瓦片/碰撞/摆放物，应用前可见）
-	var crop := MapResize.crop_counts(d, nw, nh, triangular)
+	var plan := MapResize.plan(d, nw, nh, triangular)
+	var crop: Dictionary = plan.crop
 	var cut: int = int(crop.tiles) + int(crop.collision) + int(crop.objects)
-	if cut > 0:
-		var msg := "缩到 %d×%d 会裁掉边界外的数据：\n瓦片 %d · 碰撞 %d · 摆放物 %d\n\n应用后可用 Ctrl+Z 撤销（连同原尺寸恢复）。" % [
+	var meta: Dictionary = d.meta
+	var shrinks := nw < int(meta.get("w", K.DEFAULT_MAP_W)) or nh < int(meta.get("h", K.DEFAULT_MAP_H))
+	var impact := {"added": [], "unreadable": []}
+	if shrinks:
+		var staged: Array = []
+		if app.project_shell != null and app.project_shell.content_editor != null:
+			staged = app.project_shell.content_editor.staged_rows_current_doc()
+		impact = Audit.map_change_reference_impacts(app.manifest, app.cur_map_name, d, plan.map, staged)
+	var risks: Array = impact.added
+	var unreadable: Array = impact.unreadable
+	if cut > 0 or not plan.spawn.is_empty() or not risks.is_empty() or not unreadable.is_empty():
+		var msg := "目标尺寸 %d×%d。将裁掉：瓦片 %d · 碰撞 %d · 摆放物 %d。" % [
 			nw, nh, int(crop.tiles), int(crop.collision), int(crop.objects)]
-		var accepted: bool = await app._confirm_action("裁剪地图边界", msg, "裁剪")
-		if not is_instance_valid(pop):
-			return
+		if not plan.spawn.is_empty():
+			msg += "\n出生点：%s → %s（最近界内格）。" % [plan.spawn.from, plan.spawn.to]
+		if not risks.is_empty():
+			msg += "\n\n新增引用问题 %d 处（引用值保留，请修复）：\n%s" % [risks.size(), "\n".join(risks.slice(0, 5))]
+		if not unreadable.is_empty():
+			msg += "\n\n另有 %d 个文件无法检查。" % unreadable.size()
+		if shrinks:
+			msg += "\n\n引用检查范围：地图、内容与步骤、当前暂存和可恢复草稿中的已声明字段。"
+		msg += "\n\n应用后可用 Ctrl+Z 恢复地图。"
+		pop.hide()
+		var accepted: bool = await app._confirm_action("调整地图边界", msg, "应用尺寸")
 		if not accepted:
-			pop.hide()
 			app._set_status("已取消调整尺寸")
 			return
-	if not guard.call():
+	else:
 		pop.hide()
+	if not guard.call():
 		app._set_status("确认期间地图已变更，请重新打开尺寸设置")
 		return
-	pop.hide()
 	# 一笔可撤销快照：恢复原尺寸与边缘数据。
 	app.canvas.push_undo()
-	MapResize.crop_data(d, nw, nh, triangular)
-	d["meta"]["w"] = nw
-	d["meta"]["h"] = nh
+	d = plan.map
 	# 逐图投影（B1）：空图可直接选；带内容的地图投影已冻结（弹窗里也禁用），
 	# 这里再加一道守卫——数据路径不允许绕过内容检查。
 	# 显式写入（含 orthogonal）：删键会让解析回落到项目缺省投影，
@@ -138,16 +158,14 @@ func apply_map_size(nw: int, nh: int, pop: PopupPanel, proj: String, triangular:
 	if proj != "" and not app.canvas.has_content():
 		d["meta"]["gridProjection"] = proj
 	var controller_before_load = app._map_file_ctrl
-	await app.canvas.load_data(d, app.cur_map_name, true)
+	await app.canvas.load_data(d, app.cur_map_name, true, true)
 	if app._map_file_ctrl != controller_before_load or not is_same(app.canvas.map_data, d):
 		return
-	app.canvas._mark()
 	if cut > 0:
 		app._set_status("尺寸已改为 %d×%d，裁掉瓦片 %d / 碰撞 %d / 摆放物 %d（Ctrl+Z 可撤销）" % [
 			nw, nh, int(crop.tiles), int(crop.collision), int(crop.objects)])
 	else:
 		app._set_status("尺寸已改为 %d×%d（记得保存）" % [nw, nh])
-
 
 # —— 导出：预览图 PNG + 统计文本 ——
 ## A5：单图 / 批量导出。两者都先过 v7 校验（坏图不产出一半的文件），

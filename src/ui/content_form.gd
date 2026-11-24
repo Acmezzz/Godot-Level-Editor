@@ -7,7 +7,7 @@ extends RefCounted
 ##                          切面板时 _set_mode 先 commit() 冲刷，别让用户输入凭空消失。
 ##   **已有文件的工作副本** —— 已落盘内容的字段改动直接写回该内容文件（_content_write，
 ##                          带磁盘摘要基线，外部改过就 conflict）。
-##   **新绑定的暂存** —— _staged[内容ID] = {fn_id, data, ent, bind_index, doc}；
+##   **新绑定的暂存** —— _staged[内容ID] = {fn_id, data, ent, doc}；
 ##                          只改内存，flush_staged（正式提交时）才写盘；按内容 ID 寻址（不是功能码）。
 ##
 ## 落盘责任划分：本模块只管「把值写进内容数据 / 暂存」；真正的地图写盘、历史轮转和提交日志
@@ -27,7 +27,7 @@ const FieldWidgets := preload("res://src/ui/field_widgets.gd")
 const FunctionDecls := preload("res://src/content/function_decl.gd")
 const RefFields := preload("res://src/content/ref_fields.gd")
 const ProjectAudit := preload("res://src/project/project_audit.gd")
-const CellGraph := preload("res://src/map/cell_graph.gd")   # E3：内容库删除前的引用检查
+const CellGraph := preload("res://src/map/cell_graph.gd")
 const ReferenceIndex := preload("res://src/project/reference_index.gd")   # B2：删除入边全景统一入口
 const BatchOps := preload("res://src/content/batch_ops.gd")   # E2：同功能批量改值
 const RelGraph := preload("res://src/content/rel_graph.gd")   # E2：关系图（纯数据 + 写回）
@@ -86,8 +86,6 @@ func _open_steps_editor(i: int) -> void:
 	host._open_steps_editor(i)
 func _resolve_fn(f: Dictionary) -> Dictionary:
 	return host._resolve_fn(f)
-func _set_parallel(i: int, v: bool) -> void:
-	host._set_parallel(i, v)
 
 ## 内容表单：字段按功能声明渲染（声明 = 游戏侧契约，编辑器只建控件不解释语义）。
 ## 内容文件结构 {id, function: 功能码, name, fields:{字段码:值}}。
@@ -108,6 +106,7 @@ func _build_form_block() -> Control:
 		else (ContentStore.read_ex(manifest, fn_id, content_id) if content_id != "" and fn_id != "" \
 		else {"status": "missing", "data": {}, "error": ""})
 	var data: Dictionary = cres.data if str(cres.status) == "ok" else {}
+	var project_scope := str(data.get("scope", "")) == "project"
 	var cname := str(data.get("name", "")) if not data.is_empty() else str(f.get("name", ""))
 
 	var head := Kit.hbox(6)
@@ -161,7 +160,8 @@ func _build_form_block() -> Control:
 	_form_id_edit.add_theme_font_size_override("font_size", Th.FS_META)
 	box.add_child(Kit.field_row("ID", _form_id_edit, 40))
 
-	var target := {"entity": _current_spr(), "binding": f, "doc": _doc_key(), "scope": _content_scope_guard()}
+	var target := {"entity": _current_spr(), "binding": f, "doc": _doc_key(), "scope": _content_scope_guard(),
+		"project_scope": project_scope}
 	var name_edit := LineEdit.new()
 	name_edit.text = cname if cname != "" else fn_id
 	name_edit.placeholder_text = "显示名（空则用功能 id）"
@@ -296,7 +296,9 @@ func _build_field_row(i: int, fn_id: String, fd: Dictionary, cur: Dictionary, si
 		if ok and not had_content and i < _current_fns().size():
 			target.binding = _current_fns()[i]
 		return ok
-	var built := FieldWidgets.build(d, val, apply, _resolve_options, "code")
+	var options := func(decl: Dictionary) -> Array:
+		return _resolve_options(decl, bool(target.project_scope))
+	var built := FieldWidgets.build(d, val, apply, options, "code")
 	if built.get("commit") is Callable and (built.commit as Callable).is_valid():
 		_pending_commits.append(built.commit)
 	var row := Kit.field_row(label, built.ctl, 96)
@@ -304,9 +306,9 @@ func _build_field_row(i: int, fn_id: String, fd: Dictionary, cur: Dictionary, si
 	var tip := FieldWidgets.decl_tooltip(fd)
 	if tip != "":
 		row.tooltip_text = tip
-	if FieldWidgets.wants_canvas_pick(fd):
+	if FieldWidgets.wants_canvas_pick(fd) and (not target.project_scope or tk != "") and can_pick_on_canvas(tk):
 		var pick := Kit.button("画布选…", func():
-			_pick_entity_for(fd, key, apply), "ghost")
+			_pick_entity_for(fd, apply), "ghost")
 		pick.tooltip_text = "临时切到画布点一个实例；确认才写入，取消不改当前值" \
 			if not FieldWidgets.wants_cell_pick(fd) else \
 			"临时切到画布点格图里的一格（按多边形命中）；确认才写入，取消不改当前值"
@@ -323,13 +325,16 @@ func _form_binding_matches(i: int, target: Dictionary) -> bool:
 ## E1：为一个实例引用字段开画布选点（宿主 = app，会话管理与确认条都在那边）。
 ## 确认回调只写字段值；字段写盘走与手选下拉同一条 _set_field。
 ## C4：cell_id 字段走同一会话，accept="cell"（候选来自格图多边形，不走实例命中）。
-func _pick_entity_for(fd: Dictionary, key: String, commit: Callable) -> void:
+func _pick_entity_for(fd: Dictionary, commit: Callable) -> void:
 	var fname := str(fd.get("name", str(fd.get("id", ""))))
-	var is_cell := FieldWidgets.wants_cell_pick(fd)
-	var is_edge := FieldWidgets.wants_edge_pick(fd)
+	var mode := FieldWidgets.pick_mode(fd)
+	var is_cell := mode == "cell"
+	var is_edge := mode == "edge"
 	var hint := "为「%s」选一格（格图）" % fname if is_cell \
 		else ("为「%s」选一条格边（靠近格边点）" % fname if is_edge else "为「%s」选目标实例" % fname)
 	var of := FieldWidgets.canvas_pick_types(fd)
+	if mode == "port":
+		hint = "为「%s」选目标端口" % fname
 	if not is_cell and not is_edge and not of.is_empty():
 		hint += "（限定类型：%s）" % ",".join(PackedStringArray(of))
 	# 单独建回调再传：多行 lambda 直接塞进实参列表容易读错缩进边界
@@ -338,21 +343,71 @@ func _pick_entity_for(fd: Dictionary, key: String, commit: Callable) -> void:
 	var on_ok := func(code: String):
 		if code == "":
 			return
-		var value = JSON.parse_string(code) if is_edge else code
-		if (is_edge and not value is Dictionary) or not commit.call(value):
+		var value = FieldWidgets.decode_pick(mode, code)
+		if value == null or not commit.call(value):
 			return
 		# 下拉控件还停在旧值：提交后重建右栏让新值上屏（用户主动确认的写盘）
 		_rebuild_right()
-	var accept := "cell" if is_cell else ("edge" if is_edge else "entity")
-	app._begin_canvas_pick("content", accept, hint, on_ok, Callable(),
-		[] if (is_cell or is_edge) else of)
+	app._begin_canvas_pick("content", mode, hint, on_ok, Callable(), of)
 
 ## choice.source 的选项来源解析（由游戏侧声明，编辑器只查不解释）。
 ## 支持：content:<功能id>（内容库）、entity:<id,id>（清单实体类型）、
 ## entity_inst:<id,id>（当前图实例，值=实例码）、map（值=地图码，显示图名）、audio:（音频池）、
 ## layer:（当前图用户层栈，值=层码，显示「序号.层名」）、
 ## asset:<kind>:<id,id>（资产引用，kind 空 = 全部；asset_ref 类型的 input 字段也走这里）。
-func _resolve_options(decl: Dictionary) -> Array:
+func can_pick_on_canvas(map_key: String) -> bool:
+	return _map_ready() and RefFields.map_key_local(map_key, app.canvas.cur_map_name, app.canvas.cur_map_code())
+
+## 临时地图只影响候选；不写入内容文件，也不覆盖字段自身的配对地图。
+func reference_context_selector(current: String, on_change: Callable) -> OptionButton:
+	var select := OptionButton.new()
+	select.name = "ReferenceContextMap"
+	select.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	select.tooltip_text = "只用来选择本图引用。已声明的配对地图优先，不会保存此选择。"
+	select.add_item("不指定")
+	select.set_item_metadata(0, "")
+	var index := MapStore.code_index(manifest)
+	for option in _resolve_options({"source": "map"}):
+		var key := str(option.v)
+		if ReferenceIndex.resolve_indexed_map(index, key).status != "ok":
+			continue
+		var i := select.item_count
+		select.add_item(str(option.t))
+		select.set_item_metadata(i, key)
+		if key == current:
+			select.select(i)
+	var selected := [select.selected]
+	select.item_selected.connect(func(i: int):
+		if not bool(on_change.call(str(select.get_item_metadata(i)))):
+			select.select(int(selected[0]))
+		else:
+			selected[0] = i)
+	return select
+
+func project_reference_options(decl: Dictionary, context: String) -> Array:
+	if context == "" or str(decl.get("_mapKey", "")) != "":
+		return _resolve_options(decl, true)
+	var source := str(decl.get("source", ""))
+	if not (source.begins_with("entity_inst:") or source.begins_with("cell:") \
+			or source.begins_with("port:") or source.begins_with("edge:") or source == "layer:"):
+		return _resolve_options(decl, true)
+	var scoped := decl.duplicate()
+	scoped["_mapKey"] = context
+	var options := _resolve_options(scoped, true)
+	if source.begins_with("port:") or source.begins_with("edge:"):
+		var local: Array = []
+		for option in options:
+			var value = JSON.parse_string(str(option.v))
+			if value is Dictionary:
+				value["map"] = ""
+				local.append({"t": option.t, "v": JSON.stringify(value)})
+		return local
+	return options
+
+func _resolve_options(decl: Dictionary, project_scope := false) -> Array:
+	if str(decl.get("source", "")) == "editor:condition-schema":
+		return ConditionDecls.allowed_rows(manifest, decl)
+
 	var src := str(decl.get("source", ""))
 	if src.begins_with("content:"):
 		var kind := src.substr(8)
@@ -376,7 +431,9 @@ func _resolve_options(decl: Dictionary) -> Array:
 	# 有目标图就枚举目标图实例（跨图引用按 (地图码, 实例码) 语义），否则列当前图。
 		var want := src.substr(12).split(",", false)
 		var map_key := str(decl.get("_mapKey", ""))
-		if map_key != "":
+		if project_scope and map_key == "":
+			return []
+		if map_key != "" and not can_pick_on_canvas(map_key):
 			return RefFields.map_instances(manifest, map_key, Array(want))
 		var out4: Array = []
 		if _map_ready():
@@ -399,27 +456,40 @@ func _resolve_options(decl: Dictionary) -> Array:
 		# C3：端口候选 = 配对图（_mapKey）优先，缺省本图；of 白名单 = 端口类型过滤。
 		var pk := src.substr(5).split(",", false)
 		var pmap := str(decl.get("_mapKey", ""))
-		if pmap == "" and _map_ready():
-			pmap = app.canvas.cur_map_name
-		var outp: Array = RefFields.port_candidates(manifest, pmap, Array(pk))
-		return outp
-	if src.begins_with("cell:"):
-		# C4：有限格图 cell_id 候选（只读参考层）：当前图 meta.cellGraph 的 cells。
-		if not _map_ready():
+		if project_scope and pmap == "":
 			return []
-		var cg := CellGraph.graph_of(app.canvas.map_data.get("meta", {}) as Dictionary)
-		var outc: Array = []
-		for cid0 in CellGraph.cell_ids(cg):
-			outc.append({"v": str(cid0), "t": str(cid0)})
-		return outc
+		if can_pick_on_canvas(pmap):
+			var rows: Array = []
+			for ent in app.canvas.ents_all():
+				if ent is EntityNode and ent.is_entity():
+					rows.append({"asset": ent.asset, "code": ent.code})
+			var map_code: String = app.canvas.cur_map_code()
+			return RefFields.port_options(manifest, map_code if map_code != "" else app.canvas.cur_map_name,
+				rows, Array(pk))
+		return RefFields.port_candidates(manifest, pmap, Array(pk))
+	if src.begins_with("cell:"):
+		# 有限格图使用配对地图，并可限定候选的局部空间。
+		var map_key := str(decl.get("_mapKey", ""))
+		var snap := {}
+		if project_scope and map_key == "":
+			return []
+		if can_pick_on_canvas(map_key):
+			snap = app.canvas.map_data
+		elif map_key != "":
+			var rm := ReferenceIndex.resolve_map(manifest, map_key)
+			if rm.status == "ok":
+				snap = MapStore.read(manifest, str(rm.key))
+		var cg := CellGraph.graph_of(snap.get("meta", {}) as Dictionary)
+		return CellGraph.cell_options(cg, CellGraph.cell_source_space(decl))
 	if src.begins_with("edge:"):
 		# §7.4：格边候选 = 两侧都有瓦片的相邻格对（按规范代表边去重）。
 		# 配对图（_mapKey）指向别的图时读那张图的文档；否则直接用画布活体瓦片层（未保存也能选）。
 		var emap := str(decl.get("_mapKey", ""))
-		if emap == "" or not _map_ready() or emap == app.canvas.cur_map_code() \
-				or emap == app.canvas.cur_map_name:
+		if project_scope and emap == "":
+			return []
+		if can_pick_on_canvas(emap):
 			return app.canvas._edge_candidates()
-		return RefFields.edge_candidates(manifest, emap)
+		return RefFields.edge_candidates(manifest, emap) if emap != "" else []
 	if src.begins_with("viewport:"):
 		# C5：具名参考画幅候选（清单 viewports：[{id, w, h}]）。缺声明 = 无候选（控件保留原值）。
 		var outv: Array = []
@@ -428,9 +498,17 @@ func _resolve_options(decl: Dictionary) -> Array:
 				outv.append({"v": str((vp as Dictionary).get("id", "")), "t": "%s（%dx%d）" % [str((vp as Dictionary).get("id", "")), int((vp as Dictionary).get("w", 0)), int((vp as Dictionary).get("h", 0))]})
 		return outv
 	if src == "layer:":
+		var key := str(decl.get("_mapKey", ""))
+		var layers: Array = []
+		if (key != "" or not project_scope) and can_pick_on_canvas(key):
+			layers = app.canvas.layers_decl()
+		elif key != "":
+			var resolved := ReferenceIndex.resolve_map(manifest, key)
+			if resolved.status == "ok":
+				layers = MapStore.read(manifest, str(resolved.key)).get("meta", {}).get("layers", [])
 		var outl: Array = []
 		var li := 0
-		for L in app.canvas.layers_decl():
+		for L in layers:
 			outl.append({"v": str(L.get("id", "")), "t": "%d.%s" % [li + 1, str(L.get("name", ""))]})
 			li += 1
 		return outl
@@ -645,7 +723,7 @@ func _ensure_content(i: int) -> String:
 	var data := _blank_content(fn_id, new_id)
 	data["name"] = nm
 	# 暂存：只在内存登记，等正式提交再写（staged）
-	_staged_put(fn_id, new_id, {"fn_id": fn_id, "data": data, "ent": spr.code, "bind_index": i, "doc": _doc_key()})
+	_staged_put(fn_id, new_id, {"fn_id": fn_id, "data": data, "ent": spr.code, "doc": _doc_key()})
 	app._set_status(" 新内容 %s 已暂存：Ctrl+S 或试玩时落盘" % new_id)
 	fns = fns.duplicate(true)
 	(fns[i] as Dictionary)["content"] = new_id
@@ -656,7 +734,7 @@ func _ensure_content(i: int) -> String:
 		_form_id_edit.text = new_id
 	return new_id
 
-## 暂存内容：{"fn_id\u0001content_id": {fn_id, cid, data, ent, bind_index, doc}}。
+## 暂存内容：{"fn_id\u0001content_id": {fn_id, cid, data, ent, doc}}。
 ## 正式提交时 flush_staged 写入。键必须含功能 ID——多个功能目录下可以存在同名 cid，
 ## 只按裸 cid 索引会读到/覆盖另一份内容（V4 P0-6）。
 ## doc（R02 工作副本归属）= 项目根|地图码：冲刷只写当前文档（地图）的条目，
@@ -706,9 +784,8 @@ func _doc_key() -> String:
 	return root.path_join(code)
 
 ## 绑定身份复核（R02）：暂存条目的实例与绑定行还在吗？
-## 返回 ""（在）/ "gone"（实例没了）/ "moved"（绑定行被撤销、换绑或重排）。
+## 返回 ""（仍被当前文档引用）或 "gone"（已无任何绑定）。
 func _staged_bind_state(st: Dictionary, cid: String) -> String:
-	var ent := str(st.get("ent", ""))
 	if not _map_ready():
 		return ""
 	# V4 P0-6：只要有**任一**实例仍绑定这条内容，就必须写盘。
@@ -724,16 +801,6 @@ func _staged_bind_state(st: Dictionary, cid: String) -> String:
 				continue
 			return ""   # 任一同功能绑定仍在：这条内容仍被使用
 	return "gone"
-
-## 绑定行还在吗：该实例的 functions 里仍有一条「同功能码 + 同内容 ID」的行。
-func _bind_holds(spr: EntityNode, fcode: String, cid: String) -> bool:
-	for f in spr.functions:
-		if not (f is Dictionary):
-			continue
-		if str((f as Dictionary).get("content", "")) == cid \
-				and (fcode == "" or str((f as Dictionary).get("fn", "")) == fcode):
-			return true
-	return false
 
 ## 把暂存内容写盘（A2 正式提交入口调用）。全部成功返回 true；任一失败停下并保留剩余暂存。
 ## 只写当前文档的条目（R02）：doc 不符的条目留在暂存表里，等各自文档保存时再写。
@@ -885,7 +952,7 @@ func restage_rows(rows: Array) -> int:
 		if ent == "" and _map_ready():
 			continue   # 绑定不在恢复后的画布上：这条不收（写盘只会造孤儿文件）
 		_staged_put(fn_id, cid, {"fn_id": fn_id, "data": (dat as Dictionary).duplicate(true),
-			"ent": ent, "bind_index": -1, "doc": doc})
+			"ent": ent, "doc": doc})
 		n += 1
 	return n
 
@@ -896,7 +963,7 @@ func stage_clone(fn_id: String, cid: String, data: Dictionary, ent: String) -> v
 	if fn_id == "" or cid == "" or _staged_get(fn_id, cid) != null:
 		return
 	_staged_put(fn_id, cid, {"fn_id": fn_id, "data": data.duplicate(true),
-		"ent": ent, "bind_index": -1, "doc": _doc_key()})
+		"ent": ent, "doc": _doc_key()})
 
 ## 写盘失败：状态栏 + 徽章双重提示（红色徽章在右栏顶部，不依赖状态栏可见性）
 ## 不再一律甩「目录权限」——真实失败原因多半是身份码没生成或 kind 不合法。
@@ -1500,12 +1567,14 @@ func _lib_edges_text(cid: String, bulk: Dictionary) -> String:
 	var clines: Array[String] = []
 	for c in cs:
 		clines.append("%s/%s.%s" % [str((c as Dictionary).get("kind", "")), str((c as Dictionary).get("id", "")), str((c as Dictionary).get("field", ""))])
+	for ref in refd.get("views", []):
+		clines.append("参考视图 %s · %s" % [ref.view, ref.path])
 	if not clines.is_empty():
 		out += "
 入边：" + "、".join(clines)
 	if int(refd.get("n", 0)) == 0:
 		out += "
-（未被任何实例或内容引用）"
+（未被任何实例、内容或参考视图引用）"
 	return out
 
 ## C2：共享改绑：本实例改绑到已有内容 ID（沿用同一 ID），先弹确认框列受影响实例。
@@ -1549,14 +1618,6 @@ func _share_rebind(i: int, fn_id: String, cid: String) -> void:
 	body.add_child(Kit.popup_buttons(go, func(): pop.hide(), "改绑", "取消"))
 	app._open_popup(pop)
 
-## C2：纯逻辑辅助（测试用）：本实例改绑后的绑定行——只换 content 键，其余不动。
-func _rebound_fns(fns: Array, i: int, cid: String) -> Array:
-	var out: Array = (fns as Array).duplicate(true)
-	if i < 0 or i >= out.size():
-		return out
-	(out[i] as Dictionary)["content"] = cid
-	return out
-
 ## R14：删除前的全部入边检查（活体绑定 / 暂存 / 草稿 / 内容间引用 / 范围完整性）。
 ## 返回 "" = 可以删；非空 = 中止原因（可直接给状态栏）。确认弹窗前后各跑一次（复验）。
 func _delete_blocked_reason(fn_id: String, cid: String) -> String:
@@ -1573,12 +1634,10 @@ func _delete_blocked_reason(fn_id: String, cid: String) -> String:
 	# R14：暂存内容的引用字段也指得到它（未落盘的入边）。
 	var staged_refs: Array = []
 	for row2 in staged_rows_for_current_doc():
-		var d2: Dictionary = row2.data
-		for k in (d2.get("fields", {}) as Dictionary):
-			var fv = (d2.get("fields", {}) as Dictionary)[k]
-			if fv is String and str(fv) == cid:
-				staged_refs.append(str(row2.cid))
-				break
+		if row2.fn_id == fn_id and row2.cid == cid:
+			continue
+		if not ProjectAudit.content_link_paths(manifest, str(row2.fn_id), row2.data, fn_id, cid).is_empty():
+			staged_refs.append("%s/%s" % [row2.fn_id, row2.cid])
 	var cur_map := str(app.cur_map_name) if app.map_loaded else ""
 	# B2（§7.2）：删除入边全景统一走 ReferenceIndex.inbound_content——
 	# 磁盘地图/内容/草稿三路入边 + 读不全源，审计与删除共用同一套解析结果。
@@ -1608,6 +1667,11 @@ func _delete_blocked_reason(fn_id: String, cid: String) -> String:
 				str((r as Dictionary).get("id", "")), str((r as Dictionary).get("field", ""))])
 		return " 删除中止：另有 %d 份内容的引用字段指向它（%s）。先清掉那些字段" % [
 			inbound.size(), ", ".join(PackedStringArray(refs.slice(0, 5)))]
+	var view_targets: Array = edges.get("views", [])
+	if not view_targets.is_empty():
+		var ref_view: Dictionary = view_targets[0]
+		return " 删除中止：参考视图「%s」仍引用它（%s）。请先改接或清除目标。" % [
+			ref_view.view, ref_view.path]
 	# R14：暂存内容（未落盘）的引用字段指向它也算入边——删了那些引用就悬空。
 	if not staged_refs.is_empty():
 		return " 删除中止：另有 %d 条暂存内容引用它（%s）。先清掉那些字段或落盘后再试" % [
@@ -1625,7 +1689,7 @@ func _delete_library_item(fn_id: String, cid: String) -> bool:
 		app._set_status(reason)
 		return false
 	var nm := str(_content_read(fn_id, cid).get("name", ""))
-	var text := "将删除内容「%s」(%s)。\n\n当前没有任何实例或内容引用它；文件会从 content/%s/ 移除（.history 有备份）。" % [
+	var text := "将删除内容「%s」(%s)。\n\n编辑器未发现实例或内容引用。游戏侧按 ID 直接加载的入口请先确认仍可运行。文件会从 content/%s/ 移除（.history 有备份）。" % [
 		nm if nm != "" else cid, cid, fn_id]
 	if not await app._confirm_action("删除内容", text, "删除"):
 		return false
@@ -1644,11 +1708,8 @@ func _delete_library_item(fn_id: String, cid: String) -> bool:
 		if bool(rm.get("backed_up", false)) else ""])
 	return true
 
-## 复制成新 ID：深拷贝整份源内容（保留原文件不动），name 用弹窗里填的。
-## 继承行（类型挂载行）复用 = 把副本填进**这一行**，不追加同码第二条
-## ——追加会让「唯一继承行」无从辨认，也把挂载行变成了两条同码（C09）。
-## 附加功能复用 = 追加一条新绑定到末尾并选中。
-func _duplicate_from_lib(fn_id: String, old_id: String, new_name: String, bind_index := -1) -> void:
+## 将库中内容复制成新文件并改绑到当前行。时机、行 ID 与挂载标记原样保留。
+func _duplicate_from_lib(fn_id: String, old_id: String, new_name: String, bind_index: int) -> void:
 	var src := _content_read(fn_id, old_id)
 	if src.is_empty():
 		app._set_status(" 读不到内容 %s（文件缺失或损坏）" % old_id)
@@ -1667,28 +1728,26 @@ func _duplicate_from_lib(fn_id: String, old_id: String, new_name: String, bind_i
 	# 以整份源内容为底（顶层未知键原样带走），只覆盖身份三键
 	var data: Dictionary = src.duplicate(true)
 	data["id"] = new_id
+	if data.get("scope") == "project":
+		data.erase("scope")
 	data["function"] = FunctionDecls.fn_code(manifest, fn_id)
 	data["name"] = nm
 	if not (data.get("fields", null) is Dictionary):
 		data["fields"] = {}
 	if not (data.get("steps", null) is Array):
 		data["steps"] = []
-	# 新内容 + 新绑定都属于 staged 范围（A2）：先暂存，等正式保存/试玩再落盘
+	# 复制后的内容先暂存，等正式保存或试玩再落盘。
 	if not commit():
 		return
 	var fns := _current_fns().duplicate(true)
-	if bind_index >= 0 and bind_index < fns.size() and fns[bind_index] is Dictionary:
-		# 继承行复用：内容填进原行，行身份（mounted 标记/时机/并行）原样保留
-		_staged_put(fn_id, new_id, {"fn_id": fn_id, "data": data, "ent": spr.code, "bind_index": bind_index, "doc": _doc_key()})
-		(fns[bind_index] as Dictionary)["content"] = new_id
-		(fns[bind_index] as Dictionary)["name"] = nm
-		_selected_fn = bind_index
-	else:
-		_staged_put(fn_id, new_id, {"fn_id": fn_id, "data": data, "ent": spr.code, "bind_index": -1, "doc": _doc_key()})
-		# 绑定里写执行码；码由 ensure_codes 保证非空
-		fns.append({"fn": FunctionDecls.fn_code(manifest, fn_id), "content": new_id, "name": nm,
-			"order": fns.size() + 1, "parallel": false})
-		_selected_fn = fns.size() - 1
+	if bind_index < 0 or bind_index >= fns.size() or not fns[bind_index] is Dictionary:
+		return
+	if str(fns[bind_index].get("fn", "")) != FunctionDecls.fn_code(manifest, fn_id):
+		return
+	_staged_put(fn_id, new_id, {"fn_id": fn_id, "data": data, "ent": spr.code, "doc": _doc_key()})
+	fns[bind_index]["content"] = new_id
+	fns[bind_index]["name"] = nm
+	_selected_fn = bind_index
 	_write_fns(spr, fns)
 	_refresh_all()
 	app._set_status(" 已复制「%s」为新内容 %s" % [nm, new_id])

@@ -3,6 +3,9 @@ extends RefCounted
 
 
 const ContentIdRef := preload("res://src/content/content_id.gd")
+const CellGraph := preload("res://src/map/cell_graph.gd")
+const MapViewData := preload("res://src/map/map_view_data.gd")
+const TileLayerConvert := preload("res://src/map/tile_layer_convert.gd")
 
 var cvs   # editor_canvas 宿主
 
@@ -219,6 +222,7 @@ func layer_del(i: int) -> void:
 	var lid := layer_id(i)
 	var meta: Dictionary = snap.get("meta", {})
 	var L: Array = meta.get("layers", [])
+	CellGraph.detach_layer(CellGraph.graph_of(meta), lid, MapViewData.layer_transform_of(L[i]))
 	L.remove_at(i)
 	meta["layers"] = L
 	snap["meta"] = meta
@@ -322,6 +326,73 @@ func layer_set_visible(i: int, v: bool) -> void:
 	snap["meta"] = meta
 	await _load_snap_layers(snap, layer_id(active_layer))
 
+func layer_set_tile_grid(i: int, spec: Dictionary) -> String:
+	if i < 0 or i >= layer_count() or not cvs.is_map_ready() or cvs.doc_busy:
+		return "地图或图层不可用。"
+	var snapshot := extract()
+	if snapshot.is_empty():
+		return "地图重建中，请稍后再试。"
+	var lid := layer_id(i)
+	if not snapshot.get("tiles", {}).get(lid, []).is_empty():
+		return "已有瓦片的图层不能直接切换格系，请使用空图层。"
+	var row: Dictionary = snapshot.meta.layers[i]
+	if row.get("tileGrid", {}) == spec:
+		return ""
+	if not spec.is_empty():
+		var checked := GridSpace.resolve_tile_layer({"tileGrid": spec}, cvs.manifest, cvs.grid)
+		if not checked.issues.is_empty():
+			return str(checked.issues[0].message)
+		row["tileGrid"] = spec.duplicate(true)
+	else:
+		row.erase("tileGrid")
+	cvs.push_undo()
+	await _load_snap_layers(snapshot, layer_id(active_layer))
+	return ""
+
+## Builds the exact document shown in the migration preview, without changing the canvas.
+func prepare_tile_layer_copy(lid: String, title: String, spec: Dictionary, by_center: bool) -> Dictionary:
+	var i := _layer_index_of(lid)
+	if i < 0 or not cvs.is_map_ready() or cvs.doc_busy:
+		return {"error": "地图或图层不可用。"}
+	if title.is_empty() or layers_decl().any(func(row): return row.get("name", "") == title):
+		return {"error": "请填写未使用的新图层名。"}
+	var snapshot := extract()
+	if snapshot.is_empty():
+		return {"error": "地图重建中，请稍后再试。"}
+	var rows: Array = snapshot.get("tiles", {}).get(lid, [])
+	if rows.is_empty():
+		return {"error": "源图层没有瓦片。"}
+	var decl := {} if spec.is_empty() else {"tileGrid": spec}
+	var resolved := GridSpace.resolve_tile_layer(decl, cvs.manifest, cvs.grid)
+	if not resolved.issues.is_empty():
+		return {"error": str(resolved.issues[0].message)}
+	var source: GridSpace = cvs.tile_grid_for_layer(i)
+	var target: GridSpace = resolved.grid
+	var size := Vector2i(int(snapshot.meta.get("w", 1)), int(snapshot.meta.get("h", 1)))
+	var plan := TileLayerConvert.plan(rows, source, target, size, by_center)
+	if plan.outside > 0 or plan.collisions > 0:
+		return plan
+	var id := ContentIdRef.new_inst_code()
+	while _layer_index_of(id) >= 0:
+		id = ContentIdRef.new_inst_code()
+	var original: Dictionary = snapshot.meta.layers[i]
+	for key in ["offset", "scale", "parallax", "blend", "ySort", "visible"]:
+		if original.has(key):
+			decl[key] = original[key]
+	decl.merge({"id": id, "name": title})
+	snapshot.meta.layers.insert(i + 1, decl)
+	snapshot.tiles[id] = plan.rows
+	return {"snapshot": snapshot, "id": id, "count": rows.size(), "moved": plan.moved,
+		"source": map_data, "revision": cvs.map_rev}
+
+func apply_tile_layer_copy(plan: Dictionary) -> bool:
+	if not plan.has("snapshot") or not cvs.is_map_ready() or cvs.doc_busy \
+			or not is_same(plan.source, map_data) or plan.revision != cvs.map_rev:
+		return false
+	cvs.push_undo()
+	await _load_snap_layers(plan.snapshot, plan.id)
+	return true
+
 ## 层参数写回（R-04 控件批）：快照先行 → 改 meta.layers[i] 单键（缺省整键省略）→ 整图重建。
 ## ySort 改层容器结构（y-sorted 父），parallax/offset/scale 只改容器变换——统一走重建最省心。
 func layer_set_param(i: int, key: String, v) -> void:
@@ -330,9 +401,6 @@ func layer_set_param(i: int, key: String, v) -> void:
 	var L := layers_decl()
 	if i < 0 or i >= L.size():
 		return
-	if key == "ySort" and not bool(v):
-		# 关掉 ySort 是合法操作（E11）：erase 键 = 回到缺省顺序，不能静默拒绝
-		pass
 	# 快照先行（同 layer_set_visible：改层参数走同一纪律）
 	cvs.push_undo()
 	var snap := extract()

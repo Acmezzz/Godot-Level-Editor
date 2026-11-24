@@ -26,6 +26,9 @@ static func effective_grid(data: Dictionary, manifest: Dictionary) -> GridSpace:
 	var meta: Dictionary = data.get("meta", {}) if data.get("meta", {}) is Dictionary else {}
 	return GridSpaceScript.resolve(meta, manifest).get("grid") as GridSpace
 
+static func tile_grid_of(layer: Dictionary, manifest: Dictionary, root: GridSpace) -> GridSpace:
+	return GridSpaceScript.resolve_tile_layer(layer, manifest, root).grid
+
 ## 层内变换（数据口径）：meta.layers[] 按层码取 {offset: [x,y], scale: number} → Transform2D。
 ## 与画布的节点变换（layer_xform(i)）同值——层容器 position/scale 由同一组参数建成
 ## （editor_canvas.gd 建层时同样按 offset 数组 + scale 标量，layer_ops.gd 写回也按标量）。
@@ -38,16 +41,27 @@ static func layer_transform(data: Dictionary, layer_id: String) -> Transform2D:
 		var ld: Dictionary = L
 		if str(ld.get("id", "")) != layer_id:
 			continue
-		var off = ld.get("offset", null)
-		var sc = ld.get("scale", null)
-		var offv := Vector2.ZERO
-		var scv := Vector2.ONE
-		if off is Array and (off as Array).size() >= 2:
-			offv = Vector2(float((off as Array)[0]), float((off as Array)[1]))
-		if (sc is int or sc is float) and float(sc) > 0.0:
-			scv = Vector2.ONE * float(sc)
-		return Transform2D(0.0, scv, 0.0, offv)
+		return layer_transform_of(ld)
 	return Transform2D.IDENTITY
+
+static func layer_transform_of(decl: Dictionary) -> Transform2D:
+	var off = decl.get("offset")
+	var sc = decl.get("scale")
+	var origin := Vector2.ZERO
+	if off is Array and off.size() >= 2 and _finite_number(off[0]) and _finite_number(off[1]):
+		origin = Vector2(float(off[0]), float(off[1]))
+	var scale_px := float(sc) if _finite_number(sc) and sc > 0.0 else 1.0
+	return Transform2D(0.0, Vector2.ONE * scale_px, 0.0, origin)
+
+static func _finite_number(value: Variant) -> bool:
+	return (value is int or value is float) and is_finite(float(value))
+
+static func layer_transforms(layers: Variant) -> Dictionary:
+	var result := {}
+	for row in layers if layers is Array else []:
+		if row is Dictionary and row.get("id") is String and row.id != "":
+			result[row.id] = layer_transform_of(row)
+	return result
 
 ## 格多边形（层内世界口径）：格空间几何 + 层变换合成。
 ## layer_id 为空 = 根空间（不加层变换）。
@@ -87,10 +101,11 @@ static func scene_bounds(data: Dictionary, manifest: Dictionary, include_layers 
 	for row in (meta.get("layers", []) as Array):
 		if not (row is Dictionary):
 			continue
-		var lxf := layer_transform(data, str((row as Dictionary).get("id", "")))
-		if lxf == Transform2D.IDENTITY:
-			continue
+		var lxf := layer_transform_of(row)
 		bounds = bounds.merge(xform_rect(lxf, base))
+		if row.has("tileGrid"):
+			var own := tile_grid_of(row, manifest, g)
+			bounds = bounds.merge(xform_rect(lxf, own.map_bounds(Rect2i(0, 0, w, h))))
 	return bounds
 
 ## 矩形过仿射变换后的轴对齐包围盒（层变换扩边界用）。

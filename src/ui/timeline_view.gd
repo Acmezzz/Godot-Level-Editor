@@ -35,7 +35,9 @@ const EDGE := 7.0      # 右缘拖拽热区宽
 var timebase := "seconds"   # R-10：seconds（缺省）/ frames / beats——刻度/吸附单位随声明
 var _pps := 64.0              # 像素/单位（set_timebase 按基设）
 var clock = null              # TimelineClock（D2）：秒换算/吸附粒度；null = 按时间基缺省
-var playhead := 0.0           # 播放头（原始单位）；首版只定位，不调用游戏判定
+var playhead := 0.0           # 播放头（原始单位）
+var _audio_length := 0.0
+var _waveform := PackedVector2Array()
 var _drag := ""               # "" / "move" / "resize"
 var _drag_idx := -1
 var _drag_off_x := 0.0
@@ -102,7 +104,7 @@ func _hot_blocks() -> Dictionary:
 ## 时间轴总时长（视图宽度口径）：末尾再加 1 秒留白，至少 2 秒。
 func _time_max() -> float:
 	_timeline()
-	return _max_time
+	return maxf(_max_time, float(clock.value_at(_audio_length))) if _audio_length > 0.0 and clock != null else _max_time
 
 func _track_count() -> int:
 	_timeline()
@@ -126,6 +128,37 @@ func set_timebase(tb: String) -> void:
 func set_clock(c) -> void:
 	clock = c
 	queue_redraw()
+
+func set_reference_audio(seconds: float, envelope: PackedVector2Array) -> void:
+	if _audio_length == seconds and is_same(_waveform, envelope):
+		return
+	_audio_length = seconds
+	_waveform = envelope
+	sync_min_size()
+	queue_redraw()
+
+func follow_playhead() -> void:
+	var scroll := _scroll_container()
+	if scroll == null:
+		return
+	var x := MARGIN_L + playhead * _pps
+	if x < scroll.scroll_horizontal or x > scroll.scroll_horizontal + scroll.size.x - 8:
+		scroll.scroll_horizontal = maxi(0, roundi(x - scroll.size.x * 0.2))
+
+func _draw_reference_audio(lo: float, hi: float) -> void:
+	if _waveform.is_empty() or clock == null or _audio_length <= 0.0:
+		return
+	var x0 := floori(MARGIN_L + lo * _pps)
+	var x1 := ceili(MARGIN_L + hi * _pps)
+	for px in range(x0, x1, 2):
+		var raw := maxf(0.0, (float(px) - MARGIN_L) / _pps)
+		var sec := float(clock.seconds_at(raw))
+		if sec < 0.0 or sec >= _audio_length:
+			continue
+		var bucket := mini(_waveform.size() - 1, int(sec / _audio_length * _waveform.size()))
+		var peak := _waveform[bucket]
+		var mid := RULER_H * 0.58
+		draw_line(Vector2(px, mid - peak.y * 6.0), Vector2(px, mid - peak.x * 6.0), Color(Th.ACCENT, 0.45))
 
 func _snap(v: float) -> float:
 	var step := float(SNAP.get(timebase, 0.1))
@@ -307,6 +340,7 @@ func _draw() -> void:
 	var span := _visible_span(tmax)
 	var vis_lo := span.x
 	var vis_hi := span.y
+	_draw_reference_audio(vis_lo, vis_hi)
 	# 主刻度：每单位一格 + 单位标签（frames 每 5 帧一档防挤）
 	var tstep := 5 if timebase == "frames" else 1
 	var suffix: String = {"seconds": "s", "frames": "f", "beats": "拍"}.get(timebase, "s")

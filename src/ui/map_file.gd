@@ -11,12 +11,14 @@ extends RefCounted
 ## 有未保存修改时新建/打开/切图/关窗口都要先确认；取消即中止。
 const ClonePlan := preload("res://src/content/clone_plan.gd")
 const UiKitScript := preload("res://src/ui/ui_kit.gd")
+const BasisFields := preload("res://src/ui/grid_basis_fields.gd")
 const UiThemeScript := preload("res://src/ui/ui_theme.gd")
 const K := preload("res://src/core/constants.gd")
 const MapStore := preload("res://src/map/map_store.gd")
 const Recovery := preload("res://src/map/recovery.gd")
 const GridSpaceScript := preload("res://src/canvas/grid_space.gd")
 const MapConvert := preload("res://src/map/map_convert.gd")
+const ProjectAudit := preload("res://src/project/project_audit.gd")
 const DocumentSession := preload("res://src/project/document_session.gd")
 const DocumentCommit := preload("res://src/project/document_commit.gd")
 
@@ -31,7 +33,8 @@ var _last_alive_poll := 0   # PF-04：存活轮询节流
 var _play_pid := 0
 var _play_started_msec: int = 0
 var _play_program := ""        # A6：实际启动的程序（结构化配置的 exe 或模板首个 token）
-var _play_args_text := ""      # A6：实际参数（数组直启时原样，模板时为空）
+var _play_report_request := {}
+var _play_report_result := {}
 var _play_tracked := true      # false = 跟踪的是包装进程（playCommand 模板）
 ## 最近一次在新建/重命名弹窗里确认的名字（顶栏常驻名字框已移除，这里记住值供预填）
 var _name_memo := ""
@@ -176,12 +179,17 @@ func on_convert_projection() -> void:
 	if old_name == "":
 		app._set_status("当前地图没有名字，无法另存")
 		return
+	var source: Dictionary = app.canvas.copy_content_source()
+	if source.is_empty():
+		app._set_status("字段未能提交：投影转换已中止")
+		return
 	var data: Dictionary = app.canvas.extract()
 	if data.is_empty():
 		app._set_status("地图重建中，请稍后再试")
 		return
 	var cur_proj := MapConvert.current_projection(data, app.manifest)
-	var shell: Dictionary = app._popup_body("另存并转换投影",
+	var guard := _commit_is_current.bind(sess.generation, sess.revision, app.manifest)
+	var shell: Dictionary = app._popup_body("另存并转换格空间",
 		"另存为副本并换算实例与出生点：原图不动。瓦片与碰撞没有唯一对应，保留原格号，转换后需在副本里核对。")
 	var pop: PopupPanel = shell.pop
 	var body: VBoxContainer = shell.body
@@ -189,12 +197,16 @@ func on_convert_projection() -> void:
 	name_edit.placeholder_text = "新地图名"
 	body.add_child(UiKitScript.field_row("新名字", name_edit))
 	var proj_sel := OptionButton.new()
+	proj_sel.name = "TargetGridProjection"
 	for p in ["orthogonal", "isometric", "hexagonal"]:
-		if p == cur_proj:
-			continue   # 目标必须与当前不同（同投影另存请用「复制整张地图」）
 		proj_sel.add_item(_proj_label(p))
 		proj_sel.set_item_metadata(proj_sel.item_count - 1, p)
+		if p == cur_proj:
+			proj_sel.select(proj_sel.item_count - 1)
 	body.add_child(UiKitScript.field_row("目标投影", proj_sel, UiKitScript.LABEL_W_LONG))
+	var existing_basis := GridSpaceScript.parse_basis(data.meta)
+	var basis_editor := BasisFields.add_to(body, "TargetGrid", GridSpaceScript.tile_size_of(app.manifest),
+		data.meta.get("gridBasis", []) if existing_basis.ok else [])
 	var note := UiKitScript.hint_label("", 460)
 	body.add_child(note)
 	var err_label := UiKitScript.text_label("", UiThemeScript.WARN, UiThemeScript.FS_SMALL)
@@ -202,13 +214,22 @@ func on_convert_projection() -> void:
 	err_label.custom_minimum_size = Vector2(app.POPUP_BODY_W, 0)
 	body.add_child(err_label)
 	# lambda 按值捕获局部变量（重新赋值外层看不到）：计划放进容器里用内容变更回传
-	var holder := {"plan": {"ok": false, "error": "先填新图名"}}
-	var refresh := func():
+	var holder := {"plan": {"ok": false, "error": "先填新图名"}, "copy": {}}
+	var publish := UiKitScript.button("检查副本", Callable(), "primary")
+	var impacts := UiKitScript.hint_label("", 460)
+	body.add_child(impacts)
+	var reset_preview := func():
+		holder.copy = {}
+		publish.text = "检查副本"
+		impacts.text = ""
+		impacts.tooltip_text = ""
+		err_label.text = ""
+		note.text = "当前格空间：%s" % _grid_description(cur_proj,
+			data.meta.get("gridBasis", []) if existing_basis.ok else [])
+	var build_preview := func():
 		var nn: String = name_edit.text.strip_edges()
 		if nn == "":
 			holder.plan = {"ok": false, "error": "先填新图名"}
-			err_label.text = ""
-			note.text = "当前投影：%s" % _proj_label(cur_proj)
 			return
 		if not EditorManifest.is_valid_map_name(nn):
 			holder.plan = {"ok": false, "error": "名称非法"}
@@ -218,99 +239,122 @@ func on_convert_projection() -> void:
 			holder.plan = {"ok": false, "error": "同名地图已存在"}
 			err_label.text = "同名地图已存在：换个名字"
 			return
-		var p := MapConvert.plan(data, app.manifest, str(proj_sel.get_item_metadata(proj_sel.selected)))
+		var basis := BasisFields.read(basis_editor)
+		var p := MapConvert.plan(data, app.manifest, str(proj_sel.get_item_metadata(proj_sel.selected)), basis.value) \
+			if basis.ok else {"ok": false, "error": basis.error}
 		holder.plan = p
 		err_label.text = str(p.get("error", ""))
 		if not bool(p.get("ok", false)):
-			note.text = "当前投影：%s" % _proj_label(cur_proj)
 			return
-		var lines: Array[String] = ["当前投影：%s → 目标投影：%s（另存为新图，原图不动）" % [
-			_proj_label(cur_proj), _proj_label(str(p.get("projection", "")))]]
+		var lines: Array[String] = ["格空间：%s → %s（另存为新图）" % [
+			_grid_description(cur_proj, p.source_grid.get("gridBasis", [])),
+			_grid_description(p.projection, basis.value)]]
 		var doc: Dictionary = p.get("document", {})
 		var n_obj: int = (doc.get("objects", []) as Array).size() if doc.get("objects", null) is Array else 0
-		lines.append("实例 %d 个：按锚点换算到新格系（像素位置保持不变）" % n_obj)
+		lines.append("实例 %d 个：按像素锚点换算到新格系（坐标保留至 0.001 格）" % n_obj)
 		for m in (p.get("manual", []) as Array):
 			lines.append("⚠ " + str((m as Dictionary).get("message", "")))
 		for w in (p.get("warnings", []) as Array):
 			lines.append("· " + str(w))
 		note.text = "\n".join(lines)
-	name_edit.text_changed.connect(func(_t: String): refresh.call())
-	proj_sel.item_selected.connect(func(_i: int): refresh.call())
-	refresh.call()
+	name_edit.text_changed.connect(func(_t: String): reset_preview.call())
+	proj_sel.item_selected.connect(func(_i: int): reset_preview.call())
+	basis_editor.enabled.toggled.connect(func(_enabled: bool): reset_preview.call())
+	for field in basis_editor.axes:
+		field.text_changed.connect(func(_t: String): reset_preview.call())
+	reset_preview.call()
 	var btn_row := UiKitScript.hbox(8)
 	btn_row.alignment = BoxContainer.ALIGNMENT_END
 	btn_row.add_child(UiKitScript.button("取消", func(): pop.hide(), "ghost"))
-	btn_row.add_child(UiKitScript.button("另存并转换",
-		func(): convert_current_to_dialog(old_name, name_edit, err_label, pop, holder), "primary"))
+	publish.pressed.connect(func():
+		if holder.copy.is_empty():
+			build_preview.call()
+		convert_current_to_dialog(old_name, name_edit, err_label, impacts, publish, pop, holder, source.staged, guard))
+	btn_row.add_child(publish)
 	body.add_child(btn_row)
 	app._open_popup(pop)
 
-## 另存转换确认：转换计划已由弹窗预览算好（holder.plan），这里只校验名字并落盘。
-func convert_current_to_dialog(old_name: String, name_edit: LineEdit, err_label: Label,
-		pop: PopupPanel, holder: Dictionary) -> void:
-	var nn: String = name_edit.text.strip_edges()
-	if nn == "":
-		err_label.text = "先填新图名"
+## 两种另存共用冻结目标与依赖发布；从不保存源地图。
+func convert_current_to_dialog(old_name: String, name_edit: LineEdit, err_label: Label, impacts: Label,
+		publish: Button, pop: PopupPanel, holder: Dictionary, staged: Dictionary, guard: Callable) -> void:
+	if not guard.call():
+		err_label.text = "源文档已改变，请重新打开转换预览"
 		return
-	if not EditorManifest.is_valid_map_name(nn):
-		err_label.text = "地图名不合法：不能含 / \\ : * ? \" < > | 或以 . 开头"
+	var plan: Dictionary = holder.get("plan", {})
+	if not bool(plan.get("ok", false)):
+		err_label.text = str(plan.get("error", "转换计划未就绪"))
 		return
-	if FileAccess.file_exists(EditorManifest.map_path(app.manifest, nn)):
-		err_label.text = "同名地图已存在：换个名字"
+	var nn := name_edit.text.strip_edges()
+	if holder.copy.is_empty():
+		var prep := MapStore.prepare_duplicate(app.manifest, old_name, nn, plan.document, staged)
+		if not prep.has("plan"):
+			err_label.text = str(prep.get("error", "")) + "\n" + ClonePlan.conflicts_text(prep.get("conflicts", []))
+			return
+		var report := ProjectAudit.projection_copy_impacts(app.manifest, prep.plan.targets, plan.source_grid)
+		var added: Array = report.added
+		var summary := "副本未产生新的空间引用问题。" if added.is_empty() else \
+			"副本新增引用问题 %d 处，原值将保留：\n%s" % [added.size(), "\n".join(added.slice(0, 4))]
+		if not report.unreadable.is_empty():
+			summary += "\n有 %d 份绑定内容无法核对。" % report.unreadable.size()
+		impacts.text = summary
+		impacts.tooltip_text = "\n".join(added + report.unreadable)
+		holder.copy = prep.plan
+		publish.text = "另存并转换"
+		# 同一弹窗展示冻结计划，不写源图或内容。
+		pop.size = pop.get_contents_minimum_size().ceil().min(Vector2i(app.get_viewport_rect().size) - Vector2i(40, 40))
 		return
-	var last_plan: Dictionary = holder.get("plan", {}) if holder.get("plan", null) is Dictionary else {}
-	if not bool(last_plan.get("ok", false)):
-		err_label.text = str(last_plan.get("error", "转换计划未就绪"))
+	if not await _publish_map_copy(holder.copy, guard, err_label):
 		return
-	var doc: Dictionary = last_plan.get("document", {}) if last_plan.get("document", null) is Dictionary else {}
-	if doc.is_empty():
-		err_label.text = "转换结果为空：请重试"
-		return
-	doc.meta.name = old_name
-	# 同上：来源图码要留着给组外引用做「钉源图」判定；副本自己的码由 duplicate_map 换新
-	var conflicts: Array = []
-	var err: String = app.MapStore.duplicate_map(app.manifest, old_name, nn, conflicts, doc)
-	if err != "":
-		err_label.text = "另存失败：" + err + (("（" + ClonePlan.conflicts_text(conflicts) + "）")
-			if not conflicts.is_empty() else "")
-		return
-	pop.hide()
-	var manual_n: int = (last_plan.get("manual", []) as Array).size()
-	app._set_status("已另存并转换：%s → %s（%s）；%s" % [old_name, nn,
-		_proj_label(str(last_plan.get("projection", ""))),
-		"瓦片/碰撞保留原格号，请在副本里核对" if manual_n > 0 else "无瓦片/碰撞需核对"])
+	if is_instance_valid(pop):
+		pop.hide()
+	app._set_status("已另存并转换格空间：%s → %s" % [old_name, nn])
 
 func duplicate_current_from_dialog(old_name: String, name_edit: LineEdit, err_label: Label, pop: PopupPanel) -> void:
-	var nn: String = name_edit.text.strip_edges()
-	if nn == "":
-		err_label.text = "先填新图名"
+	if old_name != _effective_map_name():
+		err_label.text = "源文档已改变，请重新打开复制预览"
 		return
-	if not EditorManifest.is_valid_map_name(nn):
-		err_label.text = "地图名不合法：不能含 / \\ : * ? \" < > | 或以 . 开头"
-		return
-	if FileAccess.file_exists(EditorManifest.map_path(app.manifest, nn)):
-		err_label.text = "同名地图已存在：换个名字"
-		return
-	# 以画布提交状态为源（未保存改动一并进副本；原图磁盘文件不动）
 	var source: Dictionary = app.canvas.copy_content_source()
 	if source.is_empty():
 		err_label.text = "有字段未能提交，请修正后再复制"
 		return
 	var data: Dictionary = app.canvas.extract()
-	if data.is_empty():   # 重建窗口哨兵：此刻复制会得到空图
+	if data.is_empty():
 		err_label.text = "地图重建中，请稍后再试"
 		return
-	data.meta.name = old_name
-	# 保留源图码：整图复制时组外引用要钉的是**源图码**（游戏侧按码认图），剥码会让它们
-	# 变成名字、预览与执行也不一致。副本自己的码由 whole_map_document 重新写（V4 P1）。
-	var conflicts: Array = []
-	var err: String = app.MapStore.duplicate_map(app.manifest, old_name, nn, conflicts, data, source.staged)
-	if err != "":
-		var detail := ClonePlan.conflicts_text(conflicts) if not conflicts.is_empty() else ""
-		err_label.text = "复制失败：" + err + (("\n" + detail) if detail != "" else "")
+	var guard := _commit_is_current.bind(sess.generation, sess.revision, app.manifest)
+	var nn := name_edit.text.strip_edges()
+	if not await _write_map_copy(old_name, nn, data, source.staged, guard, err_label):
 		return
 	pop.hide()
-	app._set_status("已创建副本：%s → %s（实例与内容均为独立副本）" % [old_name, nn])
+	app._set_status("已创建副本：%s → %s（项目级内容保持共享）" % [old_name, nn])
+
+func _write_map_copy(old_name: String, new_name: String, data: Dictionary, staged: Dictionary,
+		guard: Callable, error_label: Label) -> bool:
+	if not guard.call() or app.canvas.doc_busy:
+		error_label.text = "文档已变化或正在提交，请重试"
+		return false
+	var prep := MapStore.prepare_duplicate(app.manifest, old_name, new_name, data, staged)
+	if not prep.has("plan"):
+		error_label.text = str(prep.get("error", "")) + "\n" + ClonePlan.conflicts_text(prep.get("conflicts", []))
+		return false
+	return await _publish_map_copy(prep.plan, guard, error_label)
+
+func _publish_map_copy(plan: Dictionary, guard: Callable, error_label: Label) -> bool:
+	if not guard.call() or app.canvas.doc_busy:
+		error_label.text = "文档已变化或正在提交，请重试"
+		return false
+	app.canvas.doc_busy = true
+	var ready := true
+	if bool(app.manifest.get("_codes_issued", false)):
+		ready = await app._save_manifest_file_async(guard, app.manifest.duplicate(true))
+	var err := "清单未发布或源文档已改变"
+	if ready and guard.call():
+		err = MapStore.apply_duplicate(plan)
+	_release_busy()
+	if err != "" and is_instance_valid(error_label):
+		error_label.text = "另存失败：" + err
+	return err == ""
+
 func confirm_discard(action: String) -> bool:
 	if app.canvas != null and app.canvas.doc_busy:
 		app._set_status(" 文档操作正在进行，请稍后再试")
@@ -382,12 +426,13 @@ func confirm_action(title: String, text: String, ok_text := "确定", _danger :=
 	dlg.queue_free()
 	return answer[0]
 
-## 新建地图：名字在弹窗里输入（顶栏已无常驻名字框）。高级设置可选格投影（B1）。
+## 新建地图时确定投影、拓扑和可选的像素基向量。
 func on_new() -> void:
-	var shell: Dictionary = app._popup_body("新建地图", "名字同时作文件名与显示名。投影进 meta.gridProjection，之后由这张图自己带着走。")
+	var shell: Dictionary = app._popup_body("新建地图", "名字同时作文件名与显示名。格空间设置随地图保存。")
 	var pop: PopupPanel = shell.pop
 	var body: VBoxContainer = shell.body
 	var name_edit := LineEdit.new()
+	name_edit.name = "NewMapName"
 	# 记住上次填的名字，但已存在的名字不预填（否则一按确定必然撞重名）
 	if _name_memo != "" and not FileAccess.file_exists(EditorManifest.map_path(app.manifest, _name_memo)):
 		name_edit.text = _name_memo
@@ -395,6 +440,7 @@ func on_new() -> void:
 	body.add_child(UiKitScript.field_row("地图名", name_edit))
 	# 高级设置：格投影。缺省 = 沿用项目解析（清单里瓦片资产的声明）。
 	var proj_sel := OptionButton.new()
+	proj_sel.name = "NewMapProjection"
 	var proj_keys: Array = ["", "orthogonal", "isometric", "hexagonal"]
 	var proj_labels: Array = ["沿用项目（%s）" % _proj_label(GridSpaceScript.project_projection(app.manifest)),
 		"正交", "等距", "六边形"]
@@ -406,37 +452,46 @@ func on_new() -> void:
 	var err_label := UiKitScript.text_label("", UiThemeScript.WARN, UiThemeScript.FS_SMALL)
 	err_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	err_label.custom_minimum_size = Vector2(app.POPUP_BODY_W, 0)
-	# B3：格拓扑（三角格 = 每个平行四边形切成两个半格）。六边投影没有平行四边形列，
-	# 选六边时这一项回落缺省——判据与校验/画布同一份（GridSpace.parse_topology）。
 	var topo_sel := OptionButton.new()
+	topo_sel.name = "NewMapTopology"
 	topo_sel.add_item("平行四边形（缺省）")
 	topo_sel.set_item_metadata(0, "")
 	topo_sel.add_item("三角形（每列两半格）")
 	topo_sel.set_item_metadata(1, "triangles")
 	body.add_child(UiKitScript.field_row("格拓扑", topo_sel, UiKitScript.LABEL_W_LONG))
-	proj_sel.item_selected.connect(func(_i: int):
+	var basis_editor := BasisFields.add_to(body, "NewMap", GridSpaceScript.tile_size_of(app.manifest))
+	var refresh_topology := func():
 		var pj := str(proj_sel.get_item_metadata(proj_sel.selected))
-		if pj == "hexagonal" and str(topo_sel.get_item_metadata(topo_sel.selected)) == "triangles":
+		if pj == "":
+			pj = GridSpaceScript.project_projection(app.manifest)
+		topo_sel.disabled = pj == "hexagonal"
+		if topo_sel.disabled:
 			topo_sel.select(0)
-			err_label.text = "六边形投影没有平行四边形列，不能改成三角格"
-		elif str(topo_sel.get_item_metadata(topo_sel.selected)) == "triangles":
-			err_label.text = "三角格：瓦片按半格三角形绘制，每格仍是原六元组"
-		else:
-			err_label.text = "")
+		topo_sel.tooltip_text = "六边形投影不能搭配三角拓扑" if topo_sel.disabled else ""
+		err_label.text = ""
+	proj_sel.item_selected.connect(func(_i: int): refresh_topology.call())
+	refresh_topology.call()
 	body.add_child(err_label)
+	var submit := func():
+		var basis := BasisFields.read(basis_editor)
+		if not basis.ok:
+			err_label.text = basis.error
+			basis.field.grab_focus()
+			return
+		create_map_from_dialog(name_edit, err_label, pop,
+			str(proj_sel.get_item_metadata(proj_sel.selected)),
+			str(topo_sel.get_item_metadata(topo_sel.selected)), basis.value)
 	var btn_row := UiKitScript.hbox(8)
 	btn_row.alignment = BoxContainer.ALIGNMENT_END
 	btn_row.add_child(UiKitScript.button("取消", func(): pop.hide(), "ghost"))
-	btn_row.add_child(UiKitScript.button("确定",
-		func(): create_map_from_dialog(name_edit, err_label, pop,
-			str(proj_sel.get_item_metadata(proj_sel.selected)),
-			str(topo_sel.get_item_metadata(topo_sel.selected))), "primary"))
-	name_edit.text_submitted.connect(func(_t: String):
-		create_map_from_dialog(name_edit, err_label, pop,
-			str(proj_sel.get_item_metadata(proj_sel.selected)),
-			str(topo_sel.get_item_metadata(topo_sel.selected))))
+	btn_row.add_child(UiKitScript.button("确定", submit, "primary"))
+	name_edit.text_submitted.connect(func(_t: String): submit.call())
 	body.add_child(btn_row)
 	app._open_popup(pop)
+
+func _grid_description(projection: String, basis: Array) -> String:
+	return _proj_label(projection) if basis.is_empty() else "自定义 U=%s，V=%s（%s）" % [
+		basis[0], basis[1], _proj_label(projection)]
 
 func _proj_label(p: String) -> String:
 	match p:
@@ -448,7 +503,7 @@ func _proj_label(p: String) -> String:
 
 ## 新建弹窗确定：校验 → 未保存确认 → 载入空图
 func create_map_from_dialog(name_edit: LineEdit, err_label: Label, pop: PopupPanel,
-		proj := "", topo := "") -> void:
+		proj := "", topo := "", basis: Array = []) -> void:
 	var n: String = name_edit.text.strip_edges()
 	if n == "":
 		err_label.text = "先填地图名"
@@ -459,6 +514,13 @@ func create_map_from_dialog(name_edit: LineEdit, err_label: Label, pop: PopupPan
 	if FileAccess.file_exists(EditorManifest.map_path(app.manifest, n)):
 		err_label.text = "同名地图已存在：换个名字，或直接打开它"
 		return
+	var data := MapStore.new_map(n, K.DEFAULT_MAP_W, K.DEFAULT_MAP_H, proj, topo)
+	if not basis.is_empty():
+		data.meta["gridBasis"] = basis
+	var issues: Array = GridSpaceScript.resolve(data.meta, app.manifest).issues
+	if not issues.is_empty():
+		err_label.text = str(issues[0].message)
+		return
 	err_label.text = ""
 	_name_memo = n
 	# 先收新建弹窗再开确认框：确认框是模态窗口，会让新建弹窗失焦自动 hide，
@@ -466,12 +528,43 @@ func create_map_from_dialog(name_edit: LineEdit, err_label: Label, pop: PopupPan
 	pop.hide()
 	if not await confirm_discard("新建"):
 		return
+	data.meta.code = MapStore.allocate_code(app.manifest, app.canvas.cur_map_code())
+	await _open_unsaved_map(n, data, "新建空地图")
+
+func open_generated_map(n: String, data: Dictionary, guard: Callable) -> bool:
+	if not guard.call() or not await confirm_discard("打开生成地图") or not guard.call():
+		return false
+	var target := MapStore.path_for(app.manifest, n)
+	if target == "" or FileAccess.file_exists(target) or map_code_taken(str(data.meta.code)):
+		app._set_status("生成地图未打开：目标图名或地图码已被占用，请重新生成。")
+		return false
+	return await _open_unsaved_map(n, data, "打开生成地图")
+
+func map_code_taken(code: String) -> bool:
+	return code == "" or MapStore.code_index(app.manifest).by_code.has(code) \
+		or (app.map_loaded and app.canvas.cur_map_code() == code)
+
+func apply_regenerated_map(data: Dictionary, generation: int, revision: int) -> bool:
+	var canvas: EditorCanvas = app.canvas
+	if sess.stale(generation) or sess.revision != revision or not app.map_loaded or canvas.doc_busy:
+		return false
+	canvas.push_undo()
+	canvas.doc_busy = true
+	await canvas.load_data(data, app.cur_map_name, true, true)
+	if sess.stale(generation):
+		return false
+	canvas.doc_busy = false
+	app._sync_ui()
+	app._set_status("已应用重生成，可撤销；保存后写回原地图")
+	return true
+
+func _open_unsaved_map(n: String, data: Dictionary, action: String) -> bool:
 	var previous_doc := _doc_key()
 	var gen := _begin_doc_op()
 	app.canvas.set_thumbs(app._entity_thumbs())
-	await app.canvas.load_data(MapStore.new_map(n, K.DEFAULT_MAP_W, K.DEFAULT_MAP_H, proj, topo), n)
+	await app.canvas.load_data(data, n)
 	if _doc_stale(gen):
-		return   # 期间又切了别的图：本次载入结果已被更新的一次重建取代
+		return false
 	_discard_previous_staging(previous_doc)
 	app.cur_map_name = n
 	app.cur_map_path = EditorManifest.map_path(app.manifest, n)
@@ -483,7 +576,10 @@ func create_map_from_dialog(name_edit: LineEdit, err_label: Label, pop: PopupPan
 	app._sync_play_cfg_to_map()
 	app._set_map_loaded(true)
 	app.canvas._undo_history_ctrl.clear_history()
-	app._set_status(" 新建空地图 " + n + "（先保存再试玩）")
+	app.canvas.modified_flag = true
+	app._sync_ui()
+	app._set_status(" %s %s（先保存再试玩）" % [action, n])
+	return true
 
 ## 重命名当前地图：弹窗输入新名（顶栏名字框已移除，就地改名入口改到这里）
 func on_rename() -> void:
@@ -589,9 +685,17 @@ func rename_map_now(old_name: String, new_name: String, allow_write_unsaved := f
 			return "地图校验失败：" + MapStore.write_error(app.manifest, data)
 		var frozen: Array = []
 		if ce != null:
-			for row in ce.staged_rows_current_doc():
-				frozen.append({"kind": "content", "fn_id": str(row.fn_id), "id": str(row.cid),
-					"data": row.data})
+			sess.contents = ce.staged_table()
+			var prep_contents: Dictionary = _doc_commit.prepare({"manifest": app.manifest,
+				"map_snapshot": data}, {"contents": sess.snapshot().get("contents", [])})
+			if prep_contents.status == "failed":
+				return str(prep_contents.error)
+			if prep_contents.status == "ok":
+				for target in prep_contents.plan.targets:
+					if target.required:
+						frozen.append({"kind": "content", "fn_id": str(target.payload.fn_id),
+							"id": str(target.id), "data": target.payload.data,
+							"expect_absent": target.expect_absent, "baseline": target.baseline})
 		# 地图目标带「写前校验 + 历史快照」的语义：用 payload 声明它是地图文档，
 		# 执行器按 MapStore.write 的同一入口落盘（不是裸写字节）。
 		frozen.append({"kind": "map", "id": nn, "path": new_path, "expect_absent": true,
@@ -599,7 +703,7 @@ func rename_map_now(old_name: String, new_name: String, allow_write_unsaved := f
 		var prep: Dictionary = _doc_commit.prepare_frozen("未落盘地图改名落盘 → %s" % nn,
 			app.manifest, frozen)
 		if str(prep.get("status", "")) != "ok":
-			return "提交计划为空：改名已中止"
+			return str(prep.get("error", "提交计划为空：改名已中止"))
 		var res: Dictionary = _doc_commit.apply_frozen(prep.get("plan", {}) as Dictionary)
 		if ce != null:
 			ce.consume_written_staged(res.get("targets", []))
@@ -1112,6 +1216,8 @@ func _save_now(data: Dictionary, guard: Callable) -> bool:
 	# 写前校验不过时把首个错误带回状态栏，避免只看到「保存失败」无从下手。
 	if not app.MapStore.write(app.manifest, n, data):
 		var why: String = app.MapStore.write_error(app.manifest, data)
+		if why == "":
+			why = MapStore.identity_error(app.manifest, n, data)
 		app._set_status(" 保存失败: %s%s" % [path, ("（%s）" % why) if why != "" else ""])
 		return false
 	# 基线前移（§4.4-2）：此后外部改动 = 相对这次写入的内容
@@ -1308,11 +1414,16 @@ func offer_draft_recovery() -> void:
 		names.append(str(k))
 	app._set_status(" 发现 %d 份未完成草稿：打开地图菜单可恢复（%s）" % [names.size(), ", ".join(PackedStringArray(names))])
 
-func on_play(spawn_tiles: Vector2i = Vector2i(-1, -1)) -> void:
-	if not app.map_loaded:
+func on_play(spawn_tiles: Vector2i = Vector2i(-1, -1), project_entry := false) -> void:
+	if _play_pid > 0 and Playtest.is_alive(_play_pid):
+		app._set_status("已有试玩正在运行，请关闭该游戏后再启动")
+		return
+	if project_entry and not bool(app.manifest.get("playtest", {}).get("projectEntry", false)):
+		return
+	if not project_entry and not app.map_loaded:
 		app._set_status(" 无地图：先新建或打开一张地图")
 		return
-	if _effective_map_name() == "":
+	if not project_entry and _effective_map_name() == "":
 		app._set_status(" 试玩前先「新建地图」并填名字")
 		return
 	# 试玩只拿「成功提交后的项目内路径」（A2）：先走统一提交（清单码 → 内容 → 地图），
@@ -1322,34 +1433,40 @@ func on_play(spawn_tiles: Vector2i = Vector2i(-1, -1)) -> void:
 	if str(res.get("status", "")) != "ok":
 		app._set_status(" 试玩中止：" + str(res.get("error", "提交未完成")))
 		return
-	if sess.stale(gen) or app.canvas.modified_flag:
+	if sess.stale(gen) or (app.map_loaded and app.canvas.modified_flag):
 		app._set_status(" 试玩中止：提交期间文档已变化")
 		return
 	var receipt: Dictionary = res.get("receipt", {})
 	var maps_root := str(app.manifest.get("_maps_dir", "")).simplify_path()
-	var play_path := str(receipt.get("absolute_path", sess.map_path)).simplify_path()
-	var digest := str(receipt.get("map_digest", sess.opened_digest))
-	if digest == "" or Recovery.digest(play_path) != digest:
+	var play_path := "" if project_entry else str(receipt.get("absolute_path", sess.map_path)).simplify_path()
+	var digest := "" if project_entry else str(receipt.get("map_digest", sess.opened_digest))
+	if not project_entry and (digest == "" or Recovery.digest(play_path) != digest):
 		app._set_status(" 试玩中止：磁盘地图与已提交版本不一致")
 		return
-	if maps_root == "" or play_path == "" or not play_path.begins_with(maps_root.path_join("")):
+	if not project_entry and (maps_root == "" or play_path.get_base_dir() != maps_root):
 		app._set_status(" 试玩中止：地图不在当前项目 maps 目录内，拒绝启动")
 		return
-	var play_res := Playtest.launch_tracked(app.manifest, play_path, app._play_args(spawn_tiles))
+	var request := Playtest.request_report(app.manifest, digest)
+	if bool(app.manifest.get("playtest", {}).get("report", false)) and request.is_empty():
+		app._set_status("试玩中止：无法创建加载回执目录")
+		return
+	var args: PackedStringArray = PackedStringArray() if project_entry else app._play_args(spawn_tiles)
+	var play_res := Playtest.launch_tracked(app.manifest, play_path, args, request)
 	if not play_res.get("ok", false):
 		app._set_status(" 试玩失败: " + str(play_res.get("error", "")))
 		return
 	_play_pid = int(play_res.get("pid", 0))
 	_play_started_msec = Time.get_ticks_msec()
 	_play_program = str(play_res.get("program", ""))
-	_play_args_text = " ".join(play_res.get("args", PackedStringArray()))
+	_play_report_request = request
+	_play_report_result = {}
 	_play_tracked = bool(play_res.get("tracked", false))
 	# 状态里说清「启动了什么、又在跟踪什么」：模板包装进程退出 ≠ 游戏退出
 	var what := _play_program.get_file() if _play_program != "" else "playCommand"
 	var tail := Playtest.log_tail(str(app.manifest.get("_dir", "")), 2)
 	# R24：平台查不了进程就明说「跟踪不可用」，不给假的「仍在运行」。
 	var track_note := "" if Playtest.tracking_available() else "（此平台无法跟踪进程退出）"
-	app._set_status(" 试玩启动: %s %s%s%s%s" % [what, play_path.get_file(),
+	app._set_status(" 试玩启动: %s %s%s%s%s" % [what, "项目入口" if project_entry else play_path.get_file(),
 		"（跟踪包装进程）" if not _play_tracked else "",
 		track_note,
 		("；日志: " + tail) if tail != "" else ""])
@@ -1364,10 +1481,11 @@ func poll_playtest() -> void:
 	_last_alive_poll = Time.get_ticks_msec()
 	if _play_pid <= 0:
 		return
-	# 刚启动的头几秒可能还查不到（进程尚未建好），先跳过
-	if Time.get_ticks_msec() - _play_started_msec < 4000:
-		return
-	if Playtest.is_alive(_play_pid):
+	if not _play_report_request.is_empty() and _play_report_result.is_empty():
+		_play_report_result = Playtest.read_report(_play_report_request)
+		if not _play_report_result.is_empty():
+			app._set_status(_play_report_summary())
+	if not Playtest.tracking_available() or Playtest.is_alive(_play_pid):
 		return
 	var secs := int((Time.get_ticks_msec() - _play_started_msec) / 1000.0)
 	var prog := _play_program
@@ -1376,10 +1494,20 @@ func poll_playtest() -> void:
 	var tail := Playtest.log_tail(str(app.manifest.get("_dir", "")), 4)
 	var who := prog.get_file() if prog != "" else "进程"
 	var tracked_note := "" if _play_tracked else "（跟踪的包装进程已退出）"
-	if tail != "":
+	if not _play_report_request.is_empty():
+		app._set_status("试玩 %s 已退出 · %s" % [who, _play_report_summary()])
+	elif tail != "":
 		app._set_status(" 试玩%s退出（%s，%d 秒）· 日志: %s" % [who, tracked_note, secs, tail.replace("\n", " | ")])
 	else:
 		app._set_status(" 试玩%s已退出%s（运行 %d 秒）" % [who, tracked_note, secs])
+
+func _play_report_summary() -> String:
+	match str(_play_report_result.get("status", "")):
+		"ready":
+			return "游戏已加载本次试玩数据"
+		"error", "invalid":
+			return "游戏加载未通过：" + str(_play_report_result.get("message", ""))
+	return "游戏没有返回本次加载回执"
 
 ## 试玩配置弹窗（v7）：清单 playtest.flags/params 声明驱动，替代写死的 dash/glide/hp。
 ## flags → 勾选框（启用时启动参数原样追加 flag.arg）；params → SpinBox（追加 arg 以 %d 填数）。
