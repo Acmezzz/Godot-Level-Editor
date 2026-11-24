@@ -215,6 +215,17 @@ func _render_preview(path: String) -> void:
 			_compose_pick_frame(surface, size, path.get_base_dir(), request)
 		elif subject.get("map", {}).get("meta", {}).get("name") == "frame_pick_destination":
 			_compose_destination_frame(surface, size, path.get_base_dir(), request)
+		elif subject.get("map", {}).get("meta", {}).get("name") == "flow_stage":
+			_compose_map_frame(surface, subject, size)
+			var door: Dictionary = subject.map.objects[0]
+			var center := (Vector2(door.x, door.y) + Vector2(0.5, 0.5)) * 16.0
+			var camera: Dictionary = subject.camera
+			var origin := Vector2(size) * 0.5 - _vector(camera.center) * float(camera.zoom)
+			var triangle := []
+			for corner in [Vector2(-6, -8), Vector2(6, -8), Vector2(0, 8)]:
+				var pixel: Vector2 = origin + (center + corner) * float(camera.zoom)
+				triangle.append([pixel.x, pixel.y])
+			_write_frame_picks(path.get_base_dir(), request.token, [{"screen": triangle, "targets": {"entity": door.code}}])
 		else:
 			_compose_map_frame(surface, subject, size)
 	elif capability == "worldFrame":
@@ -1242,6 +1253,7 @@ func _publish_attempt(message: String) -> void:
 func _resolve_branch(cue: Dictionary, input_seconds: float, lane: int) -> Dictionary:
 	var destination := ""
 	var map_code := ""
+	var door := ""
 	for route in cue.get("fields", {}).get("BRCH", []):
 		var require_all: bool = route.get("MODE", "all") == "all"
 		var matches := require_all
@@ -1261,8 +1273,14 @@ func _resolve_branch(cue: Dictionary, input_seconds: float, lane: int) -> Dictio
 		if matches:
 			destination = str(route.get("DEST", ""))
 			map_code = str(route.get("DMAP", ""))
+			door = str(route.get("ADRP", ""))
 			break
-	return _resolve_ending(destination, _map_with_code(map_code) if map_code != "" else {})
+	var map := _map_with_code(map_code) if map_code != "" else {}
+	if door != "":
+		if not map.get("objects", []).any(func(obj): return obj.get("code") == door and obj.get("asset") == "door"):
+			return {}
+		_flow_goal = {"map": map.meta.code, "inst": door}
+	return _resolve_ending(destination, map)
 
 ## The branch chooses a map. Its continuation keeps that map and resolves its own local instance.
 func _resolve_ending(destination: String, current_map: Dictionary) -> Dictionary:

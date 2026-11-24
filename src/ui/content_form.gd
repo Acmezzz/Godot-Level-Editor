@@ -299,7 +299,9 @@ func _build_field_row(i: int, fn_id: String, fd: Dictionary, cur: Dictionary, si
 		return ok
 	var options := func(decl: Dictionary) -> Array:
 		return _resolve_options(decl, bool(target.project_scope))
-	var built := FieldWidgets.build(d, val, apply, options, "code")
+	var frame_pick := func(row: Control, nested: Dictionary, pair: Callable, save: Callable):
+		FrameReference.add_nested_reference(app, row, nested, pair, save, options, bool(target.project_scope), _rebuild_right)
+	var built := FieldWidgets.build(d, val, apply, options, "code", frame_pick)
 	if built.get("commit") is Callable and (built.commit as Callable).is_valid():
 		_pending_commits.append(built.commit)
 	var row := Kit.field_row(label, built.ctl, 96)
@@ -316,7 +318,7 @@ func _build_field_row(i: int, fn_id: String, fd: Dictionary, cur: Dictionary, si
 			"临时切到画布点格图里的一格（按多边形命中）；确认才写入，取消不改当前值"
 		pick.add_theme_font_size_override("font_size", Th.FS_META)
 		row.add_child(pick)
-	if pickable and not bool(d.get("multiple", false)) and FrameReference.reference_available(app, tk):
+	if FieldWidgets.wants_frame_pick(fd) and (not bool(target.project_scope) or tk != "") and FrameReference.reference_available(app, tk):
 		row.add_child(Kit.button("实景选…", func():
 			var save := func(value) -> bool:
 				if not apply.call(value):
@@ -631,7 +633,8 @@ func _set_field(i: int, fn_id: String, key: String, value, expected: Dictionary,
 	if wr != "ok":
 		_ensure_failed()
 		return false
-	expected.merge({"present": true, "value": value}.duplicate(true), true)
+	var stored: Dictionary = _content_read_ex(fn_id, cid).data.get("fields", fields)
+	expected.merge({"present": stored.has(key), "value": stored.get(key)}.duplicate(true), true)
 	_record_content_delta(fn_id, cid, before, data, str(rd.digest))
 	_refresh_value_only()
 	return true

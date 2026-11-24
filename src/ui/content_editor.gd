@@ -803,7 +803,7 @@ func _build_ref_row(fd: Dictionary, props: Dictionary, fdecls: Array = []) -> Co
 		pick.tooltip_text = "临时切到画布点一个实例；确认才写入，取消不改当前值"
 		pick.add_theme_font_size_override("font_size", Th.FS_META)
 		row.add_child(pick)
-	if pickable and FrameReference.reference_available(app, expected_map):
+	if FieldWidgets.wants_frame_pick(fd) and FrameReference.reference_available(app, expected_map):
 		var frame_pick := Kit.button("实景选…", func():
 			var save := func(value) -> bool:
 				if origin == null or not is_instance_valid(origin) or origin != _current_spr() \

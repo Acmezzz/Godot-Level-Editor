@@ -1052,7 +1052,9 @@ func _step_field_row(fd: Dictionary, sfd: Dictionary, siblings: Array, shown: Di
 			return false
 		return true
 	var apply := func(v) -> bool: return _set_step_field(shown, key, v, rev, check_pair)
-	var built := FieldWidgets.build(d, val, apply, _resolve_options, "code")
+	var frame_pick := func(row: Control, nested: Dictionary, pair: Callable, save: Callable):
+		FrameReference.add_nested_reference(app, row, nested, pair, save, _resolve_options, _project_scope, _rebuild_steps_form_from_data)
+	var built := FieldWidgets.build(d, val, apply, _resolve_options, "code", frame_pick)
 	if built.get("commit") is Callable and (built.commit as Callable).is_valid():
 		_pending_commits.append(built.commit)
 	var row := Kit.field_row(label, built.ctl, 96)
@@ -1068,7 +1070,7 @@ func _step_field_row(fd: Dictionary, sfd: Dictionary, siblings: Array, shown: Di
 			pick.tooltip_text = "临时切到画布点格图里的一格（按多边形命中）；确认才写入这一步，取消不改当前值"
 		pick.add_theme_font_size_override("font_size", Th.FS_META)
 		row.add_child(pick)
-	if pickable and not bool(d.get("multiple", false)) and FrameReference.reference_available(app, tk):
+	if FieldWidgets.wants_frame_pick(fd) and (not _project_scope or tk != "") and FrameReference.reference_available(app, tk):
 		row.add_child(Kit.button("实景选…", func():
 			var save := func(value) -> bool:
 				if not apply.call(value):
@@ -1435,12 +1437,15 @@ func _set_step_field(shown: Dictionary, key: String, value, rev := -1, check_pai
 	data["steps"] = arr
 	if not _steps_write(data):
 		return false
+	# Compare later edits with the representation the workspace actually reads.
+	# JSON numbers read back as floats, including integers within records.
+	var stored: Array = _steps_data().get("steps", arr)
 	var previous: Array = shown.steps
-	shown.steps = arr.duplicate(true)
+	shown.steps = stored.duplicate(true)
 	if _steps_list_snapshot == previous:
-		_steps_list_snapshot[si] = st.duplicate(true)
+		_steps_list_snapshot[si] = stored[si].duplicate(true)
 	if is_instance_valid(_steps_tl) and _steps_tl.steps == previous:
-		_steps_tl.steps[si] = st.duplicate(true)
+		_steps_tl.steps[si] = stored[si].duplicate(true)
 	var preview = FunctionDecls.function_decl(manifest, _steps_fn_id).get("timePreview")
 	if preview is Dictionary and preview.has("tempoStep") and preview.has("bpmField"):
 		var tempo := StepDecls.step_decl(manifest, str(preview.tempoStep))

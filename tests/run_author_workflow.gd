@@ -315,6 +315,8 @@ func run():
 				{"id":"predicates", "code":"PRED", "kind":"input","type":"array","of":"condition",
 					"allowedConditions":["hit_window","on_lane"]},
 				{"id":"destination_map", "code":"DMAP", "name":"Branch map", "kind":"choice", "source":"map"},
+				{"id":"arrival_door", "code":"ADRP", "name":"Arrival door", "kind":"choice",
+					"source":"entity_inst:door", "mapField":"destination_map"},
 				{"id":"destination", "code":"DEST", "name":"Branch target", "kind":"choice", "source":"content:ending",
 					"contentMapContext":"paired", "mapField":"destination_map"}
 			]}]}}, "assets":[
@@ -434,6 +436,19 @@ func run():
 	press(pop, "步骤移到播放头")
 	author_branches(pop, str(flow_map.meta.code))
 	check(ce.commit_fields(), "nested branch forms commit")
+	var branch_pick: Button = pop.find_child("NestedFrameReference_arrival_door", true, false)
+	check(branch_pick != null, "a nested step field has a game frame picker")
+	if branch_pick != null:
+		branch_pick.pressed.emit()
+		var branch_frame := await _render_pick_frame(app)
+		if branch_frame != null:
+			var branch_confirm := _click_pick_frame(branch_frame, _frame_pick_at_world(branch_frame, Vector2(72, 40)))
+			check(not branch_confirm.disabled, "a branch uses its newly selected map to pick the matching door")
+			check(not Store.read(manifest, "campaign", "project-acceptance").steps[2].fields.BRCH[0].has("ADRP"),
+				"pending scene selection does not write the branch row")
+			branch_confirm.pressed.emit()
+			await process_frame
+			check(not is_instance_valid(branch_frame) or not branch_frame.visible, "nested frame confirmation applies the selected reference")
 	var saved := Store.read(manifest, "campaign", "project-acceptance")
 	check(saved.get("scope") == "project" and saved.get("steps", []).size() == 3
 		and saved.steps[2].get("at", -1) == 3.0, "standalone beat-aligned step persisted")
@@ -442,6 +457,7 @@ func run():
 		and routes[0].PRED[1].fields.LANE == 2 and routes[1].PRED[0].negate
 		and routes[0].get("DMAP") == flow_map.meta.code and routes[1].get("DMAP") == flow_map.meta.code,
 		"author assembled two groups with independent typed parameters and a negated predicate")
+	check(routes[0].get("ADRP") == "EXIT" and not routes[1].has("ADRP"), "scene selection stores the door on only the selected branch")
 	var staged_frame := saved.duplicate(true)
 	staged_frame.fields["CAPT"] = "Staged frame"
 	ce.stage_clone("campaign", "project-acceptance", staged_frame, "")

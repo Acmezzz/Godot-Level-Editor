@@ -47,6 +47,10 @@ static func wants_canvas_pick(decl: Dictionary) -> bool:
 	# §7.4：格边字段——画布按最近共边命中（accept="edge"）
 	return pick_mode(decl) != "entity"
 
+static func wants_frame_pick(decl: Dictionary) -> bool:
+	return not bool(decl.get("multiple", false)) and (
+		wants_canvas_pick(decl) or RefFields.describe(decl).kind == "entity_inst")
+
 ## C4：choice 来源是 `cell:` 的字段可在画布上按格图多边形点选。
 static func wants_cell_pick(decl: Dictionary) -> bool:
 	return type_of(decl) == "choice" and str(decl.get("source", "")).begins_with("cell:")
@@ -153,16 +157,16 @@ static func _value_commit(read_value: Callable, initial: Variant, on_set: Callab
 ## option_resolver（可选）：Callable(decl) -> Array，元素为 {v, t} 或纯字符串，
 ## 供 choice 的 source（content:item / entity:portal,exit / map）动态取选项。
 static func build(decl: Dictionary, value, on_set: Callable,
-		option_resolver: Callable = Callable(), key_mode := "id") -> Dictionary:
+		option_resolver: Callable = Callable(), key_mode := "id", frame_pick := Callable()) -> Dictionary:
 	var kind := kind_of(decl)
 	if kind == KIND_CHOICE:
 		return _build_choice(decl, value, on_set, option_resolver, key_mode)
 	if kind == KIND_INPUT:
-		return _build_input(decl, value, on_set, option_resolver, key_mode)
+		return _build_input(decl, value, on_set, option_resolver, key_mode, frame_pick)
 	if kind == KIND_CONDITION:
-		return _build_condition_row(decl, value, on_set, option_resolver)
+		return _build_condition_row(decl, value, on_set, option_resolver, frame_pick)
 	if kind == KIND_RECORD:
-		return _build_record(decl, value, on_set, option_resolver, key_mode)
+		return _build_record(decl, value, on_set, option_resolver, key_mode, frame_pick)
 	var why := "声明缺 kind（应写 \"input\" 或 \"choice\"）" if kind == "" \
 		else "未声明的字段种类「%s」" % kind
 	return _readonly(decl, value, why, "补全声明后重新加载清单即可恢复编辑")
@@ -170,7 +174,7 @@ static func build(decl: Dictionary, value, on_set: Callable,
 ## input：string（可 multiline）/ int / float / bool / color / vector2 / range / asset_ref。
 ## 连续控件（SpinBox、HScale、多行 TextEdit）拖动/输入期间只记内存，失焦或 commit() 才写盘。
 static func _build_input(decl: Dictionary, value, on_set: Callable,
-		option_resolver: Callable, key_mode := "id") -> Dictionary:
+		option_resolver: Callable, key_mode := "id", frame_pick := Callable()) -> Dictionary:
 	var typ := type_of(decl)
 	match typ:
 		"bool":
@@ -322,7 +326,7 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 				return _readonly(decl, value, "值类型不符：声明 array，实际是 %s" % type_name(value),
 					"编辑器不会改写它，请游戏侧或手工修正")
 			var items: Array = value if value is Array else []
-			return _build_array(decl, items, on_set, option_resolver, key_mode)
+			return _build_array(decl, items, on_set, option_resolver, key_mode, frame_pick)
 		"viewport_ref":
 			return _build_viewport_ref(decl, value, on_set, option_resolver)
 		"port_ref":
@@ -396,7 +400,7 @@ static func _elem_decl(decl: Dictionary) -> Dictionary:
 ## 行删除前先冲刷该行连续控件的待写值（commit），行序变动靠行字典引用而非闭包下标。
 ## C1：of: record 行给 复制/上移/下移（rows 换位 + 容器子序同步）；key_mode 透传元素控件。
 static func _build_array(decl: Dictionary, items: Array, on_set: Callable,
-		option_resolver: Callable, key_mode := "id") -> Dictionary:
+		option_resolver: Callable, key_mode := "id", frame_pick := Callable()) -> Dictionary:
 	var elem := _elem_decl(decl)
 	var rec := str(elem.get("type", "")) in ["record", "condition"]
 	var wrap := VBoxContainer.new()
@@ -429,7 +433,12 @@ static func _build_array(decl: Dictionary, items: Array, on_set: Callable,
 		var r := {"state": {"v": v}, "commit": Callable(), "line": null}
 		var line: BoxContainer = VBoxContainer.new() if rec else HBoxContainer.new()
 		line.add_theme_constant_override("separation", 4)
-		var built := build(elem, v, func(v2): (r.state as Dictionary)["v"] = v2, option_resolver, key_mode)
+		var nested_frame_pick := Callable()
+		if frame_pick.is_valid():
+			nested_frame_pick = func(row: Control, fd: Dictionary, pair: Callable, set_value: Callable):
+				frame_pick.call(row, fd, pair, func(v2):
+					return bool(set_value.call(v2)) and save.call())
+		var built := build(elem, v, func(v2): (r.state as Dictionary)["v"] = v2, option_resolver, key_mode, nested_frame_pick)
 		r["commit"] = built.commit
 		var tools: BoxContainer = line
 		if rec:
@@ -518,7 +527,7 @@ static func _row_dup(ctx: Dictionary, r: Dictionary, done: Callable) -> void:
 
 ## 条件参数存入各行自己的 fields；未选择或过期的条件不会自动替换。
 static func _build_condition_row(decl: Dictionary, value: Variant, on_set: Callable,
-		resolve: Callable) -> Dictionary:
+		resolve: Callable, frame_pick := Callable()) -> Dictionary:
 	if not value is Dictionary:
 		return _readonly(decl, value, "条件行不是对象", "保留原值；可删除该行后重新添加")
 	var box := Kit.vbox(4)
@@ -575,7 +584,7 @@ static func _build_condition_row(decl: Dictionary, value: Variant, on_set: Calla
 		if not choices[id].fields.is_empty():
 			var built := _build_record(choices[id], values, func(fields: Dictionary):
 				state.row["fields"] = fields
-				return push.call(), resolve, "code")
+				return push.call(), resolve, "code", frame_pick)
 			params.add_child(built.ctl)
 			state.params = built.commit
 	render.call()
@@ -604,7 +613,7 @@ static func _build_condition_row(decl: Dictionary, value: Variant, on_set: Calla
 ## （key_mode："code" = 字段码，缺码退回 id）。兄弟配对字段作用域 = 当前记录行
 ## （mapField 的 _mapKey 注入读行内值）。未知子键不碰（未知版本往返）；非字典值只读展示。
 static func _build_record(decl: Dictionary, value, on_set: Callable,
-		option_resolver: Callable, key_mode := "id") -> Dictionary:
+		option_resolver: Callable, key_mode := "id", frame_pick := Callable()) -> Dictionary:
 	if not (value is Dictionary):
 		return _readonly(decl, value, "记录值不是字典（实际 %s）" % type_name(value),
 			"已有值原样保留，不提供可写控件")
@@ -633,10 +642,15 @@ static func _build_record(decl: Dictionary, value, on_set: Callable,
 			if tk != "":
 				d2 = sd.duplicate(true)
 				d2["_mapKey"] = tk
-		var built := build(d2, sub_val, func(v2):
+		var set_value := func(v2):
 			value[sub_key] = v2
-			return commit.call(), option_resolver, key_mode)
-		box.add_child(Kit.field_row(str(sd.get("name", sub_key)), built.ctl, 96))
+			return commit.call()
+		var built := build(d2, sub_val, set_value, option_resolver, key_mode, frame_pick)
+		var row := Kit.field_row(str(sd.get("name", sub_key)), built.ctl, 96)
+		box.add_child(row)
+		if frame_pick.is_valid() and wants_frame_pick(sd):
+			var pair := func() -> String: return RefFields.paired_map_value(sd, fields_arr, value)
+			frame_pick.call(row, sd, pair, set_value)
 		commits.append(built.commit)
 	return {"ctl": panel, "commit": func() -> bool:
 		for c in commits:
