@@ -79,11 +79,15 @@ func _show_map_target(code: String) -> void:
 					"res://content/%s/%s.json" % [round_target.function, round_target.content]))
 				required = int(config.fields.INPT)
 				entered_board["roundRules"] = round_target.content
-				if config.fields.has("HOST"):
-					if not pawns.has(config.fields.HOST):
+				var role: Dictionary = config.fields.get("ROLE", {})
+				if not role.is_empty():
+					var role_config: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(
+						"res://content/%s/%s.json" % [role.function, role.content]))
+					var host_code: String = role_config.fields.HOST
+					if not pawns.has(host_code):
 						_finish("The round host is missing from this board.")
 						return
-					entered_board["roundHost"] = config.fields.HOST
+					entered_board["roundHost"] = host_code
 			entered_board["roundInputs"] = 0
 			var leave := Button.new()
 			leave.text = "Finish course (0/%d)" % required

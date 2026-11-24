@@ -27,6 +27,7 @@ const StepDecls := preload("res://src/content/step_decl.gd")
 const RefFields := preload("res://src/content/ref_fields.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
 const MapFlow := preload("res://src/map/map_flow.gd")
+const FlowTarget := preload("res://src/content/flow_target.gd")
 
 static func _data(ctx: Dictionary) -> Dictionary:
 	if ctx.get("data", null) is Dictionary:
@@ -243,42 +244,35 @@ static func build(src: Dictionary, dst: Dictionary, codes: PackedStringArray = P
 	var source_key := _source_key(sdata, src_map)
 	var spatial_refs := {"cells": src.get("cell_ids", {}), "edge": src.get("map_edge", Callable()),
 		"whole_map": self_copy}
+	var scoped_ids := {}
 	if self_copy:
-		for ref in MapFlow.scoped_content(m, sdata):
-			var fn: String = ref.value.function
-			var cid: String = ref.value.content
-			if content_map.get(fn, {}).has(cid):
-				continue
-			var key := content_key(fn, cid)
-			var data: Dictionary = staged_contents[key] if staged_contents.has(key) else ContentStore.read(m, fn, cid)
-			if data.is_empty():
-				conflicts.append({"kind": "content_missing", "id": cid,
-					"message": "地图绑定的内容读不到：%s/%s" % [fn, cid]})
-				continue
-			var sample := data.duplicate(true)
-			_remap_content(sample, m, fn, instance_map, {}, "", src_codes, conflicts,
-				ddata, dst_map, source_key, src_map, spatial_refs)
-			if sample == data:
-				continue
-			var new_id := ContentId.unique(m, fn, "%s-%s" % [cid, _target_key(ddata, dst_map)])
-			if new_id == "":
-				conflicts.append({"kind": "content_id", "id": cid, "message": "新内容 ID 生成失败：%s" % cid})
-				continue
-			if not content_map.has(fn):
-				content_map[fn] = {}
-			content_map[fn][cid] = new_id
-			var clone := data.duplicate(true)
-			clone["id"] = new_id
-			pending.append({"fn_id": fn, "id": new_id, "data": clone})
+		var roots: Array = MapFlow.scoped_content(m, sdata).map(func(ref): return ref.value)
+		for row in selected:
+			for binding in row.get("functions", []):
+				if binding is Dictionary and binding.get("content", "") != "":
+					var fn := FunctionDecls.fn_id_of(m, binding.get("fn", ""))
+					if fn != "":
+						roots.append({"function": fn, "content": binding.content})
+		var probe := func(data: Dictionary, fn: String, visit: Callable):
+			_remap_content(data, m, fn, instance_map, {}, "", src_codes, conflicts, ddata, dst_map,
+				source_key, src_map, spatial_refs.merged({"visit_scoped": visit}))
+		scoped_ids = _clone_scoped_chain(m, roots, staged_contents, content_map, pending, conflicts,
+			_target_key(ddata, dst_map), probe)
+	var scoped_copies := {}
+	for key in scoped_ids:
+		var fn: String = key.get_slice("\u0001", 0)
+		scoped_copies[content_key(fn, scoped_ids[key])] = true
 	var out_objects: Array = []
 	for r5 in selected:
 		out_objects.append(remap_row(r5 as Dictionary, instance_map, content_map, m,
 			cross_code, src_codes, conflicts, ddata, dst_map, source_key, src_map, spatial_refs))
 	# —— 内容副本内部引用：组内实例码/内容跳转按声明重映射（C05） ——
 	for pc in pending:
+		var scope := spatial_refs.merged({"scoped_ids": scoped_ids}) \
+			if scoped_copies.has(content_key(pc.fn_id, pc.id)) else spatial_refs
 		_remap_content((pc as Dictionary).data, m, str((pc as Dictionary).fn_id),
 			instance_map, content_map, cross_code, src_codes, conflicts,
-			ddata, dst_map, source_key, src_map, spatial_refs)
+			ddata, dst_map, source_key, src_map, scope)
 	var patch := {"objects": out_objects}
 	if include_world:
 		# 整图：图片/瓦片/碰撞/出生点原样带过去（实例行已重映射）
@@ -290,10 +284,65 @@ static func build(src: Dictionary, dst: Dictionary, codes: PackedStringArray = P
 		"status": "ok" if conflicts.is_empty() else "conflict",
 		"instance_map": instance_map,
 		"content_map": content_map,
+		"scoped_ids": scoped_ids,
 		"map_patch": patch,
 		"pending_contents": pending,
 		"conflicts": conflicts,
 	}
+
+## Walk each reachable content once, then copy only paths leading to a changed document.
+static func _clone_scoped_chain(manifest: Dictionary, roots: Array, staged: Dictionary, content_map: Dictionary,
+		pending: Array, conflicts: Array, target_key: String, probe: Callable) -> Dictionary:
+	var queue := roots.duplicate()
+	var rows := {}
+	var parents := {}
+	var dirty: Array[String] = []
+	var seen := {}
+	var cursor := 0
+	while cursor < queue.size():
+		var address: Dictionary = queue[cursor]
+		cursor += 1
+		var fn: String = address.function
+		var cid: String = address.content
+		var key := content_key(fn, cid)
+		if seen.has(key):
+			continue
+		seen[key] = true
+		var data: Dictionary = staged[key] if staged.has(key) else ContentStore.read(manifest, fn, cid)
+		if data.is_empty():
+			conflicts.append({"kind": "content_missing", "id": cid,
+				"message": "地图内容链读不到：%s/%s" % [fn, cid]})
+			continue
+		rows[key] = {"fn": fn, "cid": cid, "data": data}
+		var sample := data.duplicate(true)
+		probe.call(sample, fn, func(next: Dictionary):
+			var next_key := content_key(next.function, next.content)
+			if not parents.has(next_key):
+				parents[next_key] = []
+			parents[next_key].append(key)
+			queue.append(next))
+		if sample != data or content_map.get(fn, {}).has(cid):
+			dirty.append(key)
+	var ids := {}
+	cursor = 0
+	while cursor < dirty.size():
+		var key: String = dirty[cursor]
+		cursor += 1
+		if ids.has(key):
+			continue
+		var row: Dictionary = rows[key]
+		var id: String = content_map.get(row.fn, {}).get(row.cid, "")
+		if id == "":
+			id = ContentId.unique(manifest, row.fn, "%s-%s" % [row.cid, target_key])
+			if id == "":
+				conflicts.append({"kind": "content_id", "id": row.cid, "message": "新内容 ID 生成失败：%s" % row.cid})
+				continue
+			var clone: Dictionary = row.data.duplicate(true)
+			clone["id"] = id
+			pending.append({"fn_id": row.fn, "id": id, "data": clone})
+		ids[key] = id
+		dirty.append_array(parents.get(key, []))
+	return ids
 
 ## 单行重映射（活体贴/区域粘贴/整图共用）：返回深拷贝，原行不动。
 ##   instance_map 旧码→新码；content_map 旧内容 ID→新内容 ID；
@@ -411,12 +460,15 @@ static func _remap_field_map(manifest: Dictionary, values, decls: Array, instanc
 			continue
 		var kind := str(desc.get("kind", ""))
 		var cell := kind == "cell" and not cell_ids.is_empty()
-		if kind not in ["entity_inst", "content", "layer"] and not cell:
+		if kind not in ["entity_inst", "content", "flow_target", "layer"] and not cell:
 			continue
 		var key := str(f.get("code", ""))
 		if key == "":
 			key = str(f.get("id", ""))
-		if not vals.has(key):
+		if kind in ["content", "flow_target"] and (spatial_refs.has("visit_scoped") or spatial_refs.has("scoped_ids")):
+			_remap_scoped_link(f, key, vals, decls, fn_id, desc, source_key, source_name,
+				_target_key(target_data, target_map), spatial_refs, pairs_to_fill)
+		if kind == "flow_target" or not vals.has(key):
 			continue
 		var id_map: Dictionary = cell_ids if cell else instance_map
 		if kind == "content":
@@ -475,6 +527,44 @@ static func _remap_field_map(manifest: Dictionary, values, decls: Array, instanc
 	for k in pairs_to_fill:
 		vals[k] = pairs_to_fill[k]
 
+static func _remap_scoped_link(field: Dictionary, key: String, values: Dictionary, decls: Array,
+		fn: String, desc: Dictionary, source_key: String, source_name: String,
+		target: String, scope: Dictionary, pairs: Dictionary) -> void:
+	var mode: String = field.get("contentMapContext", "")
+	if mode == "paired":
+		var map_key := RefFields.effective_map_value(field, decls, values, "code")
+		if map_key == "" or not RefFields.map_key_local(map_key, source_name, source_key):
+			return
+	elif mode != "inherit":
+		return
+	var mixed: bool = desc.kind == "flow_target"
+	var value = values.get(key, field.get("default") if mixed else null)
+	var entries: Array = value.duplicate() if value is Array else [value]
+	var target_fn: String = desc.get("filter", {}).get("fn", "")
+	var changed := false
+	for i in entries.size():
+		var item = entries[i]
+		var address: Dictionary
+		if mixed:
+			if FlowTarget.kind(item) != "content" or not FlowTarget.allows(field, item):
+				continue
+			address = item
+		else:
+			if not item is String or item == "":
+				continue
+			address = {"function": target_fn if target_fn != "" else fn, "content": item}
+		if scope.has("visit_scoped"):
+			scope.visit_scoped.call(address)
+		else:
+			var id: String = scope.scoped_ids.get(content_key(address.function, address.content), "")
+			if id != "":
+				entries[i] = {"function": address.function, "content": id} if mixed else id
+				changed = true
+	if changed:
+		values[key] = entries if value is Array else entries[0]
+		if mode == "paired":
+			pairs[_key_of(decls, field.mapField)] = target
+
 ## 新内容 ID：优先按分层身份重组（目标图码 + 类型码 + 新实例码 + 功能 id），
 ## 缺任一段时沿用源 ID 前缀 + 新随机内容段，最后查重。
 static func _new_content_id(manifest: Dictionary, fn_id: String, target_data: Dictionary,
@@ -530,9 +620,9 @@ static func whole_map_document(src: Dictionary, new_name: String, new_code: Stri
 		if patch.has(key):
 			doc[key] = patch[key]
 	for ref in MapFlow.scoped_content(m, sdata):
-		var ids: Dictionary = plan.content_map.get(ref.value.function, {})
-		if ids.has(ref.value.content):
-			meta[ref.map_section][ref.field]["content"] = ids[ref.value.content]
+		var key := content_key(ref.value.function, ref.value.content)
+		if plan.scoped_ids.has(key):
+			meta[ref.map_section][ref.field]["content"] = plan.scoped_ids[key]
 	plan["document"] = doc
 	return plan
 ## entity_ref 字段引用重映射（remap_row 顶层与 C1 记录行共用）：vals = 值字典（键=字段 id），

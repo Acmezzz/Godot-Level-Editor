@@ -51,6 +51,9 @@ func run() -> void:
 			"sequence": {"code": "SEQN", "name": "Sequence", "steps": true},
 			"round_rules": {"code": "ROND", "name": "Round rules", "fields": [
 				{"id": "inputs", "code": "INPT", "kind": "input", "type": "int", "min": 1, "max": 4},
+				{"id": "role", "code": "ROLE", "kind": "input", "type": "flow_target",
+					"contentTypes": ["round_host"], "contentMapContext": "inherit"}]},
+			"round_host": {"code": "RHST", "name": "Round host", "fields": [
 				{"id": "host", "code": "HOST", "kind": "choice", "source": "entity_inst:relay"}]},
 			"signal": {"code": "SIGN", "name": "Signal", "fields": [
 			{"id": "text", "code": "TEXT", "kind": "input", "type": "string"},
@@ -126,6 +129,17 @@ func run() -> void:
 	press(form, "保存")
 	form.hide()
 	var round_target := {"function": "round_rules", "content": "project-three-inputs"}
+	app.project_shell.content_editor._library.open()
+	choose(collect(popup(), "OptionButton")[0], "round_host")
+	press(popup(), "新建…")
+	await process_frame
+	form = popup()
+	inputs = collect(form, "LineEdit")
+	inputs[0].text = "Host role"
+	inputs[1].text = "relay-host"
+	press(form, "保存")
+	form.hide()
+	var host_target := {"function": "round_host", "content": "project-relay-host"}
 	await add_screen("results", "Play a procedural course", {}, rules)
 	app._set_mode("map")
 	Generator.open(app)
@@ -204,6 +218,11 @@ func run() -> void:
 	form = popup()
 	check(form.find_child("ReferenceContextMap", true, false).get_selected_metadata() == map_code,
 		"editing the bound rules opens with the owning map selected")
+	choose(field_control(form, "role"), JSON.stringify(host_target))
+	press(form, "保存")
+	form.hide()
+	app.project_shell.content_editor._library._open_item(host_target.function, host_target.content, map_code)
+	form = popup()
 	choose(field_control(form, "host"), pawn_code)
 	press(form, "保存")
 	form.hide()
@@ -256,10 +275,13 @@ func run() -> void:
 	var copy_code: String = copy.meta.code
 	var copy_host: String = copy.objects[0].code
 	var copy_rules: Dictionary = copy.meta.contentSlots.round
+	var copy_role: Dictionary = Store.read(manifest, copy_rules.function, copy_rules.content).fields.ROLE
 	check(copy_rules.content != round_target.content and copy_host != pawn_code
-		and Store.read(manifest, copy_rules.function, copy_rules.content).fields.HOST == copy_host
-		and Store.read(manifest, round_target.function, round_target.content).fields.HOST == pawn_code,
-		"the copy owns its remapped rules without changing the original")
+		and copy_role.content != host_target.content
+		and Store.read(manifest, copy_role.function, copy_role.content).fields.HOST == copy_host
+		and Store.read(manifest, host_target.function, host_target.content).fields.HOST == pawn_code
+		and Store.read(manifest, round_target.function, round_target.content).fields.ROLE == host_target,
+		"the copy owns both documents on the remapped path; the source documents are unchanged")
 	app._set_mode("content")
 	await add_screen("instructions", "Enter course", {}, {"map": copy_code})
 	await add_screen("welcome", "Start tutorial", {"module": "signal-latch"}, {"view": "instructions"})
@@ -293,7 +315,7 @@ func run() -> void:
 		"BRD1": map_code, "ROUT": {"function": "signal", "content": "project-finished"}},
 		"the timeline keeps the paired map alongside the graph-authored destination")
 	var findings := Audit.audit(manifest)
-	check(not findings.any(func(issue): return issue.get("path", "").begins_with("round_rules/project-three-inputs.host")),
+	check(not findings.any(func(issue): return issue.get("path", "").begins_with("round_host/")),
 		"the bound rules validate their local host against the owning map")
 	check(not findings.any(func(issue): return issue.get("path", "").begins_with("signal/project-finished.actor")),
 		"the timeline outlet propagates the selected map to the ending's local actor reference")
