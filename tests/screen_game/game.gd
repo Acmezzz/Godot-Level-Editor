@@ -312,6 +312,7 @@ func _draw_screen(parent: Node, layout: Dictionary, extent: Vector2, locale: Str
 							outlets.append("accepted")
 						if row.get("module") == "course-door":
 							runtime_course["screenMarker"] = row.get("props", {}).get("marker", {})
+							runtime_course["screenCrossing"] = row.get("props", {}).get("crossing", {})
 						opened_buttons.append(button.text)
 						_follow_target.call_deferred(target))
 					buttons.append(button)
@@ -432,6 +433,7 @@ func _relay_regions(map: Dictionary, pawns: Dictionary, extent: Vector2, camera:
 		var targets := {"entity": row.code}
 		if row.asset == "relay":
 			targets["port"] = {"map": map.meta.code, "inst": row.code, "port": relay_port}
+			targets["edge"] = {"map": map.meta.code, "cell": [1, 1], "edge": "1,1|2,1"}
 		for points in [[0, 1, 2], [0, 2, 3]]:
 			var screen: Array = points.map(func(i: int): return [outline[i].x, outline[i].y])
 			regions.append({"screen": screen, "targets": targets})

@@ -17,6 +17,8 @@ const ViewData := preload("res://src/map/map_view_data.gd")
 const Graph := preload("res://src/map/cell_graph.gd")
 const Layout := preload("res://src/project/screen_layout.gd")
 const Picks := preload("res://src/project/frame_picks.gd")
+const EdgeRef := preload("res://src/map/edge_ref.gd")
+const K := preload("res://src/core/constants.gd")
 const CAPABILITY := "mapFrame"
 
 class ReferenceSelection extends RefCounted:
@@ -305,14 +307,22 @@ static func open_reference(app, decl: Dictionary, resolve: Callable, commit: Cal
 		app._set_status("请先选择此字段所属的图层。")
 		return
 	var source := decl.duplicate()
+	var edge_scope := {}
+	var prepare := Callable()
 	match mode:
 		"entity":
 			source["source"] = "entity_inst:" + ",".join(PackedStringArray(FieldWidgets.canvas_pick_types(decl)))
 		"port":
 			source["source"] = "port:" + ",".join(PackedStringArray(FieldWidgets.canvas_pick_types(decl)))
 		"edge":
-			source["source"] = "edge:"
+			prepare = func(map: Dictionary, _current: Callable) -> String:
+				var meta: Dictionary = map.meta
+				edge_scope.assign({"code": meta.code, "grid": GridSpace.resolve(meta, app.manifest).grid,
+					"w": int(meta.get("w", K.DEFAULT_MAP_W)), "h": int(meta.get("h", K.DEFAULT_MAP_H))})
+				return ""
 	var match_target := func(value: Variant) -> Dictionary:
+		if mode == "edge":
+			return _match_edge(value, edge_scope)
 		if mode in ["collision", "placement"]:
 			var point: Vector2 = value.point
 			var lo := float(decl.get("min", -999999))
@@ -342,7 +352,7 @@ static func open_reference(app, decl: Dictionary, resolve: Callable, commit: Cal
 		var selection := ReferenceSelection.new(mode, match_target, commit, read, ordered, layer)
 		parent.merge({"interaction": selection, "on_picks": selection.set_regions, "confirm_label": "应用选择"})
 	if local:
-		_open(app, mode, choose, parent)
+		_open(app, mode, choose, parent, prepare)
 	else:
 		var session = app._map_file_ctrl.sess
 		var generation: int = session.generation
@@ -351,9 +361,25 @@ static func open_reference(app, decl: Dictionary, resolve: Callable, commit: Cal
 			"hint": "使用引用字段指定地图的已保存版本。确认后只写入当前字段。",
 			"prefix": "MapGamePreview", "default_label": "当前窗口大小", "pick_mode": mode, "pick": choose, "camera": true}
 		FrameDialog.open(app, CAPABILITY, options.merged(parent),
-			_saved_snapshot.bind(app, app.manifest, key, false, Callable()), valid)
+			_saved_snapshot.bind(app, app.manifest, key, false, prepare), valid)
 
-static func _open(app, mode: String, choose: Callable, extra := {}) -> void:
+static func _match_edge(value: Variant, scope: Dictionary) -> Dictionary:
+	if not value is Dictionary or value.get("map") != scope.code or not value.get("edge") is String:
+		return {}
+	var ends := EdgeRef.parse_edge(value.edge)
+	if ends.size() != 2:
+		return {}
+	var a := Vector2i(ends[0][0], ends[0][1])
+	var b := Vector2i(ends[1][0], ends[1][1])
+	if EdgeRef.segment(scope.grid, a, b, scope.w, scope.h).is_empty():
+		return {}
+	var canonical := EdgeRef.value_of(scope.code, a, b)
+	var cell = value.get("cell")
+	if value.edge != canonical.edge or not cell is Array or cell.size() != 2 or cell[0] != a.x or cell[1] != a.y:
+		return {}
+	return {"v": canonical, "t": canonical.edge.replace("|", " — ")}
+
+static func _open(app, mode: String, choose: Callable, extra := {}, prepare := Callable()) -> void:
 	if not available(app):
 		app._set_status("打开地图并在游戏清单中声明 mapFrame 预览能力后可用。")
 		return
@@ -369,8 +395,13 @@ static func _open(app, mode: String, choose: Callable, extra := {}) -> void:
 		subject["manifest"] = app._manifest_write_payload(app.manifest)
 		subject["viewportId"] = preset
 		var revision: int = session.revision
+		var current := func() -> bool: return session.revision == revision and context_matches(app, subject)
+		if prepare.is_valid():
+			var issue: String = prepare.call(subject.map, current)
+			if not issue.is_empty():
+				return {"error": issue}
 		return {"subject": subject, "default_size": canvas.get_viewport_rect().size,
-			"current": func(): return session.revision == revision and context_matches(app, subject)}
+			"current": current}
 	FrameDialog.open(app, CAPABILITY, {"title": "关卡游戏画面预览", "button": "渲染关卡",
 		"hint": "用游戏渲染当前关卡和画布取景。未保存的地图与暂存内容会随请求传入。",
 		"prefix": "MapGamePreview", "default_label": "当前画布大小", "pick_mode": mode, "pick": choose,

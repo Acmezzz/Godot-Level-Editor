@@ -47,7 +47,8 @@ func run() -> void:
 		"preview": {"version": 1, "executable": OS.get_executable_path(), "capabilities": ["generateMap", "mapFrame"],
 			"args": ["--rendering-method", "gl_compatibility", "--audio-driver", "Dummy", "--path", "%projectpath%", "--"]},
 		"screenModules": {"course-door": {"outputs": {"accepted": {"name": "Enter", "arrivalPorts": ["arrival"]}},
-			"fields": [{"id": "marker", "kind": "input", "type": "port_ref", "of": "signal"}]},
+			"fields": [{"id": "marker", "kind": "input", "type": "port_ref", "of": "signal"},
+				{"id": "crossing", "kind": "input", "type": "edge_ref"}]},
 			"signal-latch": {"name": "Latch", "outputs": {"accepted": {"name": "Continue", "screens": true}}, "fields": [
 			{"id": "presses", "kind": "input", "type": "int", "min": 1, "default": 1}]}},
 		"functions": {"course_rules": {"code": "CRUL", "name": "Course rules", "fields": [
@@ -372,6 +373,8 @@ func run() -> void:
 	if not check(not copy.is_empty(), "copy the authored map and scoped content from the editor"):
 		quit(1)
 		return
+	check(copy.meta.gridProjection == "isometric" and copy.tiles.values().all(func(layer): return layer.is_empty()),
+		"the target is a saved isometric map with no painted tiles")
 	var copy_code: String = copy.meta.code
 	var copy_host: String = copy.objects[0].code
 	var copy_rules: Dictionary = copy.meta.contentSlots.round
@@ -596,6 +599,7 @@ func run() -> void:
 		and result.get("localActor") == copy_host
 		and result.get("arrivalPort") == "door" and result.get("arrivalInstance") == copy_host
 		and result.get("screenMarker") == {"map": copy_code, "inst": copy_host, "port": "wire"}
+		and result.get("screenCrossing") == {"map": copy_code, "cell": [1.0, 1.0], "edge": "1,1|2,1"}
 		and result.get("remotePort") == remote_port
 		and result.get("placed") == copy.objects.map(func(row): return row.code) and result.get("text") == "Screen sequence complete",
 		"the game reads the map-level completion outlet and reaches the conclusion: %s" % [report])
@@ -703,52 +707,65 @@ func add_screen(id: String, label: String, module: Dictionary, target: Dictionar
 		check(port.item_count > 1 and range(1, port.item_count).all(func(i):
 			return JSON.parse_string(port.get_item_metadata(i)).port == "wire"),
 			"unpaired module field offers the selected map's ports of the declared type")
-		var picker: Button = pop.find_child("FrameFieldReference_marker", true, false)
-		if not check(picker != null, "unpaired module port offers the game frame picker"):
+		var crossing: Control = pop.find_child("LayoutModuleField_crossing", true, false)
+		choose(crossing.find_child("ReferenceTargetMap", true, false), target.map)
+		var edges: OptionButton = crossing.find_child("ReferenceTargetValue", true, false)
+		check(edges.item_count == 1, "the occupied-edge dropdown has no choices")
+		if not await pick_relay_reference(pop, "crossing", target.map):
 			return
-		picker.pressed.emit()
-		var preview := popup()
-		var render: Button = preview.find_child("MapGamePreviewRender", true, false)
-		if not check(render != null and render.text == "渲染目标地图", "the picker targets the selected saved map"):
+		if not await pick_relay_reference(pop, "marker", target.map):
 			return
-		choose(preview.find_child("MapGamePreviewViewport", true, false), "handheld")
-		render.pressed.emit()
-		var until := Time.get_ticks_msec() + 8000
-		while render.disabled and Time.get_ticks_msec() < until:
-			await process_frame
-		var shot: TextureRect = preview.find_child("MapGamePreviewFrame", true, false)
-		if not check(shot.texture != null, "load the game-rendered map"):
-			preview.hide()
-			return
-		await process_frame
-		var image := shot.texture.get_image()
-		var pixel := Vector2(-1, -1)
-		for y in image.get_height():
-			for x in image.get_width():
-				if image.get_pixel(x, y).is_equal_approx(Color("#ffbe54")):
-					pixel = Vector2(x, y + 2)
-					break
-			if pixel.x >= 0:
-				break
-		var extent := Vector2(image.get_size())
-		var fit := minf(shot.size.x / extent.x, shot.size.y / extent.y)
-		var mouse := InputEventMouseButton.new()
-		mouse.button_index = MOUSE_BUTTON_LEFT
-		mouse.pressed = true
-		mouse.position = (shot.size - extent * fit) * 0.5 + pixel * fit
-		shot.gui_input.emit(mouse)
-		var confirm: Button = preview.find_child("MapGamePreviewConfirmPick", true, false)
-		if not check(not confirm.disabled, "the game image identifies a compatible relay port"):
-			preview.hide()
-			return
-		confirm.pressed.emit()
-		await process_frame
-		await process_frame
 	var control: OptionButton = pop.find_child("LayoutElementTarget" if module.is_empty() else "LayoutOutput_accepted", true, false)
 	choose(control, target)
 	press(pop, "保存参考视图")
 	check(not pop.visible, "publish screen " + id)
 	await process_frame
+
+func pick_relay_reference(pop: PopupPanel, field: String, map_code: String) -> bool:
+	var widget: Control = pop.find_child("LayoutModuleField_" + field, true, false)
+	choose(widget.find_child("ReferenceTargetMap", true, false), map_code)
+	var picker: Button = pop.find_child("FrameFieldReference_" + field, true, false)
+	if not check(picker != null, "unpaired module field offers the game frame picker: " + field):
+		return false
+	picker.pressed.emit()
+	var preview := popup()
+	var render: Button = preview.find_child("MapGamePreviewRender", true, false)
+	if not check(render != null and render.text == "渲染目标地图", "the picker targets the selected saved map: " + field):
+		return false
+	choose(preview.find_child("MapGamePreviewViewport", true, false), "handheld")
+	render.pressed.emit()
+	var until := Time.get_ticks_msec() + 8000
+	while render.disabled and Time.get_ticks_msec() < until:
+		await process_frame
+	var shot: TextureRect = preview.find_child("MapGamePreviewFrame", true, false)
+	if not check(shot.texture != null, "load the game-rendered map"):
+		preview.hide()
+		return false
+	await process_frame
+	var image := shot.texture.get_image()
+	var pixel := Vector2(-1, -1)
+	for y in image.get_height():
+		for x in image.get_width():
+			if image.get_pixel(x, y).is_equal_approx(Color("#ffbe54")):
+				pixel = Vector2(x, y + 2)
+				break
+		if pixel.x >= 0:
+			break
+	var extent := Vector2(image.get_size())
+	var fit := minf(shot.size.x / extent.x, shot.size.y / extent.y)
+	var mouse := InputEventMouseButton.new()
+	mouse.button_index = MOUSE_BUTTON_LEFT
+	mouse.pressed = true
+	mouse.position = (shot.size - extent * fit) * 0.5 + pixel * fit
+	shot.gui_input.emit(mouse)
+	var confirm: Button = preview.find_child("MapGamePreviewConfirmPick", true, false)
+	if not check(not confirm.disabled, "the game image identifies a compatible target: " + field):
+		preview.hide()
+		return false
+	confirm.pressed.emit()
+	await process_frame
+	await process_frame
+	return true
 
 func choose(control: OptionButton, value: Variant) -> void:
 	for i in control.item_count:
