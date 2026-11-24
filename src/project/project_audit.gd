@@ -1005,7 +1005,7 @@ static func _asset_map_count(manifest: Dictionary, asset_id: String, data: Dicti
 		if obj is Dictionary:
 			var aid := str(obj.get("asset", ""))
 			var decl := AssetDecl.by_id(manifest, aid)
-			if aid == asset_id or not _asset_fields_pointing(manifest, asset_id, decl.get("fields", []), obj.get("props", {}), false).is_empty():
+			if aid == asset_id or not _fields_pointing(manifest, "asset", asset_id, decl.get("fields", []), obj.get("props", {}), false).is_empty():
 				count += 1
 	return count
 
@@ -1024,33 +1024,14 @@ static func asset_content_refs(manifest: Dictionary, asset_id: String, bad: Arra
 		for row in staged:
 			if row is Dictionary and str(row.get("fn_id", "")) == kind and row.get("data") is Dictionary:
 				items["草稿:" + str(row.get("cid", ""))] = row.data
-		var decls: Array = []
-		decls.append_array(FunctionDecls.function_fields(manifest, str(kind)))
-		var conds = FunctionDecls.function_decl(manifest, str(kind)).get("conditions", null)
-		for cond_id in (conds as Array) if conds is Array else []:
-			var cd := ConditionDecls.condition_decl(manifest, str(cond_id))
-			if cd.get("fields", []) is Array:
-				decls.append_array(cd.get("fields", []) as Array)
 		for oid in items:
-			var data: Dictionary = items[oid]
-			var oid_s := str(oid)
-			for f in _asset_fields_pointing(manifest, asset_id, decls, data.get("fields", null)):
-				out.append({"kind": str(kind), "id": oid_s, "field": str(f)})
-			var steps = data.get("steps", null)
-			for i in steps.size() if steps is Array else 0:
-				var st = steps[i]
-				if not (st is Dictionary):
-					continue
-				var sd := StepDecls.step_by_code(manifest, str((st as Dictionary).get("step", "")))
-				var sdecls: Array = sd.get("fields", []) if sd.get("fields", []) is Array else []
-				if sdecls.is_empty():
-					continue
-				for f2 in _asset_fields_pointing(manifest, asset_id, sdecls, st.get("fields")):
-					out.append({"kind": str(kind), "id": oid_s, "field": "steps[%d].%s" % [i, f2]})
+			for section in _content_sections(manifest, kind, items[oid]):
+				for field in _fields_pointing(manifest, "asset", asset_id, section.decls, section.values):
+					out.append({"kind": str(kind), "id": str(oid), "field": section.prefix + field})
 	return out
 
-## 一组声明 + 值里，值为 asset 类引用且等于 asset_id 的字段 id 列表。
-static func _asset_fields_pointing(manifest: Dictionary, asset_id: String, decls: Array, values,
+## 按声明定位嵌套引用；普通字符串即使同名也不参与。
+static func _fields_pointing(manifest: Dictionary, kind: String, target: String, decls: Array, values,
 		coded := true, depth := 0) -> Array:
 	var out: Array = []
 	if not (values is Dictionary) or depth > 8:
@@ -1069,16 +1050,47 @@ static func _asset_fields_pointing(manifest: Dictionary, asset_id: String, decls
 			var prefix := "%s#%d." % [id, scope.path[0]]
 			if scope.path.size() == 2:
 				prefix += "fields."
-			for sub in _asset_fields_pointing(manifest, asset_id, scope.decls, scope.values, coded, depth + 1):
+			for sub in _fields_pointing(manifest, kind, target, scope.decls, scope.values, coded, depth + 1):
 				out.append(prefix + str(sub))
 		var desc := RefFields.describe(fd)
-		if str(desc.get("kind", "")) != "asset":
+		if desc.kind != kind:
 			continue
 		for v in _as_list(vals[key]):
-			if str(v) == asset_id:
+			if v is String and v == target:
 				out.append(str((fd as Dictionary).get("id", key)))
 				break
 	return out
+
+## Screen IDs are stored in declared content fields, including step and condition records.
+static func view_inbound_refs(manifest: Dictionary, id: String, staged: Array) -> Dictionary:
+	var refs: Array[String] = []
+	var bad: Array = []
+	var inspect := func(kind: String, cid: String, data: Dictionary):
+		for section in _content_sections(manifest, kind, data):
+			for field in _fields_pointing(manifest, "view", id, section.decls, section.values):
+				refs.append("%s.%s%s" % [cid, section.prefix, field])
+	for kind in ContentStore.declared_kinds(manifest):
+		var folder := ContentStore.dir_for(manifest, kind)
+		if DirAccess.dir_exists_absolute(folder) and DirAccess.open(folder) == null:
+			bad.append({"name": folder})
+		var items := ContentStore.read_all(manifest, kind, bad)
+		for cid in items:
+			inspect.call(kind, "%s/%s" % [kind, cid], items[cid])
+	for row in staged:
+		inspect.call(row.fn_id, "暂存 %s/%s" % [row.fn_id, row.cid], row.data)
+	for key in MapStore.Recovery.list_drafts(manifest):
+		var draft := MapStore.Recovery.read_draft_key(manifest, key)
+		var rows = draft.get("pendingContents", [])
+		if draft.is_empty() or not rows is Array:
+			bad.append({"name": "草稿 " + str(key)})
+			continue
+		for row in rows:
+			if not row is Dictionary or not row.get("data") is Dictionary:
+				bad.append({"name": "草稿 " + str(key)})
+				continue
+			var kind := str(row.get("fn_id", ""))
+			inspect.call(kind, "草稿 %s · %s" % [key, row.get("cid", row.get("id", kind))], row.data)
+	return {"refs": refs, "bad": bad}
 
 ## R15：草稿里的资产使用（快照实例的 asset 键 + 待提交内容载荷的字段值）。
 ## 返回引用它的草稿键数组；读不出的草稿按「有使用」保守处理。

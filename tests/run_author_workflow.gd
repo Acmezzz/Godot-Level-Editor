@@ -3099,8 +3099,43 @@ func author_signal_room(app, project: String) -> void:
 	await process_frame
 	var opened := _visible_popup(app)
 	check(collect(opened, "LineEdit").front().text == "watch-deck", "the graph opens the selected screen")
-	opened.hide()
+	var before := Store.file_digest(path)
+	press(opened, "删除视图…")
+	check(collect(app, "ConfirmationDialog").filter(func(d): return d.visible).is_empty()
+		and collect(opened, "Label").any(func(label): return label.text.contains("signal/project-watch.screen"))
+		and Store.file_digest(path) == before, "incoming content prevents deleting the screen")
+	press(opened, "复制视图…")
+	collect(opened, "LineEdit").front().text = "watch-deck-copy"
+	opened.find_child("ViewLayoutMode", true, false).button_pressed = true
 	await process_frame
+	press(opened, "复制元素")
+	await process_frame
+	var caption: LineEdit = opened.find_child("LayoutElement_text", true, false)
+	caption.text = "A different button"
+	caption.text_changed.emit(caption.text)
+	press(opened, "保存参考视图")
+	await process_frame
+	check(manifest.views.size() == 3 and manifest.views[2].view_id == "watch-deck-copy",
+		"the duplicate is independently saved under its new view ID")
+	if manifest.views.size() == 3:
+		var original: Array = manifest.views[1].layout.elements
+		var copied: Array = manifest.views[2].layout.elements
+		check(original.size() == 1 and copied.size() == 2 and original[0] == copied[0]
+			and copied[1].id != copied[0].id and copied[1].text == "A different button"
+			and copied[1].target == original[0].target,
+			"the copied element has a fresh ID and retains the authored target")
+	ReferenceViews.open(app, "watch-deck-copy")
+	opened = _visible_popup(app)
+	press(opened, "删除视图…")
+	var confirmations := collect(app, "ConfirmationDialog").filter(func(d): return d.visible)
+	check(confirmations.size() == 1, "confirm removal of the unused copy")
+	if not confirmations.is_empty():
+		confirmations[0].confirmed.emit()
+		confirmations[0].hide()
+		await process_frame
+		await process_frame
+	check(manifest.views.size() == 2 and manifest.views[1].view_id == "watch-deck",
+		"only the unreferenced view is removed")
 	check(not app.map_loaded and Store.read(manifest, "signal", "project-watch").get("fields", {}).get("PANE") == "watch-deck",
 		"the start content stores a chosen screen without creating a map")
 	var changed := manifest.duplicate(true)

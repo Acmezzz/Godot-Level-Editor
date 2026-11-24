@@ -9,6 +9,7 @@ const Validation := preload("res://src/project/manifest_validation.gd")
 const Layout := preload("res://src/project/screen_layout.gd")
 const Id := preload("res://src/content/content_id.gd")
 const GamePreview := preload("res://src/project/game_preview.gd")
+const Audit := preload("res://src/project/project_audit.gd")
 
 class Preview extends Control:
 	const FOCUS_ACTIONS := {"ui_left": "left", "ui_right": "right", "ui_up": "up", "ui_down": "down",
@@ -357,12 +358,16 @@ static func open(app, view_id := "") -> void:
 		if state.has_layout:
 			state.layout["elements"] = preview.elements
 			row["layout"] = state.layout.duplicate(true)
+	var duplicate_view := Kit.button("复制视图…", Callable(), "ghost")
+	var delete_view := Kit.button("删除视图…", Callable(), "ghost")
 	var show_row := func(index: int):
 		restore_editing.call()
 		state.row = index
 		var row: Dictionary = rows[index] if index >= 0 else state.draft
 		id.text = str(row.get("view_id", ""))
 		id.editable = index < 0
+		duplicate_view.disabled = index < 0
+		delete_view.disabled = index < 0
 		image_path.text = str(row.get("image", ""))
 		var current_hotspots = row.get("hotspots")
 		preview.hotspots = current_hotspots.duplicate(true) if current_hotspots is Array else []
@@ -415,9 +420,7 @@ static func open(app, view_id := "") -> void:
 			refill_hotspots.call(i))
 	preview.rectangle_drawn.connect(func(r: Rect2):
 		if preview.editing_layout:
-			var token := Id.new_inst_code()
-			while preview.elements.any(func(item): return item.id == token):
-				token = Id.new_inst_code()
+			var token := _element_id(preview.elements)
 			preview.elements.append({"id": token, "kind": "button", "text": "",
 				"anchors": [r.position.x, r.position.y, r.end.x, r.end.y]})
 			preview.active_element = preview.elements.size() - 1
@@ -433,7 +436,65 @@ static func open(app, view_id := "") -> void:
 			preview.hotspots[preview.selected].erase("target")
 		elif target.get_item_metadata(i) is Dictionary:
 			preview.hotspots[preview.selected]["target"] = target.get_item_metadata(i))
+	var current := func() -> bool:
+		return is_instance_valid(pop) and pop.visible and is_same(app.manifest, source) and source.get("views", []) == baseline
 	var buttons := Kit.hbox(6)
+	buttons.add_child(duplicate_view)
+	buttons.add_child(delete_view)
+	duplicate_view.pressed.connect(func():
+		if state.saving:
+			return
+		if not state.draft.is_empty() and state.draft != {"view_id": ""}:
+			notice.text = "已有未保存的新视图；请先保存或取消后再复制。"
+			return
+		stash.call()
+		var copy: Dictionary = rows[state.row].duplicate(true)
+		copy["view_id"] = ""
+		state.draft = copy
+		list.select(rows.size())
+		show_row.call(-1)
+		notice.text = "为副本填写新的视图 ID，再保存。"
+		id.grab_focus())
+	delete_view.pressed.connect(func():
+		if state.saving or not current.call():
+			return
+		var at: int = state.row
+		var key: String = rows[at].view_id
+		var block_reason := func() -> String:
+			var staged: Array = app.project_shell.content_editor.staged_rows_current_doc()
+			var uses := Audit.view_inbound_refs(source, key, staged)
+			if not uses.refs.is_empty():
+				return "视图仍被引用：" + "、".join(uses.refs.slice(0, 3)) + "。请先在流程图中改接或断开。"
+			if not uses.bad.is_empty():
+				return "无法检查引用：" + str(uses.bad[0].name)
+			return ""
+		var reason: String = block_reason.call()
+		if reason != "":
+			notice.text = reason
+			return
+		state.saving = true
+		var agreed: bool = await app._confirm_action("删除参考视图", "删除屏幕「%s」及其布局和热点？" % key, "删除视图")
+		if not agreed or not current.call():
+			state.saving = false
+			return
+		reason = block_reason.call()
+		if reason != "":
+			state.saving = false
+			notice.text = reason
+			return
+		var updated: Array = baseline.duplicate(true)
+		updated.remove_at(at)
+		var candidate := source.duplicate(true)
+		candidate["views"] = updated
+		var ok: bool = await app._save_manifest_file_async(current, candidate, "views")
+		state.saving = false
+		if not is_instance_valid(pop) or not pop.visible:
+			return
+		if not ok:
+			notice.text = "视图未删除；请重新打开后再试。"
+			return
+		app._set_status("已删除参考视图：" + key)
+		pop.hide())
 	buttons.add_child(Kit.button("加载图片", func(): load_picture.call()))
 	buttons.add_child(game_render)
 	game_render.pressed.connect(func():
@@ -520,11 +581,8 @@ static func open(app, view_id := "") -> void:
 			if ref.view == key and not image_assets.has(ref.asset):
 				notice.text = "%s 指向不存在的图片资产。" % ref.path
 				return
-		var guard := func() -> bool:
-			return is_instance_valid(pop) and pop.visible and is_same(app.manifest, source) \
-				and source.get("views", []) == baseline
 		state.saving = true
-		var ok: bool = await app._save_manifest_file_async(guard, candidate, "views") if guard.call() else false
+		var ok: bool = await app._save_manifest_file_async(current, candidate, "views") if current.call() else false
 		state.saving = false
 		if not is_instance_valid(pop) or not pop.visible:
 			return
@@ -728,12 +786,24 @@ static func _render_layout(form: VBoxContainer, preview: Preview, state: Diction
 			refresh.call(), "ghost")
 		b.disabled = to < 0 or to >= preview.elements.size()
 		actions.add_child(b)
+	actions.add_child(Kit.button("复制元素", func():
+		var copy := item.duplicate(true)
+		copy["id"] = _element_id(preview.elements)
+		preview.elements.insert(at + 1, copy)
+		preview.active_element = at + 1
+		refresh.call(), "ghost"))
 	actions.add_child(Kit.button("删除元素", func():
 		Layout.clear_focus_links(state.layout, preview.elements, item.id)
 		preview.elements.remove_at(at)
 		preview.active_element = mini(at, preview.elements.size() - 1)
 		refresh.call(), "ghost"))
 	form.add_child(actions)
+
+static func _element_id(elements: Array) -> String:
+	var id := Id.new_inst_code()
+	while elements.any(func(item): return item.id == id):
+		id = Id.new_inst_code()
+	return id
 
 static func _load_layout_image(preview: Preview, state: Dictionary, id: String) -> void:
 	if id == "" or preview.asset_textures.has(id) or not state.image_assets.has(id) or state.project_dir == "":
