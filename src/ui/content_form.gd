@@ -1,6 +1,6 @@
 extends RefCounted
 ## 内容表单 + 内容库：字段控件渲染、结构化行、内容库（复制/共享改绑/改名/删除）、
-## 批量改值与关系图入口。从 content_editor.gd 拆出的控制器，宿主 = content_editor（host 引用）。
+## 内容字段和绑定共用同一份工作副本。
 ##
 ## 三件必须分清的东西：
 ##   **控件待收集值** —— LineEdit/SpinBox 里还没提交的文本；commit()/失焦/回车才转成值，
@@ -31,7 +31,6 @@ const ReferenceUsage := preload("res://src/project/reference_usage.gd")
 const StartupTargets := preload("res://src/project/startup_targets.gd")
 const CellGraph := preload("res://src/map/cell_graph.gd")
 const ReferenceIndex := preload("res://src/project/reference_index.gd")   # B2：删除入边全景统一入口
-const BatchOps := preload("res://src/content/batch_ops.gd")   # E2：同功能批量改值
 const RIGHT_W := 360
 
 var host   # content_editor 宿主
@@ -113,14 +112,6 @@ func _build_form_block() -> Control:
 	var title := Kit.text_label("%s 内容" % fn_label, Th.TEXT, Th.FS_SMALL)
 	title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(title)
-	# E2：批量改值入口——同一张图里绑定了同一功能的实例一次改到相同值（先预览再提交）。
-	# 只在有多条本功能内容候选时出现，单实例维持「就地填」的最短路径。
-	var fn_ent := _batch_candidates(fn_id)
-	if fn_ent.size() > 1:
-		var bbtn := Kit.button("批量…", func(): _open_batch(fn_id), "ghost")
-		bbtn.tooltip_text = "同一功能的多条内容一次改同一字段（先预览命中/跳过/冲突）"
-		bbtn.add_theme_font_size_override("font_size", Th.FS_META)
-		head.add_child(bbtn)
 	var reload_btn := Kit.button("重读内容", host.reload_content_form, "ghost")
 	reload_btn.tooltip_text = "放弃此表单尚未写入的值，重读当前内容"
 	head.add_child(reload_btn)
@@ -1147,30 +1138,6 @@ func _open_lib(i: int) -> void:
 	body.add_child(Kit.popup_buttons(on_ok, func(): pop.hide(), "复用", "取消"))
 	app._open_popup(pop)
 
-## E2：同功能批量改值的候选——本图绑定了该功能、且已有内容 ID 的实例。
-## 只收实体（场景实例不参与内容绑定）；同一内容 ID 出现多次由 BatchOps 去重。
-func _batch_candidates(fn_id: String) -> Array:
-	var out: Array = []
-	if not _map_ready() or fn_id == "":
-		return out
-	var fcode := FunctionDecls.fn_code(manifest, fn_id)
-	if fcode == "":
-		return out
-	for e in app.canvas.ents_all():
-		var n := e as EntityNode
-		if n == null or not n.is_entity():
-			continue
-		for f in n.functions:
-			if not (f is Dictionary):
-				continue
-			if str((f as Dictionary).get("fn", "")) != fcode:
-				continue
-			out.append({"node": n, "code": n.code, "cid": str((f as Dictionary).get("content", ""))})
-	return out
-
-## E2 批量改值弹窗：选字段（只列同功能可写字段）→ 填目标值（复用原字段控件）
-## → 预览命中/跳过/冲突 → 「应用」逐条写。冲突不阻断其余命中，但会逐条列名。
-## 批量只改已有内容文件：不新建内容、不碰绑定（绑定编辑走正常表单）。
 func _content_scope_guard() -> Callable:
 	var ctrl = app._map_file_ctrl
 	if ctrl == null:
@@ -1179,161 +1146,6 @@ func _content_scope_guard() -> Callable:
 	var source: Dictionary = manifest
 	return func() -> bool:
 		return app._map_file_ctrl == ctrl and not ctrl.sess.stale(generation) and is_same(app.manifest, source)
-
-func _open_batch(fn_id: String) -> void:
-	if not commit():
-		return
-	var guard := _content_scope_guard()
-	var fn_code := FunctionDecls.fn_code(manifest, fn_id)
-	var bfields: Array = BatchOps.batchable_fields(manifest, fn_id)
-	if bfields.is_empty():
-		app._set_status(" 这个功能没有可批量写入的字段")
-		return
-	var cand := _batch_candidates(fn_id)
-	if cand.is_empty():
-		app._set_status(" 本图没有绑定这个功能的实例")
-		return
-	var shell: Dictionary = app._popup_body("批量改值 · %s" % FunctionDecls.function_name(manifest, fn_id),
-		"同一功能的实例改成同一个值。只改已有内容文件；先预览命中、跳过与冲突，确认后逐条写入。")
-	var pop: PopupPanel = shell.pop
-	var body: VBoxContainer = shell.body
-	# 字段选择
-	var field_opt := OptionButton.new()
-	for r in bfields:
-		field_opt.add_item("%s（%s）" % [str((r as Dictionary).get("name", "")), str((r as Dictionary).get("type", ""))])
-		field_opt.set_item_metadata(field_opt.item_count - 1, str((r as Dictionary).get("code", "")))
-	body.add_child(Kit.field_row("字段", field_opt, 40))
-	# 目标值控件位（换字段时重建）
-	var value_slot := Kit.vbox(4)
-	body.add_child(value_slot)
-	var plan_lbl := Kit.hint_label("选字段并填写目标值后点「预览」。", RIGHT_W - 40)
-	body.add_child(plan_lbl)
-	var apply_btn: Button = Kit.button("应用", func(): pass, "primary")
-	apply_btn.disabled = true
-	# lambda 按值捕获局部变量：计划与控件 commit 必须放字典里，预览写、应用读才是同一份
-	var cur := {"plan": {}, "commit": Callable()}
-	# 读控件值 → {v} 或 {err}
-	var value_of := func(fd: Dictionary, ctl: Control, commit: Callable) -> Dictionary:
-		# 空 Callable（换字段后旧提交器已清）不能 call()，否则直接报 Method not found
-		if commit is Callable and (commit as Callable).is_valid():
-			commit.call()
-		# 控件族与 _set_field 一致：CheckBox / OptionButton / LineEdit / SpinBox / 行内多控件
-		if fd.get("type") == "curve" and ctl.has_method("value"):
-			return {"v": ctl.call("value")}
-		if ctl is CheckBox:
-			return {"v": (ctl as CheckBox).button_pressed}
-		if ctl is OptionButton:
-			var ob := ctl as OptionButton
-			if ob.selected < 0:
-				return {"err": "先选一个选项"}
-			return {"v": str(ob.get_item_metadata(ob.selected))}
-		if ctl is SpinBox:
-			return {"v": (ctl as SpinBox).value if str(fd.get("type", "")) != "int" else int((ctl as SpinBox).value)}
-		if ctl is LineEdit:
-			return {"v": (ctl as LineEdit).text}
-		if ctl is TextEdit:
-			return {"v": (ctl as TextEdit).text}
-		return {"err": "这个字段的控件不支持批量（请在表单里逐个改）"}
-	var rebuild := func():
-		for c in value_slot.get_children():
-			value_slot.remove_child(c)
-			c.queue_free()
-		var code := str(field_opt.get_item_metadata(field_opt.selected)) if field_opt.selected >= 0 else ""
-		apply_btn.disabled = true
-		cur["plan"] = {}
-		cur["commit"] = Callable()
-		if code == "":
-			return
-		var fd: Dictionary = {}
-		for r in bfields:
-			if str((r as Dictionary).get("code", "")) == code:
-				fd = (r as Dictionary).get("fd", {})
-				break
-		var init = FieldWidgets.default_for(fd)
-		var built: Dictionary = FieldWidgets.build(fd, init, func(_v): pass)
-		var ctl: Control = built.ctl
-		cur["commit"] = built.commit
-		ctl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		value_slot.add_child(Kit.field_row("目标值", ctl, 48))
-		plan_lbl.text = "选字段并填写目标值后点「预览」。"
-	var read_target := func() -> Dictionary:
-		var code := str(field_opt.get_item_metadata(field_opt.selected)) if field_opt.selected >= 0 else ""
-		if code == "":
-			return {"err": "先选字段"}
-		var fd: Dictionary = {}
-		for r2 in bfields:
-			if str((r2 as Dictionary).get("code", "")) == code:
-				fd = (r2 as Dictionary).get("fd", {})
-				break
-		# 控件在 value_slot 的唯一行里：直接取行的子控件
-		var got := {"err": "没有目标值控件"}
-		if value_slot.get_child_count() > 0:
-			var row: Control = value_slot.get_child(0)
-			for ch in row.get_children():
-				if ch is Control and not (ch is Label):
-					# 连续控件（LineEdit）的待写值先冲刷，否则预览读到的是上一个值。
-					# cur.commit 是 rebuild 里按当前字段码装的，切换字段后会指向旧控件——
-					# 只在它属于当前字段的非空 Callable 时才冲刷（V4 P1：cur 重绑后刷错控件）。
-					var cb: Callable = cur.get("commit", Callable())
-					if cb is Callable and (cb as Callable).is_valid():
-						got = value_of.call(fd, ch, cb)
-					else:
-						got = value_of.call(fd, ch, Callable())
-					break
-		got["code"] = code
-		return got
-	var preview := func():
-		if not guard.call() or not commit():
-			return
-		var got: Dictionary = read_target.call()
-		if str(got.get("err", "")) != "":
-			plan_lbl.text = "⚠ " + str(got.get("err", ""))
-			apply_btn.disabled = true
-			return
-		cur["candidates"] = _batch_candidates(fn_id)
-		cur["plan"] = BatchOps.plan_field(manifest, fn_id, cur.candidates, str(got.code), got.get("v"), _content_read)
-		var txt := BatchOps.plan_text(cur["plan"])
-		plan_lbl.text = txt
-		apply_btn.disabled = str((cur["plan"] as Dictionary).get("status", "")) != "ok" \
-			or ((cur["plan"] as Dictionary).get("targets", []) as Array).is_empty()
-	field_opt.item_selected.connect(func(_i: int): rebuild.call())
-	var btn_row := Kit.hbox(8)
-	btn_row.add_child(Kit.spacer())
-	btn_row.add_child(Kit.button("预览", func(): preview.call(), "ghost"))
-	btn_row.add_child(apply_btn)
-	body.add_child(btn_row)
-	# 应用：逐条写（内容编辑器提供 staged 感知读写，不让内存里的新内容被覆盖）
-	apply_btn.pressed.connect(func():
-		var plan_now: Dictionary = cur["plan"]
-		if str(plan_now.get("status", "")) != "ok":
-			return
-		if not guard.call() or not commit():
-			return
-		var got: Dictionary = read_target.call()
-		if got.has("err") or got.get("code") != plan_now.code or got.get("v") != plan_now.new \
-				or FunctionDecls.fn_code(manifest, fn_id) != fn_code \
-				or _batch_candidates(fn_id) != cur.get("candidates", []):
-			apply_btn.disabled = true
-			plan_lbl.text = "目标值或绑定已变更，请重新预览。"
-			return
-		var plan := plan_now.duplicate(true)
-		pop.hide()
-		var res := BatchOps.apply_field(manifest, fn_id, plan, _content_read_ex,
-			func(fid: String, cid: String, data: Dictionary, digest: String) -> bool:
-				return _content_write(fid, cid, data, digest) == "ok")
-		var failed := (res.get("failed", []) as Array)
-		var msg := "批量改值：写入 %d 条" % int(res.get("written", 0))
-		if not failed.is_empty():
-			var parts: Array[String] = []
-			for f in failed:
-				parts.append("%s（%s）" % [str((f as Dictionary).get("cid", "")), str((f as Dictionary).get("why", ""))])
-			msg += "，失败 %d 条：%s" % [failed.size(), "；".join(parts)]
-		app._set_status(msg)
-		_refresh_status_only()
-		if host != null and host.has_method("_rebuild_right"):
-			host._rebuild_right())
-	rebuild.call()
-	app._open_popup(pop)
 
 ## 返回是否真的改了（调用方据此刷新列表快照）。
 func _rename_library_item(fn_id: String, cid: String, new_name: String) -> bool:

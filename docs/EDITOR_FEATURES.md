@@ -73,7 +73,6 @@ src/
 │   ├── step_timeline.gd    步骤时间轴：at/duration/track/blocking 缺省计算、回写净化、重叠/负值警告
 │   ├── timeline_clock.gd   时间参考时钟（D2）：帧/拍↔秒换算、timePreview 声明解析
 │   ├── clone_plan.gd       复制计划（C2）：新身份映射、组内引用重映射、冲突列表
-│   ├── batch_ops.gd        E2 批量改值计划：同功能同码字段的命中/跳过/冲突
 │   ├── rel_graph.gd        E2 关系图数据层：按声明内容引用建点边、写回/断开同一字段
 │   ├── ref_fields.gd       引用字段描述（C1）：entity_ref/port_ref/map_ref/mapField 配对与作用域解析
 │   ├── content_id.gd       五段身份数：地图/实体/实例 4 位 + 内容 6 位的生成与拼装
@@ -99,7 +98,7 @@ src/
 	├── collision_dialog.gd 从地形生成碰撞
 	├── content_editor.gd   内容编辑器骨架：实例列表（含筛选）/画布预览/选中与挂载补齐
 	├── fn_bind.gd          功能绑定行：添加/↑↓排序/并行/时机/启用/删除（content_editor 拆出）
-	├── content_form.gd     内容表单 + 批量改值（content_editor 拆出）
+	├── content_form.gd     内容表单与内容绑定
 	├── rel_graph_view.gd   E2 关系图画布：分层布局、节点/边命中、点击与改接回调
 	├── steps_panel.gd      演出子面板：列表/时间轴双视图 + 步骤表单（content_editor 拆出）
 	├── timeline_view.gd    演出时间轴视图：横轴时间纵轴轨道，拖块改 at/duration/轨道，重叠描红
@@ -661,9 +660,6 @@ src/
 若旧地图有多个候选继承行，先用「设为自带」确认其中一条。
 
 **内容表单**：只读 ID（未创建时显示「未创建」）+ 显示名 + 按 `fields` 声明渲染的字段。
-**批量改值（E2）**：本图有多条同功能内容时，表单标题旁出「批量…」——选一个字段（只列
-`input`/`choice` 可写字段）、填目标值（复用原字段控件）、先「预览」列出命中/跳过/冲突，
-确认后逐条写入。只改已有内容文件，不新建内容、不碰实例绑定；类型不符的文件进冲突，原值保留。
 **条件区**：功能声明引用了条件库条目（`conditions: [id, ...]`）时，逐条渲染条件名小节 +
 可调字段——与功能字段共用同一份内容 `fields`，同一条件在不同实例上参数各填各的。
 游戏还可为功能或步骤声明 `array of condition`：作者按白名单添加可重复条件，
@@ -996,7 +992,7 @@ godot --headless --path "<编辑器工程>" --script res://tests/run_tests.gd
 | `test_stores.gd` | MapStore v7 写读回环 + 复制图重发码、`code_map` 写后缓存失效、ContentStore 写读回环、写前摘要基线冲突检出（同秒同长度外部改写）、草稿按码写/按键读（空码+图名读不到带码草稿、冲突备份不列入）、历史按码分目录与失败不入历史（user:// 临时目录，跑完自清） |
 | `test_asset_scan.gd` | 资产零登记扫描制：新文件补条目发码 / 改名 md5 重链 / 消失标缺失 / 约定外条目不碰 |
 | `test_audit_c3.gd` | 挂载去重与补齐、按 `(功能 id, 内容 ID)` 查询来向 |
-| `test_batch_e2.gd` | 批量改值计划、瓦片替换计划（源过滤/切片边界/冲突不写） |
+| `test_batch_e2.gd` | 瓦片替换计划（源过滤/切片边界/冲突不写） |
 | `test_clone_plan.gd` | C2 统一复制语义（组内 A→B、组外 A→C、功能执行码与普通字符串区分、内容独立文件、整图复制） |
 | `test_geometry.gd` | 几何段：`visual_type` / `points_local` / `points_write` 与 PolyView 装配（不进树） |
 | `test_grid_space.gd` 的 `test_map_view_*` | MapViewData 层变换（offset 数组 + scale 标量、scale≤0 视为缺省）与格多边形/锚点合成 |
