@@ -106,31 +106,12 @@ static func _open_cell_destination(app, editor, parent: Window, source_current: 
 		return source_current.call() and editor.destination_row.visible \
 			and source == [editor.tool, editor.from, editor.pending.get("id", "")]
 	var rendered := {}
-	var capture := func(preset: String) -> Dictionary:
-		var resolved := RefIndex.resolve_graph_map(Maps.code_index(manifest), code)
-		if resolved.status != "ok":
-			return {"error": "目标地图不可读或地图码不唯一。"}
-		var path := Maps.path_for(manifest, resolved.key)
-		var result := Maps.read_path(path, manifest)
-		if not result.ok or result.data.meta.code != code:
-			return {"error": "目标地图不可读或地图码已变更。"}
-		var map: Dictionary = result.data
+	var prepare := func(map: Dictionary, current: Callable) -> String:
 		var cells := Graph.cell_ids(Graph.graph_of(map.meta))
 		if cells.is_empty():
-			return {"error": "请先在目标地图创建格并保存。"}
-		var digest: String = result.digest
-		var current := func() -> bool:
-			var now := RefIndex.resolve_graph_map(Maps.code_index(manifest), code)
-			return now.status == "ok" and Maps.path_for(manifest, now.key) == path and Recovery.digest(path) == digest
+			return "请先在目标地图创建格并保存。"
 		rendered.assign({"cells": cells, "current": current})
-		var default_size: Vector2 = app.canvas.get_viewport_rect().size
-		var size: Vector2 = Layout.sizes(manifest).get(preset, default_size)
-		var bounds := ViewData.scene_bounds(map, manifest)
-		var center := bounds.get_center()
-		var zoom := minf(size.x / bounds.size.x, size.y / bounds.size.y) * 0.9
-		return {"subject": {"map": map, "manifest": app._manifest_write_payload(manifest), "viewportId": preset,
-			"camera": {"center": [center.x, center.y], "zoom": zoom}, "stagedContent": []},
-			"default_size": default_size, "current": current}
+		return ""
 	var choose := func(cell: String) -> Dictionary:
 		if not rendered.cells.has(cell):
 			return {"text": "请选择目标地图已有的格。"}
@@ -140,9 +121,42 @@ static func _open_cell_destination(app, editor, parent: Window, source_current: 
 	FrameDialog.open(app, CAPABILITY, {"title": "跨地图选择终点 · " + code, "button": "渲染目标地图",
 		"hint": "目标地图使用已保存版本。确认选点后，回到起点地图应用连接。",
 		"prefix": "MapGamePreview", "default_label": "当前画布大小", "pick_mode": "cell", "pick": choose,
-		"parent": parent}, capture, valid)
+		"parent": parent}, _saved_snapshot.bind(app, manifest, code, true, prepare), valid)
 
-static func open_reference(app, decl: Dictionary, resolve: Callable, commit: Callable) -> void:
+static func _saved_snapshot(preset: String, app, manifest: Dictionary, key: String,
+		stable_code: bool, prepare: Callable) -> Dictionary:
+	var resolve := func() -> Dictionary:
+		return RefIndex.resolve_graph_map(Maps.code_index(manifest), key) if stable_code \
+			else RefIndex.resolve_map(manifest, key)
+	var resolved: Dictionary = resolve.call()
+	if resolved.status != "ok":
+		return {"error": "目标地图不可读或地图键不唯一。"}
+	var path := Maps.path_for(manifest, resolved.key)
+	var result := Maps.read_path(path, manifest)
+	if not result.ok or (stable_code and result.data.meta.code != key):
+		return {"error": "目标地图不可读或地图码已变更。"}
+	var digest: String = result.digest
+	var current := func() -> bool:
+		var now: Dictionary = resolve.call()
+		return now.status == "ok" and now.key == resolved.key and Recovery.digest(path) == digest
+	var map: Dictionary = result.data
+	if prepare.is_valid():
+		var issue: String = prepare.call(map, current)
+		if issue != "":
+			return {"error": issue}
+	var default_size: Vector2 = app.get_viewport_rect().size
+	var size: Vector2 = Layout.sizes(manifest).get(preset, default_size)
+	var bounds := ViewData.scene_bounds(map, manifest)
+	var center := bounds.get_center()
+	var zoom := minf(size.x / bounds.size.x, size.y / bounds.size.y) * 0.9
+	return {"subject": {"map": map, "manifest": app._manifest_write_payload(manifest), "viewportId": preset,
+		"camera": {"center": [center.x, center.y], "zoom": zoom}, "stagedContent": []},
+		"default_size": default_size, "current": current}
+
+static func reference_available(app, map_key: String) -> bool:
+	return GamePreview.supports(app.manifest, CAPABILITY) and (app.map_loaded or map_key != "")
+
+static func open_reference(app, decl: Dictionary, resolve: Callable, commit: Callable, window: Window) -> void:
 	var mode := FieldWidgets.pick_mode(decl)
 	var source := decl.duplicate()
 	match mode:
@@ -158,7 +172,20 @@ static func open_reference(app, decl: Dictionary, resolve: Callable, commit: Cal
 			if candidate != null and candidate == value:
 				return {"text": "目标：" + str(row.t), "apply": func(): return await commit.call(candidate)}
 		return {"text": "该画面目标不在字段的候选范围内。"}
-	_open(app, mode, choose)
+	var key := str(decl.get("_mapKey", ""))
+	var local: bool = key == "" or (app.map_loaded and key in [app.canvas.cur_map_code(), app.canvas.cur_map_name])
+	var parent := {"parent": window} if window is PopupPanel else {}
+	if local:
+		_open(app, mode, choose, parent)
+	else:
+		var session = app._map_file_ctrl.sess
+		var generation: int = session.generation
+		var valid := func() -> bool: return not session.stale(generation)
+		var options := {"title": "实景选引用 · " + key, "button": "渲染目标地图",
+			"hint": "使用引用字段指定地图的已保存版本。确认后只写入当前字段。",
+			"prefix": "MapGamePreview", "default_label": "当前窗口大小", "pick_mode": mode, "pick": choose}
+		FrameDialog.open(app, CAPABILITY, options.merged(parent),
+			_saved_snapshot.bind(app, app.manifest, key, false, Callable()), valid)
 
 static func _open(app, mode: String, choose: Callable, extra := {}) -> void:
 	if not available(app):

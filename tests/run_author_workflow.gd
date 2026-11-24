@@ -318,7 +318,9 @@ func run():
 				{"id":"destination", "code":"DEST", "name":"Branch target", "kind":"choice", "source":"content:ending",
 					"contentMapContext":"paired", "mapField":"destination_map"}
 			]}]}}, "assets":[
-			{"id": "switch", "kind": "entity", "code": "SWCH", "functions":["reaction"], "fields": [{"id":"target","type":"port_ref","of":"door"}]},
+			{"id": "switch", "kind": "entity", "code": "SWCH", "functions":["reaction"], "fields": [
+				{"id":"target","type":"port_ref","of":"door"}, {"id":"backup_map","type":"map_ref"},
+				{"id":"backup","type":"port_ref","of":"door","mapField":"backup_map"}]},
 			{"id": "button-art", "kind": "scene", "shape": "image", "texture": "button.png"},
 			{"id": "terrain", "kind": "scene", "shape": "tile", "atlas": "terrain.png", "cell": 16},
 			{"id": "terrain-alt", "kind": "scene", "shape": "tile", "atlas": "terrain-alt.png", "cell": 16},
@@ -2255,13 +2257,16 @@ func _click_pick_frame(pop: PopupPanel, at: Vector2, button := MOUSE_BUTTON_LEFT
 
 func author_frame_picks(app, manifest: Dictionary) -> void:
 	var map := Maps.new_map("frame_pick", 10, 10, "orthogonal")
+	var destination := Maps.new_map("frame_pick_destination", 10, 10, "orthogonal")
+	var destination_code: String = destination.meta.code
 	var primary: String = map.meta.layers[0].id
 	var upper: String = map.meta.layers[1].id
 	map.meta.layers[1].offset = [48, 16]
 	map.meta.layers[1].scale = 1.5
 	map.meta.cellGraph = {"spaces": {"upper-side": {"layer": upper, "origin": [40, 30], "axisX": [2, 0]}},
 		"cells": [{"id": "entry", "polygon": [[20, 20], [30, 22], [22, 31]], "neighbors": []}]}
-	map.objects = [{"asset": "switch", "code": "PICK", "layer": primary, "x": 0, "y": 0}]
+	map.objects = [{"asset": "switch", "code": "PICK", "layer": primary, "x": 0, "y": 0,
+		"props": {"backup_map": destination_code}}]
 	map.collision = [{"x": 1, "y": 1, "type": "solid", "material": "ice"}]
 	check(Maps.write(manifest, "frame_pick", map), "make a map with two game view lanes")
 	var path := Maps.path_for(manifest, "frame_pick")
@@ -2758,9 +2763,8 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 	delete_pop.hide()
 	check(await cvs.undo() and cvs.map_root == root_before_delete and cvs.cell_graph() == graph_before_delete,
 		"one undo restores the cell and its connections without rebuilding the map")
-	var destination := Maps.new_map("frame_pick_destination", 10, 10, "orthogonal")
 	destination.meta.cellGraph = {"cells": [{"id": "remote", "polygon": [[20, 20], [30, 22], [22, 31]], "neighbors": []}]}
-	var destination_code: String = destination.meta.code
+	destination.objects = [{"asset": "door", "code": "DIST", "layer": destination.meta.layers[0].id, "x": 1, "y": 1}]
 	check(Maps.write(manifest, "frame_pick_destination", destination), "save a second map with a projected graph cell")
 	app._layout_ctrl._on_map_menu_id(23)
 	edge_pop = await _render_pick_frame(app)
@@ -2813,6 +2817,25 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 	edge_pop.hide()
 	check(cvs.cell_graph().edges[0].toMap == destination_code and cvs.cell_graph().edges[0].to == "remote",
 		"the existing edge now targets the second map")
+	app._set_mode("content", "PICK")
+	var backup: Button = editor.root.find_child("FrameReference_backup", true, false)
+	check(backup != null, "a paired cross-map port exposes a game frame picker")
+	if backup == null:
+		return
+	backup.pressed.emit()
+	target_pop = await _render_pick_frame(app)
+	if target_pop == null:
+		return
+	var confirm_remote := _click_pick_frame(target_pop, Vector2(0.15, 0.25))
+	var switch: EntityNode = cvs._ent_by_code_index()["PICK"]
+	check(not confirm_remote.disabled and not switch.props.has("backup"),
+		"the remote port is selectable and remains unwritten until confirmation")
+	confirm_remote.pressed.emit()
+	await process_frame
+	check(switch.props.get("backup") == {"map": destination_code, "inst": "DIST", "port": "open"}
+		and switch.props.backup_map == destination_code and cvs.cur_map_code() == map.meta.code,
+		"the port is written on the source instance without switching the active map")
+	app._set_mode("map")
 	var saved: Dictionary = await app._map_file_ctrl.commit_document("保存实景落点及连接")
 	check(saved.get("status") == "ok", "publish positions and port selected from the game frame")
 	await app._load_map_file(path)
@@ -2827,6 +2850,7 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 		and absf(float(picks[1].point[0]) - (48.0 + (48.0 + 32.0 / 7.0) * 1.5)) < 0.02
 		and absf(float(picks[1].point[1]) - (16.0 + (32.0 + 64.0 / 7.0) * 1.5)) < 0.02
 		and result.get("opened") == doors[1].code
+		and result.get("openedBackup") == "DIST"
 		and absf(float(picks[0].transform.rotation) - PI / 2.0) < 0.001 and picks[0].transform.flip_h == true
 		and result.get("playerStart") == [88.0, 56.0]
 		and result.get("switchCopies", []).size() == 1 and result.switchCopies[0].code == copy_code

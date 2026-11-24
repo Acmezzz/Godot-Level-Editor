@@ -86,6 +86,7 @@ func _ready() -> void:
 			var route := _current if _load_board(map, "entry") and _advance_board() else ""
 			var arrival := Vector2.ZERO if route.is_empty() else Vector2(_cells[route].polygon[0])
 			_report("ready", "", {"picks": lanes, "opened": _activate_switch(map, manifest), "contours": contours,
+				"openedBackup": _activate_switch(map, manifest, "backup"),
 				"playerStart": [player.position.x, player.position.y], "switchCopies": copies, "authoredRoute": route,
 				"authoredEdge": _traversed_edge, "arrivalMap": _board_code, "arrivalVertex": [arrival.x, arrival.y]})
 		elif map.get("meta", {}).get("name") == "rule_hex" and not map.meta.get("cellGraph", {}).is_empty():
@@ -723,15 +724,16 @@ func _check_floor_route(map: Dictionary) -> Dictionary:
 			"upperPoint": [point.x, point.y], "tileTopology": tile_grid.topology}
 	return {}
 
-func _activate_switch(map: Dictionary, manifest: Dictionary) -> String:
+func _activate_switch(map: Dictionary, manifest: Dictionary, field := "target") -> String:
 	var target: Dictionary = {}
 	for obj in map.get("objects", []):
 		if obj.asset == "switch":
-			target = obj.get("props", {}).get("target", {})
+			target = obj.get("props", {}).get(field, {})
 			break
-	if target.get("map") != map.meta.code or target.get("port") != "open":
+	if target.get("port") != "open":
 		return ""
-	for obj in map.get("objects", []):
+	var target_map := map if target.get("map") == map.meta.code else _map_with_code(str(target.get("map", "")))
+	for obj in target_map.get("objects", []):
 		if obj.get("code") == target.get("inst") and obj.asset == "door":
 			for asset in manifest.get("assets", []):
 				if asset.id == obj.asset and asset.get("ports", []).any(func(p): return p.id == target.port):

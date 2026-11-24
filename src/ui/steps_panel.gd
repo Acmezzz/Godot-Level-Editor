@@ -1059,7 +1059,8 @@ func _step_field_row(fd: Dictionary, sfd: Dictionary, siblings: Array, shown: Di
 	var tip := FieldWidgets.decl_tooltip(fd)
 	if tip != "":
 		row.tooltip_text = tip
-	if FieldWidgets.wants_canvas_pick(fd) and (not _project_scope or tk != "") and host._form.can_pick_on_canvas(tk):
+	var pickable := FieldWidgets.wants_canvas_pick(fd) and (not _project_scope or tk != "")
+	if pickable and host._form.can_pick_on_canvas(tk):
 		var pick := Kit.button("画布选…", func(): _pick_step_ref(fd, apply), "ghost")
 		pick.tooltip_text = "临时切到画布点一个实例；确认才写入这一步，取消不改当前值" \
 			if not FieldWidgets.wants_edge_pick(fd) else "临时切到画布点一条格边；确认才写入这一步，取消不改当前值"
@@ -1067,14 +1068,14 @@ func _step_field_row(fd: Dictionary, sfd: Dictionary, siblings: Array, shown: Di
 			pick.tooltip_text = "临时切到画布点格图里的一格（按多边形命中）；确认才写入这一步，取消不改当前值"
 		pick.add_theme_font_size_override("font_size", Th.FS_META)
 		row.add_child(pick)
-		if FrameReference.available(app) and not bool(d.get("multiple", false)):
-			row.add_child(Kit.button("实景选…", func():
-				var save := func(value) -> bool:
-					if not apply.call(value):
-						return false
-					_rebuild_steps_form_from_data()
-					return true
-				FrameReference.open_reference(app, d, _resolve_options, save), "ghost"))
+	if pickable and not bool(d.get("multiple", false)) and FrameReference.reference_available(app, tk):
+		row.add_child(Kit.button("实景选…", func():
+			var save := func(value) -> bool:
+				if not apply.call(value):
+					return false
+				_rebuild_steps_form_from_data()
+				return true
+			FrameReference.open_reference(app, d, _resolve_options, save, row.get_window()), "ghost"))
 	return row
 
 ## E1：步骤字段的画布选点。确认后按起手时的步骤令牌 + 版本写回：
