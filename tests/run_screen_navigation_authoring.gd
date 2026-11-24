@@ -8,6 +8,7 @@ const Views := preload("res://src/ui/reference_view_library.gd")
 const Flow := preload("res://src/content/rel_graph.gd")
 const Store := preload("res://src/content/content_store.gd")
 const ScreenCanvas := preload("res://src/ui/screen_layout_canvas.gd")
+const Generator := preload("res://src/ui/map_generator_dialog.gd")
 const Editor := preload("res://src/editor.tscn")
 var app
 var failures := 0
@@ -29,6 +30,13 @@ func run() -> void:
 			"fields": [{"id": "exit_target", "kind": "input", "type": "flow_target",
 				"maps": true, "screens": true, "contentTypes": ["signal"]}]}],
 		"startup": {"screens": true}, "viewports": [{"id": "handheld", "w": 480, "h": 720}],
+		"mapGenerators": {"course": {"fields": [
+			{"id": "projection", "kind": "choice", "options": ["orthogonal", "isometric"]},
+			{"id": "placements", "kind": "input", "type": "array", "of": "record", "fields": [
+				{"id": "asset", "kind": "input", "type": "asset_ref", "assetKind": "entity"},
+				{"id": "column", "kind": "input", "type": "int", "min": 1, "max": 10}]}]}},
+		"preview": {"version": 1, "executable": OS.get_executable_path(), "capabilities": ["generateMap"],
+			"args": ["--headless", "--path", "%projectpath%", "--"]},
 		"screenModules": {"signal-latch": {"name": "Latch", "outputs": {"accepted": "Continue"}, "fields": [
 			{"id": "presses", "kind": "input", "type": "int", "min": 1, "default": 1}]}},
 		"functions": {"signal": {"code": "SIGN", "name": "Signal", "fields": [
@@ -69,10 +77,27 @@ func run() -> void:
 	form.hide()
 	await add_screen("results", "See result", {}, {"function": "signal", "content": "project-results-router"})
 	app._set_mode("map")
-	app._on_new()
+	Generator.open(app)
 	var create := popup()
-	create.find_child("NewMapName", true, false).text = "course"
-	press(create, "确定")
+	create.find_child("GeneratedMapName", true, false).text = "course"
+	choose(create.find_child("GeneratorField_projection", true, false), "orthogonal")
+	var placements: Control = create.find_child("GeneratorField_placements", true, false)
+	press(placements, "+ 添加")
+	press(placements, "+ 添加")
+	var assets := collect(placements, "OptionButton")
+	var columns := collect(placements, "SpinBox")
+	for i in 2:
+		choose(assets[i], "relay")
+		columns[i].value = 3 + 2 * i
+	var generate: Button = create.find_child("RunMapGenerator", true, false)
+	generate.pressed.emit()
+	while generate.disabled:
+		await process_frame
+	var status: String = create.find_child("GeneratedMapStatus", true, false).text
+	if not check(status.begins_with("生成完成"), "game produces a map from the authored parameters: " + status):
+		quit(1)
+		return
+	press(create, "打开为可编辑地图")
 	for i in 12:
 		await process_frame
 		if app.map_loaded and app.cur_map_name == "course":
@@ -81,9 +106,11 @@ func run() -> void:
 		quit(1)
 		return
 	var canvas: EditorCanvas = app.canvas
+	check(canvas.extract().objects.map(func(row): return int(row.x)) == [3, 5],
+		"the generated placements match the two authored record rows")
 	var base: Dictionary = await app._map_file_ctrl.commit_document("发布地图供流程选用")
 	check(base.get("status") == "ok", "publish the map before it becomes a destination")
-	var pawn: EntityNode = canvas._tool_ops_ctrl.place_object("relay", 0, Vector2(48, 48), true)
+	var pawn: EntityNode = canvas._ent_by_code_index()["R000"]
 	var pawn_code := pawn.code
 	var map_code := canvas.cur_map_code()
 	app._set_mode("content", pawn_code)
@@ -159,7 +186,7 @@ func run() -> void:
 	var result: Dictionary = report.get("result", {})
 	check(report.get("status") == "ready" and result.get("screens") == ["welcome", "instructions", "results"]
 		and result.get("visited") == ["project-results-router", "project-finished"] and result.get("board") == map_code
-		and result.get("placed") == [pawn_code] and result.get("text") == "Screen sequence complete",
+		and result.get("placed") == [pawn_code, "R001"] and result.get("text") == "Screen sequence complete",
 		"the game loads the authored map object, follows its screen reference and reaches the conclusion: %s" % [report])
 	print("SCREEN-NAV-DONE failures=", failures)
 	quit(0 if failures == 0 else 1)

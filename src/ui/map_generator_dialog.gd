@@ -131,13 +131,12 @@ func _build_params() -> void:
 	_commits.clear()
 	_values = {}
 	var id: String = _picker.get_selected_metadata()
+	var resolve: Callable = _app.project_shell.content_editor._form.project_reference_options.bind("")
 	for field in _source.mapGenerators[id].get("fields", []):
 		var key: String = field.id
 		var saved = _origin.get("parameters", {}).get(key, Generators.default_value(field))
-		var effective: Dictionary = field.duplicate()
-		effective.default = saved
-		_values[key] = saved if Generators.valid_field(effective) else Generators.default_value(field)
-		var built := Fields.build(field, _values[key], _set_param.bind(key))
+		_values[key] = saved if Generators.valid_value(field, saved) else Generators.default_value(field)
+		var built := Fields.build(field, _values[key], _set_param.bind(key), resolve)
 		built.ctl.name = "GeneratorField_" + key.validate_node_name()
 		_params.add_child(Kit.field_row(str(field.get("name", key)), built.ctl))
 		if built.get("commit", Callable()).is_valid():

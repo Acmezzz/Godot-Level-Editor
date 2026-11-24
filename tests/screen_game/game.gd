@@ -270,6 +270,10 @@ func _screen_rectangles(elements: Array, extent: Vector2, profile: String) -> Di
 
 func _preview(path: String) -> void:
 	var request: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(path))
+	if request.get("capability") == "generateMap":
+		_generate_course(path.get_base_dir(), request)
+		get_tree().quit()
+		return
 	var extent := Vector2i(request.viewport.w, request.viewport.h)
 	var surface := SubViewport.new()
 	surface.size = extent
@@ -289,6 +293,20 @@ func _preview(path: String) -> void:
 	_write_json(dir.path_join("result.json"), {"version": 1, "token": request.token,
 		"status": "ready" if ok else "error"})
 	get_tree().quit(0 if ok else 1)
+
+func _generate_course(dir: String, request: Dictionary) -> void:
+	var subject: Dictionary = request.subject
+	var target: Dictionary = subject.target
+	var objects := []
+	for row in subject.parameters.placements:
+		objects.append({"asset": row.asset, "code": "R%03d" % objects.size(),
+			"layer": "base", "x": row.column, "y": 2})
+	_write_json(dir.path_join("map.json"), {"version": target.version,
+		"meta": {"code": target.code, "name": target.name, "w": 12, "h": 8,
+			"gridProjection": subject.parameters.projection,
+			"layers": [{"id": "base", "name": "Course", "visible": true}]},
+		"spawn": [1, 2], "tiles": {}, "collision": [], "objects": objects})
+	_write_json(dir.path_join("result.json"), {"version": 1, "token": request.token, "status": "ready"})
 
 func _relay_camera(extent: Vector2) -> Transform2D:
 	return Transform2D(Vector2(3, 0), Vector2(0, 3), Vector2(extent.x * 0.5, extent.y / 9.0))
