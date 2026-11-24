@@ -113,7 +113,7 @@ func _ready() -> void:
 				_fail("Authored floor route is missing or blocked")
 				return
 			_report("ready", "", route)
-		elif not map.get("meta", {}).get("cellGraph", {}).is_empty():
+		elif not map.meta.has("generatorSource") and not map.get("meta", {}).get("cellGraph", {}).is_empty():
 			if not _load_board(map):
 				_fail("Board has no valid cells or contains a missing neighbor")
 				return
@@ -904,6 +904,10 @@ func _generated_chunk(cell: Vector2i, slots: Dictionary, seed := 0) -> Dictionar
 		map.collision.append({"x": first - 1, "y": 4})
 		map.objects[0].props = {"seedColor": seed}
 		map.objects.append(_trim_row())
+		var exit_id := "seed-exit-%d" % seed
+		map.meta["cellGraph"] = {"cells": [
+			{"id": "seed-entry", "polygon": [[0, 0], [12, 0], [6, 10]], "neighbors": [exit_id]},
+			{"id": exit_id, "polygon": [[12, 0], [24, 0], [18, 10]]}]}
 		if seed != 0:
 			map.objects.append({"asset": "door", "code": "S%d" % seed, "layer": "base", "x": seed, "y": 0})
 			map.objects.append({"asset": "button-art", "layer": "base", "x": seed, "y": 1})
@@ -928,12 +932,17 @@ func _sample_grid_delta() -> Array:
 		var objects: Array = chunk.map.objects
 		var gate: Array = objects.filter(func(row): return row.get("code") == "GATE")
 		var props: Dictionary = gate[0].get("props", {}) if not gate.is_empty() else {}
+		var author_route := _load_board(chunk.map, "author-entry") and _advance_board()
+		var author_exit := _current if author_route else ""
+		var author_edge := _traversed_edge if author_route else ""
+		var seed_exit := _current if _load_board(chunk.map, "seed-entry") and _advance_board() else ""
 		samples.append({"seed": seed, "applied": chunk.authored, "gate": _traverse_platform(chunk.map).get("gate", ""),
 			"gateLabel": props.get("label", ""), "gateSeed": props.get("seedColor", -1),
 			"removedObject": not objects.any(func(row): return row.get("code") == "TRIM"),
 			"seedObject": objects.any(func(row): return row.get("code") == "S%d" % seed),
 			"addedObject": objects.any(func(row): return row.get("props", {}).get("label") == "extra"),
 			"spawn": chunk.map.spawn, "blend": chunk.map.meta.layers[0].get("blend", ""),
+			"authorRoute": author_exit, "authorEdge": author_edge, "seedRoute": seed_exit,
 			"decor": objects.filter(func(row): return row.asset == "button-art").size(),
 			"seedCell": rows.any(func(row): return row.x == seed and row.y == 0),
 			"deleted": not rows.any(func(row): return row.x == 3 and row.y == 0),

@@ -86,7 +86,7 @@ func _build() -> void:
 	_generated_mode.name = "WorldGeneratedMode"
 	_generated_mode.size_flags_horizontal = SIZE_EXPAND_FILL
 	var modes := ["", Layout.DELTA_MODE, Layout.CONTENT_DELTA_MODE]
-	var titles := ["整块替换", "只覆盖瓦片与碰撞差量", "覆盖格位、摆放物、出生点与图层样式"]
+	var titles := ["整块替换", "只覆盖瓦片与碰撞差量", "覆盖内容差量（含有限格图）"]
 	for i in modes.size():
 		_generated_mode.add_item(titles[i])
 		_generated_mode.set_item_metadata(i, modes[i])

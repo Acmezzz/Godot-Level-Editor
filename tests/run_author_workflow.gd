@@ -1555,6 +1555,12 @@ func run():
 	app.canvas._tool_ops_ctrl.place_object("button-art", 0, app.canvas.grid.cell_center_px(Vector2i(2, 1)))
 	check(app.canvas.set_spawn_cell(Vector2i(3, 1)), "set the authored chunk entrance")
 	app.canvas.layer_set_blend(0, "add")
+	app.canvas.apply_cell_graph({"spaces": {"deck": {"layer": "base", "origin": [8, 4], "axisX": [1, 0.25]}},
+		"cells": [
+			{"id": "author-entry", "space": "deck", "polygon": [[0, 0], [16, 0], [8, 12]]},
+			{"id": "author-exit", "space": "deck", "polygon": [[16, 0], [32, 0], [24, 12]]}],
+		"edges": [{"id": "author-stairs", "from": "author-entry", "to": "author-exit",
+			"type": "stairs", "props": {"cost": 3}}]})
 	var object_save: Dictionary = await app._map_file_ctrl.commit_document("保存分块摆放物差量")
 	check(object_save.get("status") == "ok", "save generated object edit, deletion and addition")
 	app._nav_bars[0]._switch_menu.id_pressed.emit(100002)
@@ -1573,8 +1579,10 @@ func run():
 	check(objects.size() == 2 and objects.all(func(row):
 		return row.applied and row.gate == "GATE" and row.gateLabel == "author" and row.gateSeed == row.seed \
 			and row.removedObject and row.seedObject and row.addedObject and row.tilePatched \
-			and row.spawn[0] == 3 and row.spawn[1] == 1 and row.blend == "add" and row.decor == 2),
-		"across seeds the game keeps procedural objects and applies the decor, spawn, layer style and coded edits: " + str(object_report))
+			and row.spawn[0] == 3 and row.spawn[1] == 1 and row.blend == "add" and row.decor == 2 \
+			and row.authorRoute == "author-exit" and row.authorEdge == "author-stairs" \
+			and row.seedRoute == "seed-exit-%d" % int(row.seed)),
+		"both seeds keep their own playable route and accept the authored route, decor and entrance: " + str(object_report))
 	await author_resize(app, manifest)
 	await author_projection_copy(app, manifest)
 	await author_rule_grids(app, manifest)

@@ -4,6 +4,42 @@ const Delta := preload("res://src/map/generated_chunk_delta.gd")
 const Generated := preload("res://src/map/generated_map_merge.gd")
 const Maps := preload("res://src/map/map_store.gd")
 
+func test_graph_delta_keeps_seed_topology_and_rejects_dangling_endpoints() -> void:
+	var base := Maps.new_map("seed", 8, 8, "orthogonal")
+	var poly := [[0, 0], [8, 0], [0, 8]]
+	base.meta.cellGraph = {"spaces": {"deck": {"origin": [0, 0]}},
+		"cells": [{"id": "a", "polygon": poly, "space": "deck", "neighbors": ["b"]},
+			{"id": "b", "polygon": poly}],
+		"edges": [{"id": "link", "from": "a", "to": "b", "props": {"cost": 9}}]}
+	var authored := base.duplicate(true)
+	var graph: Dictionary = authored.meta.cellGraph
+	graph.spaces.deck.origin = [12, 5]
+	graph.cells.pop_back()
+	graph.cells.append({"id": "c", "polygon": poly})
+	graph.cells[0].neighbors = ["c"]
+	graph.edges[0].to = "c"
+	graph.edges[0].props.cost = 3
+	Generated.attach(authored, base, "demo", {})
+	var plan := Delta.compile(authored, Delta.CONTENT)
+	var runtime := base.duplicate(true)
+	graph = runtime.meta.cellGraph
+	graph.cells.append({"id": "seed", "polygon": poly})
+	graph.cells[0].neighbors.append("seed")
+	graph.edges[0].props["seedOnly"] = true
+	graph.spaces.deck["name"] = "Seed deck"
+	var result := Delta.apply(runtime, plan)
+	eq(result.error, "", "merge authored and seed routes")
+	if result.has("map"):
+		var out: Dictionary = result.map.meta.cellGraph
+		eq(out.cells.map(func(row): return row.id), ["a", "seed", "c"], "patch by stable ID")
+		eq(out.cells[0].neighbors, ["seed", "c"], "retain seed-only adjacency")
+		eq(out.spaces.deck, {"origin": [12, 5], "name": "Seed deck"}, "retain unrelated space fields")
+		eq(out.edges[0].props, {"cost": 3, "seedOnly": true}, "retain unrelated edge properties")
+	graph.edges.append({"id": "seed-link", "from": "seed", "to": "b"})
+	var conflict := Delta.apply(runtime, plan)
+	ok(not conflict.has("map") and conflict.error.contains("seed-link"), "do not leave a dangling route")
+	eq(graph.edges[0].to, "b", "failed overlay leaves runtime unchanged")
+
 func test_stable_identity_conflict_rejects_the_entire_patch() -> void:
 	var base := Maps.new_map("seed", 8, 8, "orthogonal")
 	var row := {"asset": "door", "code": "GATE", "layer": base.meta.layers[0].id,

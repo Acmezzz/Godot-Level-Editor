@@ -72,6 +72,10 @@ static func compile(authored: Dictionary, mode: String) -> Dictionary:
 			if not edits.is_empty():
 				styles[meta.layers[i].id] = edits
 		result["layer_style"] = styles
+		var topology := _compile_graph(base.meta.get("cellGraph", {}), meta.get("cellGraph", {}), meta.layers)
+		if topology.has("error"):
+			return topology
+		result["cell_graph"] = topology
 	return result
 
 ## Computes a new map. A conflict never mutates or partly patches the runtime map.
@@ -136,6 +140,14 @@ static func apply(runtime: Dictionary, plan: Dictionary) -> Dictionary:
 						layer[key] = value
 			out["meta"] = meta.duplicate()
 			out.meta.layers = layers
+		var topology: Dictionary = plan.get("cell_graph", {})
+		if not topology.is_empty():
+			var patched_graph := _apply_graph(meta.get("cellGraph", {}), topology, meta.layers)
+			if patched_graph.has("error"):
+				return patched_graph
+			if is_same(out.meta, meta):
+				out["meta"] = meta.duplicate()
+			out.meta["cellGraph"] = patched_graph.graph
 	var collision = _apply_grid(runtime.get("collision", []), plan.grid.collision, false)
 	if collision == null or not runtime.get("tiles", {}) is Dictionary:
 		return {"error": "运行时格位无效或重复。"}
@@ -149,6 +161,153 @@ static func apply(runtime: Dictionary, plan: Dictionary) -> Dictionary:
 		tiles[id] = patched
 	out["tiles"] = tiles
 	return {"error": "", "map": out}
+
+static func _compile_graph(base: Variant, authored: Variant, layers: Array) -> Dictionary:
+	if _same(base, authored):
+		return {}
+	var before := _graph_index(base)
+	var after := _graph_index(authored)
+	if before.is_empty() or after.is_empty():
+		return {"error": "基线或作者格图的格、边或空间无效。"}
+	var problem := _graph_links_problem(after, layers)
+	if not problem.is_empty():
+		return {"error": problem}
+	var groups := {}
+	for group in ["spaces", "cells", "edges"]:
+		var edits := {}
+		for id in before[group]:
+			if not after[group].has(id):
+				edits[id] = {"op": "remove"}
+			elif not _same(before[group][id], after[group][id]):
+				edits[id] = {"op": "update", "base": before[group][id], "value": after[group][id]}
+		for id in after[group]:
+			if not before[group].has(id):
+				edits[id] = {"op": "add", "value": after[group][id]}
+		groups[group] = edits
+	return {"groups": groups, "base": before.extra, "value": after.extra}
+
+static func _apply_graph(runtime: Variant, plan: Dictionary, layers: Array) -> Dictionary:
+	var live := _graph_index(runtime)
+	if live.is_empty():
+		return {"error": "当前种子的有限格图无效。"}
+	for group in plan.groups:
+		var rows: Dictionary = live[group]
+		for id in plan.groups[group]:
+			var edit: Dictionary = plan.groups[group][id]
+			match edit.op:
+				"remove":
+					rows.erase(id)
+				"add":
+					if rows.has(id):
+						return {"error": "格图 %s/%s 与当前种子重码。" % [group, id]}
+					rows[id] = edit.value
+				"update":
+					if not rows.has(id):
+						return {"error": "当前种子缺少要修改的格图条目 %s/%s。" % [group, id]}
+					var row := _overlay_dict(rows[id], edit.base, edit.value)
+					if group == "cells" and not _same(edit.base.get("neighbors", []), edit.value.get("neighbors", [])):
+						row["neighbors"] = _overlay_neighbors(rows[id].get("neighbors", []),
+							edit.base.get("neighbors", []), edit.value.get("neighbors", []))
+					rows[id] = row
+	var problem := _graph_links_problem(live, layers)
+	if not problem.is_empty():
+		return {"error": problem}
+	var graph := _overlay_dict(live.extra, plan.base, plan.value)
+	graph["cells"] = live.cells.values()
+	if not live.spaces.is_empty() or runtime.has("spaces"):
+		graph["spaces"] = live.spaces
+	if not live.edges.is_empty() or runtime.has("edges"):
+		graph["edges"] = live.edges.values()
+	return {"graph": graph.duplicate(true)}
+
+static func _graph_index(graph: Variant) -> Dictionary:
+	if not graph is Dictionary or not graph.get("spaces", {}) is Dictionary:
+		return {}
+	var result := {"spaces": graph.get("spaces", {}).duplicate(), "extra": graph.duplicate()}
+	for row in result.spaces.values():
+		if not row is Dictionary:
+			return {}
+	for group in ["cells", "edges"]:
+		var rows := {}
+		var values = graph.get(group, [])
+		if not values is Array:
+			return {}
+		for row in values:
+			if not row is Dictionary or not row.get("id") is String or row.id.is_empty() or rows.has(row.id):
+				return {}
+			if group == "cells" and not row.get("neighbors", []) is Array:
+				return {}
+			rows[row.id] = row
+		result[group] = rows
+	for key in ["cells", "edges", "spaces"]:
+		result.extra.erase(key)
+	return result
+
+static func _overlay_neighbors(runtime: Array, base: Array, authored: Array) -> Array:
+	var original := {}
+	var ranks := {}
+	for id in base:
+		original[id] = true
+	for i in authored.size():
+		ranks[authored[i]] = i
+	var result := runtime.filter(func(id): return not original.has(id) or ranks.has(id))
+	var retained := {}
+	for id in result:
+		retained[id] = true
+	for id in authored:
+		if not original.has(id) and not retained.has(id):
+			result.append(id)
+			retained[id] = true
+	# Preserve seed order unless the author reordered existing destinations.
+	var before := base.filter(func(id): return ranks.has(id))
+	var after := authored.filter(func(id): return original.has(id))
+	if not _same(before, after):
+		var ordered := result.filter(func(id): return ranks.has(id))
+		ordered.sort_custom(func(a, b): return ranks[a] < ranks[b])
+		var cursor := 0
+		for i in result.size():
+			if ranks.has(result[i]):
+				result[i] = ordered[cursor]
+				cursor += 1
+	return result
+
+static func _graph_links_problem(graph: Dictionary, layers: Array) -> String:
+	var layer_ids := {}
+	for layer: Dictionary in layers:
+		layer_ids[layer.id] = true
+	for id in graph.spaces:
+		var row: Dictionary = graph.spaces[id]
+		var layer = row.get("layer", "")
+		if layer != "" and not layer_ids.has(layer):
+			return "格图空间 %s 找不到图层 %s。" % [id, layer]
+		var x := _graph_point(row.get("axisX", [1, 0]))
+		var y := _graph_point(row.get("axisY", [0, 1]))
+		var origin := _graph_point(row.get("origin", [0, 0]))
+		var frame := Transform2D(x, y, origin)
+		if (not frame.is_finite() or absf(x.normalized().cross(y.normalized())) < 0.000001
+				or not frame.affine_inverse().is_finite()):
+			return "格图空间 %s 的合并坐标轴不可逆。" % id
+	for id in graph.cells:
+		var row: Dictionary = graph.cells[id]
+		var space = row.get("space", "")
+		if space != "" and not graph.spaces.has(space):
+			return "格 %s 找不到空间 %s。" % [id, space]
+		for neighbor in row.get("neighbors", []):
+			if not graph.cells.has(neighbor):
+				return "格 %s 的邻接目标 %s 已不存在。" % [id, neighbor]
+	for id in graph.edges:
+		var edge: Dictionary = graph.edges[id]
+		if not graph.cells.has(edge.get("from")) or (edge.get("toMap", "") == "" and not graph.cells.has(edge.get("to"))):
+			return "格图边 %s 的本地端点已不存在。" % id
+	return ""
+
+static func _graph_point(pair: Variant) -> Vector2:
+	if not pair is Array or pair.size() != 2:
+		return Vector2(NAN, NAN)
+	for value in pair:
+		if not (value is int or value is float):
+			return Vector2(NAN, NAN)
+	return Vector2(pair[0], pair[1])
 
 static func _object_index(rows: Variant) -> Dictionary:
 	var coded := {}
