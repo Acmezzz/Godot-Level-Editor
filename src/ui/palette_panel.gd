@@ -115,7 +115,7 @@ func _set_grid(tl: ItemList, cols: int, col_w: int) -> void:
 	tl.fixed_column_width = col_w
 
 ## 点击路由：类别视图点类别 → 钻入；资产视图点返回行 → 回类别列表；点瓦片 → 原有选瓦片流程
-func on_tile_click(i: int, at: Vector2, mb: int) -> void:
+func on_tile_click(i: int, _at: Vector2, _mb: int) -> void:
 	var tl: ItemList = app.tile_list
 	var md = tl.get_item_metadata(i)
 	if md is Dictionary:
@@ -135,7 +135,7 @@ func on_tile_click(i: int, at: Vector2, mb: int) -> void:
 			_cat = str(md.get("cat"))
 			fill_tiles()
 			return
-	app._on_tile_pick(i, at, mb)
+	app._editor_state_ctrl.pick_tile(i)
 
 ## 类别统计（首次出现顺序；无 cat 用图集条目名兜底，再退「未分类」）
 func _build_cats(pal: Array, fb: String) -> void:

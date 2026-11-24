@@ -2418,7 +2418,7 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 	var original_hash := FileAccess.get_sha256(path)
 	await app._load_map_file(path)
 	var cvs = app.canvas
-	app._on_layer(0)
+	app._editor_state_ctrl.apply("", 0)
 	cvs.stamp_asset = "door"
 	cvs.place_kind = "object"
 	cvs.snap_to_grid = true
@@ -2521,7 +2521,7 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 	var source_switch: EntityNode = cvs._ent_by_code_index()["PICK"]
 	cvs.commit_selection(source_switch)
 	cvs.place_kind = "object"
-	app._on_layer(0)
+	app._editor_state_ctrl.apply("", 0)
 	var handle: Dictionary = cvs._link_handles()[0]
 	var source_port := {"x": -5, "y": 3}
 	check(handle.from == cvs.port_position(source_switch, source_port) and cvs._link_handles().size() == 1,

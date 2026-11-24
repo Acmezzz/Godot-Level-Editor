@@ -127,7 +127,7 @@ func _run() -> void:
 				if e is EntityNode and (e as EntityNode).asset != "":
 					pick.append(e)
 			if pick.size() > 1:
-				app._apply_state("select", _ent_layer(app, pick[0]))
+				app._editor_state_ctrl.apply("select", _ent_layer(app, pick[0]))
 				# 取靠近地图中心的一簇，保证外接框和文字都在可视区内
 				var meta: Dictionary = app.canvas.map_data.get("meta", {})
 				var mid := Vector2(float(meta.get("w", 40)) * 8.0, float(meta.get("h", 22)) * 8.0)
@@ -147,7 +147,7 @@ func _run() -> void:
 			for k in L.size():
 				if str(L[k].get("type", "tiles")) == "grid":
 					ci = k
-			app._on_layer(ci)
+			app._editor_state_ctrl.apply("", ci)
 			await process_frame
 			await process_frame
 			print("MEASURE coll_visible=%s tile_list=%s ents=%s" % [
@@ -155,14 +155,14 @@ func _run() -> void:
 				str(app.tile_list.visible), str(app.ent_list.visible)])
 		"decor_layer":
 			# 装饰层没有独立资产清单：左栏应为空状态，不显示地形瓦片
-			app._on_layer(1)
+			app._editor_state_ctrl.apply("", 1)
 			await process_frame
 			await process_frame
 			var tl: ItemList = app.tile_list
 			print("MEASURE decor_items=%d" % tl.item_count)
 		"ents_page":
 			# v2：切到实体层 = 唯一的「换到实体资产」入口（页签按钮已删）
-			app._on_layer(_any_ent_layer(app))
+			app._editor_state_ctrl.apply("", _any_ent_layer(app))
 		"layer_menu":
 			# v2 §2.2：层下拉展开，应看到每一层一行 + 👁/🔒
 			app._layout_ctrl._toggle_layer_menu()
@@ -177,7 +177,7 @@ func _run() -> void:
 				if e is EntityNode and (e as EntityNode).asset != "":
 					pick2.append(e)
 			if pick2.size() > 1:
-				app._apply_state("", _ent_layer(app, pick2[0]))
+				app._editor_state_ctrl.apply("", _ent_layer(app, pick2[0]))
 				app.canvas.selected_multi = pick2.slice(0, 2)
 				app.canvas.selected_entity = pick2[0]
 				app._on_entity_selected(pick2[0])
@@ -191,7 +191,7 @@ func _run() -> void:
 				if e is EntityNode and (e as EntityNode).asset != "":
 					pickx.append(e)
 			if pickx.size() > 1:
-				app._apply_state("select", _ent_layer(app, pickx[0]))
+				app._editor_state_ctrl.apply("select", _ent_layer(app, pickx[0]))
 				app.canvas.selected_multi = pickx.slice(0, 3)
 				app.canvas.selected_entity = pickx[0]
 				app._on_entity_selected(pickx[0])

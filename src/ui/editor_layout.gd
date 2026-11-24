@@ -47,7 +47,7 @@ func _init(host) -> void:
 	_popups_ctrl = Popups.new(self)
 func _build_editor_ui() -> void:
 	app._nav_bars.clear()  # 重建时丢弃旧顶栏导航条引用（控件已 queue_free）
-	app._ensure_editor_controllers()
+	app._editor_state_ctrl = preload("res://src/canvas/editor_state.gd").new(app)
 	for c in app.get_children():
 		app.remove_child(c)
 		c.queue_free()
@@ -129,10 +129,10 @@ func _build_editor_ui() -> void:
 	app.canvas.pick_mode_picked.connect(app._on_pick_candidate)
 	app.canvas.pick_mode_cancelled.connect(app._on_pick_cancelled)
 	_pick_ok.pressed.connect(func(): app._end_canvas_pick(true))
-	# 吸管：画布请求切工具/层，统一走 _apply_state 单一写入口
-	app.canvas.tool_requested.connect(app._apply_state)
+	# 吸管：画布请求切工具/层，交由编辑状态控制器处理
+	app.canvas.tool_requested.connect(app._editor_state_ctrl.apply)
 	app._fill_palettes()
-	app._apply_state("paint", 0)  # 初始：地形层 + 涂刷，按钮高亮由 _sync_ui 统一刷新
+	app._editor_state_ctrl.apply("paint", 0)  # 初始：地形层 + 涂刷，按钮高亮由 sync_ui 统一刷新
 	app._set_map_loaded(false)  # 防呆：没开地图前禁用全部编辑交互
 	_build_project_view()
 	app._sync_panel_buttons("map")  # 两个顶栏导航条都建好了，初始按下「关卡」
@@ -384,7 +384,7 @@ func _build_palette_column() -> PanelContainer:
 	app.ent_list.max_columns = 1
 	app.ent_list.allow_reselect = true
 	app.ent_list.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	app.ent_list.item_clicked.connect(app._on_ent_pick)
+	app.ent_list.item_clicked.connect(app._editor_state_ctrl.pick_object)
 	app.ent_list.visible = false
 	holder.add_child(app.ent_list)
 	full.call(app.ent_list)
@@ -455,7 +455,6 @@ func _build_palette_column() -> PanelContainer:
 	# 左栏只管「给画布喂什么」（图层 + 调色板）；
 	app._map_file_ctrl = preload("res://src/ui/map_file.gd").new(app)
 	app._playtest_ctrl = preload("res://src/ui/playtest_controller.gd").new(app, app._map_file_ctrl)
-	app._editor_state_ctrl = preload("res://src/canvas/editor_state.gd").new(app)
 	return col
 
 ## 左栏列表切换：which 由 place_kind / 当前类别决定——
@@ -484,14 +483,9 @@ func _palette_empty_visible(list: ItemList, visible_now: bool) -> void:
 ## 瓦片图集 + 图片/实体统一摆放列表。切换不重建整个左栏，只替换列表内容。
 func set_asset_category(cat: String) -> void:
 	var kind := "tiles" if cat == "tiles" else "object"
-	# 停在碰撞元层时选资产类别 = 想换「回去以后用什么画」：记成待恢复笔刷，
-	# 不直接改碰撞层当前的 place_kind（否则离开碰撞层时会被旧值盖掉）。
-	if app.canvas.active_layer == app.canvas.collision_index():
-		app._editor_state_ctrl.remember_brush(kind)
-	else:
-		app.canvas.place_kind = kind
+	app._editor_state_ctrl.set_brush(kind)
 	app._palette_ctrl.set_category(cat)
-	app._apply_state("")
+	app._editor_state_ctrl.sync_ui()
 
 ## 图层类型小工具（editor_layout 自用）：栈层都是瓦片层，只有碰撞是栈外元层
 func _layer_type_of(i: int) -> String:
@@ -752,7 +746,7 @@ func _toggle_sel_visible(v: bool) -> void:
 		app.canvas._undo_history_ctrl.inst_commit(pre.get("rows", {}))
 	app.canvas._mark()
 
-## 图层面板已收进层下拉，保留下钻点供既有调用方（editor_state._sync_ui）使用。
+## 图层面板已收进层下拉，保留下钻点供既有调用方（editor_state.sync_ui）使用。
 func _build_project_view() -> void:
 	app.project_shell = app.ProjectShellScript.new(app)
 	app.project_shell.set_anchors_preset(Control.PRESET_FULL_RECT)

@@ -278,7 +278,7 @@ func _entity_sizes() -> Dictionary:
 # —— 快捷键（app 级唯一键盘通道：画布在 SubViewport 里收不到键盘） ——
 # 方向键微调的撤销会话窗口——1 秒内的连续按键合并为一个撤销步
 var _nudge_undo_msec := 0
-# 最近使用瓦片（会话内记忆，最多 8 格；_on_tile_pick 记录，palette_panel 置顶渲染）
+# 最近使用瓦片（会话内最多 8 格；笔刷选择时记录，调色板置顶显示）
 var tile_mru: Array = []
 # 图层面板已并入层下拉，行容器字段随之删除
 ## 只在真正处理了按键时才 set_input_as_handled；未匹配的键放行，不再无条件吞键。
@@ -500,18 +500,6 @@ func _shortcut_input(event: InputEvent) -> void:
 				_set_mode("content")
 				get_viewport().set_input_as_handled()
 
-# —— 工具 / 图层 / 资产 三者联动 ——
-#
-# 这三者本来是互相触发的，谁都能改另外两方，结果互相覆盖：
-# 点资产 A 改工具 → 工具又改图层 → 图层又改工具…
-# 旧实现里就会出现「点了资产变成涂刷，但工具按钮还高亮着原工具」，
-# 或者「在实体层点涂刷，图层被悄悄踢回地形」。
-#
-# 现在只有一个方向：**一个入口写状态，其它全部从状态派生**。
-# _apply_state(tool=?, layer=?) 是唯一的写入口；
-# _sync_ui() 把按钮高亮/层下拉/辅助控件从 canvas 的真实状态刷出来。
-# 任何交互（点导航按钮、切图层、点资产、按快捷键）都只调用这两者，不各写一份。
-
 func _layer_label(i: int) -> String:
 	# 层名来自地图 meta.layers；碰撞元层排在栈外（下标 = 层数）；无图/越界回退 "?"
 	if canvas == null or not map_loaded:
@@ -645,7 +633,7 @@ func _set_map_loaded(loaded: bool) -> void:
 	else:
 		tile_list.modulate = Color(1, 1, 1, 1)
 		ent_list.modulate = Color(1, 1, 1, 1)
-		_sync_ui()
+		_editor_state_ctrl.sync_ui()
 		# 地图载入后：清掉引导态，换成「未选中实体」的提示
 		selected_spr = null
 	_layout_ctrl._refresh_dirty_badge()
@@ -851,28 +839,12 @@ func _save_manifest_file_async(guard := Callable(), snapshot := {}, publish_key 
 	manifest.erase("_codes_issued_now")
 	manifest["_manifest_digest"] = txt.sha256_text()
 	return true
-## —— 拆到 src/canvas/editor_state.gd 的委托（调用点保持不变） ——
-func _apply_state(tool := "", layer := -1) -> void:
-	_editor_state_ctrl._apply_state(tool, layer)
 
-func _sync_ui() -> void:
-	_editor_state_ctrl._sync_ui()
 
-func _on_layer(i: int) -> void:
-	_editor_state_ctrl._on_layer(i)
-
-func _on_tile_pick(i: int, _at: Vector2 = Vector2.ZERO, _mb: int = 0) -> void:
-	_editor_state_ctrl._on_tile_pick(i, _at, _mb)
-
-func _on_ent_pick(i: int, _at: Vector2 = Vector2.ZERO, _mb: int = 0) -> void:
-	_editor_state_ctrl._on_ent_pick(i, _at, _mb)
 ## —— 拆到 src/ui/editor_layout.gd 的委托（调用点保持不变） ——
 func _build_editor_ui() -> void:
 	_ensure_editor_controllers()
 	_layout_ctrl._build_editor_ui()
-
-func _set_palette_page(which: String) -> void:
-	_layout_ctrl._set_palette_page(which)
 
 ## 状态栏唯一写入口：按当前视图分派——项目页（内容/资产）有自己的状态栏，
 ## 只写关卡那条会让内容页里「实例已不存在」这类提示看不见（标签此时是隐藏的）。

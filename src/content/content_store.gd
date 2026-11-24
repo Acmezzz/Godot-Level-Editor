@@ -239,7 +239,3 @@ static func remove_ex(m: Dictionary, kind: String, id: String) -> Dictionary:
 	if DirAccess.remove_absolute(path) != OK:
 		return {"ok": false, "backed_up": true, "error": "文件不可删（可能被占用），备份已留"}
 	return {"ok": true, "backed_up": true, "error": ""}
-
-## 兼容旧调用点的布尔版（无引用检查的简单删除）。新代码请用 remove_ex 以便报告备份结果。
-static func remove(m: Dictionary, kind: String, id: String) -> bool:
-	return bool(remove_ex(m, kind, id).get("ok", false))

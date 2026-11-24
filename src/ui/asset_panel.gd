@@ -350,24 +350,16 @@ func _use_on_canvas(sid: String) -> void:
 		host.canvas.paint_cell = cell
 		host.canvas.paint_asset = sid
 		host.canvas.stamp_thumb = null
-		_set_brush_kind(host, "tiles")
-		host._apply_state("paint")
+		host._editor_state_ctrl.set_brush("tiles")
+		host._editor_state_ctrl.sync_ui()
 		host._set_status("画布笔刷已设为瓦片资产 %s（切片 %d,%d）" % [AssetDecl.label(manifest, sid), cell.x, cell.y])
 	else:
 		host.canvas.stamp_asset = sid
 		host.canvas.stamp_thumb = _asset_texture(d)
-		_set_brush_kind(host, "object")
-		host._apply_state("stamp")
+		host._editor_state_ctrl.set_brush("object")
+		host._editor_state_ctrl.sync_ui()
 		host._set_status("画布笔刷已设为 %s：在画布上点一下即可摆放" % AssetDecl.label(manifest, sid))
 	host._set_mode("map")
-
-## 图鉴带资产回画布（A1）：停在碰撞元层时只记「回去用什么画」，
-## 直接写 place_kind 会在离开碰撞层时被恢复值盖掉。
-func _set_brush_kind(host, kind: String) -> void:
-	if host.canvas.active_layer == host.canvas.collision_index():
-		host._editor_state_ctrl.remember_brush(kind)
-	else:
-		host.canvas.place_kind = kind
 
 func _enable_asset(sid: String) -> void:
 	var candidate := manifest.duplicate(true)

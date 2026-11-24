@@ -515,7 +515,7 @@ func _open_unsaved_map(n: String, data: Dictionary, action: String) -> bool:
 	app._set_map_loaded(true)
 	app.canvas._undo_history_ctrl.clear_history()
 	app.canvas.modified_flag = true
-	app._sync_ui()
+	app._editor_state_ctrl.sync_ui()
 	app._set_status(" %s %s（先保存再试玩）" % [action, n])
 	return true
 

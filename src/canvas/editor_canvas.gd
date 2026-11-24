@@ -746,7 +746,7 @@ var _rebuild_gen := 0
 signal tool_requested(tool: String, layer: int)
 
 ## 吸管：从顶层向下取光标格瓦片为当前笔刷；吸到哪层就切到哪层。
-## 经 tool_requested 信号走 app._apply_state 单一写入口切层，保持左栏与状态同步。
+## 通过 tool_requested 让编辑状态控制器切层，保持左栏与状态同步。
 ## V4 P1：拾取格按**各层自己的**局部空间换算（层偏移/缩放不同），隐藏层不参与，
 ## 并真正切到「涂刷」工具——传出的工具名以前被忽略，吸管状态会留在原地。
 func _pick_tile(pos: Vector2) -> void:
@@ -768,7 +768,7 @@ func _pick_tile(pos: Vector2) -> void:
 		paint_asset = asset_of_source(tn.get_cell_source_id(c))
 		set_tile_alt(MapFormat.alt_of_godot(tn.get_cell_alternative_tile(c)))
 		# 不直写 active_layer——直写会短路 editor_state 的切层分支（状态文案不出）；
-		# 经 tool_requested 走 _apply_state 单一写入口
+		# 通过 tool_requested 切换笔刷与图层
 		_hint("已吸取 %s %s（切到该层涂刷）" % [str(ac), MapFormat.alt_label(tile_alt)])
 		tool_requested.emit("paint", li)
 		return

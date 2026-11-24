@@ -63,7 +63,7 @@ func _refresh_layer_panel() -> void:
 		var row = app.UiKitScript.hbox(2)
 		var sel_btn = app.UiKitScript.button(lname, func():
 			_layer_menu.hide()
-			app._on_layer(i), "ghost")
+			app._editor_state_ctrl.apply("", i), "ghost")
 		sel_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		sel_btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		sel_btn.add_theme_font_size_override("font_size", app.UiThemeScript.FS_SMALL)
@@ -129,7 +129,7 @@ func _open_layer_manager() -> void:
 		await app.canvas.layer_add(_layer_mgr_input.text)
 		_layer_mgr_input.clear()
 		_rebuild_layer_mgr()
-		app._sync_ui(), "primary"))
+		app._editor_state_ctrl.sync_ui(), "primary"))
 	_layer_mgr_body.add_child(row)
 	var close_btn: Button = app.UiKitScript.button("关闭", func(): _layer_mgr.hide(), "plain")
 	close_btn.size_flags_horizontal = Control.SIZE_SHRINK_END
@@ -186,7 +186,7 @@ func _layer_mgr_row(i: int, decl: Dictionary) -> Control:
 			_rebuild_layer_mgr()
 			return
 		await app.canvas.layer_rename(at, s)
-		app._sync_ui())
+		app._editor_state_ctrl.sync_ui())
 	row.add_child(nm)
 	var vis := CheckBox.new()
 	vis.button_pressed = bool(decl.get("visible", true))
@@ -197,7 +197,7 @@ func _layer_mgr_row(i: int, decl: Dictionary) -> Control:
 			_rebuild_layer_mgr()
 			return
 		await app.canvas.layer_set_visible(at, on)
-		app._sync_ui())
+		app._editor_state_ctrl.sync_ui())
 	row.add_child(vis)
 	var blend_opt := OptionButton.new()
 	blend_opt.add_item("混合")
@@ -244,7 +244,7 @@ func _layer_mgr_row(i: int, decl: Dictionary) -> Control:
 			if result != "":
 				app._set_status(result)
 		_rebuild_layer_mgr()
-		app._sync_ui())
+		app._editor_state_ctrl.sync_ui())
 	row.add_child(tile_grid)
 	var convert = app.UiKitScript.button("迁移格系…", func():
 		_layer_mgr.hide()
@@ -258,7 +258,7 @@ func _layer_mgr_row(i: int, decl: Dictionary) -> Control:
 		if at > 0:
 			await app.canvas.layer_move(at, -1)
 		_rebuild_layer_mgr()
-		app._sync_ui(), "ghost")
+		app._editor_state_ctrl.sync_ui(), "ghost")
 	up.disabled = i == 0
 	up.tooltip_text = "上移一层"
 	row.add_child(up)
@@ -267,7 +267,7 @@ func _layer_mgr_row(i: int, decl: Dictionary) -> Control:
 		if at >= 0 and at < app.canvas.layer_count() - 1:
 			await app.canvas.layer_move(at, 1)
 		_rebuild_layer_mgr()
-		app._sync_ui(), "ghost")
+		app._editor_state_ctrl.sync_ui(), "ghost")
 	down.disabled = i >= app.canvas.layer_count() - 1
 	down.tooltip_text = "下移一层"
 	row.add_child(down)
@@ -297,7 +297,7 @@ func _delete_layer(lid: String) -> void:
 		return
 	await app.canvas.layer_del(at)
 	_rebuild_layer_mgr()
-	app._sync_ui()
+	app._editor_state_ctrl.sync_ui()
 
 func _open_grid_conversion(lid: String, initial: Dictionary) -> void:
 	var cvs = app.canvas
@@ -362,7 +362,7 @@ func _open_grid_conversion(lid: String, initial: Dictionary) -> void:
 			if await cvs._layer_ops_ctrl.apply_tile_layer_copy(frozen.plan):
 				if is_instance_valid(pop):
 					pop.hide()
-				app._sync_ui()
+				app._editor_state_ctrl.sync_ui()
 				app._set_status("已生成迁移图层。可撤销，保存地图后写盘。")
 			elif is_instance_valid(publish):
 				reset.call()
@@ -434,7 +434,7 @@ func _open_custom_grid(lid: String, initial: Dictionary) -> void:
 			return
 		if is_instance_valid(pop):
 			pop.hide()
-		app._sync_ui(), "primary"))
+		app._editor_state_ctrl.sync_ui(), "primary"))
 	app._open_popup(pop)
 
 ## 数字字段（回车提交；非法输入回填当前值）
@@ -476,7 +476,7 @@ func _layer_mgr_params(i: int, decl: Dictionary) -> Control:
 			return
 		await app.canvas.layer_set_param(at, "ySort", on)
 		_rebuild_layer_mgr()
-		app._sync_ui())
+		app._editor_state_ctrl.sync_ui())
 	row.add_child(ys)
 	row.add_child(_num_field(float(decl.get("parallax", 1.0)), "视差：1 = 正常，<1 = 远景半速，0 = 固定（回车提交）", func(v: float):
 		var at := _idx_of_lid(lid)
@@ -485,7 +485,7 @@ func _layer_mgr_params(i: int, decl: Dictionary) -> Control:
 			return
 		await app.canvas.layer_set_param(at, "parallax", v)
 		_rebuild_layer_mgr()
-		app._sync_ui()))
+		app._editor_state_ctrl.sync_ui()))
 	row.add_child(_num_field(_cur_off(i, 0), "层偏移 X（像素，回车提交）", func(v: float):
 		var at := _idx_of_lid(lid)
 		if at < 0:
@@ -493,7 +493,7 @@ func _layer_mgr_params(i: int, decl: Dictionary) -> Control:
 			return
 		await app.canvas.layer_set_param(at, "offset", Vector2(v, _cur_off(at, 1)))
 		_rebuild_layer_mgr()
-		app._sync_ui()))
+		app._editor_state_ctrl.sync_ui()))
 	row.add_child(_num_field(_cur_off(i, 1), "层偏移 Y（像素，回车提交）", func(v: float):
 		var at := _idx_of_lid(lid)
 		if at < 0:
@@ -501,7 +501,7 @@ func _layer_mgr_params(i: int, decl: Dictionary) -> Control:
 			return
 		await app.canvas.layer_set_param(at, "offset", Vector2(_cur_off(at, 0), v))
 		_rebuild_layer_mgr()
-		app._sync_ui()))
+		app._editor_state_ctrl.sync_ui()))
 	row.add_child(_num_field(float(decl.get("scale", 1.0)), "层缩放（>0，回车提交）", func(v: float):
 		if v <= 0.0:
 			app._set_status(" 层缩放必须大于 0（当前输入 %g 未应用）" % v)
@@ -513,5 +513,5 @@ func _layer_mgr_params(i: int, decl: Dictionary) -> Control:
 			return
 		await app.canvas.layer_set_param(at, "scale", v)
 		_rebuild_layer_mgr()
-		app._sync_ui()))
+		app._editor_state_ctrl.sync_ui()))
 	return row
