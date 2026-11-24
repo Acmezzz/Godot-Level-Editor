@@ -8,6 +8,7 @@ extends RefCounted
 const MapStore := preload("res://src/map/map_store.gd")
 const ScreenLayout := preload("res://src/project/screen_layout.gd")
 const FlowTarget := preload("res://src/content/flow_target.gd")
+const AssetDecl := preload("res://src/assets/asset_decl.gd")
 
 ## 按稳定地图码解析，返回对应文件名。
 static func resolve_map(manifest: Dictionary, code: String) -> Dictionary:
@@ -140,6 +141,33 @@ static func property_refs(manifest: Dictionary, decls: Array, values: Dictionary
 	_collect_module_fields(load("res://src/content/ref_fields.gd"), manifest, decls, values,
 		source, prefix, "", "id", out)
 	return out
+
+## Only placed entities can supply executable references.
+static func entity_property_refs(manifest: Dictionary, data: Dictionary, kinds: Array) -> Array:
+	var result := []
+	var assets := AssetDecl.all(manifest)
+	for row in data.get("objects", []):
+		if not row is Dictionary or not row.get("props", {}) is Dictionary:
+			continue
+		var code: String = row.get("code", "")
+		var asset: String = row.get("asset", "")
+		var decl: Dictionary = assets.get(asset, {})
+		if code == "" or decl.get("kind") != "entity":
+			continue
+		for ref in property_refs(manifest, decl.get("fields", []), row.get("props", {}),
+				{"code": code, "asset": asset}):
+			if ref.kind in kinds:
+				result.append(ref)
+	return result
+
+static func entity_asset(manifest: Dictionary, map: Dictionary, code: String) -> String:
+	if code != "":
+		for row in map.get("objects", []):
+			if row is Dictionary and row.get("code") == code:
+				var asset: String = row.get("asset", "")
+				if AssetDecl.is_entity(manifest, asset):
+					return asset
+	return ""
 
 static func inherited_property_targets(manifest: Dictionary, decls: Array, values: Dictionary,
 		include_views := false) -> Array:

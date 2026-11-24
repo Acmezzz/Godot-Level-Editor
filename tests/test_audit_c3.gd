@@ -82,6 +82,7 @@ func test_fill_bindings() -> void:
 func test_content_usage_and_inbound_refs() -> void:
 	_wipe()
 	var m := _fake_manifest()
+	m["assets"] = [{"id": "door", "kind": "entity", "code": "DOOR"}]
 	m["functions"] = {
 		"f1": {"name": "F1", "code": "F111", "fields": [
 			{"id": "next", "code": "N111", "kind": "choice", "type": "string", "source": "content:f1"}]},
@@ -102,9 +103,11 @@ func test_content_usage_and_inbound_refs() -> void:
 	eq((by_map["m1"] as Array).size(), 1, "只算功能码匹配的那个实例（同内容 ID 的另一功能不算）")
 	ok((by_map["m1"] as Array).has("E1"), "实例码正确")
 	# 当前图以画布为准：磁盘上没引用、画布上新绑的也算
-	var live := {"objects": [{"code": "E9", "functions": [{"fn": "F111", "content": "AAA1"}]}]}
+	var live := {"objects": [{"asset": "door", "code": "E9", "functions": [{"fn": "F111", "content": "AAA1"}]},
+		{"asset": "unknown", "code": "E0", "functions": [{"fn": "F111", "content": "AAA1"}]}]}
 	var u2 := ReferenceUsage.inbound_content(m, "f1", "AAA1", "m1", live)
 	ok(u2.edges.instances["m1"].has("E9"), "当前画布未保存绑定计入")
+	ok(not u2.edges.instances["m1"].has("E0"), "未知资产不产生执行引用")
 	# 内容间引用：BBB2 的字段指向 AAA1
 	var inbound := ReferenceUsage.content_inbound_refs(m, "f1", "AAA1")
 	eq(inbound.size(), 1, "内容间入边一条")

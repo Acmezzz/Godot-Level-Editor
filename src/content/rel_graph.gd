@@ -19,7 +19,6 @@ const FlowTarget := preload("res://src/content/flow_target.gd")
 const StartupTargets := preload("res://src/project/startup_targets.gd")
 const MapStore := preload("res://src/map/map_store.gd")
 const MapFlow := preload("res://src/map/map_flow.gd")
-const AssetDecl := preload("res://src/assets/asset_decl.gd")
 const ProjectSlots := preload("res://src/project/project_content_slots.gd")
 const EventLayers := preload("res://src/project/event_layers.gd")
 const VIEW_KIND := "@view"
@@ -152,7 +151,6 @@ static func _add_project_slot(graph: Dictionary, catalog: Dictionary, manifest: 
 		graph.external.append(edge)
 
 static func _collect_maps(manifest: Dictionary, graph: Dictionary, catalog: Dictionary) -> void:
-	var declarations := {}
 	for node in graph.nodes:
 		if node.fn_id != MAP_KIND:
 			continue
@@ -177,25 +175,17 @@ static func _collect_maps(manifest: Dictionary, graph: Dictionary, catalog: Dict
 					graph.edges.append(edge)
 				elif values.has(id):
 					graph.external.append(edge)
-		for row in data.get("objects", []):
-			var code: String = row.get("code", "")
-			if code == "":
-				continue
-			var asset: String = row.get("asset", "")
-			if not declarations.has(asset):
-				declarations[asset] = AssetDecl.by_id(manifest, asset).get("fields", [])
-			for ref in References.property_refs(manifest, declarations[asset], row.get("props", {})):
-				if ref.kind != "flow_target":
-					continue
-				var address := _flow_address(ref.value)
-				var edge := {"from": node.key, "to": _key(address[0], address[1]),
-					"fn_id": MAP_KIND, "cid": node.cid, "fn": address[0], "value": address[1],
-					"label": "%s · %s" % [code, ref.path.trim_prefix(".")], "field": ref.field,
-					"map_instance": code, "target": ref.value}
-				if _typed_target_exists(manifest, catalog, ref.decl, ref.value, address):
-					graph.edges.append(edge)
-				else:
-					graph.external.append(edge)
+		for ref in References.entity_property_refs(manifest, data, ["flow_target"]):
+			var address := _flow_address(ref.value)
+			var edge := {"from": node.key, "to": _key(address[0], address[1]),
+				"fn_id": MAP_KIND, "cid": node.cid, "fn": address[0], "value": address[1],
+				"label": "%s · %s" % [ref.code, ref.path.trim_prefix(".")],
+				"field": ref.field, "map_instance": ref.code, "target": ref.value}
+			if _typed_target_exists(manifest, catalog, ref.decl, ref.value, address):
+				graph.edges.append(edge)
+			else:
+				graph.external.append(edge)
+
 
 static func _collect_views(manifest: Dictionary, graph: Dictionary, catalog: Dictionary) -> void:
 	var views = manifest.get("views", [])

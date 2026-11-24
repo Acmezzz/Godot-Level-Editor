@@ -44,11 +44,12 @@ static func _map_content_refs(manifest: Dictionary, data: Dictionary, target: Di
 		if ref.value == target and not rows.has(ref.code):
 			rows.append(ref.code)
 	if fn_code != "":
+		var assets := AssetDecl.all(manifest)
 		for obj in data.get("objects", []):
 			if not obj is Dictionary:
 				continue
 			var code := str(obj.get("code", ""))
-			if code == "" or rows.has(code):
+			if code == "" or rows.has(code) or assets.get(obj.get("asset"), {}).get("kind") != "entity":
 				continue
 			for binding in obj.get("functions", []):
 				if binding is Dictionary and binding.get("fn") == fn_code and binding.get("content") == target.content:
@@ -106,7 +107,7 @@ static func _content_sections(manifest: Dictionary, fn: String, data: Dictionary
 				out.append({"decls": fields, "values": step.get("fields"), "prefix": "steps[%d]." % i})
 	return out
 
-static func draft_inbound_refs(manifest: Dictionary, cid: String, fn_id := "") -> Array:
+static func draft_inbound_refs(manifest: Dictionary, cid: String, fn_id: String) -> Array:
 	var out: Array = []
 	var base := str(manifest.get("_dir", "")).path_join("editor/drafts")
 	var d := DirAccess.open(base)
@@ -127,17 +128,7 @@ static func draft_inbound_refs(manifest: Dictionary, cid: String, fn_id := "") -
 		if not objects is Array or not pcs is Array:
 			out.append(key)
 			continue
-		var hit := false
-		if fn_id != "" and _map_property_refs(manifest, snap, ["flow_target"]).any(func(ref):
-			return ref.value is Dictionary and ref.value == {"function": fn_id, "content": cid}):
-			hit = true
-		for obj in objects:
-			if not obj is Dictionary or not obj.get("functions", []) is Array:
-				continue
-			for binding in obj.get("functions", []):
-				if binding is Dictionary and str(binding.get("content", "")) == cid \
-						and (target_code == "" or str(binding.get("fn", "")) == target_code):
-					hit = true
+		var hit := not _map_content_refs(manifest, snap, {"function": fn_id, "content": cid}, target_code).is_empty()
 		for row in pcs:
 			if not row is Dictionary or not row.get("data") is Dictionary:
 				hit = true
@@ -307,7 +298,8 @@ static func view_inbound_refs(manifest: Dictionary, id: String, staged: Array,
 	var scan_map := func(data: Dictionary, name: String):
 		for ref in _map_property_refs(manifest, data, ["view", "flow_target"]):
 			if _points_to_view(ref, id):
-				var label := "%s · %s" % [name, ref.path]
+				var source := "%s(%s)%s" % [ref.asset, ref.code, ref.path] if ref.has("asset") else str(ref.path)
+				var label := "%s · %s" % [name, source]
 				if not refs.has(label):
 					refs.append(label)
 	var maps := MapStore.read_all_fresh(manifest, bad)
@@ -349,25 +341,8 @@ static func _points_to_view(ref: Dictionary, id: String) -> bool:
 
 static func _map_property_refs(manifest: Dictionary, data: Dictionary, kinds: Array) -> Array:
 	var result := MapFlow.references(manifest, data) if "flow_target" in kinds else []
-	var declarations := {}
-	for row in data.get("objects", []):
-		if not row is Dictionary or not row.get("props", {}) is Dictionary:
-			continue
-		var asset: String = row.get("asset", "")
-		if not declarations.has(asset):
-			declarations[asset] = _fields_of(manifest, asset)
-		if declarations[asset].is_empty():
-			continue
-		var code: String = row.get("code", "")
-		var path := "%s(%s)" % [asset, code]
-		for ref in ReferenceIndex.property_refs(manifest, declarations[asset], row.get("props", {}), {"code": code}, path):
-			if ref.kind in kinds:
-				result.append(ref)
+	result.append_array(ReferenceIndex.entity_property_refs(manifest, data, kinds))
 	return result
-
-static func _fields_of(manifest: Dictionary, asset_id: String) -> Array:
-	var a: Dictionary = AssetDecl.by_id(manifest, asset_id)
-	return (a.get("fields", []) as Array) if (a.get("fields", null) is Array) else []
 
 static func asset_draft_refs(manifest: Dictionary, asset_id: String, bad: Array = []) -> Array:
 	var out: Array = []

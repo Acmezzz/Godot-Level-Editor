@@ -84,14 +84,14 @@ static func view_reference_issues(manifest: Dictionary, view_id := "") -> Array:
 			"entity_inst", "port", "edge", "cell", "layer":
 				if map_index.is_empty():
 					map_index = MapStore.code_index(manifest)
-				var message := _module_spatial_problem(manifest, ref, assets, map_index, map_targets)
+				var message := _module_spatial_problem(manifest, ref, map_index, map_targets)
 				if message != "":
 					out.append(_view_issue(ref, message))
 		if not valid:
 			out.append(_view_issue(ref, "%s引用无法解析：%s" % [label, ref.value]))
 	return out
 
-static func _module_spatial_problem(manifest: Dictionary, ref: Dictionary, assets: Dictionary,
+static func _module_spatial_problem(manifest: Dictionary, ref: Dictionary,
 		map_index: Dictionary, targets: Dictionary) -> String:
 	var value = ref.value
 	var object_ref: bool = ref.kind in ["port", "edge"]
@@ -111,26 +111,22 @@ static func _module_spatial_problem(manifest: Dictionary, ref: Dictionary, asset
 	var target: Dictionary = targets[name]
 	if target.is_empty():
 		return "无法读取空间引用的目标地图：" + name
-	return _module_target_problem(manifest, ref, assets, name, target)
+	return _module_target_problem(manifest, ref, name, target)
 
 static func _module_map_key(ref: Dictionary) -> String:
 	if ref.kind in ["port", "edge"] and ref.value is Dictionary and ref.value.get("map", "") is String:
 		return RefFields.object_map_key(ref.value, ref.paired)
 	return ref.paired if ref.kind in ["entity_inst", "cell", "layer"] else ""
 
-static func _module_target_problem(manifest: Dictionary, ref: Dictionary, assets: Dictionary,
+static func _module_target_problem(manifest: Dictionary, ref: Dictionary,
 		name: String, target: Dictionary) -> String:
 	var value = ref.value
 	if ref.kind in ["entity_inst", "cell", "layer"] and not value is String:
 		return "实例、格和图层引用必须是 ID 字符串。"
 	if ref.kind == "entity_inst":
-		for obj in target.get("objects", []):
-			if obj.get("code") != value:
-				continue
-			var asset_id: String = obj.get("asset", "")
-			if assets.get(asset_id, {}).get("kind") == "entity" \
-					and (ref.filter.ids.is_empty() or ref.filter.ids.has(asset_id)):
-				return ""
+		var asset_id := ReferenceIndex.entity_asset(manifest, target, value)
+		if asset_id != "" and (ref.filter.ids.is_empty() or ref.filter.ids.has(asset_id)):
+			return ""
 		return "目标地图 %s 中没有符合声明的实例：%s" % [name, value]
 	if ref.kind == "cell" and CellGraphScript.cell_ids(target.get("meta", {}).get("cellGraph", {})).is_empty():
 		return "目标地图 %s 没有可引用的格。" % name

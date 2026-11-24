@@ -32,9 +32,8 @@ static func problem(manifest: Dictionary, kind: String, source: Dictionary,
 						return {}
 				# 保留 ID，作者可重新选择坐标空间；不要把原路径默认为别的空间。
 				return {"message": "%s不存在图层：%s" % [where, value]}
-			for row in target.get("objects", []):
-				if row is Dictionary and row.get("code", "") == value:
-					return {}
+			if ReferenceIndex.entity_asset(manifest, target, value) != "":
+				return {}
 			return {"message": "引用的实例码在%s不存在: %s" % [where, str(value)]}
 		"port":
 			if source.is_empty() and paired == "" and value is Dictionary \
@@ -81,17 +80,16 @@ static func _port_ref_problem(manifest: Dictionary, data: Dictionary,
 			_:
 				return {}
 	var types := str(field.get("of", "")).split(",", false)
-	for obj in target.get("objects", []):
-		if not obj is Dictionary or str(obj.get("code", "")) != value.inst:
-			continue
-		var asset := AssetDecl.by_id(manifest, str(obj.get("asset", "")))
-		for port in RefFields.ports_of(asset):
-			if port is Dictionary and port.get("id") == value.port:
-				if types.is_empty() or types.has(str(port.get("type", ""))):
-					return {}
-				return {"message": "目标端口类型与字段声明不匹配：" + str(value.port)}
-		return {"message": "实例没有对应的端口：" + str(value.port)}
-	return {"message": "目标端口的实例不存在：" + str(value.inst)}
+	var asset_id := ReferenceIndex.entity_asset(manifest, target, value.inst)
+	if asset_id == "":
+		return {"message": "目标端口的实例不存在：" + str(value.inst)}
+	for port in RefFields.ports_of(AssetDecl.by_id(manifest, asset_id)):
+		if port is Dictionary and port.get("id") == value.port:
+			if types.is_empty() or types.has(str(port.get("type", ""))):
+				return {}
+			return {"message": "目标端口类型与字段声明不匹配：" + str(value.port)}
+	return {"message": "实例没有对应的端口：" + str(value.port)}
+
 
 ## edge_ref 悬空判定（§7.4）：边身份由格拓扑推导，因此只验「目标图存在 + 两格确实相邻 + cell 自洽」。
 ## 目标图本图/跨图取法与 map_ref 一致；图读不出来时比对双方拓扑会误报，故只按「读不到不判悬空」放行。

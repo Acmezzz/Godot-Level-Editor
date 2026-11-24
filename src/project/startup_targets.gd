@@ -89,13 +89,10 @@ static func _map_destination_available(manifest: Dictionary, domains: Dictionary
 		return false
 	if not target.has("port"):
 		return true
-	for row in map.get("objects", []):
-		if row.get("code") != target.inst:
-			continue
-		var asset := AssetDecl.by_id(manifest, row.get("asset", ""))
-		return RefFields.ports_of(asset).any(func(port):
-			return port.get("id") == target.port and port.get("type", "") in domains.arrivalPorts)
-	return false
+	var asset := AssetDecl.by_id(manifest, Refs.entity_asset(manifest, map, target.inst))
+	return RefFields.ports_of(asset).any(func(port):
+		return port.get("id") == target.port and port.get("type", "") in domains.arrivalPorts)
+
 
 static func is_project_destination(row: Dictionary, code: Variant) -> bool:
 	return row.get("scope") == "project" and row.get("function") == code and row.get("fields") is Dictionary
