@@ -936,6 +936,13 @@ func _sample_grid_delta() -> Array:
 		var author_exit := _current if author_route else ""
 		var author_edge := _traversed_edge if author_route else ""
 		var seed_exit := _current if _load_board(chunk.map, "seed-entry") and _advance_board() else ""
+		var overlay := ""
+		for layer in chunk.map.meta.layers:
+			if (layer.name == "Author overlay"
+					and chunk.map.tiles.get(layer.id, []).any(func(row): return row[0] == 2 and row[1] == 2)
+					and objects.any(func(row): return row.asset == "button-art" and row.layer == layer.id)
+					and chunk.map.meta.cellGraph.spaces.deck.layer == layer.id):
+				overlay = layer.id
 		samples.append({"seed": seed, "applied": chunk.authored, "gate": _traverse_platform(chunk.map).get("gate", ""),
 			"gateLabel": props.get("label", ""), "gateSeed": props.get("seedColor", -1),
 			"removedObject": not objects.any(func(row): return row.get("code") == "TRIM"),
@@ -943,6 +950,7 @@ func _sample_grid_delta() -> Array:
 			"addedObject": objects.any(func(row): return row.get("props", {}).get("label") == "extra"),
 			"spawn": chunk.map.spawn, "blend": chunk.map.meta.layers[0].get("blend", ""),
 			"authorRoute": author_exit, "authorEdge": author_edge, "seedRoute": seed_exit,
+			"overlay": overlay,
 			"decor": objects.filter(func(row): return row.asset == "button-art").size(),
 			"seedCell": rows.any(func(row): return row.x == seed and row.y == 0),
 			"deleted": not rows.any(func(row): return row.x == 3 and row.y == 0),

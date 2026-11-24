@@ -5,21 +5,35 @@ const GRID := "gridDelta"
 const CONTENT := "contentDelta"
 const LAYER_STYLE := ["name", "visible", "ySort", "blend"]
 
-static func compatibility_problem(a: Dictionary, b: Dictionary) -> String:
+static func compatibility_problem(a: Dictionary, b: Dictionary, authored_stack := false) -> String:
 	for field in ["w", "h", "gridProjection", "gridTopology", "gridBasis"]:
 		if not _same(a.get(field), b.get(field)):
 			return "网格配置不一致：%s。" % field
 	var left = a.get("layers")
 	var right = b.get("layers")
-	if not left is Array or not right is Array or left.size() != right.size():
+	if not left is Array or not right is Array or left.is_empty() or right.is_empty():
 		return "图层结构不一致。"
-	for i in left.size():
-		if not left[i] is Dictionary or not right[i] is Dictionary:
-			return "图层声明无效。"
-		for field in ["id", "offset", "scale", "parallax", "tileGrid"]:
-			if not _same(left[i].get(field), right[i].get(field)):
-				return "图层 ID、顺序或空间变换不一致。"
+	var before := _layer_index(left)
+	var after := _layer_index(right)
+	if before.is_empty() or after.is_empty():
+		return "图层声明无效。"
+	if before.keys()[0] != after.keys()[0] or (not authored_stack and before.keys() != after.keys()):
+		return "首层或生成图层顺序不一致。"
+	for id in before:
+		if not after.has(id):
+			continue
+		for field in ["offset", "scale", "parallax", "tileGrid"]:
+			if not _same(before[id].get(field), after[id].get(field)):
+				return "图层 %s 的空间变换或格系不一致。" % id
 	return ""
+
+static func _layer_index(layers: Array) -> Dictionary:
+	var indexed := {}
+	for layer in layers:
+		if not layer is Dictionary or not layer.get("id") is String or layer.id.is_empty() or indexed.has(layer.id):
+			return {}
+		indexed[layer.id] = layer
+	return indexed
 
 static func compile(authored: Dictionary, mode: String) -> Dictionary:
 	if mode not in [GRID, CONTENT]:
@@ -31,7 +45,7 @@ static func compile(authored: Dictionary, mode: String) -> Dictionary:
 			or source.base.meta.get("code") != meta.get("code"):
 		return {"error": "差量需要本图自己的生成基线。"}
 	var base: Dictionary = source.base
-	var problem := compatibility_problem(base.meta, meta)
+	var problem := compatibility_problem(base.meta, meta, mode == CONTENT)
 	if problem != "":
 		return {"error": problem}
 	var grid := _compile_grid(base, authored, meta.layers)
@@ -39,6 +53,17 @@ static func compile(authored: Dictionary, mode: String) -> Dictionary:
 		return {"error": "瓦片或碰撞格位无效或重复。"}
 	var result := {"error": "", "mode": mode, "meta": meta, "grid": grid, "objects": {}}
 	if mode == CONTENT:
+		var baseline_layers := _layer_index(base.meta.layers)
+		var authored_layers := _layer_index(meta.layers)
+		result["baseline_meta"] = base.meta
+		var removed_layers := {}
+		for id in baseline_layers:
+			if not authored_layers.has(id):
+				var removed = _grid_index(base.get("tiles", {}).get(id, []), true)
+				if removed == null:
+					return {"error": "移除图层 %s 的基线瓦片无效。" % id}
+				removed_layers[id] = removed
+		result["removed_layers"] = removed_layers
 		var before := _object_index(base.get("objects", []))
 		var after := _object_index(authored.get("objects", []))
 		if not before.ok or not after.ok:
@@ -64,13 +89,15 @@ static func compile(authored: Dictionary, mode: String) -> Dictionary:
 		if not _same(original_spawn, new_spawn):
 			result["spawn"] = new_spawn
 		var styles := {}
-		for i in meta.layers.size():
+		for id in authored_layers:
+			if not baseline_layers.has(id):
+				continue
 			var edits := {}
 			for key in LAYER_STYLE:
-				if not _same(base.meta.layers[i].get(key), meta.layers[i].get(key)):
-					edits[key] = meta.layers[i].get(key)
+				if not _same(baseline_layers[id].get(key), authored_layers[id].get(key)):
+					edits[key] = authored_layers[id].get(key)
 			if not edits.is_empty():
-				styles[meta.layers[i].id] = edits
+				styles[id] = edits
 		result["layer_style"] = styles
 		var topology := _compile_graph(base.meta.get("cellGraph", {}), meta.get("cellGraph", {}), meta.layers)
 		if topology.has("error"):
@@ -85,7 +112,7 @@ static func apply(runtime: Dictionary, plan: Dictionary) -> Dictionary:
 	var meta = runtime.get("meta", {})
 	if not meta is Dictionary:
 		return {"error": "运行时地图元数据无效。"}
-	var problem := compatibility_problem(meta, plan.meta)
+	var problem := compatibility_problem(meta, plan.get("baseline_meta", plan.meta))
 	if problem != "":
 		return {"error": problem}
 	var objects: Array = []
@@ -125,35 +152,51 @@ static func apply(runtime: Dictionary, plan: Dictionary) -> Dictionary:
 		objects.append_array(plan.get("decor_add", []))
 	var out := runtime.duplicate()
 	if plan.mode == CONTENT:
+		var runtime_layers := _layer_index(meta.layers)
+		var layers: Array = []
+		var styles: Dictionary = plan.get("layer_style", {})
+		for authored_layer: Dictionary in plan.meta.layers:
+			var layer: Dictionary = runtime_layers.get(authored_layer.id, authored_layer).duplicate(true)
+			for key in styles.get(layer.id, {}):
+				var value = styles[layer.id][key]
+				if value == null:
+					layer.erase(key)
+				else:
+					layer[key] = value
+			layers.append(layer)
+		var removed: Dictionary = plan.get("removed_layers", {})
+		for row: Dictionary in objects:
+			if removed.has(row.get("layer")):
+				return {"error": "移除的图层 %s 仍有当前种子的摆放物。" % row.layer}
 		out["objects"] = objects.duplicate(true)
 		if plan.has("spawn"):
 			out["spawn"] = plan.spawn.duplicate()
-		var styles: Dictionary = plan.get("layer_style", {})
-		if not styles.is_empty():
-			var layers: Array = meta.layers.duplicate(true)
-			for layer: Dictionary in layers:
-				for key in styles.get(layer.id, {}):
-					var value = styles[layer.id][key]
-					if value == null:
-						layer.erase(key)
-					else:
-						layer[key] = value
-			out["meta"] = meta.duplicate()
-			out.meta.layers = layers
+		out["meta"] = meta.duplicate()
+		out.meta.layers = layers
 		var topology: Dictionary = plan.get("cell_graph", {})
 		if not topology.is_empty():
-			var patched_graph := _apply_graph(meta.get("cellGraph", {}), topology, meta.layers)
+			var patched_graph := _apply_graph(meta.get("cellGraph", {}), topology, layers)
 			if patched_graph.has("error"):
 				return patched_graph
-			if is_same(out.meta, meta):
-				out["meta"] = meta.duplicate()
 			out.meta["cellGraph"] = patched_graph.graph
+		elif not removed.is_empty():
+			var index := _graph_index(meta.get("cellGraph", {}))
+			if index.is_empty():
+				return {"error": "当前种子的有限格图无效。"}
+			problem = _graph_links_problem(index, layers)
+			if problem != "":
+				return {"error": problem}
 	var collision = _apply_grid(runtime.get("collision", []), plan.grid.collision, false)
 	if collision == null or not runtime.get("tiles", {}) is Dictionary:
 		return {"error": "运行时格位无效或重复。"}
 	out["collision"] = collision
 	var tiles: Dictionary = runtime.get("tiles", {}).duplicate()
-	for layer in runtime.meta.get("layers", []):
+	var removed: Dictionary = plan.get("removed_layers", {})
+	for id in removed:
+		if not _same(_grid_index(tiles.get(id, []), true), removed[id]):
+			return {"error": "移除的图层 %s 含有不同于基线的种子瓦片。" % id}
+		tiles.erase(id)
+	for layer in out.meta.layers:
 		var id: String = layer.id
 		var patched = _apply_grid(tiles.get(id, []), plan.grid.tiles[id], true)
 		if patched == null:

@@ -1552,10 +1552,18 @@ func run():
 	app.canvas._tool_ops_ctrl.place_object(app.canvas.stamp_asset, app.canvas.active_layer, app.canvas.grid.cell_center_px(Vector2i(1, 1)))
 	app.canvas.selected_entity.props["label"] = "extra"
 	app.canvas._mark()
-	app.canvas._tool_ops_ctrl.place_object("button-art", 0, app.canvas.grid.cell_center_px(Vector2i(2, 1)))
+	await app.canvas.layer_add("Author overlay")
+	var overlay_id: String = app.canvas.layer_id(1)
+	app.canvas.active_layer = 1
+	app.canvas.paint_asset = "terrain"
+	app.canvas.paint_cell = Vector2i.ZERO
+	app.canvas._paint(Vector2i(2, 2))
+	app.canvas._undo_history_ctrl.stroke_end()
+	app.canvas._paint_pushed = false
+	app.canvas._tool_ops_ctrl.place_object("button-art", 1, app.canvas.grid.cell_center_px(Vector2i(2, 1)))
 	check(app.canvas.set_spawn_cell(Vector2i(3, 1)), "set the authored chunk entrance")
 	app.canvas.layer_set_blend(0, "add")
-	app.canvas.apply_cell_graph({"spaces": {"deck": {"layer": "base", "origin": [8, 4], "axisX": [1, 0.25]}},
+	app.canvas.apply_cell_graph({"spaces": {"deck": {"layer": overlay_id, "origin": [8, 4], "axisX": [1, 0.25]}},
 		"cells": [
 			{"id": "author-entry", "space": "deck", "polygon": [[0, 0], [16, 0], [8, 12]]},
 			{"id": "author-exit", "space": "deck", "polygon": [[16, 0], [32, 0], [24, 12]]}],
@@ -1581,7 +1589,7 @@ func run():
 			and row.removedObject and row.seedObject and row.addedObject and row.tilePatched \
 			and row.spawn[0] == 3 and row.spawn[1] == 1 and row.blend == "add" and row.decor == 2 \
 			and row.authorRoute == "author-exit" and row.authorEdge == "author-stairs" \
-			and row.seedRoute == "seed-exit-%d" % int(row.seed)),
+			and row.seedRoute == "seed-exit-%d" % int(row.seed) and row.overlay == overlay_id),
 		"both seeds keep their own playable route and accept the authored route, decor and entrance: " + str(object_report))
 	await author_resize(app, manifest)
 	await author_projection_copy(app, manifest)

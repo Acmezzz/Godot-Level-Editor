@@ -4,6 +4,31 @@ const Delta := preload("res://src/map/generated_chunk_delta.gd")
 const Generated := preload("res://src/map/generated_map_merge.gd")
 const Maps := preload("res://src/map/map_store.gd")
 
+func test_content_delta_changes_layer_stack_without_discarding_seed_tiles() -> void:
+	var base := Maps.new_map("seed", 8, 8, "orthogonal")
+	base.meta.layers = [{"id": "base", "name": "Base"}, {"id": "strip", "name": "Strip"}, {"id": "back", "name": "Back"}]
+	base.tiles["strip"] = [[1, 2, "terrain", 0, 0, 0]]
+	var authored := base.duplicate(true)
+	authored.meta.layers.remove_at(1)
+	authored.meta.layers.insert(1, {"id": "fx", "name": "Effects", "tileGrid": {"gridProjection": "isometric"}})
+	authored.tiles.erase("strip")
+	authored.tiles["fx"] = [[2, 1, "terrain", 0, 0, 0]]
+	Generated.attach(authored, base, "demo", {})
+	var plan := Delta.compile(authored, Delta.CONTENT)
+	eq(plan.error, "", "content overlay permits a new independent grid")
+	var runtime := base.duplicate(true)
+	runtime.tiles["back"] = [[4, 4, "terrain", 0, 0, 0]]
+	var result := Delta.apply(runtime, plan)
+	eq(result.error, "", "merge the new stack into a compatible seed")
+	if result.has("map"):
+		eq(result.map.meta.layers.map(func(layer): return layer.id), ["base", "fx", "back"], "authored layer order")
+		eq(result.map.tiles.fx, authored.tiles.fx, "new layer tiles come from the author")
+		eq(result.map.tiles.back, runtime.tiles.back, "seed tiles on another layer survive")
+		ok(not result.map.tiles.has("strip"), "removed layer no longer owns a tile table")
+	runtime.tiles.strip.append([3, 3, "terrain", 0, 0, 0])
+	var conflict := Delta.apply(runtime, plan)
+	ok(not conflict.has("map") and conflict.error.contains("strip"), "do not drop seed-specific tiles")
+
 func test_graph_delta_keeps_seed_topology_and_rejects_dangling_endpoints() -> void:
 	var base := Maps.new_map("seed", 8, 8, "orthogonal")
 	var poly := [[0, 0], [8, 0], [0, 8]]
