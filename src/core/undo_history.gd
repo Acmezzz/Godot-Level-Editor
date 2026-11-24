@@ -635,7 +635,7 @@ func _object_row(n: EntityNode) -> Dictionary:
 	return row
 
 ## 行 → 活体节点（load_data 的 objects 装载与实例差量恢复共用）。
-## C09 挂载补齐只在这里做一次：差量恢复的行已经是补齐后的形态，不会重复产键。
+## 保留行里的 ID；载图会在所有已有 ID 就位后集中补码和挂载。
 func _node_from_row(row: Dictionary) -> EntityNode:
 	var n: EntityNode = cvs.make_object(str(row.get("asset", "")))
 	n.code = str(row.get("code", ""))
@@ -655,7 +655,6 @@ func _node_from_row(row: Dictionary) -> EntityNode:
 	n.refresh_visual()   # props 就位后再算一次尺寸（sizeFields 资产按 props 定大小）
 	n.apply_grid(float(row.get("x", 0)), float(row.get("y", 0)))
 	cvs._place_in_layer(n, ei)
-	cvs._ensure_code(n)
 	return n
 
 func extract() -> Dictionary:

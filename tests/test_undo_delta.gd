@@ -106,9 +106,6 @@ class Host extends Node2D:
 		n.decl = {"kind": "entity"}
 		return n
 
-	func _ensure_code(_n: EntityNode) -> void:
-		pass
-
 	func extract() -> Dictionary:
 		return {}
 

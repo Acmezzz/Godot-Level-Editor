@@ -442,7 +442,7 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	# 位置 = 浮点格坐标 + anchor 换算；transform/visible/zPolicy 缺省整键省略。
 	# 行→节点转换与撤销差量共用一份（_undo_history_ctrl._node_from_row），这里只补 C09 挂载。
 	var mount_filled := false
-	var issued_instance_code := false
+	var missing_codes: Array[EntityNode] = []
 	for e in data.get("objects", []):
 		if not (e is Dictionary):
 			continue
@@ -450,13 +450,18 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 		if aid == "":
 			continue
 		var n: EntityNode = _undo_history_ctrl._node_from_row(e)
-		issued_instance_code = issued_instance_code or (n.code != "" and str(e.get("code", "")) == "")
 		# C09：载图即补齐类型挂载（只在工作副本上，不碰选中事件）；缺的补一条 mounted 行并标脏
 		if n.is_entity():
+			if n.code.is_empty():
+				missing_codes.append(n)
 			var fill := FunctionDeclsRef.fill_bindings(manifest, aid, n.functions)
 			if bool(fill.get("changed", false)):
 				n.functions = fill.get("functions", [])
 				mount_filled = true
+	# 所有已有码的实体先入画布，再为旧图中的无码实体补码。
+	for n in missing_codes:
+		_ensure_code(n)
+	var issued_instance_code := not missing_codes.is_empty()
 	# 出生点（数据是格坐标，画布上落在格中心）
 	spawn = Marker2D.new()
 	spawn.name = "Spawn"
