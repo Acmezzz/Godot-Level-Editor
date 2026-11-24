@@ -244,10 +244,7 @@ static func build(src: Dictionary, dst: Dictionary, codes: PackedStringArray = P
 	# R10：源图身份键——配对地图字段的现值与它不符的引用指向第三张图，原样保留。
 	var source_key := _source_key(sdata, src_map)
 	var spatial_refs := {"cells": src.get("cell_ids", {}), "edge": src.get("map_edge", Callable()),
-		"whole_map": self_copy}
-	if self_copy:
-		spatial_refs["map_copy"] = _map_copy_codes(sdata, ddata)
-		spatial_refs["map_instances"] = instance_map
+		"whole_map": self_copy, "map_copy": _map_copy_codes(sdata, ddata)}
 	var scoped_ids := {}
 	if self_copy:
 		var roots: Array = MapFlow.scoped_content(m, sdata).map(func(ref): return ref.value)
@@ -397,13 +394,12 @@ static func _remap_props(manifest: Dictionary, values: Dictionary, fields: Array
 		if not field is Dictionary:
 			continue
 		var id := str(field.get("id", ""))
-		if spatial_refs.has("map_copy"):
-			var desc := RefFields.describe(field)
-			if desc.kind == "flow_target":
-				_remap_flow_map(field, id, values, spatial_refs)
-				if field.get("contentMapContext") == "inherit":
-					_remap_scoped_link(field, id, values, fields, "", desc, source_key, source_name,
-						_target_key(target_data, target_map), spatial_refs, {})
+		var desc := RefFields.describe(field)
+		if desc.kind == "flow_target":
+			_remap_flow_map(field, id, values, spatial_refs, instance_map)
+			if spatial_refs.has("scoped_ids") and field.get("contentMapContext") == "inherit":
+				_remap_scoped_link(field, id, values, fields, "", desc, source_key, source_name,
+					_target_key(target_data, target_map), spatial_refs, {})
 		for scope in RefFields.nested_scopes(manifest, field, values.get(id)):
 			var path := "%s.%s#%d" % [owner, id, scope.path[0]]
 			if scope.path.size() == 2:
@@ -479,8 +475,8 @@ static func _remap_field_map(manifest: Dictionary, values, decls: Array, instanc
 		var key := str(f.get("code", ""))
 		if key == "":
 			key = str(f.get("id", ""))
-		if kind == "flow_target" and spatial_refs.has("map_copy"):
-			_remap_flow_map(f, key, vals, spatial_refs)
+		if kind == "flow_target":
+			_remap_flow_map(f, key, vals, spatial_refs, instance_map)
 		if kind in ["content", "flow_target"] and (spatial_refs.has("visit_scoped") or spatial_refs.has("scoped_ids")):
 			_remap_scoped_link(f, key, vals, decls, fn_id, desc, source_key, source_name,
 				_target_key(target_data, target_map), spatial_refs, pairs_to_fill)
@@ -638,7 +634,7 @@ static func whole_map_document(src: Dictionary, new_name: String, new_code: Stri
 	var map_copy := _map_copy_codes(sdata, doc)
 	var outputs := MapFlow.targets(doc, MapFlow.OUTPUTS)
 	for id in outputs:
-		outputs[id] = _copied_map_target(outputs[id], map_copy, plan.instance_map)
+		outputs[id] = _copied_map_target(outputs[id], map_copy, plan.instance_map, true)
 	for ref in MapFlow.scoped_content(m, sdata):
 		var key := content_key(ref.value.function, ref.value.content)
 		if plan.scoped_ids.has(key):
@@ -651,16 +647,17 @@ static func _map_copy_codes(source: Dictionary, target: Dictionary) -> Dictionar
 	var copy: String = target.get("meta", {}).get("code", "")
 	return {code: copy} if code != "" and copy != "" else {}
 
-static func _copied_map_target(value: Variant, codes: Dictionary, instances: Dictionary) -> Variant:
+static func _copied_map_target(value: Variant, codes: Dictionary, instances: Dictionary, whole_map: bool) -> Variant:
 	if FlowTarget.kind(value) == "map" and codes.has(value.map):
 		if value.has("port"):
 			return {"map": codes[value.map], "inst": instances[value.inst], "port": value.port} if instances.has(value.inst) else value
-		return {"map": codes[value.map]}
+		if whole_map:
+			return {"map": codes[value.map]}
 	return value
 
-static func _remap_flow_map(field: Dictionary, key: String, values: Dictionary, scope: Dictionary) -> void:
+static func _remap_flow_map(field: Dictionary, key: String, values: Dictionary, scope: Dictionary, instances: Dictionary) -> void:
 	var value = values.get(key, field.get("default"))
-	var mapped = _copied_map_target(value, scope.map_copy, scope.map_instances)
+	var mapped = _copied_map_target(value, scope.get("map_copy", {}), instances, scope.get("whole_map", false))
 	if mapped != value:
 		values[key] = mapped
 

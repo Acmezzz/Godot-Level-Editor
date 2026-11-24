@@ -30,7 +30,7 @@ func run() -> void:
 		"assets": [{"id": "relay", "kind": "entity", "code": "RLY1", "visual": {"mode": "rect", "color": "#62cabb"},
 			"ports": [{"id": "door", "x": 0, "y": 0, "type": "arrival"}, {"id": "wire", "x": 4, "y": 0, "type": "signal"}],
 			"fields": [{"id": "exit_target", "kind": "input", "type": "flow_target",
-				"maps": true, "screens": true, "contentTypes": ["signal"]},
+				"maps": true, "screens": true, "contentTypes": ["signal"], "arrivalPorts": ["arrival"]},
 				{"id": "local_signal", "kind": "input", "type": "flow_target",
 					"contentTypes": ["signal"], "contentMapContext": "inherit"}]}],
 		"startup": {"screens": true}, "viewports": [{"id": "handheld", "w": 480, "h": 720}],
@@ -410,6 +410,19 @@ func run() -> void:
 	published = await app._map_file_ctrl.commit_document("保存从流程图定位的实例出口")
 	check(published.get("status") == "ok" and Maps.read(manifest, "course_variant").objects[0].props.exit_target == {"view": "results"},
 		"the outlet can be redirected and published from the opened instance form")
+	choose(exit_picker, JSON.stringify(copy_arrival))
+	editor.commit_fields()
+	app._set_mode("map")
+	var current_host: EntityNode = canvas._ent_by_code_index()[copy_host]
+	check(canvas.duplicate_selected_at_offset([current_host], Vector2i(2, 2)), "duplicate a portal with its own arrival")
+	var new_host: EntityNode = canvas.selected_multi[0]
+	check(new_host.code != copy_host and new_host.props.exit_target == {
+		"map": copy_code, "inst": new_host.code, "port": "door"} and current_host.props.exit_target == copy_arrival,
+		"only the duplicated portal points to the duplicated arrival instance")
+	published = await app._map_file_ctrl.commit_document("保存复制的局部入口")
+	copy = Maps.read(manifest, "course_variant")
+	check(published.get("status") == "ok" and copy.objects[-1].props.exit_target.inst == new_host.code,
+		"the copied portal keeps its independent arrival after publication")
 	var inbound := Audit.view_inbound_refs(manifest, "instructions", [])
 	check(not inbound.refs.is_empty() and "welcome" in inbound.refs[0], "the destination screen has the expected inbound reference")
 	var broken := manifest.duplicate(true)
