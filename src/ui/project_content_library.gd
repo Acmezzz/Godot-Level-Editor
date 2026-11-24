@@ -15,6 +15,7 @@ const MapFlow := preload("res://src/map/map_flow.gd")
 const References := preload("res://src/project/reference_index.gd")
 const FlowTarget := preload("res://src/content/flow_target.gd")
 const StartupTargets := preload("res://src/project/startup_targets.gd")
+const StartupDialog := preload("res://src/ui/startup_dialog.gd")
 const ScreenLayout := preload("res://src/project/screen_layout.gd")
 const Kit := preload("res://src/ui/ui_kit.gd")
 const FrameReference := preload("res://src/ui/map_game_preview.gd")
@@ -173,6 +174,11 @@ func _open_flow() -> void:
 	body.add_child(Kit.field_row("引用字段", slot, 82))
 	body.add_child(Kit.field_row("筛选目标", target_search, 82))
 	body.add_child(Kit.field_row("目标", target, 82))
+	var content_map := OptionButton.new()
+	content_map.name = "FlowStartupContentMap"
+	var content_map_row := Kit.field_row("内容配对地图", content_map, 82)
+	content_map_row.hide()
+	body.add_child(content_map_row)
 	body.add_child(Kit.field_row("待修引用", broken, 82))
 	body.add_child(entry_row)
 	var neighbors_only := CheckButton.new()
@@ -208,6 +214,7 @@ func _open_flow() -> void:
 				return false
 		return true
 	var fill_targets := func():
+		content_map_row.hide()
 		target.clear()
 		target.add_item("（未设置 / 断开）")
 		target.set_item_metadata(0, "")
@@ -256,6 +263,14 @@ func _open_flow() -> void:
 			target.set_item_metadata(match_idx, edge.value)
 			target.set_item_disabled(match_idx, true)
 		target.select(match_idx)
+		if edge.get("project_section") == "startup" and edge.decl.get("contentMapContext") == "paired":
+			StartupDialog.fill_content_maps(content_map, source, str(edge.decl.get("contentMap", "")))
+			content_map_row.visible = StartupTargets.needs_content_map(edge.decl, target.get_selected_metadata())
+	target.item_selected.connect(func(_index: int):
+		if slot.selected >= 0:
+			var edge: Dictionary = state.slots[slot.selected]
+			content_map_row.visible = edge.get("project_section") == "startup" \
+				and StartupTargets.needs_content_map(edge.decl, target.get_selected_metadata()))
 	var show_graph := func(key: String):
 		view.highlighted = key
 		if neighbors_only.button_pressed:
@@ -416,7 +431,13 @@ func _open_flow() -> void:
 				refresh.call(edge.from)
 				notice.text = "项目配置或目标已变更；请选择有效目标后重试。"
 				return
-			if next == current.get("target", {}):
+			var context_map := ""
+			if section == "startup" and StartupTargets.needs_content_map(current, next):
+				context_map = content_map.get_selected_metadata()
+				if not StartupTargets.content_map_available(source, context_map):
+					notice.text = "请为内容开局选择可读取的地图。"
+					return
+			if next == current.get("target", {}) and context_map == current.get("contentMap", ""):
 				notice.text = "关系未变。"
 				return
 			var candidate := source.duplicate(true)
@@ -425,6 +446,11 @@ func _open_flow() -> void:
 				draft.erase("target")
 			else:
 				draft["target"] = next
+			if section == "startup":
+				if context_map.is_empty():
+					draft.erase("contentMap")
+				else:
+					draft["contentMap"] = context_map
 			var guard := func() -> bool:
 				return is_instance_valid(pop) and pop.visible and is_same(app.manifest, source) and source.get(section) == before
 			state.saving = true

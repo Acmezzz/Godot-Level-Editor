@@ -35,7 +35,8 @@ func run() -> void:
 				{"id": "signal_port", "kind": "input", "type": "port_ref", "of": "signal"},
 				{"id": "local_signal", "kind": "input", "type": "flow_target",
 					"contentTypes": ["signal"], "contentMapContext": "inherit"}]}],
-		"startup": {"screens": true, "arrivalPorts": ["arrival"]}, "viewports": [{"id": "handheld", "w": 480, "h": 720}],
+		"startup": {"screens": true, "arrivalPorts": ["arrival"], "contentTypes": ["sequence"],
+			"contentMapContext": "paired"}, "viewports": [{"id": "handheld", "w": 480, "h": 720}],
 		"mapOutputs": {"completed": {"name": "Course completed",
 			"maps": true, "screens": true, "contentTypes": ["signal"], "arrivalPorts": ["arrival"]},
 			"retry": {"name": "Retry the course", "arrivalPorts": ["arrival"]}},
@@ -689,6 +690,41 @@ func run() -> void:
 		and result.get("arrivalPort") == "door" and result.get("arrivalInstance") == new_host_code
 		and result.get("screens") == ["results", "debrief"] and result.get("text") == "Screen sequence complete",
 		"the normal project launch enters the saved door without a screen or playtest entry override: %s" % [report])
+	end = Time.get_ticks_msec() + 2000
+	while Playtest.is_alive(controller._play_pid) and Time.get_ticks_msec() < end:
+		await create_timer(0.05).timeout
+	var missing_board: Dictionary = app.manifest.duplicate(true)
+	missing_board.startup.target = timeline_target
+	check(Audit.audit(missing_board).any(func(issue):
+		return issue.path == "startup.contentMap" and issue.jump.type == "startup"),
+		"a content startup without its board links to startup settings")
+	app.project_shell.content_editor._library.open()
+	press(popup(), "流程关系…")
+	await process_frame
+	flow = popup()
+	choose(flow.find_child("FlowSource", true, false), "@project\u0001root")
+	choose(flow.find_child("FlowTarget", true, false), timeline_target)
+	var startup_board: OptionButton = flow.find_child("FlowStartupContentMap", true, false)
+	check(startup_board.is_visible_in_tree(), "the project slot offers a paired map for content startup")
+	choose(startup_board, copy_code)
+	press(flow, "应用关系")
+	check(app.manifest.startup.target == timeline_target and app.manifest.startup.contentMap == copy_code,
+		"the graph publishes the content and its board together")
+	flow.hide()
+	app._clear_project_session()
+	app.manifest = Manifest.load_from(project)
+	app._build_editor_ui()
+	press(app.project_shell, "试玩项目")
+	controller = app._playtest_ctrl
+	end = Time.get_ticks_msec() + 8000
+	while controller._play_report_result.is_empty() and Time.get_ticks_msec() < end:
+		await create_timer(0.05).timeout
+	report = controller._play_report_result
+	result = report.get("result", {})
+	check(report.get("status") == "ready" and result.get("screens", []).is_empty()
+		and result.get("debriefBoard") == copy_code and result.get("debriefHost") == copy_host
+		and result.get("visited") == ["project-epilogue", "project-finished"],
+		"ordinary launch starts map-bound content directly and reaches its authored ending: %s" % [report])
 	print("SCREEN-NAV-DONE failures=", failures)
 	quit(0 if failures == 0 else 1)
 

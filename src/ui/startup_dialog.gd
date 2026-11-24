@@ -2,6 +2,20 @@ extends RefCounted
 
 const Kit := preload("res://src/ui/ui_kit.gd")
 const Targets := preload("res://src/project/startup_targets.gd")
+const Refs := preload("res://src/project/reference_index.gd")
+
+static func fill_content_maps(picker: OptionButton, manifest: Dictionary, saved: String) -> void:
+	picker.clear()
+	picker.add_item("选择已保存的地图…")
+	picker.set_item_metadata(0, "")
+	var current := 0
+	for map in Refs.map_target_options(manifest):
+		var index := picker.item_count
+		picker.add_item("%s [%s]" % [map.name, map.code])
+		picker.set_item_metadata(index, map.code)
+		if map.code == saved:
+			current = index
+	picker.select(current)
 
 static func open(app) -> void:
 	var source: Dictionary = app.manifest
@@ -28,6 +42,17 @@ static func open(app) -> void:
 		options.set_item_disabled(current, true)
 	options.select(current)
 	shell.body.add_child(Kit.field_row("正式开局", options, 80))
+	var board := OptionButton.new()
+	board.name = "StartupContentMap"
+	var board_row := Kit.field_row("内容配对地图", board, 80)
+	shell.body.add_child(board_row)
+	var saved_board: String = startup.get("contentMap", "")
+	var show_board := func():
+		board_row.visible = Targets.needs_content_map(startup, options.get_selected_metadata())
+	show_board.call()
+	if startup.get("contentMapContext") == "paired":
+		fill_content_maps(board, source, saved_board)
+		options.item_selected.connect(func(_index: int): show_board.call())
 	var notice := Kit.hint_label("", 430)
 	shell.body.add_child(notice)
 	var guard := func() -> bool:
@@ -37,7 +62,13 @@ static func open(app) -> void:
 		if not Targets.available(source, value):
 			notice.text = "该入口已不可用，请重新选择。"
 			return
-		if value == selected:
+		var code := ""
+		if Targets.needs_content_map(startup, value):
+			code = board.get_selected_metadata()
+			if not Targets.content_map_available(source, code):
+				notice.text = "请为内容开局选择可读取的地图。"
+				return
+		if value == selected and code == saved_board:
 			pop.hide()
 			return
 		var candidate := source.duplicate(true)
@@ -45,6 +76,10 @@ static func open(app) -> void:
 			candidate.startup.erase("target")
 		else:
 			candidate.startup["target"] = value
+		if code.is_empty():
+			candidate.startup.erase("contentMap")
+		else:
+			candidate.startup["contentMap"] = code
 		if await app._save_manifest_file_async(guard, candidate, "startup"):
 			app._set_status("已保存正式启动入口")
 			pop.hide()

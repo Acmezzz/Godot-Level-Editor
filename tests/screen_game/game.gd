@@ -39,12 +39,13 @@ func _ready() -> void:
 		map_bytes = FileAccess.get_file_as_bytes(args["--map"])
 		await _play_relay(JSON.parse_string(map_bytes.get_string_from_utf8()))
 		return
+	var startup: Dictionary = manifest.get("startup", {})
 	var entry: Dictionary = _decode(args["--editor-entry"]) if args.has("--editor-entry") else (
-		manifest.get("startup", {}).get("target", {"function": "signal", "content": "project-default"}))
+		startup.get("target", {"function": "signal", "content": "project-default"}))
 	if entry.has("viewDraft") and not _load_view_draft(entry):
 		_finish("Cannot load this screen draft.")
 		return
-	_follow_target(entry)
+	_follow_target(entry, "" if args.has("--editor-entry") else startup.get("contentMap", ""))
 
 func _follow_target(target: Dictionary, content_board := "") -> void:
 	if target.has("view"):

@@ -61,6 +61,12 @@ static func available(manifest: Dictionary, target: Dictionary) -> bool:
 		return true
 	return destination_available(manifest, manifest.startup, target)
 
+static func needs_content_map(startup: Dictionary, target: Variant) -> bool:
+	return startup.get("contentMapContext") == "paired" and FlowTarget.kind(target) == "content"
+
+static func content_map_available(manifest: Dictionary, code: String) -> bool:
+	return code != "" and Refs.resolve_graph_map(Maps.code_index(manifest), code).status == "ok"
+
 static func destination_available(manifest: Dictionary, domains: Dictionary, target: Variant, maps := {}) -> bool:
 	if not FlowTarget.allows(domains, target):
 		return false

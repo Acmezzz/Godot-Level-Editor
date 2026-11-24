@@ -140,6 +140,12 @@ static func _validate_startup(data: Dictionary, issues: Array[Dictionary]) -> vo
 			_add(issues, "error", "startup.contentTypes", "must name unique declared function IDs")
 		else:
 			seen[kind] = true
+	if startup.has("contentMapContext") and (startup.contentMapContext != "paired" or kinds.is_empty()):
+		_add(issues, "error", "startup.contentMapContext", "paired requires at least one permitted content type")
+	if startup.has("contentMap") and (startup.get("contentMapContext") != "paired" \
+			or FlowTarget.kind(startup.get("target")) != "content" \
+			or not startup.contentMap is String or startup.contentMap.is_empty()):
+		_add(issues, "error", "startup.contentMap", "must be a non-empty map code on a paired content entry")
 	if not startup.has("target"):
 		return
 	var target = startup.target

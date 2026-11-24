@@ -55,6 +55,11 @@ static func audit(manifest: Dictionary, meta_out: Dictionary = {}) -> Array:
 			out.append(_wrap("manifest", {"severity": "error", "path": "startup.target",
 				"message": "正式启动入口不可读取：%s。" % JSON.stringify(startup_target)
 			}).merged({"jump": {"type": "startup"}}, true))
+		elif StartupTargets.needs_content_map(manifest.get("startup", {}), startup_target) \
+				and not StartupTargets.content_map_available(manifest, manifest.startup.get("contentMap", "")):
+			out.append(_wrap("manifest", {"severity": "error", "path": "startup.contentMap",
+				"message": "正式内容入口需要一张可读取的配对地图。"
+			}).merged({"jump": {"type": "startup"}}, true))
 	# 2. 地图校验（读盘全图）+ 顺带收集被实例引用的内容（孤立内容判定用）
 	var used_content := {}
 	for ref in ProjectSlots.references(manifest):
@@ -398,7 +403,7 @@ static func _content_checks(manifest: Dictionary, used: Dictionary, contexts := 
 			rows[_content_key(kind, cid)] = {"fn_id": kind, "cid": cid, "data": data}
 			# C12：内容自身的引用范围——步骤码、条件字段、内容池字段
 			out.append_array(_content_ref_checks(manifest, kind, str(cid), data))
-	_collect_screen_contexts(manifest, contexts)
+	_collect_entry_contexts(manifest, contexts)
 	var graph := _content_context_graph(manifest, contexts, rows, {})
 	for key in rows:
 		var row: Dictionary = rows[key]
@@ -755,23 +760,30 @@ static func _add_map_context(contexts: Dictionary, key: String, data: Dictionary
 		contexts[key] = {}
 	contexts[key][label] = {"map": data, "name": name}
 
-static func _collect_screen_contexts(manifest: Dictionary, contexts: Dictionary, maps := {}) -> void:
+static func _collect_entry_contexts(manifest: Dictionary, contexts: Dictionary, maps := {}) -> void:
 	var cache: Dictionary = maps.duplicate()
+	var startup: Dictionary = manifest.get("startup", {})
+	var target = startup.get("target")
+	var refs := ReferenceIndex.view_content_refs(manifest)
+	if StartupTargets.needs_content_map(startup, target) and startup.get("contentMap") is String:
+		refs.append({"fn": target.function, "cid": target.content, "context_map": startup.contentMap})
 	var index := {}
-	for ref in ReferenceIndex.view_content_refs(manifest):
+	for ref in refs:
 		if not ref.has("context_map") or ref.context_map == "":
 			continue
 		var map_key: String = ref.context_map
 		if not cache.has(map_key):
 			if index.is_empty():
 				index = MapStore.code_index(manifest)
-			var resolved := ReferenceIndex.resolve_indexed_map(index, map_key)
+			var resolved := ReferenceIndex.resolve_indexed_map(index, map_key) if ref.has("view") \
+				else ReferenceIndex.resolve_graph_map(index, map_key)
 			cache[map_key] = MapStore.read(manifest, resolved.key) if resolved.status == "ok" else {}
 		var map: Dictionary = cache[map_key]
 		if map.is_empty():
 			continue
 		var name := str(map.meta.get("name", map_key))
-		_add_map_context(contexts, _content_key(ref.fn, ref.cid), map, name, "屏幕 %s → 地图 %s" % [ref.view, name])
+		var source := "屏幕 " + str(ref.view) if ref.has("view") else "正式启动"
+		_add_map_context(contexts, _content_key(ref.fn, ref.cid), map, name, "%s → 地图 %s" % [source, name])
 
 static func _contextual_content_checks(manifest: Dictionary, fn: String, cid: String,
 		data: Dictionary, contexts: Dictionary, overrides: Dictionary, prefix := "", probe := Callable()) -> Array:
@@ -1033,7 +1045,7 @@ static func _map_change_issues(manifest: Dictionary, name: String, target: Dicti
 	for context_key in contexts:
 		if contexts[context_key].has(name):
 			contexts[context_key][name].map = target
-	_collect_screen_contexts(manifest, contexts, overrides)
+	_collect_entry_contexts(manifest, contexts, overrides)
 	var graph := _content_context_graph(manifest, contexts, contents, overrides)
 	for key in contents:
 		var row: Dictionary = contents[key]
