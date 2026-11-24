@@ -5,8 +5,6 @@ extends RefCounted
 var host   # editor_layout 宿主
 var app    # 根应用（= host.app）
 const BasisFields := preload("res://src/ui/grid_basis_fields.gd")
-const Audit := preload("res://src/project/project_audit.gd")
-const LayerOps := preload("res://src/canvas/layer_ops.gd")
 const TILE_GRID_PRESETS := [
 	["沿用地图格", {}], ["独立正交", {"gridProjection": "orthogonal"}],
 	["独立等距", {"gridProjection": "isometric"}], ["独立六边", {"gridProjection": "hexagonal"}],
@@ -288,24 +286,15 @@ func _delete_layer(lid: String) -> void:
 	var editor = app.project_shell.content_editor
 	if not editor.commit_fields():
 		return
-	var before: Dictionary = app.canvas.extract()
 	var session = app._map_file_ctrl.sess
 	var generation: int = session.generation
 	var revision: int = session.revision
-	var impact := Audit.map_change_reference_impacts(app.manifest, app.cur_map_name, before,
-		LayerOps.without_layer(before, at), editor.staged_rows_current_doc())
-	if not impact.added.is_empty() or not impact.unreadable.is_empty():
-		var text := "删除图层会保留受影响的引用值。"
-		if not impact.added.is_empty():
-			text += "\n\n新增引用问题 %d 处：\n%s" % [impact.added.size(), "\n".join(impact.added.slice(0, 5))]
-		if not impact.unreadable.is_empty():
-			text += "\n\n另有 %d 个文件无法检查。" % impact.unreadable.size()
-		_layer_mgr.hide()
-		if not await app._confirm_action("删除图层", text, "删除图层"):
-			return
-		if session.stale(generation) or session.revision != revision:
-			app._set_status("地图已更改，请重新选择要删除的图层。")
-			return
+	_layer_mgr.hide()
+	if not await app._confirm_action("删除图层", "删除「%s」及其瓦片和实例。可用 Ctrl+Z 撤销。" % app.canvas.layer_name(at), "删除图层"):
+		return
+	if session.stale(generation) or session.revision != revision:
+		app._set_status("地图已更改，请重新选择要删除的图层。")
+		return
 	await app.canvas.layer_del(at)
 	_rebuild_layer_mgr()
 	app._sync_ui()

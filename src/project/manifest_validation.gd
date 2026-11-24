@@ -42,6 +42,7 @@ static func validate(data: Dictionary, project_dir := "") -> Array[Dictionary]:
 		_validate_conditions(data, issues)
 	if data.has("steps"):
 		_validate_steps(data, issues)
+	_validate_field_codes(data, issues)
 	_validate_content_field_shapes(data, issues)
 	if data.has("audio"):
 		_validate_audio(data, issues)
@@ -66,27 +67,6 @@ static func validate(data: Dictionary, project_dir := "") -> Array[Dictionary]:
 			_add(issues, "error", "tileSize", "must be a positive integer or [w, h] of two positive integers")
 	elif not _is_positive_integer(tile_size):
 		_add(issues, "error", "tileSize", "must be a positive integer or [w, h] of two positive integers")
-	# C-15 混投影：画布口径是「任一 tile 资产声明非正交投影即整图按它」，混用会静默错位——警告。
-	# B1：指名具体资产与投影，否则「混了」这句话无从下手。
-	var projs := {}
-	var proj_assets := {}
-	var assets_arr = data.get("assets", null)
-	if assets_arr is Array:
-		for a in (assets_arr as Array):
-			if not (a is Dictionary) or str((a as Dictionary).get("kind", "")) != "scene" \
-					or str((a as Dictionary).get("shape", "")) != "tile":
-				continue
-			var p := str((a as Dictionary).get("gridProjection", "orthogonal"))
-			projs[p] = true
-			if not proj_assets.has(p):
-				proj_assets[p] = []
-			(proj_assets[p] as Array).append(str((a as Dictionary).get("id", "")))
-	if projs.size() > 1:
-		var detail: Array[String] = []
-		for p in proj_assets:
-			detail.append("%s: %s" % [str(p), ", ".join(PackedStringArray(proj_assets[p]))])
-		_add(issues, "warning", "assets",
-			"mixed gridProjection: canvas renders isometric if ANY tile asset declares it; orthogonal assets will misalign (" + "; ".join(detail) + ")")
 	_validate_top_level(data, issues)
 	for issue in CellGraph.validate_edge_types(data):
 		_add(issues, "error", issue.path, issue.message)
@@ -202,28 +182,7 @@ static func _validate_functions(data: Dictionary, issues: Array[Dictionary]) -> 
 			_add(issues, "error", "functions.%s.repeatable" % fid, "must be a boolean")
 		# 缺码不是错误：load_from 在 validate 之后调 ensure_codes 补发（新声明补码的正常路径）。
 		# 只有「重复」是错误——上面 duplicate_codes 已报。
-		var fseen := {}
-		for fd in d.get("fields", []):
-			if not (fd is Dictionary):
-				_add(issues, "error", "functions.%s.fields" % str(fid), "entries must be objects")
-				continue
-			var field_id := str((fd as Dictionary).get("id", ""))
-			if field_id == "" or fseen.has(field_id):
-				_add(issues, "error", "functions.%s.fields" % str(fid),
-					"field ids must be non-empty and unique (by id, seen: %s)" % field_id)
-			fseen[field_id] = true
-			var kind := str((fd as Dictionary).get("kind", ""))
-			# 零兼容：kind/type 是声明契约的必需键，缺或非法直接报错（UI 侧对应只读兜底）
-			if kind != "input" and kind != "choice":
-				_add(issues, "error", "functions.%s.fields.%s" % [str(fid), field_id],
-					"field kind must be \"input\" or \"choice\"")
-			elif kind == "input":
-				var typ := str((fd as Dictionary).get("type", ""))
-				if not INPUT_TYPES.has(typ):
-					_add(issues, "error", "functions.%s.fields.%s" % [str(fid), field_id],
-						"input type must be one of: " + ", ".join(INPUT_TYPES))
-				elif typ == "array":
-					_validate_array_field("functions.%s.fields.%s" % [fid, field_id], fd, issues)
+		_validate_fields(d.get("fields", []), "functions.%s.fields" % fid, issues)
 		# 功能引用的条件：同清单内按 id 引用（同挂载模型），引用未声明的条件 = 错误
 		var conds = d.get("conditions", [])
 		if not (conds is Array):
@@ -333,43 +292,7 @@ static func _validate_conditions(data: Dictionary, issues: Array[Dictionary]) ->
 	# 字段 id / kind / type（归一化视图逐条件查）
 	for cid in ConditionDecls.conditions(data):
 		var d: Dictionary = ConditionDecls.conditions(data)[cid]
-		var fseen := {}
-		for fd in d.get("fields", []):
-			if not (fd is Dictionary):
-				_add(issues, "error", "conditions.%s.fields" % cid, "entries must be objects")
-				continue
-			var field_id := str((fd as Dictionary).get("id", ""))
-			if field_id == "" or fseen.has(field_id):
-				_add(issues, "error", "conditions.%s.fields" % cid,
-					"field ids must be non-empty and unique (seen: %s)" % field_id)
-			fseen[field_id] = true
-			var kind := str((fd as Dictionary).get("kind", ""))
-			if kind != "input" and kind != "choice":
-				_add(issues, "error", "conditions.%s.fields.%s" % [cid, field_id],
-					"field kind must be \"input\" or \"choice\"")
-			elif kind == "input":
-				var typ := str((fd as Dictionary).get("type", ""))
-				if not INPUT_TYPES.has(typ):
-					_add(issues, "error", "conditions.%s.fields.%s" % [cid, field_id],
-						"input type must be one of: " + ", ".join(INPUT_TYPES))
-	# 字段码跨池查重：条件字段与功能字段共存于同一份内容 fields，同码 = 静默合并。
-	# 功能池内部的字段码重复由 duplicate_codes（本文件上方）已报过——这里只收集不重报
-	var fcodes := {}
-	for fid in FunctionDecls.functions(data):
-		for fd1 in (FunctionDecls.functions(data)[fid] as Dictionary).get("fields", []):
-			if fd1 is Dictionary:
-				var fc := str((fd1 as Dictionary).get("code", ""))
-				if fc != "":
-					fcodes[fc] = true
-	for cid2 in ConditionDecls.conditions(data):
-		for fd2 in (ConditionDecls.conditions(data)[cid2] as Dictionary).get("fields", []):
-			if fd2 is Dictionary:
-				var fc2 := str((fd2 as Dictionary).get("code", ""))
-				if fc2 != "" and fcodes.has(fc2):
-					_add(issues, "error", "conditions.%s.fields" % cid2,
-						"duplicate field code across pools: " + fc2)
-				if fc2 != "":
-					fcodes[fc2] = true
+		_validate_fields(d.get("fields", []), "conditions.%s.fields" % cid, issues, false)
 
 ## 音频池：id 非空唯一（array 写法查重）、码池内唯一（重复=静默别名，报错）、
 ## path 缺失只警告（条目占位合法，播放归游戏侧）。
@@ -556,45 +479,25 @@ static func _validate_steps(data: Dictionary, issues: Array[Dictionary]) -> void
 	# 字段 id / kind / type（归一化视图逐步骤查）
 	for sid in StepDecls.steps(data):
 		var d: Dictionary = StepDecls.steps(data)[sid]
-		var fseen := {}
-		for fd in d.get("fields", []):
-			if not (fd is Dictionary):
-				_add(issues, "error", "steps.%s.fields" % sid, "entries must be objects")
-				continue
-			var field_id := str((fd as Dictionary).get("id", ""))
-			if field_id == "" or fseen.has(field_id):
-				_add(issues, "error", "steps.%s.fields" % sid,
-					"field ids must be non-empty and unique (seen: %s)" % field_id)
-			fseen[field_id] = true
-			var kind := str((fd as Dictionary).get("kind", ""))
-			if kind != "input" and kind != "choice":
-				_add(issues, "error", "steps.%s.fields.%s" % [sid, field_id],
-					"field kind must be \"input\" or \"choice\"")
-			elif kind == "input":
-				var typ := str((fd as Dictionary).get("type", ""))
-				if not INPUT_TYPES.has(typ):
-					_add(issues, "error", "steps.%s.fields.%s" % [sid, field_id],
-						"input type must be one of: " + ", ".join(INPUT_TYPES))
-	# 步骤字段码跨池查重：避开功能 + 条件已占用的码
-	var fcodes := {}
-	for fid in FunctionDecls.functions(data):
-		for fd1 in (FunctionDecls.functions(data)[fid] as Dictionary).get("fields", []):
-			if fd1 is Dictionary and str((fd1 as Dictionary).get("code", "")) != "":
-				fcodes[str((fd1 as Dictionary).get("code", ""))] = true
-	for cid2 in ConditionDecls.conditions(data):
-		for fd2 in (ConditionDecls.conditions(data)[cid2] as Dictionary).get("fields", []):
-			if fd2 is Dictionary and str((fd2 as Dictionary).get("code", "")) != "":
-				fcodes[str((fd2 as Dictionary).get("code", ""))] = true
-	for sid3 in StepDecls.steps(data):
-		for fd3 in (StepDecls.steps(data)[sid3] as Dictionary).get("fields", []):
-			if not (fd3 is Dictionary):
-				continue
-			var fc3 := str((fd3 as Dictionary).get("code", ""))
-			if fc3 != "" and fcodes.has(fc3):
-				_add(issues, "error", "steps.%s.fields" % sid3,
-					"duplicate field code across pools: " + fc3)
-			if fc3 != "":
-				fcodes[fc3] = true
+		_validate_fields(d.get("fields", []), "steps.%s.fields" % sid, issues, false)
+
+# 功能、条件和步骤的顶层字段共享码空间。
+static func _validate_field_codes(data: Dictionary, issues: Array[Dictionary]) -> void:
+	var seen := {}
+	var pools := {"functions": FunctionDecls.functions(data), "conditions": ConditionDecls.conditions(data),
+		"steps": StepDecls.steps(data)}
+	for section in pools:
+		var pool: Dictionary = pools[section]
+		for id in pool:
+			for field in pool[id].get("fields", []):
+				if not field is Dictionary:
+					continue
+				var code := str(field.get("code", ""))
+				if code.is_empty():
+					continue
+				if section != "functions" and seen.has(code):
+					_add(issues, "error", "%s.%s.fields" % [section, id], "duplicate field code across pools: " + code)
+				seen[code] = true
 
 ## 资产表：kind/shape 合法、id 唯一、scene 的图集或图片二选一、entity 的呈现二选一、
 ## 挂载功能必须已声明、palette 条目结构。
@@ -658,7 +561,7 @@ static func _validate_scene_asset(ad: Dictionary, path: String, project_dir: Str
 			_add(issues, "warning", path + ".texture", "texture file not found on disk")
 	if atlas != "" and texture != "":
 		_add(issues, "error", path, "scene asset must declare exactly one of atlas / texture")
-	# 网格投影枚举校验；混投影（不同投影混用）在 validate() 尾部统一给警告
+	# 资产投影用于推断缺省地图投影。
 	var gp := str(ad.get("gridProjection", "orthogonal"))
 	if gp != "orthogonal" and gp != "isometric" and gp != "hexagonal":
 		_add(issues, "error", path + ".gridProjection", "must be \"orthogonal\" or \"isometric\" or \"hexagonal\"")
@@ -710,22 +613,8 @@ static func _validate_entity_asset(data: Dictionary, ad: Dictionary, path: Strin
 					seen_mounts[str(fid)] = true
 	if ad.has("frames") and not (ad.frames is Array):
 		_add(issues, "error", path + ".frames", "must be an array of texture paths")
-	var fields := {}
-	for field in ad.get("fields", []) if ad.get("fields", []) is Array else []:
-		if not (field is Dictionary):
-			_add(issues, "error", path + ".fields", "entries must be objects")
-			continue
-		var fid2 := str((field as Dictionary).get("id", ""))
-		if fid2 == "" or fields.has(fid2):
-			_add(issues, "error", path + ".fields", "field ids must be non-empty and unique")
-		fields[fid2] = true
-		if field.get("kind") == "input" and not field.get("type", "") in ["entity_ref", "map_ref"]:
-			var typ := str(field.get("type", ""))
-			var field_path := "%s.fields.%s" % [path, fid2]
-			if not INPUT_TYPES.has(typ):
-				_add(issues, "error", field_path, "input type must be one of: " + ", ".join(INPUT_TYPES))
-			elif typ == "array":
-				_validate_array_field(field_path, field, issues)
+	if ad.get("fields", []) is Array:
+		_validate_fields(ad.get("fields", []), path + ".fields", issues, true, "asset")
 
 ## 正整数像素尺寸（B1）：int 直接判，float 必须有限且恰为整数（JSON 20.0 合法、20.5 拒绝）。
 static func _is_positive_integer(v) -> bool:
@@ -825,45 +714,37 @@ static func _check_condition_fields(fields: Variant, path: String, conditions: D
 					else:
 						seen[id] = true
 
-## C1（§7.4）：array 字段声明校验。of: record 要求 fields 数组：子字段对象、id 非空唯一、
-## kind=input/choice、type 合法（input 的 type 走 INPUT_TYPES 白名单）；嵌套 record 递归（限深 4）。
-## 已有标量数组（of 缺省或标量/choice）不受影响——只新增 record 形的报错，不改旧声明语义。
-static func _validate_array_field(path: String, fd: Dictionary,
-		issues: Array[Dictionary], depth := 0) -> void:
-	if depth > 4:
-		_add(issues, "error", path,
-			"record nesting too deep (max 4)")
-		return
-	var of := str(fd.get("of", ""))
-	if of != "record":
-		return
-	var fl = fd.get("fields", null)
-	if not (fl is Array) or (fl as Array).is_empty():
-		_add(issues, "error", path,
-			"of: record requires a non-empty fields array")
-		return
-	var seen := {}
-	for sub in (fl as Array):
-		if not (sub is Dictionary):
-			_add(issues, "error", path,
-				"record fields entries must be objects")
+static func _validate_fields(fields: Array, path: String, issues: Array[Dictionary],
+		records := true, domain := "", depth := 0) -> void:
+	var ids := {}
+	for field in fields:
+		if not field is Dictionary:
+			_add(issues, "error", path, "entries must be objects")
 			continue
-		var sid := str((sub as Dictionary).get("id", ""))
-		if sid == "" or seen.has(sid):
-			_add(issues, "error", path,
-				"record sub-field ids must be non-empty and unique (seen: %s)" % sid)
-		seen[sid] = true
-		var skind := str((sub as Dictionary).get("kind", ""))
-		if skind != "input" and skind != "choice":
-			_add(issues, "error", path,
-				"record sub-field kind must be input or choice (seen: %s)" % skind)
-		elif skind == "input":
-			var styp := str((sub as Dictionary).get("type", ""))
-			if styp == "array":
-				_validate_array_field(path + ".fields." + sid, sub as Dictionary, issues, depth + 1)
-			elif not INPUT_TYPES.has(styp):
-				_add(issues, "error", path,
-					"record sub-field type must be one of: " + ", ".join(INPUT_TYPES))
+		var id := str(field.get("id", ""))
+		if id.is_empty() or ids.has(id) or (domain == "module" and (not field.get("id") is String or id.strip_edges().is_empty())):
+			_add(issues, "error", path, "field ids must be non-empty and unique (seen: %s)" % id)
+		ids[id] = true
+		var at := path + "." + id
+		var kind := str(field.get("kind", ""))
+		if kind != "input":
+			if kind != "choice" and domain != "asset":
+				_add(issues, "error", at, "field kind must be \"input\" or \"choice\"")
+			continue
+		var type := str(field.get("type", ""))
+		if domain == "asset" and type in ["entity_ref", "map_ref"]:
+			continue
+		if not INPUT_TYPES.has(type):
+			_add(issues, "error", at, "input type must be one of: " + ", ".join(INPUT_TYPES))
+		elif records and type == "array" and field.get("of") == "record":
+			var children = field.get("fields")
+			if depth >= 5:
+				_add(issues, "error", at, "record nesting too deep (max 5)")
+			elif not children is Array or children.is_empty():
+				_add(issues, "error", at, "of: record requires a non-empty fields array")
+			else:
+				_validate_fields(children, at + ".fields", issues, true, "", depth + 1)
+
 ## C3（§7.4）：assets[].ports 校验。端口 = {id, x, y, type?}：id 非空唯一、x/y 为数字
 ## （锚点局部像素）、type 可选字符串。不校验其它未知键（游戏侧自定义原样保留）。
 static func _validate_ports(ad: Dictionary, path: String, issues: Array[Dictionary]) -> void:
@@ -972,21 +853,7 @@ static func _validate_screen_modules(data: Dictionary, issues: Array[Dictionary]
 							"inherit or paired requires contentTypes; paired also needs a single map choice in mapField")
 				if spec.has("viewMapContext") and (spec.viewMapContext != "inherit" or spec.get("screens") != true):
 					_add(issues, "error", at + ".viewMapContext", "inherit requires an output that accepts screens")
-		var seen := {}
-		for i in fields.size():
-			var field = fields[i]
-			var place := "%s.fields[%d]" % [path, i]
-			if not field is Dictionary or not field.get("id") is String or field.id.strip_edges().is_empty() or seen.has(field.id):
-				_add(issues, "error", place, "must declare a unique non-empty field ID")
-				continue
-			seen[field.id] = true
-			if field.get("kind") == "input":
-				if field.get("type") == "array":
-					_validate_array_field(place, field, issues)
-				elif not INPUT_TYPES.has(field.get("type")):
-					_add(issues, "error", place + ".type", "must name a supported input type")
-			elif field.get("kind") != "choice":
-				_add(issues, "error", place + ".kind", "must be input or choice")
+		_validate_fields(fields, path + ".fields", issues, true, "module")
 		_check_condition_fields(fields, path + ".fields", conditions, true, issues)
 		_check_module_map_pairs(fields, path + ".fields", issues)
 

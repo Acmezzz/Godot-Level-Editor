@@ -400,7 +400,7 @@ static func _content_checks(manifest: Dictionary, used: Dictionary, contexts := 
 			# C12：内容自身的引用范围——步骤码、条件字段、内容池字段
 			out.append_array(_content_ref_checks(manifest, kind, str(cid), data))
 	_collect_entry_contexts(manifest, contexts)
-	var graph := _content_context_graph(manifest, contexts, rows, {})
+	var graph := _content_context_graph(manifest, contexts, rows)
 	for key in rows:
 		var row: Dictionary = rows[key]
 		if str(row.data.get("scope", "")) != "project" and not used.has(key) and not graph.inbound.has(key):
@@ -408,7 +408,7 @@ static func _content_checks(manifest: Dictionary, used: Dictionary, contexts := 
 				"message": "孤立内容：没有实例绑定或内容入边（可能是复用库，确认后可删）",
 				"map": "", "jump": {}})
 		out.append_array(_contextual_content_checks(manifest, row.fn_id, row.cid, row.data,
-			graph.contexts.get(key, {}), {}))
+			graph.contexts.get(key, {})))
 	return out
 
 ## 内容文件的引用自检（C12）：只查**声明驱动**的引用，不做字符串猜测。
@@ -760,8 +760,8 @@ static func _add_map_context(contexts: Dictionary, key: String, data: Dictionary
 		contexts[key] = {}
 	contexts[key][label] = {"map": data, "name": name}
 
-static func _collect_entry_contexts(manifest: Dictionary, contexts: Dictionary, maps := {}) -> void:
-	var cache: Dictionary = maps.duplicate()
+static func _collect_entry_contexts(manifest: Dictionary, contexts: Dictionary) -> void:
+	var cache := {}
 	var startup: Dictionary = manifest.get("startup", {})
 	var target = startup.get("target")
 	var refs := ReferenceIndex.view_content_refs(manifest)
@@ -786,22 +786,22 @@ static func _collect_entry_contexts(manifest: Dictionary, contexts: Dictionary, 
 		_add_map_context(contexts, _content_key(ref.fn, ref.cid), map, name, "%s → 地图 %s" % [source, name])
 
 static func _contextual_content_checks(manifest: Dictionary, fn: String, cid: String,
-		data: Dictionary, contexts: Dictionary, overrides: Dictionary, prefix := "", probe := Callable()) -> Array:
+		data: Dictionary, contexts: Dictionary) -> Array:
 	var out: Array = []
 	var sources := contexts if not contexts.is_empty() else {"": {"map": {}, "name": ""}}
 	for section in _content_sections(manifest, fn, data):
 		for label in sources:
 			var context: Dictionary = sources[label]
 			for issue in _spatial_fields(manifest, section.decls, section.values, context.map,
-					context.name, overrides, true, section.prefix, 0, "", probe):
-				var path := prefix + "%s/%s.%s" % [fn, cid, issue.path]
+					context.name, true, {}, section.prefix):
+				var path := "%s/%s.%s" % [fn, cid, issue.path]
 				if label != "" and label != context.name:
 					path += " · " + str(label)
 				elif label != "":
 					path += " · 地图 " + str(label)
 				out.append({"kind": "content", "severity": "warning", "path": path,
 					"message": issue.message, "map": context.name,
-					"jump": _content_jump(fn, cid, issue.prop, context.name, section.step_index) if prefix == "" else {}})
+					"jump": _content_jump(fn, cid, issue.prop, context.name, section.step_index)})
 	return out
 
 static func _screen_context_links(manifest: Dictionary) -> Dictionary:
@@ -821,10 +821,8 @@ static func _append_screen_context_link(links: Dictionary, view: String, fn: Str
 	links[key].append({"fn": fn, "cid": cid, "map_context": "inherit"})
 
 ## 传播状态由 (内容或屏幕, 入口, 当前地图) 唯一确定。分支只传地图，不替游戏计算条件；
-## 循环与汇合都不会反复扫描。rows 是本次评估可见的内容版本，lookup 只用于按需读取副本依赖。
-static func _content_context_graph(manifest: Dictionary, seeds: Dictionary, rows: Dictionary,
-		overrides: Dictionary, lookup := Callable(), include_standalone := true,
-		standalone_keys := []) -> Dictionary:
+## 循环与汇合都不会反复扫描。rows 为已保存的内容。
+static func _content_context_graph(manifest: Dictionary, seeds: Dictionary, rows: Dictionary) -> Dictionary:
 	var contexts := {}
 	var links := _screen_context_links(manifest)
 	var inbound := {}
@@ -832,18 +830,15 @@ static func _content_context_graph(manifest: Dictionary, seeds: Dictionary, rows
 	for key in seeds:
 		for label in seeds[key]:
 			_enqueue_content_context(queue, contexts, key, label, seeds[key][label])
-	for key in rows.keys() if include_standalone else standalone_keys:
+	for key in rows:
 		queue.append({"key": key, "label": "", "context": {"map": {}, "name": ""}})
 	var cursor := 0
-	var map_cache := overrides.duplicate()
+	var map_cache := {}
 	while cursor < queue.size():
 		var visit: Dictionary = queue[cursor]
 		cursor += 1
 		var key: String = visit.key
 		if not links.has(key):
-			if not key.begins_with("@view\u0001") and not rows.has(key) and lookup.is_valid():
-				var parts := key.split("\u0001", true, 1)
-				rows[key] = {"fn_id": parts[0], "cid": parts[1], "data": lookup.call(parts[0], parts[1])}
 			var row: Dictionary = rows.get(key, {})
 			links[key] = _content_links(manifest, row.fn_id, row.data, [], true) if not row.is_empty() else []
 			for link in links[key]:
@@ -884,242 +879,6 @@ static func _enqueue_content_context(queue: Array, contexts: Dictionary, key: St
 		return
 	contexts[key][label] = context
 	queue.append({"key": key, "label": label, "context": context})
-
-## 对同一批磁盘来源比较两种地图状态。其他草稿保留自己的本图上下文，
-## 但其指向正在编辑地图的跨图引用按候选状态解析。
-static func map_change_reference_impacts(manifest: Dictionary, name: String, before: Dictionary,
-		after: Dictionary, staged: Array = []) -> Dictionary:
-	var project := _reference_sources(manifest)
-	var aliases := _resolved_map_aliases(project.index, name, before)
-	var old := _map_change_issues(manifest, name, before, after, project.maps, project.targets, aliases, project.contents, project.drafts, staged)
-	var next := _map_change_issues(manifest, name, after, after, project.maps, project.targets, aliases, project.contents, project.drafts, staged)
-	var assets := AssetDecl.all(manifest)
-	for ref in _module_refs_to_map(manifest, aliases):
-		var old_problem := _module_target_problem(manifest, ref, assets, name, before)
-		if old_problem != "":
-			continue
-		var problem := _module_target_problem(manifest, ref, assets, name, after)
-		if problem != "":
-			next.append(_view_issue(ref, problem))
-	var code: String = after.meta.get("code", "")
-	var changed := {code: after}
-	var original := {code: before}
-	var startup: Dictionary = manifest.get("startup", {})
-	var entry: Dictionary = startup.get("target", {})
-	if _lost_arrival(manifest, startup, entry, original, changed):
-		next.append(_wrap("manifest", {"path": "startup.target", "message": _flow_target_message(entry)}))
-	for ref in ReferenceIndex.view_map_refs(manifest):
-		if ref.has("domains") and _lost_arrival(manifest, ref.domains, ref.target, original, changed):
-			next.append(_view_issue(ref, _flow_target_message(ref.target)))
-	for ref in ReferenceIndex.view_module_refs(manifest):
-		if ref.kind == "flow_target" and _lost_arrival(manifest, ref.decl, ref.value, original, changed):
-			next.append(_view_issue(ref, _flow_target_message(ref.value)))
-	return {"added": _new_reference_messages(old, next), "unreadable": project.unreadable}
-
-static func _lost_arrival(manifest: Dictionary, decl: Dictionary, target: Variant, before: Dictionary, after: Dictionary) -> bool:
-	return FlowTarget.kind(target) == "map" and target.has("port") and after.has(target.map) \
-		and StartupTargets.destination_available(manifest, decl, target, before) \
-		and not StartupTargets.destination_available(manifest, decl, target, after)
-
-static func _resolved_map_aliases(index: Dictionary, name: String, data: Dictionary) -> Array:
-	var aliases := []
-	for key in [name, str(data.get("meta", {}).get("code", ""))]:
-		var resolved := ReferenceIndex.resolve_indexed_map(index, key)
-		if resolved.status == "ok" and resolved.key == name:
-			aliases.append(key)
-	return aliases
-
-static func _module_refs_to_map(manifest: Dictionary, aliases: Array) -> Array:
-	if aliases.is_empty():
-		return []
-	return ReferenceIndex.view_module_refs(manifest).filter(func(ref): return _module_map_key(ref) in aliases)
-
-static func retained_region_edge_refs(manifest: Dictionary, name: String, live: Dictionary,
-		mapper: Callable, staged: Array) -> Dictionary:
-	var project := _reference_sources(manifest)
-	var code := str(live.meta.code)
-	var probe := func(kind: String, value: Variant, source: Dictionary, source_name: String, paired: String) -> Dictionary:
-		if kind != "edge" or not value is Dictionary:
-			return {}
-		var map_key := RefFields.object_map_key(value, paired)
-		if map_key == "":
-			if source_name != name or str(source.get("meta", {}).get("code", "")) != code:
-				return {}
-		elif not map_key in [name, code]:
-			return {}
-		var moved: Dictionary = mapper.call(value, "")
-		if moved.is_empty() or moved.edge == value.get("edge"):
-			return {}
-		return {"message": "%s → %s" % [value.edge, moved.edge], "fixable": false}
-	var issues := _map_change_issues(manifest, name, live, live, project.maps, project.targets,
-		[name, code], project.contents, project.drafts, staged, probe)
-	for ref in _module_refs_to_map(manifest, _resolved_map_aliases(project.index, name, live)):
-		var finding := probe.call(ref.kind, ref.value, live, name, ref.paired) as Dictionary
-		if not finding.is_empty():
-			issues.append(_view_issue(ref, finding.message))
-	return {"retained": _new_reference_messages([], issues), "unreadable": project.unreadable}
-
-static func _reference_sources(manifest: Dictionary) -> Dictionary:
-	var unreadable: Array = []
-	var maps := MapStore.read_all_fresh(manifest, unreadable)
-	var index := MapStore.code_index(manifest)
-	var targets := {}
-	for source in maps:
-		for key in [source, str(maps[source].get("meta", {}).get("code", ""))]:
-			var resolved := ReferenceIndex.resolve_indexed_map(index, key)
-			if resolved.status == "ok" and resolved.key == source:
-				targets[key] = maps[source]
-	var drafts := {}
-	var contents := {}
-	for fn in ContentStore.declared_kinds(manifest):
-		var bad: Array = []
-		var rows := ContentStore.read_all(manifest, fn, bad)
-		for cid in rows:
-			contents[_content_key(fn, str(cid))] = {"fn_id": fn, "cid": cid, "data": rows[cid]}
-		for item in bad:
-			unreadable.append("内容 %s/%s" % [fn, str(item.get("name", ""))])
-	for key in MapStore.Recovery.list_drafts(manifest):
-		var draft := MapStore.Recovery.read_draft_key(manifest, str(key))
-		if not draft.get("snapshot") is Dictionary or not draft.get("pendingContents", []) is Array \
-				or not draft.snapshot.get("meta") is Dictionary or not draft.snapshot.get("objects", []) is Array:
-			unreadable.append("草稿 " + str(key))
-			continue
-		drafts[key] = draft
-	return {"index": index, "maps": maps, "targets": targets, "contents": contents,
-		"drafts": drafts, "unreadable": unreadable}
-
-## 检查真正要发布的副本与它的新内容。反事实基线恢复原格空间，副本身份
-## 保持相同，因此不会把指回源图或其他图的引用算成副本拓扑问题。
-static func projection_copy_impacts(manifest: Dictionary, targets: Array, source_grid: Dictionary) -> Dictionary:
-	var copy := {}
-	var name := ""
-	var pending := {}
-	for target in targets:
-		if target.get("kind") == "map":
-			copy = target.map_data
-			name = str(target.id)
-		elif target.get("kind") == "content":
-			pending[_content_key(str(target.fn_id), str(target.id))] = {
-				"fn_id": str(target.fn_id), "cid": str(target.id), "data": target.data}
-	if copy.is_empty():
-		return {"added": [], "unreadable": []}
-	var baseline := copy.duplicate()
-	baseline.meta = copy.meta.duplicate()
-	for key in ["gridProjection", "gridBasis", "gridTopology"]:
-		baseline.meta.erase(key)
-	baseline.meta.merge(source_grid, true)
-	var old := _ref_checks(baseline, manifest, name)
-	var next := _ref_checks(copy, manifest, name)
-	var unreadable: Array = []
-	var lookup := func(fn: String, cid: String) -> Dictionary:
-		var read := ContentStore.read_ex(manifest, fn, cid)
-		if read.status != "ok":
-			unreadable.append("%s/%s" % [fn, cid])
-			return {}
-		return read.data
-	for state in [baseline, copy]:
-		var seeds := {}
-		_collect_spatial_contexts(manifest, state, name, seeds)
-		var overrides := {name: state, str(copy.meta.code): state}
-		var graph := _content_context_graph(manifest, seeds, pending, overrides, lookup, false)
-		var issues: Array = old if is_same(state, baseline) else next
-		for key in graph.contexts:
-			var row: Dictionary = pending.get(key, {})
-			if not row.is_empty():
-				issues.append_array(_contextual_content_checks(manifest, row.fn_id, row.cid, row.data,
-					graph.contexts[key], overrides))
-	return {"added": _new_reference_messages(old, next), "unreadable": unreadable}
-
-static func _new_reference_messages(old: Array, next: Array) -> Array[String]:
-	var prior := {}
-	for issue in old:
-		prior[[issue.path, issue.message]] = true
-	var added: Array[String] = []
-	for issue in next:
-		var identity := [issue.path, issue.message]
-		if not prior.has(identity):
-			prior[identity] = true
-			added.append("%s：%s" % [issue.path, issue.message])
-	return added
-
-static func _map_change_issues(manifest: Dictionary, name: String, target: Dictionary, retained: Dictionary,
-		maps: Dictionary, targets: Dictionary, aliases: Array, contents: Dictionary, drafts: Dictionary,
-		staged: Array, probe := Callable()) -> Array:
-	var out: Array = []
-	var overrides := targets.duplicate()
-	for alias in aliases:
-		overrides[alias] = target
-	var sources := maps.duplicate()
-	sources[name] = target
-	var contexts := {}
-	for source in sources:
-		if not probe.is_valid() or source != name:
-			out.append_array(_ref_checks(sources[source], manifest, source, overrides, probe))
-		var bindings: Dictionary = retained if source == name else sources[source]
-		# 只比较操作后仍绑定内容的地图，本图上下文仍用前后各自的几何与实例。
-		_collect_spatial_contexts(manifest, bindings, source, contexts)
-	for context_key in contexts:
-		if contexts[context_key].has(name):
-			contexts[context_key][name].map = target
-	_collect_entry_contexts(manifest, contexts, overrides)
-	var graph := _content_context_graph(manifest, contexts, contents, overrides)
-	for key in contents:
-		var row: Dictionary = contents[key]
-		out.append_array(_contextual_content_checks(manifest, row.fn_id, row.cid, row.data,
-			graph.contexts.get(key, {}), overrides, "", probe))
-	for key in drafts:
-		var draft: Dictionary = drafts[key]
-		var snapshot: Dictionary = draft.snapshot
-		var draft_name := str(draft.get("mapName", snapshot.meta.get("name", "")))
-		var label := "草稿 " + str(key)
-		for issue in _ref_checks(snapshot, manifest, draft_name, overrides, probe):
-			issue.path = label + " · " + str(issue.path)
-			out.append(issue)
-		var draft_contexts := {}
-		_collect_spatial_contexts(manifest, snapshot, draft_name, draft_contexts, label)
-		_append_pending_spatial(manifest, draft.get("pendingContents", []), draft_contexts,
-			contents, overrides, out, label + " · ", {}, probe)
-	var staged_contexts := {}
-	for key in contexts:
-		if contexts[key].has(name):
-			staged_contexts[key] = {name: contexts[key][name]}
-	if not staged.is_empty():
-		_append_pending_spatial(manifest, staged, staged_contexts, contents, overrides, out,
-			"当前暂存 · ", graph.contexts, probe)
-	return out
-
-static func _append_pending_spatial(manifest: Dictionary, rows: Array, contexts: Dictionary,
-		contents: Dictionary, overrides: Dictionary, out: Array, label: String,
-		already_checked := {}, probe := Callable()) -> void:
-	var overlay := contents.duplicate()
-	var pending := {}
-	for row in rows:
-		if not row is Dictionary or not row.get("data") is Dictionary:
-			continue
-		var fn := str(row.get("fn_id", row.get("fn", "")))
-		var cid := str(row.get("cid", row.get("id", "")))
-		if fn == "" or cid == "":
-			continue
-		var key := _content_key(fn, cid)
-		pending[key] = row
-		overlay[key] = {"fn_id": fn, "cid": cid, "data": row.data}
-	var graph := _content_context_graph(manifest, contexts, overlay, overrides, Callable(), false, pending.keys())
-	for key in pending:
-		if not graph.contexts.has(key):
-			graph.contexts[key] = {}
-	for key in graph.contexts:
-		var row: Dictionary = overlay.get(key, {})
-		if row.is_empty():
-			continue
-		var contexts_to_check: Dictionary = graph.contexts[key]
-		if not pending.has(key):
-			contexts_to_check = contexts_to_check.duplicate()
-			for known in already_checked.get(key, {}):
-				contexts_to_check.erase(known)
-			if contexts_to_check.is_empty():
-				continue
-		out.append_array(_contextual_content_checks(manifest, row.fn_id, row.cid, row.data,
-			contexts_to_check, overrides, label, probe))
 
 static func draft_inbound_refs(manifest: Dictionary, cid: String, fn_id := "") -> Array:
 	var out: Array = []
@@ -1489,22 +1248,21 @@ static func asset_draft_refs(manifest: Dictionary, asset_id: String, bad: Array 
 	return out
 
 ## 地图属性以字段 id 寻址；内容以字段码寻址。自动清理只支持顶层摆放物属性。
-static func _ref_checks(data: Dictionary, manifest: Dictionary, map_name: String, overrides := {}, probe := Callable()) -> Array:
+static func _ref_checks(data: Dictionary, manifest: Dictionary, map_name: String, targets := {}) -> Array:
 	var out: Array = []
-	if not probe.is_valid():
-		var views := ReferenceIndex.view_ids(manifest)
-		for ref in _map_property_refs(manifest, data, ["view", "flow_target"]):
-			var message := ""
-			if ref.kind == "view" and not views.has(ref.value):
-				message = "引用的参考视图不存在：" + ref.value
-			elif ref.kind == "flow_target" and not StartupTargets.destination_available(manifest, ref.decl, ref.value, overrides):
-				message = _flow_target_message(ref.value)
-			if message != "":
-				var jump := {"type": "map_flow", "map": map_name, "field": ref.field,
-					"section": ref.map_section} if ref.has("map_section") \
-					else {"type": "entity", "map": map_name, "code": ref.code, "prop": ref.field}
-				out.append({"kind": "ref", "severity": "warning", "path": "%s · %s" % [map_name, ref.path],
-					"message": message, "map": map_name, "jump": jump})
+	var views := ReferenceIndex.view_ids(manifest)
+	for ref in _map_property_refs(manifest, data, ["view", "flow_target"]):
+		var message := ""
+		if ref.kind == "view" and not views.has(ref.value):
+			message = "引用的参考视图不存在：" + ref.value
+		elif ref.kind == "flow_target" and not StartupTargets.destination_available(manifest, ref.decl, ref.value, targets):
+			message = _flow_target_message(ref.value)
+		if message != "":
+			var jump := {"type": "map_flow", "map": map_name, "field": ref.field,
+				"section": ref.map_section} if ref.has("map_section") \
+				else {"type": "entity", "map": map_name, "code": ref.code, "prop": ref.field}
+			out.append({"kind": "ref", "severity": "warning", "path": "%s · %s" % [map_name, ref.path],
+				"message": message, "map": map_name, "jump": jump})
 	var declarations := {}
 	var objects = data.get("objects", [])
 	if not objects is Array:
@@ -1518,7 +1276,7 @@ static func _ref_checks(data: Dictionary, manifest: Dictionary, map_name: String
 		var code := str(o.get("code", ""))
 		var label := "%s · %s(%s)." % [map_name, aid, code]
 		for finding in _spatial_fields(manifest, declarations[aid], o.get("props", {}), data,
-				map_name, overrides, false, "", 0, "", probe):
+				map_name, false, targets):
 			var issue := {"kind": "ref", "severity": "warning", "path": label + str(finding.path),
 				"message": finding.message, "map": map_name,
 				"jump": {"type": "entity", "map": map_name, "code": code, "prop": finding.prop}}
@@ -1536,8 +1294,8 @@ static func _empty_reference_value(value: Variant) -> bool:
 		or (value is Dictionary and value.is_empty()) or (value is Array and value.is_empty())
 
 static func _spatial_fields(manifest: Dictionary, decls: Array, values: Variant, source: Dictionary,
-		map_name: String, overrides: Dictionary, coded: bool, prefix := "", depth := 0,
-		root_prop := "", probe := Callable()) -> Array:
+		map_name: String, coded: bool, targets := {}, prefix := "", depth := 0,
+		root_prop := "") -> Array:
 	var out: Array = []
 	if not values is Dictionary or depth > 8:
 		return out
@@ -1550,10 +1308,7 @@ static func _spatial_fields(manifest: Dictionary, decls: Array, values: Variant,
 			key = id
 		var value = values.get(key)
 		if _empty_reference_value(value):
-			value = field.get("default") if coded and not overrides.is_empty() and not values.has(key) \
-				and RefFields.describe(field).kind == "flow_target" else null
-			if _empty_reference_value(value):
-				continue
+			continue
 		var path := prefix + id
 		var prop := id if root_prop == "" else root_prop
 		for scope in RefFields.nested_scopes(manifest, field, value):
@@ -1561,17 +1316,8 @@ static func _spatial_fields(manifest: Dictionary, decls: Array, values: Variant,
 			if scope.path.size() == 2:
 				sub += "fields."
 			out.append_array(_spatial_fields(manifest, scope.decls, scope.values, source,
-				map_name, overrides, coded or scope.path.size() == 2, sub, depth + 1, prop, probe))
+				map_name, coded or scope.path.size() == 2, targets, sub, depth + 1, prop))
 		var desc := RefFields.describe(field)
-		if not probe.is_valid() and coded and desc.kind == "flow_target":
-			var targets := _as_list(value) if desc.many else [value]
-			for i in targets.size():
-				var target = targets[i]
-				if FlowTarget.kind(target) == "map" and target.has("port") and overrides.has(target.map) \
-						and not StartupTargets.destination_available(manifest, field, target, overrides):
-					out.append({"path": "%s[%d]" % [path, i] if desc.many else path, "prop": prop,
-						"message": _flow_target_message(target), "fixable": false, "top_level": depth == 0, "value": target})
-			continue
 		if desc.kind not in ["entity_inst", "port", "edge", "cell", "map", "layer"]:
 			continue
 		var paired := RefFields.paired_map_value(field, decls, values, "code" if coded else "id")
@@ -1581,8 +1327,7 @@ static func _spatial_fields(manifest: Dictionary, decls: Array, values: Variant,
 			var entry = entries[i]
 			if _empty_reference_value(entry):
 				continue
-			var problem: Dictionary = probe.call(desc.kind, entry, source, map_name, paired) if probe.is_valid() \
-				else SpatialCheck.problem(manifest, desc.kind, source, map_name, entry, ref_decl, paired, overrides)
+			var problem := SpatialCheck.problem(manifest, desc.kind, source, map_name, entry, ref_decl, paired, targets)
 			if not problem.is_empty() and str(problem.get("message", "")) != "":
 				out.append({"path": path + ("#%d" % i if value is Array else ""),
 					"prop": prop, "message": problem.message, "fixable": bool(problem.get("fixable", false)),

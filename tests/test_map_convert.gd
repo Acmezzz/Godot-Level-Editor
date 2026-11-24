@@ -6,7 +6,6 @@ const MapConvert := preload("res://src/map/map_convert.gd")
 const GridSpaceScript := preload("res://src/canvas/grid_space.gd")
 const MapStore := preload("res://src/map/map_store.gd")
 const Edge := preload("res://src/map/edge_ref.gd")
-const Audit := preload("res://src/project/project_audit.gd")
 const ContentStore := preload("res://src/content/content_store.gd")
 const ClonePlan := preload("res://src/content/clone_plan.gd")
 
@@ -90,7 +89,7 @@ func test_spawn_uses_cell_center() -> void:
 	ok(src_px.distance_to(dst_px) <= float(dst_g.cell_max()),
 		"格中心偏移不超过一格：%s vs %s" % [str(src_px), str(dst_px)])
 
-func test_out_of_bounds_spawn_and_new_edges_on_the_frozen_copy() -> void:
+func test_out_of_bounds_spawn_and_edge_values_on_the_frozen_copy() -> void:
 	_wipe()
 	var d := _map("orthogonal")
 	d.spawn = [5, 3]
@@ -129,14 +128,8 @@ func test_out_of_bounds_spawn_and_new_edges_on_the_frozen_copy() -> void:
 	if not prep.has("plan"):
 		_wipe()
 		return
-	var report := Audit.projection_copy_impacts(m, prep.plan.targets, converted.source_grid)
-	var paths := "\n".join(report.added)
-	eq(report.added.size(), 4, "只报告副本摆放物、暂存流程副本与共享流程链的新问题：" + paths)
-	ok(paths.contains(".local") and paths.contains("route/shared.steps[0].edge")
-		and paths.contains("route/next.steps[0].edge")
-		and not paths.contains("source_edge") and not paths.contains(".remote"), "按真正的副本身份区别本图与源图")
-	ok(not FileAccess.file_exists(MapStore.path_for(m, "dst")), "检查没有发布任何地图")
-	eq(MapStore.apply_duplicate(prep.plan), "", "发布刚检查的冻结副本")
+	ok(not FileAccess.file_exists(MapStore.path_for(m, "dst")), "preview does not publish")
+	eq(MapStore.apply_duplicate(prep.plan), "", "publish the prepared copy")
 	var copy := MapStore.read(m, "dst")
 	eq(copy.objects[0].props.local.map, copy.meta.code, "显式本图格边随整图副本")
 	eq(copy.objects[0].props.local.edge, local_edge.edge, "需人工修复的边身份保留")
@@ -179,7 +172,7 @@ func test_rejects_invalid_targets() -> void:
 	var tm := MapConvert.plan(tri, _manifest(), "hexagonal")
 	ok(not bool(tm.get("ok", true)), "三角拓扑 + 六边拒绝")
 
-func test_changing_and_removing_basis_preserves_anchor_and_grid_reference_baseline() -> void:
+func test_changing_and_removing_basis_preserves_anchor() -> void:
 	var m := _manifest()
 	m.assets[0].fields = [{"id": "edge", "type": "edge_ref"}]
 	var d := _map("hexagonal")
@@ -199,15 +192,6 @@ func test_changing_and_removing_basis_preserves_anchor_and_grid_reference_baseli
 		ok(anchor.distance_to(Vector2(56, 62)) < 0.02, "保存局部锚点像素位置")
 		eq(plan.document.spawn, [grid.pick_cell(Vector2(40, 40)).x, grid.pick_cell(Vector2(40, 40)).y],
 			"出生点从原斜基的格中心拾取")
-	# 从真正六边形转到斜基时，六边形斜向同边引用才成为新问题。
-	var hex := d.duplicate(true)
-	hex.meta.erase("gridBasis")
-	hex.objects[0].props.edge = Edge.value_of("", Vector2i(3, 3), Vector2i(4, 4))
-	var to_basis := MapConvert.plan(hex, m, "hexagonal", d.meta.gridBasis)
-	var report := Audit.projection_copy_impacts(m,
-		[{"kind": "map", "map_data": to_basis.document, "id": "copy"}], to_basis.source_grid)
-	eq(report.added.size(), 1, "审计应先从反事实基线移除副本的新基向量")
-
 ## 缺 meta.gridProjection 时按项目解析取当前投影（任一瓦片资产声明非正交）
 func test_current_projection_falls_back_to_project() -> void:
 	var d := _map("orthogonal")

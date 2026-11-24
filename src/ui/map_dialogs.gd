@@ -8,7 +8,6 @@ const K := preload("res://src/core/constants.gd")
 const MapStore := preload("res://src/map/map_store.gd")
 const MapResize := preload("res://src/ui/map_resize.gd")
 const DocumentSession := preload("res://src/project/document_session.gd")
-const Audit := preload("res://src/project/project_audit.gd")
 
 var app   # app 宿主
 
@@ -116,27 +115,11 @@ func apply_map_size(nw: int, nh: int, pop: PopupPanel, proj: String, triangular:
 	var plan := MapResize.plan(d, nw, nh, triangular)
 	var crop: Dictionary = plan.crop
 	var cut: int = int(crop.tiles) + int(crop.collision) + int(crop.objects)
-	var meta: Dictionary = d.meta
-	var shrinks := nw < int(meta.get("w", K.DEFAULT_MAP_W)) or nh < int(meta.get("h", K.DEFAULT_MAP_H))
-	var impact := {"added": [], "unreadable": []}
-	if shrinks:
-		var staged: Array = []
-		if app.project_shell != null and app.project_shell.content_editor != null:
-			staged = app.project_shell.content_editor.staged_rows_current_doc()
-		impact = Audit.map_change_reference_impacts(app.manifest, app.cur_map_name, d, plan.map, staged)
-	var risks: Array = impact.added
-	var unreadable: Array = impact.unreadable
-	if cut > 0 or not plan.spawn.is_empty() or not risks.is_empty() or not unreadable.is_empty():
+	if cut > 0 or not plan.spawn.is_empty():
 		var msg := "目标尺寸 %d×%d。将裁掉：瓦片 %d · 碰撞 %d · 摆放物 %d。" % [
 			nw, nh, int(crop.tiles), int(crop.collision), int(crop.objects)]
 		if not plan.spawn.is_empty():
 			msg += "\n出生点：%s → %s（最近界内格）。" % [plan.spawn.from, plan.spawn.to]
-		if not risks.is_empty():
-			msg += "\n\n新增引用问题 %d 处（引用值保留，请修复）：\n%s" % [risks.size(), "\n".join(risks.slice(0, 5))]
-		if not unreadable.is_empty():
-			msg += "\n\n另有 %d 个文件无法检查。" % unreadable.size()
-		if shrinks:
-			msg += "\n\n引用检查范围：地图、屏幕模块、内容与步骤、当前暂存和可恢复草稿中的已声明字段。"
 		msg += "\n\n应用后可用 Ctrl+Z 恢复地图。"
 		pop.hide()
 		var accepted: bool = await app._confirm_action("调整地图边界", msg, "应用尺寸")

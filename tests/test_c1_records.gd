@@ -189,7 +189,7 @@ func test_validation_rejects_record_without_fields() -> void:
 func test_validation_rejects_bad_subfield_and_accepts_nested() -> void:
 	var bad := _record_decl([{"id": "X", "kind": "widget", "type": "string"}])
 	var errs := _errors_of(ManifestValidation.validate(_manifest_with([bad])))
-	ok(str(errs).contains("record sub-field kind"), "bad sub-kind reported: " + str(errs))
+	ok(str(errs).contains("field kind"), "bad sub-kind reported: " + str(errs))
 	var nested := _record_decl([{"id": "SUBS", "kind": "input", "type": "array", "of": "record",
 		"fields": [{"id": "N", "kind": "input", "type": "string"}]}])
 	var errs2 := _errors_of(ManifestValidation.validate(_manifest_with([nested])))

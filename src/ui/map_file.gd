@@ -18,7 +18,6 @@ const MapStore := preload("res://src/map/map_store.gd")
 const Recovery := preload("res://src/map/recovery.gd")
 const GridSpaceScript := preload("res://src/canvas/grid_space.gd")
 const MapConvert := preload("res://src/map/map_convert.gd")
-const ProjectAudit := preload("res://src/project/project_audit.gd")
 const DocumentSession := preload("res://src/project/document_session.gd")
 const DocumentCommit := preload("res://src/project/document_commit.gd")
 
@@ -197,14 +196,10 @@ func on_convert_projection() -> void:
 	body.add_child(err_label)
 	# lambda 按值捕获局部变量（重新赋值外层看不到）：计划放进容器里用内容变更回传
 	var holder := {"plan": {"ok": false, "error": "先填新图名"}, "copy": {}}
-	var publish := UiKitScript.button("检查副本", Callable(), "primary")
-	var impacts := UiKitScript.hint_label("", 460)
-	body.add_child(impacts)
+	var publish := UiKitScript.button("预览转换", Callable(), "primary")
 	var reset_preview := func():
 		holder.copy = {}
-		publish.text = "检查副本"
-		impacts.text = ""
-		impacts.tooltip_text = ""
+		publish.text = "预览转换"
 		err_label.text = ""
 		note.text = "当前格空间：%s" % _grid_description(cur_proj,
 			data.meta.get("gridBasis", []) if existing_basis.ok else [])
@@ -251,13 +246,13 @@ func on_convert_projection() -> void:
 	publish.pressed.connect(func():
 		if holder.copy.is_empty():
 			build_preview.call()
-		convert_current_to_dialog(old_name, name_edit, err_label, impacts, publish, pop, holder, source.staged, guard))
+		convert_current_to_dialog(old_name, name_edit, err_label, publish, pop, holder, source.staged, guard))
 	btn_row.add_child(publish)
 	body.add_child(btn_row)
 	app._open_popup(pop)
 
 ## 两种另存共用冻结目标与依赖发布；从不保存源地图。
-func convert_current_to_dialog(old_name: String, name_edit: LineEdit, err_label: Label, impacts: Label,
+func convert_current_to_dialog(old_name: String, name_edit: LineEdit, err_label: Label,
 		publish: Button, pop: PopupPanel, holder: Dictionary, staged: Dictionary, guard: Callable) -> void:
 	if not guard.call():
 		err_label.text = "源文档已改变，请重新打开转换预览"
@@ -272,14 +267,6 @@ func convert_current_to_dialog(old_name: String, name_edit: LineEdit, err_label:
 		if not prep.has("plan"):
 			err_label.text = str(prep.get("error", "")) + "\n" + ClonePlan.conflicts_text(prep.get("conflicts", []))
 			return
-		var report := ProjectAudit.projection_copy_impacts(app.manifest, prep.plan.targets, plan.source_grid)
-		var added: Array = report.added
-		var summary := "副本未产生新的空间引用问题。" if added.is_empty() else \
-			"副本新增引用问题 %d 处，原值将保留：\n%s" % [added.size(), "\n".join(added.slice(0, 4))]
-		if not report.unreadable.is_empty():
-			summary += "\n有 %d 份绑定内容无法核对。" % report.unreadable.size()
-		impacts.text = summary
-		impacts.tooltip_text = "\n".join(added + report.unreadable)
 		holder.copy = prep.plan
 		publish.text = "另存并转换"
 		# 同一弹窗展示冻结计划，不写源图或内容。

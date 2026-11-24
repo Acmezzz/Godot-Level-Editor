@@ -325,9 +325,6 @@ func run() -> void:
 	var flow_choice: OptionButton = collect(flow_label[0].get_parent(), "OptionButton")[0]
 	flow_choice.select(1)
 	flow_choice.item_selected.emit(1)
-	var merge_status: Label = regenerate.find_child("GeneratedMapStatus", true, false)
-	check("新增引用问题" in merge_status.text and "flowOutputs.retry" in merge_status.text and "R001" in merge_status.text,
-		"regeneration names the exact outlet and retired door before applying")
 	press(regenerate, "应用重生成")
 	await process_frame
 	var regenerated := canvas.extract()

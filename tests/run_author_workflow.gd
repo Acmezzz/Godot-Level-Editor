@@ -1803,10 +1803,8 @@ func author_resize(app, manifest: Dictionary) -> void:
 			return
 		var confirm: ConfirmationDialog = dialogs[0]
 		var message := confirm.dialog_text
-		check(message.contains("新增引用问题 4 处") and message.contains("REF0).edge")
-			and message.contains("REF0).entity") and message.contains("SW09).target")
-			and message.contains("REF1).entity") and message.contains("(10, 9) → (7, 7)"),
-			"confirmation names newly broken local edge/entity and incoming port/entity references: " + message)
+		check(message.contains("将裁掉") and message.contains("(10, 9) → (7, 7)"),
+			"confirmation describes the local crop and spawn change: " + message)
 		if accept:
 			confirm.get_ok_button().pressed.emit()
 		else:
@@ -1850,10 +1848,10 @@ func author_projection_copy(app, manifest: Dictionary) -> void:
 	input.text = "projection_copy"
 	input.text_changed.emit(input.text)
 	select_metadata(collect(pop, "OptionButton")[0], "orthogonal")
-	press(pop, "检查副本")
+	press(pop, "预览转换")
 	var labels := collect(pop, "Label")
-	check(labels.any(func(label): return label.text.contains("副本新增引用问题 1 处"))
-		and not FileAccess.file_exists(copy_path), "projection check displays a dangling edge and does not publish")
+	check(labels.any(func(label): return label.text.contains("格空间："))
+		and not FileAccess.file_exists(copy_path), "projection preview does not publish")
 	press(pop, "另存并转换")
 	for i in 12:
 		await process_frame
@@ -1984,14 +1982,14 @@ func author_basis_copy(app, manifest: Dictionary) -> void:
 	check(enabled.button_pressed and is_equal_approx(ux.text.to_float(), 22.0), "load existing basis into conversion inputs")
 	ux.text = "24"
 	ux.text_changed.emit(ux.text)
-	press(pop, "检查副本")
+	press(pop, "预览转换")
 	check(collect(pop, "Button").any(func(btn): return btn.text == "另存并转换")
 		and not FileAccess.file_exists(target_path), "freeze custom basis conversion for review")
 	ux.text = "25"
 	ux.text_changed.emit(ux.text)
-	check(collect(pop, "Button").any(func(btn): return btn.text == "检查副本")
+	check(collect(pop, "Button").any(func(btn): return btn.text == "预览转换")
 		and not FileAccess.file_exists(target_path), "editing the basis invalidates the frozen review")
-	press(pop, "检查副本")
+	press(pop, "预览转换")
 	press(pop, "另存并转换")
 	for i in 12:
 		await process_frame
@@ -2391,18 +2389,6 @@ func author_world_region_move(app, manifest: Dictionary) -> void:
 	manifest.views.append(screen)
 	manifest.screenModules["edge-marker"] = {"fields": [{"id": "edge", "kind": "input", "type": "edge_ref"}]}
 	input._on_left_press(lower_px, mouse)
-	input._on_left_release(lower_px + step)
-	var retained_dialogs := collect(app, "ConfirmationDialog").filter(func(dialog): return dialog.visible)
-	check(retained_dialogs.size() == 1 and retained_dialogs[0].dialog_text.contains("ending/project-region-edge.arrival_edge")
-		and retained_dialogs[0].dialog_text.contains("props.edge：参考视图 region-screen")
-		and retained_dialogs[0].dialog_text.contains("0,0|0,1 → 1,0|1,1"),
-		"the move lists the external content and screen fields with both edge IDs")
-	if retained_dialogs.is_empty():
-		return
-	retained_dialogs[0].get_cancel_button().pressed.emit()
-	await process_frame
-	check(cvs.extract() == initial, "cancel leaves the region and its references unchanged")
-	input._on_left_press(lower_px, mouse)
 	cvs._move_region_preview(lower_px + step)
 	var plan: Dictionary = cvs._move_snap.get("plan", {})
 	check(plan.get("positions", []).size() == 3, "cross-layer preview plans two tile grids and root collision")
@@ -2411,8 +2397,6 @@ func author_world_region_move(app, manifest: Dictionary) -> void:
 	var root: Node2D = cvs.map_root
 	var steps: int = cvs.undo_step_count()
 	input._on_left_release(lower_px + step)
-	retained_dialogs = collect(app, "ConfirmationDialog").filter(func(dialog): return dialog.visible)
-	retained_dialogs[0].get_ok_button().pressed.emit()
 	await process_frame
 	check(Store.file_digest(external_path) == external_digest,
 		"confirm keeps the external content file pointing at the old position")
@@ -3287,13 +3271,7 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 		and result.get("arrivalVertex") == [20.0, 20.0]
 		and result.get("contours", []).size() == 1 and result.contours[0].props == compound,
 		"game reloads both view positions and the projected polygon, and opens the selected door: " + str(report))
-	var before_delete: Dictionary = cvs.extract()
 	var upper_index: int = cvs._layer_index_of(upper)
-	var after_delete: Dictionary = cvs._layer_ops_ctrl.without_layer(before_delete, upper_index)
-	var impact := Audit.map_change_reference_impacts(manifest, "frame_pick", before_delete, after_delete)
-	check(impact.added.any(func(message): return message.contains("PICK).motion_layer"))
-		and impact.added.any(func(message): return message.contains("project-layer-path.path_layer")),
-		"deleting a layer previews affected instance and shared content paths: " + str(impact.added))
 	await cvs.layer_del(upper_index)
 	var problems := Audit._ref_checks(cvs.extract(), manifest, "frame_pick")
 	check(problems.any(func(issue): return issue.jump.get("code") == "PICK" and issue.jump.get("prop") == "motion_layer")

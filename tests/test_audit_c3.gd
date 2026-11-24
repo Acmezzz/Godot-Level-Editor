@@ -9,8 +9,6 @@ const V := preload("res://src/project/manifest_validation.gd")
 const ContentId := preload("res://src/content/content_id.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
 const MapResize := preload("res://src/ui/map_resize.gd")
-const Edge := preload("res://src/map/edge_ref.gd")
-const ViewData := preload("res://src/map/map_view_data.gd")
 
 const TMP := "user://test_audit_c3_tmp"
 
@@ -66,11 +64,6 @@ func test_flow_context_follows_nested_routes_without_looping_or_guessing() -> vo
 	ok(ContentStore.write(m, "flow", "paired-only", {"function": "FLOW", "fields": {"LOCL": "GOAL"}}),
 		"save destination reached only by pairing")
 	var crop: Dictionary = MapResize.plan(primary, 8, 8, false).map
-	var result := ProjectAudit.map_change_reference_impacts(m, "primary", primary, crop)
-	var messages := "\n".join(result.added)
-	eq(result.added.size(), 2, "one invalid reference for each route mode: " + messages)
-	ok(messages.contains("flow/finish.local · 地图 primary") and messages.contains("flow/paired-only.local · 地图 primary")
-		and not messages.contains("flow/free") and not messages.contains("spare"), "inheritance only follows declared routes")
 	ok(MapStore.write(m, "primary", crop), "publish the changed map")
 	var audit := ProjectAudit.audit(m)
 	ok(audit.any(func(issue): return str(issue.path).contains("flow/finish.local · 地图 primary")),
@@ -80,69 +73,6 @@ func test_flow_context_follows_nested_routes_without_looping_or_guessing() -> vo
 		"paired layout rejects a missing sibling map field")
 	_wipe()
 
-func test_map_change_checks_steps_staging_and_recovery_contexts() -> void:
-	_wipe()
-	var m := _fake_manifest()
-	m.assets = [{"id": "door", "kind": "entity"},
-		{"id": "switch", "kind": "entity", "functions": ["route"]}]
-	m.functions = {"route": {"code": "ROUT", "name": "Route", "steps": true, "fields": [
-		{"id": "destination", "code": "DEST", "type": "entity_ref"}]}}
-	m.steps = {"jump": {"code": "JUMP", "name": "Jump", "fields": [
-		{"id": "routes", "code": "ROWS", "type": "array", "of": "record", "fields": [
-			{"id": "map", "code": "MAP1", "type": "map_ref"},
-			{"id": "edge", "code": "EDGE", "type": "edge_ref", "mapField": "map"}]}]}}
-	var live := MapStore.new_map("resize", 12, 10, "orthogonal")
-	var other := MapStore.new_map("other", 12, 10, "orthogonal")
-	var lid: String = live.meta.layers[0].id
-	live.objects = [
-		{"code": "DROP", "asset": "door", "x": 10, "y": 2, "layer": lid},
-		{"code": "HOLD", "asset": "switch", "x": 1, "y": 2, "layer": lid,
-			"functions": [{"fn": "ROUT", "content": "local"}, {"fn": "ROUT", "content": "staged"}]}]
-	ok(MapStore.write(m, "resize", live), "store resize target")
-	var step := {"step": "JUMP", "fields": {"ROWS": [{"MAP1": live.meta.code,
-		"EDGE": Edge.value_of("", Vector2i(7, 3), Vector2i(8, 3))}]}}
-	var local := {"function": "ROUT", "fields": {"DEST": "DROP"}, "steps": [step]}
-	ok(ContentStore.write(m, "route", "local", local), "store bound record")
-	var project := {"function": "ROUT", "scope": "project", "fields": {"DEST": "UNKNOWN"},
-		"steps": [step]}
-	ok(ContentStore.write(m, "route", "project", project), "store standalone flow with explicit map")
-	var source := {"function": "ROUT", "fields": {"DEST": "UNKNOWN"}, "steps": [step]}
-	var draft_path := MapStore.Recovery.write_draft(m, other.meta.code, "other",
-		MapStore.path_for(m, "other"), "", other, [{"fn_id": "route", "id": "future", "data": source}])
-	ok(draft_path != "", "store draft pending flow")
-	var staged := [{"fn_id": "route", "cid": "staged", "data": local}]
-	var crop: Dictionary = MapResize.plan(live, 8, 8, false).map
-	var result := ProjectAudit.map_change_reference_impacts(m, "resize", live, crop, staged)
-	var paths := "\n".join(result.added)
-	eq(result.added.size(), 6, "bound, standalone, staged and draft refs only: " + paths)
-	ok(paths.contains("route/local.destination") and paths.contains("route/project.steps[0].routes#0.edge")
-		and paths.contains("当前暂存 · route/staged.destination")
-		and paths.contains("route/future.steps[0].routes#0.edge") and not paths.contains("UNKNOWN"),
-		"references use coded fields, local binding contexts and explicit cross-map parents")
-	eq(result.unreadable, [], "all input files readable")
-	m.assets[0].fields = [{"id": "boundary", "type": "edge_ref"}]
-	var cross_edge := Edge.value_of(live.meta.code, Vector2i(7, 3), Vector2i(8, 3))
-	other.objects = [{"code": "PEER", "asset": "door", "x": 0, "y": 0,
-		"layer": other.meta.layers[0].id, "props": {"boundary": cross_edge}}]
-	ok(MapStore.write(m, "other", other), "save a map with an incoming rule edge")
-	live.objects[0].props = {"boundary": cross_edge}
-	var grid := ViewData.effective_grid(live, m)
-	var area := Rect2(118, 48, 20, 16)
-	var size := Vector2i(12, 10)
-	var mapper := Edge.region_mapper(grid, size, Transform2D.IDENTITY, area,
-		grid, size, Transform2D.IDENTITY, area.position - Vector2(16, 0))
-	var retained := ProjectAudit.retained_region_edge_refs(m, "resize", live, mapper, staged)
-	var edges := "\n".join(retained.retained)
-	eq(retained.retained.size(), 5, "five external sources keep the original edge: " + edges)
-	ok(edges.contains("other · door(PEER).boundary") and edges.contains("route/local.steps[0].routes#0.edge")
-		and edges.contains("route/project.steps[0].routes#0.edge") and edges.contains("当前暂存 · route/staged")
-		and edges.contains("route/future.steps[0].routes#0.edge") and not edges.contains("door(DROP)"),
-		"the changed map's live props are excluded while maps, steps, staging and recovery have concrete paths")
-	_wipe()
-
-# ──────────── 挂载去重与补齐（C09） ────────────
-
-## 重复挂载 = 清单错误（不静默别名），运行期 entity_mounts 也去重兜底
 func test_duplicate_mount_rejected_and_deduped() -> void:
 	var m := _fake_manifest()
 	m["functions"] = {"f1": {"name": "F", "code": "F111", "fields": []}}
