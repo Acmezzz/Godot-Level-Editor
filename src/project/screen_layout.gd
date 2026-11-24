@@ -24,11 +24,17 @@ static func modules(manifest: Dictionary) -> Dictionary:
 
 ## Preserve an existing binding if the game removes its declaration, so it can be disconnected.
 static func output_labels(declarations: Dictionary, element: Dictionary) -> Dictionary:
-	var labels: Dictionary = declarations.get(element.get("module", ""), {}).get("outputs", {}).duplicate()
+	var labels := {}
+	for id in declarations.get(element.get("module", ""), {}).get("outputs", {}):
+		var spec = output_spec(declarations, element, id)
+		labels[id] = spec.get("name", id) if spec is Dictionary else spec
 	for id in element.get("outputs", {}):
 		if not labels.has(id):
 			labels[id] = id
 	return labels
+
+static func output_spec(declarations: Dictionary, element: Dictionary, output: String) -> Variant:
+	return declarations.get(element.get("module", ""), {}).get("outputs", {}).get(output)
 
 static func content_target(value: Variant) -> bool:
 	return value is Dictionary and value.size() == 2 and value.get("function") is String and value.get("content") is String
@@ -351,9 +357,11 @@ static func validate(layout: Variant, viewports: Dictionary, path: String, issue
 			else:
 				for output in outputs:
 					var target = outputs[output]
-					var supported := content_target(target) or (direct_views and view_target(target)) or (direct_maps and map_target(target))
+					var spec = output_spec(declarations, row, str(output))
+					var supported := FlowTarget.allows(spec, target) if spec is Dictionary else (
+						content_target(target) or (direct_views and view_target(target)) or (direct_maps and map_target(target)))
 					if not output is String or output.strip_edges().is_empty() or not supported:
-						_error(issues, p + ".outputs." + str(output), "must bind a named output to {function, content} or an enabled {view} / {map}")
+						_error(issues, p + ".outputs." + str(output), "must bind a named output to a permitted destination")
 		elif not KINDS.has(row.get("kind")):
 			_error(issues, p + ".kind", "must be panel, text, button or module")
 		if _validate_geometry(row, p, issues, true) and used.get(id) == i:

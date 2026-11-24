@@ -8,6 +8,7 @@ const Widgets := preload("res://src/ui/field_widgets.gd")
 const RefFields := preload("res://src/content/ref_fields.gd")
 const MapPreview := preload("res://src/ui/map_game_preview.gd")
 const Preview := preload("res://src/ui/screen_layout_canvas.gd")
+const FlowTarget := preload("res://src/content/flow_target.gd")
 
 static func render(form: VBoxContainer, preview: Preview, state: Dictionary) -> void:
 	preview.cancel_placement()
@@ -230,7 +231,10 @@ static func render(form: VBoxContainer, preview: Preview, state: Dictionary) -> 
 	if outlets.is_empty() or item.has("target"):
 		_add_element_target(form, state.targets, item, "", "跳转目标")
 	for output in outlets:
-		_add_element_target(form, state.targets, item, output, outlets[output])
+		var spec = Layout.output_spec(state.modules, item, output)
+		var options: Array = state.named_targets.filter(func(option):
+			return FlowTarget.allows(spec, option.value)) if spec is Dictionary else state.targets
+		_add_element_target(form, options, item, output, outlets[output])
 	if item.kind in ["button", "module"]:
 		_add_focus_fields(form, preview, state, item, refresh)
 	var actions := Kit.hbox(4)

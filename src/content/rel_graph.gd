@@ -193,8 +193,10 @@ static func _collect_views(manifest: Dictionary, graph: Dictionary, catalog: Dic
 					labels[""] = ""
 				for output in labels:
 					var current = ScreenLayout.target_at(row, output)
-					var direct: bool = manifest.get("directViewTargets") == true and ScreenLayout.view_target(current)
-					var to_map: bool = manifest.get("directMapTargets") == true and ScreenLayout.map_target(current)
+					var spec = ScreenLayout.output_spec(modules, row, output) if not output.is_empty() else null
+					var typed := spec is Dictionary
+					var direct: bool = (typed or manifest.get("directViewTargets") == true) and ScreenLayout.view_target(current)
+					var to_map: bool = (typed or manifest.get("directMapTargets") == true) and ScreenLayout.map_target(current)
 					if current != null and not direct and not to_map and not ScreenLayout.content_target(current):
 						continue
 					var fn: String = MAP_KIND if to_map else (VIEW_KIND if direct else (current.function if current != null else ""))
@@ -202,10 +204,14 @@ static func _collect_views(manifest: Dictionary, graph: Dictionary, catalog: Dic
 					var edge := {"from": key, "fn_id": VIEW_KIND, "cid": id, "fn": fn,
 						"value": value, "label": label if output == "" else label + " · " + labels[output],
 						"multi": false, "group": group, "index": i, "shown_rows": rows, "output": output}
+					if typed:
+						edge.merge({"decl": spec, "flow_target": true, "target": current})
 					graph.slots[key].append(edge)
 					if current == null:
 						continue
-					if catalog.get(fn, {}).has(value):
+					var destinations: Dictionary = catalog.get(fn, {})
+					var valid: bool = FlowTarget.allows(spec, current) and destinations.get(value, false) if typed else destinations.has(value)
+					if valid:
 						edge["to"] = _key(fn, value)
 						graph.edges.append(edge)
 					else:

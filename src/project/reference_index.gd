@@ -89,14 +89,12 @@ static func view_content_refs(manifest: Dictionary) -> Array:
 	return out
 
 static func view_transition_refs(manifest: Dictionary) -> Array:
-	if manifest.get("directViewTargets") != true:
-		return []
-	return _view_connections(manifest).filter(func(ref): return ScreenLayout.view_target(ref.target))
+	return _view_connections(manifest).filter(func(ref):
+		return ScreenLayout.view_target(ref.target) and (ref.has("domains") or manifest.get("directViewTargets") == true))
 
 static func view_map_refs(manifest: Dictionary) -> Array:
-	if manifest.get("directMapTargets") != true:
-		return []
-	return _view_connections(manifest).filter(func(ref): return ScreenLayout.map_target(ref.target))
+	return _view_connections(manifest).filter(func(ref):
+		return ScreenLayout.map_target(ref.target) and (ref.has("domains") or manifest.get("directMapTargets") == true))
 
 ## Map transitions exclusively use stable codes, with the same uniqueness checks as graph edges.
 static func map_target_options(manifest: Dictionary) -> Array[Dictionary]:
@@ -111,19 +109,20 @@ static func map_target_options(manifest: Dictionary) -> Array[Dictionary]:
 static func _view_connections(manifest: Dictionary) -> Array:
 	var out := []
 	var views = manifest.get("views")
+	var modules := ScreenLayout.modules(manifest)
 	if not views is Array:
 		return out
 	for i in views.size():
 		var view = views[i]
 		if not view is Dictionary:
 			continue
-		_collect_view_targets(view.get("hotspots"), view, "views[%d].hotspots" % i, false, out)
+		_collect_view_targets(view.get("hotspots"), view, "views[%d].hotspots" % i, false, modules, out)
 		var layout = view.get("layout")
 		if layout is Dictionary:
-			_collect_view_targets(layout.get("elements"), view, "views[%d].layout.elements" % i, true, out)
+			_collect_view_targets(layout.get("elements"), view, "views[%d].layout.elements" % i, true, modules, out)
 	return out
 
-static func _collect_view_targets(rows: Variant, view: Dictionary, prefix: String, elements: bool, out: Array) -> void:
+static func _collect_view_targets(rows: Variant, view: Dictionary, prefix: String, elements: bool, modules: Dictionary, out: Array) -> void:
 	if not rows is Array:
 		return
 	for i in rows.size():
@@ -136,7 +135,11 @@ static func _collect_view_targets(rows: Variant, view: Dictionary, prefix: Strin
 			out.append(source.merged({"target": row.target, "path": "%s[%d].target" % [prefix, i]}))
 		if row.get("kind") == "module" and row.get("outputs") is Dictionary:
 			for id in row.outputs:
-				out.append(source.merged({"target": row.outputs[id], "path": "%s[%d].outputs.%s" % [prefix, i, id]}))
+				var ref := source.merged({"target": row.outputs[id], "path": "%s[%d].outputs.%s" % [prefix, i, id]})
+				var spec = ScreenLayout.output_spec(modules, row, str(id))
+				if spec is Dictionary:
+					ref["domains"] = spec
+				out.append(ref)
 
 ## Use the same ID keys and defaults as the layout form. Condition rows use their own field codes.
 static func view_module_refs(manifest: Dictionary) -> Array:

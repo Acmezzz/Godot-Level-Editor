@@ -210,8 +210,8 @@ func _open_flow() -> void:
 		var words: PackedStringArray = tokenize.call(target_search.text)
 		for item in state.graph.nodes:
 			var address := RelGraph.node_target(item)
-			if (from_view and item.fn_id == RelGraph.VIEW_KIND and source.get("directViewTargets") != true) \
-					or (from_view and item.fn_id == RelGraph.MAP_KIND and source.get("directMapTargets") != true) \
+			if (from_view and not mixed and item.fn_id == RelGraph.VIEW_KIND and source.get("directViewTargets") != true) \
+					or (from_view and not mixed and item.fn_id == RelGraph.MAP_KIND and source.get("directMapTargets") != true) \
 					or (not from_view and not mixed and item.fn_id != edge.fn):
 				continue
 			if mixed and (not FlowTarget.allows(edge.decl, address) \
@@ -368,7 +368,9 @@ func _open_flow() -> void:
 			var chosen = target.get_selected_metadata()
 			var next: Dictionary = chosen if chosen is Dictionary else {}
 			var resolved := true
-			if next.has("map"):
+			if edge.get("flow_target", false):
+				resolved = next.is_empty() or StartupTargets.destination_available(source, edge.decl, next)
+			elif next.has("map"):
 				resolved = References.resolve_graph_map(app.MapStore.code_index(source), next.map).status == "ok"
 			elif next.has("view"):
 				resolved = References.view_ids(source).has(next.view)

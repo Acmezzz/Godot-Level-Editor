@@ -12,6 +12,7 @@ const GamePreview := preload("res://src/project/game_preview.gd")
 const FrameDialog := preload("res://src/ui/game_frame_dialog.gd")
 const References := preload("res://src/project/reference_index.gd")
 const Audit := preload("res://src/project/project_audit.gd")
+const StartupTargets := preload("res://src/project/startup_targets.gd")
 
 static func open(app, view_id := "", jump := {}) -> void:
 	var source: Dictionary = app.manifest
@@ -84,7 +85,7 @@ static func open(app, view_id := "", jump := {}) -> void:
 	body.add_child(hotspot_row)
 	body.add_child(hotspot_target_row)
 	body.add_child(notice)
-	var state := {"row": -1, "saving": false, "targets": [], "draft": {}, "layout": {},
+	var state := {"row": -1, "saving": false, "targets": [], "named_targets": [], "draft": {}, "layout": {},
 		"preview_size": "", "locale": "", "has_layout": false, "viewport_sizes": Layout.sizes(source),
 		"image_assets": Layout.image_assets(source), "project_dir": str(source.get("_dir", "")),
 		"render_revision": 0, "modules": Layout.modules(source), "module_commits": [], "manifest": source, "app": app,
@@ -233,14 +234,21 @@ static func open(app, view_id := "", jump := {}) -> void:
 		for cid in Store.list_ids(source, kind):
 			var rd := Store.read_ex(source, kind, cid)
 			if rd.status == "ok":
-				state.targets.append({"label": "%s · %s · %s" % [kind, rd.data.get("name", ""), cid],
-					"value": {"function": kind, "content": cid}})
-	if source.get("directViewTargets") == true:
-		for row in baseline:
-			state.targets.append({"label": "屏幕 · " + row.view_id, "value": {"view": row.view_id}})
-	if preview.direct_maps:
-		for row in References.map_target_options(source):
-			state.targets.append({"label": "地图 · %s [%s]" % [row.name, row.code], "value": {"map": row.code}})
+				var option := {"label": "%s · %s · %s" % [kind, rd.data.get("name", ""), cid],
+					"value": {"function": kind, "content": cid}}
+				state.targets.append(option)
+				if StartupTargets.is_project_destination(rd.data, Functions.fn_code(source, kind)):
+					state.named_targets.append(option)
+	for row in baseline:
+		var option := {"label": "屏幕 · " + row.view_id, "value": {"view": row.view_id}}
+		state.named_targets.append(option)
+		if preview.direct_views:
+			state.targets.append(option)
+	for row in References.map_target_options(source):
+		var option := {"label": "地图 · %s [%s]" % [row.name, row.code], "value": {"map": row.code}}
+		state.named_targets.append(option)
+		if preview.direct_maps:
+			state.targets.append(option)
 	for row in rows:
 		list.add_item(str(row.view_id))
 	list.add_item("添加视图…")

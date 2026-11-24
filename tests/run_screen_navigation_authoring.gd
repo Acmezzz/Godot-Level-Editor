@@ -26,7 +26,7 @@ func run() -> void:
 	for file in ["project.godot", "main.tscn", "game.gd"]:
 		check(DirAccess.copy_absolute(ProjectSettings.globalize_path("res://tests/screen_game/" + file),
 			project.path_join(file)) == OK, "install the standalone game " + file)
-	var declaration := {"projectName": "Screen Navigation", "directViewTargets": true, "directMapTargets": true,
+	var declaration := {"projectName": "Screen Navigation", "directMapTargets": true,
 		"assets": [{"id": "relay", "kind": "entity", "code": "RLY1", "visual": {"mode": "rect", "color": "#62cabb"},
 			"fields": [{"id": "exit_target", "kind": "input", "type": "flow_target",
 				"maps": true, "screens": true, "contentTypes": ["signal"]},
@@ -42,7 +42,7 @@ func run() -> void:
 			"parameterFields": ["projection", "placements"]}},
 		"preview": {"version": 1, "executable": OS.get_executable_path(), "capabilities": ["generateMap"],
 			"args": ["--headless", "--path", "%projectpath%", "--"]},
-		"screenModules": {"signal-latch": {"name": "Latch", "outputs": {"accepted": "Continue"}, "fields": [
+		"screenModules": {"signal-latch": {"name": "Latch", "outputs": {"accepted": {"name": "Continue", "screens": true}}, "fields": [
 			{"id": "presses", "kind": "input", "type": "int", "min": 1, "default": 1}]}},
 		"functions": {"course_rules": {"code": "CRUL", "name": "Course rules", "fields": [
 			{"id": "projection", "code": "PROJ", "kind": "choice", "options": ["orthogonal", "isometric"]},
@@ -319,6 +319,15 @@ func run() -> void:
 	var flow := popup()
 	var rules_key := "course_rules\u0001project-course-rules"
 	var targets: OptionButton = flow.find_child("FlowTarget", true, false)
+	choose(flow.find_child("FlowSource", true, false), "@view\u0001welcome")
+	check(range(1, targets.item_count).all(func(i): return targets.get_item_metadata(i).has("view")),
+		"a typed screen outlet offers only screens without the global enable flag")
+	for id in ["debrief", "instructions"]:
+		choose(targets, {"view": id})
+		press(flow, "应用关系")
+		var welcome_view: Dictionary = manifest.views.filter(func(row): return row.view_id == "welcome")[0]
+		check(welcome_view.layout.elements[0].outputs.accepted == {"view": id},
+			"the typed outlet can be rewired from the graph")
 	choose(flow.find_child("FlowSource", true, false), rules_key)
 	for destination in [{"map": map_code}, {"function": "signal", "content": "project-finished"}, {"view": "debrief"}]:
 		choose(targets, destination)

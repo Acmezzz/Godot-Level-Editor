@@ -154,6 +154,12 @@ static func view_reference_issues(manifest: Dictionary, view_id := "", used_cont
 		if view_id != "" and ref.view != view_id:
 			continue
 		var key := _content_key(ref.fn, ref.cid)
+		if ref.has("domains"):
+			if StartupTargets.destination_available(manifest, ref.domains, ref.target):
+				used_content[key] = true
+			else:
+				out.append(_view_issue(ref, _flow_target_message(ref.target)))
+			continue
 		if not contents.has(key):
 			contents[key] = ContentStore.read_ex(manifest, ref.fn, ref.cid).status
 		if contents[key] == "ok":

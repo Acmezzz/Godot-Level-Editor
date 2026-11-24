@@ -921,9 +921,11 @@ static func _validate_screen_modules(data: Dictionary, issues: Array[Dictionary]
 			_add(issues, "error", path + ".outputs", "must be an object of output IDs and labels")
 		else:
 			for output in outputs:
-				if not output is String or output.strip_edges().is_empty() or not outputs[output] is String \
-						or outputs[output].strip_edges().is_empty():
-					_add(issues, "error", path + ".outputs." + str(output), "must have a non-empty ID and label")
+				var spec = outputs[output]
+				var valid: bool = not spec.strip_edges().is_empty() if spec is String else (
+					spec is Dictionary and spec.get("name", "") is String and FlowTarget.declaration_valid(spec))
+				if not output is String or output.strip_edges().is_empty() or not valid:
+					_add(issues, "error", path + ".outputs." + str(output), "requires an output ID and a label or destination domains")
 		var fields = decl.get("fields", [])
 		if not fields is Array:
 			_add(issues, "error", path + ".fields", "must be an array")
