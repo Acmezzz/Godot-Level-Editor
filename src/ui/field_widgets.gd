@@ -376,43 +376,12 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 				else "未声明的输入类型「%s」" % typ
 			return _readonly(decl, value, why, "补全声明后重新加载清单即可恢复编辑")
 
-## array 元素声明：of 指基础类型或 choice；choice 元素继承 options/source，
-## 其它同型声明继承范围/固定选项/过滤参数（C10）——每个元素拿到的是独立同型声明副本。
-## 注意 `of` 在数组上表示**元素类型**，所以 asset_ref 元素的 id 白名单用 `ids`（不用 of）。
-static func _elem_decl(decl: Dictionary) -> Dictionary:
-	var of := str(decl.get("of", "string"))
-	if of == "choice":
-		var d: Dictionary = {"kind": KIND_CHOICE}
-		for k in ["options", "source", "multiple", "mapField", "_mapKey"]:
-			if decl.get(k, null) != null:
-				d[k] = (decl.get(k) as Variant).duplicate(true) if (decl.get(k) is Array or decl.get(k) is Dictionary) \
-					else decl.get(k)
-		return d
-	if of == "condition":
-		return {"kind": KIND_CONDITION, "type": "condition", "source": "editor:condition-schema",
-			"allowedConditions": decl.get("allowedConditions", [])}
-	# C1：of: record —— 元素控件是记录表单（子字段声明在 fields 里，逐元素独立副本）
-	if of == "record":
-		return {"kind": KIND_RECORD, "type": "record",
-			"fields": (decl.get("fields", []) as Array).duplicate(true)}
-	var out := {"kind": KIND_INPUT, "type": of}
-	for k in ["min", "max", "step", "dims", "assetKind"]:
-		if decl.get(k, null) != null:
-			# 逐元素独立声明副本（C1）：数组/字典值不能与父声明共享引用
-			out[k] = decl.get(k).duplicate(true) if (decl.get(k) is Array or decl.get(k) is Dictionary) \
-				else decl.get(k)
-	if of == "asset_ref":
-		var ids = decl.get("ids", null)
-		if ids is Array:
-			out["of"] = ",".join(PackedStringArray(ids))
-	return out
-
 ## array：可增删行容器，每行一个元素控件；值 = 各行 state.v 按顺序收集。
 ## 行删除前先冲刷该行连续控件的待写值（commit），行序变动靠行字典引用而非闭包下标。
 ## C1：of: record 行给 复制/上移/下移（rows 换位 + 容器子序同步）；key_mode 透传元素控件。
 static func _build_array(decl: Dictionary, items: Array, on_set: Callable,
 		option_resolver: Callable, key_mode := "id", frame_pick := Callable()) -> Dictionary:
-	var elem := _elem_decl(decl)
+	var elem := RefFields.array_element_decl(decl)
 	var rec := str(elem.get("type", "")) in ["record", "condition"]
 	var ordered := ordered_frame_pick(decl)
 	var wrap := VBoxContainer.new()

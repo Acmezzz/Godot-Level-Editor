@@ -155,6 +155,35 @@ static func describe(decl: Dictionary) -> Dictionary:
 static func is_ref(decl: Dictionary) -> bool:
 	return bool(describe(decl).get("is_ref", false))
 
+## 表单与引用遍历共用数组元素声明。数组的 of 表示元素类型，资产 ID 白名单写 ids。
+static func array_element_decl(decl: Dictionary) -> Dictionary:
+	var of := str(decl.get("of", "string"))
+	if of == "choice":
+		var d: Dictionary = {"kind": "choice"}
+		for k in ["options", "source", "multiple", "mapField", "_mapKey"]:
+			if decl.get(k, null) != null:
+				d[k] = (decl.get(k) as Variant).duplicate(true) if (decl.get(k) is Array or decl.get(k) is Dictionary) \
+					else decl.get(k)
+		return d
+	if of == "condition":
+		return {"kind": "condition_row", "type": "condition", "source": "editor:condition-schema",
+			"allowedConditions": decl.get("allowedConditions", [])}
+	# C1：of: record —— 元素控件是记录表单（子字段声明在 fields 里，逐元素独立副本）
+	if of == "record":
+		return {"kind": "record", "type": "record",
+			"fields": (decl.get("fields", []) as Array).duplicate(true)}
+	var out := {"kind": "input", "type": of}
+	for k in ["min", "max", "step", "dims", "assetKind"]:
+		if decl.get(k, null) != null:
+			# 逐元素独立声明副本（C1）：数组/字典值不能与父声明共享引用
+			out[k] = decl.get(k).duplicate(true) if (decl.get(k) is Array or decl.get(k) is Dictionary) \
+				else decl.get(k)
+	if of == "asset_ref":
+		var ids = decl.get("ids", null)
+		if ids is Array:
+			out["of"] = ",".join(PackedStringArray(ids))
+	return out
+
 ## 一个数组字段中可继续按声明进入的作用域。value/fields 是原字典引用，
 ## path 相对数组字段用于定位；标签含条件类型，供图和审计显示。
 static func nested_scopes(manifest: Dictionary, field: Dictionary, value: Variant) -> Array:

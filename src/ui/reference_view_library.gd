@@ -192,7 +192,7 @@ class Preview extends Control:
 		focus_message.emit("当前画幅没有可聚焦按钮。")
 		queue_redraw()
 
-static func open(app, view_id := "") -> void:
+static func open(app, view_id := "", jump := {}) -> void:
 	var source: Dictionary = app.manifest
 	var baseline = source.get("views", [])
 	var issues: Array[Dictionary] = []
@@ -465,7 +465,7 @@ static func open(app, view_id := "") -> void:
 			var staged: Array = app.project_shell.content_editor.staged_rows_current_doc()
 			var uses := Audit.view_inbound_refs(source, key, staged)
 			if not uses.refs.is_empty():
-				return "视图仍被引用：" + "、".join(uses.refs.slice(0, 3)) + "。请先在流程图中改接或断开。"
+				return "视图仍被引用：" + "、".join(uses.refs.slice(0, 3)) + "。请先修改引用字段。"
 			if not uses.bad.is_empty():
 				return "无法检查引用：" + str(uses.bad[0].name)
 			return ""
@@ -573,15 +573,10 @@ static func open(app, view_id := "") -> void:
 		if not errors.is_empty():
 			notice.text = "%s：%s" % [errors[0].path, errors[0].message]
 			return
-		for ref in References.view_content_refs(candidate):
-			if ref.view == key and Store.read_ex(source, ref.fn, ref.cid).status != "ok":
-				notice.text = "%s 指向不存在或无法读取的内容。" % ref.path
-				return
-		var image_assets := Layout.image_assets(candidate)
-		for ref in References.view_image_refs(candidate):
-			if ref.view == key and not image_assets.has(ref.asset):
-				notice.text = "%s 指向不存在的图片资产。" % ref.path
-				return
+		var problems := Audit.view_reference_issues(candidate, key)
+		if not problems.is_empty():
+			notice.text = "%s：%s" % [problems[0].path, problems[0].message]
+			return
 		state.saving = true
 		var ok: bool = await app._save_manifest_file_async(current, candidate, "views") if current.call() else false
 		state.saving = false
@@ -593,7 +588,20 @@ static func open(app, view_id := "") -> void:
 		app._set_status("已保存参考视图：" + key)
 		pop.hide()
 	body.add_child(Kit.popup_buttons(save, func(): pop.hide(), "保存参考视图"))
-	app._open_popup(pop, Vector2i(660, 620))
+	var element: String = jump.get("element", "")
+	var selected := preview.elements.find_custom(func(row): return row.id == element)
+	if selected >= 0:
+		preview.active_element = selected
+		layout_mode.button_pressed = true
+	elif jump.get("hotspot", -1) in range(preview.hotspots.size()):
+		refill_hotspots.call(jump.hotspot)
+	app._open_popup(pop, Vector2i(960, 650) if selected >= 0 else Vector2i(660, 620))
+	var field: String = jump.get("field", "")
+	if selected >= 0 and field != "":
+		for row in layout_form.get_children():
+			if row.get_meta("module_field", "") == field:
+				layout_scroll.ensure_control_visible.call_deferred(row)
+				break
 
 static func _render_layout(form: VBoxContainer, preview: Preview, state: Dictionary) -> void:
 	_commit_module_fields(state)
@@ -838,7 +846,9 @@ static func _add_module_fields(form: VBoxContainer, state: Dictionary, item: Dic
 			item.props[id] = next, state.resolve_options)
 		var ctl: Control = built.ctl
 		ctl.name = "LayoutModuleField_" + id
-		form.add_child(Kit.field_row(str(field.get("name", id)), ctl, 70))
+		var row := Kit.field_row(str(field.get("name", id)), ctl, 70)
+		row.set_meta("module_field", id)
+		form.add_child(row)
 		state.module_commits.append(built.get("commit", Callable()))
 
 static func _commit_module_fields(state: Dictionary) -> void:

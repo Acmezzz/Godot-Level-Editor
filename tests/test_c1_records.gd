@@ -7,6 +7,49 @@ const RefFields := preload("res://src/content/ref_fields.gd")
 const ClonePlan := preload("res://src/content/clone_plan.gd")
 const MapStore := preload("res://src/map/map_store.gd")
 const ScreenLayout := preload("res://src/project/screen_layout.gd")
+const References := preload("res://src/project/reference_index.gd")
+const Audit := preload("res://src/project/project_audit.gd")
+
+func test_screen_module_declared_references() -> void:
+	var field := {"id": "links", "kind": "input", "type": "array", "of": "record", "fields": [
+		{"id": "screen", "kind": "choice", "source": "view:", "default": "next"},
+		{"id": "actors", "kind": "input", "type": "array", "of": "asset_ref", "assetKind": "entity"},
+		{"id": "flow", "kind": "choice", "source": "content:flow", "multiple": true},
+		{"id": "caption", "kind": "input", "type": "string"},
+	]}
+	var props := {"links": [{"actors": ["actor"], "flow": ["entry", "missing"], "caption": "next"}]}
+	var manifest := {"screenModules": {"widget": {"fields": [field,
+		{"id": "self", "kind": "choice", "source": "view:", "default": "menu"}]}},
+		"assets": [{"id": "actor", "kind": "entity", "prefab": "actor.tscn"}],
+		"views": [{"view_id": "menu", "layout": {"elements": [
+			{"id": "widget-1", "kind": "module", "module": "widget", "props": props}]}},
+			{"view_id": "next"}]}
+	var prefix := "views[0].layout.elements[0].props.links[0]."
+	eq(References.view_content_refs(manifest).map(func(ref): return [ref.fn, ref.cid, ref.path]),
+		[["flow", "entry", prefix + "flow[0]"], ["flow", "missing", prefix + "flow[1]"]],
+		"multi-choice content references are indexed individually")
+	eq(References.view_asset_refs(manifest, "actor").map(func(ref): return ref.path),
+		[prefix + "actors[0]"], "typed asset arrays participate in the same deletion index as layout art")
+	eq(Audit.view_inbound_refs(manifest, "next", []).refs,
+		["menu · " + prefix + "screen"], "nested declared default is a live reference")
+	eq(Audit.view_inbound_refs(manifest, "menu", []).refs, [], "self-reference does not block removing a view")
+	var issues := Audit.view_reference_issues(manifest, "menu")
+	eq(issues.map(func(issue): return issue.path), [prefix + "flow[0]", prefix + "flow[1]"],
+		"an entity asset does not need to meet the layout image rules")
+	eq(Audit.view_reference_issues(manifest, "next"), [], "saving one screen does not validate unrelated screens")
+	manifest.assets.clear()
+	manifest.views.pop_back()
+	var broken := Audit.view_reference_issues(manifest)
+	var hit := broken.filter(func(issue): return issue.path == prefix + "screen")
+	if hit.size() == 1:
+		eq(hit[0].jump, {"type": "view", "id": "menu", "element": "widget-1", "field": "links", "hotspot": -1},
+			"jump opens the affected element and root control for the nested reference")
+	else:
+		ok(false, "removed screen reports the precise broken reference")
+	ok(broken.any(func(issue): return issue.path == prefix + "actors[0]"), "removed asset is diagnosed")
+	props.links[0]["screen"] = ""
+	eq(Audit.view_inbound_refs(manifest, "next", []).refs, [],
+		"explicit empty override releases the default; matching free text does not count")
 
 func test_screen_layout_image_fit():
 	var bounds := Rect2(0, 0, 100, 100)
@@ -91,7 +134,7 @@ func test_validation_rejects_bad_subfield_and_accepts_nested() -> void:
 ## 元素声明与默认值（field_widgets）
 func test_elem_decl_and_default() -> void:
 	var fd := _record_decl([{"id": "MAT", "kind": "input", "type": "string"}, {"id": "QTY", "kind": "input", "type": "int"}])
-	var e := FieldWidgets._elem_decl(fd)
+	var e := RefFields.array_element_decl(fd)
 	eq(str(e.get("kind")), "record", "elem kind is record")
 	eq(str(e.get("type")), "record", "elem type is record")
 	eq((e.get("fields") as Array).size(), 2, "elem fields copied")

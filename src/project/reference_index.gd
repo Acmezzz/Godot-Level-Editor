@@ -9,6 +9,7 @@ extends RefCounted
 
 const MapStore := preload("res://src/map/map_store.gd")
 const ManifestScript := preload("res://src/project/manifest.gd")
+const ScreenLayout := preload("res://src/project/screen_layout.gd")
 
 ## 地图键（码或图名）解析 → {status, key(图名), candidates}。
 ## 一码多图（R09 拒绝猜测，候选 = 冲突图名列表）；键同时是图名又是另一张图的码 = ambiguous
@@ -93,6 +94,11 @@ static func view_content_refs(manifest: Dictionary) -> Array:
 		var layout = view.get("layout")
 		if layout is Dictionary:
 			_collect_view_targets(layout.get("elements"), view, "views[%d].layout.elements" % i, out)
+	for ref in view_module_refs(manifest):
+		if ref.kind == "content":
+			ref["fn"] = ref.filter.fn
+			ref["cid"] = ref.value
+			out.append(ref)
 	return out
 
 static func _collect_view_targets(rows: Variant, view: Dictionary, prefix: String, out: Array) -> void:
@@ -104,13 +110,82 @@ static func _collect_view_targets(rows: Variant, view: Dictionary, prefix: Strin
 			continue
 		if is_view_content_target(row.get("target")):
 			out.append({"fn": row.target.function, "cid": row.target.content,
-				"view": str(view.get("view_id", "")), "path": "%s[%d].target" % [prefix, i]})
+				"view": str(view.get("view_id", "")), "path": "%s[%d].target" % [prefix, i],
+				"element": str(row.get("id", "")) if prefix.ends_with(".elements") else "",
+				"hotspot": -1 if prefix.ends_with(".elements") else i})
 		if row.get("kind") == "module" and row.get("outputs") is Dictionary:
 			for id in row.outputs:
 				var target = row.outputs[id]
 				if is_view_content_target(target):
 					out.append({"fn": target.function, "cid": target.content,
-						"view": str(view.get("view_id", "")), "path": "%s[%d].outputs.%s" % [prefix, i, id]})
+						"view": str(view.get("view_id", "")), "path": "%s[%d].outputs.%s" % [prefix, i, id],
+						"element": str(row.get("id", ""))})
+
+## Use the same ID keys and defaults as the layout form. Condition rows use their own field codes.
+static func view_module_refs(manifest: Dictionary) -> Array:
+	var out := []
+	var modules := ScreenLayout.modules(manifest)
+	var views = manifest.get("views", [])
+	if modules.is_empty() or not views is Array:
+		return out
+	var fields = load("res://src/content/ref_fields.gd")
+	for i in views.size():
+		var view = views[i]
+		if not view is Dictionary or not view.get("layout") is Dictionary:
+			continue
+		var elements = view.layout.get("elements", [])
+		for j in (elements.size() if elements is Array else 0):
+			var row = elements[j]
+			if not row is Dictionary or row.get("kind") != "module":
+				continue
+			var module = modules.get(row.get("module"), {})
+			var props = row.get("props", {})
+			if not module is Dictionary or not module.get("fields", []) is Array or not props is Dictionary:
+				continue
+			var source := {"view": str(view.get("view_id", "")), "element": str(row.get("id", ""))}
+			_collect_module_fields(fields, manifest, module.get("fields", []), props, source,
+				"views[%d].layout.elements[%d].props" % [i, j], "", "id", out)
+	return out
+
+static func _collect_module_fields(fields: GDScript, manifest: Dictionary, decls: Array,
+		values: Dictionary, source: Dictionary, prefix: String, root: String, key_mode: String, out: Array) -> void:
+	for decl in decls:
+		if not decl is Dictionary:
+			continue
+		var id := str(decl.get("id", ""))
+		var code := str(decl.get("code", ""))
+		var key := code if key_mode == "code" and code != "" else id
+		var value = values.get(key, decl.get("default"))
+		var path := prefix + "." + key
+		var field := id if root == "" else root
+		for scope in fields.nested_scopes(manifest, decl, value):
+			var sub_path := "%s[%d]" % [path, scope.path[0]]
+			var condition: bool = scope.path.size() > 1
+			_collect_module_fields(fields, manifest, scope.decls, scope.values, source,
+				sub_path + (".fields" if condition else ""), field, "code" if condition else key_mode, out)
+		var ref_decl: Dictionary = fields.array_element_decl(decl) if decl.get("type") == "array" else decl
+		if ref_decl.get("kind") == "input" and ref_decl.get("type") not in ["asset_ref", "map_ref"]:
+			continue
+		var desc: Dictionary = fields.describe(ref_decl)
+		if desc.kind not in ["content", "asset", "entity_type", "view", "audio", "map"]:
+			continue
+		var pending: Array = [[value, path]]
+		while not pending.is_empty():
+			var part: Array = pending.pop_back()
+			if part[0] is Array:
+				for i in range(part[0].size() - 1, -1, -1):
+					pending.append([part[0][i], "%s[%d]" % [part[1], i]])
+			elif part[0] is String and part[0] != "":
+				out.append(source.merged({"kind": desc.kind, "filter": desc.filter, "value": part[0],
+					"path": part[1], "field": field}))
+
+static func view_asset_refs(manifest: Dictionary, asset_id: String) -> Array:
+	var out := view_image_refs(manifest).filter(func(ref): return ref.asset == asset_id)
+	for ref in view_module_refs(manifest):
+		if ref.kind in ["asset", "entity_type"] and ref.value == asset_id:
+			ref["asset"] = ref.value
+			out.append(ref)
+	return out
 
 static func view_image_refs(manifest: Dictionary) -> Array:
 	var out := []
@@ -124,7 +199,8 @@ static func view_image_refs(manifest: Dictionary) -> Array:
 			var row = elements[j]
 			if row is Dictionary and row.get("imageAsset") is String and row.imageAsset != "":
 				out.append({"asset": row.imageAsset, "view": str(view.get("view_id", "")),
-					"path": "views[%d].layout.elements[%d].imageAsset" % [i, j]})
+					"path": "views[%d].layout.elements[%d].imageAsset" % [i, j],
+					"element": str(row.get("id", ""))})
 	return out
 
 ## 入边全景（§7.2 inbound）：内容 (fn_id, cid) 的全部入边，破坏性检查共用这一个入口。

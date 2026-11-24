@@ -550,8 +550,8 @@ func _delete_asset_checked(sid: String) -> void:
 	var usage := _deletion_usage(sid) if erase_will_dangle else {}
 	var views: Array = usage.get("views", [])
 	if not views.is_empty():
-		host._set_status("参考视图「%s」正在使用此图片（共 %d 处）。请先移除或替换布局中的图片。" %
-			[views[0].view, views.size()])
+		host._set_status("参考视图「%s」仍在使用此资产（共 %d 处）：%s。请先修改引用。" %
+			[views[0].view, views.size(), views[0].path])
 		return
 	var bad: Array = usage.get("bad", [])
 	if not bad.is_empty():

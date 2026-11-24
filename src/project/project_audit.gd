@@ -17,6 +17,7 @@ extends RefCounted
 const ManifestValidation := preload("res://src/project/manifest_validation.gd")
 const MapStore := preload("res://src/map/map_store.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
+const AudioDecls := preload("res://src/content/audio_decl.gd")
 const ContentStore := preload("res://src/content/content_store.gd")
 const FunctionDecls := preload("res://src/content/function_decl.gd")
 const ConditionDecls := preload("res://src/content/condition_decl.gd")
@@ -89,18 +90,7 @@ static func audit(manifest: Dictionary, meta_out: Dictionary = {}) -> Array:
 		elif delta_problems.get(code, "") != "":
 			out.append(_wrap("manifest", {"severity": "warning", "path": "worldLayout.chunks." + str(code),
 				"message": delta_problems[code]}))
-	for ref in ReferenceIndex.view_content_refs(manifest):
-		var rd := ContentStore.read_ex(manifest, ref.fn, ref.cid)
-		if rd.status == "ok":
-			used_content[_content_key(ref.fn, ref.cid)] = true
-		else:
-			out.append(_wrap("manifest", {"severity": "warning", "path": ref.path,
-				"message": "参考视图 %s 的内容目标无法读取：%s/%s" % [ref.view, ref.fn, ref.cid]}))
-	var screen_assets := ScreenLayout.image_assets(manifest)
-	for ref in ReferenceIndex.view_image_refs(manifest):
-		if not screen_assets.has(ref.asset):
-			out.append(_wrap("manifest", {"severity": "warning", "path": ref.path,
-				"message": "参考视图 %s 的图片资产无法解析：%s" % [ref.view, ref.asset]}))
+	out.append_array(view_reference_issues(manifest, "", used_content))
 	# 3. 内容文件：损坏 JSON / function 码漂移 / 孤立内容
 	out.append_array(_content_checks(manifest, used_content, content_contexts))
 	# 4. 资产停用/改名待确认（A4）：已有引用仍按原 ID 解析，但要让人看见问题所在
@@ -139,6 +129,57 @@ static func audit(manifest: Dictionary, meta_out: Dictionary = {}) -> Array:
 	return out
 
 ## 按 id 取清单里的资产条目原件（无则空字典）。
+## The view editor and project audit share these checks; only the audit asks for usage.
+static func view_reference_issues(manifest: Dictionary, view_id := "", used_content := {}) -> Array:
+	var out := []
+	var contents := {}
+	for ref in ReferenceIndex.view_content_refs(manifest):
+		if view_id != "" and ref.view != view_id:
+			continue
+		var key := _content_key(ref.fn, ref.cid)
+		if not contents.has(key):
+			contents[key] = ContentStore.read_ex(manifest, ref.fn, ref.cid).status
+		if contents[key] == "ok":
+			used_content[key] = true
+		else:
+			out.append(_view_issue(ref, "内容目标无法读取：%s/%s" % [ref.fn, ref.cid]))
+	var images := ScreenLayout.image_assets(manifest)
+	for ref in ReferenceIndex.view_image_refs(manifest):
+		if (view_id == "" or ref.view == view_id) and not images.has(ref.asset):
+			out.append(_view_issue(ref, "图片资产无法解析：%s" % ref.asset))
+	var views := ReferenceIndex.view_ids(manifest)
+	var assets := AssetDecl.all(manifest)
+	for ref in ReferenceIndex.view_module_refs(manifest):
+		if view_id != "" and ref.view != view_id:
+			continue
+		var valid := true
+		var label := ""
+		match ref.kind:
+			"asset", "entity_type":
+				label = "资产"
+				var expected: String = "entity" if ref.kind == "entity_type" else ref.filter.kind
+				var asset: Dictionary = assets.get(ref.value, {})
+				valid = not asset.is_empty() and (expected == "" or asset.kind == expected) \
+					and (ref.filter.ids.is_empty() or ref.filter.ids.has(ref.value))
+			"view":
+				label = "视图"
+				valid = views.has(ref.value)
+			"audio":
+				label = "音频"
+				valid = not AudioDecls.from_value(manifest, ref.value).is_empty()
+			"map":
+				label = "地图"
+				valid = ReferenceIndex.resolve_map(manifest, ref.value).status == "ok"
+		if not valid:
+			out.append(_view_issue(ref, "%s引用无法解析：%s" % [label, ref.value]))
+	return out
+
+static func _view_issue(ref: Dictionary, message: String) -> Dictionary:
+	var out := _wrap("manifest", {"path": ref.path, "message": "参考视图 %s：%s" % [ref.view, message]})
+	out.jump = {"type": "view", "id": ref.view, "element": ref.get("element", ""),
+		"field": ref.get("field", ""), "hotspot": ref.get("hotspot", -1)}
+	return out
+
 static func _graph_target_checks(data: Dictionary, manifest: Dictionary, name: String,
 		index: Array, cached_targets: Dictionary) -> Array:
 	var out: Array = []
@@ -1032,7 +1073,7 @@ static func asset_deletion_usage(manifest: Dictionary, asset_id: String, live: D
 	var live_count := _asset_map_count(manifest, asset_id, live)
 	return {"maps": refs, "live": live_count, "contents": asset_content_refs(manifest, asset_id, bad, staged),
 		"drafts": asset_draft_refs(manifest, asset_id, bad), "bad": bad,
-		"views": ReferenceIndex.view_image_refs(manifest).filter(func(ref): return ref.asset == asset_id)}
+		"views": ReferenceIndex.view_asset_refs(manifest, asset_id)}
 
 static func _asset_map_count(manifest: Dictionary, asset_id: String, data: Dictionary) -> int:
 	var count := 0
@@ -1100,10 +1141,13 @@ static func _fields_pointing(manifest: Dictionary, kind: String, target: String,
 				break
 	return out
 
-## Screen IDs are stored in declared content fields, including step and condition records.
+## Ignore outgoing references from the view being removed along with its own layout.
 static func view_inbound_refs(manifest: Dictionary, id: String, staged: Array) -> Dictionary:
 	var refs: Array[String] = []
 	var bad: Array = []
+	for ref in ReferenceIndex.view_module_refs(manifest):
+		if ref.kind == "view" and ref.value == id and ref.view != id:
+			refs.append("%s · %s" % [ref.view, ref.path])
 	var inspect := func(kind: String, cid: String, data: Dictionary):
 		for section in _content_sections(manifest, kind, data):
 			for field in _fields_pointing(manifest, "view", id, section.decls, section.values):

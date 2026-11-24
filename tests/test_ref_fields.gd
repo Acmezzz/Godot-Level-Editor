@@ -97,14 +97,14 @@ func test_widget_type_strictness() -> void:
 
 ## —— C10：数组元素继承范围/选项 ——
 func test_array_elem_inherits_decl() -> void:
-	var elem := FieldWidgets._elem_decl({"kind": "input", "type": "array", "of": "int", "min": 3, "max": 9})
+	var elem := RefFields.array_element_decl({"kind": "input", "type": "array", "of": "int", "min": 3, "max": 9})
 	eq(int(elem.get("min", 0)), 3, "元素继承 min")
 	eq(int(elem.get("max", 0)), 9, "元素继承 max")
-	var elem2 := FieldWidgets._elem_decl({"kind": "input", "type": "array", "of": "choice",
+	var elem2 := RefFields.array_element_decl({"kind": "input", "type": "array", "of": "choice",
 		"options": ["x", "y"], "multiple": true})
 	ok(bool(elem2.get("multiple", false)), "choice 元素继承 multiple")
 	eq(elem2.get("options", []), ["x", "y"], "choice 元素继承 options")
-	var elem3 := FieldWidgets._elem_decl({"kind": "input", "type": "array", "of": "asset_ref",
+	var elem3 := RefFields.array_element_decl({"kind": "input", "type": "array", "of": "asset_ref",
 		"assetKind": "entity", "ids": ["A1", "B2"]})
 	eq(str(elem3.get("assetKind", "")), "entity", "asset_ref 元素继承 assetKind")
 	eq(str(elem3.get("of", "")), "A1,B2", "ids 白名单转成元素 of")

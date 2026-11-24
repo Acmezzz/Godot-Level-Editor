@@ -4,6 +4,7 @@ extends RefCounted
 const ProjectAudit := preload("res://src/project/project_audit.gd")
 const EntityNodeScript := preload("res://src/canvas/entity_node.gd")
 const MapStore := preload("res://src/map/map_store.gd")
+const ReferenceViews := preload("res://src/ui/reference_view_library.gd")
 
 var host   # editor_layout 宿主
 var app    # 根应用（= host.app）
@@ -154,6 +155,9 @@ func _jump_to(it: Dictionary) -> void:
 		return
 	if typ == "content":
 		app.project_shell.content_editor._library.open_issue(j)
+		return
+	if typ == "view":
+		ReferenceViews.open(app, str(j.id), j)
 		return
 	if typ == "asset":
 		# A4：停用/待确认的资产在资产页有恢复与候选按钮
