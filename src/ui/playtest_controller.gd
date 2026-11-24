@@ -48,7 +48,18 @@ func on_play(spawn_tiles: Vector2i = Vector2i(-1, -1), project_entry := false, e
 		"项目入口 %s / %s" % [entry.function, entry.content] if not entry.is_empty() else "项目入口")
 	_start_playtest(play_path, digest, args, subject)
 
-## Screen entries never submit the open map or layout.
+## Published resource entries leave the current editing session untouched.
+func play_map_entry(map_code: String) -> bool:
+	if not Playtest.allows_map_entry(app.manifest):
+		return false
+	var entry := References.resolve_graph_map(app.MapStore.code_index(app.manifest), map_code)
+	if entry.status != "ok":
+		app._set_status("试玩中止：所选地图已不可用。")
+		return false
+	if not _published_manifest_current():
+		return false
+	return _start_playtest("", "", PackedStringArray([Playtest.map_entry_arg(map_code)]), "地图入口 " + str(entry.key))
+
 func play_view(view_id: String, draft := {}) -> bool:
 	var is_draft := not draft.is_empty()
 	var allowed := Playtest.allows_view_draft(app.manifest) if is_draft else Playtest.allows_view_entry(app.manifest)
@@ -58,14 +69,19 @@ func play_view(view_id: String, draft := {}) -> bool:
 	if not is_draft and not References.view_ids(app.manifest).has(view_id):
 		app._set_status("试玩中止：所选屏幕已经不存在。")
 		return false
-	var manifest_path := str(app.manifest._dir).path_join("editor/editor_manifest.json")
-	var digest := EntryStore.file_digest(manifest_path)
-	if digest == "" or digest != app.manifest.get("_manifest_digest", ""):
-		app._set_status("试玩中止：磁盘清单已变化，请重新打开项目。")
+	if not _published_manifest_current():
 		return false
 	if is_draft:
 		return _start_playtest("", "", PackedStringArray(), "屏幕草稿 " + view_id, draft)
 	return _start_playtest("", "", PackedStringArray([Playtest.view_entry_arg(view_id)]), "屏幕 " + view_id)
+
+func _published_manifest_current() -> bool:
+	var manifest_path := str(app.manifest._dir).path_join("editor/editor_manifest.json")
+	var digest := EntryStore.file_digest(manifest_path)
+	if digest != "" and digest == app.manifest.get("_manifest_digest", ""):
+		return true
+	app._set_status("试玩中止：磁盘清单已变化，请重新打开项目。")
+	return false
 
 func _can_start_playtest() -> bool:
 	if _play_pid > 0 and Playtest.is_alive(_play_pid):

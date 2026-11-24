@@ -68,7 +68,7 @@ func run() -> void:
 			{"id": "board", "code": "BRD1", "kind": "choice", "source": "map"},
 			{"id": "route", "code": "ROUT", "kind": "input", "type": "flow_target",
 				"maps": true, "screens": true, "contentTypes": ["signal"], "contentMapContext": "paired", "mapField": "board"}]}},
-		"playtest": {"executable": OS.get_executable_path(), "report": true, "projectEntry": true,
+		"playtest": {"executable": OS.get_executable_path(), "report": true, "projectEntry": true, "mapEntry": true,
 			"args": ["--path", "%projectpath%", "--audio-driver", "Dummy", "--", "--verify"]}}
 	check(Maps.write_json(project.path_join("editor/editor_manifest.json"), declaration), "install only game declarations")
 	var manifest := Manifest.load_from(project)
@@ -439,6 +439,26 @@ func run() -> void:
 		and result.get("localActor") == copy_host
 		and result.get("placed") == copy.objects.map(func(row): return row.code) and result.get("text") == "Screen sequence complete",
 		"the game reads the map-level completion outlet and reaches the conclusion: %s" % [report])
+	end = Time.get_ticks_msec() + 2000
+	while Playtest.is_alive(controller._play_pid) and Time.get_ticks_msec() < end:
+		await create_timer(0.05).timeout
+	app.project_shell.content_editor._library.open()
+	press(popup(), "流程关系…")
+	await process_frame
+	flow = popup()
+	choose(flow.find_child("FlowSource", true, false), "@map\u0001" + copy_code)
+	press(flow, "试玩所选地图")
+	end = Time.get_ticks_msec() + 8000
+	while controller._play_report_result.is_empty() and Time.get_ticks_msec() < end:
+		await create_timer(0.05).timeout
+		controller.poll_playtest()
+	report = controller._play_report_result
+	result = report.get("result", {})
+	check(report.get("status") == "ready" and result.get("board") == copy_code
+		and result.get("screens") == ["results", "debrief"]
+		and result.get("text") == "Screen sequence complete"
+		and app.manifest.startup.target == {"view": "welcome"},
+		"the selected map enters its normal flow without changing project startup: %s" % [report])
 	print("SCREEN-NAV-DONE failures=", failures)
 	quit(0 if failures == 0 else 1)
 

@@ -468,7 +468,7 @@ static func _validate_playtest(data: Dictionary, issues: Array[Dictionary]) -> v
 		_add(issues, "error", "playtest.executable", "must be a path string")
 	elif exe is String and (exe as String).strip_edges() == "" and pt2.has("executable"):
 		_add(issues, "warning", "playtest.executable", "empty executable: falls back to playCommand")
-	for feature in ["report", "projectEntry", "viewEntry", "viewDraft"]:
+	for feature in ["report", "projectEntry", "mapEntry", "viewEntry", "viewDraft"]:
 		if not pt2.has(feature):
 			continue
 		if not pt2[feature] is bool:

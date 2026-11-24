@@ -88,6 +88,7 @@
 | `playtest.args` | string[] | 可选（A6）。参数字符串数组，逐项替换 `%mapfile%`、`%projectpath%`（**不加引号**，空格路径由数组分段保证）。Godot 项目示例：`['--path', '%projectpath%', '--', '--map=%mapfile%']`。未配 `executable` 时退回 `playCommand` 模板，状态栏会标明跟踪的是包装进程 |
 | `playtest.entryFunctions` | string[] | 可选，须启用 `projectEntry: true`。填写允许作者从内容库启动的功能声明 ID；列表成员必须已声明且互不重复。 |
 | `playtest.viewEntry` | bool | 可选，须配置结构化启动。开启后，作者可以从参考视图启动该屏幕的已保存版本，不要求配置 `projectEntry`。 |
+| `playtest.mapEntry` | bool | 可选，须配置结构化启动。开启后，作者可以从项目流程图按地图码试玩已保存的地图入口。 |
 | `playtest.viewDraft` | bool | 可选，须配置结构化启动并开启 `report: true`。开启后，作者可以试玩当前屏幕的未保存布局。 |
 | `preview` | object | 可选。声明独立进程渲染预览，可请求 `screenLayout`、`mapFrame`、`worldFrame` 和 `timelineFrame`。与试玩配置分开。 |
 | `mapGenerators` | object | 可选。按生成器 ID 声明从游戏生成可编辑地图的参数。需同时声明 `preview.capabilities` 包含 `generateMap`。 |
@@ -1405,6 +1406,11 @@ main.gd
 `{"version":1,"function":"功能声明 ID","content":"所选内容 ID"}`。
 游戏按功能和内容 ID 加载入口，并自行决定如何运行它。未收到该参数时沿用游戏默认入口。
 此参数独立于 `--editor-playtest`，不要求启用加载回执。
+
+声明 `playtest.mapEntry: true` 后，项目流程图的「试玩所选地图」会以空的 `%mapfile%` 启动，
+并发送同一个 `--editor-entry` 参数，解码为 `{"version":1,"map":"地图码"}`。
+游戏应按正常地图目标的入场逻辑加载该地图。编辑器不提交当前地图草稿，也不修改正式启动入口。
+此方式与从屏幕和项目内容进入一样，加载回执的 `mapDigest` 为空。
 
 若声明 `playtest.viewEntry: true`，同一个 `--editor-entry` 参数也可携带
 `{"version":1,"view":"所选 view_id"}`，此时没有 `function` 或 `content`，`%mapfile%` 为空。

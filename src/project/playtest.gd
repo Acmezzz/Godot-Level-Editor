@@ -25,6 +25,12 @@ static func entry_arg(function_id: String, content_id: String) -> String:
 static func allows_view_entry(m: Dictionary) -> bool:
 	return m.get("playtest", {}).get("viewEntry", false) == true
 
+static func allows_map_entry(m: Dictionary) -> bool:
+	return m.get("playtest", {}).get("mapEntry", false) == true
+
+static func map_entry_arg(map_code: String) -> String:
+	return _encode_entry({"map": map_code})
+
 static func allows_view_draft(m: Dictionary) -> bool:
 	var config: Dictionary = m.get("playtest", {})
 	return config.get("viewDraft", false) == true and config.get("report", false) == true

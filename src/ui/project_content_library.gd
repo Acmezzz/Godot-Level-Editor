@@ -146,6 +146,9 @@ func _open_flow() -> void:
 	var slot := OptionButton.new()
 	var target := OptionButton.new()
 	target.name = "FlowTarget"
+	var play_map := Kit.button("试玩所选地图", Callable(), "ghost")
+	play_map.visible = Playtest.allows_map_entry(source)
+	play_map.tooltip_text = "从已保存地图的正式流程进入游戏，保留当前草稿及项目启动设置。"
 	var broken := OptionButton.new()
 	broken.name = "FlowMissingLinks"
 	broken.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
@@ -243,6 +246,7 @@ func _open_flow() -> void:
 		view.queue_redraw()
 	var fill_slots := func():
 		var key: String = selected.call(node)
+		play_map.disabled = state.index.nodes.get(key, {}).get("fn_id") != RelGraph.MAP_KIND
 		show_graph.call(key)
 		links.clear()
 		for direction in ["outgoing", "incoming"]:
@@ -356,6 +360,12 @@ func _open_flow() -> void:
 			pick_edge.call(edge))
 	var actions := Kit.hbox(6)
 	body.add_child(actions)
+	actions.add_child(play_map)
+	play_map.pressed.connect(func():
+		var item: Dictionary = state.index.nodes.get(selected.call(node), {})
+		if is_same(app.manifest, source) and item.get("fn_id") == RelGraph.MAP_KIND \
+				and app._playtest_ctrl.play_map_entry(item.cid):
+			pop.hide())
 	actions.add_child(Kit.button("定位引用字段", func():
 		var items := links.get_selected_items()
 		if not items.is_empty():
