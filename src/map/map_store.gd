@@ -322,9 +322,6 @@ static func write_text(path: String, text: String) -> bool:
 	project_rev += 1
 	return true
 
-## 多文件提交的协调写入与崩溃恢复不在这里：全部走 DocumentCommit 的冻结计划
-## （prepare_frozen + apply_frozen，见 src/project/document_commit.gd），提交日志由它统一登记。
-## 本函数只负责把一段字节写进一个文件。
 static func _write_bytes(path: String, bytes: PackedByteArray) -> bool:
 	var file := FileAccess.open(path, FileAccess.WRITE)
 	if file == null:
@@ -372,7 +369,6 @@ static func rename_map(m: Dictionary, old_name: String, new_name: String, baseli
 	var src := path_for(m, old_name)
 	if src == "" or not FileAccess.file_exists(src):
 		return "原图不存在"
-	var dst := path_for(m, new_name)
 	var original := read_path(src, m)
 	if not original.ok:
 		return "原图无法读取或校验失败"
@@ -380,27 +376,14 @@ static func rename_map(m: Dictionary, old_name: String, new_name: String, baseli
 		return "原图已被外部修改，请重新打开后再改名"
 	var renamed: Dictionary = original.data
 	renamed.meta.name = new_name
-	var DC := preload("res://src/project/document_commit.gd").new()
-	var prep: Dictionary = DC.prepare_frozen("地图改名 %s → %s" % [old_name, new_name], m, [
-		{"kind": "map", "id": new_name, "path": dst, "expect_absent": true, "map_data": renamed, "move_from": old_name},
-		{"kind": "map", "id": old_name, "path": src, "op": "delete", "baseline": original.digest},
-	])
-	if str(prep.get("status", "")) != "ok":
-		return str(prep.get("error", "提交计划为空：改名已中止"))
-	var res: Dictionary = DC.apply_frozen(prep.get("plan", {}) as Dictionary)
-	if str(res.get("status", "")) != "ok":
-		var why := str(res.get("error", ""))
-		if why == "":
-			var cs: Array = res.get("conflicts", [])
-			why = str((cs[0] as Dictionary).get("message", "")) if not cs.is_empty() else "改名失败"
-		for row in res.get("targets", []):
-			if row.get("path") == dst and row.get("status") == "written":
-				invalidate_read_cache()
-				invalidate_code_map()
-				return "新地图已写入，请检查新旧文件及待处理日志：" + why
-		return why
+	var DC := preload("res://src/project/document_commit.gd")
+	var prep := DC.prepare(m, new_name, renamed, [], old_name, original.digest)
+	if prep.has("error"):
+		return prep.error
+	var res := DC.apply(prep.plan)
+	if res.error != "":
+		return res.error
 	_cache.erase(src)
-	_cache.erase(dst)
 	invalidate_code_map()   # 改名换了文件：码表按图名做键，必须重算
 	return ""
 
@@ -428,38 +411,15 @@ static func prepare_duplicate(m: Dictionary, old_name: String, new_name: String,
 		{"data": d, "manifest": m, "map": old_name}, new_name, code, staged_contents)
 	if str(plan.get("status", "")) != "ok":
 		return {"error": "复制计划有冲突", "conflicts": plan.get("conflicts", [])}
-	# R06/§4.4-4：复制 = 一次多文件冻结计划（内容 N 份 + 地图 1 份），
-	# 交给 DocumentCommit 执行——同一套日志、写前复验与逐目标收据。
-	# A2 依赖序：内容在前（失败即停，地图文件未动），地图在后。
-	var frozen := []
-	for pc in (plan.get("pending_contents", []) as Array):
-		var pd: Dictionary = pc
-		frozen.append({"kind": "content", "fn_id": str(pd.get("fn_id", "")),
-			"id": str(pd.get("id", "")), "data": pd.get("data", {})})
-	var doc: Dictionary = plan.get("document", {}) if plan.get("document", {}) is Dictionary else {}
-	if doc.is_empty():
-		return {"error": "复制文档组装失败"}
-	if not validate_for_write(doc, m):
-		return {"error": "复制地图校验失败：" + write_error(m, doc)}
-	var mpath := path_for(m, new_name)
-	frozen.append({"kind": "map", "id": new_name, "path": mpath, "expect_absent": true,
-		"map_data": doc})
+	var contents: Array = []
+	for row in plan.pending_contents:
+		contents.append({"fn_id": row.fn_id, "cid": row.id, "data": row.data})
 	var DC := preload("res://src/project/document_commit.gd")
-	var prep: Dictionary = DC.prepare_frozen("整图复制 %s → %s" % [old_name, new_name], m, frozen)
-	if str(prep.get("status", "")) != "ok":
-		return {"error": str(prep.get("error", "无法准备复制计划"))}
-	return prep
+	return DC.prepare(m, new_name, plan.document, contents)
 
 static func apply_duplicate(plan: Dictionary) -> String:
 	var DC := preload("res://src/project/document_commit.gd")
-	var res: Dictionary = DC.new().apply_frozen(plan)
-	if str(res.get("status", "")) == "ok":
-		invalidate_code_map()
-		return ""
-	var why := str(res.get("error", ""))
-	var conflicts: Array = res.get("conflicts", [])
-	return why if why != "" else (
-		str(conflicts[0].get("message", "")) if not conflicts.is_empty() else "复制失败")
+	return DC.apply(plan).error
 
 static func duplicate_map(m: Dictionary, old_name: String, new_name: String,
 		conflicts_out: Array = [], src_data: Dictionary = {}, staged_contents := {}) -> String:

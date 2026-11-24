@@ -31,8 +31,6 @@ const AUTOSAVE_INTERVAL_MS := 120000
 var _last_autosave_msec := 0
 ## 最近一次在新建/重命名弹窗里确认的名字（顶栏常驻名字框已移除，这里记住值供预填）
 var _name_memo := ""
-## 未保存地图改名用的冻结写入。
-var _doc_commit := DocumentCommit.new()
 var sess := DocumentSession.new()
 
 ## 进入一次会影响当前文档的操作（新建/切图）：抬会话代数并返回本次代次。
@@ -616,31 +614,15 @@ func rename_map_now(old_name: String, new_name: String, allow_write_unsaved := f
 		if data.is_empty():   # 重建窗口哨兵：此刻写盘会把空图落成新文件
 			return " 地图重建中，请稍后再试"
 		data.meta.name = nn
-		var map_error := MapStore.write_error(app.manifest, data)
-		if map_error != "":
-			return "地图校验失败：" + map_error
-		var frozen: Array = []
+		var rows: Array = ce.bound_staged_rows(data) if ce != null else []
+		var prep := DocumentCommit.prepare(app.manifest, nn, data, rows)
+		if prep.has("error"):
+			return prep.error
+		var result := DocumentCommit.apply(prep.plan)
 		if ce != null:
-			for row in ce.bound_staged_rows(data):
-				frozen.append({"kind": "content", "fn_id": row.fn_id, "id": row.cid,
-					"data": row.data, "expect_absent": row.expect_absent, "baseline": row.get("baseline", "")})
-		# 地图目标带「写前校验」的语义：用 payload 声明它是地图文档，
-		# 执行器按 MapStore.write 的同一入口落盘（不是裸写字节）。
-		frozen.append({"kind": "map", "id": nn, "path": new_path, "expect_absent": true,
-			"map_data": data})
-		var prep: Dictionary = _doc_commit.prepare_frozen("未落盘地图改名落盘 → %s" % nn,
-			app.manifest, frozen)
-		if str(prep.get("status", "")) != "ok":
-			return str(prep.get("error", "提交计划为空：改名已中止"))
-		var res: Dictionary = _doc_commit.apply_frozen(prep.get("plan", {}) as Dictionary)
-		if ce != null:
-			ce.consume_written_staged(res.get("targets", []))
-		if str(res.get("status", "")) != "ok":
-			var why := str(res.get("error", ""))
-			if why == "":
-				var cs: Array = res.get("conflicts", [])
-				why = str((cs[0] as Dictionary).get("message", "")) if not cs.is_empty() else "改名写盘失败"
-			return why
+			ce.consume_written_staged(result.get("written_contents", []))
+		if result.error != "":
+			return result.error
 	else:
 		return "原图不存在（先保存该地图）"
 	if is_current:

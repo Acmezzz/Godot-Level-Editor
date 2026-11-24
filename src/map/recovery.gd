@@ -194,31 +194,10 @@ static func begin_pending(m: Dictionary, reason: String, entries: Array) -> Stri
 		"reason": reason,
 		"startedAt": Time.get_unix_time_from_system(),
 		"entries": entries,   # [{path, baseline, expect, kind, id}]
-		"done": 0,
 	}
 	return path if write_json(path, payload) else ""
 
-## 每个文件写成功后把**实际结果摘要**记进日志（A3）：重启时逐条比对就能分清
-## 已写（摘要相符）/ 未写（仍与基线相符）/ 已变（两者都不符 → 外部改过或写了一半 → 人工复核）。
-## 只记摘要，不重放内容：同 ID 重试仍走各自的补写路径（内容页暂存 / 地图保存）。
-## 回填某条目标的写后摘要（R04）。返回是否真的写进日志：
-## 日志被外部删掉/改写导致回填失败时，调用方必须停手——继续写下去会留下
-## 「文件已替换、日志却说没写」的不可判读状态。
-static func mark_pending_written(m: Dictionary, log_path: String, index: int, result_digest: String) -> bool:
-	if log_path == "":
-		return false
-	var d := read_json(log_path)
-	if d.is_empty():
-		return false
-	var entries: Array = d.get("entries", []) if d.get("entries", []) is Array else []
-	if index < 0 or index >= entries.size() or not (entries[index] is Dictionary):
-		return false
-	(entries[index] as Dictionary)["expect"] = result_digest
-	d["entries"] = entries
-	d["done"] = maxi(int(d.get("done", 0)), index + 1)
-	return write_json(log_path, d)
-
-static func clear_pending(m: Dictionary, log_path: String) -> bool:
+static func clear_pending(log_path: String) -> bool:
 	if log_path == "":
 		return true
 	if not FileAccess.file_exists(log_path):

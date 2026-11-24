@@ -822,13 +822,11 @@ func save_staged_content(map_data: Dictionary) -> String:
 
 
 ## 消费冻结计划中已落盘的内容，失败目标继续留在工作副本里。
-func consume_written_staged(receipts: Array) -> void:
+func consume_written_staged(rows: Array) -> void:
 	var doc: String = app._map_file_ctrl.document_key()
-	for row in receipts:
-		if row.get("kind") != "content" or row.get("status") != "written":
-			continue
-		var fn_id := str(row.get("fn_id", ""))
-		var cid := str(row.get("id", ""))
+	for row in rows:
+		var fn_id := str(row.fn_id)
+		var cid := str(row.cid)
 		var staged = _staged_get(fn_id, cid)
 		if staged is Dictionary and staged.get("doc") == doc:
 			_staged_erase(fn_id, cid)

@@ -263,25 +263,6 @@ func test_resolve_map_states() -> void:
 	eq(ReferenceIndex.resolve_map(m, "GOOD").key, "okmap", "只按地图码解析")
 	_wipe()
 
-## §4.4-3：提交收据逐目标列出——提前返回时未轮到的目标一律记 pending，
-## 调用方不必猜「哪些落盘了」。
-func test_document_commit_receipts() -> void:
-	var DC := preload("res://src/project/document_commit.gd")
-	# 冻结计划收据辅助函数。
-	var plan_targets: Array = [
-		{"path": "a", "kind": "manifest", "id": ""},
-		{"path": "b", "kind": "content", "id": "C1"},
-		{"path": "c", "kind": "map", "id": "m"},
-	]
-	var rest: Array = DC._receipts_pending(plan_targets, "b")
-	eq(rest.size(), 1, "停在 b 之后只剩 c")
-	eq(str((rest[0] as Dictionary).get("status", "")), "pending", "未轮到 = pending")
-	eq(str((rest[0] as Dictionary).get("kind", "")), "map", "收据带 kind")
-	eq(DC._receipts_pending(plan_targets, "").size(), 3, "还没开始 = 全部 pending")
-	var rc: Dictionary = DC._receipt_of(plan_targets[1], "written", "DIG")
-	eq(str(rc.get("id", "")), "C1", "收据带目标身份")
-	eq(str(rc.get("digest", "")), "DIG", "写到盘上的目标带摘要")
-
 ## 新的地图操作使上一份文档的异步工作失效。
 func test_document_session_lifecycle() -> void:
 	var DS := preload("res://src/project/document_session.gd")
@@ -291,65 +272,21 @@ func test_document_session_lifecycle() -> void:
 	ok(s.stale(g1) and not s.stale(g2), "旧代次过期、新代次有效")
 
 
-## §4.4-4：冻结计划执行器——rename 原子换名、delete 复验摘要后删除、
-## 目标占用/源被外部改动都判冲突不越写，收据逐目标给状态。
-func test_frozen_plan_targets() -> void:
+func test_map_copy_preserves_an_external_content_file() -> void:
 	_wipe()
 	var m := _fake_manifest()
-	var DC := preload("res://src/project/document_commit.gd")
-	var a := MapStore.new_map("fa", 8, 8)
-	var b := MapStore.new_map("fb", 8, 8)
-	ok(MapStore.write(m, "fa", a), "fa 写入")
-	ok(MapStore.write(m, "fb", b), "fb 写入")
-	var pa := MapStore.path_for(m, "fa")
-	var pb := MapStore.path_for(m, "fb")
-	var pc := MapStore.path_for(m, "fc")
-	# rename：源在 → 成功，源消失、目标出现
-	var prep: Dictionary = DC.prepare_frozen("测试改名", m, [DC.rename_target(pa, pc, "fc")])
-	eq(str(prep.get("status", "")), "ok", "计划非空")
-	var res: Dictionary = DC.new().apply_frozen(prep.get("plan", {}) as Dictionary)
-	eq(str(res.get("status", "")), "ok", "改名执行成功：%s" % str(res.get("error", "")))
-	ok(not FileAccess.file_exists(pa) and FileAccess.file_exists(pc), "源没了、目标在")
-	eq(str((res.get("targets", []) as Array)[0].get("status", "")), "written", "改名收据 = written")
-	# rename 目标已存在 → 冲突（不覆盖）
-	var prep2: Dictionary = DC.prepare_frozen("撞名", m, [DC.rename_target(pb, pc, "fc2")])
-	var res2: Dictionary = DC.new().apply_frozen(prep2.get("plan", {}) as Dictionary)
-	eq(str(res2.get("status", "")), "conflict", "目标已存在判冲突")
-	ok(FileAccess.file_exists(pb), "源文件原样保留")
-	# delete：摘要不符 → 冲突；相符 → 真删
-	var prep3: Dictionary = DC.prepare_frozen("删", m, [{"path": pb, "kind": "map", "id": "fb", "op": "delete"}])
-	# 计划后改写源文件：apply 必须发现基线不符
-	MapStore.write(m, "fb", MapStore.new_map("fb", 8, 8))
-	var res3: Dictionary = DC.new().apply_frozen(prep3.get("plan", {}) as Dictionary)
-	eq(str(res3.get("status", "")), "conflict", "删除前摘要复验：被改动就冲突")
-	ok(FileAccess.file_exists(pb), "冲突时不删")
-	var prep4: Dictionary = DC.prepare_frozen("删2", m, [{"path": pb, "kind": "map", "id": "fb", "op": "delete"}])
-	var res4: Dictionary = DC.new().apply_frozen(prep4.get("plan", {}) as Dictionary)
-	eq(str(res4.get("status", "")), "ok", "摘要相符可删")
-	ok(not FileAccess.file_exists(pb), "文件已删除")
-	eq(str((res4.get("targets", []) as Array)[0].get("status", "")), "deleted", "删除收据 = deleted")
-	_wipe()
-
-func test_frozen_plan_preserves_file_preconditions() -> void:
-	_wipe()
-	var m := _fake_manifest()
-	var dc := preload("res://src/project/document_commit.gd").new()
-	var data := MapStore.new_map("a", 8, 8)
-	ok(MapStore.write(m, "a", data), "写入替换目标")
-	var path := MapStore.path_for(m, "a")
-	var read := MapStore.read_path(path, m)
-	var map_target := {"kind": "map", "id": "a", "path": path, "map_data": read.data, "baseline": read.digest}
-	var content_target := {"kind": "content", "fn_id": "dialog", "id": "new", "data": {"name": "ours"}}
-	var prep := dc.prepare_frozen("部分写入", m, [map_target, content_target])
-	ok(ContentStore.write(m, "dialog", "new", {"name": "external"}), "计划后新建同名内容")
-	var result := dc.apply_frozen(prep.plan)
-	eq(result.status, "conflict", "冻结内容目标出现时拒绝覆盖")
-	eq(result.targets[0].status, "written", "部分成功保留已写地图收据")
-	eq(ContentStore.read(m, "dialog", "new").name, "external", "保留外部数据")
-	DirAccess.remove_absolute(path)
-	var replace := dc.prepare_frozen("替换", m, [map_target])
-	eq(dc.apply_frozen(replace.plan).status, "conflict", "替换目标删除后不重建")
-	eq(dc.prepare_frozen("坏目标", m, [map_target, {"kind": "map"}]).status, "failed", "非法目标拒绝整份计划")
+	var dc := preload("res://src/project/document_commit.gd")
+	var data := MapStore.new_map("copy", 8, 8)
+	var prep := dc.prepare(m, "copy", data, [
+		{"fn_id": "dialog", "cid": "first", "data": {"name": "ours"}},
+		{"fn_id": "dialog", "cid": "second", "data": {"name": "ours"}},
+	])
+	ok(ContentStore.write(m, "dialog", "second", {"name": "external"}), "准备之后创建同名内容")
+	var result := dc.apply(prep.plan)
+	ok(result.error != "", "拒绝覆盖新增的文件")
+	ok(not FileAccess.file_exists(MapStore.path_for(m, "copy")), "内容失败时不发布地图")
+	eq(result.written_contents, [{"fn_id": "dialog", "cid": "first"}], "只返回已写内容")
+	eq(ContentStore.read(m, "dialog", "second").name, "external", "保留外部数据")
 	_wipe()
 
 ## A3：草稿写到 editor/drafts/<地图码>.json，记录目标/基线/快照，可读回、可删。
@@ -416,14 +353,13 @@ func test_pending_log_partial_detection() -> void:
 	MapStore.write_json(b, {"v": 1})
 	MapStore.write_json(c, {"v": 1})
 	var log := Recovery.begin_pending(m, "test", [
-		{"path": a, "baseline": Recovery.digest(a), "expect": "", "kind": "map"},
+		{"path": a, "baseline": Recovery.digest(a), "expect": JSON.stringify({"v": 2}, "\t").sha256_text(), "kind": "map"},
 		{"path": b, "baseline": Recovery.digest(b), "expect": "", "kind": "content"},
 		{"path": c, "baseline": Recovery.digest(c), "expect": "", "kind": "manifest"},
 	])
 	ok(log != "", "登记成功")
-	# a 写成功 → 回填结果摘要；b 保持原样（未写）；c 被外部改动
+	# a 写成登记的版本；b 保持原样；c 被外部改动。
 	MapStore.write_json(a, {"v": 2})
-	Recovery.mark_pending_written(m, log, 0, Recovery.digest(a))
 	MapStore.write_json(c, {"v": 9})
 	var scan := Recovery.scan_pending(m)
 	eq(scan.size(), 1, "扫到一条日志")
@@ -439,7 +375,7 @@ func test_pending_log_partial_detection() -> void:
 	# §4.4：manual 再分「外部改变」（内容对不上）与「可跳过」（目标不在且无基线）
 	eq((rec.get("external", []) as Array).size(), 1, "外部改动一条进 external")
 	eq((rec.get("skipped", []) as Array).size(), 0, "目标都在，没有可跳过项")
-	ok(Recovery.clear_pending(m, log), "清除日志")
+	ok(Recovery.clear_pending(log), "清除日志")
 	ok(Recovery.scan_pending(m).is_empty(), "清除后扫不到")
 	# 坏日志不能静默隐身：写出坏 JSON 后应扫到 status=corrupt
 	var bad := str(m._maps_dir).get_base_dir().path_join("editor/pending/pending-broken.json")
@@ -453,34 +389,16 @@ func test_pending_log_partial_detection() -> void:
 	DirAccess.remove_absolute(bad)
 	_wipe()
 
-func test_pending_recovers_before_progress_update() -> void:
+func test_pending_recovers_from_expected_digest() -> void:
 	_wipe()
 	var m := _fake_manifest()
-	var dc := preload("res://src/project/document_commit.gd")
 	var path := MapStore.path_for(m, "a")
 	var text := "{\"v\": 2}"
-	var log := Recovery.begin_pending(m, "中断", dc._journal_entries([
-		{"kind": "map", "path": path, "frozen_text": text, "target_absent": true},
-	]))
-	ok(log != "", "登记冻结摘要")
+	var log := Recovery.begin_pending(m, "中断", [
+		{"path": path, "expect": text.sha256_text(), "expect_absent": true},
+	])
+	ok(log != "", "登记预期摘要")
 	eq(Recovery.scan_pending(m)[0].status, "stale", "未写的新文件仍可判为待写")
-	ok(Recovery.write_text(path, text), "模拟写入成功、尚未回填")
+	ok(Recovery.write_text(path, text), "写入登记的版本")
 	eq(Recovery.scan_pending(m)[0].status, "done", "用预期摘要识别已完成写入")
-	_wipe()
-
-## §7.1 阶段一：替换已成功但进度标记失败时必须停手，不能报成功也不能继续写。
-## 这里直接验证底层判据：日志不在了，回填就返回 false（调用方据此停）。
-func test_pending_mark_fails_when_log_gone() -> void:
-	_wipe()
-	var m := _fake_manifest()
-	DirAccess.make_dir_recursive_absolute(str(m._maps_dir))
-	var a := str(m._maps_dir).path_join("a.json")
-	MapStore.write_json(a, {"v": 1})
-	var log := Recovery.begin_pending(m, "t", [
-		{"path": a, "baseline": Recovery.digest(a), "expect": "", "kind": "map"}])
-	ok(log != "", "登记成功")
-	ok(Recovery.mark_pending_written(m, log, 0, Recovery.digest(a)), "正常情况下回填成功")
-	DirAccess.remove_absolute(log)
-	ok(not Recovery.mark_pending_written(m, log, 0, Recovery.digest(a)), "日志被删 → 回填失败（调用方必须停手）")
-	ok(not Recovery.mark_pending_written(m, log, 5, "x"), "越界索引也返回失败，不静默跳过")
 	_wipe()
