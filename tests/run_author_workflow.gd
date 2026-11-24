@@ -1808,6 +1808,7 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 	await app._load_map_file(path)
 	var cvs = app.canvas
 	cvs.stamp_asset = "door"
+	cvs.place_kind = "object"
 	cvs.snap_to_grid = true
 	for i in 2:
 		app._layout_ctrl._on_map_menu_id(14)
@@ -1871,9 +1872,41 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 	await process_frame
 	var linked: Array = cvs.extract().objects.filter(func(row): return row.code == "PICK")
 	check(linked[0].get("props", {}).get("target", {}).get("inst") == doors[1].code, "confirm writes the instance port field")
+	app._set_mode("map")
+	cvs.place_kind = "tile"
+	cvs.paint_asset = "terrain"
+	cvs.paint_cell = Vector2i.ZERO
+	cvs.brush_size = 1
+	app._layout_ctrl._on_map_menu_id(14)
+	var paint_pop := await _render_pick_frame(app)
+	if paint_pop == null:
+		return
+	var before_tiles: Dictionary = cvs.extract().tiles
+	var apply := _drag_pick_frame(paint_pop, Vector2(0.11, 0.25), Vector2(0.86, 0.25))
+	check(not apply.disabled and cvs.extract().tiles == before_tiles, "mapped stroke is a draft until confirmed")
+	apply.pressed.emit()
+	await process_frame
+	var painted: Dictionary = cvs.extract().tiles
+	check(not painted.get(primary, []).is_empty() and not painted.get(upper, []).is_empty()
+		and painted[primary].all(func(row): return row[0] in [1, 2])
+		and painted[upper].all(func(row): return row[0] in [3, 4]),
+		"one screen drag paints both projected layers and does not bridge the unmapped gap")
+	check(await cvs.undo() and cvs.extract().tiles == before_tiles, "one undo reverses the complete multilayer stroke")
+	check(await cvs.redo() and cvs.extract().tiles == painted, "redo restores the full stroke")
+	app._layout_ctrl._on_map_menu_id(14)
+	var erase_pop := await _render_pick_frame(app)
+	if erase_pop == null:
+		return
+	apply = _click_pick_frame(erase_pop, Vector2(0.12, 0.25), MOUSE_BUTTON_RIGHT)
+	apply.pressed.emit()
+	await process_frame
+	var final_tiles: Dictionary = cvs.extract().tiles
+	check(final_tiles.get(primary, []).size() < painted.get(primary, []).size()
+		and final_tiles.get(upper, []) == painted.get(upper, []), "right button erases the picked tile without touching another layer")
 	var saved: Dictionary = await app._map_file_ctrl.commit_document("保存实景落点及连接")
 	check(saved.get("status") == "ok", "publish positions and port selected from the game frame")
 	await app._load_map_file(path)
+	check(cvs.extract().tiles == final_tiles, "mapped paint and erase survive save and reopen")
 	var report := await launch_and_read(app, false)
 	var result: Dictionary = report.get("result", {})
 	var picks: Array = result.get("picks", [])
@@ -1883,3 +1916,19 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 		and result.get("opened") == doors[1].code
 		and result.get("contours", []).size() == 1 and result.contours[0].props.points == outline.props.points,
 		"game reloads both view positions and the projected polygon, and opens the selected door: " + str(report))
+
+func _drag_pick_frame(pop: PopupPanel, a: Vector2, b: Vector2) -> Button:
+	var frame: TextureRect = pop.find_child("MapGamePreviewFrame", true, false)
+	var extent := Vector2(frame.texture.get_size())
+	var fitted := extent * minf(frame.size.x / extent.x, frame.size.y / extent.y)
+	var origin := (frame.size - fitted) * 0.5
+	var confirm := _click_pick_frame(pop, a)
+	var drag := InputEventMouseMotion.new()
+	drag.button_mask = MOUSE_BUTTON_MASK_LEFT
+	drag.position = origin + fitted * b
+	frame.gui_input.emit(drag)
+	var release := InputEventMouseButton.new()
+	release.button_index = MOUSE_BUTTON_LEFT
+	release.position = drag.position
+	frame.gui_input.emit(release)
+	return confirm

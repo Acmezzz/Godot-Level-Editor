@@ -50,17 +50,69 @@ static func at(regions: Array, pixel: Vector2, mode: String) -> Dictionary:
 				if region.occludes:
 					break
 				continue
-			var local: PackedVector2Array = region.local
-			var bary := Vector3(maxf(1.0 - uv.x - uv.y, 0.0), maxf(uv.x, 0.0), maxf(uv.y, 0.0))
-			var weight := bary * (region.reciprocal as Vector3)
-			var total := weight.x + weight.y + weight.z
-			value = {"layer": region.layer, "point": (local[0] * weight.x + local[1] * weight.y + local[2] * weight.z) / total}
+			value = {"layer": region.layer, "point": _local_point(region, uv)}
 		elif value == null:
 			if region.occludes:
 				break
 			continue
 		return {"value": value, "screen": region.screen, "label": region.label}
 	return {}
+
+## Split at triangle boundaries before mapping a stroke. Even a narrow foreground
+## blocker or a gap between separate projections must not be bridged in map space.
+static func placement_spans(regions: Array, a: Vector2, b: Vector2) -> Array:
+	var breaks: Array[float] = [0.0, 1.0]
+	var candidates := []
+	for region in regions:
+		if region.layer == "" and not region.occludes:
+			continue
+		var inv: Transform2D = region.inverse
+		var lo: Vector2 = inv * a
+		var hi: Vector2 = inv * b
+		var start := Vector3(lo.x, lo.y, 1.0 - lo.x - lo.y)
+		var end := Vector3(hi.x, hi.y, 1.0 - hi.x - hi.y)
+		var entry := 0.0
+		var exit := 1.0
+		for k in 3:
+			if start[k] < 0.0 and end[k] < 0.0:
+				entry = 2.0
+				break
+			if start[k] < 0.0:
+				entry = maxf(entry, start[k] / (start[k] - end[k]))
+			elif end[k] < 0.0:
+				exit = minf(exit, start[k] / (start[k] - end[k]))
+		if entry >= exit:
+			continue
+		breaks.append(entry)
+		breaks.append(exit)
+		candidates.append({"entry": entry, "exit": exit, "region": region})
+	breaks.sort()
+	var spans := []
+	for i in breaks.size() - 1:
+		var t0 := breaks[i]
+		var t1 := breaks[i + 1]
+		if t1 <= t0:
+			continue
+		var mid := (t0 + t1) * 0.5
+		for c in candidates:
+			if mid < c.entry or mid > c.exit:
+				continue
+			var region: Dictionary = c.region
+			if region.layer != "":
+				var p := a.lerp(b, t0)
+				var q := a.lerp(b, t1)
+				var inverse: Transform2D = region.inverse
+				spans.append({"layer": region.layer, "a": _local_point(region, inverse * p),
+					"b": _local_point(region, inverse * q), "screen_a": p, "screen_b": q})
+			break
+	return spans
+
+static func _local_point(region: Dictionary, uv: Vector2) -> Vector2:
+	var local: PackedVector2Array = region.local
+	var bary := Vector3(maxf(1.0 - uv.x - uv.y, 0.0), maxf(uv.x, 0.0), maxf(uv.y, 0.0))
+	var weight := bary * (region.reciprocal as Vector3)
+	var total := weight.x + weight.y + weight.z
+	return (local[0] * weight.x + local[1] * weight.y + local[2] * weight.z) / total
 
 static func _triangle(raw: Variant) -> PackedVector2Array:
 	var out := PackedVector2Array()

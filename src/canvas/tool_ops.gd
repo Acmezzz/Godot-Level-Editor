@@ -84,30 +84,34 @@ func _paint(c: Vector2i) -> void:
 		if changed:
 			cvs._mark_collision()   # P01：只改碰撞，红块镜像重画；瓦片/实体都没动
 		return
-	var layer = cvs._layer_node(cvs.active_layer)
-	if layer == null:
-		return
-	# 笔刷记的是资产 id，落笔时映射到 TileSet source_id（磁盘数据同样写 id）
+	paint_tile_cells(cvs.active_layer, _brush_cells(c))
+
+
+func paint_tile_cells(li: int, cells: Array) -> bool:
+	if cvs.is_layer_locked(li):
+		return false
+	var layer: TileMapLayer = cvs._layer_node(li)
 	var src: int = cvs.source_of_asset(cvs.paint_asset)
 	if src < 0:
 		cvs._hint("当前笔刷的资产不在清单里：左栏重新选一个瓦片")
-		return
-	var lid: String = cvs.layer_id(cvs.active_layer)
-	var tile_grid: GridSpace = cvs.tile_grid_for_layer(cvs.active_layer)
-	var meta: Dictionary = cvs.map_data.get("meta", {})
-	for bc in _brush_cells(c):
-		if tile_grid != cvs.grid and not tile_grid.cell_in_map(bc, int(meta.get("w", 1)), int(meta.get("h", 1))):
+		return false
+	var lid: String = cvs.layer_id(li)
+	var tile_grid: GridSpace = cvs.tile_grid_for_layer(li)
+	var meta: Dictionary = cvs.map_data.meta
+	var changed := false
+	for bc: Vector2i in cells:
+		if tile_grid != cvs.grid and not tile_grid.cell_in_map(bc, int(meta.w), int(meta.h)):
 			continue
-		if layer.get_cell_source_id(bc) != src \
-				or layer.get_cell_atlas_coords(bc) != cvs.paint_cell \
-				or MapFormat.alt_of_godot(layer.get_cell_alternative_tile(bc)) != cvs.tile_alt:
-			_ensure_stroke_undo()
-			cvs._undo_history_ctrl.stroke_touch_tile(lid, bc)
-			cvs.write_tile_row(lid, layer, [bc.x, bc.y, cvs.paint_asset, cvs.paint_cell.x, cvs.paint_cell.y, cvs.tile_alt])
-			changed = true
+		if layer.get_cell_source_id(bc) == src and layer.get_cell_atlas_coords(bc) == cvs.paint_cell \
+				and MapFormat.alt_of_godot(layer.get_cell_alternative_tile(bc)) == cvs.tile_alt:
+			continue
+		_ensure_stroke_undo()
+		cvs._undo_history_ctrl.stroke_touch_tile(lid, bc)
+		cvs.write_tile_row(lid, layer, [bc.x, bc.y, cvs.paint_asset, cvs.paint_cell.x, cvs.paint_cell.y, cvs.tile_alt])
+		changed = true
 	if changed:
-		# 阶段三：只失效这一笔写的那一层（三角自绘按层重画，其它层数据没动）
-		cvs._mark_tiles_layer(cvs.active_layer)
+		cvs._mark_tiles_layer(li)
+	return changed
 
 
 ## 这一格到底有没有东西可擦——起手前先判，避免压空撤销快照。
@@ -135,19 +139,21 @@ func _erase_hits(pos: Vector2) -> bool:
 
 ## 按格批量擦除（瓦片/碰撞），返回是否有真实改动。路径补格与起手共用。
 ## 撤销覆盖在首个真实改动前接上（H01 差量记录；空擦 = 零副作用、不留空条目）。
-func erase_cells(cells: Array) -> bool:
+func erase_cells(cells: Array, li := -1) -> bool:
+	if li < 0:
+		li = cvs.active_layer
 	# 锁检查放在写入口本身：补格路径（_erase_path 直调）不经过 _apply_tool，
 	# 任何新增调用者也自动受锁约束，不再依赖调用方各自记得查。
-	if cvs.is_layer_locked(cvs.active_layer):
+	if cvs.is_layer_locked(li):
 		cvs._hint("当前图层已锁定：解锁后再擦除")
 		return false
 	var changed := false
 	var layer = null
-	if not cvs._is_grid_layer(cvs.active_layer):
-		layer = cvs._layer_node(cvs.active_layer)
+	if not cvs._is_grid_layer(li):
+		layer = cvs._layer_node(li)
 		if layer == null:
 			return false
-	var lid: String = cvs.layer_id(cvs.active_layer) if layer != null else ""
+	var lid: String = cvs.layer_id(li) if layer != null else ""
 	for bc in cells:
 		var has: bool = cvs.collision.get_cell_source_id(bc) != -1 if layer == null \
 			else layer.get_cell_source_id(bc) != -1 or not cvs.unresolved_tile(lid, bc).is_empty()
@@ -165,7 +171,7 @@ func erase_cells(cells: Array) -> bool:
 		if layer == null:
 			cvs._mark_collision()   # P01：擦的是碰撞层
 		else:
-			cvs._mark_tiles_layer(cvs.active_layer)   # 阶段三：只重画被擦的那一层
+			cvs._mark_tiles_layer(li)   # 阶段三：只重画被擦的那一层
 	return changed
 
 

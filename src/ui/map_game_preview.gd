@@ -6,12 +6,16 @@ const FrameDialog := preload("res://src/ui/game_frame_dialog.gd")
 const FieldWidgets := preload("res://src/ui/field_widgets.gd")
 const Assets := preload("res://src/assets/asset_decl.gd")
 const Geometry := preload("res://src/map/object_geometry.gd")
+const TileBrush := preload("res://src/ui/frame_tile_brush.gd")
 const CAPABILITY := "mapFrame"
 
 static func available(app) -> bool:
 	return app.map_loaded and GamePreview.supports(app.manifest, CAPABILITY)
 
 static func open(app) -> void:
+	if app.map_loaded and app.canvas.place_kind != "object" and app.canvas.source_of_asset(app.canvas.paint_asset) >= 0:
+		_open(app, "placement", Callable(), {"tile_brush": TileBrush.new(app.canvas)})
+		return
 	var asset: String = app.canvas.stamp_asset if app.map_loaded else ""
 	var choose := func(value: Dictionary) -> Dictionary:
 		var canvas: EditorCanvas = app.canvas

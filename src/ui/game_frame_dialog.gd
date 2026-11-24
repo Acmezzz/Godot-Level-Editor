@@ -46,13 +46,16 @@ static func open(app, capability: String, options: Dictionary, snapshot: Callabl
 	var choose: Callable = options.get("pick", Callable())
 	var draw_shape: Callable = options.get("draw_shape", Callable())
 	var drafting := draw_shape.is_valid()
-	var confirm := Kit.button("创建形状" if drafting else "确认选点", Callable(), "primary")
+	var brush = options.get("tile_brush")
+	var confirm := Kit.button("应用笔画" if brush != null else ("创建形状" if drafting else "确认选点"), Callable(), "primary")
 	confirm.name = options.prefix + "ConfirmPick"
 	confirm.disabled = true
 	var picks := {"regions": [], "selected": {}, "draft": [], "apply": Callable(), "current": Callable()}
 	var clear_selection := func():
 		picks.selected = {}
 		picks.draft.clear()
+		if brush != null:
+			brush.clear()
 		picks.apply = Callable()
 		confirm.disabled = true
 		frame.queue_redraw()
@@ -102,6 +105,8 @@ static func open(app, capability: String, options: Dictionary, snapshot: Callabl
 				notice.text = pick_error
 			elif picks.regions.is_empty():
 				notice.text += " · 游戏未提供可拾取区域"
+			elif brush != null:
+				notice.text += " · 左键涂刷，右键擦除"
 			else:
 				notice.text += (" · 左键描点，右键撤末点" if drafting else " · 点击画面后确认"))
 	picker.item_selected.connect(func(_i: int):
@@ -117,7 +122,27 @@ static func open(app, capability: String, options: Dictionary, snapshot: Callabl
 			picks.apply = option.get("apply", Callable())
 			confirm.disabled = not picks.apply.is_valid()
 			frame.queue_redraw()
+		if brush != null:
+			frame.gui_input.connect(func(event: InputEvent):
+				if not (event is InputEventMouseButton or event is InputEventMouseMotion) or frame.texture == null or picks.regions.is_empty():
+					return
+				if not is_current.call():
+					clear_selection.call()
+					notice.text = "内容已变更，请重新渲染。"
+					return
+				var rect := _image_rect(frame)
+				var pixel: Vector2 = (event.position - rect.position) / rect.size * frame.texture.get_size()
+				if brush.input(event, pixel, picks.regions):
+					notice.text = brush.message()
+					confirm.disabled = brush.groups.is_empty()
+					picks.apply = brush.apply
+					frame.queue_redraw())
+			frame.draw.connect(func():
+				if frame.texture != null:
+					brush.draw(frame, _image_rect(frame)))
 		frame.gui_input.connect(func(event: InputEvent):
+			if brush != null:
+				return
 			if not event is InputEventMouseButton or not event.pressed or frame.texture == null or picks.regions.is_empty():
 				return
 			if not is_current.call():
