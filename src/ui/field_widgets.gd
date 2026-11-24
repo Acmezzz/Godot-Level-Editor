@@ -45,12 +45,18 @@ static func wants_canvas_pick(decl: Dictionary) -> bool:
 		return true
 	# C4：有限格图 cell_id 字段——格是多边形，画布按多边形命中（accept="cell"）
 	# §7.4：格边字段——画布按最近共边命中（accept="edge"）
-	return pick_mode(decl) != "entity"
+	return pick_mode(decl) in ["cell", "edge", "port"]
 
 static func wants_frame_pick(decl: Dictionary) -> bool:
-	return pick_mode(decl) in ["cell", "edge", "port"] or RefFields.describe(decl).kind == "entity_inst"
+	return pick_mode(decl) in ["cell", "edge", "port", "collision"] or RefFields.describe(decl).kind == "entity_inst"
+
+static func map_point_pick(decl: Dictionary) -> bool:
+	return decl.get("pickSpace") == "map" and kind_of(decl) == KIND_INPUT and RefFields.vector_dims(decl) == 2 \
+		and (type_of(decl) == "vector2" or (type_of(decl) == "array" and decl.get("of") == "vector2"))
 
 static func ordered_frame_pick(decl: Dictionary) -> bool:
+	if map_point_pick(decl):
+		return type_of(decl) == "array"
 	return type_of(decl) == "array" and decl.get("of") == "choice" and not bool(decl.get("multiple", false)) \
 		and RefFields.describe(decl).kind in ["entity_inst", "cell"]
 
@@ -63,6 +69,8 @@ static func wants_edge_pick(decl: Dictionary) -> bool:
 	return type_of(decl) == "edge_ref"
 
 static func pick_mode(decl: Dictionary) -> String:
+	if map_point_pick(decl):
+		return "collision"
 	if type_of(decl) == "port_ref":
 		return "port"
 	if wants_cell_pick(decl):
@@ -277,7 +285,7 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 					pending.v[ai] = n)
 				sp.get_line_edit().focus_exited.connect(func(): commit_v.call())
 				h.add_child(sp)
-			return {"ctl": h, "commit": commit_v}
+			return {"ctl": h, "commit": commit_v, "pick_values": func(): return pending.v.duplicate()}
 		"range":
 			# 数字之外的值（空串占位除外）只读展示——commit() 不能把它悄悄写成 min
 			if not (value is int or value is float):
@@ -768,7 +776,7 @@ static func _build_choice_multi(decl: Dictionary, value, on_set: Callable,
 	return {"ctl": box, "commit": push, "pick_values": func(): return pend.v.duplicate()}
 
 static func frame_value_available(decl: Dictionary, built: Dictionary) -> bool:
-	return built.has("pick_values") if ordered_frame_pick(decl) or bool(decl.get("multiple", false)) else true
+	return built.has("pick_values") if map_point_pick(decl) or ordered_frame_pick(decl) or bool(decl.get("multiple", false)) else true
 
 static func _norm_option(o) -> Dictionary:
 	if o is Dictionary:

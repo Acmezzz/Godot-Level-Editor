@@ -29,6 +29,7 @@ class ReferenceSelection extends RefCounted:
 	var regions: Array
 	var status: String
 	var ordered: bool
+	var clicks: PackedVector2Array
 
 	func _init(kind: String, lookup: Callable, save: Callable, current: Callable, sequence: bool) -> void:
 		mode = kind
@@ -42,12 +43,13 @@ class ReferenceSelection extends RefCounted:
 	func clear() -> void:
 		selected = initial.duplicate()
 		regions = []
+		clicks.clear()
 		_update_message()
 
 	func _update_message() -> void:
 		if ordered:
-			var path := " → ".join(PackedStringArray(selected.slice(maxi(0, selected.size() - 5))))
-			status = "%d 个途经点 · %s · 左键追加，右键移除末项。" % [selected.size(), path]
+			var tail := selected.slice(maxi(0, selected.size() - 5)).map(func(value): return str(value))
+			status = "%d 个途经点 · %s · 左键追加，右键移除末项。" % [selected.size(), " → ".join(tail)]
 		else:
 			status = "已选 %d 项 · 点击切换，右键恢复本次打开时的选择。" % selected.size()
 
@@ -65,7 +67,10 @@ class ReferenceSelection extends RefCounted:
 			return false
 		if event.button_index == MOUSE_BUTTON_RIGHT:
 			if ordered:
-				selected.pop_back()
+				if not selected.is_empty():
+					selected.pop_back()
+				if not clicks.is_empty():
+					clicks.resize(clicks.size() - 1)
 			else:
 				selected = initial.duplicate()
 			_update_message()
@@ -77,11 +82,13 @@ class ReferenceSelection extends RefCounted:
 		if candidate.is_empty():
 			status = "这里没有此字段可选的目标。当前已选 %d 项。" % selected.size()
 			return true
-		var value: String = candidate.v
+		var value: Variant = candidate.v
 		if not ordered and selected.has(value):
 			selected.erase(value)
 		else:
 			selected.append(value)
+			if mode == "collision":
+				clicks.append(pixel)
 		_update_message()
 		return true
 
@@ -92,6 +99,14 @@ class ReferenceSelection extends RefCounted:
 
 	func draw(frame: TextureRect, rect: Rect2) -> void:
 		var scale := rect.size / frame.texture.get_size()
+		if mode == "collision":
+			var line := PackedVector2Array()
+			for point in clicks:
+				line.append(rect.position + point * scale)
+				frame.draw_circle(line[-1], 4.0, Color("#ffda67"))
+			if line.size() >= 2:
+				frame.draw_polyline(line, Color("#ffda67"), 2.0, true)
+			return
 		for region in regions:
 			if not selected.has(region.targets.get(mode)):
 				continue
@@ -280,6 +295,13 @@ static func open_reference(app, decl: Dictionary, resolve: Callable, commit: Cal
 		"edge":
 			source["source"] = "edge:"
 	var match_target := func(value: Variant) -> Dictionary:
+		if mode == "collision":
+			var point: Vector2 = value.point
+			var lo := float(decl.get("min", -999999))
+			var hi := float(decl.get("max", 999999))
+			if point.x < lo or point.x > hi or point.y < lo or point.y > hi:
+				return {}
+			return {"v": [point.x, point.y], "t": "地图坐标 (%.2f, %.2f)" % [point.x, point.y]}
 		for row in resolve.call(source):
 			var candidate = FieldWidgets.decode_pick(mode, str(row.v))
 			if candidate != null and candidate == value:

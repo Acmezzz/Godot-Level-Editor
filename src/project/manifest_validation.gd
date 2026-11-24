@@ -686,6 +686,10 @@ static func _check_condition_fields(fields: Variant, path: String, conditions: D
 		if not fd is Dictionary:
 			continue
 		var child := path + "." + str(fd.get("id", "?"))
+		if fd.has("pickSpace"):
+			var point: bool = fd.get("type") == "vector2" or (fd.get("type") == "array" and fd.get("of") == "vector2")
+			if fd.pickSpace != "map" or fd.get("kind") != "input" or not point or fd.get("dims", 2) != 2:
+				_add(issues, "error", child + ".pickSpace", "map picking requires a two-dimensional vector2 or array of vector2")
 		if fd.has("contentMapContext"):
 			var mode = fd.contentMapContext
 			var at := child + ".contentMapContext"

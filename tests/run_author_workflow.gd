@@ -132,6 +132,23 @@ func create_ending(app, library, id: String, message: String, map_context := "",
 					confirm.pressed.emit()
 					await process_frame
 					await process_frame
+			var path_picker: Button = pop.find_child("FrameFieldReference_camera_path", true, false)
+			check(path_picker != null, "a declared free path can be drawn in the game frame")
+			if path_picker != null:
+				path_picker.pressed.emit()
+				var frame := await _render_pick_frame(app)
+				if frame != null:
+					var first := _frame_pick_at_world(frame, Vector2(34, 31))
+					var second := _frame_pick_at_world(frame, Vector2(89, 54))
+					var confirm := _click_pick_frame(frame, first)
+					_click_pick_frame(frame, second)
+					_click_pick_frame(frame, first)
+					_click_pick_frame(frame, first, MOUSE_BUTTON_RIGHT)
+					check(not confirm.disabled and not Store.list_ids(app.manifest, "ending").has("project-arrive"),
+						"unoccupied positions are mapped without publishing the draft")
+					confirm.pressed.emit()
+					await process_frame
+					await process_frame
 		for opt in collect(pop, "OptionButton"):
 			if id != "arrive" and goal != "" and range(opt.item_count).any(func(i): return opt.get_item_metadata(i) == goal):
 				select_metadata(opt, goal)
@@ -350,6 +367,7 @@ func run():
 				{"id":"goal_port", "code":"GPRT", "kind":"input", "type":"port_ref", "of":"door"},
 				{"id":"goal_group", "code":"GGRP", "kind":"choice", "source":"entity_inst:door", "multiple":true},
 				{"id":"goal_route", "code":"GROT", "kind":"input", "type":"array", "of":"choice", "source":"entity_inst:door"},
+				{"id":"camera_path", "code":"CPTH", "kind":"input", "type":"array", "of":"vector2", "pickSpace":"map"},
 				{"id":"next", "code":"HOP1", "kind":"choice", "source":"content:ending",
 					"contentMapContext":"inherit"},
 				{"id":"retry_chart", "code":"AGAN", "name":"Retry chart", "kind":"choice",
@@ -554,6 +572,10 @@ func run():
 	check(second_steps.size() == 3 and second_steps[0].get("at") == 0.123456
 		and second_steps[0].get("duration") == 0.234567, "manual seconds retain time precision")
 	var arrival := Store.read(manifest, "ending", "project-arrive")
+	var camera_path: Array = arrival.get("fields", {}).get("CPTH", [])
+	check(camera_path.size() == 2 and Vector2(camera_path[0][0], camera_path[0][1]).distance_to(Vector2(34, 31)) < 0.01
+		and Vector2(camera_path[1][0], camera_path[1][1]).distance_to(Vector2(89, 54)) < 0.01,
+		"free path stores root-space coordinates without requiring placed targets")
 	check(arrival.get("fields", {}).get("GOAL") == "EXIT"
 		and arrival.fields.get("GGRP") == ["ALT", "EXIT"]
 		and arrival.fields.get("GROT") == ["EXIT", "ALT", "EXIT"]

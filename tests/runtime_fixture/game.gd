@@ -228,6 +228,16 @@ func _render_preview(path: String) -> void:
 					triangle.append([pixel.x, pixel.y])
 				regions.append({"screen": triangle, "targets": {
 					"entity": door.code, "port": {"map": subject.map.meta.code, "inst": door.code, "port": "open"}}})
+			var corners := [Vector2.ZERO, Vector2(size.x, 0), Vector2(size), Vector2(0, size.y)]
+			for indices in [[0, 1, 2], [0, 2, 3]]:
+				var pixels := []
+				var points := []
+				for i in indices:
+					var corner: Vector2 = corners[i]
+					var point := (corner - origin) / float(camera.zoom)
+					pixels.append([corner.x, corner.y])
+					points.append([point.x, point.y])
+				regions.append({"screen": pixels, "collision": {"local": points}})
 			_write_frame_picks(path.get_base_dir(), request.token, regions)
 		else:
 			_compose_map_frame(surface, subject, size)
@@ -1300,6 +1310,11 @@ func _resolve_ending(destination: String, current_map: Dictionary) -> Dictionary
 			if not current_map.get("objects", []).any(func(obj): return obj.get("code") == code and obj.get("asset") == "door"):
 				return {}
 		var route: Array = fields.get("GROT", [])
+		if fields.has("CPTH"):
+			var path: Array = fields.CPTH
+			if path.size() != 2 or not _vector(path[0]).is_equal_approx(Vector2(34, 31)) \
+					or not _vector(path[1]).is_equal_approx(Vector2(89, 54)):
+				return {}
 		if not route.is_empty():
 			var visited := []
 			for code in route:
