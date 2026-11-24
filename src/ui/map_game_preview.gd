@@ -157,27 +157,31 @@ static func _saved_snapshot(preset: String, app, manifest: Dictionary, key: Stri
 static func reference_available(app, map_key: String) -> bool:
 	return GamePreview.supports(app.manifest, CAPABILITY) and (app.map_loaded or map_key != "")
 
-static func add_nested_reference(app, row: Control, decl: Dictionary, pair: Callable,
-		commit: Callable, resolve: Callable, project_scope: bool, refresh: Callable) -> void:
+static func add_reference_button(app, row: Control, decl: Dictionary, pair: Callable,
+		commit: Callable, resolve: Callable, project_scope: bool, refresh: Callable, context := "") -> void:
 	if not GamePreview.supports(app.manifest, CAPABILITY):
 		return
-	if (project_scope or not app.map_loaded) and not decl.has("mapField"):
+	if context == "" and (project_scope or not app.map_loaded) and not decl.has("mapField"):
 		return
 	var button := Kit.button("实景选…", func():
 		var key: String = pair.call()
-		if (project_scope and key == "") or not reference_available(app, key):
+		var effective := key if key != "" else context
+		if (project_scope and effective == "") or not reference_available(app, effective):
 			app._set_status("请先选择此记录的配对地图。")
 			return
-		var scoped := decl.merged({"_mapKey": key}, true)
+		var scoped := decl.merged({"_mapKey": effective}, true)
 		var save := func(value) -> bool:
 			if not is_instance_valid(row) or not row.is_inside_tree() or row.is_queued_for_deletion() or pair.call() != key:
 				return false
+			# A temporary map resolves a local reference; it is not part of the authored value.
+			if key.is_empty() and not context.is_empty() and value is Dictionary:
+				value = value.merged({"map": ""}, true)
 			if not commit.call(value):
 				return false
 			refresh.call_deferred()
 			return true
 		open_reference(app, scoped, resolve, save, row.get_window()), "ghost")
-	button.name = "NestedFrameReference_" + str(decl.get("id", ""))
+	button.name = "FrameFieldReference_" + str(decl.get("id", ""))
 	row.add_child(button)
 
 static func open_reference(app, decl: Dictionary, resolve: Callable, commit: Callable, window: Window) -> void:

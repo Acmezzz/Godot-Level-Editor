@@ -81,8 +81,24 @@ func create_ending(app, library, id: String, message: String, map_context := "",
 		var selector: OptionButton = pop.find_child("ReferenceContextMap", true, false)
 		select_metadata(selector, map_context)
 	if goal != "" or next != "":
+		if id == "arrive":
+			for field in ["goal", "goal_port"]:
+				var pick: Button = pop.find_child("FrameFieldReference_" + field, true, false)
+				check(pick != null, "library scene picker is available for " + field)
+				if pick == null:
+					continue
+				pick.pressed.emit()
+				var frame := await _render_pick_frame(app)
+				if frame == null:
+					continue
+				var confirm := _click_pick_frame(frame, _frame_pick_at_world(frame, Vector2(72, 40)))
+				check(not confirm.disabled and not Store.list_ids(app.manifest, "ending").has("project-arrive"),
+					"library can select a target without publishing the draft")
+				confirm.pressed.emit()
+				await process_frame
+				await process_frame
 		for opt in collect(pop, "OptionButton"):
-			if goal != "" and range(opt.item_count).any(func(i): return opt.get_item_metadata(i) == goal):
+			if id != "arrive" and goal != "" and range(opt.item_count).any(func(i): return opt.get_item_metadata(i) == goal):
 				select_metadata(opt, goal)
 			if next != "" and range(opt.item_count).any(func(i): return opt.get_item_metadata(i) == next):
 				select_metadata(opt, next)
@@ -296,6 +312,7 @@ func run():
 			"ending": {"name": "Ending", "code": "ENDS", "fields": [
 				{"id":"message", "code":"MESG", "kind":"input", "type":"string"},
 				{"id":"goal", "code":"GOAL", "kind":"choice", "source":"entity_inst:door"},
+				{"id":"goal_port", "code":"GPRT", "kind":"input", "type":"port_ref", "of":"door"},
 				{"id":"next", "code":"HOP1", "kind":"choice", "source":"content:ending",
 					"contentMapContext":"inherit"},
 				{"id":"retry_chart", "code":"AGAN", "name":"Retry chart", "kind":"choice",
@@ -436,7 +453,7 @@ func run():
 	press(pop, "步骤移到播放头")
 	author_branches(pop, str(flow_map.meta.code))
 	check(ce.commit_fields(), "nested branch forms commit")
-	var branch_pick: Button = pop.find_child("NestedFrameReference_arrival_door", true, false)
+	var branch_pick: Button = pop.find_child("FrameFieldReference_arrival_door", true, false)
 	check(branch_pick != null, "a nested step field has a game frame picker")
 	if branch_pick != null:
 		branch_pick.pressed.emit()
@@ -499,7 +516,8 @@ func run():
 	check(second_steps.size() == 3 and second_steps[0].get("at") == 0.123456
 		and second_steps[0].get("duration") == 0.234567, "manual seconds retain time precision")
 	var arrival := Store.read(manifest, "ending", "project-arrive")
-	check(arrival.get("fields", {}).get("GOAL") == "EXIT" and not arrival.has("map")
+	check(arrival.get("fields", {}).get("GOAL") == "EXIT"
+		and arrival.fields.get("GPRT") == {"map": "", "inst": "EXIT", "port": "open"} and not arrival.has("map")
 		and not arrival.fields.has("DMAP"), "temporary map exposes the local instance without pinning the saved reference")
 	ce._library.open()
 	pop = collect(app, "PopupPanel").filter(func(p): return p.visible).back()

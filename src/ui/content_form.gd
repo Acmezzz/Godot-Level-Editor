@@ -300,7 +300,7 @@ func _build_field_row(i: int, fn_id: String, fd: Dictionary, cur: Dictionary, si
 	var options := func(decl: Dictionary) -> Array:
 		return _resolve_options(decl, bool(target.project_scope))
 	var frame_pick := func(row: Control, nested: Dictionary, pair: Callable, save: Callable):
-		FrameReference.add_nested_reference(app, row, nested, pair, save, options, bool(target.project_scope), _rebuild_right)
+		FrameReference.add_reference_button(app, row, nested, pair, save, options, bool(target.project_scope), _rebuild_right)
 	var built := FieldWidgets.build(d, val, apply, options, "code", frame_pick)
 	if built.get("commit") is Callable and (built.commit as Callable).is_valid():
 		_pending_commits.append(built.commit)

@@ -10,6 +10,7 @@ const Widgets := preload("res://src/ui/field_widgets.gd")
 const RelGraph := preload("res://src/content/rel_graph.gd")
 const RelGraphView := preload("res://src/ui/rel_graph_view.gd")
 const Kit := preload("res://src/ui/ui_kit.gd")
+const FrameReference := preload("res://src/ui/map_game_preview.gd")
 
 var host
 var app
@@ -302,12 +303,18 @@ func _open_item(kind: String, cid: String) -> void:
 	form.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.add_child(form)
 	var commits: Array = []
+	var refresh := func():
+		for commit in commits:
+			if not bool(commit.call()):
+				return
+		form.get_meta("render_fields").call()
 	var render := func():
 		commits.clear()
 		for child in form.get_children():
 			form.remove_child(child)
 			child.queue_free()
-		_build_fields(form, fn, fields, commits, notice, str(state.map))
+		_build_fields(form, fn, fields, commits, notice, str(state.map), refresh)
+	form.set_meta("render_fields", render)
 	var map_selector: OptionButton = host._form.reference_context_selector("", func(key: String) -> bool:
 		for commit in commits:
 			if not bool(commit.call()):
@@ -395,7 +402,7 @@ func _delete(kind: String, cid: String) -> void:
 	open()
 
 func _build_fields(form: VBoxContainer, fn: Dictionary, values: Dictionary, commits: Array, notice: Label,
-		context: String) -> void:
+		context: String, refresh: Callable) -> void:
 	var groups := [{"name": "功能参数", "fields": fn.get("fields", [])}]
 	var siblings: Array = (fn.get("fields", []) as Array).duplicate()
 	var conditions = fn.get("conditions", [])
@@ -410,32 +417,39 @@ func _build_fields(form: VBoxContainer, fn: Dictionary, values: Dictionary, comm
 		form.add_child(Kit.section_header(str(group.name)))
 		for fd in group.fields:
 			if fd is Dictionary:
-				_build_field(form, fd, siblings, values, commits, notice, context)
+				_build_field(form, fd, siblings, values, commits, notice, context, refresh)
 
 func _build_field(form: VBoxContainer, fd: Dictionary, siblings: Array, values: Dictionary, commits: Array,
-		notice: Label, context: String) -> void:
+		notice: Label, context: String, refresh: Callable) -> void:
 	var key := str(fd.get("code", ""))
 	if key == "":
 		return
 	var decl := fd.duplicate(true)
-	var map_key := Refs.paired_map_value(fd, siblings, values)
+	var pair := func() -> String: return Refs.paired_map_value(fd, siblings, values)
+	var map_key: String = pair.call()
 	if map_key != "":
 		decl["_mapKey"] = map_key
-	var use := func(v) -> bool:
-		if Refs.paired_map_value(fd, siblings, values) != map_key:
-			notice.text = "请先保存配对地图，再选择新的引用值。"
-			return false
+	var set_value := func(v) -> bool:
 		if v is String and v.is_empty() and Refs.wants_empty_option(fd):
 			values.erase(key)
 		else:
 			values[key] = v
 		return true
+	var use := func(v) -> bool:
+		if pair.call() != map_key:
+			notice.text = "请先保存配对地图，再选择新的引用值。"
+			return false
+		return set_value.call(v)
 	var options := func(d: Dictionary) -> Array:
 		return host._form.project_reference_options(d, context)
-	var built := Widgets.build(decl, values.get(key, fd.get("default", Widgets.default_for(fd))), use, options, "code")
+	var frame_pick := func(row: Control, nested: Dictionary, nested_pair: Callable, save: Callable):
+		FrameReference.add_reference_button(app, row, nested, nested_pair, save, options, true, refresh, context)
+	var built := Widgets.build(decl, values.get(key, fd.get("default", Widgets.default_for(fd))), use, options, "code", frame_pick)
 	var commit: Callable = built.get("commit", Callable())
 	if commit.is_valid():
 		commits.append(commit)
 	var row := Kit.field_row(str(fd.get("name", fd.get("id", key))), built.ctl, 92)
 	row.tooltip_text = Widgets.decl_tooltip(fd)
 	form.add_child(row)
+	if Widgets.wants_frame_pick(fd):
+		FrameReference.add_reference_button(app, row, fd, pair, set_value, options, true, refresh, context)
