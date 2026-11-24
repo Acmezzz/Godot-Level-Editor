@@ -861,8 +861,8 @@ func run():
 	var held_ending := project.path_join("held-ending.json")
 	check(DirAccess.rename_absolute(old_ending, held_ending) == OK, "temporarily remove the target from the content directory")
 	press(pop, "重新扫描")
-	check(not missing_links.disabled and missing_links.item_count == 2
-		and missing_links.get_item_text(1).contains("ending/project-finish"), "rescan exposes the missing nested branch target")
+	check(not missing_links.disabled and missing_links.item_count == 4
+		and missing_links.get_item_text(1).contains("ending/project-finish"), "rescan exposes the missing nested branch, screen button and hotspot targets")
 	missing_links.select(1)
 	missing_links.item_selected.emit(1)
 	graph_options = collect(pop, "OptionButton")
@@ -871,7 +871,7 @@ func run():
 	select_metadata(graph_options[2], "")
 	press(pop, "应用关系")
 	var repaired_routes: Array = Store.read(manifest, "campaign", "project-acceptance").steps[2].fields.BRCH
-	check(missing_links.disabled and not repaired_routes[0].has("DEST") and repaired_routes[1].DEST == "project-retry",
+	check(missing_links.item_count == 3 and not repaired_routes[0].has("DEST") and repaired_routes[1].DEST == "project-retry",
 		"disconnect clears the missing reference without changing the sibling branch")
 	select_metadata(graph_options[2], "project-finish-alt")
 	press(pop, "应用关系")
@@ -3075,8 +3075,32 @@ func author_signal_room(app, project: String) -> void:
 	await _author_signal_content(app, library, "clear", "Signal verified")
 	await _author_signal_screen(app, "relay-tuning", "Confirm the signal", "project-clear")
 	await _author_signal_content(app, library, "tune", "", "relay-tuning")
-	await _author_signal_screen(app, "watch-deck", "Tune the relay", "project-tune", path)
-	await _author_signal_content(app, library, "watch", "", "watch-deck")
+	await _author_signal_screen(app, "watch-deck", "Tune the relay", "project-clear", path)
+	await _author_signal_content(app, library, "watch", "")
+	library.open()
+	press(_visible_popup(app), "流程关系…")
+	await process_frame
+	var flow := _visible_popup(app)
+	var source: OptionButton = flow.find_child("FlowSource", true, false)
+	var target: OptionButton = flow.find_child("FlowTarget", true, false)
+	select_metadata(source, "signal\u0001project-watch")
+	select_metadata(target, "watch-deck")
+	press(flow, "应用关系")
+	select_metadata(source, "@view\u0001watch-deck")
+	for i in target.item_count:
+		var candidate = target.get_item_metadata(i)
+		if candidate is Dictionary and candidate == {"function": "signal", "content": "project-tune"}:
+			target.select(i)
+			break
+	press(flow, "应用关系")
+	check(manifest.views[1].layout.elements[0].target.content == "project-tune",
+		"the graph rebinds the screen button in the project manifest")
+	press(flow, "编辑选中项")
+	await process_frame
+	var opened := _visible_popup(app)
+	check(collect(opened, "LineEdit").front().text == "watch-deck", "the graph opens the selected screen")
+	opened.hide()
+	await process_frame
 	check(not app.map_loaded and Store.read(manifest, "signal", "project-watch").get("fields", {}).get("PANE") == "watch-deck",
 		"the start content stores a chosen screen without creating a map")
 	var changed := manifest.duplicate(true)

@@ -189,7 +189,7 @@ class Preview extends Control:
 		focus_message.emit("当前画幅没有可聚焦按钮。")
 		queue_redraw()
 
-static func open(app) -> void:
+static func open(app, view_id := "") -> void:
 	var source: Dictionary = app.manifest
 	var baseline = source.get("views", [])
 	var issues: Array[Dictionary] = []
@@ -387,7 +387,11 @@ static func open(app) -> void:
 	list.item_selected.connect(func(i: int):
 		stash.call()
 		show_row.call(i if i < rows.size() else -1))
-	show_row.call(0 if not rows.is_empty() else -1)
+	var initial := rows.find_custom(func(row): return row.view_id == view_id)
+	if initial < 0:
+		initial = 0 if not rows.is_empty() else -1
+	list.select(initial if initial >= 0 else rows.size())
+	show_row.call(initial)
 	image_path.text_submitted.connect(func(_s: String): load_picture.call())
 	hotspot.item_selected.connect(refill_hotspots)
 	layout_mode.toggled.connect(func(enabled: bool):

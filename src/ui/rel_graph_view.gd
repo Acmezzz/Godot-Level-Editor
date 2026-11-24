@@ -150,8 +150,15 @@ func _draw() -> void:
 		var at: Vector2 = p
 		var is_hot: bool = k == highlighted or k == _hover
 		var col := Color(1.0, 0.85, 0.3, 0.95) if is_hot else Color(0.30, 0.45, 0.58, 0.95)
-		draw_circle(at, _radius, col)
-		draw_circle(at, _radius, Color(1, 1, 1, 0.85), false, 1.4, true)
+		if nd.get("fn_id") == RelGraph.VIEW_KIND:
+			if not is_hot:
+				col = Color("#4d6654")
+			var extent := Vector2.ONE * _radius
+			draw_rect(Rect2(at - extent, extent * 2), col)
+			draw_rect(Rect2(at - extent, extent * 2), Color(1, 1, 1, 0.85), false, 1.4)
+		else:
+			draw_circle(at, _radius, col)
+			draw_circle(at, _radius, Color(1, 1, 1, 0.85), false, 1.4, true)
 		# 名称（过长截断）+ 内容 ID 尾段（4 位随机码足够辨认）
 		var nm := str(nd.get("name", ""))
 		if nm.length() > 7:

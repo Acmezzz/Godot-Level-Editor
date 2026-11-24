@@ -9,6 +9,8 @@ const Refs := preload("res://src/content/ref_fields.gd")
 const Widgets := preload("res://src/ui/field_widgets.gd")
 const RelGraph := preload("res://src/content/rel_graph.gd")
 const RelGraphView := preload("res://src/ui/rel_graph_view.gd")
+const ReferenceViews := preload("res://src/ui/reference_view_library.gd")
+const References := preload("res://src/project/reference_index.gd")
 const Kit := preload("res://src/ui/ui_kit.gd")
 const FrameReference := preload("res://src/ui/map_game_preview.gd")
 
@@ -109,16 +111,18 @@ func open() -> void:
 func _open_flow() -> void:
 	var source := manifest
 	var shell: Dictionary = app._popup_body("项目流程关系",
-		"选择内容和引用字段即可接线、改接或断开。关系写回原字段；游戏决定何时跳转。")
+		"选择内容、屏幕以及它们的出口。接线写回内容字段、按钮或热点；游戏决定何时跳转。")
 	var pop: PopupPanel = shell.pop
 	var body: VBoxContainer = shell.body
 	var node := OptionButton.new()
+	node.name = "FlowSource"
 	var slot := OptionButton.new()
 	var target := OptionButton.new()
+	target.name = "FlowTarget"
 	var broken := OptionButton.new()
 	broken.name = "FlowMissingLinks"
 	broken.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	body.add_child(Kit.field_row("内容", node, 64))
+	body.add_child(Kit.field_row("来源", node, 64))
 	body.add_child(Kit.field_row("引用字段", slot, 64))
 	body.add_child(Kit.field_row("目标", target, 64))
 	body.add_child(Kit.field_row("待修引用", broken, 64))
@@ -133,7 +137,7 @@ func _open_flow() -> void:
 	view.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.add_child(view)
 	body.add_child(scroll)
-	var state := {"graph": {}, "slots": []}
+	var state := {"graph": {}, "slots": [], "saving": false}
 	var selected := func(opt: OptionButton) -> String:
 		return str(opt.get_selected_metadata()) if opt.selected >= 0 else ""
 	var fill_targets := func():
@@ -146,12 +150,14 @@ func _open_flow() -> void:
 		target.disabled = false
 		var edge: Dictionary = state.slots[slot.selected]
 		var match_idx := 0
+		var from_view: bool = edge.fn_id == RelGraph.VIEW_KIND
 		for item in state.graph.nodes:
-			if item.fn_id != edge.fn:
+			if (from_view and item.fn_id == RelGraph.VIEW_KIND) or (not from_view and item.fn_id != edge.fn):
 				continue
 			target.add_item("%s · %s" % [item.name, item.cid])
-			target.set_item_metadata(target.item_count - 1, item.cid)
-			if item.cid == edge.value:
+			target.set_item_metadata(target.item_count - 1,
+				{"function": item.fn_id, "content": item.cid} if from_view else item.cid)
+			if item.cid == edge.value and item.fn_id == edge.fn:
 				match_idx = target.item_count - 1
 		if match_idx == 0 and edge.value != "":
 			target.add_item("（失效引用）" + str(edge.value))
@@ -168,7 +174,9 @@ func _open_flow() -> void:
 		for edge in state.slots:
 			var suffix := "（添加目标）" if edge.multi and edge.index == -1 else (
 				" #%d" % (int(edge.index) + 1) if edge.multi else "")
-			slot.add_item(str(edge.label) + suffix + " → " + str(edge.fn))
+			var domain := "内容" if edge.fn_id == RelGraph.VIEW_KIND else (
+				"屏幕" if edge.fn == RelGraph.VIEW_KIND else str(edge.fn))
+			slot.add_item(str(edge.label) + suffix + " → " + domain)
 		if slot.item_count > 0:
 			slot.select(0)
 		slot.disabled = slot.item_count == 0
@@ -178,7 +186,7 @@ func _open_flow() -> void:
 		node.clear()
 		var names := {}
 		for item in state.graph.nodes:
-			node.add_item("%s · %s · %s" % [item.fn_id, item.name, item.cid])
+			node.add_item("屏幕 · " + item.cid if item.fn_id == RelGraph.VIEW_KIND else "%s · %s · %s" % [item.fn_id, item.name, item.cid])
 			node.set_item_metadata(node.item_count - 1, item.key)
 			names[item.key] = "%s/%s" % [item.fn_id, item.cid]
 			if item.key == key:
@@ -217,12 +225,37 @@ func _open_flow() -> void:
 	var actions := Kit.hbox(6)
 	body.add_child(actions)
 	actions.add_child(Kit.button("应用关系", func():
-		if not is_same(app.manifest, source) or slot.selected < 0:
+		if state.saving or not is_same(app.manifest, source) or slot.selected < 0 or target.selected < 0 or target.is_item_disabled(target.selected):
 			return
 		var edge: Dictionary = state.slots[slot.selected]
+		if edge.fn_id == RelGraph.VIEW_KIND:
+			var chosen = target.get_selected_metadata()
+			var next: Dictionary = chosen if chosen is Dictionary else {}
+			if not next.is_empty() and Store.read_ex(source, next.function, next.content).status != "ok":
+				refresh.call(edge.from)
+				notice.text = "目标内容已变更；请选择有效目标后重试。"
+				return
+			var changed := RelGraph.change_view_target(source, edge, next)
+			if changed.status != "ok":
+				refresh.call(edge.from)
+				notice.text = "关系未变。" if changed.status == "noop" else "屏幕已变更，请重试。"
+				return
+			var candidate := source.duplicate(true)
+			candidate.views = changed.views
+			var before: Array = source.views.duplicate(true)
+			var current := func() -> bool:
+				return is_instance_valid(pop) and pop.visible and is_same(app.manifest, source) and source.views == before
+			state.saving = true
+			var published: bool = await app._save_manifest_file_async(current, candidate, "views")
+			state.saving = false
+			if is_instance_valid(pop) and pop.visible:
+				refresh.call(edge.from)
+				notice.text = "关系已保存。" if published else "屏幕关系未保存，请重试。"
+			return
 		var want: String = selected.call(target)
-		if not RelGraph.declaration_matches(source, edge.fn_id, edge) or (
-				want != "" and Store.read_ex(source, edge.fn, want).status != "ok"):
+		var valid_target: bool = want.is_empty() or (References.view_ids(source).has(want) if edge.fn == RelGraph.VIEW_KIND
+			else Store.read_ex(source, edge.fn, want).status == "ok")
+		if not RelGraph.declaration_matches(source, edge.fn_id, edge) or not valid_target:
 			refresh.call(edge.from)
 			notice.text = "声明或目标已变更；请选择有效目标后重试。"
 			return
@@ -239,13 +272,16 @@ func _open_flow() -> void:
 		refresh.call(edge.from)
 		notice.text = "关系已保存。" if result.status == "ok" else (
 			"关系未变。" if result.status == "noop" else "写入未完成；请根据刷新后的关系重试。"), "primary"))
-	actions.add_child(Kit.button("编辑选中内容", func():
+	actions.add_child(Kit.button("编辑选中项", func():
 		var i := node.selected
 		if i < 0 or not is_same(app.manifest, source):
 			return
 		var item: Dictionary = state.graph.nodes[i]
 		pop.hide()
-		_open_item.call_deferred(item.fn_id, item.cid)))
+		if item.fn_id == RelGraph.VIEW_KIND:
+			ReferenceViews.open.call_deferred(app, item.cid)
+		else:
+			_open_item.call_deferred(item.fn_id, item.cid)))
 	actions.add_child(Kit.button("重新扫描", func():
 		if is_same(app.manifest, source):
 			refresh.call(selected.call(node)), "ghost"))

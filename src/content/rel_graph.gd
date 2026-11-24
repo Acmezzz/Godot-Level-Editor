@@ -1,7 +1,7 @@
 extends RefCounted
 ## RelGraph：内容关系图（E2）。纯数据 + 单一写入口。
 ##
-## 节点 = (功能 id, 内容 ID)；边 = 声明为 content 引用的字段（功能字段、条件字段、步骤字段）。
+## 项目图包含内容和参考视图；关系写回声明字段、布局元素或热点。
 ## 图的真相仍是那些字段——本模块不缓存副本，只负责：
 ##   build()      读内容文件生成 {nodes, edges, external}（可并入尚未落盘的 staged 内容）；
 ##   set_edge()   把一条边的目标写回同一个字段（读/写回调由调用方给，复用表单的 staged 路径）。
@@ -13,6 +13,8 @@ const FunctionDecls := preload("res://src/content/function_decl.gd")
 const ConditionDecls := preload("res://src/content/condition_decl.gd")
 const StepDecls := preload("res://src/content/step_decl.gd")
 const RefFields := preload("res://src/content/ref_fields.gd")
+const References := preload("res://src/project/reference_index.gd")
+const VIEW_KIND := "@view"
 
 ## 建图。scope_fn = 当前功能 id（只画这个功能的内容条目与其出边）。
 ## extra = 尚未落盘的内容 {cid: data}（A2 staged），并入本功能目录参与建图。
@@ -34,6 +36,10 @@ static func _build(manifest: Dictionary, kinds: Array, extra: Dictionary, scope:
 	var graph := {"nodes": [], "edges": [], "external": [], "bad": [], "slots": {}}
 	var catalog := {}
 	var contents := {}
+	if scope.is_empty():
+		catalog[VIEW_KIND] = {}
+		for id in References.view_ids(manifest):
+			catalog[VIEW_KIND][id] = true
 	for kind in kinds:
 		var items := ContentStore.read_all(manifest, str(kind), graph.bad)
 		var staged: Dictionary = extra.get(kind, {})
@@ -70,9 +76,77 @@ static func _build(manifest: Dictionary, kinds: Array, extra: Dictionary, scope:
 				var sdecls = step_decl.get("fields", [])
 				if sdecls is Array:
 					_collect(manifest, key, base, sdecls, fields, i, graph, catalog, "步骤%d" % (i + 1))
-	if scope != "":
+	if scope.is_empty():
+		_collect_views(manifest, graph, catalog)
+	else:
 		_add_target_nodes(manifest, scope, graph.nodes, graph.edges)
 	return graph
+
+static func _collect_views(manifest: Dictionary, graph: Dictionary, catalog: Dictionary) -> void:
+	var views = manifest.get("views", [])
+	if not views is Array:
+		return
+	var seen := {}
+	for view in views:
+		if not view is Dictionary or not catalog[VIEW_KIND].has(view.get("view_id")) or seen.has(view.view_id):
+			continue
+		var id: String = view.view_id
+		seen[id] = true
+		var key := _key(VIEW_KIND, id)
+		graph.nodes.append({"key": key, "cid": id, "fn_id": VIEW_KIND, "name": id})
+		graph.slots[key] = []
+		for group in ["elements", "hotspots"]:
+			var rows := _view_rows(view, group).duplicate(true)
+			for i in rows.size():
+				if not rows[i] is Dictionary:
+					continue
+				var row: Dictionary = rows[i]
+				var current = row.get("target")
+				if row.has("target") and not References.is_view_content_target(current):
+					continue
+				if group == "elements" and row.get("kind") != "button" and current == null:
+					continue
+				var label := str(row.get("text", "")).strip_edges()
+				if label.is_empty():
+					label = ("布局元素 " if group == "elements" else "热点 ") + str(i + 1)
+				var edge := {"from": key, "fn_id": VIEW_KIND, "cid": id, "fn": "" if current == null else current.function,
+					"value": "" if current == null else current.content, "label": label, "multi": false,
+					"group": group, "index": i, "shown_rows": rows}
+				graph.slots[key].append(edge)
+				if current == null:
+					continue
+				if catalog.get(current.function, {}).has(current.content):
+					edge["to"] = _key(current.function, current.content)
+					graph.edges.append(edge)
+				else:
+					graph.external.append(edge)
+
+static func _view_rows(view: Dictionary, group: String) -> Array:
+	var layout = view.get("layout")
+	var rows = layout.get("elements") if group == "elements" and layout is Dictionary else view.get(group)
+	return rows if rows is Array else []
+
+## Build a new views payload using the same row the author selected in the graph.
+static func change_view_target(manifest: Dictionary, edge: Dictionary, target: Dictionary) -> Dictionary:
+	var current = manifest.get("views")
+	if not current is Array:
+		return {"status": "stale"}
+	var views: Array = current.duplicate(true)
+	for view in views:
+		if not view is Dictionary or view.get("view_id") != edge.cid:
+			continue
+		var rows := _view_rows(view, edge.group)
+		if rows != edge.shown_rows:
+			return {"status": "stale"}
+		var row: Dictionary = rows[edge.index]
+		if row.get("target", {}) == target:
+			return {"status": "noop"}
+		if target.is_empty():
+			row.erase("target")
+		else:
+			row["target"] = target
+		return {"status": "ok", "views": views}
+	return {"status": "stale"}
 
 static func _top_decls(manifest: Dictionary, fn_id: String) -> Array:
 	var decls := FunctionDecls.function_fields(manifest, fn_id).duplicate()
@@ -145,9 +219,9 @@ static func _collect(manifest: Dictionary, from_key: String, base: Dictionary, d
 				_collect(manifest, from_key, nested, scope.decls, scope.values, step, graph, catalog,
 					"%s %s" % [label, scope.label])
 		var desc := RefFields.describe(fd)
-		if str(desc.get("kind", "")) != "content":
+		if desc.kind != "content" and not (desc.kind == "view" and catalog.has(VIEW_KIND)):
 			continue
-		var to_fn := str(desc.get("filter", {}).get("fn", ""))
+		var to_fn := VIEW_KIND if desc.kind == "view" else str(desc.get("filter", {}).get("fn", ""))
 		if to_fn == "":
 			to_fn = str(base.fn_id)
 		var multi := bool(desc.get("many", false))
