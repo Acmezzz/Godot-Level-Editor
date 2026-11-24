@@ -3366,7 +3366,7 @@ func author_signal_room(app, project: String) -> void:
 	var launch := ["--path", "%projectpath%", "--audio-driver", "Dummy", "--"]
 	var manifest := {"_dir": project, "_maps_dir": project.path_join("maps"), "projectName": "Signal Room",
 		"viewports": [{"id": "handheld", "w": 480, "h": 720}],
-		"screenModules": {"signal-latch": {"name": "Signal latch", "fields": [
+		"screenModules": {"signal-latch": {"name": "Signal latch", "outputs": {"accepted": "Accepted", "cancelled": "Cancelled"}, "fields": [
 			{"id": "presses", "name": "Confirmations", "kind": "input", "type": "int", "min": 1, "max": 4, "default": 3}]}},
 		"assets": [
 			{"id": "relay", "kind": "entity", "code": "RLY1", "fields": [
@@ -3394,6 +3394,7 @@ func author_signal_room(app, project: String) -> void:
 	app._set_mode("content")
 	var library = app.project_shell.content_editor._library
 	await _author_signal_content(app, library, "clear", "Signal verified")
+	await _author_signal_content(app, library, "cancelled", "Signal cancelled")
 	await _author_signal_screen(app, "relay-tuning", "Confirm the signal", "project-clear")
 	await _author_signal_content(app, library, "tune", "", "relay-tuning")
 	await _author_signal_screen(app, "watch-deck", "Tune the relay", "project-clear", path)
@@ -3426,13 +3427,21 @@ func author_signal_room(app, project: String) -> void:
 	var links: ItemList = flow.find_child("FlowDirectLinks", true, false)
 	check(links.item_count == 1 and canvas.data.nodes.size() == 2, "linking refreshes the focused view")
 	links.item_activated.emit(0)
-	check(source.get_selected_metadata() == "@view\u0001watch-deck" and links.item_count == 2,
+	check(source.get_selected_metadata() == "@view\u0001watch-deck" and links.item_count == 3,
 		"follow an edge to the screen even when its name does not match the source filter")
-	links.select(1)
+	for i in links.item_count:
+		if links.get_item_metadata(i).other == "signal\u0001project-watch":
+			links.select(i)
+			break
 	press(flow, "定位引用字段")
 	check(source.get_selected_metadata() == "signal\u0001project-watch" and target.get_selected_metadata() == "watch-deck",
 		"the inbound relation selects its original editable field")
 	links.item_activated.emit(0)
+	for i in links.item_count:
+		if links.get_item_metadata(i).edge.get("output") == "accepted":
+			links.select(i)
+			press(flow, "定位引用字段")
+			break
 	var target_search: LineEdit = flow.find_child("FlowTargetSearch", true, false)
 	target_search.text = "project-tune"
 	target_search.text_changed.emit(target_search.text)
@@ -3443,8 +3452,12 @@ func author_signal_room(app, project: String) -> void:
 			target.select(i)
 			break
 	press(flow, "应用关系")
-	check(manifest.views[1].layout.elements[0].target.content == "project-tune",
-		"the graph rebinds the screen button in the project manifest")
+	var outputs: Dictionary = manifest.views[1].layout.elements[0].outputs
+	check(outputs.accepted.content == "project-tune" and outputs.cancelled.content == "project-cancelled",
+		"the graph rebinds one named outlet without changing its neighbor")
+	check(References.view_content_refs(manifest).any(func(ref):
+		return ref.cid == "project-cancelled" and ref.path.ends_with(".outputs.cancelled")),
+		"the shared reference index tracks the named outlet by its concrete path")
 	press(flow, "编辑选中项")
 	await process_frame
 	var opened := _visible_popup(app)
@@ -3472,8 +3485,8 @@ func author_signal_room(app, project: String) -> void:
 		var copied: Array = manifest.views[2].layout.elements
 		check(original.size() == 1 and copied.size() == 2 and original[0] == copied[0]
 			and copied[1].id != copied[0].id and copied[1].text == "A different button"
-			and copied[1].target == original[0].target,
-			"the copied element has a fresh ID and retains the authored target")
+			and copied[1].outputs == original[0].outputs,
+			"the copied element has a fresh ID and retains both authored outputs")
 	ReferenceViews.open(app, "watch-deck-copy")
 	opened = _visible_popup(app)
 	press(opened, "删除视图…")
@@ -3539,8 +3552,15 @@ func author_signal_room(app, project: String) -> void:
 		and result.get("screens") == ["watch-deck", "relay-tuning"]
 		and result.get("buttons") == ["Tune the relay", "Confirm the signal"]
 		and result.get("latchInputs") == [2.0]
+		and result.get("outlets") == ["accepted"]
 		and result.get("text") == "Signal verified",
 		"the second game follows both authored buttons from the selected start content: " + str(report))
+	await app._map_file_ctrl.on_play(Vector2i(-1, -1), true, {"function": "signal", "content": "project-watch"})
+	var cancellation := await wait_for_playtest(app._map_file_ctrl)
+	var cancelled: Dictionary = cancellation.get("result", {})
+	check(cancellation.get("status") == "ready" and cancelled.get("visited") == ["project-watch", "project-cancelled"]
+		and cancelled.get("outlets") == ["cancelled"] and cancelled.get("text") == "Signal cancelled",
+		"the same module obeys its separately authored cancel outlet: " + str(cancellation))
 	await _author_relay_map(app, manifest)
 
 func _author_relay_map(app, manifest: Dictionary) -> void:
@@ -3689,12 +3709,19 @@ func _author_signal_screen(app, id: String, caption: String, content: String, ma
 	field = pop.find_child("LayoutElement_style", true, false)
 	field.text = "signal/relay"
 	field.text_changed.emit(field.text)
-	var target: OptionButton = pop.find_child("LayoutElementTarget", true, false)
+	var target: OptionButton = pop.find_child("LayoutOutput_accepted" if id == "watch-deck" else "LayoutElementTarget", true, false)
 	for i in target.item_count:
 		if target.get_item_metadata(i) == {"function": "signal", "content": content}:
 			target.select(i)
 			target.item_selected.emit(i)
 			break
+	if id == "watch-deck":
+		var cancel: OptionButton = pop.find_child("LayoutOutput_cancelled", true, false)
+		for i in cancel.item_count:
+			if cancel.get_item_metadata(i) == {"function": "signal", "content": "project-cancelled"}:
+				cancel.select(i)
+				cancel.item_selected.emit(i)
+				break
 	if manifest_path != "":
 		var before := Store.file_digest(manifest_path)
 		var render: Button = pop.find_child("GameRenderPreview", true, false)

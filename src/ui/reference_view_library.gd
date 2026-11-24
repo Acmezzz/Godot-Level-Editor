@@ -676,6 +676,7 @@ static func _render_layout(form: VBoxContainer, preview: Preview, state: Diction
 		_commit_module_fields(state)
 		item.erase("module")
 		item.erase("props")
+		item.erase("outputs")
 		item.erase("focusable")
 		Layout.clear_focus_links(state.layout, preview.elements, item.id)
 		item.merge(next, true)
@@ -771,27 +772,11 @@ static func _render_layout(form: VBoxContainer, preview: Preview, state: Diction
 		item["offsets"] = o
 		refresh.call(), "ghost")
 	form.add_child(fixed_bottom)
-	var target := OptionButton.new()
-	target.name = "LayoutElementTarget"
-	target.add_item("（无目标）")
-	target.set_item_metadata(0, {})
-	var selected := 0
-	for option in state.targets:
-		target.add_item(option.label)
-		target.set_item_metadata(target.item_count - 1, option.value)
-		if item.get("target") == option.value:
-			selected = target.item_count - 1
-	if item.has("target") and selected == 0 and not item.target.is_empty():
-		target.add_item("（保留原目标）")
-		selected = target.item_count - 1
-		target.set_item_disabled(selected, true)
-	target.select(selected)
-	target.item_selected.connect(func(i: int):
-		if i == 0:
-			item.erase("target")
-		elif target.get_item_metadata(i) is Dictionary:
-			item["target"] = target.get_item_metadata(i))
-	form.add_child(Kit.field_row("跳转内容", target, 70))
+	var outlets := Layout.output_labels(state.modules, item) if item.kind == "module" else {}
+	if outlets.is_empty() or item.has("target"):
+		_add_element_target(form, state.targets, item, "", "跳转内容")
+	for output in outlets:
+		_add_element_target(form, state.targets, item, output, outlets[output])
 	if item.kind in ["button", "module"]:
 		_add_focus_fields(form, preview, state, item, refresh)
 	var actions := Kit.hbox(4)
@@ -817,6 +802,30 @@ static func _render_layout(form: VBoxContainer, preview: Preview, state: Diction
 		preview.active_element = mini(at, preview.elements.size() - 1)
 		refresh.call(), "ghost"))
 	form.add_child(actions)
+
+static func _add_element_target(form: VBoxContainer, options: Array, item: Dictionary,
+		output: String, label: String) -> void:
+	var target := OptionButton.new()
+	target.name = "LayoutElementTarget" if output.is_empty() else "LayoutOutput_" + output.validate_node_name()
+	target.add_item("（无目标）")
+	target.set_item_metadata(0, {})
+	var current = Layout.target_at(item, output)
+	var selected := 0
+	for option in options:
+		target.add_item(option.label)
+		target.set_item_metadata(target.item_count - 1, option.value)
+		if current == option.value:
+			selected = target.item_count - 1
+	if selected == 0 and current is Dictionary and not current.is_empty():
+		target.add_item("（保留原目标）")
+		selected = target.item_count - 1
+		target.set_item_disabled(selected, true)
+	target.select(selected)
+	target.item_selected.connect(func(i: int):
+		var value = target.get_item_metadata(i)
+		if value is Dictionary:
+			Layout.set_target(item, output, value))
+	form.add_child(Kit.field_row(label, target, 70))
 
 static func _add_module_fields(form: VBoxContainer, state: Dictionary, item: Dictionary) -> void:
 	var fields: Array = state.modules[item.module].get("fields", [])

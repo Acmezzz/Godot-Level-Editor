@@ -861,6 +861,14 @@ static func _validate_screen_modules(data: Dictionary, issues: Array[Dictionary]
 		if not id is String or id.strip_edges().is_empty() or not decl is Dictionary:
 			_add(issues, "error", path, "must have a non-empty ID and an object declaration")
 			continue
+		var outputs = decl.get("outputs", {})
+		if not outputs is Dictionary:
+			_add(issues, "error", path + ".outputs", "must be an object of output IDs and labels")
+		else:
+			for output in outputs:
+				if not output is String or output.strip_edges().is_empty() or not outputs[output] is String \
+						or outputs[output].strip_edges().is_empty():
+					_add(issues, "error", path + ".outputs." + str(output), "must have a non-empty ID and label")
 		var fields = decl.get("fields", [])
 		if not fields is Array:
 			_add(issues, "error", path + ".fields", "must be an array")

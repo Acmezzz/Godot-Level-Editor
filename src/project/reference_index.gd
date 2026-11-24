@@ -100,9 +100,17 @@ static func _collect_view_targets(rows: Variant, view: Dictionary, prefix: Strin
 		return
 	for i in rows.size():
 		var row = rows[i]
-		if row is Dictionary and is_view_content_target(row.get("target")):
+		if not row is Dictionary:
+			continue
+		if is_view_content_target(row.get("target")):
 			out.append({"fn": row.target.function, "cid": row.target.content,
 				"view": str(view.get("view_id", "")), "path": "%s[%d].target" % [prefix, i]})
+		if row.get("kind") == "module" and row.get("outputs") is Dictionary:
+			for id in row.outputs:
+				var target = row.outputs[id]
+				if is_view_content_target(target):
+					out.append({"fn": target.function, "cid": target.content,
+						"view": str(view.get("view_id", "")), "path": "%s[%d].outputs.%s" % [prefix, i, id]})
 
 static func view_image_refs(manifest: Dictionary) -> Array:
 	var out := []

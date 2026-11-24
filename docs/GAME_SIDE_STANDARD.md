@@ -154,13 +154,16 @@
 游戏可通过 `screenModules` 声明自定义控件，例如：
 
 ```json
-{"screenModules":{"confirm-latch":{"name":"多次确认","fields":[{"id":"presses","kind":"input","type":"int","min":1,"default":3}]}}}
+{"screenModules":{"confirm-latch":{"name":"多次确认","outputs":{"accepted":"确认","cancelled":"取消"},"fields":[{"id":"presses","kind":"input","type":"int","min":1,"default":3}]}}}
 ```
 
 作者在布局中选择模块后，元素写为 `kind: "module"`、`module: "confirm-latch"`，
 沿用 `id`、`anchors`、`offsets`、文字及样式。`props` 以声明字段 ID 为键，只保存作者的覆盖值；
 游戏应在缺键时应用模块缺省值。若需要键盘或手柄焦点，作者可启用 `focusable: true`（模块默认关闭）。
-`target: {function, content}` 是可选的内容出口，游戏决定何时触发，例如满足确认次数后再跳转。
+声明的 `outputs` 是出口 ID 到显示名的映射。实例的 `outputs` 以相同 ID 保存 `{function, content}` 目标；
+未连接的出口不写键。游戏触发某个出口时读取同名目标，例如确认次数达标用 `accepted`、玩家取消用 `cancelled`。
+旧的单目标 `target: {function, content}` 继续可用，已有绑定不会自动转为某个具名出口。
+若游戏移除了出口声明，已保存的目标仍可在编辑器中找到并断开；游戏只需处理仍实现的出口。
 正式试玩和 `screenLayout` 预览应按同一个模块 ID 构造控件；编辑器不加载模块代码。
 
 对 `mapFrame`，`subject` 结构如下：

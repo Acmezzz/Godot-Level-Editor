@@ -14,6 +14,7 @@ const ConditionDecls := preload("res://src/content/condition_decl.gd")
 const StepDecls := preload("res://src/content/step_decl.gd")
 const RefFields := preload("res://src/content/ref_fields.gd")
 const References := preload("res://src/project/reference_index.gd")
+const ScreenLayout := preload("res://src/project/screen_layout.gd")
 const VIEW_KIND := "@view"
 
 ## 建图。scope_fn = 当前功能 id（只画这个功能的内容条目与其出边）。
@@ -117,6 +118,7 @@ static func _collect_views(manifest: Dictionary, graph: Dictionary, catalog: Dic
 	if not views is Array:
 		return
 	var seen := {}
+	var modules := ScreenLayout.modules(manifest)
 	for view in views:
 		if not view is Dictionary or not catalog[VIEW_KIND].has(view.get("view_id")) or seen.has(view.view_id):
 			continue
@@ -131,25 +133,27 @@ static func _collect_views(manifest: Dictionary, graph: Dictionary, catalog: Dic
 				if not rows[i] is Dictionary:
 					continue
 				var row: Dictionary = rows[i]
-				var current = row.get("target")
-				if row.has("target") and not References.is_view_content_target(current):
-					continue
-				if group == "elements" and row.get("kind") not in ["button", "module"] and current == null:
-					continue
 				var label := str(row.get("text", "")).strip_edges()
 				if label.is_empty():
 					label = ("布局元素 " if group == "elements" else "热点 ") + str(i + 1)
-				var edge := {"from": key, "fn_id": VIEW_KIND, "cid": id, "fn": "" if current == null else current.function,
-					"value": "" if current == null else current.content, "label": label, "multi": false,
-					"group": group, "index": i, "shown_rows": rows}
-				graph.slots[key].append(edge)
-				if current == null:
-					continue
-				if catalog.get(current.function, {}).has(current.content):
-					edge["to"] = _key(current.function, current.content)
-					graph.edges.append(edge)
-				else:
-					graph.external.append(edge)
+				var labels := ScreenLayout.output_labels(modules, row) if group == "elements" and row.get("kind") == "module" else {}
+				if group == "hotspots" or row.has("target") or (labels.is_empty() and row.get("kind") in ["button", "module"]):
+					labels[""] = ""
+				for output in labels:
+					var current = ScreenLayout.target_at(row, output)
+					if current != null and not References.is_view_content_target(current):
+						continue
+					var edge := {"from": key, "fn_id": VIEW_KIND, "cid": id, "fn": "" if current == null else current.function,
+						"value": "" if current == null else current.content, "label": label if output == "" else label + " · " + labels[output],
+						"multi": false, "group": group, "index": i, "shown_rows": rows, "output": output}
+					graph.slots[key].append(edge)
+					if current == null:
+						continue
+					if catalog.get(current.function, {}).has(current.content):
+						edge["to"] = _key(current.function, current.content)
+						graph.edges.append(edge)
+					else:
+						graph.external.append(edge)
 
 static func _view_rows(view: Dictionary, group: String) -> Array:
 	var layout = view.get("layout")
@@ -169,12 +173,11 @@ static func change_view_target(manifest: Dictionary, edge: Dictionary, target: D
 		if rows != edge.shown_rows:
 			return {"status": "stale"}
 		var row: Dictionary = rows[edge.index]
-		if row.get("target", {}) == target:
+		var output: String = edge.get("output", "")
+		var current_target = ScreenLayout.target_at(row, output)
+		if current_target == target or (current_target == null and target.is_empty()):
 			return {"status": "noop"}
-		if target.is_empty():
-			row.erase("target")
-		else:
-			row["target"] = target
+		ScreenLayout.set_target(row, output, target)
 		return {"status": "ok", "views": views}
 	return {"status": "stale"}
 

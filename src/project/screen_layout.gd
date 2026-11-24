@@ -11,6 +11,34 @@ static func modules(manifest: Dictionary) -> Dictionary:
 	var declarations = manifest.get("screenModules", {})
 	return declarations if declarations is Dictionary else {}
 
+## Preserve an existing binding if the game removes its declaration, so it can be disconnected.
+static func output_labels(declarations: Dictionary, element: Dictionary) -> Dictionary:
+	var labels: Dictionary = declarations.get(element.get("module", ""), {}).get("outputs", {}).duplicate()
+	for id in element.get("outputs", {}):
+		if not labels.has(id):
+			labels[id] = id
+	return labels
+
+static func target_at(row: Dictionary, output: String) -> Variant:
+	return row.get("target") if output.is_empty() else row.get("outputs", {}).get(output)
+
+static func set_target(row: Dictionary, output: String, target: Dictionary) -> void:
+	if output.is_empty():
+		if target.is_empty():
+			row.erase("target")
+		else:
+			row["target"] = target
+		return
+	var outputs: Dictionary = row.get("outputs", {})
+	if target.is_empty():
+		outputs.erase(output)
+	else:
+		outputs[output] = target
+	if outputs.is_empty():
+		row.erase("outputs")
+	else:
+		row["outputs"] = outputs
+
 static func image_assets(manifest: Dictionary) -> Dictionary:
 	var out := {}
 	var rows = manifest.get("assets", [])
@@ -201,6 +229,15 @@ static func validate(layout: Variant, viewports: Dictionary, path: String, issue
 				_error(issues, p + ".module", "must name a declared screen module")
 			if row.has("props") and not row.props is Dictionary:
 				_error(issues, p + ".props", "must be an object keyed by field ID")
+			var outputs = row.get("outputs", {})
+			if not outputs is Dictionary:
+				_error(issues, p + ".outputs", "must be an object keyed by output ID")
+			else:
+				for output in outputs:
+					var target = outputs[output]
+					if not output is String or output.strip_edges().is_empty() or not target is Dictionary \
+							or target.size() != 2 or not target.get("function") is String or not target.get("content") is String:
+						_error(issues, p + ".outputs." + str(output), "must bind a named output to {function, content}")
 		elif not KINDS.has(row.get("kind")):
 			_error(issues, p + ".kind", "must be panel, text, button or module")
 		var a = row.get("anchors")

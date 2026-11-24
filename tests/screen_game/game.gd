@@ -9,6 +9,8 @@ var visited: Array[String] = []
 var screens: Array[String] = []
 var opened_buttons: Array[String] = []
 var latch_inputs: Array[int] = []
+var outlets: Array[String] = []
+var cancel_target := {}
 var verify := false
 
 func _ready() -> void:
@@ -36,6 +38,7 @@ func _decode(encoded: String) -> Dictionary:
 	return JSON.parse_string(Marshalls.base64_to_utf8(encoded))
 
 func _show_content(target: Dictionary) -> void:
+	cancel_target = {}
 	var kind: String = target.function
 	var cid: String = target.content
 	var data = JSON.parse_string(FileAccess.get_file_as_string("res://content/%s/%s.json" % [kind, cid]))
@@ -67,6 +70,11 @@ func _show_content(target: Dictionary) -> void:
 			var button: Button = buttons[0]
 			await get_tree().process_frame
 			var click := InputEventAction.new()
+			if cid == "project-watch" and not cancel_target.is_empty():
+				click.action = &"ui_cancel"
+				click.pressed = true
+				Input.parse_input_event(click)
+				return
 			click.action = &"ui_accept"
 			button.grab_focus()
 			for i in 4:
@@ -78,6 +86,12 @@ func _show_content(target: Dictionary) -> void:
 					await get_tree().process_frame
 		return
 	_finish("Missing signal screen: " + view_id)
+
+func _unhandled_input(event: InputEvent) -> void:
+	if not cancel_target.is_empty() and event.is_action_pressed("ui_cancel"):
+		get_viewport().set_input_as_handled()
+		outlets.append("cancelled")
+		_show_content.call_deferred(cancel_target)
 
 func _draw_screen(parent: Node, layout: Dictionary, extent: Vector2, locale: String) -> Array[Button]:
 	var background := ColorRect.new()
@@ -97,19 +111,23 @@ func _draw_screen(parent: Node, layout: Dictionary, extent: Vector2, locale: Str
 				var button := Button.new()
 				button.text = caption
 				var latch: bool = row.get("module") == "signal-latch"
+				var route: Dictionary = row.get("outputs", {})
 				var remaining := [int(row.get("props", {}).get("presses", 3)) if latch else 1]
 				var authored_count: int = remaining[0]
 				var style := StyleBoxFlat.new()
 				style.bg_color = Color("#cc711e") if row.get("style") == "signal/relay" else Color("#286968")
 				button.add_theme_stylebox_override("normal", style)
-				if row.has("target"):
-					var target: Dictionary = row.target
+				var target: Dictionary = route.get("accepted", row.get("target", {}))
+				if latch and parent == self:
+					cancel_target = route.get("cancelled", {})
+				if not target.is_empty():
 					button.pressed.connect(func():
 						remaining[0] -= 1
 						if remaining[0] != 0:
 							return
 						if latch:
 							latch_inputs.append(authored_count)
+							outlets.append("accepted")
 						opened_buttons.append(button.text)
 						_show_content.call_deferred(target))
 					buttons.append(button)
@@ -224,7 +242,7 @@ func _finish(error: String, text := "", extra := {}) -> void:
 		var result := {"version": 1, "token": report.token, "status": "ready" if error.is_empty() else "error",
 			"message": error, "mapDigest": _map_digest(), "manifestDigest": digest.finish().hex_encode(),
 			"result": {"visited": visited, "screens": screens, "buttons": opened_buttons,
-				"latchInputs": latch_inputs, "text": text}.merged(extra)}
+				"latchInputs": latch_inputs, "outlets": outlets, "text": text}.merged(extra)}
 		_write_json(path + ".tmp", result)
 		DirAccess.rename_absolute(path + ".tmp", path)
 	if verify or not error.is_empty():
