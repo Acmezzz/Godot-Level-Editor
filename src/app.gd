@@ -491,7 +491,7 @@ func _shortcut_input(event: InputEvent) -> void:
 		_on_open()
 		get_viewport().set_input_as_handled()
 		return
-	if k == KEY_ESCAPE and canvas.world_region_mode:
+	if k == KEY_ESCAPE and canvas.world_region_mode and not canvas._paste_mode:
 		_toggle_world_region_mode()
 		get_viewport().set_input_as_handled()
 		return
@@ -597,7 +597,7 @@ func _toggle_world_region_mode() -> void:
 	canvas._region_layer = ""
 	if canvas.world_region_mode:
 		canvas.select_mode = false
-	_set_status("跨层搬动：左键框选，框内拖动，右键清除。" if canvas.world_region_mode else "跨层搬动已关闭。")
+	_set_status("跨层选区：左键框选，框内拖动，Ctrl+C 复制，右键清除。" if canvas.world_region_mode else "跨层选区已关闭。")
 	canvas.queue_redraw()
 	_refresh_view_toggles()
 
@@ -629,7 +629,7 @@ func _copy() -> void:
 		_set_status("无地图：先新建或打开一张地图")
 		return
 	if canvas.world_region_mode:
-		_set_status("跨层框选仅用于搬动。复制请先退出该模式。")
+		canvas._world_region_move.copy()
 		return
 	if canvas.place_kind == "object":
 		canvas.copy_selection()
@@ -640,8 +640,14 @@ func _paste() -> void:
 	if not map_loaded:
 		_set_status("无地图：先新建或打开一张地图")
 		return
+	if canvas._last_copy_region and canvas._region_clip.get("world", false):
+		canvas.cancel_preview_gesture()
+		canvas._paste_mode = true
+		canvas.queue_redraw()
+		_set_status("跨层区域粘贴预览：左键落位，右键或 Esc 取消。")
+		return
 	if canvas.world_region_mode:
-		_set_status("粘贴请先退出跨层搬动模式。")
+		_set_status("粘贴普通剪贴板前请退出跨层选区。")
 		return
 	# 区域剪贴板走幽灵预览（左键落位），实体剪贴板直接贴到光标处
 	if canvas._last_copy_region and not canvas._region_clip.is_empty():

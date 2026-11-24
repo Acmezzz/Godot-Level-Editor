@@ -502,7 +502,7 @@ func _build_status_bar() -> PanelContainer:
 	_select_btn.tooltip_text = "打开后左键拖动框选；关闭则正常涂刷 / 放置"
 	h.add_child(_select_btn)
 	_world_region_btn = app.UiKitScript.button("跨层搬动", app._toggle_world_region_mode, "toggle")
-	_world_region_btn.tooltip_text = "按画布范围搬动可见图层的瓦片、实例及根碰撞"
+	_world_region_btn.tooltip_text = "按画布范围搬动或复制可见图层的瓦片、实例及根碰撞"
 	h.add_child(_world_region_btn)
 	# 吸附开关：关掉后摆放物可落在任意像素位置（存浮点格坐标），默认开
 	_snap_btn = app.UiKitScript.button("吸附", app._toggle_snap, "toggle")

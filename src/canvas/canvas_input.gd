@@ -201,7 +201,10 @@ func _on_left_press(pos: Vector2, b: InputEventMouseButton) -> void:
 		cvs.begin_gesture(cvs.Gesture.PAN, MOUSE_BUTTON_LEFT)
 		return
 	if cvs._paste_mode:
-		cvs._paste_region(cvs._cell_of(pos))
+		if cvs._region_clip.get("world", false):
+			cvs._world_region_move.paste_at(pos)
+		else:
+			cvs._paste_region(cvs._cell_of(pos))
 		return
 	if cvs.world_region_mode:
 		if cvs._world_region_move.selection.has_point(pos):
@@ -315,6 +318,9 @@ func _on_tile_layer_press(pos: Vector2, b: InputEventMouseButton) -> void:
 
 ## 右键 = 擦除。实体放置模式删实体、其余擦瓦片/碰撞，语义与左键对称。
 func _on_right_press(pos: Vector2, shift := false, alt := false) -> void:
+	if cvs._paste_mode:
+		cancel_paste_mode()
+		return
 	if cvs.world_region_mode:
 		cvs.cancel_preview_gesture()
 		cvs._world_region_move.selection = Rect2()
@@ -326,10 +332,6 @@ func _on_right_press(pos: Vector2, shift := false, alt := false) -> void:
 				cvs._hint("选中闭合几何后，点击附加轮廓内部。")
 		elif not cvs._geometry_draw.remove_hole_at(pos):
 			cvs._hint("先选中闭合几何，再 Shift + 右键点击孔洞内部。")
-		return
-	if cvs._paste_mode:
-		cvs._paste_mode = false
-		cvs.queue_redraw()
 		return
 	if cvs.map_root == null:
 		return

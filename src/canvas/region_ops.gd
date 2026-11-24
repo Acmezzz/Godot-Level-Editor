@@ -562,21 +562,7 @@ func _paste_region(origin: Vector2i) -> void:
 	# 撤销恢复地图后绑定消失，暂存复核就地丢弃，不再留下孤儿内容文件。
 	# ent 取拥有该内容的副本实例码（R02 复核用）；行与剪贴板条目一一对应。
 	var remapped: Array = (plan.get("map_patch", {}) as Dictionary).get("objects", [])
-	var ce = null
-	if cvs.app_host != null and cvs.app_host.project_shell != null \
-			and cvs.app_host.project_shell.content_editor != null:
-		ce = cvs.app_host.project_shell.content_editor
-	for pc in (plan.get("pending_contents", []) as Array):
-		var pd: Dictionary = pc
-		var owner := ""
-		for row in remapped:
-			var rf: Dictionary = row
-			for f in (rf.get("functions", []) as Array):
-				if f is Dictionary and str((f as Dictionary).get("content", "")) == str(pd.get("id", "")):
-					owner = str(rf.get("code", ""))
-		if ce != null:
-			ce.stage_clone(str(pd.get("fn_id", "")), str(pd.get("id", "")),
-				pd.get("data", {}) as Dictionary, owner)
+	stage_cloned_contents(plan)
 	# 校验全过才动手：一条撤销步覆盖瓦片 + 碰撞 + 实例
 	cvs.push_undo()
 	# 粘贴按 层id 维度重建（tiles = {层id: [[dx,dy,资产id,ax,ay]...]}）
@@ -631,6 +617,24 @@ func _paste_region(origin: Vector2i) -> void:
 	else:   # 层匹配失败提示合并进同一条（状态栏单条消息，分开发会被覆盖）
 		cvs._hint("区域已粘贴%s；有 %d 个层按名匹配失败，其内容落在最底层：%s" % [
 			("；复制内容 %d 条（随保存落盘）" % n_new) if n_new > 0 else "", missed.size(), ", ".join(missed)])
+
+func stage_cloned_contents(plan: Dictionary) -> void:
+	var remapped: Array = plan.map_patch.objects
+	var ce = null
+	if cvs.app_host != null and cvs.app_host.project_shell != null \
+			and cvs.app_host.project_shell.content_editor != null:
+		ce = cvs.app_host.project_shell.content_editor
+	for pc in (plan.get("pending_contents", []) as Array):
+		var pd: Dictionary = pc
+		var owner := ""
+		for row in remapped:
+			var rf: Dictionary = row
+			for f in (rf.get("functions", []) as Array):
+				if f is Dictionary and str((f as Dictionary).get("content", "")) == str(pd.get("id", "")):
+					owner = str(rf.get("code", ""))
+		if ce != null:
+			ce.stage_clone(str(pd.get("fn_id", "")), str(pd.get("id", "")),
+				pd.get("data", {}) as Dictionary, owner)
 
 ## 区域粘贴的层重映射（C2）：同图按 id 直配；跨图按**唯一**层名匹配，
 ## 名字重复或不匹配落最底层并记入 missed（末尾黄字提示，绝不猜）。

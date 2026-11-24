@@ -336,8 +336,11 @@ func _draw() -> void:
 				cvs.draw_rect(gr, Color(0.6, 1.0, 0.6, 0.35), true)
 		_draw_grid_region(morg, cvs._region_sel.size, move_li, Color(0.45, 1.0, 0.75, 0.9))
 	# 区域粘贴预览：各层幽灵跟随鼠标，左键落位
-	var show_paste: bool = cvs._paste_mode and not cvs._region_clip.is_empty() and cvs._region_ops_ctrl.region_clip_matches()
-	if show_paste and cvs._region_clip.has("tile_rows"):
+	var world_paste: bool = cvs._paste_mode and cvs._region_clip.get("world", false)
+	var show_paste: bool = cvs._paste_mode and not world_paste and not cvs._region_clip.is_empty() and cvs._region_ops_ctrl.region_clip_matches()
+	if world_paste:
+		cvs._world_region_move.draw_paste(pos)
+	elif show_paste and cvs._region_clip.has("tile_rows"):
 		_draw_layer_paste(pos)
 	elif show_paste:
 		var org: Vector2i = cvs.grid.region_origin(cvs._cell_of(pos), int(cvs._region_clip.get("parity", -1)))

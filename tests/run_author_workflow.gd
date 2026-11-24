@@ -1733,13 +1733,49 @@ func author_world_region_move(app, manifest: Dictionary) -> void:
 	input._on_left_press(lower_px, mouse)
 	input._on_left_release(lower_px + step * 2)
 	check(cvs.extract() == initial, "a blocked cross-layer move writes none of its members")
+	app._copy()
+	check(cvs._region_clip.get("world", false), "copy captures the entire world selection")
+	app._paste()
+	check(cvs._paste_mode, "cross-layer paste starts a preview")
+	input._on_right_press(lower_px)
+	check(not cvs._paste_mode and cvs._world_region_move.selection.has_point(lower_px), "cancel paste preserves the source selection")
+	var snap_offset: Vector2 = cvs._region_clip.snap_offset
+	var copy_origin := min_corner + snap_offset
+	app._paste()
+	input._on_left_press(copy_origin + step * 2, mouse)
+	check(cvs._paste_mode and cvs.extract() == initial, "an occupied destination rejects the whole paste")
+	cvs.set_layer_locked(1, true)
+	input._on_left_press(copy_origin + step, mouse)
+	check(cvs._paste_mode and cvs.extract() == initial, "a locked destination rejects the whole paste")
+	cvs.set_layer_locked(1, false)
+	input._on_left_press(copy_origin + step, mouse)
+	var copied: Dictionary = cvs.extract()
+	var dest_upper: Vector2i = cvs.tile_grid_for_layer(1).pick_cell(cvs.to_layer_local(1, upper_px + step))
+	check(not cvs._paste_mode and copied.tiles[ground].size() == 3 and copied.tiles[upper].size() == 2
+		and copied.tiles[upper].any(func(row): return Vector2i(row[0], row[1]) == dest_upper)
+		and copied.collision.size() == 2 and copied.collision[1].material == "ice"
+		and copied.objects.size() == initial.objects.size() + 1 and copied.objects[1].code != initial.objects[0].code
+		and copied.meta.cellGraph == initial.meta.cellGraph and copied.spawn == initial.spawn,
+		"paste adds both tile grids, collision metadata and a fresh instance without replacing the source")
+	var pasted: EntityNode = cvs._ent_by_code_index().get(str(copied.objects[1].code))
+	check(pasted != null and (pasted.get_parent().to_global(pasted.position - pasted.sort_anchor()) - entity_px).is_equal_approx(step),
+		"the copied instance retains the common pixel displacement")
+	_check_world_move_restore(await cvs.undo(), cvs.extract(), initial, "undo copy")
+	_check_world_move_restore(await cvs.redo(), cvs.extract(), copied, "redo copy")
+	var copy_save: Dictionary = await app._map_file_ctrl.commit_document("保存跨层复制")
+	check(copy_save.get("status") == "ok", "save the cross-layer copy")
+	await app._load_map_file(path)
+	_check_world_move_restore(true, cvs.extract(), copied, "save and reopen copy")
+	await cvs.load_data(initial, "rule_hex", true)
+	n = cvs.ents_all()[0]
+	input._on_left_press(min_corner, mouse)
+	input._on_left_release(max_corner)
 	input._on_left_press(lower_px, mouse)
 	cvs._move_region_preview(lower_px + step)
 	var plan: Dictionary = cvs._move_snap.get("plan", {})
 	check(plan.get("positions", []).size() == 3, "cross-layer preview plans two tile grids and root collision")
 	input._on_left_release(lower_px + step)
 	var moved: Dictionary = cvs.extract()
-	var dest_upper: Vector2i = cvs.tile_grid_for_layer(1).pick_cell(cvs.to_layer_local(1, upper_px + step))
 	var upper_row: Array = moved.tiles[upper][0]
 	check(moved.tiles[ground].any(func(row): return row[0] == 1 and row[1] == 0)
 		and Vector2i(upper_row[0], upper_row[1]) == dest_upper and dest_upper != Vector2i.ZERO
