@@ -45,7 +45,8 @@ func run() -> void:
 			"parameterFields": ["projection", "placements"]}},
 		"preview": {"version": 1, "executable": OS.get_executable_path(), "capabilities": ["generateMap"],
 			"args": ["--headless", "--path", "%projectpath%", "--"]},
-		"screenModules": {"course-door": {"outputs": {"accepted": {"name": "Enter", "arrivalPorts": ["arrival"]}}},
+		"screenModules": {"course-door": {"outputs": {"accepted": {"name": "Enter", "arrivalPorts": ["arrival"]}},
+			"fields": [{"id": "marker", "kind": "input", "type": "port_ref", "of": "signal"}]},
 			"signal-latch": {"name": "Latch", "outputs": {"accepted": {"name": "Continue", "screens": true}}, "fields": [
 			{"id": "presses", "kind": "input", "type": "int", "min": 1, "default": 1}]}},
 		"functions": {"course_rules": {"code": "CRUL", "name": "Course rules", "fields": [
@@ -528,6 +529,7 @@ func run() -> void:
 		and result.get("roundHost") == copy_host
 		and result.get("localActor") == copy_host
 		and result.get("arrivalPort") == "door" and result.get("arrivalInstance") == copy_host
+		and result.get("screenMarker") == {"map": copy_code, "inst": copy_host, "port": "wire"}
 		and result.get("placed") == copy.objects.map(func(row): return row.code) and result.get("text") == "Screen sequence complete",
 		"the game reads the map-level completion outlet and reaches the conclusion: %s" % [report])
 	end = Time.get_ticks_msec() + 2000
@@ -599,6 +601,15 @@ func add_screen(id: String, label: String, module: Dictionary, target: Dictionar
 	caption.text_changed.emit(label)
 	if module.get("module") == "signal-latch":
 		pop.find_child("LayoutModuleField_presses", true, false).value = 2
+	if module.get("module") == "course-door":
+		var marker: Control = pop.find_child("LayoutModuleField_marker", true, false)
+		var map: OptionButton = marker.find_child("ReferenceTargetMap", true, false)
+		choose(map, target.map)
+		var port: OptionButton = marker.find_child("ReferenceTargetValue", true, false)
+		check(port.item_count > 1 and range(1, port.item_count).all(func(i):
+			return JSON.parse_string(port.get_item_metadata(i)).port == "wire"),
+			"unpaired module field offers the selected map's ports of the declared type")
+		choose(port, JSON.stringify({"map": target.map, "inst": target.inst, "port": "wire"}))
 	var control: OptionButton = pop.find_child("LayoutElementTarget" if module.is_empty() else "LayoutOutput_accepted", true, false)
 	choose(control, target)
 	press(pop, "保存参考视图")

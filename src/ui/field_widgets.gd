@@ -358,25 +358,9 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 			return _build_choice(choice, encoded, func(v):
 				return on_set.call(JSON.parse_string(v) if v != "" else {}), option_resolver)
 		"port_ref":
-			# C3：端口引用 = 对象值 {map, inst, port}；选项 = port: 解析器（配对图优先），写入值解码回对象。
-			# 值编码成 JSON 串走 choice 控件；值不在选项里时显示「(当前值)」，不静默改写。
-			var pd2: Dictionary = decl.duplicate(true)
-			pd2["kind"] = KIND_CHOICE
-			pd2["source"] = "port:" + str(decl.get("of", ""))
-			var enc := JSON.stringify(value) if value is Dictionary and not value.is_empty() else ""
-			return _build_choice(pd2, enc, func(v2):
-				var pd = JSON.parse_string(str(v2)) if v2 != "" else {}
-				return on_set.call(pd if pd is Dictionary else {}), option_resolver)
+			return _build_object_reference(decl, value, "port:" + str(decl.get("of", "")), on_set, option_resolver)
 		"edge_ref":
-			# §7.4 格边引用 = 对象值 {map, cell, edge}；候选 = edge: 解析器（本图/配对图的共边）。
-			# 与 port_ref 同口径：JSON 串走 choice 控件，值不在候选里显示「(当前值)」。
-			var ed2: Dictionary = decl.duplicate(true)
-			ed2["kind"] = KIND_CHOICE
-			ed2["source"] = "edge:"
-			var eenc := JSON.stringify(value) if value is Dictionary and not value.is_empty() else ""
-			return _build_choice(ed2, eenc, func(v3):
-				var ed = JSON.parse_string(str(v3)) if v3 != "" else {}
-				return on_set.call(ed if ed is Dictionary else {}), option_resolver)
+			return _build_object_reference(decl, value, "edge:", on_set, option_resolver)
 		"asset_ref":
 			# 资产引用走 choice 的同一套控件，只是选项来源由 asset: 解析器提供。
 			# 白名单两种写法：`of`（字段直写）或 `ids`（数组元素的同型声明——`of` 已被元素类型占用）。
@@ -392,6 +376,55 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 			var why := "声明缺 type（应写 string / int / float / bool / color / vector2 / range / asset_ref / array）" if typ == "" \
 				else "未声明的输入类型「%s」" % typ
 			return _readonly(decl, value, why, "补全声明后重新加载清单即可恢复编辑")
+
+static func _build_object_reference(decl: Dictionary, value: Variant, source: String,
+		on_set: Callable, resolve: Callable) -> Dictionary:
+	var choice := decl.merged({"kind": KIND_CHOICE, "source": source}, true)
+	var current: Dictionary = value if value is Dictionary else {}
+	var encoded := func(target: Dictionary) -> String:
+		return "" if target.is_empty() else JSON.stringify(target)
+	var decode := func(raw: String) -> Dictionary:
+		return JSON.parse_string(raw) if raw != "" else {}
+	var maps: Array = []
+	if str(decl.get("mapField", "")) == "" and str(decl.get("_mapKey", "")) == "" and resolve.is_valid():
+		maps = resolve.call({"source": "editor:reference-maps"})
+	if maps.is_empty():
+		return _build_choice(choice, encoded.call(current), func(raw): return on_set.call(decode.call(raw)), resolve)
+	var box := Kit.vbox(3)
+	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var map := OptionButton.new()
+	map.name = "ReferenceTargetMap"
+	map.add_item("选择目标地图…")
+	map.set_item_metadata(0, "")
+	var selected := 0
+	for item in maps:
+		map.add_item(item.t)
+		var index := map.item_count - 1
+		map.set_item_metadata(index, item.v)
+		if item.v == current.get("map", ""):
+			selected = index
+	map.select(selected)
+	box.add_child(map)
+	var state := {"target": current, "commit": Callable()}
+	var render := func():
+		if box.get_child_count() > 1:
+			var old := box.get_child(1)
+			box.remove_child(old)
+			old.queue_free()
+		var key: String = map.get_selected_metadata()
+		var scoped := choice.merged({"_mapKey": key}, true)
+		var field := _build_choice(scoped, encoded.call(state.target), func(raw: String):
+			var next: Dictionary = decode.call(raw)
+			var result = on_set.call(next)
+			if not result is bool or result:
+				state.target = next
+			return result, resolve)
+		field.ctl.name = "ReferenceTargetValue"
+		box.add_child(field.ctl)
+		state.commit = field.commit
+	render.call()
+	map.item_selected.connect(func(_i: int): render.call())
+	return {"ctl": box, "commit": func(): return state.commit.call()}
 
 ## array：可增删行容器，每行一个元素控件；值 = 各行 state.v 按顺序收集。
 ## 行删除前先冲刷该行连续控件的待写值（commit），行序变动靠行字典引用而非闭包下标。

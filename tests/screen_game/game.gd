@@ -305,6 +305,8 @@ func _draw_screen(parent: Node, layout: Dictionary, extent: Vector2, locale: Str
 						if latch:
 							latch_inputs.append(authored_count)
 							outlets.append("accepted")
+						if row.get("module") == "course-door":
+							runtime_course["screenMarker"] = row.get("props", {}).get("marker", {})
 						opened_buttons.append(button.text)
 						_follow_target.call_deferred(target))
 					buttons.append(button)

@@ -404,6 +404,8 @@ func project_reference_options(decl: Dictionary, context: String) -> Array:
 	if context == "" or str(decl.get("_mapKey", "")) != "":
 		return _resolve_options(decl, true)
 	var source := str(decl.get("source", ""))
+	if source == "editor:reference-maps":
+		return []
 	if not (source.begins_with("entity_inst:") or source.begins_with("cell:") \
 			or source.begins_with("port:") or source.begins_with("edge:") or source == "layer:"):
 		return _resolve_options(decl, true)
@@ -425,6 +427,11 @@ func _resolve_options(decl: Dictionary, project_scope := false, saved_only := fa
 		return ConditionDecls.allowed_rows(manifest, decl)
 
 	var src := str(decl.get("source", ""))
+	if src == "editor:reference-maps":
+		if not project_scope:
+			return []
+		return ReferenceIndex.map_target_options(manifest).map(func(map):
+			return {"v": map.code, "t": map.name})
 	if src == "editor:flow-target":
 		var working_map: Dictionary = app.canvas.arrival_snapshot() if not project_scope and not saved_only \
 			and app.map_loaded and not decl.domains.get("arrivalPorts", []).is_empty() else {}
