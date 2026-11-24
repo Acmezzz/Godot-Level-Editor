@@ -179,12 +179,19 @@ static func property_refs(manifest: Dictionary, decls: Array, values: Dictionary
 		source, prefix, "", "id", out)
 	return out
 
-static func inherited_property_targets(manifest: Dictionary, decls: Array, values: Dictionary) -> Array:
+static func inherited_property_targets(manifest: Dictionary, decls: Array, values: Dictionary,
+		include_views := false) -> Array:
 	var targets := []
 	for ref in property_refs(manifest, decls, values):
-		if ref.kind == "flow_target" and ref.decl.get("contentMapContext") == "inherit" \
-				and FlowTarget.kind(ref.value) == "content" and FlowTarget.allows(ref.decl, ref.value):
-			targets.append(ref.value)
+		if ref.kind != "flow_target" or not FlowTarget.allows(ref.decl, ref.value):
+			continue
+		match FlowTarget.kind(ref.value):
+			"content":
+				if ref.decl.get("contentMapContext") == "inherit":
+					targets.append(ref.value)
+			"view":
+				if include_views and ref.decl.get("viewMapContext") == "inherit":
+					targets.append(ref.value)
 	return targets
 
 static func _collect_module_fields(fields: GDScript, manifest: Dictionary, decls: Array,

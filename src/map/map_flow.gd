@@ -31,6 +31,9 @@ static func declaration_issues(manifest: Dictionary) -> Array[Dictionary]:
 					or decl.get("contentTypes", []).is_empty()):
 				result.append({"path": path + ".contentMapContext", "severity": "error",
 					"message": "must be independent or inherit on a slot that accepts content"})
+			elif decl.has("viewMapContext") and (decl.viewMapContext != "inherit" or decl.get("screens") != true):
+				result.append({"path": path + ".viewMapContext", "severity": "error",
+					"message": "inherit requires an output that accepts screens"})
 	return result
 
 static func scoped_content(manifest: Dictionary, data: Dictionary) -> Array[Dictionary]:

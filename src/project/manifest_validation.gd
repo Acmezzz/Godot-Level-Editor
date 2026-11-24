@@ -785,6 +785,9 @@ static func _check_condition_fields(fields: Variant, path: String, conditions: D
 						and sibling.get("source") == "layer:" and not bool(sibling.get("multiple", false)) \
 						and sibling.get("mapField", "") == fd.get("mapField", "")):
 					_add(issues, "error", child + ".layerField", "must name a single layer: choice in the same row with the same mapField")
+		if fd.has("viewMapContext") and (fd.viewMapContext != "inherit" or fd.get("screens") != true \
+				or fd.get("kind") != "input" or (fd.get("type") != "flow_target" and not flow_list)):
+			_add(issues, "error", child + ".viewMapContext", "inherit requires a flow_target that permits screens")
 		if fd.has("contentMapContext"):
 			var mode = fd.contentMapContext
 			var at := child + ".contentMapContext"
@@ -954,11 +957,18 @@ static func _validate_screen_modules(data: Dictionary, issues: Array[Dictionary]
 		if outputs is Dictionary:
 			for output in outputs:
 				var spec = outputs[output]
-				if spec is Dictionary and (spec.has("contentMapContext") or spec.has("mapField")):
-					if spec.get("contentMapContext") != "paired" or not spec.get("contentTypes") is Array \
-							or spec.contentTypes.is_empty() or not _module_map_field(fields, spec.get("mapField")):
+				if not spec is Dictionary:
+					continue
+				var at := path + ".outputs." + str(output)
+				if spec.has("contentMapContext") or spec.has("mapField"):
+					var mode = spec.get("contentMapContext")
+					if mode not in ["inherit", "paired"] or not spec.get("contentTypes") is Array \
+							or spec.contentTypes.is_empty() or (mode == "paired" and not _module_map_field(fields, spec.get("mapField"))) \
+							or (mode == "inherit" and spec.has("mapField")):
 						_add(issues, "error", path + ".outputs." + str(output),
-							"paired content context requires contentTypes and a single map choice in mapField")
+							"inherit or paired requires contentTypes; paired also needs a single map choice in mapField")
+				if spec.has("viewMapContext") and (spec.viewMapContext != "inherit" or spec.get("screens") != true):
+					_add(issues, "error", at + ".viewMapContext", "inherit requires an output that accepts screens")
 		var seen := {}
 		for i in fields.size():
 			var field = fields[i]

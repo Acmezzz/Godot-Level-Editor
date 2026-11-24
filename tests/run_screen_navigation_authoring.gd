@@ -38,7 +38,7 @@ func run() -> void:
 		"startup": {"screens": true, "arrivalPorts": ["arrival"], "contentTypes": ["sequence"],
 			"contentMapContext": "paired"}, "viewports": [{"id": "handheld", "w": 480, "h": 720}],
 		"mapOutputs": {"completed": {"name": "Course completed",
-			"maps": true, "screens": true, "contentTypes": ["signal"], "arrivalPorts": ["arrival"]},
+			"maps": true, "screens": true, "viewMapContext": "inherit", "contentTypes": ["signal"], "arrivalPorts": ["arrival"]},
 			"retry": {"name": "Retry the course", "arrivalPorts": ["arrival"]}},
 		"mapContentSlots": {"round": {"name": "Round rules",
 			"contentTypes": ["round_rules"], "contentMapContext": "inherit"},
@@ -52,8 +52,9 @@ func run() -> void:
 				{"id": "crossing", "kind": "input", "type": "edge_ref"},
 				{"id": "checkpoint", "kind": "input", "type": "edge_ref"}]},
 			"map-debrief": {"outputs": {"accepted": {"name": "Debrief", "contentTypes": ["sequence"],
-				"contentMapContext": "paired", "mapField": "board"}},
-				"fields": [{"id": "board", "kind": "choice", "source": "map"}]},
+				"contentMapContext": "inherit"}}},
+			"map-results": {"outputs": {"accepted": {"name": "Continue", "contentTypes": ["course_rules"],
+				"contentMapContext": "inherit"}}},
 			"signal-latch": {"name": "Latch", "outputs": {"accepted": {"name": "Continue", "screens": true}}, "fields": [
 			{"id": "presses", "kind": "input", "type": "int", "min": 1, "default": 1}]}},
 		"functions": {"course_rules": {"code": "CRUL", "name": "Course rules", "fields": [
@@ -66,7 +67,7 @@ func run() -> void:
 			{"id": "elevation", "code": "ELEV", "kind": "input", "type": "curve",
 				"default": [{"time": 0, "value": 0}]},
 			{"id": "next", "code": "CNXT", "kind": "input", "type": "flow_target",
-				"maps": true, "screens": true, "contentTypes": ["signal"]}]},
+				"maps": true, "screens": true, "viewMapContext": "inherit", "contentTypes": ["signal"]}]},
 			"sequence": {"code": "SEQN", "name": "Sequence", "steps": true, "fields": [
 				{"id": "host", "code": "DHST", "kind": "choice", "source": "entity_inst:relay"}]},
 			"round_rules": {"code": "ROND", "name": "Round rules", "fields": [
@@ -172,7 +173,7 @@ func run() -> void:
 	press(form, "保存")
 	form.hide()
 	var host_target := {"function": "round_host", "content": "project-relay-host"}
-	await add_screen("results", "Play a procedural course", {}, rules)
+	await add_screen("results", "Play a procedural course", {"module": "map-results"}, rules)
 	app._set_mode("map")
 	Generator.open(app)
 	var create := popup()
@@ -448,7 +449,7 @@ func run() -> void:
 	choose(field_control(form, "host"), copy_host)
 	press(form, "保存")
 	form.hide()
-	await add_screen("debrief", "Read results", {"module": "map-debrief", "board": copy_code}, timeline_target)
+	await add_screen("debrief", "Read results", {"module": "map-debrief"}, timeline_target)
 	app.project_shell.content_editor._library.open()
 	press(popup(), "流程关系…")
 	await process_frame
@@ -492,13 +493,9 @@ func run() -> void:
 		"BRD1": map_code, "ROUT": route},
 		"the timeline keeps the paired map and the graph-authored destinations in order")
 	var findings := Audit.audit(manifest)
-	check(not findings.any(func(issue): return issue.path.begins_with("sequence/project-epilogue.host")),
-		"the screen outlet resolves the debrief host against the module's paired map")
-	var wrong_board := manifest.duplicate(true)
-	var debrief: Dictionary = wrong_board.views.filter(func(view): return view.view_id == "debrief")[0]
-	debrief.layout.elements[0].props.board = map_code
-	check(Audit.audit(wrong_board).any(func(issue): return issue.path.begins_with("sequence/project-epilogue.host")),
-		"changing the outlet's paired map makes the copied host unresolved")
+	var host_issues := findings.filter(func(issue): return issue.path.begins_with("sequence/project-epilogue.host"))
+	check(host_issues.size() == 1 and host_issues[0].map == "course",
+		"the same results chain resolves the host on the copy and flags it only on the original board")
 	check(not findings.any(func(issue): return issue.get("path", "").begins_with("round_host/")),
 		"the bound rules validate their local host against the owning map")
 	check(not findings.any(func(issue): return issue.get("path", "").begins_with("signal/project-finished.actor")),
@@ -770,8 +767,6 @@ func add_screen(id: String, label: String, module: Dictionary, target: Dictionar
 	caption.text_changed.emit(label)
 	if module.get("module") == "signal-latch":
 		pop.find_child("LayoutModuleField_presses", true, false).value = 2
-	if module.has("board"):
-		choose(pop.find_child("LayoutModuleField_board", true, false), module.board)
 	if module.get("module") == "course-door":
 		var marker: Control = pop.find_child("LayoutModuleField_marker", true, false)
 		var map: OptionButton = marker.find_child("ReferenceTargetMap", true, false)

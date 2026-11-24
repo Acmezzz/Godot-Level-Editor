@@ -49,7 +49,7 @@ func _ready() -> void:
 
 func _follow_target(target: Dictionary, content_board := "") -> void:
 	if target.has("view"):
-		_show_view(target.view)
+		_show_view(target.view, false, content_board)
 	elif target.has("map"):
 		_show_map_target(target)
 	else:
@@ -116,7 +116,9 @@ func _show_map_target(destination: Dictionary) -> void:
 				entered_board.roundInputs += 1
 				leave.text = "Finish course (%d/%d)" % [entered_board.roundInputs, required]
 				if entered_board.roundInputs == required:
-					_follow_target.call_deferred(exit_target))
+					var output: Dictionary = manifest.get("mapOutputs", {}).get("completed", {})
+					var board := code if exit_target.has("view") and output.get("viewMapContext") == "inherit" else ""
+					_follow_target.call_deferred(exit_target, board))
 			if verify:
 				await _verify_button(leave)
 			return
@@ -200,7 +202,10 @@ func _show_content(target: Dictionary, content_board: String) -> void:
 		next_button.text = "Finish procedural course"
 		next_button.position = Vector2(16, 16)
 		add_child(next_button)
-		next_button.pressed.connect(func(): _follow_target.call_deferred(fields.CNXT))
+		next_button.pressed.connect(func():
+			var spec: Dictionary = manifest.functions.course_rules.fields.filter(func(row): return row.id == "next")[0]
+			var board := content_board if fields.CNXT.has("view") and spec.get("viewMapContext") == "inherit" else ""
+			_follow_target.call_deferred(fields.CNXT, board))
 		if verify:
 			await _verify_button(next_button)
 		return
@@ -234,7 +239,7 @@ func _clear_screen() -> void:
 		remove_child(child)
 		child.queue_free()
 
-func _show_view(view_id: String, test_cancel := false) -> void:
+func _show_view(view_id: String, test_cancel := false, content_board := "") -> void:
 	for view in manifest.get("views", []):
 		if view.view_id != view_id:
 			continue
@@ -243,7 +248,7 @@ func _show_view(view_id: String, test_cancel := false) -> void:
 		screens.append(view_id)
 		var extent := draft_extent if view_id == draft_view else size
 		var profile := draft_profile if view_id == draft_view else _viewport_profile(extent)
-		var buttons := _draw_screen(self, view.layout, extent, draft_locale, profile)
+		var buttons := _draw_screen(self, view.layout, extent, draft_locale, profile, content_board)
 		screen_frames.append({"id": profile, "size": [extent.x, extent.y]})
 		if verify:
 			if buttons.is_empty() or screens.size() > 8:
@@ -286,7 +291,8 @@ func _viewport_profile(extent: Vector2) -> String:
 			return profile.id
 	return ""
 
-func _draw_screen(parent: Node, layout: Dictionary, extent: Vector2, locale: String, profile: String) -> Array[Button]:
+func _draw_screen(parent: Node, layout: Dictionary, extent: Vector2, locale: String, profile: String,
+		content_board := "") -> Array[Button]:
 	var background := ColorRect.new()
 	background.color = Color("#10232b")
 	background.size = extent
@@ -329,8 +335,11 @@ func _draw_screen(parent: Node, layout: Dictionary, extent: Vector2, locale: Str
 							runtime_course["screenCheckpoint"] = row.get("props", {}).get("checkpoint", {})
 						opened_buttons.append(button.text)
 						var spec = manifest.get("screenModules", {}).get(row.get("module", ""), {}).get("outputs", {}).get("accepted")
-						var board := "" if not spec is Dictionary or spec.get("contentMapContext") != "paired" \
-							else str(row.get("props", {}).get(spec.mapField, ""))
+						var board := ""
+						if spec is Dictionary and not target.has("map"):
+							match spec.get("viewMapContext" if target.has("view") else "contentMapContext"):
+								"inherit": board = content_board
+								"paired": board = str(row.get("props", {}).get(spec.mapField, ""))
 						_follow_target.call_deferred(target, board))
 					buttons.append(button)
 				item = button

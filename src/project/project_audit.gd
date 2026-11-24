@@ -705,11 +705,11 @@ static func content_link_paths(manifest: Dictionary, source_fn: String, data: Di
 	return out
 
 static func _content_links(manifest: Dictionary, source_fn: String, data: Dictionary,
-		findings: Array = []) -> Array:
+		findings: Array = [], include_views := false) -> Array:
 	var out: Array = []
 	for section in _content_sections(manifest, source_fn, data):
 		_collect_content_links(manifest, section.decls, section.values, source_fn, section.prefix, out, findings, section.step_index)
-	return out
+	return out if include_views else out.filter(func(link): return link.fn != "@view")
 
 static func _content_sections(manifest: Dictionary, fn: String, data: Dictionary) -> Array:
 	var decls := FunctionDecls.function_fields(manifest, fn).duplicate()
@@ -737,6 +737,9 @@ static func _collect_spatial_contexts(manifest: Dictionary, data: Dictionary, na
 	var context_label := label if label != "" else name
 	for ref in MapFlow.scoped_content(manifest, data):
 		_add_map_context(contexts, _content_key(ref.value.function, ref.value.content), data, name, context_label)
+	for ref in MapFlow.references(manifest, data):
+		if ref.decl.get("viewMapContext") == "inherit" and ScreenLayout.view_target(ref.value):
+			_add_map_context(contexts, _content_key("@view", ref.value.view), data, name, context_label)
 	var objects = data.get("objects", [])
 	if not objects is Array:
 		return
@@ -744,8 +747,9 @@ static func _collect_spatial_contexts(manifest: Dictionary, data: Dictionary, na
 		if not obj is Dictionary or not obj.get("functions", []) is Array:
 			continue
 		for target in ReferenceIndex.inherited_property_targets(manifest,
-				_fields_of(manifest, obj.get("asset", "")), obj.get("props", {})):
-			_add_map_context(contexts, _content_key(target.function, target.content), data, name, context_label)
+				_fields_of(manifest, obj.get("asset", "")), obj.get("props", {}), true):
+			var key := _content_key("@view", target.view) if target.has("view") else _content_key(target.function, target.content)
+			_add_map_context(contexts, key, data, name, context_label)
 		for binding in obj.get("functions", []):
 			if not binding is Dictionary:
 				continue
@@ -804,13 +808,29 @@ static func _contextual_content_checks(manifest: Dictionary, fn: String, cid: St
 					"jump": _content_jump(fn, cid, issue.prop, context.name, section.step_index) if prefix == "" else {}})
 	return out
 
-## 传播状态由 (功能, 内容, 入口, 当前地图) 唯一确定。分支只传地图，不替游戏计算条件；
+static func _screen_context_links(manifest: Dictionary) -> Dictionary:
+	var links := {}
+	for ref in ReferenceIndex.view_transition_refs(manifest):
+		if ref.get("domains", {}).get("viewMapContext") == "inherit":
+			_append_screen_context_link(links, ref.view, "@view", ref.target.view)
+	for ref in ReferenceIndex.view_content_refs(manifest):
+		if ref.get("domains", {}).get("contentMapContext") == "inherit":
+			_append_screen_context_link(links, ref.view, ref.fn, ref.cid)
+	return links
+
+static func _append_screen_context_link(links: Dictionary, view: String, fn: String, cid: String) -> void:
+	var key := _content_key("@view", view)
+	if not links.has(key):
+		links[key] = []
+	links[key].append({"fn": fn, "cid": cid, "map_context": "inherit"})
+
+## 传播状态由 (内容或屏幕, 入口, 当前地图) 唯一确定。分支只传地图，不替游戏计算条件；
 ## 循环与汇合都不会反复扫描。rows 是本次评估可见的内容版本，lookup 只用于按需读取副本依赖。
 static func _content_context_graph(manifest: Dictionary, seeds: Dictionary, rows: Dictionary,
 		overrides: Dictionary, lookup := Callable(), include_standalone := true,
 		standalone_keys := []) -> Dictionary:
 	var contexts := {}
-	var links := {}
+	var links := _screen_context_links(manifest)
 	var inbound := {}
 	var queue: Array = []
 	for key in seeds:
@@ -825,11 +845,11 @@ static func _content_context_graph(manifest: Dictionary, seeds: Dictionary, rows
 		cursor += 1
 		var key: String = visit.key
 		if not links.has(key):
-			if not rows.has(key) and lookup.is_valid():
+			if not key.begins_with("@view\u0001") and not rows.has(key) and lookup.is_valid():
 				var parts := key.split("\u0001", true, 1)
 				rows[key] = {"fn_id": parts[0], "cid": parts[1], "data": lookup.call(parts[0], parts[1])}
 			var row: Dictionary = rows.get(key, {})
-			links[key] = _content_links(manifest, row.fn_id, row.data) if not row.is_empty() else []
+			links[key] = _content_links(manifest, row.fn_id, row.data, [], true) if not row.is_empty() else []
 			for link in links[key]:
 				inbound[_content_key(link.fn, link.cid)] = true
 		for link in links[key]:
@@ -1196,6 +1216,8 @@ static func _collect_content_links(manifest: Dictionary, decls: Array, values, s
 						"message": _flow_target_message(target)})
 				if FlowTarget.kind(target) == "content":
 					out.append(_content_link(target.function, target.content, at, field, step_index, fd, decls, values))
+				elif FlowTarget.kind(target) == "view" and fd.get("viewMapContext") == "inherit":
+					out.append({"fn": "@view", "cid": target.view, "map_context": "inherit"})
 			continue
 		if desc.kind == "view":
 			var views := ReferenceIndex.view_ids(manifest)
