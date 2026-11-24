@@ -163,6 +163,7 @@ func _nuke(p: String) -> void:
 
 func test_screen_module_spatial_integrity() -> void:
 	_wipe()
+	DirAccess.make_dir_recursive_absolute(TMP.path_join("content"))
 	var Maps := preload("res://src/map/map_store.gd")
 	var Audit := preload("res://src/project/project_audit.gd")
 	var map := Maps.new_map("Deck", 12, 12)
@@ -187,10 +188,12 @@ func test_screen_module_spatial_integrity() -> void:
 			"layout": {"elements": [{"id": "module", "kind": "module", "module": "relay", "props": {"rules": [row]}}]}}]}
 	ok(Maps.write(m, "Deck", map), "save the map consumed by the screen")
 	eq(Audit.view_reference_issues(m), [], "nested spatial references resolve against the declared default map")
+	var prefix := "views[0].layout.elements[0].props.rules[0]."
+	var other := Maps.new_map("Other", 12, 12)
+	check_module_impacts(m, map, other, row, prefix)
 	row.cell = "missing"
 	row.edge.edge = "1,1|3,1"
 	row.ports[0].port = "missing"
-	var prefix := "views[0].layout.elements[0].props.rules[0]."
 	eq(Audit.view_reference_issues(m).map(func(issue): return issue.path),
 		[prefix + "cell", prefix + "edge", prefix + "ports[0]"], "invalid cells, geometry and ports report their exact locations")
 	row.deck = ""
@@ -199,6 +202,29 @@ func test_screen_module_spatial_integrity() -> void:
 		[prefix + "actor", prefix + "floor", prefix + "cell", prefix + "edge"],
 		"explicitly clearing the sibling does not fall back to an open map; an explicit port map still works")
 	_wipe()
+
+func check_module_impacts(m: Dictionary, map: Dictionary, other: Dictionary, row: Dictionary, prefix: String) -> void:
+	var Maps := preload("res://src/map/map_store.gd")
+	var Audit := preload("res://src/project/project_audit.gd")
+	ok(Maps.write(m, "Other", other), "save unrelated map")
+	var saved: Array = m.views.duplicate(true)
+	var before := map.duplicate(true)
+	var after := map.duplicate(true)
+	after.meta.layers.pop_front()
+	after.meta.cellGraph.cells.clear()
+	after.objects.clear()
+	after.meta.w = 2
+	var issues: Array = Audit.map_change_reference_impacts(m, "Deck", before, after).added
+	eq(issues.map(func(issue): return issue.get_slice("：", 0)),
+		[prefix + "actor", prefix + "floor", prefix + "cell", prefix + "edge", prefix + "ports[0]"],
+		"screen refs are tested against the pending map instead of rereading the saved targets")
+	row.deck = other.meta.code
+	issues = Audit.map_change_reference_impacts(m, "Deck", before, after).added
+	eq(issues.map(func(issue): return issue.get_slice("：", 0)), [prefix + "ports[0]"],
+		"only the explicit port still targets the changed map; already invalid refs are excluded")
+	row.erase("deck")
+	eq(m.views, saved, "preflight does not rewrite screen fields")
+	eq(Maps.read(m, "Deck").meta.w, 12.0, "preflight does not write the map")
 
 func test_same_cell_targets_distinguishable() -> void:
 	_wipe()

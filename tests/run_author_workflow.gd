@@ -2380,11 +2380,22 @@ func author_world_region_move(app, manifest: Dictionary) -> void:
 	check(Store.write(manifest, "ending", "project-region-edge", external_content), "publish a separate edge reference")
 	var external_path := Store.path_for(manifest, "ending", "project-region-edge")
 	var external_digest := Store.file_digest(external_path)
+	var screen_edge := external_edge.duplicate(true)
+	var screen := {"view_id": "region-screen", "layout": {"elements": [{"id": "marker", "kind": "module",
+		"module": "edge-marker", "anchors": [0.1, 0.1, 0.3, 0.3], "props": {"edge": screen_edge}}]}}
+	if not manifest.has("views"):
+		manifest["views"] = []
+	if not manifest.has("screenModules"):
+		manifest["screenModules"] = {}
+	manifest.views.append(screen)
+	manifest.screenModules["edge-marker"] = {"fields": [{"id": "edge", "kind": "input", "type": "edge_ref"}]}
 	input._on_left_press(lower_px, mouse)
 	input._on_left_release(lower_px + step)
 	var retained_dialogs := collect(app, "ConfirmationDialog").filter(func(dialog): return dialog.visible)
 	check(retained_dialogs.size() == 1 and retained_dialogs[0].dialog_text.contains("ending/project-region-edge.arrival_edge")
-		and retained_dialogs[0].dialog_text.contains("0,0|0,1 → 1,0|1,1"), "the move lists the external field and both edge IDs")
+		and retained_dialogs[0].dialog_text.contains("props.edge：参考视图 region-screen")
+		and retained_dialogs[0].dialog_text.contains("0,0|0,1 → 1,0|1,1"),
+		"the move lists the external content and screen fields with both edge IDs")
 	if retained_dialogs.is_empty():
 		return
 	retained_dialogs[0].get_cancel_button().pressed.emit()
@@ -2404,6 +2415,11 @@ func author_world_region_move(app, manifest: Dictionary) -> void:
 	await process_frame
 	check(Store.file_digest(external_path) == external_digest,
 		"confirm keeps the external content file pointing at the old position")
+	check(screen.layout.elements[0].props.edge == external_edge
+		and screen.layout.elements[0].props.edge.edge == "0,0|0,1",
+		"confirm keeps the screen's field pointing at the old position")
+	manifest.views.erase(screen)
+	manifest.screenModules.erase("edge-marker")
 	var move_entry: Variant = cvs._undo_history_ctrl.undo_stack.back()
 	check(cvs.undo_step_count() == steps + 1 and move_entry is Dictionary
 		and move_entry.get("kind") == "region_move" and move_entry.graph_rows.size() == 2

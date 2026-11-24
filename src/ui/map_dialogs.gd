@@ -136,7 +136,7 @@ func apply_map_size(nw: int, nh: int, pop: PopupPanel, proj: String, triangular:
 		if not unreadable.is_empty():
 			msg += "\n\n另有 %d 个文件无法检查。" % unreadable.size()
 		if shrinks:
-			msg += "\n\n引用检查范围：地图、内容与步骤、当前暂存和可恢复草稿中的已声明字段。"
+			msg += "\n\n引用检查范围：地图、屏幕模块、内容与步骤、当前暂存和可恢复草稿中的已声明字段。"
 		msg += "\n\n应用后可用 Ctrl+Z 恢复地图。"
 		pop.hide()
 		var accepted: bool = await app._confirm_action("调整地图边界", msg, "应用尺寸")

@@ -379,7 +379,7 @@ func _confirm_retained_edges(mapper: Callable) -> bool:
 	var msg := "%d 处引用仍指向原位置：\n%s" % [retained.size(), "\n".join(retained.slice(0, 8))]
 	if not incoming.unreadable.is_empty():
 		msg += "\n另有 %d 个文件无法检查。" % incoming.unreadable.size()
-	msg += "\n\n仅更新当前地图的实例引用；清单中的路径和新格边可用于随后修订。"
+	msg += "\n\n仅更新当前地图的实例引用。可按上方字段路径和新格边另行改接。"
 	var revision: int = cvs.map_rev
 	var data: Dictionary = cvs.map_data
 	cvs.doc_busy = true

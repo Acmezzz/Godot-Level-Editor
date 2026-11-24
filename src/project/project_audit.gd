@@ -190,11 +190,9 @@ static func _module_spatial_problem(manifest: Dictionary, ref: Dictionary, asset
 	var object_ref: bool = ref.kind in ["port", "edge"]
 	if object_ref and not value is Dictionary:
 		return "端口和格边引用必须是对象。"
-	if not object_ref and not value is String:
-		return "实例、格和图层引用必须是 ID 字符串。"
 	if object_ref and not value.get("map", "") is String:
 		return "空间引用的地图键必须是字符串。"
-	var key: String = RefFields.object_map_key(value, ref.paired) if object_ref else ref.paired
+	var key := _module_map_key(ref)
 	if key == "":
 		return "屏幕模块没有所属地图，请先选择配对地图。"
 	var resolved := ReferenceIndex.resolve_indexed_map(map_index, key)
@@ -206,6 +204,19 @@ static func _module_spatial_problem(manifest: Dictionary, ref: Dictionary, asset
 	var target: Dictionary = targets[name]
 	if target.is_empty():
 		return "无法读取空间引用的目标地图：" + name
+	return _module_target_problem(manifest, ref, assets, name, target)
+
+static func _module_map_key(ref: Dictionary) -> String:
+	if ref.kind in ["port", "edge"] and ref.value is Dictionary and ref.value.get("map", "") is String:
+		return RefFields.object_map_key(ref.value, ref.paired)
+	return ref.paired if ref.kind in ["entity_inst", "cell", "layer"] else ""
+
+## The caller has already resolved the map; use its supplied snapshot for every check.
+static func _module_target_problem(manifest: Dictionary, ref: Dictionary, assets: Dictionary,
+		name: String, target: Dictionary) -> String:
+	var value = ref.value
+	if ref.kind in ["entity_inst", "cell", "layer"] and not value is String:
+		return "实例、格和图层引用必须是 ID 字符串。"
 	if ref.kind == "entity_inst":
 		for obj in target.get("objects", []):
 			if obj.get("code") != value:
@@ -217,7 +228,8 @@ static func _module_spatial_problem(manifest: Dictionary, ref: Dictionary, asset
 		return "目标地图 %s 中没有符合声明的实例：%s" % [name, value]
 	if ref.kind == "cell" and CellGraphScript.cell_ids(target.get("meta", {}).get("cellGraph", {})).is_empty():
 		return "目标地图 %s 没有可引用的格。" % name
-	var problem := _spatial_problem(manifest, ref.kind, target, name, value, ref.decl, key, {})
+	var key := _module_map_key(ref)
+	var problem := _spatial_problem(manifest, ref.kind, target, name, value, ref.decl, key, {key: target})
 	return str(problem.get("message", ""))
 
 static func _view_issue(ref: Dictionary, message: String) -> Dictionary:
@@ -764,14 +776,31 @@ static func _enqueue_content_context(queue: Array, contexts: Dictionary, key: St
 static func map_change_reference_impacts(manifest: Dictionary, name: String, before: Dictionary,
 		after: Dictionary, staged: Array = []) -> Dictionary:
 	var project := _reference_sources(manifest)
-	var aliases: Array = []
-	for key in [name, str(before.get("meta", {}).get("code", ""))]:
-		var resolved := ReferenceIndex.resolve_indexed_map(project.index, key)
-		if resolved.status == "ok" and resolved.key == name:
-			aliases.append(key)
+	var aliases := _resolved_map_aliases(project.index, name, before)
 	var old := _map_change_issues(manifest, name, before, after, project.maps, project.targets, aliases, project.contents, project.drafts, staged)
 	var next := _map_change_issues(manifest, name, after, after, project.maps, project.targets, aliases, project.contents, project.drafts, staged)
+	var assets := AssetDecl.all(manifest)
+	for ref in _module_refs_to_map(manifest, aliases):
+		var old_problem := _module_target_problem(manifest, ref, assets, name, before)
+		if old_problem != "":
+			continue
+		var problem := _module_target_problem(manifest, ref, assets, name, after)
+		if problem != "":
+			next.append(_view_issue(ref, problem))
 	return {"added": _new_reference_messages(old, next), "unreadable": project.unreadable}
+
+static func _resolved_map_aliases(index: Dictionary, name: String, data: Dictionary) -> Array:
+	var aliases := []
+	for key in [name, str(data.get("meta", {}).get("code", ""))]:
+		var resolved := ReferenceIndex.resolve_indexed_map(index, key)
+		if resolved.status == "ok" and resolved.key == name:
+			aliases.append(key)
+	return aliases
+
+static func _module_refs_to_map(manifest: Dictionary, aliases: Array) -> Array:
+	if aliases.is_empty():
+		return []
+	return ReferenceIndex.view_module_refs(manifest).filter(func(ref): return _module_map_key(ref) in aliases)
 
 static func retained_region_edge_refs(manifest: Dictionary, name: String, live: Dictionary,
 		mapper: Callable, staged: Array) -> Dictionary:
@@ -792,6 +821,10 @@ static func retained_region_edge_refs(manifest: Dictionary, name: String, live: 
 		return {"message": "%s → %s" % [value.edge, moved.edge], "fixable": false}
 	var issues := _map_change_issues(manifest, name, live, live, project.maps, project.targets,
 		[name, code], project.contents, project.drafts, staged, probe)
+	for ref in _module_refs_to_map(manifest, _resolved_map_aliases(project.index, name, live)):
+		var finding := probe.call(ref.kind, ref.value, live, name, ref.paired) as Dictionary
+		if not finding.is_empty():
+			issues.append(_view_issue(ref, finding.message))
 	return {"retained": _new_reference_messages([], issues), "unreadable": project.unreadable}
 
 static func _reference_sources(manifest: Dictionary) -> Dictionary:
