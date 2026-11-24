@@ -6,6 +6,9 @@ const GRID_KEYS := ["gridProjection", "gridTopology", "gridBasis"]
 const SPACE_META := ["gridProjection", "gridTopology", "gridBasis", "w", "h", "layers", "cellGraph"]
 const SPACE_ROWS := ["tiles", "collision", "objects", "spawn"]
 const SHAPE_PROPS := ["points", "holes", "parts"]
+const AssetDecl := preload("res://src/assets/asset_decl.gd")
+const RefFields := preload("res://src/content/ref_fields.gd")
+const Conditions := preload("res://src/content/condition_decl.gd")
 
 static func origin(map: Dictionary) -> Dictionary:
 	var meta: Dictionary = map.get("meta", {})
@@ -23,7 +26,7 @@ static func attach(map: Dictionary, generated: Dictionary, generator: String, pa
 	map.meta[KEY] = {"version": 1, "owner": map.meta.code, "generator": generator,
 		"parameters": parameters.duplicate(true), "base": base}
 
-static func plan(previous: Dictionary, authored: Dictionary, generated: Dictionary, choices := {}) -> Dictionary:
+static func plan(previous: Dictionary, authored: Dictionary, generated: Dictionary, choices := {}, manifest := {}) -> Dictionary:
 	var baseline := _normalized(previous, authored.meta.name)
 	var current := _normalized(authored, authored.meta.name)
 	var incoming := _normalized(generated, authored.meta.name)
@@ -39,8 +42,13 @@ static func plan(previous: Dictionary, authored: Dictionary, generated: Dictiona
 			return {"map": current, "conflicts": state.conflicts}
 		var placements: Array = space.objects
 		var shared := _shared_instances(baseline.objects, current.objects, incoming.objects)
+		var spatial_fields := {}
+		for row in placements:
+			if shared.has(row.get("code", "")) and not spatial_fields.has(row.asset):
+				var fields: Array = AssetDecl.by_id(manifest, row.asset).get("fields", [])
+				spatial_fields[row.asset] = SHAPE_PROPS + _spatial_keys(manifest, fields)
 		for map in [baseline, current, incoming]:
-			_use_space(map, space, placements, shared)
+			_use_space(map, space, placements, shared, spatial_fields)
 	var result: Dictionary = _merge(baseline, current, incoming, "", state)
 	return {"map": result, "conflicts": state.conflicts}
 
@@ -79,7 +87,28 @@ static func _instances_by_code(rows: Array) -> Dictionary:
 			indexed[code] = row
 	return indexed
 
-static func _use_space(map: Dictionary, from: Dictionary, placements: Array, shared: Dictionary) -> void:
+static func _spatial_keys(manifest: Dictionary, fields: Array) -> Array:
+	var keys := []
+	for field in fields:
+		var local: bool = field.get("pickSpace", "") in ["map", "layer"] \
+			or RefFields.describe(field).kind in ["cell", "edge", "layer"]
+		if field.get("type") == "array":
+			match field.get("of", ""):
+				"record":
+					local = not _spatial_keys(manifest, field.get("fields", [])).is_empty()
+				"condition":
+					for id in field.get("allowedConditions", []):
+						if not _spatial_keys(manifest, Conditions.condition_decl(manifest, id).get("fields", [])).is_empty():
+							local = true
+							break
+		if local:
+			keys.append(field.id)
+			for pair in ["mapField", "layerField"]:
+				if field.has(pair):
+					keys.append(field[pair])
+	return keys
+
+static func _use_space(map: Dictionary, from: Dictionary, placements: Array, shared: Dictionary, spatial_fields: Dictionary) -> void:
 	for key in SPACE_META:
 		if from.meta.has(key):
 			map.meta[key] = from.meta[key]
@@ -98,7 +127,7 @@ static func _use_space(map: Dictionary, from: Dictionary, placements: Array, sha
 		var settings: Dictionary = originals[code]
 		var props: Dictionary = settings.get("props", {}).duplicate()
 		var shape: Dictionary = placement.get("props", {})
-		for key in SHAPE_PROPS:
+		for key in spatial_fields[row.asset]:
 			props.erase(key)
 			if shape.has(key):
 				props[key] = shape[key]

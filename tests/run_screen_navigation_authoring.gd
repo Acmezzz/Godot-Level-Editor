@@ -31,6 +31,7 @@ func run() -> void:
 			"ports": [{"id": "door", "x": 0, "y": 0, "type": "arrival"}, {"id": "wire", "x": 4, "y": 0, "type": "signal"}],
 			"fields": [{"id": "exit_target", "kind": "input", "type": "flow_target",
 				"maps": true, "screens": true, "contentTypes": ["signal"], "arrivalPorts": ["arrival"]},
+				{"id": "landing", "kind": "input", "type": "vector2", "pickSpace": "map", "step": 1},
 				{"id": "local_signal", "kind": "input", "type": "flow_target",
 					"contentTypes": ["signal"], "contentMapContext": "inherit"}]}],
 		"startup": {"screens": true}, "viewports": [{"id": "handheld", "w": 480, "h": 720}],
@@ -253,7 +254,13 @@ func run() -> void:
 	app._set_mode("content", pawn_code)
 	exit_picker = app.project_shell.content_editor.root.find_child("InstanceValue_exit_target", true, false)
 	choose(exit_picker, JSON.stringify({"view": "results"}))
+	var landing: Node = app.project_shell.content_editor.root.find_child("InstanceValue_landing", true, false)
+	var coordinates := collect(landing, "SpinBox")
+	coordinates[0].value = 71
+	coordinates[1].value = 32
 	app.project_shell.content_editor.commit_fields()
+	var authored_landing: Array = canvas._ent_by_code_index()[pawn_code].props.get("landing", [])
+	check(authored_landing == [71.0, 32.0], "author a point in the old map space: %s" % [authored_landing])
 	app._set_mode("map")
 	check(canvas.set_spawn_cell(Vector2i(4, 4)), "author a competing spawn move")
 	Generator.open(app, true)
@@ -275,8 +282,9 @@ func run() -> void:
 	check(regenerated.meta.gridProjection == "isometric" and regenerated.spawn == [1, 2]
 		and regenerated.meta.flowOutputs.completed == {"view": "results"}
 		and regenerated.meta.contentSlots.round == round_target
-		and regenerated.objects[0].props.get("exit_target") == {"view": "results"},
-		"adopt generated geometry without erasing the map or instance outlets")
+		and regenerated.objects[0].props.get("exit_target") == {"view": "results"}
+		and Array(regenerated.objects[0].props.get("landing", [])).map(func(n): return int(n)) == [16, 48],
+		"adopt generated geometry without erasing the map or instance outlets: %s" % [regenerated.objects[0]])
 	published = await app._map_file_ctrl.commit_document("保存重生成的地图和实例出口")
 	check(published.get("status") == "ok" and Maps.read(manifest, "course").objects[0].props.exit_target == {"view": "results"},
 		"the kept instance outlet is published with the new projection")

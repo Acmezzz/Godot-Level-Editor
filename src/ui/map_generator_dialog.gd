@@ -252,7 +252,7 @@ func _run() -> void:
 	var candidate := {"name": name_, "manifest": public, "generation": generation, "revision": revision,
 		"generated": map, "generator": id, "parameters": params, "warnings": decoded.warnings}
 	if regenerate:
-		var plan := Merge.plan(_origin.base, live, map)
+		var plan := Merge.plan(_origin.base, live, map, {}, _source)
 		var conflicts: Array = plan.conflicts
 		if not conflicts.is_empty():
 			_merge_input = {"candidate": candidate, "live": live, "count": conflicts.size()}
@@ -326,7 +326,7 @@ func _choose(index: int, path: String) -> void:
 	if session.stale(candidate.generation) or session.revision != candidate.revision:
 		_status.text = "地图已变动，请重新生成。"
 		return
-	var plan := Merge.plan(_origin.base, _merge_input.live, candidate.generated, _choices)
+	var plan := Merge.plan(_origin.base, _merge_input.live, candidate.generated, _choices, _source)
 	if plan.conflicts.is_empty():
 		_prepare_candidate(candidate, plan.map)
 	else:
