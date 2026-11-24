@@ -1158,24 +1158,7 @@ func _steps_time_row(arr: Array, tok: Dictionary) -> Control:
 	at_edit.placeholder_text = "随前序"
 	at_edit.text = _num_text(st.get("at", null)) if has_at else ""
 	at_edit.tooltip_text = "留空 = 随前序（接着上一阻塞步骤结束）；填 0 = 从零开始"
-	var rev_at := _steps_rev
-	var at_base := at_edit.text
-	at_edit.text_submitted.connect(func(t: String):
-		if rev_at != _steps_rev:
-			return
-		if t.strip_edges() == "":
-			_apply_time_patch(tok, {}, ["at"])   # 清起点 = 恢复「随前序」
-		else:
-			_apply_time_patch(tok, {"at": maxf(t.to_float(), 0.0)}, []))
-	at_edit.focus_exited.connect(func():
-		# 只是把焦点移走（没改内容）不该写盘：显示文本与起手文本一致就不再回写，
-		# 否则显示精度会把已存值截断（V4 P1）
-		if rev_at != _steps_rev or at_edit.text == at_base:
-			return
-		if at_edit.text.strip_edges() == "":
-			_apply_time_patch(tok, {}, ["at"])
-		else:
-			_apply_time_patch(tok, {"at": maxf(at_edit.text.to_float(), 0.0)}, []))
+	_bind_time_input(at_edit, tok, "at")
 	row.add_child(Kit.text_label("起点", Th.TEXT_DIM, Th.FS_META))
 	row.add_child(at_edit)
 	# 时长
@@ -1183,16 +1166,7 @@ func _steps_time_row(arr: Array, tok: Dictionary) -> Control:
 	dur_edit.custom_minimum_size = Vector2(64, 0)
 	dur_edit.text = _num_text(eff.get("duration", 0.0))
 	dur_edit.tooltip_text = "持续时长；0 = 瞬发（不占时）"
-	var rev_dur := _steps_rev
-	var dur_base := dur_edit.text
-	dur_edit.text_submitted.connect(func(t: String):
-		if rev_dur != _steps_rev:
-			return
-		_apply_time_patch(tok, {"duration": maxf(t.to_float(), 0.0)}, []))
-	dur_edit.focus_exited.connect(func():
-		if rev_dur != _steps_rev or dur_edit.text == dur_base:
-			return
-		_apply_time_patch(tok, {"duration": maxf(dur_edit.text.to_float(), 0.0)}, []))
+	_bind_time_input(dur_edit, tok, "duration")
 	row.add_child(Kit.text_label("时长", Th.TEXT_DIM, Th.FS_META))
 	row.add_child(dur_edit)
 	# 轨号
@@ -1373,6 +1347,24 @@ static func _num_text(v) -> String:
 		return str(int(f))
 	# 四位小数去尾零，不用两位：两位会把 1.234 显示成 1.23，失焦回写就把真实值截断了（V4 P1）
 	return ("%.4f" % f).rstrip("0").rstrip(".")
+
+func _bind_time_input(edit: LineEdit, tok: Dictionary, key: String) -> void:
+	var rev := _steps_rev
+	var initial := edit.text
+	var commit := func(text: String):
+		if rev != _steps_rev or text.strip_edges() == initial:
+			return
+		var value := text.strip_edges()
+		if key == "at" and value.is_empty():
+			_apply_time_patch(tok, {}, [key])
+			return
+		if not value.is_valid_float() or not is_finite(value.to_float()):
+			edit.text = initial
+			app._set_status("请输入有效的时间数值")
+			return
+		_apply_time_patch(tok, {key: maxf(value.to_float(), 0.0)}, [])
+	edit.text_submitted.connect(commit)
+	edit.focus_exited.connect(func(): commit.call(edit.text))
 
 ## 表单的时间编辑：与时间轴同一个补丁入口（StepTimeline.apply_patch + 同一写回）。
 ## tok 持有展示快照，顺序和正文仍匹配时才使用其中的下标。

@@ -90,6 +90,55 @@ func create_ending(app, library, id: String, message: String, map_context := "",
 	pop.hide()
 	await process_frame
 
+func time_edit(pop: PopupPanel, field: String, value: String, submit := true) -> void:
+	for button in collect(pop, "Button"):
+		if str(button.text).begins_with("▸ 时间与轨道"):
+			button.pressed.emit()
+			break
+	var editor: LineEdit
+	for item in collect(pop, "LineEdit"):
+		if item.is_visible_in_tree() and (item.placeholder_text == "随前序") == (field == "at"):
+			editor = item
+			break
+	check(editor != null, "time field is visible: " + field)
+	if editor == null:
+		return
+	editor.text = value
+	if submit:
+		editor.text_submitted.emit(value)
+	else:
+		editor.focus_exited.emit()
+
+func author_timed_sequence(app, ce, fn_id: String, start: String, duration: String) -> void:
+	ce._library.open()
+	var pop: PopupPanel = collect(app, "PopupPanel").filter(func(p): return p.visible).back()
+	select_metadata(collect(pop, "OptionButton").front(), fn_id)
+	press(pop, "新建…")
+	await process_frame
+	pop = collect(app, "PopupPanel").filter(func(p): return p.visible).back()
+	var inputs := collect(pop, "LineEdit")
+	inputs[0].text = fn_id
+	inputs[1].text = "timing"
+	if fn_id == "frame_sequence":
+		collect(pop, "SpinBox").front().value = 24
+	press(pop, "保存并编辑演出")
+	await process_frame
+	pop = ce._steps._steps_pop
+	ce._steps._steps_add("MARK")
+	time_edit(pop, "at", start)
+	time_edit(pop, "duration", duration, false)
+	time_edit(pop, "at", "not a number")
+	time_edit(pop, "duration", "1e999", false)
+	if fn_id == "second_sequence":
+		time_edit(pop, "at", "0.1235")
+	ce._steps._steps_add("MARK")
+	time_edit(pop, "at", "0")
+	time_edit(pop, "at", "", false)
+	ce._steps._steps_add("MARK")
+	time_edit(pop, "at", "0")
+	pop.hide()
+	await process_frame
+
 func message_for_binding(form: Control, value: String) -> void:
 	var editor: LineEdit = collect(form, "LineEdit").back()
 	editor.text = value
@@ -196,6 +245,9 @@ func run():
 			{"id": "cost", "kind": "input", "type": "int", "min": 1, "default": 9}]}},
 		"functions": {"reaction": {"name":"Reaction", "code":"REAC", "repeatable":true,
 			"triggers":["touch", "leave"], "fields":[{"id":"message","code":"RMES","kind":"input","type":"string"}]},
+			"frame_sequence": {"name":"Frame Sequence", "code":"FSEQ", "steps":true, "timebase":"frames",
+				"timePreview":{"fpsField":"fps"}, "fields":[{"id":"fps","code":"FPS1","kind":"input","type":"int","min":1}]},
+			"second_sequence": {"name":"Second Sequence", "code":"SSEQ", "steps":true},
 			"campaign": {"name": "Campaign", "code": "FLOW", "steps": true, "timebase":"beats",
 			"timePreview":{"audioField":"music","offsetField":"offset","tempoStep":"tempo","bpmField":"bpm"},
 			"fields": [
@@ -214,7 +266,8 @@ func run():
 			"on_lane":{"name":"On Lane","fields":[
 			{"id":"lane","code":"LANE","kind":"input","type":"int","min":1}]}},
 		"audio": {"rhythm": {"name":"Rhythm", "code":"AUD1", "path":"rhythm.wav"}},
-		"steps": {"tempo": {"name":"Tempo","code":"TMPO","fields":[
+		"steps": {"marker": {"name":"Mark","code":"MARK"},
+			"tempo": {"name":"Tempo","code":"TMPO","fields":[
 			{"id":"bpm","code":"BPM1","kind":"input","type":"int","min":1}]},
 			"advance": {"name": "Advance", "code": "NEXT", "fields": [
 			{"id":"routes", "code":"BRCH", "name":"Branches", "kind":"input","type":"array","of":"record","fields":[
@@ -376,6 +429,15 @@ func run():
 	await create_ending(app, ce._library, "arrive", "Reached the ending", str(flow_map.meta.code), "EXIT")
 	await create_ending(app, ce._library, "finish", "Reached the ending", "", "", "project-arrive")
 	await create_ending(app, ce._library, "retry", "Try again")
+	await author_timed_sequence(app, ce, "frame_sequence", "11.6", "5.8")
+	await author_timed_sequence(app, ce, "second_sequence", "0.123456", "0.234567")
+	var frame_steps: Array = Store.read(manifest, "frame_sequence", "project-timing").get("steps", [])
+	var second_steps: Array = Store.read(manifest, "second_sequence", "project-timing").get("steps", [])
+	check(frame_steps.size() == 3 and frame_steps[0].get("at") == 12 and frame_steps[0].get("duration") == 6
+		and not frame_steps[1].has("at") and frame_steps[2].get("at") == 0,
+		"frame inputs snap, invalid edits do not write, and blank start differs from explicit zero")
+	check(second_steps.size() == 3 and second_steps[0].get("at") == 0.123456
+		and second_steps[0].get("duration") == 0.234567, "manual seconds retain time precision")
 	var arrival := Store.read(manifest, "ending", "project-arrive")
 	check(arrival.get("fields", {}).get("GOAL") == "EXIT" and not arrival.has("map")
 		and not arrival.fields.has("DMAP"), "temporary map exposes the local instance without pinning the saved reference")
@@ -570,6 +632,13 @@ func run():
 		"independent runtime hits the authored bottom-anchored button in two viewport sizes")
 	check(entry_report.get("result", {}).get("flowGoal") == {"map": flow_map.meta.code, "inst": "EXIT"},
 		"the independent game enters the branch map, inherits it on the next hop and resolves the authored instance")
+	var schedules: Dictionary = entry_report.get("result", {}).get("schedules", {})
+	check(schedules.get("frame_sequence") == [[0.5, 0.75], [0.75, 0.75], [0.0, 0.0]],
+		"independent game schedules frame steps at the declared content frame rate")
+	var seconds: Array = schedules.get("second_sequence", [])
+	check(seconds.size() == 3 and is_equal_approx(seconds[0][0], 0.123456)
+		and is_equal_approx(seconds[0][1], 0.358023) and seconds[1][0] == seconds[0][1]
+		and seconds[2] == [0.0, 0.0], "independent game schedules seconds and resolves implicit and explicit starts")
 	check(entry_report.get("result", {}).get("screenFocus") == {"start": menu_id, "next": continue_id, "content": "project-finish",
 		"localized": "Continuer", "fallback": "Continue"},
 		"independent game resolves the author-defined directional route and consumes its target")

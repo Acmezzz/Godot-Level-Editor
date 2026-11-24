@@ -139,7 +139,9 @@ func _ready() -> void:
 			_fail("Campaign, screen position, or first step is invalid")
 			return
 		_report("ready", "", {"caption": _caption, "step": _next_step, "ending": _ending, "missEnding": _miss_ending, "cueSec": _cue_seconds,
-			"flowGoal": _flow_goal,
+			"flowGoal": _flow_goal, "schedules": {
+				"frame_sequence": _read_schedule("frame_sequence", content_dir),
+				"second_sequence": _read_schedule("second_sequence", content_dir)},
 			"pointPx": [_dialogue_position.x, _dialogue_position.y], "hotspot": _reference_target(Vector2(0.5, 0.5)),
 			"screenTargets": [_screen_target(Vector2(720, 1280)), _screen_target(Vector2(900, 900))],
 			"screenFocus": _screen_focus("right"), "screenArtwork": _screen_artwork()}, [{
@@ -995,6 +997,29 @@ func _add_solid_pieces(terrain: StaticBody2D, anchor: Vector2, rings: Array) -> 
 			var child := CollisionShape2D.new()
 			child.shape = shape
 			terrain.add_child(child)
+
+func _read_schedule(fn_id: String, content_dir: String) -> Array:
+	var decl: Dictionary = _manifest.functions[fn_id]
+	var content := _parse(FileAccess.get_file_as_string("res://".path_join(content_dir).path_join(fn_id)
+		.path_join("project-timing.json")))
+	if content.get("function") != decl.code:
+		return []
+	var rate := 1.0
+	if decl.get("timebase", "seconds") == "frames":
+		for field in decl.fields:
+			if field.id == decl.timePreview.fpsField:
+				rate = float(content.fields[field.code])
+	var cursors := {}
+	var schedule := []
+	for step in content.steps:
+		var track := int(step.get("track", 0))
+		var cursor := float(cursors.get(track, 0.0))
+		var at := float(step.get("at", cursor))
+		var end := at + float(step.get("duration", 0.0))
+		schedule.append([at / rate, end / rate])
+		if step.get("blocking", true):
+			cursors[track] = maxf(cursor, end)
+	return schedule
 
 func _advance_campaign(code: String) -> bool:
 	var sequence: Array = _entry.get("steps", [])
