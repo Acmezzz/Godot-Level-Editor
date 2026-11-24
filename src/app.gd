@@ -45,7 +45,7 @@ var _coll_type_opt: OptionButton
 var _coll_shape_opt: OptionButton
 var status: Label
 var _map_file_ctrl   # 地图文件生命周期
-var _playtest_ctrl  # 试玩启动与反馈
+var _playtest_ctrl  # 试玩启动与加载状态
 var _editor_state_ctrl   # canvas/editor_state.gd 控制器（状态流）
 var _layout_ctrl   # ui/editor_layout.gd 控制器（界面搭建）
 var _picker_ctrl   # ui/project_picker.gd 控制器（项目选择页）

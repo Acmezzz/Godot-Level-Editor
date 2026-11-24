@@ -72,8 +72,6 @@ func _build_top_bar() -> PanelContainer:
 	if bool(manifest.get("playtest", {}).get("projectEntry", false)):
 		bar.add_child(Kit.button("试玩项目", func():
 			app._playtest_ctrl.on_play(Vector2i(-1, -1), true), "ghost"))
-	if bool(manifest.get("playtest", {}).get("report", false)):
-		bar.add_child(Kit.button("试玩反馈", func(): app._playtest_ctrl.open_play_report(), "ghost"))
 	return box
 
 ## 底栏：状态消息常驻，与画布状态栏同一套视觉

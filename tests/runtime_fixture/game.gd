@@ -9,7 +9,6 @@ var _request: Dictionary
 var _manifest_text := ""
 var _map_text := ""
 var _entry: Dictionary
-var _entry_digest := ""
 var _cells := {}
 var _board_edges: Array = []
 var _traversed_edge := ""
@@ -193,7 +192,6 @@ func _ready() -> void:
 		var entry_text := FileAccess.get_file_as_string("res://".path_join(content_dir).path_join(
 			"campaign/project-acceptance.json"))
 		_entry = _parse(entry_text)
-		_entry_digest = entry_text.sha256_text()
 		if not _load_campaign(manifest):
 			_fail("Campaign, screen position, or first step is invalid")
 			return
@@ -1222,16 +1220,16 @@ func _judge_attempt() -> void:
 	_attempts.append({"inputSec": elapsed, "retry": result.retry})
 	if result.retry == _entry.id:
 		_miss_ending = result.message
-		_publish_attempt("输入未命中，按作者配置重试。")
+		_publish_attempt()
 		_start_attempt()
 		return
 	_ending = result.message
 	_awaiting_input = false
-	_publish_attempt("进入结局：" + _ending)
+	_publish_attempt()
 	if _headless:
 		get_tree().quit()
 
-func _publish_attempt(message: String) -> void:
+func _publish_attempt() -> void:
 	var content_dir := str(_manifest.get("contentDir", "content"))
 	_report("ready", "", {"caption": _caption, "step": _next_step, "ending": _ending, "missEnding": _miss_ending,
 		"cueSec": _cue_seconds, "attempts": _attempts, "flowGoal": _flow_goal, "schedules": {
@@ -1239,9 +1237,7 @@ func _publish_attempt(message: String) -> void:
 			"second_sequence": _read_schedule("second_sequence", content_dir)},
 		"pointPx": [_dialogue_position.x, _dialogue_position.y], "hotspot": _reference_target(Vector2(0.5, 0.5)),
 		"screenTargets": [_screen_target(Vector2(720, 1280)), _screen_target(Vector2(900, 900))],
-		"screenFocus": _screen_focus("right"), "screenArtwork": _screen_artwork()}, [{
-			"message": message, "function": "campaign", "content": _entry.id, "contentDigest": _entry_digest,
-			"step": _entry.steps.size() - 1, "stepCode": _entry.steps.back().step}])
+		"screenFocus": _screen_focus("right"), "screenArtwork": _screen_artwork()})
 
 ## The game defines group evaluation, predicate code and how a chosen target is loaded.
 func _resolve_branch(cue: Dictionary, input_seconds: float, lane: int) -> Dictionary:
@@ -1434,7 +1430,7 @@ func _fail(message: String) -> void:
 	if _headless:
 		get_tree().quit(1)
 
-func _report(status: String, message: String, result: Dictionary, observations := []) -> void:
+func _report(status: String, message: String, result: Dictionary) -> void:
 	if _request.is_empty():
 		return
 	var path := str(_request.get("path", ""))
@@ -1443,8 +1439,6 @@ func _report(status: String, message: String, result: Dictionary, observations :
 	var report := {"version": 1, "token": _request.get("token", ""), "status": status,
 		"mapDigest": _map_text.sha256_text() if _map_text != "" else "",
 		"manifestDigest": _manifest_text.sha256_text(), "message": message, "result": result}
-	if not observations.is_empty():
-		report.observations = observations
 	var tmp := path + ".tmp"
 	var file := FileAccess.open(tmp, FileAccess.WRITE)
 	if file == null:

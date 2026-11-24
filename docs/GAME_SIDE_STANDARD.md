@@ -1448,19 +1448,8 @@ main.gd
 
 项目入口的 `mapDigest` 为空。应根据实际读取的文件计算 SHA-256；不要直接照抄请求摘要。
 游戏拒绝加载时回传相同的版本和 token，写入 `status: "error"` 和 `message`。
-回执允许附带游戏自定义结果。可另加 `observations` 数组在「试玩反馈」中展示作者能理解的结果：
-
-```json
-{"message":"输入晚于命中窗口，进入重试分支","function":"campaign","content":"intro",
- "step":2,"stepCode":"NEXT","contentDigest":"实际读取的内容文件 SHA-256"}
-```
-
-每项只需 `message` 即可展示。需要定位时，`function` 用清单功能 ID，`content` 用内容 ID，
-`step` 是从 0 开始的下标，`stepCode` 是该行的 `step` 值。内容摘要或步骤不符时编辑器拒绝跳转。
-可在加载完成时先写回执，收集试玩结果后以同一 token 原子替换。游戏运行时重新打开「试玩反馈」
-会读取最新回执，进程退出后会读取最终回执。
-回执上限仍为 64 KiB，界面最多读取前 100 项反馈。
-两项能力都需要 `playtest.executable` 结构化启动；未启用时不传新参数。
+回执上限为 64 KiB。编辑器在收到回执时更新状态栏，游戏退出后读取最终回执。
+回执需要 `playtest.executable` 结构化启动；未启用时不传新参数。
 建议的解析顺序：`FileAccess.file_exists(原始串)` → 否则 `"res://" + 去掉前导 /`。
 游戏侧新增启动参数时保持这个前缀约定，别改 `--map=` 的语义。
 

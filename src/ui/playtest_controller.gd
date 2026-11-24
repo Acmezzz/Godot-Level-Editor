@@ -1,5 +1,5 @@
 extends RefCounted
-## Starts games from committed documents or screen drafts and presents their reports.
+## Starts games from committed documents or screen drafts and shows load status.
 
 const UiKitScript := preload("res://src/ui/ui_kit.gd")
 const Recovery := preload("res://src/map/recovery.gd")
@@ -160,48 +160,6 @@ func _play_report_summary() -> String:
 		"error", "invalid":
 			return "游戏加载未通过：" + str(_play_report_result.get("message", ""))
 	return "游戏没有返回本次加载回执"
-
-func open_play_report() -> void:
-	# 游戏运行中可以原子替换加载回执，打开时读本次试玩的最新版本。
-	if _play_pid > 0 and not _play_report_request.is_empty():
-		var latest := Playtest.read_report(_play_report_request)
-		if not latest.is_empty():
-			_play_report_result = latest
-	var shell: Dictionary = app._popup_body("试玩反馈", _play_report_summary())
-	var pop: PopupPanel = shell.pop
-	var body: VBoxContainer = shell.body
-	var observations := Playtest.observations(_play_report_result)
-	if observations.is_empty():
-		body.add_child(UiKitScript.hint_label("本次试玩没有返回作者反馈。"))
-	else:
-		var scroll := ScrollContainer.new()
-		scroll.custom_minimum_size = Vector2(540, 240)
-		body.add_child(scroll)
-		var rows := VBoxContainer.new()
-		rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		scroll.add_child(rows)
-		for row in observations:
-			rows.add_child(UiKitScript.hint_label(row.message, 480))
-			if row.has("step"):
-				var button := UiKitScript.button("定位步骤 %d" % (row.step + 1), func():
-					if _open_report_step(row):
-						pop.hide(), "ghost")
-				rows.add_child(button)
-	body.add_child(UiKitScript.button("关闭", pop.hide, "ghost"))
-	app._open_popup(pop)
-
-func _open_report_step(row: Dictionary) -> bool:
-	var editor = app.project_shell.content_editor
-	if not editor.commit_fields():
-		return false
-	var content: Dictionary = editor.read_content_staged_ex(row.function, row.content)
-	var steps = content.data.get("steps", [])
-	if (content.digest != row.contentDigest or not steps is Array or row.step >= steps.size()
-			or not steps[row.step] is Dictionary or steps[row.step].get("step") != row.stepCode):
-		app._set_status("无法定位：内容已修改或步骤不存在，请重新试玩。")
-		return false
-	app._set_mode("content")
-	return editor._steps.open_content(row.function, row.content, "", row.step)
 
 ## 试玩配置弹窗（v7）：清单 playtest.flags/params 声明驱动，替代写死的 dash/glide/hp。
 ## flags → 勾选框（启用时启动参数原样追加 flag.arg）；params → SpinBox（追加 arg 以 %d 填数）。
