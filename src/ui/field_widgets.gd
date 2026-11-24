@@ -394,8 +394,9 @@ static func _build_object_reference(decl: Dictionary, value: Variant, source: St
 	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var map := OptionButton.new()
 	map.name = "ReferenceTargetMap"
-	map.add_item("选择目标地图…")
-	map.set_item_metadata(0, "")
+	if maps[0].v != "":
+		map.add_item("选择目标地图…")
+		map.set_item_metadata(0, "")
 	var selected := 0
 	for item in maps:
 		map.add_item(item.t)

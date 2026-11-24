@@ -428,10 +428,13 @@ func _resolve_options(decl: Dictionary, project_scope := false, saved_only := fa
 
 	var src := str(decl.get("source", ""))
 	if src == "editor:reference-maps":
-		if not project_scope:
-			return []
-		return ReferenceIndex.map_target_options(manifest).map(func(map):
+		var local := not project_scope and not saved_only and _map_ready()
+		var options := ReferenceIndex.map_target_options(manifest).filter(func(map):
+			return not local or map.name != app.canvas.cur_map_name).map(func(map):
 			return {"v": map.code, "t": map.name})
+		if local and not options.is_empty():
+			options.push_front({"v": "", "t": "当前地图（工作副本）"})
+		return options
 	if src == "editor:flow-target":
 		var working_map: Dictionary = app.canvas.arrival_snapshot() if not project_scope and not saved_only \
 			and app.map_loaded and not decl.domains.get("arrivalPorts", []).is_empty() else {}

@@ -848,6 +848,7 @@ func _build_ref_row(fd: Dictionary, props: Dictionary, fdecls: Array = []) -> Co
 			return
 		_set_prop_ref(fd, v)
 	built = FieldWidgets.build(d, cur, apply, _resolve_options)
+	built.ctl.name = "InstanceReference_" + fid
 	var row := Kit.field_row(str(fd.get("name", fid)), built.ctl, 96)
 	var tip := FieldWidgets.decl_tooltip(fd)
 	if tip != "":

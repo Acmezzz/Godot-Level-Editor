@@ -32,6 +32,7 @@ func run() -> void:
 			"fields": [{"id": "exit_target", "kind": "input", "type": "flow_target",
 				"maps": true, "screens": true, "contentTypes": ["signal"], "arrivalPorts": ["arrival"]},
 				{"id": "landing", "kind": "input", "type": "vector2", "pickSpace": "map", "step": 1},
+				{"id": "signal_port", "kind": "input", "type": "port_ref", "of": "signal"},
 				{"id": "local_signal", "kind": "input", "type": "flow_target",
 					"contentTypes": ["signal"], "contentMapContext": "inherit"}]}],
 		"startup": {"screens": true}, "viewports": [{"id": "handheld", "w": 480, "h": 720}],
@@ -486,6 +487,16 @@ func run() -> void:
 	editor.commit_fields()
 	app._set_mode("map")
 	var current_host: EntityNode = canvas._ent_by_code_index()[copy_host]
+	app._set_mode("content", copy_host)
+	var signal_port: Control = app.project_shell.content_editor.root.find_child("InstanceReference_signal_port", true, false)
+	var target_map: OptionButton = signal_port.find_child("ReferenceTargetMap", true, false)
+	check(target_map.get_selected_metadata() == "", "instance offers the working map by default")
+	choose(target_map, map_code)
+	check(not current_host.props.has("signal_port"), "switching candidate map does not write a reference")
+	var remote_port := {"map": map_code, "inst": pawn_code, "port": "wire"}
+	choose(signal_port.find_child("ReferenceTargetValue", true, false), JSON.stringify(remote_port))
+	check(current_host.props.get("signal_port") == remote_port, "instance chooses an explicit port on another map")
+	app._set_mode("map")
 	check(canvas.duplicate_selected_at_offset([current_host], Vector2i(2, 2)), "duplicate a portal with its own arrival")
 	var new_host: EntityNode = canvas.selected_multi[0]
 	var new_host_code := new_host.code
@@ -496,6 +507,9 @@ func run() -> void:
 	copy = Maps.read(manifest, "course_variant")
 	check(published.get("status") == "ok" and copy.objects[-1].props.exit_target.inst == new_host.code,
 		"the copied portal keeps its independent arrival after publication")
+	check(copy.objects[0].props.get("signal_port") == remote_port
+		and copy.objects[-1].props.get("signal_port") == remote_port,
+		"the original and copy keep the same explicit port on the other map")
 	var inbound := Audit.view_inbound_refs(manifest, "instructions", [])
 	check(not inbound.refs.is_empty() and "welcome" in inbound.refs[0], "the destination screen has the expected inbound reference")
 	var broken := manifest.duplicate(true)
@@ -530,6 +544,7 @@ func run() -> void:
 		and result.get("localActor") == copy_host
 		and result.get("arrivalPort") == "door" and result.get("arrivalInstance") == copy_host
 		and result.get("screenMarker") == {"map": copy_code, "inst": copy_host, "port": "wire"}
+		and result.get("remotePort") == remote_port
 		and result.get("placed") == copy.objects.map(func(row): return row.code) and result.get("text") == "Screen sequence complete",
 		"the game reads the map-level completion outlet and reaches the conclusion: %s" % [report])
 	end = Time.get_ticks_msec() + 2000

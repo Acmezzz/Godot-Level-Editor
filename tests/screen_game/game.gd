@@ -79,6 +79,10 @@ func _show_map_target(destination: Dictionary) -> void:
 				entered_board["localActor"] = signal_data.fields.ACTR
 				break
 		var exit_target: Dictionary = map.meta.get("flowOutputs", {}).get("completed", {})
+		for row in map.objects:
+			if row.get("props", {}).has("signal_port"):
+				entered_board["remotePort"] = row.props.signal_port
+				break
 		if exit_target.is_empty():
 			for row in map.objects:
 				exit_target = row.get("props", {}).get("exit_target", {})
