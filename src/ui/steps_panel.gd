@@ -1063,7 +1063,7 @@ func _step_field_row(fd: Dictionary, sfd: Dictionary, siblings: Array, shown: Di
 	if tip != "":
 		row.tooltip_text = tip
 	var pickable := FieldWidgets.wants_canvas_pick(fd) and (not _project_scope or tk != "")
-	if pickable and not bool(fd.get("multiple", false)) and host._form.can_pick_on_canvas(tk):
+	if pickable and not FieldWidgets.ordered_frame_pick(fd) and not bool(fd.get("multiple", false)) and host._form.can_pick_on_canvas(tk):
 		var pick := Kit.button("画布选…", func(): _pick_step_ref(fd, apply), "ghost")
 		pick.tooltip_text = "临时切到画布点一个实例；确认才写入这一步，取消不改当前值" \
 			if not FieldWidgets.wants_edge_pick(fd) else "临时切到画布点一条格边；确认才写入这一步，取消不改当前值"

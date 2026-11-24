@@ -28,12 +28,14 @@ class ReferenceSelection extends RefCounted:
 	var selected: Array
 	var regions: Array
 	var status: String
+	var ordered: bool
 
-	func _init(kind: String, lookup: Callable, save: Callable, current: Callable) -> void:
+	func _init(kind: String, lookup: Callable, save: Callable, current: Callable, sequence: bool) -> void:
 		mode = kind
 		match_target = lookup
 		commit = save
 		read = current
+		ordered = sequence
 		initial = read.call()
 		clear()
 
@@ -43,7 +45,11 @@ class ReferenceSelection extends RefCounted:
 		_update_message()
 
 	func _update_message() -> void:
-		status = "已选 %d 项 · 点击切换，右键恢复本次打开时的选择。" % selected.size()
+		if ordered:
+			var path := " → ".join(PackedStringArray(selected.slice(maxi(0, selected.size() - 5))))
+			status = "%d 个途经点 · %s · 左键追加，右键移除末项。" % [selected.size(), path]
+		else:
+			status = "已选 %d 项 · 点击切换，右键恢复本次打开时的选择。" % selected.size()
 
 	func message() -> String:
 		return status
@@ -58,7 +64,10 @@ class ReferenceSelection extends RefCounted:
 		if not event is InputEventMouseButton or not event.pressed:
 			return false
 		if event.button_index == MOUSE_BUTTON_RIGHT:
-			selected = initial.duplicate()
+			if ordered:
+				selected.pop_back()
+			else:
+				selected = initial.duplicate()
 			_update_message()
 			return true
 		if event.button_index != MOUSE_BUTTON_LEFT:
@@ -69,7 +78,7 @@ class ReferenceSelection extends RefCounted:
 			status = "这里没有此字段可选的目标。当前已选 %d 项。" % selected.size()
 			return true
 		var value: String = candidate.v
-		if selected.has(value):
+		if not ordered and selected.has(value):
 			selected.erase(value)
 		else:
 			selected.append(value)
@@ -284,8 +293,9 @@ static func open_reference(app, decl: Dictionary, resolve: Callable, commit: Cal
 	var key := str(decl.get("_mapKey", ""))
 	var local: bool = key == "" or (app.map_loaded and key in [app.canvas.cur_map_code(), app.canvas.cur_map_name])
 	var parent := {"parent": window} if window is PopupPanel else {}
-	if bool(decl.get("multiple", false)):
-		var selection := ReferenceSelection.new(mode, match_target, commit, read)
+	var ordered := FieldWidgets.ordered_frame_pick(decl)
+	if ordered or bool(decl.get("multiple", false)):
+		var selection := ReferenceSelection.new(mode, match_target, commit, read, ordered)
 		parent.merge({"interaction": selection, "on_picks": selection.set_regions, "confirm_label": "应用选择"})
 	if local:
 		_open(app, mode, choose, parent)

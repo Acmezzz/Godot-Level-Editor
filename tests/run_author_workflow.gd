@@ -114,6 +114,24 @@ func create_ending(app, library, id: String, message: String, map_context := "",
 					confirm.pressed.emit()
 					await process_frame
 					await process_frame
+			var route: Button = pop.find_child("FrameFieldReference_goal_route", true, false)
+			check(route != null, "library exposes the ordered route picker")
+			if route != null:
+				route.pressed.emit()
+				var frame := await _render_pick_frame(app)
+				if frame != null:
+					var first := _frame_pick_at_world(frame, Vector2(72, 40))
+					var second := _frame_pick_at_world(frame, Vector2(104, 72))
+					var confirm := _click_pick_frame(frame, first)
+					_click_pick_frame(frame, second)
+					_click_pick_frame(frame, second)
+					_click_pick_frame(frame, second, MOUSE_BUTTON_RIGHT)
+					_click_pick_frame(frame, first)
+					check(not confirm.disabled and not Store.list_ids(app.manifest, "ending").has("project-arrive"),
+						"ordered route accepts revisits and stays in the draft")
+					confirm.pressed.emit()
+					await process_frame
+					await process_frame
 		for opt in collect(pop, "OptionButton"):
 			if id != "arrive" and goal != "" and range(opt.item_count).any(func(i): return opt.get_item_metadata(i) == goal):
 				select_metadata(opt, goal)
@@ -331,6 +349,7 @@ func run():
 				{"id":"goal", "code":"GOAL", "kind":"choice", "source":"entity_inst:door"},
 				{"id":"goal_port", "code":"GPRT", "kind":"input", "type":"port_ref", "of":"door"},
 				{"id":"goal_group", "code":"GGRP", "kind":"choice", "source":"entity_inst:door", "multiple":true},
+				{"id":"goal_route", "code":"GROT", "kind":"input", "type":"array", "of":"choice", "source":"entity_inst:door"},
 				{"id":"next", "code":"HOP1", "kind":"choice", "source":"content:ending",
 					"contentMapContext":"inherit"},
 				{"id":"retry_chart", "code":"AGAN", "name":"Retry chart", "kind":"choice",
@@ -537,6 +556,7 @@ func run():
 	var arrival := Store.read(manifest, "ending", "project-arrive")
 	check(arrival.get("fields", {}).get("GOAL") == "EXIT"
 		and arrival.fields.get("GGRP") == ["ALT", "EXIT"]
+		and arrival.fields.get("GROT") == ["EXIT", "ALT", "EXIT"]
 		and arrival.fields.get("GPRT") == {"map": "", "inst": "EXIT", "port": "open"} and not arrival.has("map")
 		and not arrival.fields.has("DMAP"), "temporary map exposes the local instance without pinning the saved reference")
 	ce._library.open()

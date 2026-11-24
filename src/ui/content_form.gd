@@ -310,7 +310,7 @@ func _build_field_row(i: int, fn_id: String, fd: Dictionary, cur: Dictionary, si
 	if tip != "":
 		row.tooltip_text = tip
 	var pickable := FieldWidgets.wants_canvas_pick(fd) and (not bool(target.project_scope) or tk != "")
-	if pickable and not bool(fd.get("multiple", false)) and can_pick_on_canvas(tk):
+	if pickable and not FieldWidgets.ordered_frame_pick(fd) and not bool(fd.get("multiple", false)) and can_pick_on_canvas(tk):
 		var pick := Kit.button("画布选…", func():
 			_pick_entity_for(fd, apply), "ghost")
 		pick.tooltip_text = "临时切到画布点一个实例；确认才写入，取消不改当前值" \

@@ -1299,6 +1299,16 @@ func _resolve_ending(destination: String, current_map: Dictionary) -> Dictionary
 		for code in fields.get("GGRP", []):
 			if not current_map.get("objects", []).any(func(obj): return obj.get("code") == code and obj.get("asset") == "door"):
 				return {}
+		var route: Array = fields.get("GROT", [])
+		if not route.is_empty():
+			var visited := []
+			for code in route:
+				for obj in current_map.get("objects", []):
+					if obj.get("code") == code and obj.get("asset") == "door":
+						visited.append(code)
+						break
+			if visited != ["EXIT", "ALT", "EXIT"]:
+				return {}
 		var port: Dictionary = fields.get("GPRT", {})
 		if not port.is_empty() and (port.get("map") != "" or port.get("port") != "open"
 				or not current_map.get("objects", []).any(func(obj): return obj.get("code") == port.get("inst") and obj.get("asset") == "door")):

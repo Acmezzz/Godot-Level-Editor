@@ -50,9 +50,13 @@ static func wants_canvas_pick(decl: Dictionary) -> bool:
 static func wants_frame_pick(decl: Dictionary) -> bool:
 	return pick_mode(decl) in ["cell", "edge", "port"] or RefFields.describe(decl).kind == "entity_inst"
 
+static func ordered_frame_pick(decl: Dictionary) -> bool:
+	return type_of(decl) == "array" and decl.get("of") == "choice" and not bool(decl.get("multiple", false)) \
+		and RefFields.describe(decl).kind in ["entity_inst", "cell"]
+
 ## C4：choice 来源是 `cell:` 的字段可在画布上按格图多边形点选。
 static func wants_cell_pick(decl: Dictionary) -> bool:
-	return type_of(decl) == "choice" and str(decl.get("source", "")).begins_with("cell:")
+	return (type_of(decl) == "choice" or ordered_frame_pick(decl)) and str(decl.get("source", "")).begins_with("cell:")
 
 ## §7.4：edge_ref 字段可在画布上按「最近的共边」点选（边身份由格拓扑推导）。
 static func wants_edge_pick(decl: Dictionary) -> bool:
@@ -371,7 +375,7 @@ static func _elem_decl(decl: Dictionary) -> Dictionary:
 	var of := str(decl.get("of", "string"))
 	if of == "choice":
 		var d: Dictionary = {"kind": KIND_CHOICE}
-		for k in ["options", "source", "multiple", "mapField"]:
+		for k in ["options", "source", "multiple", "mapField", "_mapKey"]:
 			if decl.get(k, null) != null:
 				d[k] = (decl.get(k) as Variant).duplicate(true) if (decl.get(k) is Array or decl.get(k) is Dictionary) \
 					else decl.get(k)
@@ -402,6 +406,7 @@ static func _build_array(decl: Dictionary, items: Array, on_set: Callable,
 		option_resolver: Callable, key_mode := "id", frame_pick := Callable()) -> Dictionary:
 	var elem := _elem_decl(decl)
 	var rec := str(elem.get("type", "")) in ["record", "condition"]
+	var ordered := ordered_frame_pick(decl)
 	var wrap := VBoxContainer.new()
 	wrap.set_meta("array_field", str(decl.get("id", "")))
 	wrap.add_theme_constant_override("separation", 4)
@@ -446,6 +451,8 @@ static func _build_array(decl: Dictionary, items: Array, on_set: Callable,
 			tools.add_child(_row_tools(ctx, r))
 			line.add_child(tools)
 		line.add_child(built.ctl)
+		if ordered:
+			tools.add_child(_row_tools(ctx, r))
 		var del := Button.new()
 		del.text = "×"
 		del.focus_mode = Control.FOCUS_NONE
@@ -479,7 +486,10 @@ static func _build_array(decl: Dictionary, items: Array, on_set: Callable,
 		add_row.call(default_for(elem))
 		done.call())
 	wrap.add_child(add)
-	return {"ctl": wrap, "commit": commit}
+	var built := {"ctl": wrap, "commit": commit}
+	if ordered:
+		built["pick_values"] = collect
+	return built
 
 ## C1：记录行工具组（复制/上移/下移）。ctx = {"rows", "box", "add", "done"}。
 ## GDScript lambda 按值捕获局部变量，行操作需要共享可变状态，统一走 ctx 字典（字典按引用捕获）。
@@ -758,7 +768,7 @@ static func _build_choice_multi(decl: Dictionary, value, on_set: Callable,
 	return {"ctl": box, "commit": push, "pick_values": func(): return pend.v.duplicate()}
 
 static func frame_value_available(decl: Dictionary, built: Dictionary) -> bool:
-	return not bool(decl.get("multiple", false)) or built.has("pick_values")
+	return built.has("pick_values") if ordered_frame_pick(decl) or bool(decl.get("multiple", false)) else true
 
 static func _norm_option(o) -> Dictionary:
 	if o is Dictionary:
