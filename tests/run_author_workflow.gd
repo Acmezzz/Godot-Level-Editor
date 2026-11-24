@@ -1825,7 +1825,8 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 		check(false, "both views can place a door")
 		return
 	check(doors[0].layer == primary and doors[1].layer == upper and doors[0].x == 1 and doors[0].y == 1
-		and doors[1].x == 3 and doors[1].y == 2 and FileAccess.get_sha256(path) == original_hash,
+		and is_equal_approx(float(doors[1].x), 2.786) and is_equal_approx(float(doors[1].y), 2.071)
+		and FileAccess.get_sha256(path) == original_hash,
 		"both frame regions map to stable layer-local anchors without writing the file")
 	app._set_mode("content", "PICK")
 	var editor = app.project_shell.content_editor
@@ -1846,5 +1847,7 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 	var result: Dictionary = report.get("result", {})
 	var picks: Array = result.get("picks", [])
 	check(report.get("status") == "ready" and picks.size() == 2 and picks[0].point == [24.0, 24.0]
-		and picks[1].point == [132.0, 76.0] and result.get("opened") == doors[1].code,
+		and absf(float(picks[1].point[0]) - (48.0 + (48.0 + 32.0 / 7.0) * 1.5)) < 0.02
+		and absf(float(picks[1].point[1]) - (16.0 + (32.0 + 64.0 / 7.0) * 1.5)) < 0.02
+		and result.get("opened") == doors[1].code,
 		"game reloads both view positions and opens the selected upper-layer door: " + str(report))

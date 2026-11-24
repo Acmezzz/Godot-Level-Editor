@@ -268,6 +268,9 @@ func _compose_pick_frame(surface: SubViewport, size: Vector2i, dir: String, requ
 		var region := {"label": "View " + str(i + 1),
 			"screen": [[start.x, start.y], [right.x, right.y], [down.x, down.y]],
 			"placement": {"layer": layer, "local": [[local.x, local.y], [local.x + 32, local.y], [local.x, local.y + 32]]}}
+		if i == 1:
+			# Projection depth doubles along one edge, giving that vertex half the reciprocal W.
+			region.placement.reciprocalW = [1.0, 0.5, 1.0]
 		for row in map.objects:
 			if row.get("asset") == "door" and row.get("layer") == layer:
 				region["targets"] = {"entity": row.code, "port": {"map": map.meta.code, "inst": row.code, "port": "open"}}

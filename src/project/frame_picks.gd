@@ -24,9 +24,19 @@ static func read(bytes: PackedByteArray, token: String, size: Vector2i) -> Dicti
 		var placement = row.get("placement", {})
 		var points := _triangle(placement.get("local")) if placement is Dictionary else PackedVector2Array()
 		var layer := str(placement.get("layer", "")) if points.size() == 3 else ""
+		var reciprocal := Vector3.ONE
+		if layer != "" and placement.has("reciprocalW"):
+			var raw = placement.reciprocalW
+			if raw is Array and raw.size() == 3 and raw.all(func(w): return _number(w) and w > 0.0):
+				var greatest := maxf(float(raw[0]), maxf(float(raw[1]), float(raw[2])))
+				reciprocal = Vector3(float(raw[0]) / greatest, float(raw[1]) / greatest, float(raw[2]) / greatest)
+				if minf(reciprocal.x, minf(reciprocal.y, reciprocal.z)) <= 0.0:
+					layer = ""
+			else:
+				layer = ""
 		regions.append({"screen": screen, "inverse": Transform2D(u, v, screen[0]).affine_inverse(),
 			"label": str(row.get("label", "")).left(120), "targets": targets if targets is Dictionary else {},
-			"layer": layer, "local": points})
+			"layer": layer, "local": points, "reciprocal": reciprocal})
 	return {"regions": regions}
 
 static func at(regions: Array, pixel: Vector2, mode: String) -> Dictionary:
@@ -39,7 +49,10 @@ static func at(regions: Array, pixel: Vector2, mode: String) -> Dictionary:
 			if region.layer == "":
 				continue
 			var local: PackedVector2Array = region.local
-			value = {"layer": region.layer, "point": local[0] + (local[1] - local[0]) * uv.x + (local[2] - local[0]) * uv.y}
+			var bary := Vector3(maxf(1.0 - uv.x - uv.y, 0.0), maxf(uv.x, 0.0), maxf(uv.y, 0.0))
+			var weight := bary * (region.reciprocal as Vector3)
+			var total := weight.x + weight.y + weight.z
+			value = {"layer": region.layer, "point": (local[0] * weight.x + local[1] * weight.y + local[2] * weight.z) / total}
 		elif value == null:
 			continue
 		return {"value": value, "screen": region.screen, "label": region.label}
