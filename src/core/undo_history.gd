@@ -277,7 +277,7 @@ func _same_keys(a: Array, b: Array) -> bool:
 
 ## 新增实例的差量：new_nodes 是已放到画布上的新节点（before 视为不存在）。
 ## 返回 false = 有节点没有实例码（场景图片），调用方应改用整图快照。
-func inst_commit_add(new_nodes: Array) -> bool:
+func inst_commit_add(new_nodes: Array, clone_contents := []) -> bool:
 	var ops: Array = []
 	for s in new_nodes:
 		var n := s as EntityNode
@@ -289,7 +289,10 @@ func inst_commit_add(new_nodes: Array) -> bool:
 			return false
 		ops.append({"op": "add", "key": key, "before": null, "after": r})
 	if not ops.is_empty():
-		_push_entry({"kind": "ents", "ops": ops})
+		var entry := {"kind": "ents", "ops": ops}
+		if not clone_contents.is_empty():
+			entry["clone_contents"] = clone_contents
+		_push_entry(entry)
 	return true
 
 ## 行相等判定：null 与 null 相等；其余按规范化 JSON 比（键序无关由 Dictionary 深比保证）。
@@ -323,6 +326,9 @@ func _restore_ents(entry: Dictionary, forward: bool) -> void:
 			_apply_row_to_node(cur as EntityNode, want as Dictionary)
 		else:
 			_node_from_row(want as Dictionary)   # 行自带实例码；场景图片没有码也就不进差量
+	if forward and entry.has("clone_contents"):
+		var rows: Array = entry.ops.map(func(op): return op.after)
+		cvs._region_ops_ctrl.stage_cloned_contents({"map_patch": {"objects": rows}, "pending_contents": entry.clone_contents})
 	cvs.selected_multi = cvs.selected_multi.filter(func(x): return is_instance_valid(x))
 	cvs.commit_selection(cvs.selected_entity if is_instance_valid(cvs.selected_entity) else null,
 		cvs.selected_multi)

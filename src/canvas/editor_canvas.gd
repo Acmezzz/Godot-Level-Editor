@@ -1173,82 +1173,59 @@ func commit_multi(multi: Array) -> void:
 func selection_touches_locked(sel: Array) -> bool:
 	return _selection_ops_ctrl._selection_touches_locked(sel)
 
-## Ctrl+D 原位复制（C2：与粘贴/整图复制同一条 ClonePlan 流程）。
-## 副本偏移 offset 格、落回原件所在层、身份与附属内容全部独立；一个撤销步 + 选中新副本。
-## 返回是否真的复制了（锁层/计划冲突时 false，状态提示已由本函数或调用方给出）。
+## Ctrl+D：偏移根格的方向向量，副本留在各自图层。
 func duplicate_selected_at_offset(srcs: Array, offset: Vector2i) -> bool:
+	var delta := grid_dir_px(offset.x, offset.y)
+	var placements := []
+	for node: EntityNode in srcs:
+		placements.append({"node": node, "layer": _layer_index_of(node.layer_id),
+			"anchor": node.position - node.sort_anchor() + delta})
+	return duplicate_instances(placements)
+
+## 两种入口都由同一复制计划发行身份、重映射声明引用，并暂存新绑定内容。
+func duplicate_instances(placements: Array) -> bool:
 	var ClonePlan := preload("res://src/content/clone_plan.gd")
-	if map_root == null:
-		return false
-	var rows: Array = []
-	var live: Array = []
-	for s in srcs:
-		var n := s as EntityNode
-		if n == null or not is_instance_valid(n) or n.asset == "":
-			continue
-		live.append(n)
-		rows.append({"asset": n.asset, "code": n.code,
-			"props": n.props.duplicate(true), "functions": n.functions.duplicate(true)})
-	if live.is_empty():
-		return false
-	var plan: Dictionary = ClonePlan.build(
-		{"data": {"objects": rows}, "manifest": manifest, "map": cur_map_name},
-		{"data": map_data, "manifest": manifest, "map": cur_map_name})
-	if str(plan.get("status", "")) != "ok":
-		_hint("复制已取消：" + ClonePlan.conflicts_text(plan.get("conflicts", [])))
-		return false
-	# 内容先落盘（A2）：写失败不动画布
-	var ContentStore := preload("res://src/content/content_store.gd")
-	for pc in (plan.get("pending_contents", []) as Array):
-		var pd: Dictionary = pc
-		if not ContentStore.write(manifest, str(pd.get("fn_id", "")), str(pd.get("id", "")),
-				pd.get("data", {}) as Dictionary):
-			_hint("复制已取消：新内容 %s 写入失败" % str(pd.get("id", "")))
-			return false
-	# §7.5 阶段二：副本都是实体（计划已发码）→ InstanceKey 差量；有场景图片就退回整图快照。
+	var rows := []
 	var can_delta := true
-	for n0 in live:
-		if not AssetDecl.is_entity(manifest, (n0 as EntityNode).asset):
-			can_delta = false
-			break
+	for placement: Dictionary in placements:
+		var node: EntityNode = placement.node
+		var li: int = placement.layer
+		if li < 0 or is_layer_locked(li) or not is_layer_visible(li):
+			_hint("副本目标图层已锁定、隐藏或不存在。")
+			return false
+		var row: Dictionary = _undo_history_ctrl._object_row(node)
+		rows.append(row)
+		can_delta = can_delta and row.has("code")
+	var source := copy_content_source()
+	if source.is_empty():
+		return false
+	var taken := []
+	for code in _ent_by_code_index():
+		taken.append({"code": code})
+	var data := {"meta": source.meta, "objects": taken}
+	var plan := ClonePlan.build(
+		{"data": {"meta": source.meta, "objects": rows}, "manifest": manifest, "map": cur_map_name},
+		{"data": data, "manifest": manifest, "map": cur_map_name},
+		PackedStringArray(), false, source.staged)
+	if plan.status != "ok":
+		_hint("复制已取消：" + ClonePlan.conflicts_text(plan.conflicts))
+		return false
 	if not can_delta:
 		push_undo()
-	var remapped: Array = (plan.get("map_patch", {}) as Dictionary).get("objects", [])
-	var copies: Array = []
-	for i in live.size():
-		var orig: EntityNode = live[i]
-		var row: Dictionary = remapped[i] if i < remapped.size() else {}
-		var dup: EntityNode = make_object(orig.asset)
-		dup.props = (row.get("props", {}) as Dictionary).duplicate(true) \
-			if row.get("props", null) is Dictionary else orig.props.duplicate(true)
-		dup.functions = (row.get("functions", []) as Array).duplicate(true) \
-			if row.get("functions", null) is Array else orig.functions.duplicate(true)
-		dup.data_transform = orig.data_transform.duplicate(true)
-		dup.z_policy = orig.z_policy
-		dup.visible_flag = orig.visible_flag
-		# sortAnchor 与未知对象键随原件走（E12：完整对象负载）
-		var raw: Dictionary = orig.raw.duplicate(true)
-		if str(row.get("code", "")) != "":
-			raw["code"] = str(row.get("code", ""))
-		dup.raw = raw
-		dup.code = str(row.get("code", ""))
-		dup.refresh_visual()
-		dup.position = orig.position + grid_dir_px(offset.x, offset.y)
-		var oi: int = _layer_index_of(orig.layer_id)
-		if oi < 0:
-			oi = 0
-		dup.layer_id = layer_id(oi)
-		_place_in_layer(dup, oi)
-		_ensure_code(dup)   # 计划已给码；无码实例（场景图片）在这里也不会产码
-		copies.append(dup)
+	_region_ops_ctrl.stage_cloned_contents(plan)
+	var copies := []
+	for i in placements.size():
+		var row: Dictionary = plan.map_patch.objects[i]
+		row["layer"] = layer_id(placements[i].layer)
+		var node: EntityNode = _undo_history_ctrl._node_from_row(row)
+		node.position = placements[i].anchor + node.sort_anchor()
+		copies.append(node)
 	if can_delta:
-		_undo_history_ctrl.inst_commit_add(copies)
+		_undo_history_ctrl.inst_commit_add(copies, plan.pending_contents)
 	_mark_ents()
 	commit_multi(copies)
-	var n_contents: int = (plan.get("pending_contents", []) as Array).size()
-	_hint("已复制 %d 个实例%s（Ctrl+Z 撤销）" % [
-		copies.size(), ("，复制内容 %d 条" % n_contents) if n_contents > 0 else ""])
-	return not copies.is_empty()
+	_hint("已复制 %d 个实例（Ctrl+Z 撤销）" % copies.size())
+	return true
 
 # —— 框选集合有效性过滤 ——
 func _valid_multi() -> Array:

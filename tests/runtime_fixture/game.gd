@@ -71,13 +71,20 @@ func _ready() -> void:
 						lanes.append({"lane": i, "point": [anchor.x, anchor.y], "door": row.code,
 							"transform": row.get("transform", {})})
 			var contours: Array = map.objects.filter(func(row): return row.asset == "free-ramp")
+			var copies := []
+			for row in map.objects:
+				if row.asset == "switch" and row.code != "PICK":
+					var cid: String = row.functions[0].content
+					var content := _parse(FileAccess.get_file_as_string("res://content/reaction/%s.json" % cid))
+					copies.append({"code": row.code, "layer": row.layer, "target": row.props.target,
+						"message": content.get("fields", {}).get("RMES", "")})
 			var start := Vector2i(int(map.spawn[0]), int(map.spawn[1]))
 			var player := Node2D.new()
 			var grid: Grid = Grid.resolve(map.meta, manifest).grid
 			player.position = grid.cell_center_px(start)
 			add_child(player)
 			_report("ready", "", {"picks": lanes, "opened": _activate_switch(map, manifest), "contours": contours,
-				"playerStart": [player.position.x, player.position.y]})
+				"playerStart": [player.position.x, player.position.y], "switchCopies": copies})
 		elif map.get("meta", {}).get("name") == "rule_hex" and not map.meta.get("cellGraph", {}).is_empty():
 			var route := _check_floor_route(map)
 			if route.is_empty():
@@ -325,6 +332,10 @@ func _compose_pick_frame(surface: SubViewport, size: Vector2i, dir: String, requ
 			region.placement.reciprocalW = weights
 			region.collision.reciprocalW = weights
 		for row in map.objects:
+			if i == 0 and row.get("code") == "PICK":
+				var center := Vector2(size) * Vector2(0.11, 0.34)
+				regions.append({"screen": [[center.x - 7, center.y - 7], [center.x + 10, center.y - 7], [center.x - 7, center.y + 10]],
+					"targets": {"entity": row.code}})
 			if row.get("asset") == "door" and row.get("layer") == layer:
 				region["targets"] = {"entity": row.code, "port": {"map": map.meta.code, "inst": row.code, "port": "open"}}
 				break

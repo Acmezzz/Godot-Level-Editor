@@ -5,9 +5,9 @@ const Picks := preload("res://src/project/frame_picks.gd")
 const Geometry := preload("res://src/map/object_geometry.gd")
 const Ink := Color("ffda67")
 enum Edit {MOVE, INSERT, DELETE}
-enum Tool {POINT, OUTER, HOLE, REMOVE_RING, ROTATE, FLIP, REMOVE_INSTANCE}
+enum Tool {POINT, OUTER, HOLE, REMOVE_RING, ROTATE, FLIP, REMOVE_INSTANCE, DUPLICATE}
 const TOOLS := ["移动实例 / 编辑顶点", "绘制附加外环", "绘制孔洞", "删除外环或孔洞",
-	"旋转实例 90°", "水平翻转实例", "删除实例"]
+	"旋转实例 90°", "水平翻转实例", "删除实例", "复制实例到选点"]
 
 var canvas: EditorCanvas
 var target: EntityNode
@@ -17,6 +17,7 @@ var tool := Tool.POINT
 var origin := Vector2.ZERO
 var destination := Vector2.ZERO
 var local_point := Vector2.ZERO
+var destination_layer := -1
 var rings := []
 var parts := []
 var draft := []
@@ -48,6 +49,8 @@ func clear() -> void:
 			status = "点选附加外环或孔洞的任一顶点，再确认删除。右键重选。"
 		Tool.ROTATE, Tool.FLIP, Tool.REMOVE_INSTANCE:
 			status = "点选实例或其轮廓顶点，再确认%s。右键重选。" % TOOLS[tool]
+		Tool.DUPLICATE:
+			status = "先选原件，再点副本落点；可跨图层。右键重选。"
 
 func ready() -> bool:
 	return can_apply
@@ -68,6 +71,14 @@ func input(event: InputEvent, pixel: Vector2, regions: Array) -> bool:
 		return true
 	if event.button_index != MOUSE_BUTTON_LEFT:
 		return false
+	if tool == Tool.DUPLICATE:
+		if target == null:
+			_select(pixel, regions, Edit.MOVE)
+			if target != null:
+				status = "已选 %s，请选副本落点。右键重选。" % target.code
+		else:
+			_pick_copy_destination(pixel, regions)
+		return true
 	if tool >= Tool.ROTATE:
 		clear()
 		_select(pixel, regions, Edit.MOVE)
@@ -85,6 +96,22 @@ func input(event: InputEvent, pixel: Vector2, regions: Array) -> bool:
 	elif edit != Edit.DELETE:
 		_destinate(pixel, regions)
 	return true
+
+func _pick_copy_destination(pixel: Vector2, regions: Array) -> void:
+	can_apply = false
+	var hit := Picks.at(regions, pixel, "placement")
+	if hit.is_empty():
+		status = "请选择有图层映射的落点。"
+		return
+	destination_layer = canvas._layer_index_of(hit.value.layer)
+	if destination_layer < 0 or canvas.is_layer_locked(destination_layer) or not canvas.is_layer_visible(destination_layer):
+		status = "副本目标图层已锁定、隐藏或不存在。"
+		return
+	local_point = hit.value.point
+	destination = pixel
+	can_apply = true
+	status = "复制 %s 到 %s (%.2f, %.2f)。确认后写入。" % [target.code,
+		canvas.layer_name(destination_layer), local_point.x, local_point.y]
 
 func _component_click(pixel: Vector2, regions: Array) -> void:
 	if tool == Tool.REMOVE_RING:
@@ -225,6 +252,8 @@ func apply() -> bool:
 	var li := canvas._layer_index_of(target.layer_id)
 	if canvas.is_layer_locked(li):
 		return false
+	if tool == Tool.DUPLICATE:
+		return canvas.duplicate_instances([{"node": target, "layer": destination_layer, "anchor": local_point}])
 	if tool == Tool.REMOVE_INSTANCE:
 		var victim := target
 		target = null
@@ -256,6 +285,10 @@ func draw(frame: TextureRect, rect: Rect2) -> void:
 	var scale := rect.size / frame.texture.get_size()
 	var start := rect.position + origin * scale
 	frame.draw_circle(start, 5.0, Color.SALMON if tool in [Tool.REMOVE_RING, Tool.REMOVE_INSTANCE] or edit == Edit.DELETE else Ink)
+	if tool == Tool.DUPLICATE:
+		if can_apply:
+			_draw_destination(frame, rect, scale, start)
+		return
 	if tool >= Tool.ROTATE:
 		return
 	if tool != Tool.POINT:
@@ -270,9 +303,12 @@ func draw(frame: TextureRect, rect: Rect2) -> void:
 			frame.draw_polyline(line, Ink, 2.0, true)
 		return
 	if can_apply and edit != Edit.DELETE:
-		var end := rect.position + destination * scale
-		frame.draw_line(start, end, Ink, 2.0, true)
-		frame.draw_circle(end, 5.0, Ink)
+		_draw_destination(frame, rect, scale, start)
+
+func _draw_destination(frame: TextureRect, rect: Rect2, scale: Vector2, start: Vector2) -> void:
+	var end := rect.position + destination * scale
+	frame.draw_line(start, end, Ink, 2.0, true)
+	frame.draw_circle(end, 5.0, Ink)
 
 static func _is_index(value: Variant) -> bool:
 	return (value is int or value is float) and value >= 0 and value < 10000 and int(value) == value

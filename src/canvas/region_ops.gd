@@ -9,6 +9,8 @@ var cvs   # editor_canvas 宿主
 const MapFormat := preload("res://src/map/map_format.gd")
 const TilesetCache := preload("res://src/canvas/tileset_cache.gd")
 const ClonePlan := preload("res://src/content/clone_plan.gd")
+const ContentStore := preload("res://src/content/content_store.gd")
+const FunctionDecls := preload("res://src/content/function_decl.gd")
 
 func _init(c) -> void:
 	cvs = c
@@ -626,11 +628,14 @@ func stage_cloned_contents(plan: Dictionary) -> void:
 		ce = cvs.app_host.project_shell.content_editor
 	for pc in (plan.get("pending_contents", []) as Array):
 		var pd: Dictionary = pc
+		if FileAccess.file_exists(ContentStore.path_for(cvs.manifest, pd.fn_id, pd.id)):
+			continue
 		var owner := ""
 		for row in remapped:
 			var rf: Dictionary = row
 			for f in (rf.get("functions", []) as Array):
-				if f is Dictionary and str((f as Dictionary).get("content", "")) == str(pd.get("id", "")):
+				if f is Dictionary and f.get("content") == pd.id \
+						and FunctionDecls.fn_id_of(cvs.manifest, str(f.get("fn", ""))) == pd.fn_id:
 					owner = str(rf.get("code", ""))
 		if ce != null:
 			ce.stage_clone(str(pd.get("fn_id", "")), str(pd.get("id", "")),

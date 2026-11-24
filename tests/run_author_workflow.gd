@@ -2565,6 +2565,42 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 	check(cvs.extract().spawn == [5, 3] and cvs.undo_step_count() == steps + 1, "spawn uses root coordinates from the perspective view")
 	check(await cvs.undo() and cvs.extract().spawn == before_spawn and cvs.map_root == root, "undo restores the root spawn in place")
 	check(await cvs.redo() and cvs.extract().spawn == [5, 3] and cvs.map_root == root, "redo reapplies the root spawn in place")
+	var source_switch: EntityNode = cvs._ent_by_code_index()["PICK"]
+	var source_id := "%s-SWCH-PICK-reaction-preview" % cvs.cur_map_code()
+	source_switch.functions = [{"fn": "REAC", "tr": "TUCH", "content": source_id}]
+	editor.stage_clone("reaction", source_id, {"id": source_id, "function": "REAC",
+		"fields": {"RMES": "Draft copied from the game frame"}}, "PICK")
+	cvs._mark_ents()
+	app._layout_ctrl._on_map_menu_id(17)
+	var copy_pop := await _render_pick_frame(app)
+	if copy_pop == null:
+		return
+	var copy_tools: OptionButton = copy_pop.find_child("MapGamePreviewTool", true, false)
+	copy_tools.select(7)
+	copy_tools.item_selected.emit(7)
+	var object_count: int = cvs.ents_all().size()
+	check(_click_pick_frame(copy_pop, Vector2(0.11, 0.34)).disabled, "copy needs a destination after selecting the switch")
+	check(_click_pick_frame(copy_pop, occluder).disabled, "copy cannot use an occluded destination")
+	apply = _click_pick_frame(copy_pop, Vector2(0.65, 0.25))
+	check(not apply.disabled and cvs.ents_all().size() == object_count, "cross-layer copy stays a draft until confirmed")
+	apply.pressed.emit()
+	if await _wait_for_pick_frame(copy_pop) == null:
+		return
+	copy_pop.hide()
+	var copied_switches: Array = cvs.ents_all().filter(func(n): return n.asset == "switch" and n.code != "PICK")
+	if copied_switches.size() != 1:
+		check(false, "one switch was copied")
+		return
+	var copy: EntityNode = copied_switches[0]
+	var copy_code := copy.code
+	var copy_id: String = copy.functions[0].content
+	check(copy.layer_id == upper and copy.props.target == source_switch.props.target and copy_id != source_id
+		and copy.position.is_equal_approx(Vector2(48.0 + 32.0 / 7, 32.0 + 64.0 / 7))
+		and not FileAccess.file_exists(Store.path_for(manifest, "reaction", copy_id)),
+		"copy has a fresh identity and staged content, preserves its outside port reference and lands in the perspective layer")
+	check(await cvs.undo() and not cvs._ent_by_code_index().has(copy_code) and cvs.map_root == root,
+		"undo removes just the copy in place")
+	check(await cvs.redo() and cvs._ent_by_code_index().has(copy_code), "redo restores the same copy ID")
 	var saved: Dictionary = await app._map_file_ctrl.commit_document("保存实景落点及连接")
 	check(saved.get("status") == "ok", "publish positions and port selected from the game frame")
 	await app._load_map_file(path)
@@ -2578,6 +2614,9 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 		and result.get("opened") == doors[1].code
 		and absf(float(picks[0].transform.rotation) - PI / 2.0) < 0.001 and picks[0].transform.flip_h == true
 		and result.get("playerStart") == [88.0, 56.0]
+		and result.get("switchCopies", []).size() == 1 and result.switchCopies[0].code == copy_code
+		and result.switchCopies[0].layer == upper and result.switchCopies[0].target.inst == doors[1].code
+		and result.switchCopies[0].message == "Draft copied from the game frame"
 		and result.get("contours", []).size() == 1 and result.contours[0].props == compound,
 		"game reloads both view positions and the projected polygon, and opens the selected door: " + str(report))
 
