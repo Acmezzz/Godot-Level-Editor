@@ -32,7 +32,8 @@ func run() -> void:
 				"maps": true, "screens": true, "contentTypes": ["signal"]}]}],
 		"startup": {"screens": true}, "viewports": [{"id": "handheld", "w": 480, "h": 720}],
 		"mapOutputs": {"completed": {"name": "Course completed",
-			"maps": true, "screens": true, "contentTypes": ["signal"]}},
+			"maps": true, "screens": true, "contentTypes": ["signal"]},
+			"retry": {"name": "Retry the course", "maps": true}},
 		"mapContentSlots": {"round": {"name": "Round rules",
 			"contentTypes": ["round_rules"], "contentMapContext": "inherit"}},
 		"mapGenerators": {"course": {"contentType": "course_rules",
@@ -52,7 +53,8 @@ func run() -> void:
 			"round_rules": {"code": "ROND", "name": "Round rules", "fields": [
 				{"id": "inputs", "code": "INPT", "kind": "input", "type": "int", "min": 1, "max": 4},
 				{"id": "role", "code": "ROLE", "kind": "input", "type": "flow_target",
-					"contentTypes": ["round_host"], "contentMapContext": "inherit"}]},
+					"contentTypes": ["round_host"], "contentMapContext": "inherit"},
+				{"id": "retry", "code": "RTRY", "kind": "input", "type": "flow_target", "maps": true}]},
 			"round_host": {"code": "RHST", "name": "Round host", "fields": [
 				{"id": "host", "code": "HOST", "kind": "choice", "source": "entity_inst:relay"}]},
 			"signal": {"code": "SIGN", "name": "Signal", "fields": [
@@ -219,6 +221,7 @@ func run() -> void:
 	check(form.find_child("ReferenceContextMap", true, false).get_selected_metadata() == map_code,
 		"editing the bound rules opens with the owning map selected")
 	choose(field_control(form, "role"), JSON.stringify(host_target))
+	choose(field_control(form, "retry"), JSON.stringify({"map": map_code}))
 	press(form, "保存")
 	form.hide()
 	app.project_shell.content_editor._library._open_item(host_target.function, host_target.content, map_code)
@@ -234,6 +237,7 @@ func run() -> void:
 	map_flow = popup()
 	completed = map_flow.find_child("MapFlow_completed", true, false)
 	choose(completed, JSON.stringify({"view": "results"}))
+	choose(map_flow.find_child("MapFlow_retry", true, false), JSON.stringify({"map": map_code}))
 	press(map_flow, "应用")
 	check(Audit._ref_checks(canvas.extract(), orphan_manifest, "course").any(func(issue):
 		return issue.jump.type == "map_flow" and issue.jump.field == "completed"),
@@ -263,7 +267,13 @@ func run() -> void:
 	choose(field_control(sequence, "board"), map_code)
 	sequence.hide()
 	var timeline_target := {"function": "sequence", "content": "project-epilogue"}
+	app._set_mode("content", pawn_code)
+	exit_picker = app.project_shell.content_editor.root.find_child("InstanceValue_exit_target", true, false)
+	choose(exit_picker, JSON.stringify({"map": map_code}))
+	app.project_shell.content_editor.commit_fields()
 	app._set_mode("map")
+	published = await app._map_file_ctrl.commit_document("保存实例重试出口")
+	check(published.get("status") == "ok", "publish the self-directed instance outlet")
 	app._map_file_ctrl.on_duplicate()
 	var copy_popup := popup()
 	collect(copy_popup, "LineEdit")[0].text = "course_variant"
@@ -275,7 +285,15 @@ func run() -> void:
 	var copy_code: String = copy.meta.code
 	var copy_host: String = copy.objects[0].code
 	var copy_rules: Dictionary = copy.meta.contentSlots.round
-	var copy_role: Dictionary = Store.read(manifest, copy_rules.function, copy_rules.content).fields.ROLE
+	var copy_fields: Dictionary = Store.read(manifest, copy_rules.function, copy_rules.content).fields
+	var copy_role: Dictionary = copy_fields.ROLE
+	var source := Maps.read(manifest, "course")
+	check(copy.meta.flowOutputs == {"completed": {"view": "results"}, "retry": {"map": copy_code}}
+		and copy.objects[0].props.exit_target == {"map": copy_code} and copy_fields.RTRY == {"map": copy_code}
+		and source.meta.flowOutputs.retry == {"map": map_code}
+		and source.objects[0].props.exit_target == {"map": map_code}
+		and Store.read(manifest, round_target.function, round_target.content).fields.RTRY == {"map": map_code},
+		"self-directed outlets follow the copy, and the screen outlet and source remain intact")
 	check(copy_rules.content != round_target.content and copy_host != pawn_code
 		and copy_role.content != host_target.content
 		and Store.read(manifest, copy_role.function, copy_role.content).fields.HOST == copy_host

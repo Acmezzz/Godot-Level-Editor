@@ -244,6 +244,8 @@ static func build(src: Dictionary, dst: Dictionary, codes: PackedStringArray = P
 	var source_key := _source_key(sdata, src_map)
 	var spatial_refs := {"cells": src.get("cell_ids", {}), "edge": src.get("map_edge", Callable()),
 		"whole_map": self_copy}
+	if self_copy:
+		spatial_refs["map_copy"] = _map_copy_codes(sdata, ddata)
 	var scoped_ids := {}
 	if self_copy:
 		var roots: Array = MapFlow.scoped_content(m, sdata).map(func(ref): return ref.value)
@@ -390,6 +392,8 @@ static func _remap_props(manifest: Dictionary, values: Dictionary, fields: Array
 		if not field is Dictionary:
 			continue
 		var id := str(field.get("id", ""))
+		if spatial_refs.has("map_copy") and RefFields.describe(field).kind == "flow_target":
+			_remap_flow_map(field, id, values, spatial_refs)
 		for scope in RefFields.nested_scopes(manifest, field, values.get(id)):
 			var path := "%s.%s#%d" % [owner, id, scope.path[0]]
 			if scope.path.size() == 2:
@@ -465,6 +469,8 @@ static func _remap_field_map(manifest: Dictionary, values, decls: Array, instanc
 		var key := str(f.get("code", ""))
 		if key == "":
 			key = str(f.get("id", ""))
+		if kind == "flow_target" and spatial_refs.has("map_copy"):
+			_remap_flow_map(f, key, vals, spatial_refs)
 		if kind in ["content", "flow_target"] and (spatial_refs.has("visit_scoped") or spatial_refs.has("scoped_ids")):
 			_remap_scoped_link(f, key, vals, decls, fn_id, desc, source_key, source_name,
 				_target_key(target_data, target_map), spatial_refs, pairs_to_fill)
@@ -619,12 +625,33 @@ static func whole_map_document(src: Dictionary, new_name: String, new_code: Stri
 	for key in ["objects", "tiles", "spawn", "collision"]:
 		if patch.has(key):
 			doc[key] = patch[key]
+	var map_copy := _map_copy_codes(sdata, doc)
+	var outputs := MapFlow.targets(doc, MapFlow.OUTPUTS)
+	for id in outputs:
+		outputs[id] = _copied_map_target(outputs[id], map_copy)
 	for ref in MapFlow.scoped_content(m, sdata):
 		var key := content_key(ref.value.function, ref.value.content)
 		if plan.scoped_ids.has(key):
 			meta[ref.map_section][ref.field]["content"] = plan.scoped_ids[key]
 	plan["document"] = doc
 	return plan
+
+static func _map_copy_codes(source: Dictionary, target: Dictionary) -> Dictionary:
+	var code: String = source.get("meta", {}).get("code", "")
+	var copy: String = target.get("meta", {}).get("code", "")
+	return {code: copy} if code != "" and copy != "" else {}
+
+static func _copied_map_target(value: Variant, codes: Dictionary) -> Variant:
+	if FlowTarget.kind(value) == "map" and codes.has(value.map):
+		return {"map": codes[value.map]}
+	return value
+
+static func _remap_flow_map(field: Dictionary, key: String, values: Dictionary, scope: Dictionary) -> void:
+	var value = values.get(key, field.get("default"))
+	var mapped = _copied_map_target(value, scope.map_copy)
+	if mapped != value:
+		values[key] = mapped
+
 ## entity_ref 字段引用重映射（remap_row 顶层与 C1 记录行共用）：vals = 值字典（键=字段 id），
 ## fdecls = 兄弟声明（配对地图字段按 mapField 在这里找，值读 vals）。冲突 id 用 owner。
 ## 原逻辑保持不变（R10 配对优先、组内→指向目标图、组外→钉源图/报冲突）。
