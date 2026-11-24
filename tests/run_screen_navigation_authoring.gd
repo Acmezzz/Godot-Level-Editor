@@ -88,7 +88,7 @@ func run() -> void:
 			{"id": "route", "code": "ROUT", "kind": "input", "type": "array", "of": "flow_target",
 				"maps": true, "screens": true, "contentTypes": ["signal"], "contentMapContext": "paired", "mapField": "board"}]}},
 		"playtest": {"executable": OS.get_executable_path(), "report": true, "projectEntry": true, "mapEntry": true,
-			"mapEntryPorts": ["arrival"],
+			"mapEntryPorts": ["arrival"], "entryFunctions": ["sequence"], "contentEntryMap": true,
 			"args": ["--path", "%projectpath%", "--audio-driver", "Dummy", "--", "--verify"]}}
 	check(Maps.write_json(project.path_join("editor/editor_manifest.json"), declaration), "install only game declarations")
 	var manifest := Manifest.load_from(project)
@@ -722,6 +722,31 @@ func run() -> void:
 		and result.get("debriefBoard") == copy_code and result.get("debriefHost") == copy_host
 		and result.get("visited") == ["project-epilogue", "project-finished"],
 		"ordinary launch starts map-bound content directly and reaches its authored ending: %s" % [report])
+	end = Time.get_ticks_msec() + 2000
+	while Playtest.is_alive(controller._play_pid) and Time.get_ticks_msec() < end:
+		await create_timer(0.05).timeout
+	var saved_startup: Dictionary = app.manifest.startup.duplicate(true)
+	app.project_shell.content_editor._library.open()
+	var library := popup()
+	choose(collect(library, "OptionButton")[0], "sequence")
+	var rows: ItemList = collect(library, "ItemList")[0]
+	for i in rows.item_count:
+		if rows.get_item_metadata(i) == timeline_target.content:
+			rows.select(i)
+			rows.item_selected.emit(i)
+			break
+	choose(library.find_child("ContentPlaytestMap", true, false), map_code)
+	press(library, "试玩所选内容")
+	end = Time.get_ticks_msec() + 8000
+	while controller._play_report_result.is_empty() and Time.get_ticks_msec() < end:
+		await create_timer(0.05).timeout
+		controller.poll_playtest()
+	report = controller._play_report_result
+	result = report.get("result", {})
+	check(report.get("status") == "ready" and result.get("debriefBoard") == map_code \
+		and result.get("visited") == ["project-epilogue", "project-finished"] \
+		and Manifest.load_from(project).startup == saved_startup,
+		"the library launches the same content on another board without changing published startup: %s" % [report])
 	print("SCREEN-NAV-DONE failures=", failures)
 	quit(0 if failures == 0 else 1)
 

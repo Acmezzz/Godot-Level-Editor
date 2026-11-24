@@ -19,8 +19,14 @@ static func allows_entry(m: Dictionary, function_id: String) -> bool:
 	var config: Dictionary = m.get("playtest", {})
 	return config.get("projectEntry", false) and config.get("entryFunctions", []).has(function_id)
 
-static func entry_arg(function_id: String, content_id: String) -> String:
-	return _encode_entry({"function": function_id, "content": content_id})
+static func allows_content_map(m: Dictionary, function_id: String) -> bool:
+	return allows_entry(m, function_id) and m.get("playtest", {}).get("contentEntryMap") == true
+
+static func entry_arg(function_id: String, content_id: String, content_map := "") -> String:
+	var entry := {"function": function_id, "content": content_id}
+	if not content_map.is_empty():
+		entry["contentMap"] = content_map
+	return _encode_entry(entry)
 
 static func allows_view_entry(m: Dictionary) -> bool:
 	return m.get("playtest", {}).get("viewEntry", false) == true

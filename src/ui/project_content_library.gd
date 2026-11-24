@@ -65,11 +65,18 @@ func open() -> void:
 		if selected.is_empty() or not eligible.has(selected[0]):
 			return {}
 		return {"function": selected_kind.call(), "content": list.get_item_metadata(selected[0])}
+	var play_board := OptionButton.new()
+	play_board.name = "ContentPlaytestMap"
+	var board_row := Kit.field_row("试玩地图", play_board, 82)
+	if manifest.get("playtest", {}).get("contentEntryMap") == true:
+		StartupDialog.fill_content_maps(play_board, manifest, "", "（无地图上下文）")
+	body.add_child(board_row)
 	var play := Kit.button("试玩所选内容", func():
 		var entry: Dictionary = selected_entry.call()
 		if not entry.is_empty():
-			pop.hide()
-			app._playtest_ctrl.on_play(Vector2i(-1, -1), true, entry), "ghost")
+			var board: String = play_board.get_selected_metadata() if board_row.visible else ""
+			if app._playtest_ctrl.play_content_entry(entry, board):
+				pop.hide(), "ghost")
 	var copy := Kit.button("复制为草稿…", func():
 		var selected := list.get_selected_items()
 		if selected.is_empty():
@@ -89,6 +96,7 @@ func open() -> void:
 	var update_play := func():
 		play.visible = Playtest.allows_entry(manifest, selected_kind.call())
 		play.disabled = selected_entry.call().is_empty()
+		board_row.visible = Playtest.allows_content_map(manifest, selected_kind.call())
 		var selected := list.get_selected_items()
 		copy.disabled = selected.is_empty() or not reusable.has(selected[0])
 	var refill := func():

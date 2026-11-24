@@ -22,13 +22,10 @@ func _init(host, map_files: RefCounted) -> void:
 	app = host
 	files = map_files
 
-func on_play(spawn_tiles: Vector2i = Vector2i(-1, -1), project_entry := false, entry := {}) -> void:
+func on_play(spawn_tiles: Vector2i = Vector2i(-1, -1), project_entry := false) -> void:
 	if not _can_start_playtest():
 		return
 	if project_entry and not bool(app.manifest.get("playtest", {}).get("projectEntry", false)):
-		return
-	if not entry.is_empty() and (not project_entry or not Playtest.allows_entry(app.manifest, entry.function)):
-		app._set_status("游戏未开放此内容类型作为试玩入口。")
 		return
 	var input: Dictionary = await files.prepare_playtest_document(project_entry)
 	if input.has("error"):
@@ -36,20 +33,27 @@ func on_play(spawn_tiles: Vector2i = Vector2i(-1, -1), project_entry := false, e
 		return
 	var play_path: String = input.path
 	var digest: String = input.digest
-	if not entry.is_empty():
-		var selected := EntryStore.read_ex(app.manifest, entry.function, entry.content)
-		if selected.status != "ok" or selected.data.get("scope") != "project" \
-				or selected.data.get("function") != EntryFunctions.fn_code(app.manifest, entry.function):
-			app._set_status("试玩中止：所选项目入口已删除、无法读取或声明不匹配。")
-			return
 	var args: PackedStringArray = PackedStringArray() if project_entry else _play_args(spawn_tiles)
-	if not entry.is_empty():
-		args.append(Playtest.entry_arg(entry.function, entry.content))
-	var subject := play_path.get_file() if not project_entry else (
-		"项目入口 %s / %s" % [entry.function, entry.content] if not entry.is_empty() else "项目入口")
+	var subject := "项目入口" if project_entry else play_path.get_file()
 	_start_playtest(play_path, digest, args, subject)
 
 ## Published resource entries leave the current editing session untouched.
+func play_content_entry(entry: Dictionary, board := "") -> bool:
+	if not Playtest.allows_entry(app.manifest, entry.function):
+		return false
+	if not board.is_empty() and (not Playtest.allows_content_map(app.manifest, entry.function) \
+			or not StartupTargets.content_map_available(app.manifest, board)):
+		app._set_status("试玩中止：所选地图已不可用。")
+		return false
+	var data := EntryStore.read(app.manifest, entry.function, entry.content)
+	if not StartupTargets.is_project_destination(data, EntryFunctions.fn_code(app.manifest, entry.function)):
+		app._set_status("试玩中止：所选项目内容不可用。")
+		return false
+	if not _published_manifest_current():
+		return false
+	var subject := "内容入口 %s / %s" % [entry.function, entry.content]
+	return _start_playtest("", "", PackedStringArray([Playtest.entry_arg(entry.function, entry.content, board)]), subject)
+
 func play_map_entry(target: Dictionary) -> bool:
 	if not Playtest.allows_map_entry(app.manifest):
 		return false

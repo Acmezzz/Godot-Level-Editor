@@ -87,6 +87,7 @@
 | `playtest.executable` | string | 可选（A6）。结构化启动：可执行文件路径，支持 `%projectpath%`/`%mapfile%`；配置后编辑器用 `OS.create_process()` **直接启动**，退出状态代表游戏本体 |
 | `playtest.args` | string[] | 可选（A6）。参数字符串数组，逐项替换 `%mapfile%`、`%projectpath%`（**不加引号**，空格路径由数组分段保证）。Godot 项目示例：`['--path', '%projectpath%', '--', '--map=%mapfile%']`。未配 `executable` 时退回 `playCommand` 模板，状态栏会标明跟踪的是包装进程 |
 | `playtest.entryFunctions` | string[] | 可选，须启用 `projectEntry: true`。填写允许作者从内容库启动的功能声明 ID；列表成员必须已声明且互不重复。 |
+| `playtest.contentEntryMap` | bool | 可选，须启用 `projectEntry` 并声明 `entryFunctions`。允许为单项内容试玩选择已保存的配对地图。 |
 | `playtest.viewEntry` | bool | 可选，须配置结构化启动。开启后，作者可以从参考视图启动该屏幕的已保存版本，不要求配置 `projectEntry`。 |
 | `playtest.mapEntry` | bool | 可选，须配置结构化启动。开启后，作者可以从项目流程图按地图码试玩已保存的地图入口。 |
 | `playtest.mapEntryPorts` | string[] | 可选，须开启 `mapEntry`。列出允许作为地图试玩入口的端口类型。 |
@@ -1450,6 +1451,10 @@ main.gd
 `{"version":1,"function":"功能声明 ID","content":"所选内容 ID"}`。
 游戏按功能和内容 ID 加载入口，并自行决定如何运行它。未收到该参数时沿用游戏默认入口。
 此参数独立于 `--editor-playtest`，不要求启用加载回执。
+
+开启 `playtest.contentEntryMap` 后，作者选了试玩地图时，同一个入口对象会额外携带
+`"contentMap":"地图码"`；未选择则省略。游戏以此值作为该段内容的地图上下文，不读取正式入口的配对地图。
+单项内容试玩只读取已保存的资源，不提交当前地图草稿。
 
 声明 `playtest.mapEntry: true` 后，项目流程图的「试玩所选地图」会以空的 `%mapfile%` 启动，
 并发送同一个 `--editor-entry` 参数，解码为 `{"version":1,"map":"地图码"}`。

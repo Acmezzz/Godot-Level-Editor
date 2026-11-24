@@ -480,7 +480,7 @@ static func _validate_playtest(data: Dictionary, issues: Array[Dictionary]) -> v
 		_add(issues, "error", "playtest.executable", "must be a path string")
 	elif exe is String and (exe as String).strip_edges() == "" and pt2.has("executable"):
 		_add(issues, "warning", "playtest.executable", "empty executable: falls back to playCommand")
-	for feature in ["report", "projectEntry", "mapEntry", "viewEntry", "viewDraft"]:
+	for feature in ["report", "projectEntry", "mapEntry", "viewEntry", "viewDraft", "contentEntryMap"]:
 		if not pt2.has(feature):
 			continue
 		if not pt2[feature] is bool:
@@ -494,6 +494,9 @@ static func _validate_playtest(data: Dictionary, issues: Array[Dictionary]) -> v
 		if pt2.get("mapEntry") != true or not types is Array or types.is_empty() \
 				or not types.all(func(id): return id is String and not id.strip_edges().is_empty()):
 			_add(issues, "error", "playtest.mapEntryPorts", "requires mapEntry: true and a non-empty array of port types")
+	if pt2.get("contentEntryMap") == true and (pt2.get("projectEntry") != true \
+			or not pt2.get("entryFunctions") is Array or pt2.entryFunctions.is_empty()):
+		_add(issues, "error", "playtest.contentEntryMap", "requires projectEntry and at least one entryFunctions ID")
 	if pt2.has("entryFunctions"):
 		var entries = pt2.entryFunctions
 		if pt2.get("projectEntry") != true:

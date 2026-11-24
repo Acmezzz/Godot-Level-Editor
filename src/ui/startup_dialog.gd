@@ -4,9 +4,10 @@ const Kit := preload("res://src/ui/ui_kit.gd")
 const Targets := preload("res://src/project/startup_targets.gd")
 const Refs := preload("res://src/project/reference_index.gd")
 
-static func fill_content_maps(picker: OptionButton, manifest: Dictionary, saved: String) -> void:
+static func fill_content_maps(picker: OptionButton, manifest: Dictionary, saved: String,
+		empty_label := "选择已保存的地图…") -> void:
 	picker.clear()
-	picker.add_item("选择已保存的地图…")
+	picker.add_item(empty_label)
 	picker.set_item_metadata(0, "")
 	var current := 0
 	for map in Refs.map_target_options(manifest):

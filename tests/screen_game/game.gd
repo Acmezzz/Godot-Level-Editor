@@ -45,7 +45,7 @@ func _ready() -> void:
 	if entry.has("viewDraft") and not _load_view_draft(entry):
 		_finish("Cannot load this screen draft.")
 		return
-	_follow_target(entry, "" if args.has("--editor-entry") else startup.get("contentMap", ""))
+	_follow_target(entry, entry.get("contentMap", "") if args.has("--editor-entry") else startup.get("contentMap", ""))
 
 func _follow_target(target: Dictionary, content_board := "") -> void:
 	if target.has("view"):
