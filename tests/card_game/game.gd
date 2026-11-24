@@ -9,6 +9,7 @@ var entry_source := "manifest"
 var rules := {}
 var hand := VBoxContainer.new()
 var settlements: Array[Dictionary] = []
+var dealt: Array[String] = []
 
 func _initialize() -> void:
 	run.call_deferred()
@@ -58,14 +59,19 @@ func deal() -> void:
 	var prompt := Label.new()
 	prompt.text = "Pick a card · target %s" % rules.TARG
 	hand.add_child(prompt)
+	var copies := {}
 	for slot in rules.DECK:
-		var card := fields("card", slot.CRDF)
+		copies[slot.CRDF] = slot.COPY
+	dealt.assign(rules.get("ORDR", copies.keys()))
+	for id in dealt:
+		var card := fields("card", id)
 		if card.is_empty():
-			finish("Missing card: " + str(slot.CRDF))
+			finish("Missing card: " + id)
 			return
+		var count := int(copies.get(id, 1))
 		var button := Button.new()
-		button.text = "%s × %s (+%s each)" % [card.CAPT, slot.COPY, card.POWR]
-		button.pressed.connect(resolve.bind(slot.CRDF, int(slot.COPY) * int(card.POWR)))
+		button.text = "%s × %s (+%s each)" % [card.CAPT, count, card.POWR]
+		button.pressed.connect(resolve.bind(id, count * int(card.POWR)))
 		hand.add_child(button)
 
 func resolve(cid: String, score: int) -> void:
@@ -89,7 +95,7 @@ func finish(error: String) -> void:
 	if not request.is_empty():
 		var report := {"version": 1, "token": request.token, "status": "ready" if error == "" else "error",
 			"message": error, "mapDigest": "", "manifestDigest": FileAccess.get_sha256("res://editor/editor_manifest.json"),
-			"result": {"entry": entry, "entrySource": entry_source, "settlements": settlements}}
+			"result": {"entry": entry, "entrySource": entry_source, "settlements": settlements, "dealt": dealt}}
 		var file := FileAccess.open(request.path + ".tmp", FileAccess.WRITE)
 		file.store_string(JSON.stringify(report))
 		file.close()

@@ -1077,11 +1077,14 @@ static func _collect_content_links(manifest: Dictionary, decls: Array, values, s
 				subpath += "fields."
 			_collect_content_links(manifest, scope.decls, scope.values, source_fn, subpath, out, findings, step_index, depth + 1, field)
 		var desc := RefFields.describe(fd)
+		var ordered := RefFields.is_ordered_choice(fd)
+		var entries := _as_list(value)
 		if desc.kind == "view":
 			var views := ReferenceIndex.view_ids(manifest)
-			for entry in _as_list(value):
+			for i in entries.size():
+				var entry = entries[i]
 				if not _empty_reference_value(entry) and not views.has(entry):
-					findings.append({"path": path, "field": field, "step_index": step_index,
+					findings.append({"path": "%s#%d" % [path, i] if ordered else path, "field": field, "step_index": step_index,
 						"message": "引用的参考视图不存在：" + str(entry)})
 			continue
 		if desc.kind != "content":
@@ -1090,10 +1093,12 @@ static func _collect_content_links(manifest: Dictionary, decls: Array, values, s
 		if want_fn == "":
 			want_fn = source_fn
 		var distinct := {}
-		for cid in _as_list(value):
-			if cid is String and cid != "" and not distinct.has(cid):
+		for i in entries.size():
+			var cid = entries[i]
+			if cid is String and cid != "" and (ordered or not distinct.has(cid)):
 				distinct[cid] = true
-				out.append({"fn": want_fn, "cid": cid, "path": path, "field": field, "step_index": step_index,
+				out.append({"fn": want_fn, "cid": cid, "path": "%s#%d" % [path, i] if ordered else path,
+					"field": field, "step_index": step_index,
 					"map_context": fd.get("contentMapContext", ""),
 					"map_key": RefFields.paired_map_value(fd, decls, values)})
 

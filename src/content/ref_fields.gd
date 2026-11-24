@@ -62,10 +62,17 @@ static func vector_dims(decl: Dictionary) -> int:
 	var d := int(decl.get("dims", 2))
 	return d if d == 2 or d == 3 else 2
 
+static func is_ordered_choice(decl: Dictionary) -> bool:
+	return decl.get("type") == "array" and decl.get("of") == "choice" and not bool(decl.get("multiple", false))
+
 ## 主入口：声明 → 结构化描述。认不出的类型/来源原样按 value 返回（控件只读兜底）。
 static func describe(decl: Dictionary) -> Dictionary:
 	var out := _base(decl)
 	var typ := str(decl.get("type", ""))
+	if is_ordered_choice(decl):
+		var item := describe(array_element_decl(decl))
+		item["many"] = true
+		return item
 	if typ == "array" and decl.get("of") in ["port_ref", "edge_ref"]:
 		var item := describe(array_element_decl(decl))
 		item["many"] = true
@@ -164,7 +171,7 @@ static func array_element_decl(decl: Dictionary) -> Dictionary:
 	var of := str(decl.get("of", "string"))
 	if of == "choice":
 		var d: Dictionary = {"kind": "choice"}
-		for k in ["options", "source", "multiple", "mapField", "_mapKey"]:
+		for k in ["options", "source", "multiple", "allowEmpty", "mapField", "_mapKey"]:
 			if decl.get(k, null) != null:
 				d[k] = (decl.get(k) as Variant).duplicate(true) if (decl.get(k) is Array or decl.get(k) is Dictionary) \
 					else decl.get(k)

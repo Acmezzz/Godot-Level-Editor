@@ -357,7 +357,7 @@ static func set_edge(read_fn: Callable, write_fn: Callable, fn_id: String, cid: 
 		var arr: Array = fields.get(field, []) if fields.get(field, null) is Array else []
 		var at := int(shown.get("index", -1)) if not shown.is_empty() else arr.find(old_cid if old_cid != "" else to_cid)
 		if not shown.is_empty() and at == -1:
-			if to_cid == "" or arr.has(to_cid):
+			if to_cid == "" or (arr.has(to_cid) and not RefFields.is_ordered_choice(shown.get("decl", {}))):
 				return {"status": "noop"}
 			arr.append(to_cid)
 		elif at < 0 or at >= arr.size():

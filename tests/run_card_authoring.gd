@@ -4,6 +4,8 @@ extends SceneTree
 const Manifest := preload("res://src/project/manifest.gd")
 const Maps := preload("res://src/map/map_store.gd")
 const Store := preload("res://src/content/content_store.gd")
+const Flow := preload("res://src/content/rel_graph.gd")
+const Audit := preload("res://src/project/project_audit.gd")
 const Editor := preload("res://src/editor.tscn")
 var app
 var failures := 0
@@ -34,6 +36,7 @@ func run() -> void:
 				{"id": "deck", "code": "DECK", "kind": "input", "type": "array", "of": "record", "fields": [
 					{"id": "card", "code": "CRDF", "kind": "choice", "source": "content:card"},
 					{"id": "copies", "code": "COPY", "kind": "input", "type": "int", "min": 1}]},
+				{"id": "deal_order", "code": "ORDR", "kind": "input", "type": "array", "of": "choice", "source": "content:card"},
 				{"id": "pass", "code": "PASS", "kind": "choice", "source": "content:settlement"},
 				{"id": "fail", "code": "FAIL", "kind": "choice", "source": "content:settlement"}]}},
 		"playtest": {"executable": OS.get_executable_path(), "report": true, "projectEntry": true,
@@ -69,6 +72,13 @@ func run() -> void:
 	var counts := collect(deck, "SpinBox")
 	counts[0].value = 2
 	counts[1].value = 3
+	var order := field(encounter, "deal_order")
+	press(order, "+ 添加")
+	press(order, "+ 添加")
+	var dealt := collect(order, "OptionButton")
+	choose(dealt[0], "project-sentry")
+	choose(dealt[1], "project-courier")
+	press(dealt[1].get_parent(), "↑")
 	choose(field(encounter, "pass"), "project-market-open")
 	choose(field(encounter, "fail"), "project-stand-down")
 	save(encounter)
@@ -77,6 +87,20 @@ func run() -> void:
 			{"CRDF": "project-courier", "COPY": 2.0}, {"CRDF": "project-sentry", "COPY": 3.0}], "deck records preserve authored order"):
 		finish()
 		return
+	check(saved.fields.ORDR == ["project-courier", "project-sentry"], "form reorders the deal list")
+	var graph := Flow.build_project(manifest)
+	var slots: Array = graph.slots["encounter\u0001project-harbor"].filter(func(slot): return slot.field == "ORDR")
+	check(slots.map(func(slot): return slot.index) == [0, 1, -1], "flow graph exposes ordered reference slots")
+	var tail: Dictionary = slots.back()
+	var result := Flow.set_edge(func(kind, id): return Store.read(manifest, kind, id),
+		func(kind, id, data): return Store.write_ex(manifest, kind, id, data, "").ok,
+		tail.fn_id, tail.cid, tail.step, tail.field, "project-courier", tail.multi, tail.value, tail)
+	check(result.status == "ok", "flow graph may append a repeated card")
+	var bad := Store.read(manifest, "encounter", "project-harbor").duplicate(true)
+	bad.fields.ORDR[1] = "missing-card"
+	check(Audit._content_ref_checks(manifest, "encounter", tail.cid, bad).any(func(issue):
+		return issue.path.ends_with(".deal_order#1") and issue.jump.field == "deal_order"),
+		"self-check identifies the broken list position")
 	press(app.project_shell, "启动入口…")
 	var startup := visible_popup()
 	var option: OptionButton = startup.find_child("StartupTarget", true, false)
@@ -106,6 +130,8 @@ func run() -> void:
 	check(report.get("status") == "ready", "independent game returned a matching receipt: %s" % [report])
 	check(report.get("result", {}).get("entrySource") == "manifest",
 		"ordinary startup loaded the authored target without a command-line content override")
+	check(report.get("result", {}).get("dealt") == ["project-courier", "project-sentry", "project-courier"],
+		"the game deals in the same order and retains the repeated card")
 	check(report.get("result", {}).get("settlements", []) == [
 		{"card": "project-courier", "score": 8.0, "outlet": "PASS", "target": "project-market-open", "text": "Market open"},
 		{"card": "project-sentry", "score": 6.0, "outlet": "FAIL", "target": "project-stand-down", "text": "Stand down"}],

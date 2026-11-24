@@ -268,6 +268,7 @@
 - 单值引用字段声明 `mapField` 并指向另一张地图时，也用该图的已保存 `mapFrame` 拾取。嵌套记录与条件参数的配对地图按所在行读取。游戏应按请求中的地图输出实例、端口、格或格边；编辑器仍使用字段的候选集判断类型、空间和目标身份，不改配对地图。
 - `entity_inst:` 和 `cell:` 的 `multiple: true` 选项可在同一实景逐项切换，仍使用同样的 `targets.entity` 或 `targets.cell` 格式；编辑器一次提交字符串数组。
 - 有序路线用 `kind: "input", type: "array", of: "choice"`，并指定 `source: "entity_inst:…"` 或 `source: "cell:…"`；可用同一行的 `mapField` 指定整条路线的地图。实景按点击顺序追加目标，存储保留重复项，游戏按数组次序消费。
+- 同样可用 `source: "content:<功能ID>"` 或 `source: "view:"` 声明有序内容或屏幕列表。表单可添加、复制、删除和调序；项目流程图可对内容里的此类字段逐项改接或追加，包括重复目标。游戏按保存的数组顺序消费，空串表示该行未连接。普通的 `choice` 加 `multiple: true` 仍是多选集合。
 - 实例参数、功能、条件和步骤可给二维 `vector2` 或 `array`（`of: "vector2"`）声明 `pickSpace: "map"`。编辑器使用 `collision.local` 的根空间映射，写入 `[x,y]` 或点数组，单位为地图根空间像素；不要求该位置存在碰撞格、实例或实体目标。支持同一行的 `mapField` 或独立内容的临时地图。声明的 `min`、`max` 仍限制坐标。
 - 同样的字段可声明 `pickSpace: "layer"` 与 `layerField: "path_layer"`，其中 `path_layer` 是同一行内单选 `kind: "choice", source: "layer:"` 字段的 ID。两个字段用相同的 `mapField`（如需跨图），也可都省略以使用当前图或临时地图。作者先选层再拾取；编辑器只匹配该层的 `placement`，遇到前方遮挡则停止。值仍为 `[x,y]` 或点数组，单位为图层局部像素；图层 ID 单独保存在图层字段，游戏按该层变换解释。
 - 旋转 90°、水平翻转或删除整实例也可通过 `targets.entity` 或该实例的 `targets.vertex` 选中，不需要 `placement`。重新出图时使用快照中的实例变换，并移除已删除实例的拾取区域。

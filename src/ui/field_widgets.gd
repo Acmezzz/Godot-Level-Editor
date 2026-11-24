@@ -59,7 +59,7 @@ static func ordered_frame_pick(decl: Dictionary) -> bool:
 		return type_of(decl) == "array"
 	if type_of(decl) == "array" and decl.get("of") in ["port_ref", "edge_ref"]:
 		return true
-	return type_of(decl) == "array" and decl.get("of") == "choice" and not bool(decl.get("multiple", false)) \
+	return RefFields.is_ordered_choice(decl) \
 		and RefFields.describe(decl).kind in ["entity_inst", "cell"]
 
 ## C4：choice 来源是 `cell:` 的字段可在画布上按格图多边形点选。
@@ -440,7 +440,7 @@ static func _build_array(decl: Dictionary, items: Array, on_set: Callable,
 			tools.add_child(_row_tools(ctx, r))
 			line.add_child(tools)
 		line.add_child(built.ctl)
-		if ordered:
+		if ordered or RefFields.is_ordered_choice(decl):
 			tools.add_child(_row_tools(ctx, r))
 		var del := Button.new()
 		del.text = "×"
