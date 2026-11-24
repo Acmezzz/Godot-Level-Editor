@@ -76,7 +76,7 @@ static func describe(decl: Dictionary) -> Dictionary:
 		var item := describe(array_element_decl(decl))
 		item["many"] = true
 		return item
-	if typ == "array" and decl.get("of") in ["port_ref", "edge_ref"]:
+	if typ == "array" and decl.get("of") in ["port_ref", "edge_ref", "flow_target"]:
 		var item := describe(array_element_decl(decl))
 		item["many"] = true
 		return item
@@ -187,7 +187,7 @@ static func array_element_decl(decl: Dictionary) -> Dictionary:
 		return {"kind": "record", "type": "record",
 			"fields": (decl.get("fields", []) as Array).duplicate(true)}
 	var out := {"kind": "input", "type": of}
-	for k in ["min", "max", "step", "dims", "assetKind", "mapField", "_mapKey"]:
+	for k in ["min", "max", "step", "dims", "assetKind", "mapField", "_mapKey", "maps", "screens", "contentTypes", "arrivalPorts"]:
 		if decl.get(k, null) != null:
 			# 逐元素独立声明副本（C1）：数组/字典值不能与父声明共享引用
 			out[k] = decl.get(k).duplicate(true) if (decl.get(k) is Array or decl.get(k) is Dictionary) \

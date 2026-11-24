@@ -204,8 +204,12 @@ static func _collect_module_fields(fields: GDScript, manifest: Dictionary, decls
 			continue
 		var desc: Dictionary = fields.describe(ref_decl)
 		if desc.kind == "flow_target":
-			if value != null and not (value is Dictionary and value.is_empty()):
-				out.append(source.merged({"kind": desc.kind, "value": value, "path": path, "field": field, "decl": ref_decl}))
+			var targets: Array = value if decl.get("type") == "array" and value is Array else [value]
+			for i in targets.size():
+				var target = targets[i]
+				if target != null and not (target is Dictionary and target.is_empty()):
+					var target_path := "%s[%d]" % [path, i] if value is Array else path
+					out.append(source.merged({"kind": desc.kind, "value": target, "path": target_path, "field": field, "decl": decl}))
 			continue
 		var spatial: bool = desc.kind in ["entity_inst", "port", "edge", "cell", "layer"]
 		if not spatial and desc.kind not in ["content", "asset", "entity_type", "view", "audio", "map"]:

@@ -756,10 +756,14 @@ static func _check_condition_fields(fields: Variant, path: String, conditions: D
 		if not fd is Dictionary:
 			continue
 		var child := path + "." + str(fd.get("id", "?"))
-		if fd.get("kind") == "input" and fd.get("type") == "flow_target":
+		var flow_list: bool = fd.get("type") == "array" and fd.get("of") == "flow_target"
+		if fd.get("kind") == "input" and (fd.get("type") == "flow_target" or flow_list):
 			if not FlowTarget.declaration_valid(fd):
 				_add(issues, "error", child, "flow_target requires at least one domain: maps, screens, contentTypes or arrivalPorts")
-			elif fd.has("default") and not (fd.default is Dictionary and fd.default.is_empty()) and not FlowTarget.allows(fd, fd.default):
+			elif flow_list and fd.has("default") and (not fd.default is Array or not fd.default.all(func(target):
+					return (target is Dictionary and target.is_empty()) or FlowTarget.allows(fd, target))):
+				_add(issues, "error", child + ".default", "must be an array of permitted flow targets")
+			elif not flow_list and fd.has("default") and not (fd.default is Dictionary and fd.default.is_empty()) and not FlowTarget.allows(fd, fd.default):
 				_add(issues, "error", child + ".default", "flow target is not in the declared domains")
 		if fd.get("kind") == "input" and fd.get("type") == "curve" and fd.has("default") and not Keyframes.valid(fd.default):
 			_add(issues, "error", child + ".default", "curve keys require increasing nonnegative times, finite values and a supported mode")
@@ -781,7 +785,7 @@ static func _check_condition_fields(fields: Variant, path: String, conditions: D
 			if not mode is String or str(mode) not in ["independent", "inherit", "paired"]:
 				_add(issues, "error", at, "must be independent, inherit or paired")
 			elif not str(fd.get("source", "")).begins_with("content:") and not (
-					fd.get("kind") == "input" and fd.get("type") == "flow_target"
+					fd.get("kind") == "input" and (fd.get("type") == "flow_target" or flow_list)
 					and fd.get("contentTypes") is Array and not fd.contentTypes.is_empty()):
 				_add(issues, "error", at, "requires a content: choice or a flow_target that permits content")
 			elif mode == "paired":

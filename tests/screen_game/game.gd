@@ -159,7 +159,17 @@ func _show_content(target: Dictionary, content_board: String) -> void:
 	var fields: Dictionary = data.get("fields", {})
 	if kind == "sequence":
 		var handoff: Dictionary = data.steps[0].fields
-		_follow_target.call_deferred(handoff.ROUT, str(handoff.BRD1))
+		var targets: Array = handoff.ROUT
+		runtime_course["handoffTargets"] = targets
+		for i in targets.size():
+			var choice := Button.new()
+			choice.text = "Continue · %d" % (i + 1)
+			choice.position = Vector2(16, 16 + 40 * i)
+			add_child(choice)
+			var destination: Dictionary = targets[i]
+			choice.pressed.connect(func(): _follow_target.call_deferred(destination, str(handoff.BRD1)))
+			if verify and i == targets.size() - 1:
+				await _verify_button(choice)
 		return
 	if kind == "course_rules":
 		var placements: Array = fields.get("PLAC", []).map(func(row):

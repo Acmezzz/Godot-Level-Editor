@@ -69,7 +69,7 @@ func run() -> void:
 				"maps": true, "screens": true, "contentTypes": ["signal"]}]}},
 		"steps": {"handoff": {"code": "HDOF", "name": "Handoff", "fields": [
 			{"id": "board", "code": "BRD1", "kind": "choice", "source": "map"},
-			{"id": "route", "code": "ROUT", "kind": "input", "type": "flow_target",
+			{"id": "route", "code": "ROUT", "kind": "input", "type": "array", "of": "flow_target",
 				"maps": true, "screens": true, "contentTypes": ["signal"], "contentMapContext": "paired", "mapField": "board"}]}},
 		"playtest": {"executable": OS.get_executable_path(), "report": true, "projectEntry": true, "mapEntry": true,
 			"mapEntryPorts": ["arrival"],
@@ -404,12 +404,17 @@ func run() -> void:
 		check(router.get("fields", {}).get("NEXT") == destination, "graph writes the typed destination %s" % destination)
 	var sequence_key := "sequence\u0001project-epilogue"
 	choose(flow.find_child("FlowSource", true, false), sequence_key)
-	choose(targets, {"function": "signal", "content": "project-finished"})
-	press(flow, "应用关系")
+	var slots: OptionButton = flow.find_child("FlowSlot", true, false)
+	var route := [{"map": map_code}, {"function": "signal", "content": "project-finished"}]
+	for destination in route:
+		slots.select(slots.item_count - 1)
+		slots.item_selected.emit(slots.selected)
+		choose(targets, destination)
+		press(flow, "应用关系")
 	flow.hide()
 	check(Store.read(manifest, "sequence", "project-epilogue").steps[0].fields == {
-		"BRD1": map_code, "ROUT": {"function": "signal", "content": "project-finished"}},
-		"the timeline keeps the paired map alongside the graph-authored destination")
+		"BRD1": map_code, "ROUT": route},
+		"the timeline keeps the paired map and the graph-authored destinations in order")
 	var findings := Audit.audit(manifest)
 	check(not findings.any(func(issue): return issue.get("path", "").begins_with("round_host/")),
 		"the bound rules validate their local host against the owning map")
@@ -506,6 +511,7 @@ func run() -> void:
 	var result: Dictionary = report.get("result", {})
 	check(report.get("status") == "ready" and result.get("screens") == ["welcome", "instructions", "results", "debrief"]
 		and result.get("visited") == ["project-course-rules", "project-epilogue", "project-finished"]
+		and result.get("handoffTargets") == route
 		and result.get("endingActor") == pawn_code and result.get("endingBoard") == map_code
 		and result.get("runtimeCourse", []).map(func(x): return int(x)) == [3, 5] and result.get("board") == copy_code
 		and result.get("roundRules") == copy_rules.content and result.get("roundInputs") == 3

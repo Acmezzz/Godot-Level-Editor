@@ -657,7 +657,9 @@ static func _copied_map_target(value: Variant, codes: Dictionary, instances: Dic
 
 static func _remap_flow_map(field: Dictionary, key: String, values: Dictionary, scope: Dictionary, instances: Dictionary) -> void:
 	var value = values.get(key, field.get("default"))
-	var mapped = _copied_map_target(value, scope.get("map_copy", {}), instances, scope.get("whole_map", false))
+	var remap := func(target: Variant):
+		return _copied_map_target(target, scope.get("map_copy", {}), instances, scope.get("whole_map", false))
+	var mapped = value.map(remap) if value is Array else remap.call(value)
 	if mapped != value:
 		values[key] = mapped
 

@@ -333,7 +333,7 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 		"array":
 			# array.of ∈ 基础类型/choice/record（record 子字段可再嵌 array，限深 4）；非数组值只读展示——commit() 不能把坏值悄悄写成 []
 			var of := str(decl.get("of", ""))
-			var ok_of: Array = ["string", "int", "float", "bool", "color", "vector2", "range", "asset_ref", "choice", "record", "condition", "port_ref", "edge_ref"]
+			var ok_of: Array = ["string", "int", "float", "bool", "color", "vector2", "range", "asset_ref", "choice", "record", "condition", "port_ref", "edge_ref", "flow_target"]
 			if not ok_of.has(of):
 				return _readonly(decl, value, "array.of 未声明（应写基础类型或 choice）",
 					"补全声明后重新加载清单即可恢复编辑")
@@ -445,7 +445,7 @@ static func _build_array(decl: Dictionary, items: Array, on_set: Callable,
 			tools.add_child(_row_tools(ctx, r))
 			line.add_child(tools)
 		line.add_child(built.ctl)
-		if ordered or RefFields.is_ordered_choice(decl):
+		if ordered or RefFields.is_ordered_choice(decl) or elem.get("type") == "flow_target":
 			tools.add_child(_row_tools(ctx, r))
 		var del := Button.new()
 		del.text = "×"

@@ -316,18 +316,25 @@ static func _collect(manifest: Dictionary, from_key: String, base: Dictionary, d
 					"%s %s" % [label, scope.label])
 		var desc := RefFields.describe(fd)
 		if desc.kind == "flow_target" and catalog.has(MAP_KIND):
-			var target = values.get(field, fd.get("default", {}))
-			var address := _flow_address(target)
-			var edge := base.merged({"from": from_key, "field": field, "label": label, "step": step,
+			var multi: bool = desc.many
+			var current = values.get(field, fd.get("default", [] if multi else {}))
+			var targets: Array = current.duplicate() if multi and current is Array else ([] if multi else [current])
+			if multi:
+				targets.append({})
+			var row := base.merged({"from": from_key, "field": field, "label": label, "step": step,
 				"decl": fd.duplicate(true), "shown_value": shown.duplicate(true) if shown is Dictionary or shown is Array else shown,
-				"shown_present": values.has(field),
-				"multi": false, "flow_target": true, "target": target, "fn": address[0], "value": address[1]})
-			graph.slots[from_key].append(edge)
-			if _typed_target_exists(manifest, catalog, fd, target, address):
-				edge["to"] = _key(edge.fn, edge.value)
-				graph.edges.append(edge)
-			elif target != null and not (target is Dictionary and target.is_empty()):
-				graph.external.append(edge)
+				"shown_present": values.has(field), "multi": multi, "flow_target": true})
+			for i in targets.size():
+				var target = targets[i]
+				var address := _flow_address(target)
+				var edge := row.merged({"target": target, "fn": address[0], "value": address[1],
+					"index": i if multi and i < targets.size() - 1 else -1})
+				graph.slots[from_key].append(edge)
+				if _typed_target_exists(manifest, catalog, fd, target, address):
+					edge["to"] = _key(edge.fn, edge.value)
+					graph.edges.append(edge)
+				elif target != null and not (target is Dictionary and target.is_empty()):
+					graph.external.append(edge)
 			continue
 		if desc.kind != "content" and not (desc.kind == "view" and catalog.has(VIEW_KIND)):
 			continue
@@ -421,9 +428,25 @@ static func set_edge(read_fn: Callable, write_fn: Callable, fn_id: String, cid: 
 			or not _same_value(fields.get(field), shown.get("shown_value"))):
 		return {"status": "stale"}
 	if shown.get("flow_target", false):
-		if _same_value(fields.get(field, shown.decl.get("default", {})), destination):
-			return {"status": "noop"}
-		fields[field] = destination
+		if multi:
+			var current = fields.get(field, shown.decl.get("default", []))
+			var targets: Array = current.duplicate() if current is Array else []
+			var index: int = shown.index
+			if index == -1:
+				if destination.is_empty():
+					return {"status": "noop"}
+				targets.append(destination)
+			elif destination.is_empty():
+				targets.remove_at(index)
+			elif _same_value(targets[index], destination):
+				return {"status": "noop"}
+			else:
+				targets[index] = destination
+			fields[field] = targets
+		else:
+			if _same_value(fields.get(field, shown.decl.get("default", {})), destination):
+				return {"status": "noop"}
+			fields[field] = destination
 	elif multi:
 		var to_cid: String = destination
 		var arr: Array = fields.get(field, []) if fields.get(field, null) is Array else []

@@ -144,6 +144,7 @@ func _open_flow() -> void:
 	var node := OptionButton.new()
 	node.name = "FlowSource"
 	var slot := OptionButton.new()
+	slot.name = "FlowSlot"
 	var target := OptionButton.new()
 	target.name = "FlowTarget"
 	var play_map := Kit.button("试玩所选地图", Callable(), "ghost")

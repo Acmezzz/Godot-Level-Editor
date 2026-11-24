@@ -1145,11 +1145,19 @@ static func _collect_content_links(manifest: Dictionary, decls: Array, values, s
 		var ordered := RefFields.is_ordered_choice(fd)
 		var entries := _as_list(value)
 		if desc.kind == "flow_target":
-			if not _empty_reference_value(value) and not StartupTargets.destination_available(manifest, fd, value):
+			if desc.many and not _empty_reference_value(value) and not value is Array:
 				findings.append({"path": path, "field": field, "step_index": step_index,
-					"message": _flow_target_message(value)})
-			if FlowTarget.kind(value) == "content":
-				out.append(_content_link(value.function, value.content, path, field, step_index, fd, decls, values))
+					"message": "流程目标列表必须是数组"})
+				continue
+			var targets := entries if desc.many else [value]
+			for i in targets.size():
+				var target = targets[i]
+				var at := "%s[%d]" % [path, i] if desc.many else path
+				if not _empty_reference_value(target) and not StartupTargets.destination_available(manifest, fd, target):
+					findings.append({"path": at, "field": field, "step_index": step_index,
+						"message": _flow_target_message(target)})
+				if FlowTarget.kind(target) == "content":
+					out.append(_content_link(target.function, target.content, at, field, step_index, fd, decls, values))
 			continue
 		if desc.kind == "view":
 			var views := ReferenceIndex.view_ids(manifest)
@@ -1309,8 +1317,11 @@ static func _fields_pointing(manifest: Dictionary, kind: String, target: String,
 			for sub in _fields_pointing(manifest, kind, target, scope.decls, scope.values, coded, depth + 1):
 				out.append(prefix + str(sub))
 		var desc := RefFields.describe(fd)
-		if desc.kind == "flow_target" and vals[key] is Dictionary and vals[key].get(kind) == target:
-			out.append(id)
+		if desc.kind == "flow_target":
+			var targets := _as_list(vals[key]) if desc.many else [vals[key]]
+			for i in targets.size():
+				if targets[i] is Dictionary and targets[i].get(kind) == target:
+					out.append("%s[%d]" % [id, i] if desc.many else id)
 			continue
 		if desc.kind != kind:
 			continue
@@ -1497,11 +1508,13 @@ static func _spatial_fields(manifest: Dictionary, decls: Array, values: Variant,
 				map_name, overrides, coded or scope.path.size() == 2, sub, depth + 1, prop, probe))
 		var desc := RefFields.describe(field)
 		if not probe.is_valid() and coded and desc.kind == "flow_target":
-			var target = values.get(key, field.get("default"))
-			if FlowTarget.kind(target) == "map" and target.has("port") and overrides.has(target.map) \
-					and not StartupTargets.destination_available(manifest, field, target, overrides):
-				out.append({"path": path, "prop": prop, "message": _flow_target_message(target),
-					"fixable": false, "top_level": depth == 0, "value": target})
+			var targets := _as_list(value) if desc.many else [value]
+			for i in targets.size():
+				var target = targets[i]
+				if FlowTarget.kind(target) == "map" and target.has("port") and overrides.has(target.map) \
+						and not StartupTargets.destination_available(manifest, field, target, overrides):
+					out.append({"path": "%s[%d]" % [path, i] if desc.many else path, "prop": prop,
+						"message": _flow_target_message(target), "fixable": false, "top_level": depth == 0, "value": target})
 			continue
 		if desc.kind not in ["entity_inst", "port", "edge", "cell", "map", "layer"]:
 			continue
