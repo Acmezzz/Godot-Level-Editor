@@ -43,24 +43,18 @@ func _gesture_hint(i: int) -> String:
 
 
 func _sync_ui() -> void:
-	# 空状态（无地图）不进碰撞页：此时 collision_index()==0 且 active_layer==0 会假命中
 	if not app.map_loaded:
 		app._set_palette_page("")
-		app._refresh_tool_meta()
-		app._sync_layer_buttons()
-		app._refresh_view_toggles()
-		return
-	# 调色板跟随 place_kind（左栏选了瓦片还是可摆放资产）；碰撞元层例外——没有资产，显示类型/形状控件。
-	if app.canvas.active_layer == app.canvas.collision_index():
+	elif app.canvas.active_layer == app.canvas.collision_index():
 		app._set_palette_page("")
 		_sync_collision_controls()
 	elif app.canvas.place_kind == "tiles":
 		app._set_palette_page("tiles")
 	else:
 		app._set_palette_page(app._palette_ctrl.current_category())
-	app._refresh_tool_meta()
-	app._sync_layer_buttons()
-	app._refresh_view_toggles()
+	app._layout_ctrl._refresh_tool_meta()
+	app._layout_ctrl._refresh_layer_panel()
+	app._layout_ctrl._refresh_view_toggles()
 
 ## 碰撞类型/形状下拉与画布笔刷状态对齐（画布是唯一真相）。
 ## 笔刷类型不在合法池里（缺省 solid、切项目换池）时，下行回落到首个合法类型，

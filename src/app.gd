@@ -66,12 +66,12 @@ var _canvas_empty: Control
 func _ready() -> void:
 	_picker_ctrl = ProjectPicker.new(self)
 	_load_prefs()
-	_load_projects()
+	_picker_ctrl._load_projects()
 	_ensure_editor_controllers()
 	manifest = _load_last_project()
 	get_tree().auto_accept_quit = false
 	if manifest.is_empty() or manifest.has("_error"):
-		_show_picker(manifest.get("_error", ""))
+		_picker_ctrl._show_picker(manifest.get("_error", ""))
 	else:
 		_enter_project(cur_project_dir, manifest)
 
@@ -86,7 +86,7 @@ func _ensure_editor_controllers() -> void:
 		_layout_ctrl = preload("res://src/ui/editor_layout.gd").new(self)
 	if _palette_ctrl == null:
 		_palette_ctrl = preload("res://src/ui/palette_panel.gd").new(self)
-	_build_theme()
+	theme = UiThemeScript.build()
 
 ## 启动时尝试打开上次的项目；失败返回 {} 或带 _error 的字典（选择页据此显示原因）。
 func _load_last_project() -> Dictionary:
@@ -529,7 +529,7 @@ func _layer_label(i: int) -> String:
 
 func _toggle_grid() -> void:
 	canvas.show_grid = not canvas.show_grid
-	_refresh_view_toggles()
+	_layout_ctrl._refresh_view_toggles()
 
 
 ## 框选开关：打开后画布左键拖动进入框选（不用快捷键）
@@ -540,7 +540,7 @@ func _toggle_select_mode() -> void:
 		_toggle_world_region_mode()
 	canvas.select_mode = not canvas.select_mode
 	_set_status("框选已%s —— 左键拖动框选，选中后可整组拖动" % ("打开" if canvas.select_mode else "关闭"))
-	_refresh_view_toggles()
+	_layout_ctrl._refresh_view_toggles()
 
 func _toggle_world_region_mode() -> void:
 	canvas.cancel_preview_gesture()
@@ -553,7 +553,7 @@ func _toggle_world_region_mode() -> void:
 		canvas.select_mode = false
 	_set_status("跨层选区：左键框选，框内拖动，Ctrl+C 复制，右键清除。" if canvas.world_region_mode else "跨层选区已关闭。")
 	canvas.queue_redraw()
-	_refresh_view_toggles()
+	_layout_ctrl._refresh_view_toggles()
 
 ## 吸附开关：关掉后摆放/拖动落在任意像素位置（数据存浮点格坐标，亚格摆放）
 func _toggle_snap() -> void:
@@ -563,7 +563,7 @@ func _toggle_snap() -> void:
 	_set_status("吸附已%s —— %s" % [
 		"打开" if canvas.snap_to_grid else "关闭",
 		"摆放/拖动对齐到格" if canvas.snap_to_grid else "可放在任意像素位置（坐标存浮点）"])
-	_refresh_view_toggles()
+	_layout_ctrl._refresh_view_toggles()
 
 ## 视图开关按钮的按下态与画布状态保持同步
 func _cut() -> void:
@@ -632,7 +632,7 @@ func _process(_delta: float) -> void:
 func _on_entity_selected(n: EntityNode) -> void:
 	# 用户看到的是画布下沿那条极简信息条；参数编辑走内容编辑器与资产目录。
 	selected_spr = n
-	_refresh_sel_bar()
+	_layout_ctrl._refresh_sel_bar()
 	# 双向同步的另一半：画布选中的实例，切到内容编辑器时左列要定位到它。
 	# 载入地图会以 null 清选，先挡掉。
 	if n != null and project_shell != null and project_shell.content_editor != null:
@@ -653,9 +653,9 @@ func _set_map_loaded(loaded: bool) -> void:
 		_sync_ui()
 		# 地图载入后：清掉引导态，换成「未选中实体」的提示
 		selected_spr = null
-	_refresh_dirty_badge()
-	_refresh_tool_meta()
-	_refresh_sel_bar()
+	_layout_ctrl._refresh_dirty_badge()
+	_layout_ctrl._refresh_tool_meta()
+	_layout_ctrl._refresh_sel_bar()
 
 # —— 模式切换：关卡 / 内容 / 资产 三个平级面板 + 旧的项目页外壳 ——
 var _map_view: VBoxContainer = null
@@ -907,33 +907,6 @@ func _set_status(msg: String) -> void:
 	if _layout_ctrl != null:
 		_layout_ctrl._set_status(msg)
 
-func _on_cursor(t: String) -> void:
-	_layout_ctrl._on_cursor(t)
-
-func _on_modified() -> void:
-	_layout_ctrl._on_modified()
-
-func _refresh_dirty_badge() -> void:
-	_layout_ctrl._refresh_dirty_badge()
-
-func _refresh_tool_meta() -> void:
-	_layout_ctrl._refresh_tool_meta()
-
-func _refresh_view_toggles() -> void:
-	_layout_ctrl._refresh_view_toggles()
-
-func _sync_layer_buttons() -> void:
-	_layout_ctrl._sync_layer_buttons()
-
-func _refresh_sel_bar() -> void:
-	_layout_ctrl._refresh_sel_bar()
-
-func _build_theme() -> void:
-	_layout_ctrl._build_theme()
-
-func _set_badge(p: PanelContainer, text: String, color: Color) -> void:
-	_layout_ctrl._set_badge(p, text, color)
-
 func _open_popup(pop: PopupPanel, popup_size := Vector2i.ZERO, parent: Window = null) -> void:
 	_layout_ctrl._open_popup(pop, popup_size, parent)
 
@@ -943,17 +916,5 @@ func _popup_body(title: String, subtitle := "") -> Dictionary:
 ## 快捷键速查弹窗（? 键 / 状态栏「?」入口）
 func _open_shortcut_help() -> void:
 	_layout_ctrl._open_shortcut_help()
-## —— 拆到 src/ui/editor_layout.gd 的委托（调用点保持不变） ——
-## 项目页外壳（src/ui/project_shell.gd）：资产/内容两视图互斥切换
-func _build_project_view() -> void:
-	_layout_ctrl._build_project_view()
 func _scene_name(sid: String) -> String:
 	return preload("res://src/assets/asset_decl.gd").name_of(manifest, sid)
-
-## —— 拆到 src/ui/project_picker.gd（调用点保持不变） ——
-
-func _load_projects() -> void:
-	_picker_ctrl._load_projects()
-
-func _show_picker(err := "") -> void:
-	_picker_ctrl._show_picker(err)

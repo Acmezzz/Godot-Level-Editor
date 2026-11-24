@@ -6,7 +6,7 @@ class_name UiTheme
 ## 低饱和边框分层、高对比正文。所有 UI 组件应从这里取色（历史遗留的少量外部
 ## 硬编码色待收敛），换肤只改本文件。
 ##
-## 用法：`theme = UiTheme.build()`（在 app._build_theme 里）。
+## 用法：`theme = UiTheme.build()`。
 
 # —— 颜色令牌 ——
 # 背景由深到浅分三层，制造「凹陷画布 / 常规面板 / 浮起控件」的层级

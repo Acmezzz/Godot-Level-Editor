@@ -1,5 +1,5 @@
 extends RefCounted
-## Popups：主题构建/徽章/统一弹窗外壳/快捷键速查（从 editor_layout.gd 拆出，宿主 = editor_layout）
+## Popups：统一弹窗外壳与快捷键速查（从 editor_layout.gd 拆出，宿主 = editor_layout）
 
 
 var host   # editor_layout 宿主
@@ -8,14 +8,6 @@ var app    # 根应用（= host.app）
 func _init(h) -> void:
 	host = h
 	app = h.app
-
-func _build_theme() -> void:
-	app.theme = app.UiThemeScript.build()
-
-## 原地切换徽章状态（继承 → 覆盖）
-
-func _set_badge(p: PanelContainer, text: String, color: Color) -> void:
-	app.UiKitScript.set_badge(p, text, color)
 
 ## 统一的弹窗挂载：挂到窗口根（不再挂进资产栏，避免被布局裁切与节点泄漏），
 ## 居中显示，关闭后自动释放。所有弹窗面板都必须走这里。

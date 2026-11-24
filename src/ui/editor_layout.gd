@@ -134,7 +134,7 @@ func _build_editor_ui() -> void:
 	app._fill_palettes()
 	app._apply_state("paint", 0)  # 初始：地形层 + 涂刷，按钮高亮由 _sync_ui 统一刷新
 	app._set_map_loaded(false)  # 防呆：没开地图前禁用全部编辑交互
-	app._build_project_view()
+	_build_project_view()
 	app._sync_panel_buttons("map")  # 两个顶栏导航条都建好了，初始按下「关卡」
 	_set_status("无地图：先点「新建」填名字，或「打开」已有地图")
 
@@ -753,10 +753,6 @@ func _toggle_sel_visible(v: bool) -> void:
 	app.canvas._mark()
 
 ## 图层面板已收进层下拉，保留下钻点供既有调用方（editor_state._sync_ui）使用。
-func _sync_layer_buttons() -> void:
-	_refresh_layer_panel()
-
-
 func _build_project_view() -> void:
 	app.project_shell = app.ProjectShellScript.new(app)
 	app.project_shell.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -775,10 +771,6 @@ func _open_layer_manager() -> void:
 	_layer_ctrl._open_layer_manager()
 func _refresh_layer_panel() -> void:
 	_layer_ctrl._refresh_layer_panel()
-func _build_theme() -> void:
-	_popups_ctrl._build_theme()
-func _set_badge(p: PanelContainer, text: String, color: Color) -> void:
-	_popups_ctrl._set_badge(p, text, color)
 func _open_popup(pop: PopupPanel, size := Vector2i.ZERO, parent: Window = null) -> void:
 	_popups_ctrl._open_popup(pop, size, parent)
 func _popup_body(title: String, subtitle := "") -> Dictionary:

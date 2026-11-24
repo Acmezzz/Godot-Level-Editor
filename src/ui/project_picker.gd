@@ -29,7 +29,7 @@ var _ent_thumbs_cache:
 
 ## 同名包装方法（真实实现经 host 转发）
 func show_picker(err := "") -> void:
-	host._show_picker(err)
+	_show_picker(err)
 func _build_editor_ui() -> void:
 	host._build_editor_ui()
 func enter_project(dir: String, loaded_manifest: Dictionary) -> void:
