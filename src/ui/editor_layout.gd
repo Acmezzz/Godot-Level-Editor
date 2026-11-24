@@ -170,7 +170,7 @@ func _build_global_bar() -> PanelContainer:
 	var map_menu := PopupMenu.new()
 	map_menu.add_item("新建地图", 1)
 	map_menu.add_item("从游戏生成地图…", 15)
-	map_menu.add_item("重新生成当前地图…", 16)
+	map_menu.add_item("重新生成到新地图…", 16)
 	map_menu.add_item("打开地图…", 2)
 	map_menu.add_item("保存", 3)
 	map_menu.add_separator()

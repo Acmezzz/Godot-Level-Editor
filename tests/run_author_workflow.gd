@@ -1408,7 +1408,7 @@ func run():
 	var generated: Dictionary = app.canvas.extract()
 	check(app.canvas.modified_flag and not FileAccess.file_exists(generated_path)
 		and Vector2i(int(generated.spawn[0]), int(generated.spawn[1])) == Vector2i(3, 2)
-		and generated.collision.size() == 2 and generated.objects.size() == 1
+		and generated.collision.size() == 2 and generated.objects.size() == 2
 		and generated.meta.code != room.meta.code and generated.meta.code != copied_room.meta.code,
 		"chosen parameter changes the generated room and the editor gives it a fresh identity")
 	app.canvas.active_layer = app.canvas.collision_index()
@@ -1438,39 +1438,25 @@ func run():
 	while is_instance_valid(regenerate) and regenerate.disabled:
 		await create_timer(0.08).timeout
 	summary = pop.find_child("GeneratedMapStatus", true, false).text
-	check(summary.contains("发现 2 处冲突")
-		and FileAccess.get_sha256(generated_path) == generated_hash and not app.canvas.modified_flag,
-		"conflicting generation leaves the document untouched and identifies the edited cell: " + summary)
-	var first_choice: OptionButton = pop.find_child("GenerationConflict0", true, false)
-	var second_choice: OptionButton = pop.find_child("GenerationConflict1", true, false)
-	if first_choice == null or second_choice == null:
-		check(false, "independent conflict choices are present")
-		quit(1)
-		return
-	for choice in [first_choice, second_choice]:
-		var cell: String = choice.get_parent().get_child(0).text
-		var selected := 1 if cell == "collision[5,3]" else 2
-		choice.select(selected)
-		choice.item_selected.emit(selected)
-	summary = pop.find_child("GeneratedMapStatus", true, false).text
-	check(summary.begins_with("生成完成"), "conflict decisions can be applied together: " + summary)
-	press(pop, "应用重生成")
-	await process_frame
-	var merged: Dictionary = app.canvas.extract()
-	var merged_collision: Array = merged.get("collision", [])
-	check(merged_collision.size() == 5 and merged.meta.code == edited_room.meta.code
-		and merged_collision.any(func(row): return row.x == 0 and row.y == 0 and row.get("shape") == "r45")
-		and merged_collision.any(func(row): return row.x == 5 and row.y == 3 and not row.has("shape"))
+	check(summary.begins_with("生成完成") and FileAccess.get_sha256(generated_path) == generated_hash,
+		"regeneration can be reviewed without changing the source map")
+	press(pop, "打开为可编辑地图")
+	for i in 12:
+		await process_frame
+		if app.cur_map_name == "generated_slope_new":
+			break
+	var regenerated: Dictionary = app.canvas.extract()
+	check(app.cur_map_name == "generated_slope_new" and regenerated.meta.code != edited_room.meta.code
+		and regenerated.meta.generatorSource.parameters.variant == 2
 		and FileAccess.get_sha256(generated_path) == generated_hash,
-		"regeneration keeps the authored landing, adopts the other generated shape, adds the ceiling, and is still unsaved")
-	check(await app.canvas.undo() and app.canvas.extract().get("collision", []).size() == 4,
-		"one undo restores the prior map and generation baseline")
-	check(await app.canvas.redo() and app.canvas.extract().get("collision", []).size() == 5,
-		"redo restores the merged map")
-	var merged_report := await launch_and_read(app, false)
-	check(merged_report.get("status") == "ready" and merged_report.get("result", {}).get("gate") == "GATE"
-		and Maps.read(manifest, "generated_slope").meta.generatorSource.parameters.variant == 2,
-		"the independent game consumes the saved merge and its new generation baseline")
+		"regeneration opens an independent map with a fresh code")
+	app.canvas.modified_flag = false
+	await app._load_map_file(generated_path)
+	app.canvas.set_collision_cell(Vector2i.ZERO, true, "solid", "r45")
+	app.canvas.set_collision_cell(Vector2i(3, 0), true)
+	app.canvas._mark()
+	var override_save: Dictionary = await app._map_file_ctrl.commit_document("保存世界分块的作者改动")
+	check(override_save.get("status") == "ok", "save authored collision changes to the original chunk")
 	var override_hash := FileAccess.get_sha256(generated_path)
 	app._nav_bars[0]._switch_menu.id_pressed.emit(100002)
 	await process_frame

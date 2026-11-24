@@ -183,6 +183,7 @@ func run() -> void:
 		"generation offers the saved project content")
 	presets.select(1)
 	presets.item_selected.emit(1)
+	choose(create.find_child("GeneratorField_projection", true, false), "isometric")
 	check(create.find_child("GeneratorField_next", true, false) == null,
 		"the runtime outlet is not part of the generator form")
 	var generate: Button = create.find_child("RunMapGenerator", true, false)
@@ -301,42 +302,15 @@ func run() -> void:
 	coordinates[1].value = 32
 	app.project_shell.content_editor.commit_fields()
 	var authored_landing: Array = canvas._ent_by_code_index()[pawn_code].props.get("landing", [])
-	check(authored_landing == [71.0, 32.0], "author a point in the old map space: %s" % [authored_landing])
+	check(authored_landing == [71.0, 32.0], "author a point in map space: %s" % [authored_landing])
 	app._set_mode("map")
-	check(canvas.set_spawn_cell(Vector2i(4, 4)), "author a competing spawn move")
-	Generator.open(app, true)
-	var regenerate := popup()
-	choose(regenerate.find_child("GeneratorField_projection", true, false), "isometric")
-	var rerun: Button = regenerate.find_child("RunMapGenerator", true, false)
-	rerun.pressed.emit()
-	while rerun.disabled:
-		await process_frame
-	var space_choice: OptionButton = regenerate.find_child("GenerationConflict0", true, false)
-	if not check(space_choice != null, "projection and spatial edits offer a resolvable conflict"):
-		quit(1)
-		return
-	space_choice.select(2)
-	space_choice.item_selected.emit(2)
-	var flow_label: Array = collect(regenerate, "Label").filter(func(label):
-		return label.text == "meta.flowOutputs.completed")
-	if not check(flow_label.size() == 1, "regeneration offers the whole completion target as a conflict"):
-		quit(1)
-		return
-	var flow_choice: OptionButton = collect(flow_label[0].get_parent(), "OptionButton")[0]
-	flow_choice.select(1)
-	flow_choice.item_selected.emit(1)
-	press(regenerate, "应用重生成")
-	await process_frame
-	var regenerated := canvas.extract()
-	check(regenerated.meta.gridProjection == "isometric" and regenerated.spawn == [1, 2]
-		and regenerated.meta.flowOutputs.completed == {"view": "results"}
-		and regenerated.meta.contentSlots.round == round_target
-		and regenerated.meta.contentSlots.course == rules
-		and regenerated.objects[0].props.get("exit_target") == {"view": "results"}
-		and Array(regenerated.objects[0].props.get("landing", [])).map(func(n): return int(n)) == [16, 48],
-		"adopt generated geometry without erasing the map or instance outlets: %s" % [regenerated.objects[0]])
-	var replacement := {"map": map_code, "inst": "R002", "port": "door"}
-	check(not Maps.read(manifest, "course").objects.any(func(row): return row.code == "R002"),
+	var previous: EntityNode = canvas._ent_by_code_index()["R001"]
+	var previous_position := previous.position
+	canvas.commit_selection(previous)
+	canvas.delete_selection()
+	var next: EntityNode = canvas._tool_ops_ctrl.place_object(pawn.asset, 0, previous_position, true)
+	var replacement := {"map": map_code, "inst": next.code, "port": "door"}
+	check(not Maps.read(manifest, "course").objects.any(func(row): return row.code == next.code),
 		"the replacement door only exists in the working map before rewiring")
 	MapFlowDialog.open(app)
 	map_flow = popup()
@@ -346,7 +320,7 @@ func run() -> void:
 	exit_picker = app.project_shell.content_editor.root.find_child("InstanceValue_exit_target", true, false)
 	choose(exit_picker, JSON.stringify(replacement))
 	app.project_shell.content_editor.commit_fields()
-	published = await app._map_file_ctrl.commit_document("保存重生成的地图和实例出口")
+	published = await app._map_file_ctrl.commit_document("保存地图和实例出口")
 	var rewired := Maps.read(manifest, "course")
 	check(published.get("status") == "ok" and rewired.meta.flowOutputs.retry == replacement
 		and rewired.objects[0].props.exit_target == replacement,

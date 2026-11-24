@@ -7,6 +7,23 @@ const LAYER_FRAME := ["offset", "scale", "parallax", "tileGrid"]
 const LAYER_OVERRIDES := ["name", "visible", "ySort", "blend"] + LAYER_FRAME
 const FLOW_SECTIONS := ["flowOutputs", "contentSlots"]
 
+const SOURCE_KEY := "generatorSource"
+
+static func origin(map: Dictionary) -> Dictionary:
+	var meta: Dictionary = map.get("meta", {})
+	var row = meta.get(SOURCE_KEY)
+	if not row is Dictionary or row.get("version") != 1 or row.get("owner") != meta.get("code") \
+			or not row.get("base") is Dictionary or not row.base.get("meta") is Dictionary \
+			or row.base.meta.get("code") != meta.get("code"):
+		return {}
+	return row
+
+static func attach(map: Dictionary, generator: String, parameters: Dictionary, generated := {}) -> void:
+	var base: Dictionary = (map if generated.is_empty() else generated).duplicate(true)
+	base.meta.erase(SOURCE_KEY)
+	map.meta[SOURCE_KEY] = {"version": 1, "owner": map.meta.code, "generator": generator,
+		"parameters": parameters.duplicate(true), "base": base}
+
 static func compatibility_problem(a: Dictionary, b: Dictionary, authored_stack := false) -> String:
 	for field in ["w", "h", "gridProjection", "gridTopology", "gridBasis"]:
 		if not _same(a.get(field), b.get(field)):
@@ -41,10 +58,8 @@ static func compile(authored: Dictionary, mode: String) -> Dictionary:
 	if mode not in [GRID, CONTENT]:
 		return {"error": "未知差量模式。"}
 	var meta: Dictionary = authored.get("meta", {}) if authored.get("meta", {}) is Dictionary else {}
-	var source = meta.get("generatorSource")
-	if not source is Dictionary or source.get("version") != 1 or source.get("owner") != meta.get("code") \
-			or not source.get("base") is Dictionary or not source.base.get("meta") is Dictionary \
-			or source.base.meta.get("code") != meta.get("code"):
+	var source := origin(authored)
+	if source.is_empty():
 		return {"error": "差量需要本图自己的生成基线。"}
 	var base: Dictionary = source.base
 	var problem := compatibility_problem(base.meta, meta, mode == CONTENT)

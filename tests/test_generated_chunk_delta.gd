@@ -1,7 +1,6 @@
 extends "res://tests/_suite_base.gd"
 
 const Delta := preload("res://src/map/generated_chunk_delta.gd")
-const Generated := preload("res://src/map/generated_map_merge.gd")
 const Maps := preload("res://src/map/map_store.gd")
 
 func test_content_delta_applies_map_flow_by_slot() -> void:
@@ -11,7 +10,7 @@ func test_content_delta_applies_map_flow_by_slot() -> void:
 	var authored := base.duplicate(true)
 	authored.meta.flowOutputs = {"exit": {"view": "score"}, "bonus": {"map": "BONUS"}}
 	authored.meta.contentSlots.round.content = "ranked"
-	Generated.attach(authored, base, "demo", {})
+	Delta.attach(authored, "demo", {}, base)
 	var runtime := base.duplicate(true)
 	runtime.meta.code = "seed-7"
 	runtime.meta.flowOutputs.exit = {"map": "HUB", "inst": "DOOR7", "port": "entry"}
@@ -44,7 +43,7 @@ func test_layer_frame_and_grid_changes_have_distinct_overlay_rules() -> void:
 	authored.meta.layers[0].offset = [12, 4]
 	authored.meta.layers[0].scale = 1.5
 	authored.meta.layers[0].parallax = 0.75
-	Generated.attach(authored, base, "demo", {})
+	Delta.attach(authored, "demo", {}, base)
 	var runtime := base.duplicate(true)
 	runtime.tiles[layer].append([4, 3, "terrain", 0, 0, 0])
 	var result := Delta.apply(runtime, Delta.compile(authored, Delta.CONTENT))
@@ -73,7 +72,7 @@ func test_content_delta_changes_layer_stack_without_discarding_seed_tiles() -> v
 	authored.meta.layers.insert(1, {"id": "fx", "name": "Effects", "tileGrid": {"gridProjection": "isometric"}})
 	authored.tiles.erase("strip")
 	authored.tiles["fx"] = [[2, 1, "terrain", 0, 0, 0]]
-	Generated.attach(authored, base, "demo", {})
+	Delta.attach(authored, "demo", {}, base)
 	var plan := Delta.compile(authored, Delta.CONTENT)
 	eq(plan.error, "", "content overlay permits a new independent grid")
 	var runtime := base.duplicate(true)
@@ -104,7 +103,7 @@ func test_graph_delta_keeps_seed_topology_and_rejects_dangling_endpoints() -> vo
 	graph.cells[0].neighbors = ["c"]
 	graph.edges[0].to = "c"
 	graph.edges[0].props.cost = 3
-	Generated.attach(authored, base, "demo", {})
+	Delta.attach(authored, "demo", {}, base)
 	var plan := Delta.compile(authored, Delta.CONTENT)
 	var runtime := base.duplicate(true)
 	graph = runtime.meta.cellGraph
@@ -133,7 +132,7 @@ func test_stable_identity_conflict_rejects_the_entire_patch() -> void:
 	var authored := base.duplicate(true)
 	authored.objects[0].erase("props")
 	authored.collision = [{"x": 2, "y": 3}]
-	Generated.attach(authored, base, "demo", {})
+	Delta.attach(authored, "demo", {}, base)
 	var plan := Delta.compile(authored, Delta.CONTENT)
 	eq(plan.error, "", "compile grid and object edits together")
 	var runtime := base.duplicate(true)
@@ -158,7 +157,7 @@ func test_anonymous_edits_preserve_seed_decor_and_counts() -> void:
 	authored.objects[0].x = 3
 	authored.spawn = [4, 2]
 	authored.meta.layers[0].blend = "add"
-	Generated.attach(authored, base, "demo", {})
+	Delta.attach(authored, "demo", {}, base)
 	var plan := Delta.compile(authored, Delta.CONTENT)
 	var runtime := base.duplicate(true)
 	runtime.objects[0] = {"asset": "sign", "layer": layer, "x": 1.0, "y": 2.0, "visible": true}

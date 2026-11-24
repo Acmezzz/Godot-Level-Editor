@@ -414,9 +414,6 @@ func _generate_course(dir: String, request: Dictionary) -> void:
 	var subject: Dictionary = request.subject
 	var map := _course_map(subject.parameters, subject.target)
 	var goal := {"map": subject.target.code}
-	if subject.parameters.projection == "isometric":
-		goal.merge({"inst": "R002", "port": "door"})
-		map.meta["contentSlots"] = {"course": {"function": "course_rules", "content": "project-course-rules"}}
 	map.meta["flowOutputs"] = {"completed": goal}
 	_write_json(dir.path_join("map.json"), map)
 	_write_json(dir.path_join("result.json"), {"version": 1, "token": request.token, "status": "ready"})
@@ -429,10 +426,6 @@ func _course_map(parameters: Dictionary, target: Dictionary) -> Dictionary:
 		var offset: float = parameters.elevation[0].value if not parameters.elevation.is_empty() else 0.0
 		objects.append({"asset": row.asset, "code": "R%03d" % objects.size(),
 			"layer": "base", "x": row.column + waypoint[0], "y": waypoint[1] + offset})
-	if parameters.projection == "isometric" and not objects.is_empty():
-		objects.resize(1)
-		objects[0]["props"] = {"landing": [16, 48]}
-		objects.append({"asset": objects[0].asset, "code": "R002", "layer": "base", "x": 7, "y": 2})
 	return {"version": target.version,
 		"meta": {"code": target.code, "name": target.name, "w": 12, "h": 8,
 			"gridProjection": parameters.projection,

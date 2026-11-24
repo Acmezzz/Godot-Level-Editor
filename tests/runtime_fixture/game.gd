@@ -284,12 +284,12 @@ func _generate_map(directory: String, request: Dictionary) -> void:
 	var message := "Unknown generator or invalid start" if not valid else ""
 	if valid:
 		var map := _slope_room(target, first)
+		map.objects.append(_trim_row())
 		match int(subject.parameters.get("variant", 0)):
 			1: map.collision.append({"x": first, "y": 0})
 			2:
 				map.collision.append_array([{"x": first + 2, "y": 3, "shape": "l45"},
 					{"x": 0, "y": 0, "shape": "r45"}, {"x": first, "y": 0}])
-				map.objects.append(_trim_row())
 		var output := FileAccess.open(directory.path_join("map.json"), FileAccess.WRITE)
 		if output == null:
 			message = "Cannot write generated map"

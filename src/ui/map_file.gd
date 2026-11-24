@@ -499,20 +499,6 @@ func map_code_taken(code: String) -> bool:
 	return code == "" or MapStore.code_index(app.manifest).by_code.has(code) \
 		or (app.map_loaded and app.canvas.cur_map_code() == code)
 
-func apply_regenerated_map(data: Dictionary, generation: int, revision: int) -> bool:
-	var canvas: EditorCanvas = app.canvas
-	if sess.stale(generation) or sess.revision != revision or not app.map_loaded or canvas.doc_busy:
-		return false
-	canvas.push_undo()
-	canvas.doc_busy = true
-	await canvas.load_data(data, app.cur_map_name, true, true)
-	if sess.stale(generation):
-		return false
-	canvas.doc_busy = false
-	app._sync_ui()
-	app._set_status("已应用重生成，可撤销；保存后写回原地图")
-	return true
-
 func _open_unsaved_map(n: String, data: Dictionary, action: String) -> bool:
 	var previous_doc := _doc_key()
 	var gen := _begin_doc_op()
