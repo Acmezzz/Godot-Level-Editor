@@ -38,10 +38,6 @@ func fill_all() -> void:
 	else:
 		fill_placeables(_place_category)
 
-## 刷新当前类别（切层/切分类/新建资产后都走这里，避免两条列表各自带旧 UI 状态）
-func refresh_current() -> void:
-	set_category(_place_category)
-
 func fill_tiles() -> void:
 	var tl: ItemList = app.tile_list
 	# 重填前先清掉上一次的空状态覆盖，别让它盖住瓦片
@@ -273,9 +269,6 @@ func fill_placeables(cat: String) -> void:
 		_show_empty(el,
 			"清单没有图片资产" if cat == "images" else "清单没有实体资产",
 			"在 assets[] 里声明 kind=scene / shape=image" if cat == "images" else "在 assets[] 里声明 kind=entity")
-
-func fill_entities() -> void:
-	fill_placeables("entities")
 
 ## visual 声明 → 占位图标：有 color 就按 color/alpha 画色块，没有则画中性灰框；
 ## 不区分 type/mode（两者都只影响画布实体呈现，不影响列表图标）。缓存：同一 visual 的图标只画一次。

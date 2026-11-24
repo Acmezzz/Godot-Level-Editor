@@ -1,6 +1,8 @@
 extends RefCounted
 ## Flat draw order with edges anchored to a parent element or the viewport.
 
+const Id := preload("res://src/content/content_id.gd")
+
 const KINDS := ["panel", "text", "button"]
 const FALLBACK_SIZE := Vector2(1280, 720)
 const DIRECTIONS := {"left": Vector2.LEFT, "right": Vector2.RIGHT, "up": Vector2.UP, "down": Vector2.DOWN}
@@ -8,6 +10,12 @@ const DEFAULT_FONT_SIZE := 24
 const IMAGE_FITS := ["contain", "cover", "stretch"]
 const ZERO_OFFSETS := [0, 0, 0, 0]
 const GEOMETRY_KEYS := ["anchors", "offsets", "hidden"]
+
+static func new_element_id(elements: Array) -> String:
+	var id := Id.new_inst_code()
+	while elements.any(func(item): return item.id == id):
+		id = Id.new_inst_code()
+	return id
 
 static func modules(manifest: Dictionary) -> Dictionary:
 	var declarations = manifest.get("screenModules", {})
@@ -214,7 +222,8 @@ static func _rect(element: Dictionary, reference: Rect2, profile: String) -> Rec
 	return Rect2(reference.position + start, end - start)
 
 ## Resolve parent geometry in linear time, independently of draw order and without recursion.
-static func rectangles(elements: Array, viewport: Vector2, profile := "", include_hidden := false) -> Dictionary:
+static func rectangles(elements: Array, viewport: Vector2, profile := "", include_hidden := false,
+		placement := {}) -> Dictionary:
 	var root := Rect2(Vector2.ZERO, viewport)
 	var children := _children_by_parent(elements)
 	var resolved := {}
@@ -224,7 +233,7 @@ static func rectangles(elements: Array, viewport: Vector2, profile := "", includ
 		if not include_hidden and geometry_value(row, profile, "hidden", false):
 			continue
 		var parent: String = row.get("parent", "")
-		resolved[row.id] = _rect(row, resolved.get(parent, root), profile)
+		resolved[row.id] = placement[row.id] if placement.has(row.id) else _rect(row, resolved.get(parent, root), profile)
 		pending.append_array(children.get(row.id, []))
 	return resolved
 
@@ -248,10 +257,12 @@ static func subtree_ids(elements: Array, id: String) -> Dictionary:
 				pending.append(child.id)
 	return visited
 
-static func _offsets_for(a: Array, bounds: Rect2, reference: Rect2) -> Array:
+## Change the rectangle in one profile without changing its anchors or parent.
+static func place(element: Dictionary, profile: String, bounds: Rect2, reference: Rect2) -> void:
+	var a: Array = geometry_value(element, profile, "anchors", [])
 	var start := bounds.position - reference.position - Vector2(a[0], a[1]) * reference.size
 	var end := bounds.end - reference.position - Vector2(a[2], a[3]) * reference.size
-	return [start.x, start.y, end.x, end.y]
+	set_geometry(element, profile, "offsets", [start.x, start.y, end.x, end.y])
 
 ## Keep the rectangle in the design viewport and every authored layout profile.
 static func reparent(elements: Array, moving: Array, parent: String, design: Vector2, sizes: Dictionary) -> void:
@@ -271,8 +282,7 @@ static func reparent(elements: Array, moving: Array, parent: String, design: Vec
 		for row in moving:
 			var before: Rect2 = resolved[row.id]
 			if profile == "" or not _rect(row, reference, profile).is_equal_approx(before):
-				var anchors: Array = geometry_value(row, profile, "anchors", [])
-				set_geometry(row, profile, "offsets", _offsets_for(anchors, before, reference))
+				place(row, profile, before, reference)
 	for row in moving:
 		if parent == "":
 			row.erase("parent")

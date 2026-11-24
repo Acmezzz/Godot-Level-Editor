@@ -382,17 +382,6 @@ func _tiles(li: int, layer_id: String) -> Array:
 	_tiles_rev[li] = rev
 	return out
 
-## 多边形轴对齐包围盒（预览贴纹理块用）。
-static func _poly_bbox(poly: PackedVector2Array) -> Rect2:
-	if poly.is_empty():
-		return Rect2()
-	var mn := poly[0]
-	var mx := poly[0]
-	for p in poly:
-		mn = mn.min(p)
-		mx = mx.max(p)
-	return Rect2(mn, mx - mn)
-
 ## 多边形过层变换（Transform2D 乘点为仿射，含 offset/scale）。
 static func _xformed(xf: Transform2D, poly: PackedVector2Array) -> PackedVector2Array:
 	if xf == Transform2D.IDENTITY:

@@ -49,13 +49,6 @@ func entity_display_size(aid: String) -> Vector2:
 		sz = Vector2(cvs.grid.tile)
 	return sz
 
-## 实例级显示尺寸：带 sizeFields 的资产（事件区）尺寸写在实例 props 里，
-## 其余等价于资产声明尺寸。旧调用点传节点，直接取节点自己的口径。
-func entity_display_size_of(node: Node) -> Vector2:
-	if node is EntityNode:
-		return (node as EntityNode).display_size()
-	return entity_display_size("")
-
 ## 建一个摆放物节点：尺寸按资产声明算，视觉（缩略图/图片/无）由 EntityNode 自己装配。
 ## 落层、props、code 由调用方填——这里只管「一个形状正确的空实例」。
 func make_object(aid: String) -> EntityNode:

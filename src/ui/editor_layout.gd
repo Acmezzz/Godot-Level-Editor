@@ -3,8 +3,6 @@ extends RefCounted
 
 const TopBarNavScript := preload("res://src/ui/top_bar_nav.gd")
 const CollisionTypes := preload("res://src/assets/collision_types.gd")
-const ProjectAudit := preload("res://src/project/project_audit.gd")
-const EntityNodeScript := preload("res://src/canvas/entity_node.gd")
 const IssuesDrawer := preload("res://src/ui/issues_drawer.gd")
 const LayerPanel := preload("res://src/ui/layer_panel.gd")
 const Popups := preload("res://src/ui/popups.gd")
@@ -225,7 +223,7 @@ func _build_global_bar() -> PanelContainer:
 	bar.add_child(app._nav_bars.back())
 
 	bar.add_child(app.UiKitScript.vdivider())
-	var cfg: Button = app.UiKitScript.button("试玩配置", app._open_play_cfg, "ghost")
+	var cfg: Button = app.UiKitScript.button("试玩配置", func(): app._playtest_ctrl.open_configuration(), "ghost")
 	cfg.tooltip_text = "每图初始能力 / 血量"
 	bar.add_child(cfg)
 	var play = app.UiKitScript.button("▶  试玩", app._on_play, "primary")
@@ -280,7 +278,7 @@ func _on_map_menu_id(id: int) -> void:
 		20:
 			app._switch_project()
 		21:
-			app._map_file_ctrl.open_play_report()
+			app._playtest_ctrl.open_play_report()
 		30:
 			_run_audit(true)
 
@@ -491,6 +489,7 @@ func _build_palette_column() -> PanelContainer:
 	# 碰撞生成 / 地图文件 / 状态控制器仍在这里建，供 app 的委托调用不变。
 	app._props_panel_ctrl = preload("res://src/ui/props_panel.gd").new(app)
 	app._map_file_ctrl = preload("res://src/ui/map_file.gd").new(app)
+	app._playtest_ctrl = preload("res://src/ui/playtest_controller.gd").new(app, app._map_file_ctrl)
 	app._editor_state_ctrl = preload("res://src/canvas/editor_state.gd").new(app)
 	return col
 

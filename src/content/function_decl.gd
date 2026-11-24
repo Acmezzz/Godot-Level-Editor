@@ -158,16 +158,6 @@ static func fn_triggers(m: Dictionary, fn_id: String) -> Array:
 	var t = function_decl(m, fn_id).get("triggers", [])
 	return t if t is Array else []
 
-## 该功能声明的时机提示对象（{mode}，缺省空字典）。
-static func fn_timing(m: Dictionary, fn_id: String) -> Dictionary:
-	var t = function_decl(m, fn_id).get("timing", null)
-	return t if t is Dictionary else {}
-
-## 该功能的呈现提示对象（{group, icon, color}，缺省空字典）。
-static func fn_view(m: Dictionary, fn_id: String) -> Dictionary:
-	var v = function_decl(m, fn_id).get("view", null)
-	return v if v is Dictionary else {}
-
 ## 功能 id（人类名）→ 执行码；缺失返回空串。
 static func fn_code(m: Dictionary, fn_id: String) -> String:
 	return str(function_decl(m, fn_id).get("code", ""))

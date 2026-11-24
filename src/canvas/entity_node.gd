@@ -155,10 +155,6 @@ static func create(m: Dictionary, aid: String, size: Vector2, tile: int,
 ## 图片资产的贴图按绝对路径缓存（同一张图被多个实例复用，不重复读盘）
 static var _img_cache := {}
 
-## 清空贴图缓存：项目重开/资产重扫后调用，路径或文件可能已变。
-static func clear_texture_cache() -> void:
-	_img_cache.clear()
-
 static func texture_of(m: Dictionary, rel: String) -> Texture2D:
 	if rel == "":
 		return null

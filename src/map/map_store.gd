@@ -359,13 +359,6 @@ static func _write_bytes(path: String, bytes: PackedByteArray) -> bool:
 	file.close()
 	return ok
 
-## 在地图数据里按实例码查找；返回空字典表示没有
-static func find_entity(data: Dictionary, ent_id: String) -> Dictionary:
-	for obj in data.get("objects", []):
-		if obj is Dictionary and str((obj as Dictionary).get("code", "")) == ent_id:
-			return obj
-	return {}
-
 ## 已有地图名列表（不含扩展名，排序）。
 ## `foo.autosave.json` 只有在带 `_autosave_of` 时才是旧式草稿（跳过）；
 ## 缺标记的是普通地图（图名就叫 foo.autosave），必须列出（A3）。

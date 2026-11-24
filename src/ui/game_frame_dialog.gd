@@ -6,12 +6,15 @@ const GamePreview := preload("res://src/project/game_preview.gd")
 const FramePicks := preload("res://src/project/frame_picks.gd")
 const Layout := preload("res://src/project/screen_layout.gd")
 
-static func keep_on_focus_loss(pop: PopupPanel) -> void:
+static func keep_on_focus_loss(pop: PopupPanel, cancel := Callable()) -> void:
 	pop.popup_window = false
 	pop.close_requested.connect(pop.hide)
 	pop.window_input.connect(func(event: InputEvent):
 		if event.is_action_pressed("ui_cancel"):
-			pop.hide())
+			if cancel.is_valid() and cancel.call():
+				pop.set_input_as_handled()
+			else:
+				pop.hide())
 
 static func visible_request(window: WeakRef, current: Callable) -> Callable:
 	return func() -> bool:

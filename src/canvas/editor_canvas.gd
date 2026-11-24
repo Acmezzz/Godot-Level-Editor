@@ -15,7 +15,6 @@ const INVISIBLE_CELL := K.INVISIBLE_CELL
 const MapStoreRef := preload("res://src/map/map_store.gd")   # 地图数据层（读全工程/写盘）
 const ContentIdRef := preload("res://src/content/content_id.gd")   # 分层身份码
 const AssetDecl := preload("res://src/assets/asset_decl.gd")   # 清单资产表（assets[]）
-const EntityNodeRef := preload("res://src/canvas/entity_node.gd")   # 摆放物节点（场景/实体共用）
 const GridSpaceScript := preload("res://src/canvas/grid_space.gd")   # 格↔像素转换层（正交/等距）
 const TriTileViewScript := preload("res://src/canvas/tri_tile_view.gd")   # B3：三角格自绘层
 const MapFormat := preload("res://src/map/map_format.gd")   # 格式版本/瓦片变换位（v7）
@@ -582,17 +581,6 @@ func tile_grid_for_layer(i: int) -> GridSpace:
 func has_independent_tile_grid(i: int) -> bool:
 	return tile_grid_for_layer(i) != grid
 
-## —— 层局部坐标（E02）——
-## 层参数 offset/scale/parallax 作用在层容器上：瓦片格号、实例 position、poly 点集
-## 全在**层局部**空间。拾取先世界→候选层局部再取格；拖拽先算世界位移、逐层逆变换。
-## 活动层容器（碰撞元层取 map_root——碰撞格与出生点都在根空间）。
-func active_layer_root() -> Node2D:
-	if active_layer < layer_ents.size() and active_layer >= 0:
-		return layer_ents[active_layer] as Node2D
-	if map_root != null and is_instance_valid(map_root):
-		return map_root
-	return null
-
 ## 第 i 层的世界变换（无层节点时 = 原点，画布自身无变换）
 func layer_xform(i: int) -> Transform2D:
 	var root := _layer_ents_or_collision(i)
@@ -1126,17 +1114,6 @@ func _edge_segment_local(edge: String) -> PackedVector2Array:
 	var a := Vector2i(int(ends[0][0]), int(ends[0][1]))
 	var b := Vector2i(int(ends[1][0]), int(ends[1][1]))
 	return _bounded_edge(a, b)
-
-## 该边当前是否仍成立（两端格在声明地图里仍是共边）。声明地图 = 本图时查本图 grid。
-func edge_is_live(edge: String, map_code := "") -> bool:
-	if edge == "":
-		return false
-	var ends := EdgeRefScript.parse_edge(edge)
-	if ends.size() != 2:
-		return false
-	if map_code != "" and map_code != cur_map_code():
-		return true   # 跨图边：本图拓扑无从判定，交给项目自检
-	return not _edge_segment_local(edge).is_empty()
 
 func _bounded_edge(a: Vector2i, b: Vector2i) -> PackedVector2Array:
 	var meta: Dictionary = map_data.get("meta", {})

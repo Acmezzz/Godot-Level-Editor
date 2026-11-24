@@ -7,7 +7,6 @@ extends RefCounted
 var cvs   # editor_canvas 宿主
 
 const MapFormat := preload("res://src/map/map_format.gd")
-const TilesetCache := preload("res://src/canvas/tileset_cache.gd")
 const ClonePlan := preload("res://src/content/clone_plan.gd")
 const ContentStore := preload("res://src/content/content_store.gd")
 const FunctionDecls := preload("res://src/content/function_decl.gd")

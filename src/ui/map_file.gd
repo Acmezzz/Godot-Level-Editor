@@ -1,7 +1,7 @@
 extends RefCounted
 ## 地图文件生命周期控制器（顶栏「设置 ▾ / 地图 ▾」的动作都在这里）：
 ## 新建、打开、保存（commit_document 统一提交）、改名（纯改名、不迁移引用）、复制整张图、
-## 另存并转换投影、尺寸调整、导出、草稿恢复、地图历史载入、试玩启动。
+## 另存并转换投影、尺寸调整、导出、草稿恢复、地图历史载入。
 ## 写盘统一走 MapStore（.tmp 原子替换）。**卸载/替换/改名/复制四条路径的保证不同**：
 ##   替换与改名：单文件写，快照进 editor/history/maps/<地图码>/；
 ##   复制：多文件提交（内容先、地图后），日志留 editor/pending/ 供崩溃后判读；
@@ -21,9 +21,6 @@ const MapConvert := preload("res://src/map/map_convert.gd")
 const ProjectAudit := preload("res://src/project/project_audit.gd")
 const DocumentSession := preload("res://src/project/document_session.gd")
 const DocumentCommit := preload("res://src/project/document_commit.gd")
-const EntryStore := preload("res://src/content/content_store.gd")
-const EntryFunctions := preload("res://src/content/function_decl.gd")
-const References := preload("res://src/project/reference_index.gd")
 
 var app   # 宿主引用
 
@@ -32,13 +29,6 @@ func _init(host) -> void:
 
 const AUTOSAVE_INTERVAL_MS := 120000
 var _last_autosave_msec := 0
-var _last_alive_poll := 0   # PF-04：存活轮询节流
-var _play_pid := 0
-var _play_started_msec: int = 0
-var _play_program := ""        # A6：实际启动的程序（结构化配置的 exe 或模板首个 token）
-var _play_report_request := {}
-var _play_report_result := {}
-var _play_tracked := true      # false = 跟踪的是包装进程（playCommand 模板）
 ## 最近一次在新建/重命名弹窗里确认的名字（顶栏常驻名字框已移除，这里记住值供预填）
 var _name_memo := ""
 ## B1（§7.1）：提交编排器（prepare/apply），提交与确认 UI 保留在本文件。
@@ -54,17 +44,6 @@ func _begin_doc_op() -> int:
 ## 本次请求是否已过期（期间又切了图/退出了项目）。过期请求不得发布图名/路径。
 func _doc_stale(gen: int) -> bool:
 	return sess.stale(gen)
-
-## 文件内容摘要；不存在/打不开返回 ""。
-func _file_digest(path: String) -> String:
-	if path == "" or not FileAccess.file_exists(path):
-		return ""
-	var f := FileAccess.open(path, FileAccess.READ)
-	if f == null:
-		return ""
-	var d := f.get_as_text().sha256_text()
-	f.close()
-	return d
 
 ## 项目 maps 目录内的未占用名字（D03）：外部地图导入绝不覆盖同名项目图。
 func _unique_map_name(base: String) -> String:
@@ -576,7 +555,7 @@ func _open_unsaved_map(n: String, data: Dictionary, action: String) -> bool:
 		n, str(app.cur_map_path), "", 0)
 	sess.contents = {}
 	sess.revision = 0
-	app._sync_play_cfg_to_map()
+	app._playtest_ctrl.sync_map_preferences()
 	app._set_map_loaded(true)
 	app.canvas._undo_history_ctrl.clear_history()
 	app.canvas.modified_flag = true
@@ -656,7 +635,7 @@ func rename_map_now(old_name: String, new_name: String, allow_write_unsaved := f
 	if on_disk:
 		if is_current and sess.opened_digest == "":
 			return "原图缺少保存基线，请重新打开后再改名"
-		var err: String = app.MapStore.rename_map(app.manifest, old_name, nn, sess.opened_digest if is_current else "")
+		var err: String = MapStore.rename_map(app.manifest, old_name, nn, sess.opened_digest if is_current else "")
 		if err != "":
 			return err
 	elif allow_write_unsaved and is_current:
@@ -728,14 +707,14 @@ func rename_map_now(old_name: String, new_name: String, allow_write_unsaved := f
 		# 历史随地图码走（A3）：码不变则目录不变；无码兜底到图名的旧记录搬到新名下
 		var mcode := str((app.canvas.map_data.get("meta", {}) as Dictionary).get("code", ""))
 		Recovery.migrate_history(app.manifest, mcode, old_name, mcode, nn)
-		sess.rename_doc(nn, str(new_path), _file_digest(new_path),
+		sess.rename_doc(nn, str(new_path), Recovery.digest(new_path),
 			FileAccess.get_modified_time(new_path))
 		# 刚才已把内容写进新文件：脏标记与自动保存计时归零，
 		# 否则状态栏还挂着「未保存」、两分钟后又多写一份 .autosave.json。
 		if not on_disk:
 			app.canvas.modified_flag = false
 			_last_autosave_msec = Time.get_ticks_msec()
-		app._sync_play_cfg_to_map()
+		app._playtest_ctrl.sync_map_preferences()
 	return ""
 
 ## 打开另一张地图：先选文件，再确认丢弃，最后载入。
@@ -760,7 +739,7 @@ func on_open() -> void:
 ## 选定文件之后的打开流程：先读+校验（失败不动旧文档），再确认丢弃，最后载入。
 func _open_chosen(p: String) -> void:
 	# 读不出来就别问「要不要丢改动」——那等于逼用户丢掉能保住的工作
-	var probe: Dictionary = app.MapStore.read_path(p, app.manifest)
+	var probe: Dictionary = MapStore.read_path(p, app.manifest)
 	if not probe.get("ok", false):
 		app._set_status(" 打开失败: " + _format_issues(probe.get("errors", [])))
 		return
@@ -775,7 +754,7 @@ func load_map_file(p: String, expected_digest := "") -> void:
 	# 未保存确认在上层入口（打开/侧栏）做；这里只做真实载入。
 	var previous_doc := _doc_key()
 	var gen := _begin_doc_op()
-	var result: Dictionary = app.MapStore.read_path(p, app.manifest)
+	var result: Dictionary = MapStore.read_path(p, app.manifest)
 	if not result.ok:
 		app._set_status(" 打开失败: " + _format_issues(result.errors))
 		return
@@ -821,7 +800,7 @@ func load_map_file(p: String, expected_digest := "") -> void:
 		if data.get("meta", null) is Dictionary:
 			(data["meta"] as Dictionary).erase("code")
 		MapStore.ensure_code(app.manifest, data)
-		if not app.MapStore.write(app.manifest, base, data):
+		if not MapStore.write(app.manifest, base, data):
 			app._set_status("导入失败：无法写入 " + EditorManifest.map_path(app.manifest, base))
 			return
 		p = EditorManifest.map_path(app.manifest, base)
@@ -832,14 +811,14 @@ func load_map_file(p: String, expected_digest := "") -> void:
 		return   # 读取/确认期间又发起了更新的切图请求：本次不再改画布
 	var baseline := str(result.get("digest", ""))
 	if was_draft or outside:
-		baseline = _file_digest(p)
+		baseline = Recovery.digest(p)
 	app.canvas.set_thumbs(app._entity_thumbs())
 	await app.canvas.load_data(data, base)
 	if _doc_stale(gen):
 		return
 	_discard_previous_staging(previous_doc)
 	app.cur_map_name = base
-	app._sync_play_cfg_to_map()
+	app._playtest_ctrl.sync_map_preferences()
 	app.cur_map_path = p
 	_name_memo = base
 	app._set_map_loaded(true)
@@ -939,7 +918,7 @@ func _restore_history_snapshot(map_name: String, snapshot_path: String) -> void:
 		map_name, path, baseline, FileAccess.get_modified_time(path))
 	sess.contents = {}
 	sess.revision = 0
-	app._sync_play_cfg_to_map()
+	app._playtest_ctrl.sync_map_preferences()
 	app._set_map_loaded(true)
 	app.canvas.modified_flag = true   # 历史内容与磁盘不同：必须显式保存
 	app._set_status(" 已载入历史版本 %s（Ctrl+S 写回 %s）" % [snapshot_path.get_file(), map_name])
@@ -955,7 +934,7 @@ func _effective_map_name() -> String:
 			app.cur_map_path = cpath
 			sess.map_name = cname
 			sess.map_path = str(cpath)
-			sess.opened_digest = _file_digest(cpath)
+			sess.opened_digest = Recovery.digest(cpath)
 			sess.opened_mtime = FileAccess.get_modified_time(cpath)
 			return cname
 	return n
@@ -1178,17 +1157,17 @@ func _save_now(data: Dictionary, guard: Callable) -> bool:
 			# V4 P0-1：本会话里这张图从未落过盘，磁盘上却出现了同名文件
 			# （期间别的编辑器/脚本建了图）：按「新文件」覆盖等于删掉别人的图，
 			# 必须确认，且确认后复验摘要没再变。
-			var appeared := _file_digest(path)
+			var appeared := Recovery.digest(path)
 			if not await app._confirm_action("目标文件已存在",
 				"这张图还没有保存过，但磁盘上已出现同名文件：\n%s\n\n继续保存会覆盖它。" % path,
 				"覆盖保存"):
 				app._set_status(" 已取消保存（磁盘上的同名地图保持不变）")
 				return false
-			if _file_digest(path) != appeared:
+			if Recovery.digest(path) != appeared:
 				app._set_status(" 保存中止：确认期间文件又被外部改写，请重新检查后再保存")
 				return false
 			baseline = appeared
-		var cur_digest := _file_digest(path)
+		var cur_digest := Recovery.digest(path)
 		var ext_changed := false
 		if sess.opened_digest != "" and cur_digest != "":
 			ext_changed = cur_digest != sess.opened_digest
@@ -1202,7 +1181,7 @@ func _save_now(data: Dictionary, guard: Callable) -> bool:
 				app._set_status(" 已取消保存（保留磁盘上的外部改动）")
 				return false
 			# 确认后复验：确认期间又被外部改写就不覆盖（R05）
-			if _file_digest(path) != cur_digest:
+			if Recovery.digest(path) != cur_digest:
 				app._set_status(" 保存中止：确认期间文件又被外部改写，请重新检查后再保存")
 				return false
 			baseline = cur_digest
@@ -1217,19 +1196,19 @@ func _save_now(data: Dictionary, guard: Callable) -> bool:
 		return false
 	# 写盘收敛到 MapStore 单入口（.tmp 原子替换，中途崩溃不留半截 JSON）；
 	# 写前校验不过时把首个错误带回状态栏，避免只看到「保存失败」无从下手。
-	if not app.MapStore.write(app.manifest, n, data):
-		var why: String = app.MapStore.write_error(app.manifest, data)
+	if not MapStore.write(app.manifest, n, data):
+		var why: String = MapStore.write_error(app.manifest, data)
 		if why == "":
 			why = MapStore.identity_error(app.manifest, n, data)
 		app._set_status(" 保存失败: %s%s" % [path, ("（%s）" % why) if why != "" else ""])
 		return false
 	# 基线前移（§4.4-2）：此后外部改动 = 相对这次写入的内容
-	sess.note_saved(str(path), _file_digest(path), FileAccess.get_modified_time(path))
+	sess.note_saved(str(path), Recovery.digest(path), FileAccess.get_modified_time(path))
 	app.canvas.cur_map_name = n
 	app.canvas.map_data["meta"] = data.meta
 	app.cur_map_name = n
 	app.cur_map_path = path
-	app._sync_play_cfg_to_map()
+	app._playtest_ctrl.sync_map_preferences()
 	app.canvas.modified_flag = false
 	_last_autosave_msec = Time.get_ticks_msec()
 	var tcount2 := 0
@@ -1362,7 +1341,7 @@ func restore_draft_key(draft_key: String) -> bool:
 	sess.set_identity(str(app.manifest.get("_dir", "")), app.canvas.cur_map_code(),
 		map_name, target, accepted, FileAccess.get_modified_time(target) if accepted != "" else 0)
 	sess.revision = 0
-	app._sync_play_cfg_to_map()
+	app._playtest_ctrl.sync_map_preferences()
 	app._set_map_loaded(true)
 	app.canvas._undo_history_ctrl.clear_history()
 	app.canvas.modified_flag = true   # 草稿内容与磁盘不同：必须显式保存
@@ -1407,332 +1386,29 @@ func open_draft_target(draft_key: String) -> void:
 		return
 	await load_map_file(str(resolved.path), str(resolved.observed.digest))
 
-## 打开项目时提示可恢复草稿（A3）：有草稿就列出来，让用户选恢复/查看正式图/丢弃。
-func offer_draft_recovery() -> void:
-	var keys := Recovery.list_drafts(app.manifest)
-	if keys.is_empty():
-		return
-	var names: Array[String] = []
-	for k in keys:
-		names.append(str(k))
-	app._set_status(" 发现 %d 份未完成草稿：打开地图菜单可恢复（%s）" % [names.size(), ", ".join(PackedStringArray(names))])
+func document_generation() -> int:
+	return sess.generation
 
-func on_play(spawn_tiles: Vector2i = Vector2i(-1, -1), project_entry := false, entry := {}) -> void:
-	if not _can_start_playtest():
-		return
-	if project_entry and not bool(app.manifest.get("playtest", {}).get("projectEntry", false)):
-		return
-	if not entry.is_empty() and (not project_entry or not Playtest.allows_entry(app.manifest, entry.function)):
-		app._set_status("游戏未开放此内容类型作为试玩入口。")
-		return
+## Commit current edits before handing the game its exact published map identity.
+func prepare_playtest_document(project_entry: bool) -> Dictionary:
 	if not project_entry and not app.map_loaded:
-		app._set_status(" 无地图：先新建或打开一张地图")
-		return
+		return {"error": " 无地图：先新建或打开一张地图"}
 	if not project_entry and _effective_map_name() == "":
-		app._set_status(" 试玩前先「新建地图」并填名字")
-		return
+		return {"error": " 试玩前先「新建地图」并填名字"}
 	# 试玩只拿「成功提交后的项目内路径」（A2）：先走统一提交（清单码 → 内容 → 地图），
 	# 失败就停，避免游戏侧读到半套内容。
 	var gen := sess.generation
 	var res: Dictionary = await commit_document("试玩前提交")
 	if str(res.get("status", "")) != "ok":
-		app._set_status(" 试玩中止：" + str(res.get("error", "提交未完成")))
-		return
+		return {"error": " 试玩中止：" + str(res.get("error", "提交未完成"))}
 	if sess.stale(gen) or (app.map_loaded and app.canvas.modified_flag):
-		app._set_status(" 试玩中止：提交期间文档已变化")
-		return
+		return {"error": " 试玩中止：提交期间文档已变化"}
 	var receipt: Dictionary = res.get("receipt", {})
 	var maps_root := str(app.manifest.get("_maps_dir", "")).simplify_path()
 	var play_path := "" if project_entry else str(receipt.get("absolute_path", sess.map_path)).simplify_path()
 	var digest := "" if project_entry else str(receipt.get("map_digest", sess.opened_digest))
 	if not project_entry and (digest == "" or Recovery.digest(play_path) != digest):
-		app._set_status(" 试玩中止：磁盘地图与已提交版本不一致")
-		return
+		return {"error": " 试玩中止：磁盘地图与已提交版本不一致"}
 	if not project_entry and (maps_root == "" or play_path.get_base_dir() != maps_root):
-		app._set_status(" 试玩中止：地图不在当前项目 maps 目录内，拒绝启动")
-		return
-	if not entry.is_empty():
-		var selected := EntryStore.read_ex(app.manifest, entry.function, entry.content)
-		if selected.status != "ok" or selected.data.get("scope") != "project" \
-				or selected.data.get("function") != EntryFunctions.fn_code(app.manifest, entry.function):
-			app._set_status("试玩中止：所选项目入口已删除、无法读取或声明不匹配。")
-			return
-	var args: PackedStringArray = PackedStringArray() if project_entry else app._play_args(spawn_tiles)
-	if not entry.is_empty():
-		args.append(Playtest.entry_arg(entry.function, entry.content))
-	var subject := play_path.get_file() if not project_entry else (
-		"项目入口 %s / %s" % [entry.function, entry.content] if not entry.is_empty() else "项目入口")
-	_start_playtest(play_path, digest, args, subject)
-
-## Screen entries never submit the open map or layout.
-func play_view(view_id: String, draft := {}) -> bool:
-	var is_draft := not draft.is_empty()
-	var allowed := Playtest.allows_view_draft(app.manifest) if is_draft else Playtest.allows_view_entry(app.manifest)
-	if not allowed:
-		app._set_status("游戏未开放从屏幕启动试玩。")
-		return false
-	if not is_draft and not References.view_ids(app.manifest).has(view_id):
-		app._set_status("试玩中止：所选屏幕已经不存在。")
-		return false
-	var manifest_path := str(app.manifest._dir).path_join("editor/editor_manifest.json")
-	var digest := EntryStore.file_digest(manifest_path)
-	if digest == "" or digest != app.manifest.get("_manifest_digest", ""):
-		app._set_status("试玩中止：磁盘清单已变化，请重新打开项目。")
-		return false
-	if is_draft:
-		return _start_playtest("", "", PackedStringArray(), "屏幕草稿 " + view_id, draft)
-	return _start_playtest("", "", PackedStringArray([Playtest.view_entry_arg(view_id)]), "屏幕 " + view_id)
-
-func _can_start_playtest() -> bool:
-	if _play_pid > 0 and Playtest.is_alive(_play_pid):
-		app._set_status("已有试玩正在运行，请关闭该游戏后再启动")
-		return false
-	return true
-
-func _start_playtest(play_path: String, digest: String, args: PackedStringArray, subject: String, draft := {}) -> bool:
-	if not _can_start_playtest():
-		return false
-	Playtest.clear_view_draft(_play_report_request)
-	var request := Playtest.request_report(app.manifest, digest)
-	if bool(app.manifest.get("playtest", {}).get("report", false)) and request.is_empty():
-		app._set_status("试玩中止：无法创建加载回执目录")
-		return false
-	if not draft.is_empty():
-		var text := JSON.stringify(draft.merged({"version": Playtest.PROTOCOL, "token": request.token}))
-		var path := Playtest.view_draft_path(request)
-		if not Recovery.write_text(path, text):
-			app._set_status("试玩中止：无法写入屏幕草稿快照")
-			return false
-		request["viewDigest"] = text.sha256_text()
-		args.append(Playtest.view_entry_arg(draft.view.view_id, path))
-	var play_res := Playtest.launch_tracked(app.manifest, play_path, args, request)
-	if not play_res.get("ok", false):
-		Playtest.clear_view_draft(request)
-		app._set_status(" 试玩失败: " + str(play_res.get("error", "")))
-		return false
-	_play_pid = int(play_res.get("pid", 0))
-	_play_started_msec = Time.get_ticks_msec()
-	_play_program = str(play_res.get("program", ""))
-	_play_report_request = request
-	_play_report_result = {}
-	_play_tracked = bool(play_res.get("tracked", false))
-	# 状态里说清「启动了什么、又在跟踪什么」：模板包装进程退出 ≠ 游戏退出
-	var what := _play_program.get_file() if _play_program != "" else "playCommand"
-	var tail := Playtest.log_tail(str(app.manifest.get("_dir", "")), 2)
-	# R24：平台查不了进程就明说「跟踪不可用」，不给假的「仍在运行」。
-	var track_note := "" if Playtest.tracking_available() else "（此平台无法跟踪进程退出）"
-	app._set_status(" 试玩启动: %s %s%s%s%s" % [what, subject,
-		"（跟踪包装进程）" if not _play_tracked else "",
-		track_note,
-		("；日志: " + tail) if tail != "" else ""])
-	return true
-
-## 试玩进程跟踪：退出后回报一次（OS.is_process_running，无子进程）
-
-func poll_playtest() -> void:
-	# §5：查询本身已是系统调用（原 tasklist 子进程已移除），但仍按 1s 节流——
-	# 退出回报不需要帧级精度，留着省一次每帧系统调用。
-	if Time.get_ticks_msec() - _last_alive_poll < 1000:
-		return
-	_last_alive_poll = Time.get_ticks_msec()
-	if _play_pid <= 0:
-		return
-	if not _play_report_request.is_empty() and _play_report_result.is_empty():
-		_play_report_result = Playtest.read_report(_play_report_request)
-		if not _play_report_result.is_empty():
-			app._set_status(_play_report_summary())
-	if not Playtest.tracking_available() or Playtest.is_alive(_play_pid):
-		return
-	var secs := int((Time.get_ticks_msec() - _play_started_msec) / 1000.0)
-	var prog := _play_program
-	_play_pid = 0
-	if not _play_report_request.is_empty():
-		_play_report_result = Playtest.read_report(_play_report_request)
-	Playtest.clear_view_draft(_play_report_request)
-	# 试玩日志尾随——游戏侧写 editor/playtest.log，退出后取最后几行（无文件 = 原消息）
-	var tail := Playtest.log_tail(str(app.manifest.get("_dir", "")), 4)
-	var who := prog.get_file() if prog != "" else "进程"
-	var tracked_note := "" if _play_tracked else "（跟踪的包装进程已退出）"
-	if not _play_report_request.is_empty():
-		app._set_status("试玩 %s 已退出 · %s" % [who, _play_report_summary()])
-	elif tail != "":
-		app._set_status(" 试玩%s退出（%s，%d 秒）· 日志: %s" % [who, tracked_note, secs, tail.replace("\n", " | ")])
-	else:
-		app._set_status(" 试玩%s已退出%s（运行 %d 秒）" % [who, tracked_note, secs])
-
-func _play_report_summary() -> String:
-	match str(_play_report_result.get("status", "")):
-		"ready":
-			return "游戏已加载本次试玩数据"
-		"error", "invalid":
-			return "游戏加载未通过：" + str(_play_report_result.get("message", ""))
-	return "游戏没有返回本次加载回执"
-
-func open_play_report() -> void:
-	# 游戏运行中可以原子替换加载回执，打开时读本次试玩的最新版本。
-	if _play_pid > 0 and not _play_report_request.is_empty():
-		var latest := Playtest.read_report(_play_report_request)
-		if not latest.is_empty():
-			_play_report_result = latest
-	var shell: Dictionary = app._popup_body("试玩反馈", _play_report_summary())
-	var pop: PopupPanel = shell.pop
-	var body: VBoxContainer = shell.body
-	var observations := Playtest.observations(_play_report_result)
-	if observations.is_empty():
-		body.add_child(UiKitScript.hint_label("本次试玩没有返回作者反馈。"))
-	else:
-		var scroll := ScrollContainer.new()
-		scroll.custom_minimum_size = Vector2(540, 240)
-		body.add_child(scroll)
-		var rows := VBoxContainer.new()
-		rows.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		scroll.add_child(rows)
-		for row in observations:
-			rows.add_child(UiKitScript.hint_label(row.message, 480))
-			if row.has("step"):
-				var button := UiKitScript.button("定位步骤 %d" % (row.step + 1), func():
-					if _open_report_step(row):
-						pop.hide(), "ghost")
-				rows.add_child(button)
-	body.add_child(UiKitScript.button("关闭", pop.hide, "ghost"))
-	app._open_popup(pop)
-
-func _open_report_step(row: Dictionary) -> bool:
-	var editor = app.project_shell.content_editor
-	if not editor.commit_fields():
-		return false
-	var content: Dictionary = editor.read_content_staged_ex(row.function, row.content)
-	var steps = content.data.get("steps", [])
-	if (content.digest != row.contentDigest or not steps is Array or row.step >= steps.size()
-			or not steps[row.step] is Dictionary or steps[row.step].get("step") != row.stepCode):
-		app._set_status("无法定位：内容已修改或步骤不存在，请重新试玩。")
-		return false
-	app._set_mode("content")
-	return editor._steps.open_content(row.function, row.content, "", row.step)
-
-## 试玩配置弹窗（v7）：清单 playtest.flags/params 声明驱动，替代写死的 dash/glide/hp。
-## flags → 勾选框（启用时启动参数原样追加 flag.arg）；params → SpinBox（追加 arg 以 %d 填数）。
-## 值只存编辑器本地 prefs（键 = flag/param id），不写进地图 JSON；清单未声明 = 空态提示。
-func _open_play_cfg() -> void:
-	if not app.map_loaded:
-		app._set_status("无地图：先新建或打开一张地图")
-		return
-	var pt: Dictionary = app.manifest.get("playtest", {}) if app.manifest is Dictionary else {}
-	var flags: Array = pt.get("flags", []) if pt.get("flags", null) is Array else []
-	var params: Array = pt.get("params", []) if pt.get("params", null) is Array else []
-	var shell = app._popup_body("试玩配置 —— %s" % app.cur_map_name,
-		"只存编辑器本地，不写进地图 JSON。声明在清单 playtest.flags / playtest.params。")
-	var pop: PopupPanel = shell.pop
-	var body: VBoxContainer = shell.body
-	if flags.is_empty() and params.is_empty():
-		body.add_child(app.UiKitScript.hint_label(
-			"清单未声明 playtest 项——在 editor_manifest.json 加 \"playtest\" 后重开清单（示例见 GAME_SIDE_STANDARD §试玩）。",
-			app.POPUP_BODY_W))
-	var states := {}   # {id: Callable} 应用时逐项收集（勾选=布尔，数字=整数）
-	for f in flags:
-		var fd: Dictionary = f
-		var fid := str(fd.get("id", ""))
-		var cb := CheckBox.new()
-		cb.text = str(fd.get("name", fid))
-		cb.button_pressed = bool(app.play_cfg.get(fid, false))
-		body.add_child(cb)
-		states[fid] = func() -> Variant: return cb.button_pressed
-	for p2 in params:
-		var pd: Dictionary = p2
-		var pid := str(pd.get("id", ""))
-		var sp := SpinBox.new()
-		sp.min_value = float(pd.get("min", 0))
-		sp.max_value = float(pd.get("max", 999999))
-		sp.step = 1
-		sp.value = float(int(app.play_cfg.get(pid, int(pd.get("def", 0)))))
-		body.add_child(app.UiKitScript.field_row(str(pd.get("name", pid)), sp, UiKitScript.LABEL_W))
-		states[pid] = func() -> Variant: return int(sp.value)
-	var btn_row = app.UiKitScript.hbox(8)
-	btn_row.alignment = BoxContainer.ALIGNMENT_END
-	btn_row.add_child(app.UiKitScript.button("取消", func(): pop.hide(), "ghost"))
-	var prefs_key := _prefs_key()
-	var generation := sess.generation
-	var apply_cfg := func():
-		if app._map_file_ctrl != self or sess.stale(generation) or prefs_key != _prefs_key():
-			return
-		var cfg: Dictionary = app.play_cfg.duplicate(true)
-		for sid in states:
-			cfg[sid] = (states[sid] as Callable).call()
-		var previous: Dictionary = app._prefs.duplicate(true)
-		app._prefs[prefs_key] = cfg
-		if not app._save_prefs():
-			app._prefs = previous
-			app._set_status("试玩配置写入失败，请重试")
-			return
-		app.play_cfg = cfg
-		pop.hide()
-		app._set_status("试玩配置已应用（仅影响试玩启动参数）")
-	btn_row.add_child(app.UiKitScript.button("应用", apply_cfg, "primary"))
-	body.add_child(btn_row)
-	app._open_popup(pop)
-
-func _play_args(spawn_tiles := Vector2i(-1, -1)) -> PackedStringArray:
-	var out: PackedStringArray = []
-	# R24：可选键用一致的默认解析——模板项目可能没有 playtest 键，直接点取会报「无效索引」。
-	var pt: Dictionary = app.manifest.get("playtest", {}) if (app.manifest is Dictionary and app.manifest.get("playtest", null) is Dictionary) else {}
-	var flags: Array = pt.get("flags", []) if pt.get("flags", null) is Array else []
-	var params: Array = pt.get("params", []) if pt.get("params", null) is Array else []
-	for f in flags:
-		var fd: Dictionary = f
-		var fid := str(fd.get("id", ""))
-		if bool(app.play_cfg.get(fid, false)) and str(fd.get("arg", "")) != "":
-			out.append(str(fd.get("arg")))
-	for p2 in params:
-		var pd: Dictionary = p2
-		var pid := str(pd.get("id", ""))
-		if app.play_cfg.has(pid):
-			var v := int(app.play_cfg.get(pid, 0))
-			if v != int(pd.get("def", 0)):
-				var arg := str(pd.get("arg", "%d"))
-				out.append(arg % v if arg.contains("%d") else arg)
-	if spawn_tiles.x >= 0 and spawn_tiles.y >= 0:
-		out.append("--spawnx=%d" % spawn_tiles.x)
-		out.append("--spawny=%d" % spawn_tiles.y)
-	return out
-
-
-## 试玩配置（v7）：prefs 由 {abilities:[],hp} 旧形态展平为 {flag_id: bool, param_id: int}。
-## 旧键 abilities[] 展开成对应 flag id 勾选、hp 落到 hp 键——与旧 CLI 参数一一对应。
-## 偏好键（A6）= <项目根>|<地图码>：两个项目有同名地图时配置不串，改名也不丢。
-func _prefs_key() -> String:
-	var root := str(app.manifest.get("_dir", ""))
-	var code := ""
-	if app.canvas != null and app.canvas.map_data.get("meta", null) is Dictionary:
-		code = str((app.canvas.map_data["meta"] as Dictionary).get("code", ""))
-	if code == "":
-		code = str(app.cur_map_name)
-	return root.path_join("|") + code
-
-func _sync_play_cfg_to_map() -> void:
-	var key := _prefs_key()
-	var legacy_key := str(app.cur_map_name)
-	var raw = app._prefs.get(key, null)
-	var from_legacy := false
-	if not raw is Dictionary and legacy_key != "" and app._prefs.get(legacy_key) is Dictionary:
-		raw = app._prefs[legacy_key]
-		from_legacy = true
-	if not raw is Dictionary:
-		app.play_cfg = {}
-		return
-	var cfg: Dictionary = raw.duplicate(true)
-	var old_flags = cfg.get("abilities")
-	if old_flags is Array:
-		cfg.erase("abilities")
-		for flag in old_flags:
-			if flag is String and flag != "" and not cfg.has(flag):
-				cfg[flag] = true
-	if cfg.get("hp") is float:
-		cfg["hp"] = int(cfg.hp)
-	app.play_cfg = cfg
-	if from_legacy or cfg != raw:
-		var previous: Dictionary = app._prefs.duplicate(true)
-		app._prefs[key] = cfg
-		if from_legacy:
-			app._prefs.erase(legacy_key)
-		if not app._save_prefs():
-			app._prefs = previous
+		return {"error": " 试玩中止：地图不在当前项目 maps 目录内，拒绝启动"}
+	return {"path": play_path, "digest": digest}

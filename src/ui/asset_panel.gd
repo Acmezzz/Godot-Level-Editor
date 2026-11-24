@@ -9,7 +9,6 @@ extends VBoxContainer
 const ImageProbe := preload("res://src/assets/image_probe.gd")
 const Kit := preload("res://src/ui/ui_kit.gd")
 const Th := preload("res://src/ui/ui_theme.gd")
-const MapStore := preload("res://src/map/map_store.gd")
 const FunctionDecls := preload("res://src/content/function_decl.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
 const ProjectAudit := preload("res://src/project/project_audit.gd")   # 使用统计（C3）
@@ -499,10 +498,6 @@ func _usage(sid: String) -> Dictionary:
 			var c: Vector2i = n.cell()
 			live_rows.append({"id": n.code, "x": c.x, "y": c.y})
 	return ProjectAudit.asset_usage(manifest, sid, cur, live_rows)
-
-## 兼容旧调用（删除检查只看每图实例数）：{地图名: [{id,x,y}]}
-func _instance_distribution(sid: String) -> Dictionary:
-	return _usage(sid).get("by_map", {})
 
 ## 分布行（只读）：id · 坐标。值在内容编辑器按实例填，这里不再提供第二套编辑入口
 ## （旧 props.stats 双写就是两个编辑面各写各的造成的分裂）。

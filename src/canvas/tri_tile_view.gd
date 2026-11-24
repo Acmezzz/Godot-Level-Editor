@@ -11,8 +11,6 @@ extends Node2D
 ## 与「相机移动」脱钩。块包围盒取块内实际多边形的并集，任何斜基/三角都不越界。
 const BLOCK := 16
 
-const AssetDecl := preload("res://src/assets/asset_decl.gd")
-const TilesetCache := preload("res://src/canvas/tileset_cache.gd")
 const MapFormat := preload("res://src/map/map_format.gd")
 
 var layer: TileMapLayer

@@ -63,7 +63,7 @@ func open() -> void:
 		var entry: Dictionary = selected_entry.call()
 		if not entry.is_empty():
 			pop.hide()
-			app._map_file_ctrl.on_play(Vector2i(-1, -1), true, entry), "ghost")
+			app._playtest_ctrl.on_play(Vector2i(-1, -1), true, entry), "ghost")
 	var copy := Kit.button("复制为草稿…", func():
 		var selected := list.get_selected_items()
 		if selected.is_empty():

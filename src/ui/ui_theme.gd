@@ -51,7 +51,6 @@ const FS_MD := 14
 const FS_LG := 17
 
 const MAP_TERRAIN := Color(0.35, 0.65, 0.40, 0.95)
-const MAP_DECOR := Color(0.20, 0.40, 0.25, 0.80)
 
 ## 构造完整主题。所有控件类型一次性配齐，避免局部漏样式而回落到 Godot 默认灰。
 static func build() -> Theme:

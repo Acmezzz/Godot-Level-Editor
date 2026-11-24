@@ -63,10 +63,6 @@ static func resolve_graph_map(index: Dictionary, code: String) -> Dictionary:
 		return {"status": "missing", "key": "", "candidates": []}
 	return resolved
 
-## 消费口径：地图键 → 图名（unset/ambiguous/missing 返回 ""，调用方按 status 区分）。
-static func map_name_of(manifest: Dictionary, map_key: String) -> String:
-	return str(resolve_map(manifest, map_key).get("key", ""))
-
 ## 只识别编辑器创建的内容目标形态，游戏自己的热点目标由游戏解释。
 static func is_view_content_target(value: Variant) -> bool:
 	return value is Dictionary and value.size() == 2 and value.get("function") is String \

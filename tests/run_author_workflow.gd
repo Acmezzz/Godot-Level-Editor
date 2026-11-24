@@ -8,6 +8,7 @@ const Store = preload("res://src/content/content_store.gd")
 const Maps = preload("res://src/map/map_store.gd")
 const ViewportLibrary = preload("res://src/ui/viewport_library.gd")
 const ReferenceViews = preload("res://src/ui/reference_view_library.gd")
+const ScreenLayoutCanvas = preload("res://src/ui/screen_layout_canvas.gd")
 const GraphEditor = preload("res://src/ui/cell_graph_editor.gd")
 const WorldLayout = preload("res://src/project/world_layout.gd")
 var failures := 0
@@ -42,8 +43,8 @@ func select_metadata(opt: OptionButton, value: String) -> void:
 	check(false, "missing option " + value)
 
 func launch_and_read(app, project_entry: bool) -> Dictionary:
-	await app._map_file_ctrl.on_play(Vector2i(-1, -1), project_entry)
-	return await wait_for_playtest(app._map_file_ctrl)
+	await app._playtest_ctrl.on_play(Vector2i(-1, -1), project_entry)
+	return await wait_for_playtest(app._playtest_ctrl)
 
 func wait_for_playtest(controller) -> Dictionary:
 	var deadline := Time.get_ticks_msec() + 12000
@@ -656,9 +657,9 @@ func run():
 	inputs[1].text = "reference.png"
 	press(pop, "加载图片")
 	await process_frame
-	var preview: ReferenceViews.Preview
+	var preview: ScreenLayoutCanvas
 	for candidate in collect(pop, "Control"):
-		if candidate is ReferenceViews.Preview:
+		if candidate is ScreenLayoutCanvas:
 			preview = candidate
 			break
 	check(preview != null and preview.texture != null, "image preview loaded")
@@ -799,7 +800,7 @@ func run():
 	check(Audit.audit(stale_view).any(func(issue): return issue.path == "views[0].layout.elements[0].imageAsset"),
 		"audit locates a stale layout image by its exact field")
 	var entry_report := await launch_and_read(app, true)
-	app._map_file_ctrl.open_play_report()
+	app._playtest_ctrl.open_play_report()
 	var observation: Dictionary = entry_report.get("observations", [{}])[0]
 	var report_popup: PopupPanel = collect(app, "PopupPanel").filter(func(p): return p.visible).back()
 	press(report_popup, "定位步骤 %d" % (int(observation.get("step", -1)) + 1))
@@ -809,7 +810,7 @@ func run():
 		ce._steps._steps_pop.hide()
 	var stale_observation := observation.duplicate()
 	stale_observation.contentDigest = "0".repeat(64)
-	check(not app._map_file_ctrl._open_report_step(stale_observation), "a mismatched content digest cannot jump to a stale step")
+	check(not app._playtest_ctrl._open_report_step(stale_observation), "a mismatched content digest cannot jump to a stale step")
 	check(entry_report.get("status") == "ready" and entry_report.get("result", {}).get("step") == 2
 		and entry_report.get("result", {}).get("caption") == "Ready"
 		and entry_report.get("result", {}).get("ending") == "Reached the ending"
@@ -851,12 +852,12 @@ func run():
 			break
 	var entry_launch: Button = collect(pop, "Button").filter(func(b): return b.text == "试玩所选内容").front()
 	check(entry_launch.is_visible_in_tree() and not entry_launch.disabled, "declared project content appears as a playable entry")
-	var prior_request: String = app._map_file_ctrl._play_report_request.token
+	var prior_request: String = app._playtest_ctrl._play_report_request.token
 	entry_launch.pressed.emit()
 	var entry_until := Time.get_ticks_msec() + 5000
-	while app._map_file_ctrl._play_report_request.get("token") == prior_request and Time.get_ticks_msec() < entry_until:
+	while app._playtest_ctrl._play_report_request.get("token") == prior_request and Time.get_ticks_msec() < entry_until:
 		await process_frame
-	var chosen_report := await wait_for_playtest(app._map_file_ctrl)
+	var chosen_report := await wait_for_playtest(app._playtest_ctrl)
 	var chosen_entry: Dictionary = chosen_report.get("result", {}).get("entry", {})
 	check(chosen_report.get("status") == "ready" and chosen_report.get("mapDigest") == ""
 		and chosen_entry.get("version") == 1 and chosen_entry.get("function") == "second_sequence"
@@ -3563,9 +3564,9 @@ func author_signal_room(app, project: String) -> void:
 			break
 	press(pop, "试玩所选内容")
 	var deadline := Time.get_ticks_msec() + 5000
-	while app._map_file_ctrl._play_report_request.is_empty() and Time.get_ticks_msec() < deadline:
+	while app._playtest_ctrl._play_report_request.is_empty() and Time.get_ticks_msec() < deadline:
 		await process_frame
-	var report := await wait_for_playtest(app._map_file_ctrl)
+	var report := await wait_for_playtest(app._playtest_ctrl)
 	var result: Dictionary = report.get("result", {})
 	check(report.get("status") == "ready" and report.get("mapDigest") == ""
 		and result.get("visited") == ["project-alternate-watch", "project-tune", "project-clear"]
@@ -3575,8 +3576,8 @@ func author_signal_room(app, project: String) -> void:
 		and result.get("outlets") == ["accepted"]
 		and result.get("text") == "Signal verified",
 		"the second game follows both authored buttons from the selected start content: " + str(report))
-	await app._map_file_ctrl.on_play(Vector2i(-1, -1), true, {"function": "signal", "content": "project-watch"})
-	var cancellation := await wait_for_playtest(app._map_file_ctrl)
+	await app._playtest_ctrl.on_play(Vector2i(-1, -1), true, {"function": "signal", "content": "project-watch"})
+	var cancellation := await wait_for_playtest(app._playtest_ctrl)
 	var cancelled: Dictionary = cancellation.get("result", {})
 	check(cancellation.get("status") == "ready" and cancelled.get("visited") == ["project-watch", "project-cancelled"]
 		and cancelled.get("outlets") == ["cancelled"] and cancelled.get("text") == "Signal cancelled",
@@ -3593,7 +3594,7 @@ func _play_saved_signal_view(app, manifest_path: String) -> void:
 	text.text_changed.emit(text.text)
 	var digest := Store.file_digest(manifest_path)
 	press(popup, "试玩已保存视图")
-	var report := await wait_for_playtest(app._map_file_ctrl)
+	var report := await wait_for_playtest(app._playtest_ctrl)
 	var result: Dictionary = report.get("result", {})
 	check(report.get("status") == "ready" and report.get("mapDigest") == ""
 		and result.get("screens") == ["watch-deck", "relay-tuning"]
@@ -3605,12 +3606,12 @@ func _play_saved_signal_view(app, manifest_path: String) -> void:
 	check(popup.visible and text.text == "Draft relay caption" and digest == Store.file_digest(manifest_path),
 		"screen playtest neither publishes nor closes the unsaved layout")
 	press(popup, "试玩当前草稿")
-	var request: Dictionary = app._map_file_ctrl._play_report_request
+	var request: Dictionary = app._playtest_ctrl._play_report_request
 	var draft_path := Playtest.view_draft_path(request)
 	check(FileAccess.file_exists(draft_path) and request.has("viewDigest"), "draft launch creates a tracked snapshot")
 	text.text = "Edited after launch"
 	text.text_changed.emit(text.text)
-	var draft_report := await wait_for_playtest(app._map_file_ctrl)
+	var draft_report := await wait_for_playtest(app._playtest_ctrl)
 	var draft_result: Dictionary = draft_report.get("result", {})
 	check(draft_report.get("status") == "ready" and draft_report.get("viewDigest") == request.get("viewDigest")
 		and draft_result.get("screens") == ["watch-deck", "relay-tuning"]
@@ -3805,6 +3806,21 @@ func _author_signal_content(app, library, id: String, message: String, view := "
 	pop.hide()
 	await process_frame
 
+func _layout_pointer(preview: ScreenLayoutCanvas, phase: String, point: Vector2) -> void:
+	var area := preview.frame()
+	var position := area.position + point * area.size / preview.viewport_size
+	if phase == "move":
+		var motion := InputEventMouseMotion.new()
+		motion.position = position
+		motion.button_mask = MOUSE_BUTTON_MASK_LEFT
+		preview._gui_input(motion)
+	else:
+		var button := InputEventMouseButton.new()
+		button.button_index = MOUSE_BUTTON_LEFT
+		button.pressed = phase == "press"
+		button.position = position
+		preview._gui_input(button)
+
 func _author_signal_screen(app, id: String, caption: String, content: String, manifest_path := "") -> void:
 	ReferenceViews.open(app)
 	var pop := _visible_popup(app)
@@ -3817,9 +3833,9 @@ func _author_signal_screen(app, id: String, caption: String, content: String, ma
 	design.select(1)
 	design.item_selected.emit(1)
 	await process_frame
-	var preview: ReferenceViews.Preview
+	var preview: ScreenLayoutCanvas
 	for node in collect(pop, "Control"):
-		if node is ReferenceViews.Preview:
+		if node is ScreenLayoutCanvas:
 			preview = node
 			break
 	var frame := preview.frame()
@@ -3888,8 +3904,22 @@ func _author_signal_screen(app, id: String, caption: String, content: String, ma
 		list_elements.item_selected.emit(0)
 		check(pop.find_child("LayoutElementParent", true, false).item_count == 1,
 			"the parent picker excludes its own child")
-		pop.find_child("offsets_1", true, false).value += 40
-		pop.find_child("offsets_3", true, false).value += 40
+		pop.find_child("LayoutAdjust", true, false).button_pressed = true
+		var panel_center: Vector2 = preview.layout_rectangles()[panel_id].get_center()
+		_layout_pointer(preview, "press", panel_center)
+		_layout_pointer(preview, "move", panel_center + Vector2(0, 40))
+		check(preview.layout_rectangles()[module_id].position.is_equal_approx(module_bounds.position + Vector2(0, 40))
+			and ReferenceViews.Layout.rectangles(preview.elements, preview.viewport_size)[module_id].is_equal_approx(module_bounds),
+			"moving a parent stages a live preview with its child without writing offsets")
+		var escape := InputEventKey.new()
+		escape.keycode = KEY_ESCAPE
+		escape.pressed = true
+		pop.window_input.emit(escape)
+		_layout_pointer(preview, "release", panel_center + Vector2(0, 40))
+		check(pop.visible and preview.layout_rectangles()[module_id].is_equal_approx(module_bounds),
+			"Escape cancels the staged move without closing the editor")
+		_layout_pointer(preview, "press", panel_center)
+		_layout_pointer(preview, "release", panel_center + Vector2(0, 40))
 		module_bounds.position.y += 40
 		check(ReferenceViews.Layout.rectangles(preview.elements, preview.viewport_size)[module_id].is_equal_approx(module_bounds),
 			"a bottom anchored module follows its panel in the editor")
@@ -3905,8 +3935,19 @@ func _author_signal_screen(app, id: String, caption: String, content: String, ma
 		press(pop, "恢复此画幅的继承")
 		check(ReferenceViews.Layout.focus_start(preview.focus_layout, preview.elements, preview.viewport_size, preview.profile) == module_id,
 			"resetting the profile restores inherited visibility")
-		pop.find_child("offsets_1", true, false).value -= 190
-		pop.find_child("offsets_3", true, false).value -= 190
+		var wide: Rect2 = preview.layout_rectangles()[module_id]
+		var center := wide.get_center()
+		_layout_pointer(preview, "press", center)
+		_layout_pointer(preview, "release", center + Vector2(0, -190))
+		wide.position.y -= 190
+		_layout_pointer(preview, "press", wide.end)
+		_layout_pointer(preview, "move", wide.end + Vector2(-32, -20))
+		_layout_pointer(preview, "release", wide.end + Vector2(-32, -20))
+		wide.size += Vector2(-32, -20)
+		check(preview.layout_rectangles()[module_id].is_equal_approx(wide)
+			and preview.elements[0].variants.wide.keys() == ["offsets"]
+			and preview.elements[0].anchors[1] == 1.0,
+			"dragging the corner resizes only the selected profile and preserves the bottom anchors")
 		check(ReferenceViews.Layout.rectangles(preview.elements, Vector2(480, 720))[module_id].is_equal_approx(module_bounds),
 			"landscape placement leaves the authored base rectangle alone")
 	if manifest_path != "":

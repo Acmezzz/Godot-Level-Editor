@@ -97,11 +97,6 @@ static func of_kind(m: Dictionary, kind: String) -> Array:
 			out.append(d)
 	return out
 
-## 条目是否被停用（用户在图鉴里删除，或扫描停用）：不该出现在调色板/引用选择里，
-## 但仍在 assets[] 里保留原 ID——已有地图引用据此继续解析与报告（A4/D12）。
-static func is_disabled(m: Dictionary, aid: String) -> bool:
-	return bool(live_by_id(m, aid).get("disabled", false))
-
 ## 可放置的资产（排除停用条目；图鉴列表仍用 of_kind 显示全部）。
 static func of_kind_placed(m: Dictionary, kind: String) -> Array:
 	var out: Array = []

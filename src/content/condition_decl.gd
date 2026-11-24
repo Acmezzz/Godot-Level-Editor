@@ -61,10 +61,6 @@ static func condition_decl(m: Dictionary, cond_id: String) -> Dictionary:
 static func condition_fields(m: Dictionary, cond_id: String) -> Array:
 	return condition_decl(m, cond_id).get("fields", [])
 
-## 条件显示名；缺省用 cond_id。
-static func condition_name(m: Dictionary, cond_id: String) -> String:
-	return str(condition_decl(m, cond_id).get("name", cond_id))
-
 ## 条件行保存人类 ID，与固定条件的 declarations.conditions 使用同一身份。
 static func allowed_rows(m: Dictionary, field: Dictionary) -> Array:
 	var allowed = field.get("allowedConditions")

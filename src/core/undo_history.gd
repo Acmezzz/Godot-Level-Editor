@@ -6,7 +6,6 @@ var cvs   # 宿主引用
 const Constants := preload("res://src/core/constants.gd")
 const ContentStore := preload("res://src/content/content_store.gd")
 const MapFormat := preload("res://src/map/map_format.gd")
-const TilesetCache := preload("res://src/canvas/tileset_cache.gd")
 
 func _init(host) -> void:
 	cvs = host
@@ -156,12 +155,6 @@ func stroke_begin() -> void:
 	_stroke_cells = []
 	_stroke_keys.clear()
 	redo_stack.clear()
-
-## 笔画取消（撤销在笔画进行中触发时）：记录作废，不产生撤销条目。
-func stroke_cancel() -> void:
-	_stroke_open = false
-	_stroke_cells = []
-	_stroke_keys.clear()
 
 ## 登记一个瓦片格的 before 状态（同格重复登记跳过）。
 func stroke_touch_tile(lid: String, c: Vector2i) -> void:

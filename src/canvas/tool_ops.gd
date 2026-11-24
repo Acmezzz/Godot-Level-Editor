@@ -8,7 +8,6 @@ extends RefCounted
 
 var cvs   # 宿主引用
 
-const TilesetCache := preload("res://src/canvas/tileset_cache.gd")
 const MapFormat := preload("res://src/map/map_format.gd")
 const FunctionDecls := preload("res://src/content/function_decl.gd")   # 挂载补齐（C09）
 

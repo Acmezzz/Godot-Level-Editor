@@ -12,7 +12,6 @@ extends RefCounted
 
 const ContentStore := preload("res://src/content/content_store.gd")
 const FunctionDecls := preload("res://src/content/function_decl.gd")
-const MapStore := preload("res://src/map/map_store.gd")
 
 ## 内容文件里的字段键：字段声明的码优先，缺码退回人类 id（与 FieldWidgets/内容表单一致）。
 static func field_key(fd: Dictionary) -> String:

@@ -11,7 +11,6 @@ extends RefCounted
 const FrameReference := preload("res://src/ui/map_game_preview.gd")
 const Kit := preload("res://src/ui/ui_kit.gd")
 const Th := preload("res://src/ui/ui_theme.gd")
-const ContentStore := preload("res://src/content/content_store.gd")
 const FieldWidgets := preload("res://src/ui/field_widgets.gd")
 const StepDecls := preload("res://src/content/step_decl.gd")
 const StepTimeline := preload("res://src/content/step_timeline.gd")
@@ -98,7 +97,6 @@ const STEPS_PAGE_SIZE := 40
 var _steps_sel_expect := ""
 var _steps_list: VBoxContainer = null
 var _steps_form: VBoxContainer = null
-var _steps_warn_box: VBoxContainer = null
 # 时间轴视图页签（第 4 批）：同一份 steps，两种呈现。
 var _steps_view := "list"     # "list" / "timeline"
 var _steps_tabs: HBoxContainer = null

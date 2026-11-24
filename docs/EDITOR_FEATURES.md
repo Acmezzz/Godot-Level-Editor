@@ -27,6 +27,7 @@ src/
 │   ├── asset_scan.gd       资产零登记扫描：约定目录新文件补条目发码、改名 md5 重链、消失标缺失
 │   ├── reference_index.gd  统一身份索引（B2）：地图码↔图名解析、内容入边查询
 │   ├── project_audit.gd    全项目自检：清单+地图校验汇总、引用悬空、内容入边批量扫描（C2）
+│   ├── spatial_reference_check.gd  空间引用校验：实例、层、端口、格及格边
 │   ├── document_session.gd 文档会话（B1）：内容暂存行（按文档键查）、快照与按文档取行
 │   ├── document_commit.gd  统一提交（B1）：prepare 出提交计划、apply 按 hooks 逐文件写（含失败停点）
 │   └── playtest.gd         试玩：清单结构化 executable+args 直启 / 退回命令模板，跟踪进程
@@ -89,7 +90,11 @@ src/
 	├── project_shell.gd    项目工作台外壳：内容、资产两个全屏视图共用
 	├── top_bar_nav.gd      共享顶栏片段：地图 ▾ + 关卡/内容/资产三个按钮
 	├── palette_panel.gd    瓦片调色板（类别 → 图集两级导航）+ 实体列表
-	├── map_file.gd         地图文件生命周期：新建/打开/保存/改名/复制/草稿/历史/试玩
+	├── map_file.gd         地图文件生命周期：新建/打开/保存/改名/复制/草稿/历史
+	├── playtest_controller.gd  试玩控制：提交入口、进程跟踪、回执及步骤定位
+	├── reference_view_library.gd  参考视图窗口：选择、加载、草稿与保存
+	├── screen_layout_canvas.gd  屏幕布局画布：绘制、命中和布局手势
+	├── screen_layout_form.gd  屏幕布局表单：元素属性、模块字段和引用
 	├── map_dialogs.gd      地图尺寸 / 导出弹窗（map_file 拆出）
 	├── map_resize.gd       改尺寸的裁剪预览与实际裁剪（E3/D17，map_dialogs 拆出）
 	├── map_menu_identity.gd  地图菜单身份解析：按码/名/当前图判定，失效项不重复入列（E3）
@@ -188,6 +193,7 @@ src/
 参考视图的「布局编辑」支持拖出元素，并选择面板、文字、按钮或游戏声明的屏幕模块；可微调锚点和像素偏移、调整叠放顺序、
 输入文字与游戏样式 ID、连接内容目标。「布局画幅」选择基础布局或一个已声明的画幅。可在具名画幅分别覆盖元素锚点、像素偏移和显隐，未改的字段沿用基础布局；恢复继承会清除此元素在该画幅的覆盖。
 各画幅共用元素、父级、模块属性、文案和内容连线。隐藏父级也会隐藏后代，隐藏元素不参与点选与焦点导航。游戏实景和草稿试玩使用当前选中的画幅。
+打开「调整元素」可在画布上拖动已有元素，拖选中元素的四角可缩放。拖动时实时显示子元素的新位置；松手写入当前画幅的像素偏移，保留锚点与父级。Esc 或右键取消本次拖动。关闭「调整元素」后可继续拖出新元素。
 「布局父级」可把元素锚定到另一个元素，支持多层嵌套。移动父级时子元素跟随，父级尺寸变化时子元素按本身的锚点和像素偏移重新布局；「固定底边」使用当前父级的底边。
 换父级保留子元素在设计画幅和已写入覆盖的画幅上的位置和大小。删除父级会将直接子元素接到其上一级（或画幅），同样保留原位置和大小。叠放顺序仍可独立调整，父级不裁切子元素。
 游戏模块的字段按声明生成控件，未改动默认值时不写覆盖值。模块可声明多个具名内容出口，作者可在布局表单或项目流程图逐条连接、改接或断开。游戏决定触发哪个出口；内容自检和删除前的来向检查会列出对应出口。旧模块仍支持原来的单目标。
@@ -710,7 +716,7 @@ Shift + 左键选已有顶点，再点同层位置，可在所选顶点之后插
 | 内容视图 Ctrl+S、顶栏「保存」 | ① 清单（仅当有待补发码）② 暂存内容每条一文件 ③ 当前地图（仅当画布脏） | `editor/pending/` 日志；地图写入前快照 | `project_shell.gd::save_current` → `map_file.gd::commit_document` → `document_commit.gd::prepare/apply` |
 | 地图菜单「保存」/ Ctrl+S（内容视图同一条） | 同上；无补码、无暂存、图不脏时退化为「无待写改动」 | 同上 | `app.gd::_on_save` → `map_file.gd::save_all` |
 | 顶栏「保存」（资产视图） | 写 `editor/editor_manifest.json`，成功后尝试更新 `editor/CODES.md`；对照表写入失败不回滚清单 | 无 | `project_shell.gd::save_current` 的 `_` 分支 → `app.gd::_save_manifest_file_async` |
-| 试玩 | 同上；提交后地图文件仍不存在则补一次正式保存 | 同上 | `map_file.gd::on_play` |
+| 试玩 | 同上；地图试玩要求已提交地图的路径和摘要与磁盘一致 | 同上 | `playtest_controller.gd::on_play` → `map_file.gd::prepare_playtest_document` |
 | 清除悬空引用 | ① 当前图脏则先走整条提交 ② 逐张改动过的地图各写一次 | 第①步同提交日志；第②步每图写前轮转 | `issues_drawer.gd` → `project_audit.gd::apply_ref_fixes` |
 | 地图改名 | ① 新名文件写入 ② 旧名文件删除 | 两文件一条日志 | `map_store.gd::rename_map` |
 | 复制整图 / 转换后另存 | 若清单仍有待发布的补码，先由编辑器发布清单，再提交① 新内容 N 份 ② 新地图 1 份 | 新内容与新地图共用一条冻结计划日志 | `map_file.gd::_publish_map_copy` → `map_store.gd::apply_duplicate` |

@@ -5,7 +5,6 @@ var cvs   # 宿主引用
 
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
 const MapViewData := preload("res://src/map/map_view_data.gd")
-const ManifestScript := preload("res://src/project/manifest.gd")   # 出口 role 判定
 const K := preload("res://src/core/constants.gd")
 const EdgeRefRef := preload("res://src/map/edge_ref.gd")   # §7.4：格边高亮/取值
 const TriTileViewScript := preload("res://src/canvas/tri_tile_view.gd")   # 格多边形贴图 UV
@@ -434,18 +433,6 @@ func _w(n: EntityNode) -> Vector2:
 func _wr(n: EntityNode) -> Rect2:
 	var li: int = cvs._layer_index_of(n.layer_id)
 	return n.aabb() if li < 0 else cvs.layer_xform(li) * n.aabb()
-
-## 层局部矩形/多边形 → 世界（区域轮廓/预览共用）
-## 区域选区是**格号**矩形（三角拓扑 = 三角列），所以走 grid_polygon（会折算）。
-func _lpoly_rect(r: Rect2i, li: int) -> PackedVector2Array:
-	var poly: PackedVector2Array = cvs.grid.grid_polygon(r.position, r.end)
-	if li < 0:
-		return poly
-	var xf: Transform2D = cvs.layer_xform(li)
-	var out := PackedVector2Array()
-	for p: Vector2 in poly:
-		out.append(xf * p)
-	return out
 
 ## 层局部位图落位矩形 → 世界矩形（区域预览瓦片）
 func _wrect_local(r: Rect2, li: int) -> Rect2:
