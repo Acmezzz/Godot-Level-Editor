@@ -3,6 +3,7 @@ extends RefCounted
 
 const GRID := "gridDelta"
 const CONTENT := "contentDelta"
+const LAYER_STYLE := ["name", "visible", "ySort", "blend"]
 
 static func compatibility_problem(a: Dictionary, b: Dictionary) -> String:
 	for field in ["w", "h", "gridProjection", "gridTopology", "gridBasis"]:
@@ -15,7 +16,7 @@ static func compatibility_problem(a: Dictionary, b: Dictionary) -> String:
 	for i in left.size():
 		if not left[i] is Dictionary or not right[i] is Dictionary:
 			return "图层声明无效。"
-		for field in ["id", "offset", "scale", "parallax"]:
+		for field in ["id", "offset", "scale", "parallax", "tileGrid"]:
 			if not _same(left[i].get(field), right[i].get(field)):
 				return "图层 ID、顺序或空间变换不一致。"
 	return ""
@@ -42,8 +43,6 @@ static func compile(authored: Dictionary, mode: String) -> Dictionary:
 		var after := _object_index(authored.get("objects", []))
 		if not before.ok or not after.ok:
 			return {"error": "摆放物列表或实例码无效，无法计算差量。"}
-		if not _same(before.anonymous, after.anonymous):
-			return {"error": "无码摆放物有改动：请用整块替换，或让游戏提供带稳定码的实体。"}
 		var changes := {}
 		for code in before.coded:
 			var old: Dictionary = before.coded[code]
@@ -57,6 +56,22 @@ static func compile(authored: Dictionary, mode: String) -> Dictionary:
 			if not before.coded.has(code):
 				changes[code] = {"op": "add", "value": after.coded[code]}
 		result.objects = changes
+		var default_layer: String = meta.layers[0].id
+		result["decor_remove"] = _unmatched_decor(before.anonymous, after.anonymous, default_layer)
+		result["decor_add"] = _unmatched_decor(after.anonymous, before.anonymous, default_layer)
+		var original_spawn = base.get("spawn", [2, 2])
+		var new_spawn = authored.get("spawn", [2, 2])
+		if not _same(original_spawn, new_spawn):
+			result["spawn"] = new_spawn
+		var styles := {}
+		for i in meta.layers.size():
+			var edits := {}
+			for key in LAYER_STYLE:
+				if not _same(base.meta.layers[i].get(key), meta.layers[i].get(key)):
+					edits[key] = meta.layers[i].get(key)
+			if not edits.is_empty():
+				styles[meta.layers[i].id] = edits
+		result["layer_style"] = styles
 	return result
 
 ## Computes a new map. A conflict never mutates or partly patches the runtime map.
@@ -88,16 +103,39 @@ static func apply(runtime: Dictionary, plan: Dictionary) -> Dictionary:
 				return {"error": "运行时实例 %s 缺失或资产身份不一致。" % code}
 			if change.op == "update":
 				updated[code] = _overlay_dict(row, change.base, change.value)
+		var default_layer: String = meta.layers[0].id
+		var removals := _decor_counts(plan.get("decor_remove", []), default_layer)
 		for row in runtime.get("objects", []):
 			var code := str(row.get("code", ""))
+			if code.is_empty() and not removals.is_empty():
+				var key := _decor_key(row, default_layer)
+				if _consume(removals, key):
+					continue
 			if plan.objects.get(code, {}).get("op") != "remove":
 				objects.append(updated.get(code, row))
+		if not removals.is_empty():
+			return {"error": "当前种子缺少要移除的原始无码摆放物，无法可靠识别位置；分块差量未应用。"}
 		for code in plan.objects:
 			if plan.objects[code].op == "add":
 				objects.append(plan.objects[code].value)
+		objects.append_array(plan.get("decor_add", []))
 	var out := runtime.duplicate()
 	if plan.mode == CONTENT:
 		out["objects"] = objects.duplicate(true)
+		if plan.has("spawn"):
+			out["spawn"] = plan.spawn.duplicate()
+		var styles: Dictionary = plan.get("layer_style", {})
+		if not styles.is_empty():
+			var layers: Array = meta.layers.duplicate(true)
+			for layer: Dictionary in layers:
+				for key in styles.get(layer.id, {}):
+					var value = styles[layer.id][key]
+					if value == null:
+						layer.erase(key)
+					else:
+						layer[key] = value
+			out["meta"] = meta.duplicate()
+			out.meta.layers = layers
 	var collision = _apply_grid(runtime.get("collision", []), plan.grid.collision, false)
 	if collision == null or not runtime.get("tiles", {}) is Dictionary:
 		return {"error": "运行时格位无效或重复。"}
@@ -128,6 +166,58 @@ static func _object_index(rows: Variant) -> Dictionary:
 		else:
 			coded[code] = row
 	return {"ok": true, "coded": coded, "anonymous": anonymous}
+
+## With no stable identity, an edit is removal of an exact baseline placement
+## plus an addition. Counts distinguish intentional duplicates from row order.
+static func _unmatched_decor(rows: Array, other: Array, default_layer: String) -> Array:
+	var counts := _decor_counts(other, default_layer)
+	var result: Array = []
+	for row: Dictionary in rows:
+		if not _consume(counts, _decor_key(row, default_layer)):
+			result.append(row)
+	return result
+
+static func _decor_counts(rows: Array, default_layer: String) -> Dictionary:
+	var counts := {}
+	for row: Dictionary in rows:
+		var key := _decor_key(row, default_layer)
+		counts[key] = int(counts.get(key, 0)) + 1
+	return counts
+
+static func _consume(counts: Dictionary, key: String) -> bool:
+	var count := int(counts.get(key, 0))
+	if count == 0:
+		return false
+	if count == 1:
+		counts.erase(key)
+	else:
+		counts[key] = count - 1
+	return true
+
+static func _decor_key(row: Dictionary, default_layer: String) -> String:
+	var value := row.duplicate()
+	value.erase("code")
+	value["layer"] = row.get("layer", default_layer)
+	for key in ["props", "transform", "functions"]:
+		if row.get(key) in [null, {}, []]:
+			value.erase(key)
+	if row.get("visible", true):
+		value.erase("visible")
+	if row.get("zPolicy", "auto") in ["", "auto"]:
+		value.erase("zPolicy")
+	return JSON.stringify(_normalized_numbers(value), "", true, true)
+
+static func _normalized_numbers(value: Variant) -> Variant:
+	if value is int or value is float:
+		return 0.0 if value == 0 else float(value)
+	if value is Array:
+		return value.map(_normalized_numbers)
+	if value is Dictionary:
+		var result := {}
+		for key in value:
+			result[key] = _normalized_numbers(value[key])
+		return result
+	return value
 
 static func _overlay_dict(runtime: Dictionary, base: Dictionary, authored: Dictionary) -> Dictionary:
 	var out := runtime.duplicate()

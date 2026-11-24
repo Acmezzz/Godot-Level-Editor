@@ -86,11 +86,11 @@ func _build() -> void:
 	_generated_mode.name = "WorldGeneratedMode"
 	_generated_mode.size_flags_horizontal = SIZE_EXPAND_FILL
 	var modes := ["", Layout.DELTA_MODE, Layout.CONTENT_DELTA_MODE]
-	var titles := ["整块替换", "只覆盖瓦片与碰撞差量", "覆盖格位与带码摆放物差量"]
+	var titles := ["整块替换", "只覆盖瓦片与碰撞差量", "覆盖格位、摆放物、出生点与图层样式"]
 	for i in modes.size():
 		_generated_mode.add_item(titles[i])
 		_generated_mode.set_item_metadata(i, modes[i])
-	_generated_mode.tooltip_text = "差量需要兼容的生成基线。摆放物差量要求游戏在各个种子里用稳定实例码。"
+	_generated_mode.tooltip_text = "保留种子未编辑的数据。实体按实例码匹配；移动或删除无码摆放物时，当前种子须包含原摆放。"
 	_generated_mode.item_selected.connect(func(i: int): _edit_generated_mode(str(modes[i])))
 	add_child(Kit.field_row("生成覆盖", _generated_mode, 90))
 	_notice = Label.new()

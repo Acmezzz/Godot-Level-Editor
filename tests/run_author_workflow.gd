@@ -1552,6 +1552,9 @@ func run():
 	app.canvas._tool_ops_ctrl.place_object(app.canvas.stamp_asset, app.canvas.active_layer, app.canvas.grid.cell_center_px(Vector2i(1, 1)))
 	app.canvas.selected_entity.props["label"] = "extra"
 	app.canvas._mark()
+	app.canvas._tool_ops_ctrl.place_object("button-art", 0, app.canvas.grid.cell_center_px(Vector2i(2, 1)))
+	check(app.canvas.set_spawn_cell(Vector2i(3, 1)), "set the authored chunk entrance")
+	app.canvas.layer_set_blend(0, "add")
 	var object_save: Dictionary = await app._map_file_ctrl.commit_document("保存分块摆放物差量")
 	check(object_save.get("status") == "ok", "save generated object edit, deletion and addition")
 	app._nav_bars[0]._switch_menu.id_pressed.emit(100002)
@@ -1569,8 +1572,9 @@ func run():
 	var objects: Array = object_report.get("result", {}).get("seedPatches", [])
 	check(objects.size() == 2 and objects.all(func(row):
 		return row.applied and row.gate == "GATE" and row.gateLabel == "author" and row.gateSeed == row.seed \
-			and row.removedObject and row.seedObject and row.addedObject and row.tilePatched),
-		"across seeds the independent game retains seed objects and props while applying placed object edits: " + str(object_report))
+			and row.removedObject and row.seedObject and row.addedObject and row.tilePatched \
+			and row.spawn[0] == 3 and row.spawn[1] == 1 and row.blend == "add" and row.decor == 2),
+		"across seeds the game keeps procedural objects and applies the decor, spawn, layer style and coded edits: " + str(object_report))
 	await author_resize(app, manifest)
 	await author_projection_copy(app, manifest)
 	await author_rule_grids(app, manifest)

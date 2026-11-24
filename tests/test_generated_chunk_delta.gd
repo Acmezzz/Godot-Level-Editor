@@ -28,3 +28,30 @@ func test_stable_identity_conflict_rejects_the_entire_patch() -> void:
 	runtime.objects.clear()
 	var missing := Delta.apply(runtime, plan)
 	ok(missing.error.contains("GATE") and not missing.has("map"), "missing edited instance fails without creating it")
+
+func test_anonymous_edits_preserve_seed_decor_and_counts() -> void:
+	var base := Maps.new_map("seed", 8, 8, "orthogonal")
+	var layer: String = base.meta.layers[0].id
+	base.objects = [{"asset": "sign", "x": 1, "y": 2}, {"asset": "sign", "x": 1, "y": 2}]
+	var authored := base.duplicate(true)
+	authored.objects[0].x = 3
+	authored.spawn = [4, 2]
+	authored.meta.layers[0].blend = "add"
+	Generated.attach(authored, base, "demo", {})
+	var plan := Delta.compile(authored, Delta.CONTENT)
+	var runtime := base.duplicate(true)
+	runtime.objects[0] = {"asset": "sign", "layer": layer, "x": 1.0, "y": 2.0, "visible": true}
+	runtime.objects.append({"asset": "sign", "layer": layer, "x": 5, "y": 1})
+	runtime.meta.layers[0].ySort = true
+	var patched := Delta.apply(runtime, plan)
+	eq(patched.error, "", "exact baseline decor can be moved without a code")
+	if patched.has("map"):
+		eq(patched.map.objects.map(func(row): return row.x), [1, 5, 3], "remove only one copy and append moved placement")
+		eq(patched.map.spawn, [4, 2], "apply authored entrance")
+		ok(patched.map.meta.layers[0].ySort and patched.map.meta.layers[0].blend == "add",
+			"layer style overrides only authored fields")
+	runtime.objects = [runtime.objects[2]]
+	var conflict := Delta.apply(runtime, plan)
+	ok(not conflict.has("map") and conflict.error.contains("无码"), "a different seed cannot silently remove unrelated decor")
+	runtime.meta.layers[0].tileGrid = {"gridProjection": "isometric"}
+	ok(Delta.apply(runtime, plan).error.contains("图层"), "independent tile projection is part of spatial compatibility")

@@ -900,10 +900,13 @@ func _generated_chunk(cell: Vector2i, slots: Dictionary, seed := 0) -> Dictionar
 	var map := _slope_room({"version": 7, "code": key, "name": key}, first)
 	map.collision.append({"x": first + 2, "y": 3, "shape": "l45"})
 	if mode == ChunkDelta.CONTENT:
+		# Keep the shared entrance platform even when this seed extends the route.
+		map.collision.append({"x": first - 1, "y": 4})
 		map.objects[0].props = {"seedColor": seed}
 		map.objects.append(_trim_row())
 		if seed != 0:
 			map.objects.append({"asset": "door", "code": "S%d" % seed, "layer": "base", "x": seed, "y": 0})
+			map.objects.append({"asset": "button-art", "layer": "base", "x": seed, "y": 1})
 	else:
 		map.objects[0].code = "SEED"
 	if seed != 0:
@@ -923,13 +926,15 @@ func _sample_grid_delta() -> Array:
 		var chunk := _generated_chunk(Vector2i(2, 0), slots, seed)
 		var rows: Array = chunk.map.collision
 		var objects: Array = chunk.map.objects
-		var gate: Array = objects.filter(func(row): return row.code == "GATE")
+		var gate: Array = objects.filter(func(row): return row.get("code") == "GATE")
 		var props: Dictionary = gate[0].get("props", {}) if not gate.is_empty() else {}
 		samples.append({"seed": seed, "applied": chunk.authored, "gate": _traverse_platform(chunk.map).get("gate", ""),
 			"gateLabel": props.get("label", ""), "gateSeed": props.get("seedColor", -1),
-			"removedObject": not objects.any(func(row): return row.code == "TRIM"),
-			"seedObject": objects.any(func(row): return row.code == "S%d" % seed),
+			"removedObject": not objects.any(func(row): return row.get("code") == "TRIM"),
+			"seedObject": objects.any(func(row): return row.get("code") == "S%d" % seed),
 			"addedObject": objects.any(func(row): return row.get("props", {}).get("label") == "extra"),
+			"spawn": chunk.map.spawn, "blend": chunk.map.meta.layers[0].get("blend", ""),
+			"decor": objects.filter(func(row): return row.asset == "button-art").size(),
 			"seedCell": rows.any(func(row): return row.x == seed and row.y == 0),
 			"deleted": not rows.any(func(row): return row.x == 3 and row.y == 0),
 			"solidLanding": rows.any(func(row): return row.x == 5 and row.y == 3 and not row.has("shape")),
