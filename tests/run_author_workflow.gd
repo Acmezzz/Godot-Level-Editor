@@ -2503,6 +2503,40 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 	check(not _frame_contour_props(cvs, outline.code).has("parts"), "confirmation removes the selected extra outer ring")
 	check(await cvs.undo() and _frame_contour_props(cvs, outline.code).has("parts"), "one undo restores the extra outer ring")
 	check(await cvs.undo() and _frame_contour_props(cvs, outline.code) == compound, "the next undo restores the hole")
+	app._layout_ctrl._on_map_menu_id(17)
+	var arrange := await _render_pick_frame(app)
+	if arrange == null:
+		return
+	var arrange_tools: OptionButton = arrange.find_child("MapGamePreviewTool", true, false)
+	var door_code: String = doors[0].code
+	var door: EntityNode = cvs._ent_by_code_index()[door_code]
+	for tool in [4, 5]:
+		arrange_tools.select(tool)
+		arrange_tools.item_selected.emit(tool)
+		var before_transform := door.data_transform.duplicate(true)
+		apply = _click_pick_frame(arrange, Vector2(0.15, 0.25))
+		check(not apply.disabled and door.data_transform == before_transform, "instance transform stays in the draft")
+		apply.pressed.emit()
+		if await _wait_for_pick_frame(arrange) == null:
+			return
+	check(is_equal_approx(float(door.data_transform.get("rotation", 0.0)), PI / 2) and door.flipped_h(),
+		"rotate and flip the same instance in the refreshed preview")
+	arrange_tools.select(6)
+	arrange_tools.item_selected.emit(6)
+	var removal_root: Node2D = cvs.map_root
+	var steps_before_removal: int = cvs.undo_step_count()
+	apply = _click_pick_frame(arrange, Vector2(0.15, 0.25))
+	check(not apply.disabled and cvs._ent_by_code_index().has(door_code), "projected deletion needs confirmation")
+	apply.pressed.emit()
+	if await _wait_for_pick_frame(arrange) == null:
+		return
+	check(cvs.undo_step_count() == steps_before_removal + 1 and not cvs._ent_by_code_index().has(door_code)
+		and _click_pick_frame(arrange, Vector2(0.15, 0.25)).disabled, "removal refreshes picks and records one step")
+	arrange.hide()
+	check(await cvs.undo() and cvs.map_root == removal_root and cvs._ent_by_code_index()[door_code].flipped_h(),
+		"deletion undo restores the transformed instance without rebuilding the map")
+	check(await cvs.redo() and not cvs._ent_by_code_index().has(door_code), "redo removes only the selected instance")
+	check(await cvs.undo(), "restore the door before publishing the preview edits")
 	var before_spawn: Array = cvs.extract().spawn
 	var root: Node2D = cvs.map_root
 	var steps: int = cvs.undo_step_count()
@@ -2542,6 +2576,7 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 		and absf(float(picks[1].point[0]) - (48.0 + (48.0 + 32.0 / 7.0) * 1.5)) < 0.02
 		and absf(float(picks[1].point[1]) - (16.0 + (32.0 + 64.0 / 7.0) * 1.5)) < 0.02
 		and result.get("opened") == doors[1].code
+		and absf(float(picks[0].transform.rotation) - PI / 2.0) < 0.001 and picks[0].transform.flip_h == true
 		and result.get("playerStart") == [88.0, 56.0]
 		and result.get("contours", []).size() == 1 and result.contours[0].props == compound,
 		"game reloads both view positions and the projected polygon, and opens the selected door: " + str(report))

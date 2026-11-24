@@ -834,9 +834,12 @@ func delete_selection() -> void:
 	if victims.is_empty():
 		cvs._hint("先在画布上点选或框选实例，再按 Del 删除")
 		return
+	delete_instances(victims)
+
+func delete_instances(victims: Array) -> bool:
 	if _selection_touches_locked(victims):
-		cvs._hint("选中实例所在图层已锁定：解锁后再删除")
-		return
+		cvs._hint("实例所在图层已锁定或隐藏：解锁并显示后再删除")
+		return false
 	# §7.5 阶段二：删除走 InstanceKey 差量；只要有一个场景图片（无码）就整体退回快照。
 	var pre: Dictionary = cvs._undo_history_ctrl.inst_rows(victims)
 	var via_delta := bool(pre.get("ok", false))
@@ -844,14 +847,16 @@ func delete_selection() -> void:
 		cvs.push_undo()
 	for v in victims:
 		if is_instance_valid(v):
+			if cvs.selected_entity == v:
+				cvs.selected_entity = null
+			cvs.selected_multi.erase(v)
 			(v.get_parent() as Node2D).remove_child(v)
 			v.free()
 	if via_delta:
-		cvs._undo_history_ctrl.inst_commit(pre.get("rows", {}))
-	cvs.selected_multi.clear()
-	cvs.selected_entity = null
+		cvs._undo_history_ctrl.record_instance_removal(pre.rows)
 	cvs._mark_ents()
-	cvs.queue_redraw()
+	cvs.commit_selection(cvs.selected_entity, cvs.selected_multi)
+	return true
 
 
 ## 翻转选中实例（单个或框选集合）：每个实例 toggle flip_h；一个撤销步。
@@ -864,15 +869,22 @@ func flip_selected() -> bool:
 		targets.append(cvs.selected_entity)
 	if targets.is_empty():
 		return false
+	return transform_instances(targets, false)
+
+func transform_instances(targets: Array, rotate: bool) -> bool:
 	if _selection_touches_locked(targets):
-		cvs._hint("实例所在图层已锁定：解锁后再翻转")
+		cvs._hint("实例所在图层已锁定或隐藏：解锁并显示后再调整")
 		return false
 	var pre: Dictionary = cvs._undo_history_ctrl.inst_rows(targets)
 	var via_delta := bool(pre.get("ok", false))
 	if not via_delta:
 		cvs.push_undo()
 	for s in targets:
-		(s as EntityNode).toggle_flip_h()
+		var node := s as EntityNode
+		if rotate:
+			node.rotate_90()
+		else:
+			node.toggle_flip_h()
 	if via_delta:
 		cvs._undo_history_ctrl.inst_commit(pre.get("rows", {}))
 	cvs._mark_ents()
@@ -889,20 +901,7 @@ func rotate_selected_90() -> bool:
 		targets.append(cvs.selected_entity)
 	if targets.is_empty():
 		return false
-	if _selection_touches_locked(targets):
-		cvs._hint("实例所在图层已锁定：解锁后再旋转")
-		return false
-	var pre: Dictionary = cvs._undo_history_ctrl.inst_rows(targets)
-	var via_delta := bool(pre.get("ok", false))
-	if not via_delta:
-		cvs.push_undo()
-	for s in targets:
-		(s as EntityNode).rotate_90()
-	if via_delta:
-		cvs._undo_history_ctrl.inst_commit(pre.get("rows", {}))
-	cvs._mark_ents()
-	cvs.queue_redraw()
-	return true
+	return transform_instances(targets, true)
 
 ## [ ] 键：等比缩放选中实例（单个或框选集合）；一个撤销步。返回是否吞键。
 func scale_selected(d: float) -> bool:

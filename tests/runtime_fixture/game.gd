@@ -68,7 +68,8 @@ func _ready() -> void:
 						var offset: Array = map.meta.layers[i].get("offset", [0, 0])
 						var anchor := (Vector2(row.x, row.y) + Vector2(0.5, 0.5)) * 16.0
 						anchor = Vector2(offset[0], offset[1]) + anchor * float(map.meta.layers[i].get("scale", 1.0))
-						lanes.append({"lane": i, "point": [anchor.x, anchor.y], "door": row.code})
+						lanes.append({"lane": i, "point": [anchor.x, anchor.y], "door": row.code,
+							"transform": row.get("transform", {})})
 			var contours: Array = map.objects.filter(func(row): return row.asset == "free-ramp")
 			var start := Vector2i(int(map.spawn[0]), int(map.spawn[1]))
 			var player := Node2D.new()

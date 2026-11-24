@@ -257,6 +257,12 @@ func inst_commit(before: Dictionary, merge := false) -> bool:
 	_push_entry({"kind": "ents", "ops": ops})
 	return true
 
+func record_instance_removal(rows: Dictionary) -> void:
+	var ops := []
+	for code in rows:
+		ops.append({"op": "del", "key": code, "before": rows[code], "after": null})
+	_push_entry({"kind": "ents", "ops": ops})
+
 ## 两组 ops 是否操作同一批实例码（合并窗口用）。
 func _same_keys(a: Array, b: Array) -> bool:
 	if a.size() != b.size():

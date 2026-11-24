@@ -191,20 +191,7 @@ func _erase_at(pos: Vector2) -> void:
 		if cvs._undo_history_ctrl._stroke_open:
 			cvs._undo_history_ctrl.stroke_end()
 			cvs._paint_pushed = false
-		# §7.5 阶段二：实例删除走 InstanceKey 差量；场景图片（无码）回退整图快照。
-		var pre: Dictionary = cvs._undo_history_ctrl.inst_rows([hit])
-		if not bool(pre.get("ok", false)):
-			cvs.push_undo()
-		# B2b：释放统一为 remove_child + free——queue_free 帧末才消失，同帧擦除→保存会把刚删实体写进文件
-		if cvs.selected_entity == hit:
-			cvs.selected_entity = null
-		cvs.selected_multi.erase(hit)
-		(hit.get_parent() as Node2D).remove_child(hit)
-		hit.free()
-		if bool(pre.get("ok", false)):
-			cvs._undo_history_ctrl.inst_commit(pre.get("rows", {}))
-		cvs.commit_selection(cvs.selected_entity)
-		cvs._mark_ents()
+		cvs._selection_ops_ctrl.delete_instances([hit])
 		return
 	# 碰撞元层擦除走统一入口（类型元数据一并清）——有真实改动才 _mark（热路径同 _paint）
 	erase_cells(_brush_cells(cvs._active_cell(pos)))

@@ -5,8 +5,9 @@ const Picks := preload("res://src/project/frame_picks.gd")
 const Geometry := preload("res://src/map/object_geometry.gd")
 const Ink := Color("ffda67")
 enum Edit {MOVE, INSERT, DELETE}
-enum Tool {POINT, OUTER, HOLE, REMOVE_RING}
-const TOOLS := ["移动实例 / 编辑顶点", "绘制附加外环", "绘制孔洞", "删除外环或孔洞"]
+enum Tool {POINT, OUTER, HOLE, REMOVE_RING, ROTATE, FLIP, REMOVE_INSTANCE}
+const TOOLS := ["移动实例 / 编辑顶点", "绘制附加外环", "绘制孔洞", "删除外环或孔洞",
+	"旋转实例 90°", "水平翻转实例", "删除实例"]
 
 var canvas: EditorCanvas
 var target: EntityNode
@@ -45,6 +46,8 @@ func clear() -> void:
 			status = "先点选闭合轮廓实例或其顶点，再在同层描点。右键撤末点。"
 		Tool.REMOVE_RING:
 			status = "点选附加外环或孔洞的任一顶点，再确认删除。右键重选。"
+		Tool.ROTATE, Tool.FLIP, Tool.REMOVE_INSTANCE:
+			status = "点选实例或其轮廓顶点，再确认%s。右键重选。" % TOOLS[tool]
 
 func ready() -> bool:
 	return can_apply
@@ -65,6 +68,15 @@ func input(event: InputEvent, pixel: Vector2, regions: Array) -> bool:
 		return true
 	if event.button_index != MOUSE_BUTTON_LEFT:
 		return false
+	if tool >= Tool.ROTATE:
+		clear()
+		_select(pixel, regions, Edit.MOVE)
+		if target != null:
+			can_apply = true
+			status = "%s · %s。确认后写入。" % [TOOLS[tool], target.code]
+			if tool == Tool.REMOVE_INSTANCE:
+				status += "引用不会自动改接。"
+		return true
 	if tool != Tool.POINT:
 		_component_click(pixel, regions)
 		return true
@@ -139,8 +151,8 @@ func _select(pixel: Vector2, regions: Array, action: Edit) -> void:
 		status = "这里没有可编辑的实例或顶点。"
 		return
 	var li := canvas._layer_index_of(entity.layer_id)
-	if li < 0 or canvas.is_layer_locked(li):
-		status = "实例所在层已锁定或不存在。"
+	if li < 0 or canvas.is_layer_locked(li) or not canvas.is_layer_visible(li):
+		status = "实例所在层已锁定、隐藏或不存在。"
 		return
 	if action != Edit.MOVE and not value is Dictionary:
 		status = "插入和删除需先点选游戏标出的轮廓顶点。"
@@ -213,6 +225,12 @@ func apply() -> bool:
 	var li := canvas._layer_index_of(target.layer_id)
 	if canvas.is_layer_locked(li):
 		return false
+	if tool == Tool.REMOVE_INSTANCE:
+		var victim := target
+		target = null
+		return canvas._selection_ops_ctrl.delete_instances([victim])
+	if tool in [Tool.ROTATE, Tool.FLIP]:
+		return canvas._selection_ops_ctrl.transform_instances([target], tool == Tool.ROTATE)
 	if tool != Tool.POINT:
 		canvas._geometry_draw.commit_parts(target, parts, ring_hint)
 		return true
@@ -237,7 +255,9 @@ func draw(frame: TextureRect, rect: Rect2) -> void:
 		return
 	var scale := rect.size / frame.texture.get_size()
 	var start := rect.position + origin * scale
-	frame.draw_circle(start, 5.0, Color.SALMON if tool == Tool.REMOVE_RING or edit == Edit.DELETE else Ink)
+	frame.draw_circle(start, 5.0, Color.SALMON if tool in [Tool.REMOVE_RING, Tool.REMOVE_INSTANCE] or edit == Edit.DELETE else Ink)
+	if tool >= Tool.ROTATE:
+		return
 	if tool != Tool.POINT:
 		var line := PackedVector2Array()
 		for pixel in draft_pixels:
