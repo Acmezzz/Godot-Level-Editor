@@ -11,6 +11,7 @@ const RelGraph := preload("res://src/content/rel_graph.gd")
 const RelGraphView := preload("res://src/ui/rel_graph_view.gd")
 const ReferenceViews := preload("res://src/ui/reference_view_library.gd")
 const MapFlowDialog := preload("res://src/ui/map_flow_dialog.gd")
+const MapFlow := preload("res://src/map/map_flow.gd")
 const References := preload("res://src/project/reference_index.gd")
 const FlowTarget := preload("res://src/content/flow_target.gd")
 const StartupTargets := preload("res://src/project/startup_targets.gd")
@@ -404,6 +405,37 @@ func _open_flow() -> void:
 		if state.saving or not is_same(app.manifest, source) or slot.selected < 0 or target.selected < 0 or target.is_item_disabled(target.selected):
 			return
 		var edge: Dictionary = state.slots[slot.selected]
+		if edge.has("map_section"):
+			var chosen = target.get_selected_metadata()
+			var next: Dictionary = chosen if chosen is Dictionary else {}
+			var map_name: String = state.index.nodes[edge.from].name
+			state.saving = true
+			if not app.map_loaded or app.cur_map_name != map_name:
+				await app._open_map_by_name(map_name)
+			state.saving = false
+			if not is_instance_valid(pop) or not pop.visible or not is_same(app.manifest, source):
+				return
+			if not app.map_loaded or app.cur_map_name != map_name or app.canvas.cur_map_code() != edge.cid:
+				notice.text = "未打开源地图，未应用关系。"
+				return
+			var values := MapFlow.targets(app.canvas.map_data, edge.map_section).duplicate()
+			var decl: Dictionary = MapFlow.declarations(source, edge.map_section).get(edge.field, {})
+			var resolved := next.is_empty() or StartupTargets.destination_available(
+				source, decl, next, {edge.cid: app.canvas.arrival_snapshot()})
+			if values.get(edge.field) != edge.target or not resolved:
+				notice.text = "工作副本的关系已变更，或目标失效。请在地图设置中核对。"
+				return
+			if (next.is_empty() and not values.has(edge.field)) or next == values.get(edge.field):
+				notice.text = "关系未变。"
+				return
+			if next.is_empty():
+				values.erase(edge.field)
+			else:
+				values[edge.field] = next
+			MapFlowDialog.apply_targets(app.canvas, {edge.map_section: values})
+			pop.hide()
+			app._set_status("地图关系已应用到工作副本；保存地图后生效。")
+			return
 		if edge.fn_id == RelGraph.VIEW_KIND:
 			var chosen = target.get_selected_metadata()
 			var next: Dictionary = chosen if chosen is Dictionary else {}

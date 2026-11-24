@@ -137,14 +137,26 @@ static func _collect_maps(manifest: Dictionary, graph: Dictionary, catalog: Dict
 		if node.fn_id != MAP_KIND:
 			continue
 		var data := MapStore.read(manifest, node.name)
-		for ref in MapFlow.references(manifest, data):
-			var address := _flow_address(ref.value)
-			if _typed_target_exists(manifest, catalog, ref.decl, ref.value, address):
-				var label: String = ref.decl.get("name", ref.field)
-				graph.edges.append({"from": node.key, "to": _key(address[0], address[1]),
-					"fn_id": MAP_KIND, "cid": node.cid, "fn": address[0], "value": address[1],
-					"label": "使用内容 · " + label if ref.map_section == MapFlow.CONTENT else label,
-					"field": ref.field, "map_section": ref.map_section})
+		graph.slots[node.key] = []
+		for section in MapFlow.SECTIONS:
+			var values := MapFlow.targets(data, section)
+			var decls := MapFlow.declarations(manifest, section)
+			var ids := decls.duplicate()
+			ids.merge(values)
+			for id in ids:
+				var decl: Dictionary = decls.get(id, {})
+				var current = values.get(id)
+				var address := _flow_address(current)
+				var label: String = decl.get("name", id)
+				var edge := {"from": node.key, "fn_id": MAP_KIND, "cid": node.cid,
+					"fn": address[0], "value": address[1], "label": "使用内容 · " + label if section == MapFlow.CONTENT else label,
+					"field": id, "map_section": section, "decl": decl, "target": current, "flow_target": true, "multi": false}
+				graph.slots[node.key].append(edge)
+				if _typed_target_exists(manifest, catalog, decl, current, address):
+					edge["to"] = _key(address[0], address[1])
+					graph.edges.append(edge)
+				elif values.has(id):
+					graph.external.append(edge)
 		for row in data.get("objects", []):
 			var code: String = row.get("code", "")
 			if code == "":

@@ -506,6 +506,22 @@ func run() -> void:
 		"the outlet can be redirected and published from the opened instance form")
 	choose(exit_picker, JSON.stringify(copy_arrival))
 	editor.commit_fields()
+	published = await app._map_file_ctrl.commit_document("保存实例入口")
+	editor._library.open()
+	press(popup(), "流程关系…")
+	await process_frame
+	flow = popup()
+	choose(flow.find_child("FlowSource", true, false), "@map\u0001" + copy_code)
+	var map_slots: OptionButton = flow.find_child("FlowSlot", true, false)
+	check(map_slots.get_item_text(0).begins_with("Course completed"), "the graph exposes the map's completion slot")
+	var map_targets: OptionButton = flow.find_child("FlowTarget", true, false)
+	choose(map_targets, {"view": "debrief"})
+	press(flow, "应用关系")
+	check(canvas.extract().meta.flowOutputs.completed == {"view": "debrief"}
+		and Maps.read(manifest, "course_variant").meta.flowOutputs.completed == {"view": "results"},
+		"graph rewires the working map without publishing it")
+	check(await canvas.undo() and canvas.extract().meta.flowOutputs.completed == {"view": "results"},
+		"the graph edit can be undone before saving")
 	app._set_mode("map")
 	var current_host: EntityNode = canvas._ent_by_code_index()[copy_host]
 	app._set_mode("content", copy_host)

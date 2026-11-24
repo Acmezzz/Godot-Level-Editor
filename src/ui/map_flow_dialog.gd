@@ -13,6 +13,15 @@ static func available(app) -> bool:
 			return true
 	return false
 
+static func apply_targets(canvas: EditorCanvas, sections: Dictionary) -> void:
+	canvas.push_undo()
+	for section in sections:
+		if sections[section].is_empty():
+			canvas.map_data.meta.erase(section)
+		else:
+			canvas.map_data.meta[section] = sections[section]
+	canvas._mark_map()
+
 static func open(app, focus_section := "", focus := "") -> void:
 	if not available(app):
 		return
@@ -38,13 +47,7 @@ static func open(app, focus_section := "", focus := "") -> void:
 		if not is_same(canvas.map_data, source) or not is_same(app.manifest, manifest):
 			return false
 		if draft != original:
-			canvas.push_undo()
-			for section in draft:
-				if draft[section].is_empty():
-					source.meta.erase(section)
-				else:
-					source.meta[section] = draft[section]
-			canvas._mark_map()
+			apply_targets(canvas, draft)
 			app._set_status("地图内容与出口已更新；保存地图后生效。")
 		return true
 	var open_content := func(target: Dictionary, context: String):
