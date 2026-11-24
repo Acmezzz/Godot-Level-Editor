@@ -153,7 +153,7 @@ static func _validate_startup(data: Dictionary, issues: Array[Dictionary]) -> vo
 			for pair in [["view", "screens"], ["map", "maps"]]:
 				if startup.get(pair[1]) == true and target.get(pair[0]) is String and not target[pair[0]].is_empty():
 					return
-	_add(issues, "error", "startup.target", "must select a permitted {function, content}, {view} or {map}")
+	_add(issues, "error", "startup.target", "must select a permitted {function, content}, {view}, {map} or {map, inst, port}")
 
 ## 功能/字段声明：结构 + 身份码唯一性 + 字段种类合法性。
 ## 码重复是**错误**：两个声明同码等于静默别名，磁盘上的引用会指向不确定的那个。

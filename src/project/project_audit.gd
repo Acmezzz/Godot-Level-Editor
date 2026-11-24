@@ -53,7 +53,8 @@ static func audit(manifest: Dictionary, meta_out: Dictionary = {}) -> Array:
 		var startup_target: Dictionary = manifest.get("startup", {}).get("target", {})
 		if not StartupTargets.available(manifest, startup_target):
 			out.append(_wrap("manifest", {"severity": "error", "path": "startup.target",
-				"message": "正式启动入口不可读取：%s。请在「启动入口」重新选择。" % JSON.stringify(startup_target)}))
+				"message": "正式启动入口不可读取：%s。" % JSON.stringify(startup_target)
+			}).merged({"jump": {"type": "startup"}}, true))
 	# 2. 地图校验（读盘全图）+ 顺带收集被实例引用的内容（孤立内容判定用）
 	var used_content := {}
 	for ref in ProjectSlots.references(manifest):

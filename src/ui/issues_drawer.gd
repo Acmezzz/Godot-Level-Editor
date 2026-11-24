@@ -7,6 +7,7 @@ const MapStore := preload("res://src/map/map_store.gd")
 const ReferenceViews := preload("res://src/ui/reference_view_library.gd")
 const MapFlowDialog := preload("res://src/ui/map_flow_dialog.gd")
 const ProjectSlotsDialog := preload("res://src/ui/project_content_slots_dialog.gd")
+const StartupDialog := preload("res://src/ui/startup_dialog.gd")
 
 var host   # editor_layout 宿主
 var app    # 根应用（= host.app）
@@ -163,6 +164,9 @@ func _jump_to(it: Dictionary) -> void:
 		return
 	if typ == "project_slot":
 		ProjectSlotsDialog.open(app, j.id)
+		return
+	if typ == "startup":
+		StartupDialog.open(app)
 		return
 	if typ == "asset":
 		# A4：停用/待确认的资产在资产页有恢复与候选按钮

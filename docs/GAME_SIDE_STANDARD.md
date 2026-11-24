@@ -1397,13 +1397,14 @@ main.gd
 **可选：由作者选择正式启动入口。** 游戏声明 `startup` 后，工作台显示「启动入口…」。
 例如 `{"startup":{"contentTypes":["campaign"],"screens":true,"maps":true}}`。
 `contentTypes` 列出允许启动的独立内容功能 ID；`screens` 和 `maps` 启用已保存的屏幕和地图候选。
-三个键都可省略，不启用的类型不会进入候选。编辑器保存一个 `startup.target`：
+还可用 `"arrivalPorts":["entrance"]` 启用指定类型的地图入场端口。各目标域可独立启用，编辑器保存一个 `startup.target`：
 
 | 类型 | 保存值 |
 |---|---|
 | 独立内容 | `{"function":"campaign","content":"project-intro"}` |
 | 屏幕 | `{"view":"title-screen"}` |
 | 地图 | `{"map":"M123"}`（地图码，改文件名不变） |
+| 地图入场端口 | `{"map":"M123","inst":"I456","port":"door"}` |
 
 正常启动时游戏读取这个值并派发；没有 `target` 时沿用自己的默认入口。游戏若收到显式的地图、
 内容或屏幕试玩参数，应优先使用该参数；工作台「试玩项目」不传选定内容参数，因此走同一套正常启动逻辑。

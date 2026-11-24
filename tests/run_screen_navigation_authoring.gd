@@ -35,7 +35,7 @@ func run() -> void:
 				{"id": "signal_port", "kind": "input", "type": "port_ref", "of": "signal"},
 				{"id": "local_signal", "kind": "input", "type": "flow_target",
 					"contentTypes": ["signal"], "contentMapContext": "inherit"}]}],
-		"startup": {"screens": true}, "viewports": [{"id": "handheld", "w": 480, "h": 720}],
+		"startup": {"screens": true, "arrivalPorts": ["arrival"]}, "viewports": [{"id": "handheld", "w": 480, "h": 720}],
 		"mapOutputs": {"completed": {"name": "Course completed",
 			"maps": true, "screens": true, "contentTypes": ["signal"], "arrivalPorts": ["arrival"]},
 			"retry": {"name": "Retry the course", "arrivalPorts": ["arrival"]}},
@@ -609,6 +609,33 @@ func run() -> void:
 		and result.get("text") == "Screen sequence complete"
 		and app.manifest.startup.target == {"view": "welcome"},
 		"the selected arrival starts the normal map flow without changing project startup: %s" % [report])
+	var arrival := {"map": copy_code, "inst": new_host_code, "port": "door"}
+	var broken_startup: Dictionary = app.manifest.duplicate(true)
+	broken_startup.startup.target = {"map": copy_code, "inst": "retired-door", "port": "door"}
+	var issues := Audit.audit(broken_startup).filter(func(issue): return issue.path == "startup.target")
+	if not check(issues.size() == 1 and issues[0].jump.type == "startup", "a missing entrance links to startup settings"):
+		quit(1)
+		return
+	await app._layout_ctrl._issues_ctrl._jump_to(issues[0])
+	startup = popup()
+	choose(startup.find_child("StartupTarget", true, false), arrival)
+	press(startup, "保存启动入口")
+	app._clear_project_session()
+	app.manifest = Manifest.load_from(project)
+	app._build_editor_ui()
+	check(app.manifest.startup.target == arrival, "the new formal entrance persists through reload")
+	press(app.project_shell, "试玩项目")
+	controller = app._playtest_ctrl
+	end = Time.get_ticks_msec() + 8000
+	while controller._play_report_result.is_empty() and Time.get_ticks_msec() < end:
+		await create_timer(0.05).timeout
+		controller.poll_playtest()
+	report = controller._play_report_result
+	result = report.get("result", {})
+	check(report.get("status") == "ready" and result.get("board") == copy_code
+		and result.get("arrivalPort") == "door" and result.get("arrivalInstance") == new_host_code
+		and result.get("screens") == ["results", "debrief"] and result.get("text") == "Screen sequence complete",
+		"the normal project launch enters the saved door without a screen or playtest entry override: %s" % [report])
 	print("SCREEN-NAV-DONE failures=", failures)
 	quit(0 if failures == 0 else 1)
 
