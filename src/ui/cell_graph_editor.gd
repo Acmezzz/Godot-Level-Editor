@@ -537,22 +537,13 @@ static func open(app) -> void:
 		var idx := int(state.index)
 		if idx < 0 or not flush.call():
 			return
-		var id := str(cells[idx].get("id", "")) if cells[idx] is Dictionary else ""
 		if not await app._confirm_action("移除格",
 				"会移除该格、它的出边和本图内指向它的边。其他地图或内容中的格 ID 引用需要另行改接。", "移除"):
 			return
 		if not is_instance_valid(pop) or not pop.visible or idx != int(state.index):
 			return
-		cells.remove_at(idx)
-		if id != "":
-			for i in range(edges.size() - 1, -1, -1):
-				if edges[i] is Dictionary and (edges[i].get("from") == id \
-						or (edges[i].get("toMap", "") == "" and edges[i].get("to") == id)):
-					edges.remove_at(i)
-			state.edge = ""
-			for other in cells:
-				if other is Dictionary and other.get("neighbors") is Array:
-					other["neighbors"] = other.neighbors.filter(func(n): return n != id)
+		Graph.remove_cell(cells, edges, idx, state.map_code)
+		state.edge = ""
 		render.call(mini(idx, cells.size() - 1)), "ghost"))
 	actions.add_child(Kit.button("应用到地图", func():
 		if not flush.call():

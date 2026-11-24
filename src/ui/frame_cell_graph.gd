@@ -9,9 +9,9 @@ const GraphEditor := preload("res://src/ui/cell_graph_editor.gd")
 const Id := preload("res://src/content/content_id.gd")
 const GraphTiles := preload("res://src/map/cell_graph_tiles.gd")
 const INK := Color("ffda67")
-enum Tool {POLYGON, NEIGHBOR, EDGE, EDIT_EDGE, VERTEX}
+enum Tool {POLYGON, NEIGHBOR, EDGE, EDIT_EDGE, VERTEX, REMOVE_CELL}
 enum VertexEdit {MOVE, INSERT, REMOVE}
-const TOOLS := ["绘制新格", "切换有向邻接", "新建独立连接", "编辑独立连接", "编辑格顶点"]
+const TOOLS := ["绘制新格", "切换有向邻接", "新建独立连接", "编辑独立连接", "编辑格顶点", "删除格"]
 signal controls_changed
 
 var canvas: EditorCanvas
@@ -147,6 +147,8 @@ func clear() -> void:
 			status = "点选起点格，在下拉中选一条出边。可改属性、点新终点或删除。右键重选。"
 		Tool.VERTEX:
 			status = "点顶点后选新位置。Shift + 点顶点可在其后插点；Ctrl + 点顶点可删除。右键重选。"
+		Tool.REMOVE_CELL:
+			status = "点击要删除的格，再确认。右键重选。"
 
 func ready() -> bool:
 	return not pending.is_empty()
@@ -173,9 +175,25 @@ func input(event: InputEvent, pixel: Vector2, regions: Array) -> bool:
 		_pick_edge_edit(pixel, regions)
 	elif tool == Tool.VERTEX:
 		_pick_vertex(pixel, regions, event)
+	elif tool == Tool.REMOVE_CELL:
+		_pick_cell_to_remove(pixel, regions)
 	else:
 		_pick_link(pixel, regions)
 	return true
+
+func _pick_cell_to_remove(pixel: Vector2, regions: Array) -> void:
+	clear()
+	var graph := canvas.cell_graph()
+	var hit := Picks.at(regions, pixel, "cell")
+	if hit.is_empty() or not Graph.cell_ids(graph).has(hit.value):
+		status = "请选择游戏标出的已有格。"
+		return
+	if not _layer_editable(Graph.layer_of_cell(graph, hit.value)):
+		status = "该格所在图层已锁定或隐藏。"
+		return
+	pending = {"id": hit.value}
+	screen = PackedVector2Array(hit.screen)
+	status = "确认删除 %s 及本图相关连接。其他地图或内容中的引用需另行改接。" % hit.value
 
 func _pick_point(pixel: Vector2, regions: Array) -> void:
 	var sid: String = space_picker.get_selected_metadata()
@@ -379,6 +397,14 @@ func apply() -> bool:
 				row.polygon = pending.polygon
 				row.erase(GraphTiles.GENERATED_KEY)
 				break
+	elif tool == Tool.REMOVE_CELL:
+		if not _layer_editable(Graph.layer_of_cell(graph, pending.id)):
+			return false
+		var cells: Array = graph.cells
+		for i in cells.size():
+			if cells[i] is Dictionary and cells[i].get("id") == pending.id:
+				Graph.remove_cell(cells, graph.get("edges", []), i, canvas.cur_map_code())
+				break
 	elif tool == Tool.EDGE:
 		if not _layer_editable(Graph.layer_of_cell(graph, pending.from)):
 			return false
@@ -440,8 +466,9 @@ func draw(frame: TextureRect, rect: Rect2) -> void:
 	for pixel in screen:
 		var point := rect.position + pixel * scale
 		line.append(point)
-		frame.draw_circle(point, 4.0, INK)
-	if tool == 0 and line.size() > 2:
+		if tool != Tool.REMOVE_CELL:
+			frame.draw_circle(point, 4.0, INK)
+	if tool in [Tool.POLYGON, Tool.REMOVE_CELL] and line.size() > 2:
 		line.append(line[0])
 	if line.size() >= 2:
-		frame.draw_polyline(line, INK, 2.0, true)
+		frame.draw_polyline(line, Color.SALMON if tool == Tool.REMOVE_CELL else INK, 2.0, true)

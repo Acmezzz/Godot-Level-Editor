@@ -316,6 +316,22 @@ static func neighbors(g: Dictionary, id: String) -> Array:
 			return nbs if nbs is Array else []
 	return []
 
+## Remove one row and its connections in place. Explicit targets in other maps are separate identities.
+static func remove_cell(cells: Array, edges: Array, index: int, map_code: String) -> void:
+	var row = cells[index]
+	var id: String = str(row.get("id", "")) if row is Dictionary else ""
+	cells.remove_at(index)
+	if id.is_empty():
+		return
+	for i in range(edges.size() - 1, -1, -1):
+		var edge = edges[i]
+		if edge is Dictionary and (edge.get("from") == id or
+				(edge.get("to") == id and edge.get("toMap", "") in ["", map_code])):
+			edges.remove_at(i)
+	for cell in cells:
+		if cell is Dictionary and cell.get("neighbors") is Array and cell.neighbors.has(id):
+			cell.neighbors = cell.neighbors.filter(func(neighbor): return neighbor != id)
+
 ## 按多边形命中（非规则格画布）：返回命中的 cell_id 或 ""。射线法，命中取首个。
 static func pick_cell(g: Dictionary, px: Vector2, space_filter: Variant = null, layer_frames := {}) -> String:
 	for c in (g.get("cells", []) as Array):

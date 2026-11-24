@@ -2735,6 +2735,29 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 		"moving a projected vertex preserves the other vertices and existing edge identity")
 	check(await cvs.undo() and cvs.cell_graph().cells[1].polygon == old_polygon, "undo restores the previous contour")
 	check(await cvs.redo() and cvs.cell_graph().cells[1].polygon == edited_polygon, "redo restores the moved vertex")
+	app._layout_ctrl._on_map_menu_id(23)
+	var delete_pop := await _render_pick_frame(app)
+	if delete_pop == null:
+		return
+	var delete_tools: OptionButton = delete_pop.find_child("MapGamePreviewTool", true, false)
+	delete_tools.select(5)
+	delete_tools.item_selected.emit(5)
+	var graph_before_delete: Dictionary = cvs.cell_graph().duplicate(true)
+	var root_before_delete: Node2D = cvs.map_root
+	cvs.set_layer_locked(1, true)
+	check(_click_pick_frame(delete_pop, Vector2(0.68, 0.28)).disabled, "locked graph cells cannot be selected for deletion")
+	cvs.set_layer_locked(1, false)
+	apply = _click_pick_frame(delete_pop, Vector2(0.68, 0.28))
+	check(not apply.disabled and cvs.cell_graph() == graph_before_delete, "the selected cell remains in the map until confirmation")
+	apply.pressed.emit()
+	if await _wait_for_pick_frame(delete_pop) == null:
+		return
+	check(cvs.cell_graph().cells.size() == 1 and cvs.cell_graph().cells[0].neighbors.is_empty()
+		and cvs.cell_graph().edges.is_empty() and _click_pick_frame(delete_pop, Vector2(0.68, 0.28)).disabled,
+		"removing a cell clears its explicit and simple inbound connections and refreshes game picks")
+	delete_pop.hide()
+	check(await cvs.undo() and cvs.map_root == root_before_delete and cvs.cell_graph() == graph_before_delete,
+		"one undo restores the cell and its connections without rebuilding the map")
 	var saved: Dictionary = await app._map_file_ctrl.commit_document("保存实景落点及连接")
 	check(saved.get("status") == "ok", "publish positions and port selected from the game frame")
 	await app._load_map_file(path)
