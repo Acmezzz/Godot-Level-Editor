@@ -5,64 +5,31 @@ class_name FunctionDecl
 
 ## 归一化结果缓存：content_editor 重建右栏时逐字段调用 function_fields 等，
 ## 全量重扫是纯浪费。指纹 = 项目目录 + functions 池的递归结构哈希（F1/P03：
-## 原先 JSON.stringify 整池是每次访问的成本，池越大越慢；见 pool_fingerprint.gd）。
+## 原先 JSON.stringify 整池是每次访问的成本，池越大越慢；见 declaration_pool.gd）。
 const ContentId := preload("res://src/content/content_id.gd")
-const PoolPrint := preload("res://src/core/pool_fingerprint.gd")
+const PoolPrint := preload("res://src/content/declaration_pool.gd")
 
 static var _cache: Dictionary = {}
 static var _cache_key := ""
 static var _by_code := {}
 
 static func _key(m: Dictionary) -> String:
-	return PoolPrint.of(m, "functions")
-
-## 把两种写法统一成 [{id, body}] 对，便于就地补码。
-## 只读视图：不往 body 里写 id（dict 形式本来就不存 id，凭空加键会让「加载+保存」多出噪音）。
-static func _decl_items(decl) -> Array:
-	var out: Array = []
-	if decl is Dictionary:
-		for key in (decl as Dictionary):
-			var body = (decl as Dictionary)[key]
-			if body is Dictionary:
-				out.append({"id": str(key), "body": body})
-	elif decl is Array:
-		for item in (decl as Array):
-			if item is Dictionary:
-				out.append({"id": str((item as Dictionary).get("id", "")), "body": item})
-	return out
+	return PoolPrint.fingerprint(m, "functions")
 
 ## 补发缺失的功能码 / 字段码。就地修改清单，返回是否有改动。
 ## 只补「空」的，**不碰重复码**——重复是真实错误（两个声明同码 = 静默别名），
 ## 由校验报出来让人决定改哪个；这里替用户改一个反而会悄悄改变既有引用指向。
 static func ensure_codes(m: Dictionary) -> bool:
-	var changed := false
-	# 占用表 = 三池字段码全量（功能+条件+步骤）。字段码是全局码空间（校验跨池同码报错），
-	# 补字段码必然避开条件/步骤已占的码；条目码另用 seen_fn 做**池内**查重，
-	# 因为条目码的查重口径本来就是池内（功能 fn 与步骤 step 写在不同字段，同值不构成冲突）。
+	var rows := PoolPrint.items(m.get("functions"))
+	var changed := PoolPrint.ensure_entry_codes(rows)
 	var seen := ContentId.field_codes(m)
-	var seen_fn := {}   # 条目码查重是池内的（steps/audio 各自池内查重）
-	for pair in _decl_items(m.get("functions", null)):
-		var c0 := str((pair.body as Dictionary).get("code", ""))
-		if c0 != "":
-			seen_fn[c0] = true
-	for pair in _decl_items(m.get("functions", null)):
+	for pair in rows:
 		var d: Dictionary = pair.body
-		if str(d.get("code", "")) == "":
-			var code := ContentId.new_fn_code()
-			while seen_fn.has(code):
-				code = ContentId.new_fn_code()
-			d["code"] = code
-			seen_fn[code] = true
-			changed = true
 		for fd in d.get("fields", []) if d.get("fields", []) is Array else []:
 			if not (fd is Dictionary):
 				continue
 			if str((fd as Dictionary).get("code", "")) == "":
-				var fcode := ContentId.new_fn_code()
-				while seen.has(fcode):
-					fcode = ContentId.new_fn_code()
-				(fd as Dictionary)["code"] = fcode
-				seen[fcode] = true
+				(fd as Dictionary)["code"] = PoolPrint.allocate_code(seen)
 				changed = true
 	return changed
 
@@ -71,7 +38,7 @@ static func duplicate_codes(m: Dictionary) -> Array:
 	var out: Array = []
 	var seen := {}
 	var fseen := {}   # 字段码跨功能查重：字段码是一个全局码空间，A 功能占了 B 功能就不能再占
-	for pair in _decl_items(m.get("functions", null)):
+	for pair in PoolPrint.items(m.get("functions", null)):
 		var d: Dictionary = pair.body
 		var code := str(d.get("code", ""))
 		if code != "":

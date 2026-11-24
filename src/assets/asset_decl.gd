@@ -14,13 +14,13 @@ extends RefCounted
 ## JSON.stringify 整个池，1000 条资产约 3 ms/次；绘制热路径按实例取声明，等于每帧几秒）。
 
 const FnDecl := preload("res://src/content/function_decl.gd")
-const PoolPrint := preload("res://src/core/pool_fingerprint.gd")
+const PoolPrint := preload("res://src/content/declaration_pool.gd")
 
 static var _cache := {}
 static var _cache_key := ""
 
 static func _key(m: Dictionary) -> String:
-	return PoolPrint.of(m, "assets")
+	return PoolPrint.fingerprint(m, "assets")
 
 ## 归一化视图 {id: 声明}，按声明顺序。
 static func all(m: Dictionary) -> Dictionary:

@@ -7,28 +7,14 @@ extends RefCounted
 ## 步骤字段与功能/条件字段共用一个码空间。运行时游戏侧按序解释执行。
 
 const ContentId := preload("res://src/content/content_id.gd")
-const PoolPrint := preload("res://src/core/pool_fingerprint.gd")
+const PoolPrint := preload("res://src/content/declaration_pool.gd")
 
 ## 归一化结果缓存：指纹 = 项目目录 + steps 池的递归结构哈希（F1/P03：避免每次访问重扫整池）。
 static var _cache: Dictionary = {}
 static var _cache_key := ""
 
 static func _key(m: Dictionary) -> String:
-	return PoolPrint.of(m, "steps")
-
-## 把两种写法统一成 [{id, body}] 对，便于就地补码（与 function_decl 同构）。
-static func _decl_items(decl) -> Array:
-	var out: Array = []
-	if decl is Dictionary:
-		for key in (decl as Dictionary):
-			var body = (decl as Dictionary)[key]
-			if body is Dictionary:
-				out.append({"id": str(key), "body": body})
-	elif decl is Array:
-		for item in (decl as Array):
-			if item is Dictionary:
-				out.append({"id": str((item as Dictionary).get("id", "")), "body": item})
-	return out
+	return PoolPrint.fingerprint(m, "steps")
 
 ## 步骤池归一化视图 {id: {id, code, name, fields}}。
 ## **以声明原件为底**（未知键原样保留），只规范化编辑器认识的键。
@@ -37,7 +23,7 @@ static func steps(m: Dictionary) -> Dictionary:
 	if _cache_key == key:
 		return _cache
 	var out := {}
-	for pair in _decl_items(m.get("steps", null)):
+	for pair in PoolPrint.items(m.get("steps", null)):
 		var sid := str(pair.id)
 		if sid == "":
 			continue
@@ -75,34 +61,16 @@ static func step_by_code(m: Dictionary, code: String) -> Dictionary:
 ## 就地修改，返回是否有改动。只补「空」的，不碰重复码（重复由校验报错）。
 ## 在 FunctionDecl / ConditionDecl 的 ensure_codes 之后调用。
 static func ensure_codes(m: Dictionary) -> bool:
-	var changed := false
-	# 三池字段码占用表：零依赖收集（content_id.field_codes），不 preload 任何声明域
+	var rows := PoolPrint.items(m.get("steps"))
+	var changed := PoolPrint.ensure_entry_codes(rows)
 	var seen := ContentId.field_codes(m)
-	var ecode_seen := {}
-	for pair in _decl_items(m.get("steps", null)):
-		var ec: String = str((pair.body as Dictionary).get("code", ""))
-		if ec != "":
-			ecode_seen[ec] = true
-	for pair in _decl_items(m.get("steps", null)):
-		var d0: Dictionary = pair.body
-		if str(d0.get("code", "")) == "":
-			var nc := ContentId.new_fn_code()
-			while ecode_seen.has(nc):
-				nc = ContentId.new_fn_code()
-			d0["code"] = nc
-			ecode_seen[nc] = true
-			changed = true
-	for pair in _decl_items(m.get("steps", null)):
+	for pair in rows:
 		var d: Dictionary = pair.body
 		for fd in d.get("fields", []) if d.get("fields", []) is Array else []:
 			if not (fd is Dictionary):
 				continue
 			if str((fd as Dictionary).get("code", "")) == "":
-				var scode := ContentId.new_fn_code()
-				while seen.has(scode):
-					scode = ContentId.new_fn_code()
-				(fd as Dictionary)["code"] = scode
-				seen[scode] = true
+				(fd as Dictionary)["code"] = PoolPrint.allocate_code(seen)
 				changed = true
 	return changed
 

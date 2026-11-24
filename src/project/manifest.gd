@@ -7,6 +7,7 @@ class_name EditorManifest
 ## （editorSize → 1 格）。地图名/路径安全校验也在这里（is_valid_map_name）。
 ## 写盘前剥内部键（`_` 前缀、atlas_abs、内置种类）——清单是游戏侧读的公共契约，不留编辑器私有状态。
 
+const DeclarationPool := preload("res://src/content/declaration_pool.gd")
 const BAD_NAME_CHARS := ["/", "\\", ":", "*", "?", "\"", "<", ">", "|"]
 const Validation := preload("res://src/project/manifest_validation.gd")
 const FunctionDecls := preload("res://src/content/function_decl.gd")
@@ -223,9 +224,9 @@ static func merge_issued_codes(m: Dictionary, codes: Dictionary, restore_reserve
 			var field_id := str(parts[2])
 			var items: Array = []
 			match scope:
-				"fnf": items = FunctionDecls._decl_items(m.get("functions", null))
-				"condf": items = ConditionDecls._decl_items(m.get("conditions", null))
-				"stepf": items = StepDecls._decl_items(m.get("steps", null))
+				"fnf": items = DeclarationPool.items(m.get("functions", null))
+				"condf": items = DeclarationPool.items(m.get("conditions", null))
+				"stepf": items = DeclarationPool.items(m.get("steps", null))
 			for pair in items:
 				if str((pair.body as Dictionary).get("id", "")) != owner:
 					continue

@@ -8,28 +8,14 @@ extends RefCounted
 ## 编辑器负责填参和引用，条件判定由游戏执行。
 
 const ContentId := preload("res://src/content/content_id.gd")
-const PoolPrint := preload("res://src/core/pool_fingerprint.gd")
+const PoolPrint := preload("res://src/content/declaration_pool.gd")
 
 ## 归一化结果缓存：指纹 = 项目目录 + conditions 池的递归结构哈希（F1/P03：避免每次访问重扫整池）。
 static var _cache: Dictionary = {}
 static var _cache_key := ""
 
 static func _key(m: Dictionary) -> String:
-	return PoolPrint.of(m, "conditions")
-
-## 把两种写法统一成 [{id, body}] 对，便于就地补码（与 function_decl 同构）。
-static func _decl_items(decl) -> Array:
-	var out: Array = []
-	if decl is Dictionary:
-		for key in (decl as Dictionary):
-			var body = (decl as Dictionary)[key]
-			if body is Dictionary:
-				out.append({"id": str(key), "body": body})
-	elif decl is Array:
-		for item in (decl as Array):
-			if item is Dictionary:
-				out.append({"id": str((item as Dictionary).get("id", "")), "body": item})
-	return out
+	return PoolPrint.fingerprint(m, "conditions")
 
 ## 条件池归一化视图 {id: {id, name, fields}}。
 ## **以声明原件为底**（未知键原样保留），只规范化编辑器认识的键。
@@ -38,7 +24,7 @@ static func conditions(m: Dictionary) -> Dictionary:
 	if _cache_key == key:
 		return _cache
 	var out := {}
-	for pair in _decl_items(m.get("conditions", null)):
+	for pair in PoolPrint.items(m.get("conditions", null)):
 		var cid := str(pair.id)
 		if cid == "":
 			continue
@@ -91,7 +77,7 @@ static func taken_field_codes(m: Dictionary) -> Dictionary:
 static func ensure_codes(m: Dictionary) -> bool:
 	var changed := false
 	var seen := taken_field_codes(m)
-	for pair in _decl_items(m.get("conditions", null)):
+	for pair in PoolPrint.items(m.get("conditions", null)):
 		var d: Dictionary = pair.body
 		for fd in d.get("fields", []) if d.get("fields", []) is Array else []:
 			if not (fd is Dictionary):

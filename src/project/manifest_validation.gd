@@ -4,6 +4,7 @@ extends RefCounted
 ## 字段 kind 必须显式 input/choice、挂载功能必须已声明、功能引用的条件必须已声明、
 ## 功能/条件/步骤字段码同空间唯一、步骤码与音频码池内唯一。
 
+const DeclarationPool := preload("res://src/content/declaration_pool.gd")
 const FunctionDecls := preload("res://src/content/function_decl.gd")
 const ConditionDecls := preload("res://src/content/condition_decl.gd")
 const StepDecls := preload("res://src/content/step_decl.gd")
@@ -302,7 +303,7 @@ static func _validate_audio(data: Dictionary, issues: Array[Dictionary]) -> void
 		return
 	var ids := {}
 	var codes := {}
-	for pair in AudioDecls._decl_items(decl):
+	for pair in DeclarationPool.items(decl):
 		var aid := str(pair.id)
 		if aid == "" or ids.has(aid):
 			_add(issues, "error", "audio",
@@ -328,7 +329,7 @@ static func _validate_triggers(data: Dictionary, issues: Array[Dictionary]) -> v
 		return
 	var ids := {}
 	var codes := {}
-	for pair in TriggerDecls._decl_items(decl):
+	for pair in DeclarationPool.items(decl):
 		var tid := str(pair.id)
 		if tid == "" or ids.has(tid):
 			_add(issues, "error", "triggers",
@@ -469,7 +470,7 @@ static func _validate_steps(data: Dictionary, issues: Array[Dictionary]) -> void
 				_add(issues, "error", "steps", "step entries must be objects (dict form, key: %s)" % str(k0))
 	# 条目码池内唯一（内容 steps[].step 存码，重复 = 静默别名）
 	var ecodes := {}
-	for pair in StepDecls._decl_items(decl):
+	for pair in DeclarationPool.items(decl):
 		var ec := str((pair.body as Dictionary).get("code", ""))
 		if ec != "":
 			if ecodes.has(ec):

@@ -17,9 +17,8 @@
 src/
 ├── app.gd                  应用外壳：项目列表/切换、快捷键、三个视图的切换与收尾
 ├── editor.tscn             入口场景（只挂 app.gd，界面全部代码构建）
-├── core/                   —— 全局共享（常量 / 撤销 / 缓存指纹） ——
+├── core/                   —— 全局共享（常量 / 撤销） ——
 │   ├── constants.gd        共享常量（地图默认尺寸、碰撞占位格等，只有这一处定义）
-│   ├── pool_fingerprint.gd 声明池缓存指纹：项目目录 + 池递归结构哈希（6 个声明域共用）
 │   └── undo_history.gd     撤销/重做：格、实例、内容和区域搬动差量，以及整图快照，上限 80 步
 ├── project/                —— 项目域（清单 / 校验 / 自检 / 试玩） ——
 │   ├── manifest.gd         清单读取器：路径/试玩命令/role/占位尺寸，加载链补发身份码、并入内置种类
@@ -64,6 +63,7 @@ src/
 │   ├── collision_types.gd  碰撞类型池：collisionTypes 归一化 + 内置缺省池（声明即整体覆盖）
 │   └── image_probe.gd      缩略图透明裁边
 ├── content/                —— 功能与内容的数据层 ——
+│   ├── declaration_pool.gd 声明池读取、缓存指纹、补发缺失执行码
 │   ├── function_decl.gd    功能声明域：声明池归一化、执行码补发/查重、码↔名互查、CODES.md
 │   ├── condition_decl.gd   条件声明域：条件池归一化、字段码补发（与功能字段同码空间）、条件码表段
 │   ├── audio_decl.gd       音频声明域：audio 池归一化、执行码补发、音频码表段
