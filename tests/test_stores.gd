@@ -267,7 +267,7 @@ func test_resolve_map_states() -> void:
 ## 调用方不必猜「哪些落盘了」。
 func test_document_commit_receipts() -> void:
 	var DC := preload("res://src/project/document_commit.gd")
-	# apply() 是协程（钩子是保存协程），测试里只验证收据辅助函数；空计划分支见 prepare/app 调用侧
+	# 冻结计划收据辅助函数。
 	var plan_targets: Array = [
 		{"path": "a", "kind": "manifest", "id": ""},
 		{"path": "b", "kind": "content", "id": "C1"},
@@ -282,8 +282,7 @@ func test_document_commit_receipts() -> void:
 	eq(str(rc.get("id", "")), "C1", "收据带目标身份")
 	eq(str(rc.get("digest", "")), "DIG", "写到盘上的目标带摘要")
 
-## §4.4-2：常驻会话——开图换身份 + 抬令牌（旧请求作废）；保存只前移基线不动令牌；
-## 暂存按 doc_key 过滤，换图后旧文档的暂存不会混进新文档的提交快照。
+## 开图换身份和令牌；保存只前移基线。
 func test_document_session_lifecycle() -> void:
 	var DS := preload("res://src/project/document_session.gd")
 	var s = DS.new()
@@ -293,7 +292,6 @@ func test_document_session_lifecycle() -> void:
 	ok(s.stale(g1) and not s.stale(g2), "旧代次过期、新代次有效")
 	eq(s.map_code, "CD34", "身份换到新图")
 	eq(s.opened_digest, "D2", "基线跟着新图走")
-	eq(s.contents.size(), 0, "开新图清空暂存")
 	# 保存：基线前移，令牌不动
 	s.note_saved("/proj/maps/map_b.json", "D3", 300)
 	eq(s.opened_digest, "D3", "保存后基线前移")
@@ -303,30 +301,6 @@ func test_document_session_lifecycle() -> void:
 	eq(s.opened_digest, "D4", "改名换基线")
 	eq(s.doc_key, "/proj/CD34", "文档键按项目根 + 地图码")
 	ok(not s.stale(g2), "改名不动令牌")
-	# 暂存按 doc_key 过滤：别的文档建的暂存行不进本快照
-	s.stage_content("dialog", "X1", {"id": "X1"}, "", -1, "/proj/AB12")
-	s.stage_content("dialog", "X2", {"id": "X2"}, "", -1, s.doc_key)
-	var snap: Dictionary = s.snapshot()
-	var rows: Array = snap.get("contents", [])
-	eq(rows.size(), 1, "只带当前文档的暂存行")
-	eq(str((rows[0] as Dictionary).get("cid", "")), "X2", "留下的是当前文档那条")
-
-func test_commit_uses_staged_record_identity() -> void:
-	var s := preload("res://src/project/document_session.gd").new()
-	var dc := preload("res://src/project/document_commit.gd").new()
-	var m := _fake_manifest()
-	s.open_doc(str(m._dir), "AB12", "a", MapStore.path_for(m, "a"))
-	s.contents["dialog\u0001X2"] = {"fn_id": "dialog", "cid": "X2", "doc": s.doc_key, "data": {"id": "X2"}}
-	m["functions"] = {"dialog": {"code": "DLG"}}
-	var map_snapshot := {"objects": [{"functions": [{"fn": "DLG", "content": "X2"}]}]}
-	var prep := dc.prepare({"manifest": m, "map_snapshot": map_snapshot}, s.snapshot())
-	eq(prep.get("status"), "ok", "生产暂存表可进入正式提交计划")
-	var targets: Array = prep.get("plan", {}).get("targets", [])
-	if not targets.is_empty():
-		eq(targets[0].get("path"), ContentStore.path_for(m, "dialog", "X2"), "写入路径使用真实内容 ID")
-		ok(bool(targets[0].get("required", false)), "冻结地图中仍绑定的目标不可丢弃")
-	s.contents["dialog\u0001X2"]["cid"] = "../bad"
-	eq(dc.prepare({"manifest": m}, s.snapshot()).get("status"), "failed", "非法目标拒绝整份计划")
 
 ## §4.4-4：冻结计划执行器——rename 原子换名、delete 复验摘要后删除、
 ## 目标占用/源被外部改动都判冲突不越写，收据逐目标给状态。

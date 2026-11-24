@@ -152,22 +152,13 @@ func _label_of(view: String) -> String:
 		return "资产"
 	return "项目"
 
-## Ctrl+S / 顶栏保存：按当前视图分派，两条路径的保证不同：
-##   内容视图 → commit_document（清单补码 → 暂存内容 → 脏地图，按依赖序 + 提交日志）。
-##   其余（资产视图） → 只写清单文件；不碰内容与地图。
-## 提示文案一律取自返回结果（written/error），失败时明说「未完成、待写项仍在」，
-## 不按「点了保存」猜成功。
+## 内容页走统一保存入口；资产页只写清单。
 func save_current() -> void:
 	match _view:
 		"content":
-			# 统一提交（清单补码 → 暂存内容 → 脏地图），不再绕过提交日志与地图保存。
 			var res: Dictionary = await app._map_file_ctrl.commit_document("内容页保存")
-			var st := str(res.get("status", ""))
-			if st == "ok":
-				var wr: Array = res.get("written", []) as Array
-				_set_status("内容页提交完成%s" % ("：" + ", ".join(PackedStringArray(wr)) if not wr.is_empty() else "：无待写改动"))
-			else:
-				_set_status(" 内容页提交未完成：%s；待写项仍在，修好后重试" % str(res.get("error", "未知原因")))
+			if res.status != "ok":
+				_set_status(" 内容页保存未完成：" + str(res.error))
 		_:
 			var ok: bool = await app._save_manifest_file_async()
 			_set_status("资产清单已保存" if ok else " 清单保存失败/取消：改动未落盘")

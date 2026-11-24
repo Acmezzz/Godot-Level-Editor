@@ -8,7 +8,7 @@ extends RefCounted
 ##   1) 已有内容文件的字段 → 控件失焦/回车/commit() 时**当场写那个内容文件**（不每击键）；
 ##      写前比对磁盘摘要，被外部改过就拒写并提示。
 ##   2) 还没创建的内容（新绑定第一次改字段）→ 先发行分层 ID，值进 **staged 暂存**
-##      （按内容 ID 查，不按功能码），正式提交（Ctrl+S/试玩）时 flush_staged 才落盘；
+##      （按内容 ID 查，不按功能码），正式提交（Ctrl+S/试玩）时才落盘；
 ##      绑定被撤销后暂存行作废，不留孤儿文件。
 ##   3) 实例绑定本身（functions 数组、props 引用值）→ 只改地图内存态，随地图保存；
 ##      改动走 _write_fns，进画布撤销栈。
@@ -367,15 +367,6 @@ func commit_fields() -> bool:
 			if result is bool and not result:
 				return false
 	return _steps._flush_pending()
-
-## Ctrl+S / 正式提交：冲刷控件值后再把 staged 内容写盘（A2 正式提交点）。
-## on_written(fn_id, cid)：每条成功写入即回调（提交日志逐文件登记，R04）。
-func commit(on_written: Callable = Callable()) -> bool:
-	return commit_fields() and _form.flush_staged(on_written)
-
-## 是否有尚未落盘的暂存内容（新 ID / 新绑定）；正式提交/试玩据此判定。
-func has_staged() -> bool:
-	return _form.has_staged()
 
 ## 待提交的连续控件提交器（SpinBox / 多行文本）：拖值/输入期间只记内存，
 ## 失焦或 commit() 才写内容文件。由 field_widgets.build() 产出，值未变时下游会幂等跳过。
@@ -1013,13 +1004,11 @@ func restage_rows(rows: Array) -> int:
 func stage_clone(fn_id: String, cid: String, data: Dictionary, ent: String) -> void:
 	_form.stage_clone(fn_id, cid, data, ent)
 
-## B1：单条暂存内容的冲刷（DocumentCommit.apply 逐目标调用）；payload = 计划冻结的 {fn_id, cid, data}。
-## 返回 {status: ok|dropped|failed}。
-func flush_one_content(cid: String, payload := {}, on_written: Callable = Callable()) -> Dictionary:
-	return _form.flush_one(cid, payload, on_written)
-## B1：暂存表本体（与 DocumentSession 共享同一份工作副本，字典按引用传递）。
-func staged_table() -> Dictionary:
-	return _form.staged_table()
+func bound_staged_rows(map_data: Dictionary) -> Array:
+	return _form.bound_staged_rows(map_data)
+
+func save_staged_content(map_data: Dictionary) -> String:
+	return _form.save_staged_content(map_data)
 
 ## 暂存感知的内容读写（steps_panel 用）：刚 staged 的新内容还没落盘，
 ## 直接 ContentStore.read 会读到空，编辑步骤就会丢掉。

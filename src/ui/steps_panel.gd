@@ -51,8 +51,6 @@ func _flush_pending() -> bool:
 	return true
 
 ## 同名包装方法（真实实现经 host 转发）
-func commit() -> bool:
-	return _flush_pending() and host.commit()
 func _current_fns() -> Array:
 	return host._current_fns()
 func _ensure_content(i: int) -> String:

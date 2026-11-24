@@ -30,10 +30,8 @@ const AUTOSAVE_INTERVAL_MS := 120000
 var _last_autosave_msec := 0
 ## 最近一次在新建/重命名弹窗里确认的名字（顶栏常驻名字框已移除，这里记住值供预填）
 var _name_memo := ""
-## B1（§7.1）：提交编排器（prepare/apply），提交与确认 UI 保留在本文件。
+## 未保存地图改名用的冻结写入。
 var _doc_commit := DocumentCommit.new()
-## §4.4-2：常驻文档会话——项目身份 / 文档令牌 / 正式基线 / 暂存内容 / 补码标记都挂在它上面。
-## 以前这些是散落在本文件的一组字段 + 每次提交新建一个空会话，基线只能靠人肉同步。
 var sess := DocumentSession.new()
 
 ## 进入一次会影响当前文档的操作（新建/切图）：抬会话代数并返回本次代次。
@@ -511,7 +509,6 @@ func _open_unsaved_map(n: String, data: Dictionary, action: String) -> bool:
 	# 新图：身份换到这张，基线清空（磁盘上还没有这份文件）
 	sess.set_identity(str(app.manifest.get("_dir", "")), app.canvas.cur_map_code(),
 		n, str(app.cur_map_path), "", 0)
-	sess.contents = {}
 	sess.revision = 0
 	app._playtest_ctrl.sync_map_preferences()
 	app._set_map_loaded(true)
@@ -608,8 +605,6 @@ func rename_map_now(old_name: String, new_name: String, allow_write_unsaved := f
 				return "清单未保存或文档已变化"
 		# 原图未落盘（新建后还没保存）：改名必须真正落地，否则只改内存名 =
 		# 面板显示新名、磁盘上始终没文件，用户看到的「重命名」是假的。
-		# R06/§4.4-4：这是一次正式提交（内容 → 地图），走 DocumentCommit 的冻结计划：
-		# 暂存内容与地图在同一条日志里，逐目标复验与收据由执行器给。
 		var ce = null
 		if app.project_shell != null:
 			ce = app.project_shell.content_editor
@@ -626,17 +621,9 @@ func rename_map_now(old_name: String, new_name: String, allow_write_unsaved := f
 			return "地图校验失败：" + map_error
 		var frozen: Array = []
 		if ce != null:
-			sess.contents = ce.staged_table()
-			var prep_contents: Dictionary = _doc_commit.prepare({"manifest": app.manifest,
-				"map_snapshot": data}, {"contents": sess.snapshot().get("contents", [])})
-			if prep_contents.status == "failed":
-				return str(prep_contents.error)
-			if prep_contents.status == "ok":
-				for target in prep_contents.plan.targets:
-					if target.required:
-						frozen.append({"kind": "content", "fn_id": str(target.payload.fn_id),
-							"id": str(target.id), "data": target.payload.data,
-							"expect_absent": target.expect_absent, "baseline": target.baseline})
+			for row in ce.bound_staged_rows(data):
+				frozen.append({"kind": "content", "fn_id": row.fn_id, "id": row.cid,
+					"data": row.data, "expect_absent": row.expect_absent, "baseline": row.get("baseline", "")})
 		# 地图目标带「写前校验 + 历史快照」的语义：用 payload 声明它是地图文档，
 		# 执行器按 MapStore.write 的同一入口落盘（不是裸写字节）。
 		frozen.append({"kind": "map", "id": nn, "path": new_path, "expect_absent": true,
@@ -778,7 +765,6 @@ func load_map_file(p: String, expected_digest := "") -> void:
 	# 基线取此刻磁盘上的这份文件。
 	sess.set_identity(str(app.manifest.get("_dir", "")), app.canvas.cur_map_code(),
 		base, str(p), baseline, FileAccess.get_modified_time(p))
-	sess.contents = {}
 	sess.revision = 0
 	var tcount := 0
 	for lid in (data.get("tiles", {}) as Dictionary):
@@ -866,7 +852,6 @@ func _restore_history_snapshot(map_name: String, snapshot_path: String) -> void:
 	app.cur_map_path = path
 	sess.set_identity(str(app.manifest.get("_dir", "")), app.canvas.cur_map_code(),
 		map_name, path, baseline, FileAccess.get_modified_time(path))
-	sess.contents = {}
 	sess.revision = 0
 	app._playtest_ctrl.sync_map_preferences()
 	app._set_map_loaded(true)
@@ -889,83 +874,61 @@ func _effective_map_name() -> String:
 			return cname
 	return n
 
-## 统一提交入口（A2）：先结束编辑手势，再按「清单 → 内容 → 地图」顺序落盘。
+## 先结束编辑手势，再按「清单 → 内容 → 地图」顺序保存。
 func commit_document(reason := "") -> Dictionary:
-	if app.canvas != null and app.canvas.doc_busy:
+	if app.canvas.doc_busy:
 		return {"status": "failed", "error": "另一次文档操作正在进行"}
-	# 正式提交（R28）：先归位未松手的预览型手势，再清手势类型，随后冻结撤销/重做。
-	if app.canvas != null:
-		if app.canvas.has_method("cancel_preview_gesture"):
-			app.canvas.cancel_preview_gesture()
-		if app.canvas.has_method("end_gesture"):
-			app.canvas.end_gesture()
-		app.canvas.doc_busy = true   # 确认/写入期间冻结撤销与重做
-	# R01/R04：先收集控件值——可能新增暂存条目或写已有内容文件，目标集合以收集后的为准。
-	# 集合失败即中止（V4 P1）：继续提交会让地图带着没落盘的字段值写出去。
+	app.canvas.cancel_preview_gesture()
+	app.canvas.end_gesture()
+	app.canvas.doc_busy = true
+	var error := await _save_document()
+	_release_busy()
+	if error != "":
+		return {"status": "failed", "error": error}
+	if reason != "":
+		app._set_status(" 已保存（%s）" % reason)
+	return {"status": "ok", "error": ""}
+
+
+func _save_document() -> String:
 	var ce = app.project_shell.content_editor if app.project_shell != null else null
 	if ce != null and not ce.commit_fields():
-		_release_busy()
-		app._set_status(" 提交中止：表单字段写入失败（" + reason + "），地图未写入")
-		return {"status": "failed", "written": [], "error": "字段写入失败", "pending": _pending_targets()}
-	# B1（§7.1）：提交编排迁到 DocumentCommit——冻结会话快照与 Plan，按依赖序执行；
-	# 清单/地图写盘的外部改动确认对话框保留在 UI 侧钩子（_hook_*）里。
-	# §4.4-2：会话是常驻的，这里只把「此刻的工作副本」同步进去，再取冻结快照。
-	if ce != null:
-		sess.contents = ce.staged_table()   # 与 UI 共享同一份工作副本（字典按引用）
-	sess.codes_pending = bool(app.manifest.get("_codes_issued", false))
-	sess.map_code = str((app.canvas.map_data.get("meta", {}) as Dictionary).get("code", "")) if app.map_loaded else ""
-	sess.map_name = str(app.cur_map_name)
-	sess.map_path = str(app.cur_map_path)
-	sess.project_root = str(app.manifest.get("_dir", ""))
-	sess.doc_key = _doc_key()
-	var op := {
-		"manifest": app.manifest,
-		"map_name": app.cur_map_name, "map_path": app.cur_map_path,
-		# 从未落过盘的新图（含恢复草稿后正式文件不存在）：即使画布还没标脏也必须建文件，
-		# 否则首次保存报「无待写改动」而地图目录里什么都没有。
-		"map_dirty": bool(app.map_loaded and app.canvas != null and app.canvas.modified_flag)
-			or (app.map_loaded and str(app.cur_map_path) != "" and not FileAccess.file_exists(str(app.cur_map_path))),
-	}
-	var snap := sess.snapshot()
-	if app.map_loaded and (op.map_dirty or not (snap["contents"] as Array).is_empty()):
-		var map_snapshot: Dictionary = app.canvas.extract()
-		if map_snapshot.is_empty():
-			_release_busy()
-			return {"status": "failed", "error": "地图正在重建，无法复核暂存依赖"}
-		if op.map_dirty:
-			map_snapshot.meta.name = str(op.map_name)
-			MapStore.ensure_code(app.manifest, map_snapshot)
-		op["map_snapshot"] = map_snapshot
-	var prep: Dictionary = _doc_commit.prepare(op, snap)
-	if str(prep.get("status", "")) == "empty":
-		_release_busy()
-		if reason != "":
-			app._set_status(" 已提交（%s）：无待写改动" % reason)
-		return {"status": "ok", "written": [], "error": "", "pending": [], "targets": []}
-	if str(prep.get("status", "")) != "ok":
-		_release_busy()
-		var error := str(prep.get("error", "无法准备提交计划"))
-		app._set_status(" 提交中止：" + error)
-		return {"status": "failed", "written": [], "error": error, "pending": _pending_targets()}
-	# 按依赖顺序写入；写入失败时保留已成功写入的文件。
-	var source: Dictionary = app.manifest
-	var manifest_snapshot := source.duplicate(true)
-	var guard := _commit_is_current.bind(sess.generation, sess.revision, source)
-	var frozen_map: Dictionary = op.get("map_snapshot", {})
-	var res: Dictionary = await _doc_commit.apply(prep.get("plan", {}) as Dictionary,
-		_commit_hooks(guard, frozen_map, manifest_snapshot))
-	_release_busy()
-	var st := str(res.get("status", ""))
-	if st == "ok" and reason != "":
-		var wk: Array = res.get("written", [])
-		app._set_status(" 已提交（%s）%s" % [reason,
-			("：" + ", ".join(PackedStringArray(wk))) if not wk.is_empty() else "：无待写改动"])
-	elif st == "conflict":
-		app._set_status(" 提交中止：内容文件在提交期间被外部改动（先重扫再试）")
-	# §4.4-3：逐目标收据带给调用方（哪些写了/跳过了/没轮到），不再只有一句状态。
-	return {"status": st, "written": res.get("written", []), "error": str(res.get("error", "")),
-		"receipt": res.get("receipt", {}), "targets": res.get("targets", []),
-		"pending": [] if st == "ok" else _pending_targets()}
+		app._set_status(" 保存中止：表单字段写入失败")
+		return "表单字段写入失败"
+
+	var name := _effective_map_name() if app.map_loaded else ""
+	var path := EditorManifest.map_path(app.manifest, name) if app.map_loaded else ""
+	var write_map: bool = app.map_loaded and (app.canvas.modified_flag or not FileAccess.file_exists(path))
+	var write_content: bool = ce != null and ce.has_staged_for_current_doc()
+	var data: Dictionary = {}
+	if write_map or (app.map_loaded and write_content):
+		data = app.canvas.extract()
+		if data.is_empty():
+			app._set_status(" 保存中止：地图正在重建")
+			return "地图正在重建"
+	if write_map:
+		if path == "":
+			app._set_status(" 保存中止：地图名不合法")
+			return "地图名不合法"
+		data.meta.name = name
+		MapStore.ensure_code(app.manifest, data)
+		var problem := MapStore.identity_error(app.manifest, name, data)
+		if problem != "":
+			app._set_status(" 保存中止：" + problem)
+			return problem
+
+	var guard := _commit_is_current.bind(sess.generation, sess.revision, app.manifest)
+	if bool(app.manifest.get("_codes_issued", false)) and not await app._save_manifest_file_async(guard):
+		return "清单保存失败或取消"
+	if write_content:
+		var error: String = ce.save_staged_content(data)
+		if error != "":
+			app._set_status(" 保存中止：" + error)
+			return error
+	if write_map and not await _save_now(name, path, data, guard):
+		return "地图保存失败或取消"
+	return ""
+
 
 ## 解除文档忙状态（保存失败/取消路径也必须走到，否则撤销永久失效）
 func _release_busy() -> void:
@@ -985,24 +948,9 @@ func _doc_key() -> String:
 		code = str(app.cur_map_name)
 	return root.path_join(code)
 
-## B1：apply 的 UI 侧钩子。清单/地图写盘含外部改动确认对话框（协程）；
-## 内容逐条冲刷走 content_editor.flush_one_content（绑定复核在表单层）。
 func _commit_is_current(gen: int, revision: int, source: Dictionary) -> bool:
 	return not sess.stale(gen) and sess.revision == revision and is_same(source, app.manifest)
 
-func _commit_hooks(guard: Callable, frozen_map: Dictionary, manifest_snapshot: Dictionary) -> Dictionary:
-	return {
-		"save_manifest": app._save_manifest_file_async.bind(guard, manifest_snapshot),
-		"save_map": _save_now.bind(frozen_map, guard),
-		"flush_one": _hook_flush_one,
-		"is_current": guard,
-	}
-
-func _hook_flush_one(cid: String, payload := {}) -> Dictionary:
-	var ce = app.project_shell.content_editor if app.project_shell != null else null
-	if ce == null:
-		return {"status": "dropped"}
-	return ce.flush_one_content(cid, payload)
 
 ## 待写项盘点（A2 staged）：清单补码 / 暂存内容 / 脏地图。
 ## 供放弃确认和保存失败提示使用。
@@ -1025,38 +973,8 @@ func save_all() -> bool:
 	var res: Dictionary = await commit_document("保存")
 	return str(res.get("status", "")) == "ok"
 
-## 写入提交时冻结的地图。前置内容和清单由提交计划处理。
-func _save_now(data: Dictionary, guard: Callable) -> bool:
-	if not app.map_loaded:
-		app._set_status(" 无地图：先新建或打开一张地图")
-		return false
-	var gen := sess.generation   # 保存属于发起时的那个文档（A2）：等待后必须仍指向同一份
-	var n: String = _effective_map_name()
-	if n == "":
-		app._set_status(" 当前地图没有名字：先「新建地图」并填名字")
-		return false
-	if not EditorManifest.is_valid_map_name(n):
-		app._set_status(" 地图名不合法：不能含 / \\ : * ? \" < > | 或以 . 开头")
-		return false
-	if data.is_empty():
-		app._set_status(" 地图重建中，保存已跳过：请稍后再试")
-		return false
-	# 依赖身份先落盘（D06）：本次画布可能用到刚补发的资产码/功能码；地图引用它们前
-	# 清单必须先写成功，否则取消/前置失败会留下指向不存在身份的地图。
-	if bool(app.manifest.get("_codes_issued", false)):
-		if not await app._save_manifest_file_async():
-			app._set_status(" 保存中止：清单补码写入失败，地图未写盘")
-			return false
-	data.meta.name = n
-	MapStore.ensure_code(app.manifest, data)   # 地图码（v7）：保存时补发，跨图引用写码的前提
-	var path := EditorManifest.map_path(app.manifest, n)
-	if path == "":
-		app._set_status(" 地图名不合法: " + n)
-		return false
-	# 保存期间项目/文档被换掉（确认框还开着时切了项目）：此时代次不同，写盘会落到别的项目
-	if _doc_stale(gen) or (sess.project_root != "" and sess.project_root != str(app.manifest.get("_dir", ""))):
-		app._set_status(" 保存中止：文档已切换，本次改动未写入")
-		return false
+## 写地图并更新当前文档的磁盘基线。
+func _save_now(n: String, path: String, data: Dictionary, guard: Callable) -> bool:
 	# 外部变更检测——打开后磁盘内容变了 = 别处改过这份文件（本次保存会覆盖外部改动）。
 	# 摘要优先（A2）：mtime 是秒级粒度，同秒同长度的外部编辑 mtime/长度都撞得上，只有内容摘要能识别。
 	# R05：确认绑定到「此刻这份内容」——确认前抓的摘要，确认后仍须一致才写。
@@ -1120,11 +1038,6 @@ func _save_now(data: Dictionary, guard: Callable) -> bool:
 	app._playtest_ctrl.sync_map_preferences()
 	app.canvas.modified_flag = false
 	_last_autosave_msec = Time.get_ticks_msec()
-	var tcount2 := 0
-	for lid2 in (data.get("tiles", {}) as Dictionary):
-		tcount2 += ((data.get("tiles", {}) as Dictionary)[lid2] as Array).size()
-	var msg := " 已保存 %s（%d 瓦片 / %d 摆放物）" % [n, tcount2, (data.get("objects", []) as Array).size()]
-	app._set_status(msg)
 	# 正式保存成功：草稿完成使命，删掉（A3）；历史快照此时才纳入（见 MapStore.write）
 	_drop_draft_for(n)
 	return true
@@ -1311,10 +1224,9 @@ func prepare_playtest_document(project_entry: bool) -> Dictionary:
 		return {"error": " 试玩中止：" + str(res.get("error", "提交未完成"))}
 	if sess.stale(gen) or (app.map_loaded and app.canvas.modified_flag):
 		return {"error": " 试玩中止：提交期间文档已变化"}
-	var receipt: Dictionary = res.get("receipt", {})
 	var maps_root := str(app.manifest.get("_maps_dir", "")).simplify_path()
-	var play_path := "" if project_entry else str(receipt.get("absolute_path", sess.map_path)).simplify_path()
-	var digest := "" if project_entry else str(receipt.get("map_digest", sess.opened_digest))
+	var play_path := "" if project_entry else sess.map_path.simplify_path()
+	var digest := "" if project_entry else sess.opened_digest
 	if not project_entry and (digest == "" or Recovery.digest(play_path) != digest):
 		return {"error": " 试玩中止：磁盘地图与已提交版本不一致"}
 	if not project_entry and (maps_root == "" or play_path.get_base_dir() != maps_root):

@@ -802,80 +802,43 @@ func _doc_key() -> String:
 		code = str(app.cur_map_name)
 	return root.path_join(code)
 
-## 绑定身份复核（R02）：暂存条目的实例与绑定行还在吗？
-## 返回 ""（仍被当前文档引用）或 "gone"（已无任何绑定）。
-func _staged_bind_state(st: Dictionary, cid: String) -> String:
-	if not _map_ready():
-		return ""
-	# V4 P0-6：只要有**任一**实例仍绑定这条内容，就必须写盘。
-	# 共享绑定场景：A 创建内容、B 共享引用、A 解绑时，原实现只查最初挂靠的 A 就把条目丢掉。
-	var fn_id := str(st.get("fn_id", ""))
-	for row in host._entities():
-		for f in ((row as Dictionary).get("fns", []) as Array):
-			if not (f is Dictionary):
-				continue
-			if str((f as Dictionary).get("content", "")) != cid:
-				continue
-			if fn_id != "" and str((f as Dictionary).get("fn", "")) != FunctionDecls.fn_code(manifest, fn_id):
-				continue
-			return ""   # 任一同功能绑定仍在：这条内容仍被使用
-	return "gone"
-
-## 把暂存内容写盘（A2 正式提交入口调用）。全部成功返回 true；任一失败停下并保留剩余暂存。
-## 只写当前文档的条目（R02）：doc 不符的条目留在暂存表里，等各自文档保存时再写。
-## on_written(fn_id, cid)：每条成功写入即回调（R04 提交日志逐文件登记）。
-func flush_staged(on_written: Callable = Callable()) -> bool:
-	if _staged.is_empty():
-		return true
+## 暂存条目按功能执行码与内容 ID 匹配地图绑定；单个实例的解绑不影响共享内容。
+func bound_staged_rows(map_data: Dictionary) -> Array:
+	var bindings := {}
+	for obj in map_data.get("objects", []):
+		if str(obj.get("code", "")) == "":
+			continue
+		for binding in obj.get("functions", []):
+			if binding is Dictionary:
+				bindings[[str(binding.get("fn", "")), str(binding.get("content", ""))]] = true
 	var doc := _doc_key()
+	var rows: Array = []
 	for key in _staged.keys():
-		var st: Dictionary = _staged.get(key, {})
-		if str(st.get("doc", "")) != doc:
-			continue   # 别的文档的暂存：不写、不丢
-		var fn_id := str(st.get("fn_id", ""))
-		var cid := str(st.get("cid", ""))
-		if cid == "":
-			cid = str(key) if not str(key).contains("\u0001") else str(key).split("\u0001")[1]
-		if str(flush_one(cid, {"fn_id": fn_id, "cid": cid}, on_written).get("status", "")) == "failed":
-			return false
-	return true
+		var row: Dictionary = _staged[key]
+		if row.doc != doc:
+			continue
+		if map_data.is_empty() or bindings.has([FunctionDecls.fn_code(manifest, row.fn_id), row.cid]):
+			rows.append(row)
+		else:
+			_staged.erase(key)
+	return rows
 
-## 单条暂存内容的冲刷（B1：DocumentCommit.apply 逐目标调用）。
-## 绑定复核失败就地丢弃并报告（R02）；写盘失败保留暂存。返回 {status: ok|dropped|failed}。
-## payload（B1）：提交计划冻结的 {fn_id, cid, data}——非空时写计划里那份，不再回读当前表单
-## （避免 prepare 与 apply 之间控件/选中变化导致「写出去的不是确认过的那份」）。
-func flush_one(cid: String, payload := {}, on_written: Callable = Callable()) -> Dictionary:
-	var pfn := str((payload as Dictionary).get("fn_id", "")) if payload is Dictionary else ""
-	var st = _staged_get(pfn, cid)
-	if not (st is Dictionary):
-		return {"status": "dropped"}
-	var fn_id := str((st as Dictionary).get("fn_id", ""))
-	var data: Dictionary = (st as Dictionary).get("data", {}) as Dictionary
-	if payload is Dictionary and not (payload as Dictionary).is_empty():
-		fn_id = pfn if pfn != "" else fn_id
-		data = (payload as Dictionary).get("data", data) as Dictionary
-	var state := _staged_bind_state(st as Dictionary, cid)
-	if state != "":
-		if bool(payload.get("required", false)):
-			return {"status": "failed"}
-		_staged_erase(fn_id, cid)   # 绑定已撤销/实例已删：这条不再写盘（R02）
-		app._set_status(" 暂存内容 %s 的绑定已不在（撤销/切图放弃）：未写盘，已丢弃" % cid)
-		return {"status": "dropped"}
-	# V4 P0-1：写前记录目标是否已存在。新内容（无磁盘基线）必须是 create-only，
-	# 不能把提交期间出现的同路径文件当成合法现状覆盖。计划若冻结了 expect_absent 以其为准。
-	var expect_absent := bool(payload.get("expect_absent", st.get("expect_absent", true)))
-	var baseline := str(payload.get("baseline", st.get("baseline", "")))
-	var wr := ContentStore.write_ex(manifest, fn_id, cid, data, baseline, false, expect_absent)
-	if bool(wr.get("conflict", false)):
-		app._set_status(" 内容 %s 的目标文件在提交期间被创建/改动：未写入（先复核再试）" % cid)
-		return {"status": "conflict"}
-	if not bool(wr.get("ok", false)):
-		_ensure_failed()
-		return {"status": "failed"}
-	_staged_erase(fn_id, cid)
-	if on_written is Callable and (on_written as Callable).is_valid():
-		(on_written as Callable).call(fn_id, cid)
-	return {"status": "ok"}
+
+## 已解绑的草稿丢弃。写入失败时保留失败条目和其后未写的条目。
+func save_staged_content(map_data: Dictionary) -> String:
+	for row in bound_staged_rows(map_data):
+		var baseline := str(row.get("baseline", ""))
+		if not row.expect_absent and baseline == "":
+			return "暂存内容缺少替换基线：%s" % row.cid
+		var result := ContentStore.write_ex(manifest, row.fn_id, row.cid, row.data,
+			baseline, false, row.expect_absent)
+		if result.get("conflict", false):
+			return "内容文件已被外部创建或改动：%s" % row.cid
+		if not result.get("ok", false):
+			return "无法写入内容：%s" % row.cid
+		_staged_erase(row.fn_id, row.cid)
+	return ""
+
 
 ## 消费冻结计划中已落盘的内容，失败目标继续留在工作副本里。
 func consume_written_staged(receipts: Array) -> void:
@@ -888,10 +851,6 @@ func consume_written_staged(receipts: Array) -> void:
 		var staged = _staged_get(fn_id, cid)
 		if staged is Dictionary and staged.get("doc") == doc:
 			_staged_erase(fn_id, cid)
-
-## 暂存表本体（B1：DocumentSession 经它共享同一份工作副本，字典按引用传递）。
-func staged_table() -> Dictionary:
-	return _staged
 
 func has_staged() -> bool:
 	return not _staged.is_empty()

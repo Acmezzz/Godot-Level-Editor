@@ -28,8 +28,8 @@ src/
 │   ├── reference_usage.gd  按资产、内容、屏幕查询来向
 │   ├── screen_reference_validation.gd  保存屏幕时检查该屏幕的模块字段和出口
 │   ├── spatial_reference_check.gd  空间引用校验：实例、层、端口、格及格边
-│   ├── document_session.gd 文档会话（B1）：内容暂存行（按文档键查）、快照与按文档取行
-│   ├── document_commit.gd  统一提交（B1）：prepare 出提交计划、apply 按 hooks 逐文件写（含失败停点）
+│   ├── document_session.gd 当前地图的身份、操作令牌与磁盘基线
+│   ├── document_commit.gd  改名、整图复制等操作的冻结写入计划
 │   └── playtest.gd         试玩：按清单的 executable 和 args 启动游戏，跟踪进程
 ├── map/                    —— 地图数据域 ——
 │   ├── map_format.gd       地图格式版本常量 + alt 变换位↔Godot alternative 位互转
@@ -716,7 +716,7 @@ Shift + 左键选已有顶点，再点同层位置，可在所选顶点之后插
 | 对象 | 内存里是什么 | 什么时候落盘 |
 |---|---|---|
 | **已落盘**内容的字段 | 直接改文件内容的工作副本 | 控件**失焦 / 回车 / `commit()`** 时即时写该内容文件（不每击键）。写前比对磁盘摘要，外部改过就拒写并提示 |
-| **尚未创建**的内容（新绑定第一次改字段） | 以 `(功能 ID, 内容 ID)` 寻址的暂存行 | `Ctrl+S` / 试玩前统一提交，按计划逐个写入仍被当前地图引用的暂存内容；暂存行不进画布撤销栈。绑定被撤销后，提交时会丢弃失去绑定的条目 |
+| **尚未创建**的内容（新绑定第一次改字段） | 以 `(功能 ID, 内容 ID)` 寻址的暂存行 | `Ctrl+S` / 试玩前统一提交，逐个写入仍被当前地图引用的暂存内容；暂存行不进画布撤销栈。绑定被撤销后，提交时会丢弃失去绑定的条目 |
 | 演出步骤（`steps`） | 与普通字段同一份内容数据 | 同上（同一次写） |
 | 实例绑定（`functions[]`、`props` 引用值） | 地图内存态 | `Ctrl+S` / 试玩前的统一提交；改绑定本身进画布撤销栈 |
 | 清单（码补发、挂载、资产改名） | 清单内存态 | 保存清单时（含统一提交） |
@@ -731,13 +731,13 @@ Shift + 左键选已有顶点，再点同层位置，可在所选顶点之后插
 
 | 入口 | 按序写哪些文件 | 提交日志 / 历史 | 代码位置 |
 |---|---|---|---|
-| 内容视图 Ctrl+S、顶栏「保存」 | ① 清单（仅当有待补发码）② 暂存内容每条一文件 ③ 当前地图（仅当有改动或尚未落盘） | 地图写入前快照 | `project_shell.gd::save_current` → `map_file.gd::commit_document` → `document_commit.gd::prepare/apply` |
-| 地图菜单「保存」/ Ctrl+S（内容视图同一条） | 同上；无补码、无暂存、图不脏时退化为「无待写改动」 | 同上 | `app.gd::_on_save` → `map_file.gd::save_all` |
+| 内容视图 Ctrl+S、顶栏「保存」 | ① 清单（仅当有待补发码）② 暂存内容每条一文件 ③ 当前地图（仅当有改动或尚未落盘） | 地图写入前快照 | `project_shell.gd::save_current` → `map_file.gd::commit_document` |
+| 地图菜单「保存」/ Ctrl+S（内容视图同一条） | 同上；无待写改动时不写文件 | 同上 | `app.gd::_on_save` → `map_file.gd::save_all` |
 | 顶栏「保存」（资产视图） | 写 `editor/editor_manifest.json`，成功后尝试更新 `editor/CODES.md`；对照表写入失败不回滚清单 | 无 | `project_shell.gd::save_current` 的 `_` 分支 → `app.gd::_save_manifest_file_async` |
 | 试玩 | 同上；地图试玩要求已提交地图的路径和摘要与磁盘一致 | 同上 | `playtest_controller.gd::on_play` → `map_file.gd::prepare_playtest_document` |
 | 地图改名 | ① 新名文件写入 ② 旧名文件删除 | 两文件一条日志 | `map_store.gd::rename_map` |
 | 复制整图 / 转换后另存 | 若清单仍有待发布的补码，先由编辑器发布清单，再提交① 新内容 N 份 ② 新地图 1 份 | 新内容与新地图共用一条冻结计划日志 | `map_file.gd::_publish_map_copy` → `map_store.gd::apply_duplicate` |
-| 内容字段失焦 / 回车 / `commit()` | 单个内容文件（覆盖前轮转） | `.history` 3 轮 | `content_store.gd::write_ex` |
+| 内容字段失焦 / 回车 | 单个内容文件（覆盖前轮转） | `.history` 3 轮 | `content_store.gd::write_ex` |
 | 内容库「删除」 | 单个内容文件（先轮转再删；轮转失败拒绝删） | `.history` 3 轮 | `content_store.gd::remove_ex` |
 | 画布编辑 / 撤销 / 重做 | 不写盘（只改内存） | — | `undo_history.gd` |
 | 草稿自动保存（每 2 分钟） | `editor/drafts/<地图码>.json` | 不进历史 | `map_file.gd::maybe_autosave` |

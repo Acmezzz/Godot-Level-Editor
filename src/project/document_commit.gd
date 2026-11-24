@@ -1,116 +1,13 @@
 extends RefCounted
-## 普通保存按清单、内容、地图写入；改名和复制用独立冻结计划。
+## 改名、复制等多文件操作的冻结计划。
 
 const Recovery := preload("res://src/map/recovery.gd")
-const FunctionDecls := preload("res://src/content/function_decl.gd")
 const MapFormat := preload("res://src/map/map_format.gd")
-## ContentStore 只在 prepare 里用来拼内容路径；**不 preload**：content_store 反向 preload 了
-## map_store，而 map_store 要复用本模块做改名/复制的冻结计划，静态 preload 会成环。
+## 延迟加载 ContentStore，避免与 MapStore 循环预加载。
 const CONTENT_STORE_PATH := "res://src/content/content_store.gd"
 
 static func _content_store():
 	return load(CONTENT_STORE_PATH)
-
-## prepare：按快照 + 磁盘基线冻结 Plan（只读盘点：无 UI 副作用，R28 口径）。
-## operation = {manifest, map_name, map_path, map_dirty, map_snapshot}
-func prepare(operation: Dictionary, snap: Dictionary) -> Dictionary:
-	var m: Dictionary = operation.get("manifest", {})
-	var targets: Array = []
-	# 1) 清单补码（内容/地图引用它们之前必须落盘：依赖序第一）
-	if bool((snap.get("manifest_changes", {}) as Dictionary).get("codes_pending", false)):
-		var mpath := str(m.get("_dir", "")).path_join("editor/editor_manifest.json")
-		targets.append({"op": "write", "kind": "manifest", "id": "",
-			"path": mpath})
-	var dependencies := _bound_content(operation.get("map_snapshot", {}))
-	# 2) 暂存内容先于地图写盘；内部索引不能作为文件身份。
-	#    V4 P0-1：新内容的目标必须声明「预期不存在」——不能只靠空摘要表达，
-	#    否则提交期间出现的同路径文件会被当成合法基线并被覆盖。
-	for row in (snap.get("contents", []) as Array):
-		var r: Dictionary = row
-		var cp: String = _content_store().path_for(m, str(r.get("fn_id", "")), str(r.get("cid", "")))
-		if cp == "":
-			return {"status": "failed", "error": "暂存内容目标非法：%s/%s" % [r.get("fn_id", ""), r.get("cid", "")]}
-		var expect_absent := bool(r.get("expect_absent", true))
-		var baseline := str(r.get("baseline", ""))
-		if not expect_absent and baseline == "":
-			return {"status": "failed", "error": "暂存内容缺少替换基线：%s" % cp}
-		var binding := [FunctionDecls.fn_code(m, str(r.get("fn_id", ""))), str(r.get("cid", ""))]
-		var required := dependencies.has(binding)
-		targets.append({"op": "write", "kind": "content", "id": str(r.get("cid", "")),
-			"path": cp, "baseline": baseline, "expected": "",
-			"expect_absent": expect_absent, "required": required,
-			"payload": {"fn_id": str(r.get("fn_id", "")), "cid": str(r.get("cid", "")),
-				"data": r.get("data", {}), "expect_absent": expect_absent, "baseline": baseline, "required": required}})
-	# 3) 地图（只脏图入计划：干净图没有待写项；写前外部改动确认在 hooks.save_map 里）
-	if bool(operation.get("map_dirty", false)) and str(operation.get("map_path", "")) != "":
-		var data: Dictionary = operation.get("map_snapshot", {})
-		if not data.is_empty():
-			var maps := load("res://src/map/map_store.gd")
-			var problem: String = maps.identity_error(m, str(operation.get("map_name", "")), data)
-			if problem != "":
-				return {"status": "failed", "error": problem}
-		targets.append({"op": "write", "kind": "map", "id": str(operation.get("map_name", "")),
-			"path": str(operation.get("map_path", ""))})
-	if targets.is_empty():
-		return {"status": "empty"}
-	return {"status": "ok", "plan": {"map_code": str(snap.get("map", "")),
-		"targets": targets}}
-
-static func _bound_content(data: Dictionary) -> Dictionary:
-	var keys := {}
-	for obj in data.get("objects", []):
-		if not (obj is Dictionary) or not (obj.get("functions", null) is Array):
-			continue
-		for binding in obj["functions"]:
-			if binding is Dictionary:
-				var code := str(binding.get("fn", ""))
-				var cid := str(binding.get("content", ""))
-				if cid != "":
-					keys[[code, cid]] = true
-	return keys
-
-## 清单和地图的外部改动确认由写入入口处理。
-func apply(plan: Dictionary, hooks: Dictionary) -> Dictionary:
-	var targets: Array = plan.targets
-	var written: Array = []
-	var receipts: Array = []
-	var receipt := {}
-	for target: Dictionary in targets:
-		var kind: String = target.kind
-		var path: String = target.path
-		var status := "ok"
-		var error := ""
-		if not hooks.is_current.call():
-			status = "failed"
-			error = "提交期间工作副本已变化"
-		elif kind == "manifest":
-			if not await hooks.save_manifest.call():
-				status = "cancelled"
-				error = "清单补码保存被取消或失败"
-		elif kind == "map":
-			if not await hooks.save_map.call():
-				status = "failed"
-				error = "地图保存失败"
-		else:
-			status = str(hooks.flush_one.call(target.id, target.payload).status)
-			if status == "conflict":
-				error = "内容文件在提交期间被外部改动：%s" % path
-			elif status != "ok" and (status != "dropped" or target.required):
-				status = "failed"
-				error = "暂存内容未写入：%s" % path
-		if error != "":
-			receipts.append(_receipt_of(target, "conflict" if status == "conflict" else "failed", ""))
-			receipts.append_array(_receipts_pending(targets, path))
-			return {"status": status, "written": written, "error": error, "targets": receipts}
-		if status == "dropped":
-			receipts.append(_receipt_of(target, "dropped", ""))
-			continue
-		var digest := Recovery.digest(path)
-		written.append(kind)
-		receipts.append(_receipt_of(target, "written", digest))
-		if kind == "map":
-			receipt = {"map_code": plan.map_code, "absolute_path": path, "map_digest": digest}
-	return {"status": "ok", "written": written, "receipt": receipt, "targets": receipts}
 
 ## §4.4-4：非「清单→内容→地图」入口的计划构造（改名 / 整图复制 / 跨图清理）。
 ## targets 每项 = {path, kind, id, baseline?, expect_absent?, frozen_text?, op?}；
@@ -290,7 +187,7 @@ func apply_frozen(plan: Dictionary) -> Dictionary:
 	return {"status": "ok", "written": written, "conflicts": [], "receipt": receipt,
 		"journal": log_path, "targets": receipts}
 
-## 冻结计划的三种提前返回，收据口径与 apply 一致（已完成部分 + 其后 pending）。
+## 冻结计划的三种提前返回，收据包含已完成目标和待处理目标。
 func _apply_file_operation(tgt: Dictionary, targets: Array, receipts: Array,
 		written: Array, m: Dictionary, log_path: String, journal: Array) -> Dictionary:
 	var path := str(tgt.get("path", ""))
