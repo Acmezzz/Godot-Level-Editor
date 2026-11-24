@@ -58,13 +58,15 @@ static func at(regions: Array, pixel: Vector2, mode: String) -> Dictionary:
 		var value = region.targets.get(mode)
 		if mode == "objectEdit":
 			value = region.targets.get("vertex", region.targets.get("entity"))
-		if mode == "placement":
-			var mapping: Dictionary = region.placement
+		if mode in ["placement", "collision"]:
+			var mapping: Dictionary = region[mode]
 			if mapping.is_empty():
 				if region.occludes:
 					break
 				continue
-			value = {"layer": mapping.layer, "point": _local_point(mapping, uv)}
+			value = {"point": _local_point(mapping, uv)}
+			if mode == "placement":
+				value["layer"] = mapping.layer
 		elif value == null:
 			if region.occludes:
 				break

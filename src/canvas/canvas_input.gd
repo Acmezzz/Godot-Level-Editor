@@ -13,7 +13,6 @@ extends RefCounted
 ## 起手即 begin_gesture，松手即 end_gesture；任何新起手都顶掉旧手势，不可能叠加。
 
 var cvs   # 宿主引用
-var _spawn_moved := false   # 出生点拖动本次是否真的动过格（点击不动 = 零副作用）
 # 阶段三：纯悬停的重画闸——上一帧鼠标所在格与像素点（手势中不用它们，一律重画）
 var _hover_cell := Vector2i(-999999, -999999)
 var _hover_px := Vector2(-1e9, -1e9)
@@ -114,15 +113,6 @@ func _unhandled_input(event: InputEvent) -> void:
 			cvs.Gesture.REGION_MOVE:
 				cvs._move_region_preview(pos)
 			cvs.Gesture.SPAWN_DRAG:
-				# 点击不动 = 不压撤销、不置脏：首次格间移动前才压快照，松手动过才 _mark
-				var c0: Vector2i = cvs.grid.pick_cell((cvs.spawn as Node2D).position)
-				var c1: Vector2i = cvs.root_cell(pos)
-				if c1 != c0 and not _spawn_moved:
-					# 压快照会取消预览手势并把出生点归位到起手快照（E05：撤销基线 = 原位）。
-					# 取消同时结束了手势，这里按同一颗键重新起手，拖动继续、松手才会置脏。
-					cvs.push_undo()
-					cvs.begin_gesture(cvs.Gesture.SPAWN_DRAG, MOUSE_BUTTON_LEFT)
-					_spawn_moved = true
 				cvs._drag_spawn_to(pos)
 			cvs.Gesture.ERASE:
 				# 路径补格（E13）：两次鼠标事件之间经过的格全部擦，快速拖动不漏格
@@ -218,10 +208,9 @@ func _on_left_press(pos: Vector2, b: InputEventMouseButton) -> void:
 		return
 	# 出生点拖动留在摆放模式，碰撞层始终先处理格工具。
 	if not cvs.select_mode and cvs.place_kind == "object" and cvs._on_spawn(pos):
-		if cvs.is_layer_locked(cvs.active_layer):
-			cvs._hint("当前图层已锁定：解锁后再移动出生点")
+		if cvs.is_layer_locked(cvs.collision_index()):
+			cvs._hint("根碰撞层已锁定：解锁后再移动出生点")
 			return
-		_spawn_moved = false   # 撤销快照推迟到首次真移动前才压（点击不动 = 零副作用）
 		cvs._spawn_origin = (cvs.spawn as Node2D).position
 		cvs.begin_gesture(cvs.Gesture.SPAWN_DRAG, MOUSE_BUTTON_LEFT)
 		cvs._drag_start = pos
@@ -359,8 +348,7 @@ func _on_right_press(pos: Vector2, shift := false, alt := false) -> void:
 				cvs._link_hover = ""
 				cvs._link_can_clear = false
 			cvs.Gesture.SPAWN_DRAG:
-				if _spawn_moved:
-					cvs._mark()   # 与左键松手同语义：动过才置脏
+				cvs.finish_spawn_drag()
 		cvs.end_gesture()
 	# 顶点删点（R-02）：右键顶点 = 删点，优先于擦除（poly≥3/path≥2 保底在实现里）
 	if not cvs._is_grid_layer(cvs.active_layer) and cvs._delete_vertex_at(pos):
@@ -394,9 +382,10 @@ func _on_left_release(pos: Vector2) -> void:
 			cvs._finish_region_move()
 			cvs.end_gesture()
 		cvs.Gesture.SPAWN_DRAG:
+			if pos != cvs._drag_start:
+				cvs._drag_spawn_to(pos)
 			cvs.end_gesture()
-			if _spawn_moved:
-				cvs._mark()   # 点击不动零副作用：不置脏、不无效化索引、不丢重做栈
+			cvs.finish_spawn_drag()
 		cvs.Gesture.ENTITY_DRAG:
 			if cvs._drag_entity != null and is_instance_valid(cvs._drag_entity):
 				cvs._finish_entity_drag()

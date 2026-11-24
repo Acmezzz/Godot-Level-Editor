@@ -113,7 +113,7 @@ func redo() -> bool:
 func _is_patch(entry) -> bool:
 	if not (entry is Dictionary):
 		return false
-	return str((entry as Dictionary).get("kind", "")) in ["delta", "ents", "content", "region_move"]
+	return str((entry as Dictionary).get("kind", "")) in ["delta", "ents", "content", "region_move", "spawn"]
 
 
 ## 条目 → 状态（undo 用 forward=false，redo 用 true）。返回是否真的应用了。
@@ -130,6 +130,8 @@ func _apply_entry(entry, forward: bool) -> bool:
 				return _restore_content(d, forward)
 			"region_move":
 				_restore_region_move(d, forward)
+			"spawn":
+				_apply_spawn_position(d.after if forward else d.before)
 		return true
 	await _restore(entry)
 	return true
@@ -463,6 +465,18 @@ func commit_region_move(entry: Dictionary, uncoded_positions: Dictionary) -> voi
 	_restore_region_move(entry, true, not uncoded_positions.is_empty())
 	if uncoded_positions.is_empty():
 		_push_entry(entry)
+
+func commit_spawn_position(before: Vector2, after: Vector2) -> bool:
+	if before == after:
+		return false
+	_push_entry({"kind": "spawn", "before": before, "after": after})
+	_apply_spawn_position(after)
+	return true
+
+func _apply_spawn_position(position: Vector2) -> void:
+	cvs.spawn.position = position
+	cvs._mark_map()
+	cvs.queue_redraw()
 
 func _restore_region_move(entry: Dictionary, forward: bool, uncoded_changed := false) -> void:
 	var field := "after" if forward else "before"

@@ -129,6 +129,8 @@ static func open(app, capability: String, options: Dictionary, snapshot: Callabl
 				notice.text = pick_error
 			elif picks.regions.is_empty():
 				notice.text += " · 游戏未提供可拾取区域"
+			elif mode == "collision" and not picks.regions.any(func(region): return not region.collision.is_empty()):
+				notice.text += " · 游戏未提供根空间映射"
 			elif interaction != null:
 				notice.text = interaction.message()
 			else:

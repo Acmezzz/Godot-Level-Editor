@@ -2503,10 +2503,38 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 	check(not _frame_contour_props(cvs, outline.code).has("parts"), "confirmation removes the selected extra outer ring")
 	check(await cvs.undo() and _frame_contour_props(cvs, outline.code).has("parts"), "one undo restores the extra outer ring")
 	check(await cvs.undo() and _frame_contour_props(cvs, outline.code) == compound, "the next undo restores the hole")
+	var before_spawn: Array = cvs.extract().spawn
+	var root: Node2D = cvs.map_root
+	var steps: int = cvs.undo_step_count()
+	var mouse := InputEventMouseButton.new()
+	mouse.button_index = MOUSE_BUTTON_LEFT
+	var origin: Vector2 = cvs.spawn.get_global_position()
+	var target: Vector2 = cvs.to_layer_world(cvs.collision_index(), cvs.grid.cell_center_px(Vector2i(6, 4)))
+	cvs.place_kind = "object"
+	cvs._canvas_input_ctrl._on_left_press(origin, mouse)
+	cvs._drag_spawn_to(target)
+	check(cvs.cancel_preview_gesture() and cvs.extract().spawn == before_spawn and cvs.undo_step_count() == steps,
+		"cancelled canvas spawn drag restores its original position and history")
+	app._layout_ctrl._on_map_menu_id(22)
+	var spawn_pop := await _render_pick_frame(app)
+	if spawn_pop == null:
+		return
+	check(_click_pick_frame(spawn_pop, occluder).disabled, "the foreground prevents selecting a spawn behind it")
+	cvs.set_layer_locked(cvs.collision_index(), true)
+	check(_click_pick_frame(spawn_pop, Vector2(0.65, 0.25)).disabled, "root collision lock prevents moving spawn")
+	cvs.set_layer_locked(cvs.collision_index(), false)
+	apply = _click_pick_frame(spawn_pop, Vector2(0.65, 0.25))
+	check(not apply.disabled and cvs.extract().spawn == before_spawn and FileAccess.get_sha256(path) == original_hash,
+		"the projected spawn stays a draft until confirmed")
+	apply.pressed.emit()
+	await process_frame
+	check(cvs.extract().spawn == [5, 3] and cvs.undo_step_count() == steps + 1, "spawn uses root coordinates from the perspective view")
+	check(await cvs.undo() and cvs.extract().spawn == before_spawn and cvs.map_root == root, "undo restores the root spawn in place")
+	check(await cvs.redo() and cvs.extract().spawn == [5, 3] and cvs.map_root == root, "redo reapplies the root spawn in place")
 	var saved: Dictionary = await app._map_file_ctrl.commit_document("保存实景落点及连接")
 	check(saved.get("status") == "ok", "publish positions and port selected from the game frame")
 	await app._load_map_file(path)
-	check(cvs.extract().tiles == final_tiles, "mapped paint and erase survive save and reopen")
+	check(cvs.extract().tiles == final_tiles and cvs.extract().spawn == [5, 3], "mapped tile edits and spawn survive save and reopen")
 	var report := await launch_and_read(app, false)
 	var result: Dictionary = report.get("result", {})
 	var picks: Array = result.get("picks", [])
@@ -2514,6 +2542,7 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 		and absf(float(picks[1].point[0]) - (48.0 + (48.0 + 32.0 / 7.0) * 1.5)) < 0.02
 		and absf(float(picks[1].point[1]) - (16.0 + (32.0 + 64.0 / 7.0) * 1.5)) < 0.02
 		and result.get("opened") == doors[1].code
+		and result.get("playerStart") == [88.0, 56.0]
 		and result.get("contours", []).size() == 1 and result.contours[0].props == compound,
 		"game reloads both view positions and the projected polygon, and opens the selected door: " + str(report))
 

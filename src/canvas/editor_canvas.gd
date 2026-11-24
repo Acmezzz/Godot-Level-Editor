@@ -548,11 +548,19 @@ func _on_spawn(pos: Vector2) -> bool:
 
 ## 拖动出生点：位置对齐到格中心（数据只存格坐标，浮点位置保存会被取整回去）
 func _drag_spawn_to(pos: Vector2) -> void:
-	if spawn == null or not is_instance_valid(spawn):
-		return
 	var c := root_cell(pos)
-	spawn.position = grid.cell_center_px(c)
-	queue_redraw()
+	if can_move_spawn_to(c):
+		spawn.position = grid.cell_center_px(c)
+		queue_redraw()
+
+func can_move_spawn_to(cell: Vector2i) -> bool:
+	return not is_layer_locked(collision_index()) and grid.cell_in_map(cell, int(map_data.meta.w), int(map_data.meta.h))
+
+func set_spawn_cell(cell: Vector2i) -> bool:
+	return can_move_spawn_to(cell) and _undo_history_ctrl.commit_spawn_position(spawn.position, grid.cell_center_px(cell))
+
+func finish_spawn_drag() -> void:
+	_undo_history_ctrl.commit_spawn_position(_spawn_origin, spawn.position)
 
 # —— 坐标换算 ——
 ## 转发：选区命中跨层（顶层向下取第一个）；tool_ops 擦除用单层版

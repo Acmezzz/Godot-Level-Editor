@@ -70,7 +70,13 @@ func _ready() -> void:
 						anchor = Vector2(offset[0], offset[1]) + anchor * float(map.meta.layers[i].get("scale", 1.0))
 						lanes.append({"lane": i, "point": [anchor.x, anchor.y], "door": row.code})
 			var contours: Array = map.objects.filter(func(row): return row.asset == "free-ramp")
-			_report("ready", "", {"picks": lanes, "opened": _activate_switch(map, manifest), "contours": contours})
+			var start := Vector2i(int(map.spawn[0]), int(map.spawn[1]))
+			var player := Node2D.new()
+			var grid: Grid = Grid.resolve(map.meta, manifest).grid
+			player.position = grid.cell_center_px(start)
+			add_child(player)
+			_report("ready", "", {"picks": lanes, "opened": _activate_switch(map, manifest), "contours": contours,
+				"playerStart": [player.position.x, player.position.y]})
 		elif map.get("meta", {}).get("name") == "rule_hex" and not map.meta.get("cellGraph", {}).is_empty():
 			var route := _check_floor_route(map)
 			if route.is_empty():

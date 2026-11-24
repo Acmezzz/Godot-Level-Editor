@@ -58,6 +58,19 @@ static func open_object_edit(app) -> void:
 			"interaction": ObjectEdit.new(app.canvas), "tools": ObjectEdit.TOOLS,
 			"confirm_label": "应用调整", "refresh_on_apply": true})
 
+static func open_spawn(app) -> void:
+	var choose := func(value: Dictionary) -> Dictionary:
+		var canvas: EditorCanvas = app.canvas
+		var cell: Vector2i = canvas.grid.pick_cell(value.point)
+		if not canvas.can_move_spawn_to(cell):
+			return {"text": "出生点须在地图内，且根碰撞层须解锁。"}
+		if canvas.grid.pick_cell(canvas.spawn.position) == cell:
+			return {"text": "出生点已在此格。"}
+		return {"text": "将关卡出生点设在根格 (%d, %d)。" % [cell.x, cell.y],
+			"apply": func(): return canvas.set_spawn_cell(cell)}
+	_open(app, "collision", choose, {"title": "实景设置出生点", "confirm_label": "应用出生点",
+		"initial": "渲染后，点击有根空间映射的地点，再确认出生点。"})
+
 static func open_reference(app, decl: Dictionary, resolve: Callable, commit: Callable) -> void:
 	var mode := FieldWidgets.pick_mode(decl)
 	var source := decl.duplicate()
