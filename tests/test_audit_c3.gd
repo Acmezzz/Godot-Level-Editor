@@ -96,14 +96,15 @@ func test_content_usage_and_inbound_refs() -> void:
 	(d.objects as Array).append({"asset": "door", "code": "E2", "layer": str(d.meta.layers[0].id),
 		"x": 1, "y": 0, "functions": [{"fn": "F222", "content": "AAA1"}]})
 	MapStore.write(m, "m1", d)
-	var u := ReferenceUsage.content_usage(m, "f1", "AAA1")
-	var by_map: Dictionary = u.get("by_map", {})
+	var u := ReferenceUsage.inbound_content(m, "f1", "AAA1")
+	var by_map: Dictionary = u.edges.instances
 	eq(by_map.size(), 1, "统计到一张图")
 	eq((by_map["m1"] as Array).size(), 1, "只算功能码匹配的那个实例（同内容 ID 的另一功能不算）")
 	ok((by_map["m1"] as Array).has("E1"), "实例码正确")
 	# 当前图以画布为准：磁盘上没引用、画布上新绑的也算
-	var u2 := ReferenceUsage.content_usage(m, "f1", "AAA1", "m1", ["E9"])
-	ok(((u2.get("by_map", {}) as Dictionary)["m1"] as Array).has("E9"), "当前画布未保存绑定计入")
+	var live := {"objects": [{"code": "E9", "functions": [{"fn": "F111", "content": "AAA1"}]}]}
+	var u2 := ReferenceUsage.inbound_content(m, "f1", "AAA1", "m1", live)
+	ok(u2.edges.instances["m1"].has("E9"), "当前画布未保存绑定计入")
 	# 内容间引用：BBB2 的字段指向 AAA1
 	var inbound := ReferenceUsage.content_inbound_refs(m, "f1", "AAA1")
 	eq(inbound.size(), 1, "内容间入边一条")

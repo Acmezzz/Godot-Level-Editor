@@ -984,34 +984,10 @@ func _open_lib(i: int) -> void:
 		app._open_popup(pop)
 		return
 
-	# —— 名称筛选（E3）+ 引用状态筛选（C2）——
 	var filter := LineEdit.new()
-	filter.placeholder_text = "筛选：名称或 id"
+	filter.placeholder_text = "筛选：名称或 ID"
 	filter.clear_button_enabled = true
-	var state_opt := OptionButton.new()
-	state_opt.add_item("全部")
-	state_opt.add_item("被引用")
-	state_opt.add_item("未被引用")
-	state_opt.tooltip_text = "按入边数筛选：被引用 = 至少一条绑定或内容入边（◆n 后缀）"
-	var state_row := Kit.hbox(6)
-	state_row.add_child(filter)
-	state_row.add_child(state_opt)
-	body.add_child(state_row)
-
-	# C2：批量引用扫描（一次读盘）——筛选与行详情共用；活体绑定从画布收集
-	var live_binds: Array = []
-	if _map_ready():
-		var fcode := FunctionDecls.fn_code(manifest, fn_id)
-		for ent_row in host._entities():
-			for fb in ((ent_row as Dictionary).get("fns", []) as Array):
-				if not (fb is Dictionary):
-					continue
-				if str((fb as Dictionary).get("content", "")) == "":
-					continue
-				if fcode != "" and str((fb as Dictionary).get("fn", "")) != fcode:
-					continue
-				live_binds.append({"cid": str((fb as Dictionary).get("content", "")), "code": str((ent_row as Dictionary).get("code", ""))})
-	var bulk := ReferenceUsage.content_edges_bulk(manifest, fn_id, ids, app.canvas.cur_map_name, live_binds)
+	body.add_child(filter)
 
 	var list := ItemList.new()
 	list.custom_minimum_size = Vector2(0, 200)
@@ -1021,10 +997,8 @@ func _open_lib(i: int) -> void:
 	# 每行的 {cid, name}：筛选重填时名字从这份快照取（不逐项重读盘）
 	var rows: Array = []
 	for cid in ids:
-		var d := ContentStore.read(manifest, fn_id, str(cid))
-		var bulk_refs: Dictionary = bulk.get("refs", {})
-		var bref: Dictionary = (bulk_refs.get(str(cid), {}) if bulk_refs.has(str(cid)) else {"n": 0})
-		rows.append({"cid": str(cid), "name": str(d.get("name", "")), "n": int(bref.get("n", 0))})
+		var name := str(_content_read(fn_id, str(cid)).get("name", ""))
+		rows.append({"cid": str(cid), "name": name})
 	body.add_child(list)
 
 	var refill := func():
@@ -1035,13 +1009,7 @@ func _open_lib(i: int) -> void:
 			var nm := str((r as Dictionary).get("name", ""))
 			if q != "" and not cid.to_lower().contains(q) and not nm.to_lower().contains(q):
 				continue
-			# C2：引用状态筛选 + 入边数后缀（◆n = 绑定实例+内容入边总数）
-			var n: int = int((r as Dictionary).get("n", 0))
-			if state_opt.selected == 1 and n == 0:
-				continue
-			if state_opt.selected == 2 and n > 0:
-				continue
-			var it := list.add_item(((nm + "  ·  " + cid) if nm != "" else cid) + ("  ◆%d" % n if n > 0 else ""))
+			var it := list.add_item((nm + "  ·  " + cid) if nm != "" else cid)
 			list.set_item_metadata(it, cid)
 			if nm == "":
 				list.set_item_custom_fg_color(it, Th.TEXT_MUTE)
@@ -1087,20 +1055,16 @@ func _open_lib(i: int) -> void:
 	rename_row.add_child(del_btn)
 	# C2：共享改绑——本实例改绑到选中的已有内容（沿用同一 ID），前显示受影响实例
 	var share_btn := Kit.button("共享改绑…", func(): _share_rebind(i, fn_id, picked[0]), "ghost")
-	share_btn.tooltip_text = "本实例改绑到选中内容（不再复制新 ID）；确认框列出正被谁引用"
+	share_btn.tooltip_text = "本实例直接引用选中内容，沿用同一 ID"
 	rename_row.add_child(share_btn)
 	body.add_child(rename_row)
 
 	filter.text_changed.connect(func(_t: String): refill.call())
-	state_opt.item_selected.connect(func(_i: int): refill.call())
 	refill.call()
 
 	var name_edit := LineEdit.new()
 	name_edit.placeholder_text = "新内容显示名"
 	body.add_child(Kit.field_row("新名字", name_edit, 56))
-	# C2：行详情——选中条目的绑定实例与内容入边（bulk 一次读盘的结果）
-	var edges_lbl := Kit.hint_label("选中条目后这里显示绑定与入边。", RIGHT_W - 40)
-	body.add_child(edges_lbl)
 	list.item_selected.connect(func(idx: int):
 		var cid := str(list.get_item_metadata(idx))
 		picked[0] = cid
@@ -1109,11 +1073,8 @@ func _open_lib(i: int) -> void:
 			if str((r as Dictionary).get("cid", "")) == cid:
 				nm = str((r as Dictionary).get("name", ""))
 				break
-		if nm == "":
-			nm = str(ContentStore.read(manifest, fn_id, cid).get("name", ""))
 		name_edit.text = (nm if nm != "" else cid) + " 副本"
-		rename_edit.text = nm
-		edges_lbl.text = _lib_edges_text(cid, bulk))
+		rename_edit.text = nm)
 
 	var on_ok := func():
 		if not _form_binding_matches(i, target) or not commit() or not _form_binding_matches(i, target):
@@ -1161,55 +1122,16 @@ func _rename_library_item(fn_id: String, cid: String, new_name: String) -> bool:
 	_refresh_status_only()
 	return true
 
-## E3：库内删除——先跑 C3 引用检查。三条拦截线：
-##   ① 有地图/实例仍引用该内容（含当前画布的未保存绑定）→ 列出后停住；
-##   ② 其它内容的引用字段指向它（内容间入边）→ 删除会让那些引用悬空；
-##   ③ 有未扫描/读不出的文件（地图或内容）→ 范围不完整，只提示不动手。
-## 全部通过才走确认框并删文件（内容文件有 .history 备份可找回）。
-## 返回是否真的删了（调用方据此从列表快照里去掉该行）。
-## C2：行详情文本：绑定实例与 content 入边（bulk 一次读盘的结果）。
-func _lib_edges_text(cid: String, bulk: Dictionary) -> String:
-	var bulk_refs: Dictionary = bulk.get("refs", {})
-	var refd: Dictionary = bulk_refs.get(cid, {}) if bulk_refs.has(cid) else {"instances": {}, "contents": [], "n": 0}
-	var inst: Dictionary = refd.get("instances", {})
-	var parts: Array[String] = []
-	for mn in inst:
-		parts.append("%s × %d" % [str(mn), (inst[mn] as Array).size()])
-	var out := "绑定：%s" % ("、".join(parts) if not parts.is_empty() else "无")
-	var cs: Array = refd.get("contents", [])
-	var clines: Array[String] = []
-	for c in cs:
-		clines.append("%s/%s.%s" % [str((c as Dictionary).get("kind", "")), str((c as Dictionary).get("id", "")), str((c as Dictionary).get("field", ""))])
-	for ref in refd.get("views", []):
-		clines.append("参考视图 %s · %s" % [ref.view, ref.path])
-	if not clines.is_empty():
-		out += "
-入边：" + "、".join(clines)
-	if int(refd.get("n", 0)) == 0:
-		out += "
-（未被任何实例、内容或参考视图引用）"
-	return out
-
-## C2：共享改绑：本实例改绑到已有内容 ID（沿用同一 ID），先弹确认框列受影响实例。
+## 本实例只改内容 ID，继续共享同一份内容。
 func _share_rebind(i: int, fn_id: String, cid: String) -> void:
 	if cid == "":
 		app._set_status(" 先选一条内容")
 		return
-	if str(((_current_fns()[i] if i >= 0 and i < _current_fns().size() else {}) as Dictionary).get("content", "")) == cid:
-		return
 	var rows := _current_fns()
-	if i < 0 or i >= rows.size() or not rows[i] is Dictionary:
+	if i < 0 or i >= rows.size() or not rows[i] is Dictionary or rows[i].get("content") == cid:
 		return
 	var target := {"entity": _current_spr(), "binding": rows[i], "doc": app._map_file_ctrl.document_key(), "scope": _content_scope_guard()}
-	var bulk := ReferenceUsage.content_edges_bulk(manifest, fn_id, [cid], app.canvas.cur_map_name, [])
-	var inst: Dictionary = ((bulk.get("refs", {}) as Dictionary).get(cid, {}) as Dictionary).get("instances", {})
-	var parts: Array[String] = []
-	var total := 0
-	for mn in inst:
-		var codes: Array = inst[mn]
-		total += codes.size()
-		parts.append("%s × %d" % [str(mn), codes.size()])
-	var shell: Dictionary = app._popup_body("共享已有内容", "这条内容正被 %d 个实例绑定（%s）。改绑后它们与本实例共用同一内容 ID，字段改动一起生效。" % [total, "、".join(parts) if not parts.is_empty() else "无"])
+	var shell: Dictionary = app._popup_body("共享已有内容", "改绑后共用同一内容 ID。编辑这份内容时，所有引用它的实例都会读到改动。")
 	var pop: PopupPanel = shell.pop
 	var body: VBoxContainer = shell.body
 	body.add_child(Kit.hint_label("目标内容：" + cid + "（沿用此 ID，不再复制）", RIGHT_W - 40))
@@ -1232,20 +1154,10 @@ func _share_rebind(i: int, fn_id: String, cid: String) -> void:
 	app._open_popup(pop)
 
 ## R14：删除前的全部入边检查（活体绑定 / 暂存 / 草稿 / 内容间引用 / 范围完整性）。
-## 返回 "" = 可以删；非空 = 中止原因（可直接给状态栏）。确认弹窗前后各跑一次（复验）。
+## 返回 "" = 可以删；非空 = 中止原因（可直接给状态栏）。
 func _delete_blocked_reason(fn_id: String, cid: String) -> String:
 	if manifest.get("startup", {}).get("target", {}) == {"function": fn_id, "content": cid}:
 		return " 删除中止：此内容是正式启动入口。请先更换或清除入口。"
-	# 当前画布的**全部**活体绑定都算引用（磁盘是旧的）——不只当前选中实例。
-	var live_codes: Array = []
-	var fcode := FunctionDecls.fn_code(manifest, fn_id)
-	if _map_ready():
-		for row in host._entities():
-			for f in (row.get("fns", []) as Array):
-				if f is Dictionary and str((f as Dictionary).get("content", "")) == cid \
-						and (fcode == "" or str((f as Dictionary).get("fn", "")) == fcode):
-					live_codes.append(str(row.get("code", "")))
-					break
 	# R14：暂存内容的引用字段也指得到它（未落盘的入边）。
 	var staged_refs: Array = []
 	for row2 in staged_rows_for_current_doc():
@@ -1254,10 +1166,8 @@ func _delete_blocked_reason(fn_id: String, cid: String) -> String:
 		if not ReferenceUsage.content_link_paths(manifest, str(row2.fn_id), row2.data, fn_id, cid).is_empty():
 			staged_refs.append("%s/%s" % [row2.fn_id, row2.cid])
 	var cur_map := str(app.cur_map_name) if app.map_loaded else ""
-	# B2（§7.2）：删除入边全景统一走 ReferenceIndex.inbound_content——
-	# 磁盘地图/内容/草稿三路入边 + 读不全源，审计与删除共用同一套解析结果。
 	var live_map: Dictionary = app.canvas.extract() if _map_ready() else {}
-	var ref: Dictionary = ReferenceUsage.inbound_content(manifest, fn_id, cid, cur_map, live_codes, live_map)
+	var ref := ReferenceUsage.inbound_content(manifest, fn_id, cid, cur_map, live_map)
 	if not bool(ref.get("complete", false)):
 		return " 删除中止：检查范围不完整——%s。先修好这些文件再试" % \
 			"；".join(PackedStringArray((ref.get("unreadable_sources", []) as Array).map(
@@ -1305,19 +1215,14 @@ func _delete_blocked_reason(fn_id: String, cid: String) -> String:
 	return ""
 
 func _delete_library_item(fn_id: String, cid: String) -> bool:
+	var current := _content_scope_guard()
+	var nm := str(_content_read(fn_id, cid).get("name", ""))
+	var text := "删除内容「%s」(%s)？编辑器会先检查引用，删除前保留备份。" % [nm if nm != "" else cid, cid]
+	if not await app._confirm_action("删除内容", text, "删除") or not current.call():
+		return false
 	var reason := _delete_blocked_reason(fn_id, cid)
 	if reason != "":
 		app._set_status(reason)
-		return false
-	var nm := str(_content_read(fn_id, cid).get("name", ""))
-	var text := "将删除内容「%s」(%s)。\n\n编辑器未发现实例或内容引用。游戏侧按 ID 直接加载的入口请先确认仍可运行。文件会从 content/%s/ 移除（.history 有备份）。" % [
-		nm if nm != "" else cid, cid, fn_id]
-	if not await app._confirm_action("删除内容", text, "删除"):
-		return false
-	# R14：确认后复验——对话框期间引用情况可能变化；变了就中止（重试会再报告原因）
-	var reason2 := _delete_blocked_reason(fn_id, cid)
-	if reason2 != "":
-		app._set_status(" 删除中止：确认后引用情况发生变化——%s" % reason2)
 		return false
 	# §7.2：删除前由存储层先轮转历史快照；拿不到快照就拒绝删（不静默丢可回滚性）
 	var rm: Dictionary = ContentStore.remove_ex(manifest, fn_id, cid)

@@ -14,74 +14,56 @@ const StepDecls := preload("res://src/content/step_decl.gd")
 const RefFields := preload("res://src/content/ref_fields.gd")
 const ReferenceIndex := preload("res://src/project/reference_index.gd")
 
-static func content_usage(manifest: Dictionary, fn_id: String, cid: String,
-		current_map := "", current_codes: Array = [], live_map := {}) -> Dictionary:
+## 检查正式地图和未保存画布，避免删除后任意一份数据变成悬空引用。
+static func _map_content_usage(manifest: Dictionary, fn_id: String, cid: String,
+		current_map: String, live_map: Dictionary, unreadable: Array) -> Dictionary:
 	var by_map := {}
 	var bad: Array = []
-	# R29：删除前引用图驱动破坏性动作，读磁盘实际内容（不走浏览缓存）
 	var maps := MapStore.read_all_fresh(manifest, bad)
-	var want_code := FunctionDecls.fn_code(manifest, fn_id)
+	for item in bad:
+		unreadable.append("地图 %s 读不出来" % item.name)
 	var target := {"function": fn_id, "content": cid}
-	var live_codes := current_codes.duplicate()
-	for ref in _map_property_refs(manifest, live_map, ["flow_target"]):
-		if ref.value is Dictionary and ref.value == target and not live_codes.has(ref.code):
-			live_codes.append(ref.code)
-	# V4 P0-4：当前图不能整张跳过。画布上的活体绑定可能已被解除，而磁盘正式文件里
-	# 仍有绑定——永久删除后放弃地图改动，正式图就会恢复成悬空引用。因此当前图的
-	# 磁盘命中与活体命中取并集。
-	for map_name in maps:
-		var is_current := current_map != "" and str(map_name) == current_map
-		var rows: Array = []
-		for ref in _map_property_refs(manifest, maps[map_name], ["flow_target"]):
-			if ref.value is Dictionary and ref.value == target and not rows.has(ref.code):
-				rows.append(ref.code)
-		for obj in ((maps[map_name] as Dictionary).get("objects", []) as Array):
-			if not (obj is Dictionary):
-				continue
-
-			for f in ((obj as Dictionary).get("functions", []) as Array):
-				if not (f is Dictionary):
-					continue
-				if str((f as Dictionary).get("content", "")) != cid:
-					continue
-				if want_code != "" and str((f as Dictionary).get("fn", "")) != want_code:
-					continue
-				var code := str(obj.get("code", ""))
-				if not rows.has(code):
-					rows.append(code)
-				break
-		if is_current:
-			# 活体绑定也并入（磁盘是旧的：未保存的新绑定同样必须在报告里）
-			for c in live_codes:
-				if str(c) != "" and not rows.has(str(c)):
-					rows.append(str(c))
+	var fn_code := FunctionDecls.fn_code(manifest, fn_id)
+	for name in maps:
+		var rows := _map_content_refs(manifest, maps[name], target, fn_code)
 		if not rows.is_empty():
-			by_map[str(map_name)] = rows
-	# 新建未保存的图不在磁盘列表里：活体命中仍要计入（否则删除检查看不到它）
-	if current_map != "" and not by_map.has(current_map):
-		var lone: Array = []
-		for c in live_codes:
-			if str(c) != "":
-				lone.append(str(c))
-		if not lone.is_empty():
-			by_map[current_map] = lone
-	var unreadable: Array = []
-	for b in bad:
-		unreadable.append(str((b as Dictionary).get("name", "")))
-	# 内容文件自身读不出来时「有没有内容引用它」同样不可判定
-	var bad_contents: Array = []
-	for kind in ContentStore.declared_kinds(manifest):
-		var bad2: Array = []
-		ContentStore.read_all(manifest, kind, bad2)
-		for b2 in bad2:
-			bad_contents.append("%s/%s" % [kind, str((b2 as Dictionary).get("name", ""))])
-	return {"by_map": by_map, "unreadable": unreadable, "bad_contents": bad_contents,
-		"incomplete": not unreadable.is_empty() or not bad_contents.is_empty()}
+			by_map[name] = rows
+	if current_map != "":
+		var rows: Array = by_map.get(current_map, [])
+		for source in _map_content_refs(manifest, live_map, target, fn_code):
+			if not rows.has(source):
+				rows.append(source)
+		if not rows.is_empty():
+			by_map[current_map] = rows
+	return by_map
 
-static func content_inbound_refs(manifest: Dictionary, fn_id: String, cid: String) -> Array:
+static func _map_content_refs(manifest: Dictionary, data: Dictionary, target: Dictionary,
+		fn_code: String) -> Array:
+	var rows: Array = []
+	for ref in _map_property_refs(manifest, data, ["flow_target"]):
+		if ref.value == target and not rows.has(ref.code):
+			rows.append(ref.code)
+	if fn_code != "":
+		for obj in data.get("objects", []):
+			if not obj is Dictionary:
+				continue
+			var code := str(obj.get("code", ""))
+			if code == "" or rows.has(code):
+				continue
+			for binding in obj.get("functions", []):
+				if binding is Dictionary and binding.get("fn") == fn_code and binding.get("content") == target.content:
+					rows.append(code)
+					break
+	return rows
+
+static func content_inbound_refs(manifest: Dictionary, fn_id: String, cid: String,
+		unreadable: Array = []) -> Array:
 	var out: Array = []
 	for kind in ContentStore.declared_kinds(manifest):
-		var items := ContentStore.read_all(manifest, kind)
+		var bad: Array = []
+		var items := ContentStore.read_all(manifest, kind, bad)
+		for item in bad:
+			unreadable.append("内容 %s/%s 读不出来" % [kind, item.name])
 		for id in items:
 			if kind == fn_id and id == cid:
 				continue
@@ -412,84 +394,19 @@ static func asset_draft_refs(manifest: Dictionary, asset_id: String, bad: Array 
 			out.append(key)
 	return out
 
-static func content_edges_bulk(manifest: Dictionary, fn_id: String, cids: Array,
-		cur_map := "", live_binds: Array = []) -> Dictionary:
-	var refs := {}
-	for c in cids:
-		if str(c) != "":
-			refs[str(c)] = {"instances": {}, "contents": [], "views": [], "n": 0}
-	var instance_sets := {}
-	var want_code := FunctionDecls.fn_code(manifest, fn_id)
-	var bad: Array = []
-	var maps := MapStore.read_all(manifest, bad)
-	for map_name in maps:
-		for obj in maps[map_name].get("objects", []):
-			if not obj is Dictionary:
-				continue
-			for f in obj.get("functions", []):
-				if not f is Dictionary or (want_code != "" and str(f.get("fn", "")) != want_code):
-					continue
-				var cid := str(f.get("content", ""))
-				if refs.has(cid):
-					_collect_content_instance(instance_sets, cid, str(map_name), str(obj.get("code", "")))
-	for live in live_binds:
-		var cid := str(live.get("cid", ""))
-		if refs.has(cid):
-			_collect_content_instance(instance_sets, cid, cur_map, str(live.get("code", "")))
-	for cid in instance_sets:
-		for map_name in instance_sets[cid]:
-			var codes: Array = instance_sets[cid][map_name].keys()
-			refs[cid].instances[map_name] = codes
-			refs[cid].n += codes.size()
-	var unreadable: Array = []
-	for b in bad:
-		unreadable.append("地图 %s 读不出来" % str(b))
-	for kind in ContentStore.declared_kinds(manifest):
-		var bad_content: Array = []
-		var items := ContentStore.read_all(manifest, kind, bad_content)
-		for b in bad_content:
-			unreadable.append("内容 %s/%s 读不出来" % [kind, b.name])
-		for oid in items:
-			for ref in _content_links(manifest, kind, items[oid]):
-				if ref.fn != fn_id or not refs.has(ref.cid) or (kind == fn_id and oid == ref.cid):
-					continue
-				var target: Dictionary = refs[ref.cid]
-				target.contents.append({"kind": kind, "id": oid, "field": ref.path})
-				target.n += 1
-	for ref in ReferenceIndex.view_content_refs(manifest):
-		if ref.fn == fn_id and refs.has(ref.cid):
-			refs[ref.cid].views.append(ref)
-			refs[ref.cid].n += 1
-	return {"refs": refs, "unreadable": unreadable}
-
-static func _collect_content_instance(sets: Dictionary, cid: String, map_name: String, code: String) -> void:
-	if map_name == "" or code == "":
-		return
-	if not sets.has(cid):
-		sets[cid] = {}
-	if not sets[cid].has(map_name):
-		sets[cid][map_name] = {}
-	sets[cid][map_name][code] = true
-
-## 入边全景（§7.2 inbound）：内容 (fn_id, cid) 的全部入边，破坏性检查共用这一个入口。
-## edges = {instances: {地图名: [实例码]}, contents: [{kind,id,field}], views: [热点引用], drafts: [草稿键]}；
-## complete=false 时 unreadable_sources 列出读不全的源（删除/清理必须拦截，D07 口径）。
-## 暂存（会话内未落盘）的入边由调用方自行并入（见 content_form._delete_blocked_reason）。
+## 内容删除前的来向。地图与内容各读一次，工作副本也计入。
 static func inbound_content(manifest: Dictionary, fn_id: String, cid: String,
-		cur_map := "", live_codes: Array = [], live_map := {}) -> Dictionary:
-	var usage: Dictionary = content_usage(manifest, fn_id, cid, cur_map, live_codes, live_map)
+		cur_map := "", live_map := {}) -> Dictionary:
 	var unreadable: Array = []
-	for u in (usage.get("unreadable", []) as Array):
-		unreadable.append("地图 %s 读不出来" % str(u))
-	for bc in (usage.get("bad_contents", []) as Array):
-		unreadable.append(str(bc))
+	var instances := _map_content_usage(manifest, fn_id, cid, cur_map, live_map, unreadable)
+	var contents := content_inbound_refs(manifest, fn_id, cid, unreadable)
 	var target := {"function": fn_id, "content": cid}
 	return {
 		"complete": unreadable.is_empty(),
 		"unreadable_sources": unreadable,
 		"edges": {
-			"instances": usage.get("by_map", {}),
-			"contents": content_inbound_refs(manifest, fn_id, cid),
+			"instances": instances,
+			"contents": contents,
 			"views": ReferenceIndex.view_content_refs(manifest).filter(func(ref): return ref.fn == fn_id and ref.cid == cid),
 			"project_slots": (ProjectSlots.references(manifest) + EventLayers.references(manifest)).filter(
 				func(ref): return ref.target == target),
