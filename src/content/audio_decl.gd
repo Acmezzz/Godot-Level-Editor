@@ -35,18 +35,18 @@ static func preview_relative_path(value: String) -> String:
 		rel = rel.substr(6)
 	return "" if rel.is_absolute_path() or ":" in rel or ".." in rel.split("/") else rel
 
-## 内容字段存执行码。旧内容可能使用人类 ID；码优先，拒绝重复码的歧义。
-static func from_value(m: Dictionary, value: String) -> Dictionary:
-	if value == "":
+## 音频引用只按执行码解析。
+static func by_code(m: Dictionary, code: String) -> Dictionary:
+	if code == "":
 		return {}
 	var all := audio(m)
 	var matched := {}
 	for row in all.values():
-		if row.code == value:
+		if row.code == code:
 			if not matched.is_empty():
 				return {}
 			matched = row
-	return matched if not matched.is_empty() else all.get(value, {})
+	return matched
 
 ## 补发音频条目缺失的执行码（池内避开已占用码），就地修改，返回是否有改动。
 ## 只补「空」的，不碰重复码——重复由校验报错（与 function_decl 同一纪律）。

@@ -14,8 +14,7 @@ extends RefCounted
 ##
 ## 可验证约束（测试按这些断言，不靠读实现猜）：
 ##   - 只有 is_ref=true 的字段参与复制重映射与悬空检查；普通字符串永不按「恰好等于某实例码」改写。
-##   - mapField 按**人类字段 id** 找兄弟声明；值按配对声明的 **code 优先、id 兜底**读
-##     （内容/步骤的键是 code，实例 props 的键是 id）。配对字段缺失 = 作用域退回本图，不报错。
+##   - mapField 按声明 ID 找兄弟字段，再按宿主的存储键读值。未填写时使用本图。
 ##   - 地图键解析统一走 ReferenceIndex.resolve_map：**一码多图不猜**（status=ambiguous，
 ##     候选进审计），缺键 = missing，两者在候选列表里都返回空数组——控件保留原值显示，
 ##     绝不把读不到的目标静默改写成空串。
@@ -378,7 +377,7 @@ static func local_entity_refs(ad: Dictionary, props: Dictionary,
 	var fdecls: Array = ad.get("fields", []) if ad.get("fields", []) is Array else []
 	for fd in ref_fields(ad):
 		var f: Dictionary = fd
-		var pair := paired_map_value(f, fdecls, props)
+		var pair := paired_map_value(f, fdecls, props, "id")
 		if not map_key_local(pair, cur_code):
 			continue
 		out.append({"fd": f, "value": str(props.get(str(f.get("id", "")), ""))})
@@ -417,8 +416,7 @@ static func _sibling_decl(want: String, siblings: Array) -> Dictionary:
 			return fd
 	return {}
 
-## 读配对地图字段的当前值：值键优先用配对声明的 code，缺省退回它的 id
-## （实例 props 的键是 id；内容/步骤的键是 code）。
+## 已有字段码的内容按码取值；实例属性和未配置码的记录子字段使用声明 ID。
 static func paired_map_value(decl: Dictionary, siblings: Array, values: Dictionary, key_mode := "code") -> String:
 	return _sibling_value(paired_map_decl(decl, siblings), values, key_mode)
 
@@ -445,19 +443,17 @@ static func _sibling_value(pm: Dictionary, values: Dictionary, key_mode: String,
 	if pm.is_empty():
 		return ""
 	var key := str(pm.get("code", "")) if key_mode == "code" else ""
-	if use_defaults:
-		var value = values.get(key if key != "" else str(pm.id), pm.get("default"))
-		return value if value is String else ""
-	if key == "" or not values.has(key):
+	if key == "":
 		key = str(pm.get("id", ""))
-	return str(values.get(key, "") if values.get(key, null) != null else "")
+	var value = values.get(key, pm.get("default") if use_defaults else null)
+	return value if value is String else ""
 
 ## 对象引用自己的地图优先，其次用同一行的配对值；两者为空由调用方取所属图。
 static func object_map_key(value: Dictionary, paired: String) -> String:
 	var key := str(value.get("map", ""))
 	return paired if key == "" else key
 
-## 地图键（地图码或图名）→ 该图里的实体实例 [{v: 实例码, t: 显示名, asset: 资产 id}]。
+## 地图码 → 该图里的实体实例 [{v: 实例码, t: 显示名, asset: 资产 id}]。
 ## want_types 非空时只列这些实体类型（entity_ref 的 of 过滤）。
 ## 读不到图/未知键返回空数组（引用控件保留原值显示，不静默改成空）。
 static func map_instances(manifest: Dictionary, map_key: String, want_types: Array = []) -> Array:

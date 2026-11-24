@@ -75,7 +75,7 @@ static func view_reference_issues(manifest: Dictionary, view_id := "") -> Array:
 				valid = views.has(ref.value)
 			"audio":
 				label = "音频"
-				valid = not AudioDecls.from_value(manifest, ref.value).is_empty()
+				valid = not AudioDecls.by_code(manifest, ref.value).is_empty()
 			"map":
 				label = "地图"
 				if map_index.is_empty():

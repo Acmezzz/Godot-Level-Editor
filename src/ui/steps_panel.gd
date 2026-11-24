@@ -924,7 +924,7 @@ func _sync_steps_clock(data: Dictionary) -> void:
 		if fr is Array:
 			_steps_preview_frames = fr
 	var audio_value := str(fields.get(str(refs.get("audioField", "")), ""))
-	_steps_audio = AudioDecls.from_value(manifest, audio_value)
+	_steps_audio = AudioDecls.by_code(manifest, audio_value)
 	if audio_value != "" and _steps_audio.is_empty():
 		_steps_clock_missing.append("音频码无法解析：%s" % audio_value)
 	if is_instance_valid(_steps_tl):
