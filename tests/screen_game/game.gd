@@ -105,6 +105,7 @@ func _show_map_target(destination: Dictionary) -> void:
 						_finish("The round host is missing from this board.")
 						return
 					entered_board["roundHost"] = host_code
+					entered_board["roundRelayPort"] = role_config.fields.get("RPOR", {})
 			entered_board["roundInputs"] = 0
 			var leave := Button.new()
 			leave.text = "Finish course (0/%d)" % required

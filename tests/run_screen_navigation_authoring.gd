@@ -64,7 +64,8 @@ func run() -> void:
 					"contentTypes": ["round_host"], "contentMapContext": "inherit"},
 				{"id": "retry", "code": "RTRY", "kind": "input", "type": "flow_target", "maps": true}]},
 			"round_host": {"code": "RHST", "name": "Round host", "fields": [
-				{"id": "host", "code": "HOST", "kind": "choice", "source": "entity_inst:relay"}]},
+				{"id": "host", "code": "HOST", "kind": "choice", "source": "entity_inst:relay"},
+				{"id": "relay_port", "code": "RPOR", "kind": "input", "type": "port_ref", "of": "signal"}]},
 			"signal": {"code": "SIGN", "name": "Signal", "fields": [
 			{"id": "text", "code": "TEXT", "kind": "input", "type": "string"},
 			{"id": "actor", "code": "ACTR", "kind": "choice", "source": "entity_inst:relay"},
@@ -381,6 +382,26 @@ func run() -> void:
 		and Store.read(manifest, host_target.function, host_target.content).fields.HOST == pawn_code
 		and Store.read(manifest, round_target.function, round_target.content).fields.ROLE == host_target,
 		"the copy owns both documents on the remapped path; the source documents are unchanged")
+	app.project_shell.content_editor._library._open_item(copy_role.function, copy_role.content, copy_code)
+	form = popup()
+	var bound_port: Control
+	for row in collect(form, "HBoxContainer"):
+		if row.get_meta("field_id", "") == "relay_port":
+			bound_port = row.get_child(1)
+			break
+	if not check(bound_port != null, "open the copied role's port field"):
+		quit(1)
+		return
+	var bound_map: OptionButton = bound_port.find_child("ReferenceTargetMap", true, false)
+	check(bound_map.get_selected_metadata() == "", "bound content starts with its inherited map")
+	choose(bound_port.find_child("ReferenceTargetValue", true, false), JSON.stringify({"map": "", "inst": copy_host, "port": "wire"}))
+	choose(bound_map, map_code)
+	var upstream_port := {"map": map_code, "inst": pawn_code, "port": "wire"}
+	choose(bound_port.find_child("ReferenceTargetValue", true, false), JSON.stringify(upstream_port))
+	press(form, "保存")
+	form.hide()
+	check(Store.read(manifest, copy_role.function, copy_role.content).fields.RPOR == upstream_port,
+		"the bound role can persist an explicit port on another map")
 	app._set_mode("content")
 	await add_screen("instructions", "Enter course", {"module": "course-door"}, copy_arrival)
 	await add_screen("welcome", "Start tutorial", {"module": "signal-latch"}, {"view": "instructions"})
@@ -541,6 +562,7 @@ func run() -> void:
 		and result.get("runtimeCourse", []).map(func(x): return int(x)) == [3, 5] and result.get("board") == copy_code
 		and result.get("roundRules") == copy_rules.content and result.get("roundInputs") == 3
 		and result.get("roundHost") == copy_host
+		and result.get("roundRelayPort") == upstream_port
 		and result.get("localActor") == copy_host
 		and result.get("arrivalPort") == "door" and result.get("arrivalInstance") == copy_host
 		and result.get("screenMarker") == {"map": copy_code, "inst": copy_host, "port": "wire"}

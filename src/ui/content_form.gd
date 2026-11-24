@@ -405,7 +405,13 @@ func project_reference_options(decl: Dictionary, context: String) -> Array:
 		return _resolve_options(decl, true)
 	var source := str(decl.get("source", ""))
 	if source == "editor:reference-maps":
-		return []
+		var resolved := ReferenceIndex.resolve_map(manifest, context)
+		var options := ReferenceIndex.map_target_options(manifest).filter(func(map):
+			return map.name != resolved.key).map(func(map):
+			return {"v": map.code, "t": map.name})
+		if not options.is_empty():
+			options.push_front({"v": "", "t": "内容所属地图 · " + str(resolved.key if resolved.status == "ok" else context)})
+		return options
 	if not (source.begins_with("entity_inst:") or source.begins_with("cell:") \
 			or source.begins_with("port:") or source.begins_with("edge:") or source == "layer:"):
 		return _resolve_options(decl, true)
