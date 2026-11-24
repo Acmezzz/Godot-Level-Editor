@@ -23,7 +23,7 @@ src/
 ├── project/                —— 项目域（清单 / 校验 / 引用 / 试玩） ——
 │   ├── manifest.gd         清单读取器：路径/试玩命令/role/占位尺寸，加载链补发身份码、并入内置种类
 │   ├── manifest_validation.gd  清单校验：资产/功能/条件/步骤/音频声明/挂载，坏清单给出错误列表
-│   ├── asset_scan.gd       资产零登记扫描：约定目录新文件补条目发码、改名 md5 重链、消失标缺失
+│   ├── asset_scan.gd       资产发现：只为约定目录的新文件补登记
 │   ├── reference_index.gd  统一身份索引（B2）：地图码↔图名解析、内容入边查询
 │   ├── reference_usage.gd  按资产、内容、屏幕查询来向
 │   ├── screen_reference_validation.gd  保存屏幕时检查该屏幕的模块字段和出口
@@ -980,7 +980,7 @@ godot --headless --path "<编辑器工程>" --script res://tests/run_tests.gd
 | `test_assets.gd` | `assets[]` 归一化：kind 分派、未知键保留、palette 展平、非正方形 `cell`、`editorSize`/`sizeFields` 尺寸、编辑期原件入口、挂载过滤 |
 | `test_entity_node.gd` | `EntityNode` 锚点↔格坐标换算（center/top_left/bottom_center 正反算）、浮点坐标与所在格、`sizeFields` 尺寸覆盖、`transform` 缺省判定（1/0/false 算缺省、翻转 toggle 后键被删掉） |
 | `test_stores.gd` | MapStore v7 写读回环 + 复制图重发码、`code_map` 写后缓存失效、ContentStore 写读回环、写前摘要基线冲突检出（同秒同长度外部改写）、草稿按码写/按键读（空码+图名读不到带码草稿、冲突备份不列入）、历史按码分目录与失败不入历史（user:// 临时目录，跑完自清） |
-| `test_asset_scan.gd` | 资产零登记扫描制：新文件补条目发码 / 改名 md5 重链 / 消失标缺失 / 约定外条目不碰 |
+| `test_asset_scan.gd` | 资产发现：给新文件补登记，保持旧路径和 ID，不复活停用条目 |
 | `test_audit_c3.gd` | 挂载去重与补齐、按 `(功能 id, 内容 ID)` 查询来向 |
 | `test_batch_e2.gd` | 瓦片替换计划（源过滤/切片边界/冲突不写） |
 | `test_clone_plan.gd` | C2 统一复制语义（组内 A→B、组外 A→C、功能执行码与普通字符串区分、内容独立文件、整图复制） |
@@ -1063,11 +1063,9 @@ godot --headless --path "<编辑器工程>" --script res://tools/migrate_project
   碰撞自动生成不区分声明形状（按整格矩形推）。
 - 排序点（`sortAnchor`）实例选中时画排序点十字（锚点 + sortAnchor 像素偏移，紫十字 + 连线；无覆盖不画）。
   排序点不移动轮廓、路径、顶点手柄或端口；这些都使用同一个实例数据锚点。
-- 资产零登记扫描制：文件放进约定目录（`assets/tiles|images|entities`，递归；图片 png/jpg/jpeg/webp/bmp/tga、
-  实体 .tscn）即资产，打开项目扫描自动补条目 + 发 4 位资产码（id=码、name=文件名 stem）；
-  改名按持久化指纹（`scanFingerprint`）一对一重链原条目（候选歧义进待确认，不猜）；消失标停用不删条目
-  （可恢复），约定外手写条目不碰；
-  细配置（palette/cell/锚点/挂载）仍走清单条目覆盖，扫描只补骨架不改写已有条目。
+- 打开项目时为约定目录下尚未登记的文件补条目。资产引用使用清单 ID。
+  移动或改名后更新原条目的素材路径，原 ID 及实体类型码继续使用。缺失文件不删除条目。
+  还在约定目录中的资产可停用和重新启用，保留 ID；细配置仍由游戏工程写入清单。
 - 几何段（R-02）：实体声明 `visual: {type: "poly"|"path", color, alpha, closed, width, points}` 即几何对象——
   画布按声明画填充多边形/折线，顶点拖拽/双击加点/右键删点写 `props.points`
   （[[x,y],…] 像素相对锚点，翻转后存取仍走未翻转局部系）；游戏侧读 `objects[].props.points` 透传。

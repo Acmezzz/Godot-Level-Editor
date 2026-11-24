@@ -31,7 +31,7 @@ static func new_inst_code() -> String:
 static func new_fn_code() -> String:
 	return _code(LAYER_LEN)
 
-## 资产身份码（AssetScan 发放）：资产 id = 码（已发放的码不重编，改名靠指纹重链），文件名只是显示壳。
+## 资产身份码（AssetScan 发放）：资产 id = 码（资源改名时保留 ID，只改条目路径），文件名只是显示壳。
 static func new_asset_code() -> String:
 	return _code(LAYER_LEN)
 
