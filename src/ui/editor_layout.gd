@@ -197,7 +197,7 @@ func _build_global_bar() -> PanelContainer:
 	map_menu.add_item("批量替换瓦片…", 6)
 	map_menu.add_item("关卡游戏画面预览…", 14)
 	map_menu.add_item("实景调整实例和轮廓…", 17)
-	map_menu.add_item("复制跨层选区（含格图或出生点）…", 18)
+	map_menu.add_item("复制跨层选区选项…", 18)
 	map_menu.add_item("跨层搬动选项…", 19)
 	map_menu.add_separator()
 	map_menu.add_item("检查项目完整性", 30)
@@ -294,6 +294,12 @@ func _world_region_options(moving: bool) -> void:
 	spawn.text = "搬动框内出生点" if moving else "包括框内的出生点"
 	spawn.button_pressed = moving and tool.move_spawn
 	body.add_child(spawn)
+	var edges: CheckBox
+	if not moving:
+		edges = CheckBox.new()
+		edges.text = "副本引用跟随框内规则格边"
+		edges.tooltip_text = "两端根格的中心都在框内，并且粘贴后仍共边时，副本才引用新格边。"
+		body.add_child(edges)
 	var pop: PopupPanel = shell.pop
 	body.add_child(app.UiKitScript.button("应用搬动选项" if moving else "复制选区", func():
 		if moving:
@@ -302,7 +308,7 @@ func _world_region_options(moving: bool) -> void:
 			app._set_status("已更新跨层搬动选项：格图%s，出生点%s。" % [
 				"随框搬动" if tool.move_graph else "留在原位", "随框搬动" if tool.move_spawn else "留在原位"])
 			pop.hide()
-		elif tool.copy(graph.button_pressed, spawn.button_pressed):
+		elif tool.copy(graph.button_pressed, spawn.button_pressed, edges.button_pressed):
 			pop.hide(), "primary"))
 	app._open_popup(pop)
 

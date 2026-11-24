@@ -76,3 +76,25 @@ static func segment(grid: GridSpace, a: Vector2i, b: Vector2i, w: int, h: int) -
 	if grid == null or not grid.cell_in_map(a, w, h) or not grid.cell_in_map(b, w, h):
 		return PackedVector2Array()
 	return grid.edge_between(a, b)
+
+## Maps a whole edge through a region paste. Partial or non-adjacent results
+## keep their original reference; an edge is never inferred from one endpoint.
+static func region_mapper(source: GridSpace, source_size: Vector2i, source_frame: Transform2D,
+		area: Rect2, target: GridSpace, target_size: Vector2i, target_frame: Transform2D,
+		origin: Vector2) -> Callable:
+	var to_target := target_frame.affine_inverse()
+	return func(value: Dictionary, map_code: String) -> Dictionary:
+		var ends := parse_edge(edge_of(value))
+		if ends.size() != 2:
+			return {}
+		var a := Vector2i(ends[0][0], ends[0][1])
+		var b := Vector2i(ends[1][0], ends[1][1])
+		var wa := source_frame * source.cell_center_px(a)
+		var wb := source_frame * source.cell_center_px(b)
+		if not area.has_point(wa) or not area.has_point(wb) or segment(source, a, b, source_size.x, source_size.y).is_empty():
+			return {}
+		var dst_a := target.pick_cell(to_target * (origin + wa - area.position))
+		var dst_b := target.pick_cell(to_target * (origin + wb - area.position))
+		if segment(target, dst_a, dst_b, target_size.x, target_size.y).is_empty():
+			return {}
+		return value_of(map_code, dst_a, dst_b)

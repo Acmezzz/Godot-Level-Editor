@@ -62,6 +62,21 @@ func test_is_real_edge_by_topology() -> void:
 func canonical_bad() -> String:
 	return "0,0"
 
+func test_region_mapper_requires_both_centers_and_a_real_destination_edge() -> void:
+	var grid := GridSpace.new(Vector2i(16, 16), "orthogonal")
+	var stretched := GridSpace.new(Vector2i(32, 32), "orthogonal")
+	var size := Vector2i(8, 8)
+	var frame := Transform2D.IDENTITY
+	var area := Rect2(4, 4, 24, 10)
+	var mapper := EdgeRef.region_mapper(grid, size, frame, area, grid, size, frame, Vector2(36, 20))
+	eq(mapper.call(EdgeRef.value_of("SRC1", Vector2i.ZERO, Vector2i.RIGHT), "DST1"),
+		EdgeRef.value_of("DST1", Vector2i(2, 1), Vector2i(3, 1)), "translates both endpoints and rebuilds the canonical edge")
+	eq(mapper.call(EdgeRef.value_of("SRC1", Vector2i.RIGHT, Vector2i(2, 0)), "DST1"), {},
+		"a boundary edge has only one endpoint inside the selection")
+	mapper = EdgeRef.region_mapper(grid, size, frame, area, stretched, size, frame, Vector2(4, 4))
+	eq(mapper.call(EdgeRef.value_of("SRC1", Vector2i.ZERO, Vector2i.RIGHT), "DST1"), {},
+		"both endpoints landing on one destination cell cannot form an edge")
+
 ## 引用字段描述与清单校验：edge_ref 是合法 input 类型
 func test_decl_and_validation() -> void:
 	var d := RefFields.describe({"type": "edge_ref"})

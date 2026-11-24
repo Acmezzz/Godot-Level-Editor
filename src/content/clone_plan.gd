@@ -238,16 +238,16 @@ static func build(src: Dictionary, dst: Dictionary, codes: PackedStringArray = P
 		cross_code = _source_key(sdata, src_map)   # 同图粘贴 = ""，组外引用原样保留
 	# R10：源图身份键——配对地图字段的现值与它不符的引用指向第三张图，原样保留。
 	var source_key := _source_key(sdata, src_map)
-	var cell_ids: Dictionary = src.get("cell_ids", {})
+	var spatial_refs := {"cells": src.get("cell_ids", {}), "edge": src.get("map_edge", Callable())}
 	var out_objects: Array = []
 	for r5 in selected:
 		out_objects.append(remap_row(r5 as Dictionary, instance_map, content_map, m,
-			cross_code, src_codes, conflicts, ddata, dst_map, source_key, src_map, cell_ids))
+			cross_code, src_codes, conflicts, ddata, dst_map, source_key, src_map, spatial_refs))
 	# —— 内容副本内部引用：组内实例码/内容跳转按声明重映射（C05） ——
 	for pc in pending:
 		_remap_content((pc as Dictionary).data, m, str((pc as Dictionary).fn_id),
 			instance_map, content_map, cross_code, src_codes, conflicts,
-			ddata, dst_map, source_key, src_map, cell_ids)
+			ddata, dst_map, source_key, src_map, spatial_refs)
 	var patch := {"objects": out_objects}
 	if include_world:
 		# 整图：图片/瓦片/碰撞/出生点原样带过去（实例行已重映射）
@@ -272,7 +272,7 @@ static func build(src: Dictionary, dst: Dictionary, codes: PackedStringArray = P
 static func remap_row(row: Dictionary, instance_map: Dictionary, content_map: Dictionary,
 		manifest: Dictionary, cross_code := "", source_codes: Dictionary = {},
 		conflicts = null, target_data: Dictionary = {}, target_map := "",
-		source_key := "", source_name := "", cell_ids := {}) -> Dictionary:
+		source_key := "", source_name := "", spatial_refs := {}) -> Dictionary:
 	var out: Dictionary = row.duplicate(true)
 	var old_code := str(out.get("code", ""))
 	if old_code != "" and instance_map.has(old_code):
@@ -282,7 +282,7 @@ static func remap_row(row: Dictionary, instance_map: Dictionary, content_map: Di
 	var ad := AssetDecl.by_id(manifest, aid) if not manifest.is_empty() else {}
 	var fdecls: Array = ad.get("fields", []) if ad.get("fields", []) is Array else []
 	_remap_props(manifest, props, fdecls, str(out.get("code", "")), instance_map, cross_code,
-		source_codes, conflicts, target_data, target_map, source_key, source_name, 0, cell_ids)
+		source_codes, conflicts, target_data, target_map, source_key, source_name, 0, spatial_refs)
 	# 功能绑定：内容跳转换成副本；未知键原样保留
 	var fns: Array = out.get("functions", []) if out.get("functions", []) is Array else []
 	for i in fns.size():
@@ -303,7 +303,7 @@ static func remap_row(row: Dictionary, instance_map: Dictionary, content_map: Di
 static func _remap_props(manifest: Dictionary, values: Dictionary, fields: Array, owner: String,
 		instance_map: Dictionary, cross_code: String, source_codes: Dictionary, conflicts: Variant,
 		target_data: Dictionary, target_map: String, source_key: String, source_name: String, depth := 0,
-		cell_ids := {}) -> void:
+		spatial_refs := {}) -> void:
 	if depth > 8:
 		return
 	for field in fields:
@@ -315,14 +315,14 @@ static func _remap_props(manifest: Dictionary, values: Dictionary, fields: Array
 			if scope.path.size() == 2:
 				_remap_field_map(manifest, scope.values, scope.decls, instance_map, {}, cross_code,
 					source_codes, conflicts if conflicts is Array else [], path, target_data, target_map,
-					source_key, source_name, "", depth + 1, cell_ids)
+					source_key, source_name, "", depth + 1, spatial_refs)
 			else:
 				_remap_props(manifest, scope.values, scope.decls, path, instance_map, cross_code,
-					source_codes, conflicts, target_data, target_map, source_key, source_name, depth + 1, cell_ids)
+					source_codes, conflicts, target_data, target_map, source_key, source_name, depth + 1, spatial_refs)
 	_remap_object_refs(values, fields, instance_map, target_data, target_map, cross_code,
-		source_key, source_name, false)
+		source_key, source_name, false, spatial_refs)
 	_remap_entity_ref_fields(values, fields, owner, instance_map, cross_code, source_codes,
-		conflicts, target_data, target_map, source_key, source_name, cell_ids)
+		conflicts, target_data, target_map, source_key, source_name, spatial_refs)
 
 static func _target_key(target_data: Dictionary, target_map: String) -> String:
 	var meta = target_data.get("meta", null)
@@ -334,11 +334,11 @@ static func _target_key(target_data: Dictionary, target_map: String) -> String:
 static func _remap_content(data: Dictionary, manifest: Dictionary, fn_id: String,
 		instance_map: Dictionary, content_map: Dictionary, cross_code: String,
 		source_codes: Dictionary, conflicts: Array, target_data: Dictionary,
-		target_map: String, source_key := "", source_name := "", cell_ids := {}) -> void:
+		target_map: String, source_key := "", source_name := "", spatial_refs := {}) -> void:
 	var decls := _content_decls(manifest, fn_id)
 	var owner := str(data.get("id", ""))
 	_remap_field_map(manifest, data.get("fields", null), decls, instance_map, content_map,
-		cross_code, source_codes, conflicts, owner, target_data, target_map, source_key, source_name, fn_id, 0, cell_ids)
+		cross_code, source_codes, conflicts, owner, target_data, target_map, source_key, source_name, fn_id, 0, spatial_refs)
 	var steps = data.get("steps", null)
 	for st in (steps as Array) if steps is Array else []:
 		if not (st is Dictionary):
@@ -348,13 +348,13 @@ static func _remap_content(data: Dictionary, manifest: Dictionary, fn_id: String
 		var sdecls: Array = sd.get("fields", []) if sd.get("fields", []) is Array else []
 		_remap_field_map(manifest, (st as Dictionary).get("fields", null), sdecls, instance_map,
 			content_map, cross_code, source_codes, conflicts, owner, target_data, target_map,
-			source_key, source_name, fn_id, 0, cell_ids)
+			source_key, source_name, fn_id, 0, spatial_refs)
 
 ## 一组声明字段 → 值字典的引用重映射（功能字段/条件字段/步骤字段共用）。
 static func _remap_field_map(manifest: Dictionary, values, decls: Array, instance_map: Dictionary,
 		content_map: Dictionary, cross_code: String, source_codes: Dictionary,
 		conflicts: Array, owner: String, target_data: Dictionary, target_map: String,
-		source_key := "", source_name := "", fn_id := "", depth := 0, cell_ids := {}) -> void:
+		source_key := "", source_name := "", fn_id := "", depth := 0, spatial_refs := {}) -> void:
 	if not (values is Dictionary) or depth > 8:
 		return
 	var vals: Dictionary = values
@@ -366,9 +366,10 @@ static func _remap_field_map(manifest: Dictionary, values, decls: Array, instanc
 			key = str(fd.get("id", ""))
 		for scope in RefFields.nested_scopes(manifest, fd, vals.get(key)):
 			_remap_field_map(manifest, scope.values, scope.decls, instance_map, content_map, cross_code,
-				source_codes, conflicts, owner, target_data, target_map, source_key, source_name, fn_id, depth + 1, cell_ids)
+				source_codes, conflicts, owner, target_data, target_map, source_key, source_name, fn_id, depth + 1, spatial_refs)
 	_remap_object_refs(vals, decls, instance_map, target_data, target_map, cross_code,
-		source_key, source_name, true)
+		source_key, source_name, true, spatial_refs)
+	var cell_ids: Dictionary = spatial_refs.get("cells", {})
 	var pairs_to_fill := {}
 	for fd in decls:
 		if not (fd is Dictionary):
@@ -501,7 +502,8 @@ static func whole_map_document(src: Dictionary, new_name: String, new_code: Stri
 static func _remap_entity_ref_fields(vals: Dictionary, fdecls: Array, owner: String,
 		instance_map: Dictionary, cross_code := "", source_codes: Dictionary = {},
 		conflicts = null, target_data: Dictionary = {}, target_map := "",
-		source_key := "", source_name := "", cell_ids := {}) -> void:
+		source_key := "", source_name := "", spatial_refs := {}) -> void:
+	var cell_ids: Dictionary = spatial_refs.get("cells", {})
 	var pairs_to_fill := {}
 	for fd in fdecls:
 		if not (fd is Dictionary):
@@ -566,11 +568,12 @@ static func _split_cell_ref(owner: String, field: String) -> Dictionary:
 		"message": "%s 的格图字段 %s 同时引用框内和框外的格，跨图时请拆分选择。" % [owner, field]}
 
 ## 先解析引用，再改配对字段。对象自带地图键，能保留原目标，即使同一行的
-## 实例引用随后改写了配对地图。格边只改地图键，端口还需换组内实例码。
+## 实例引用随后改写了配对地图。端口跟随组内实例，区域复制也可提供格边坐标映射。
 static func _remap_object_refs(vals: Dictionary, decls: Array, instance_map: Dictionary,
 		target_data: Dictionary, target_map: String, cross_code: String, source_key: String,
-		source_name: String, coded: bool) -> void:
+		source_name: String, coded: bool, spatial_refs: Dictionary) -> void:
 	var target := _target_key(target_data, target_map)
+	var map_edge: Callable = spatial_refs.get("edge", Callable())
 	for field in decls:
 		if not field is Dictionary:
 			continue
@@ -596,6 +599,11 @@ static func _remap_object_refs(vals: Dictionary, decls: Array, instance_map: Dic
 			if instance_map.has(inst):
 				value["inst"] = str(instance_map[inst])
 				value["map"] = target
+				continue
+		elif map_edge.is_valid():
+			var edge: Dictionary = map_edge.call(value, target)
+			if not edge.is_empty():
+				value.merge(edge, true)
 				continue
 		if cross_code != "":
 			value["map"] = cross_code

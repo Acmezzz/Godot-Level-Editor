@@ -3,6 +3,7 @@ extends RefCounted
 
 const ClonePlan := preload("res://src/content/clone_plan.gd")
 const GraphClip := preload("res://src/map/cell_graph_clip.gd")
+const EdgeRef := preload("res://src/map/edge_ref.gd")
 
 var cvs
 var selection := Rect2()
@@ -93,7 +94,7 @@ func _visible_layers() -> Dictionary:
 			visible[cvs.layer_id(li)] = cvs.layer_name(li)
 	return visible
 
-func copy(include_graph := false, include_spawn := false) -> bool:
+func copy(include_graph := false, include_spawn := false, follow_edges := false) -> bool:
 	if not selection.has_area():
 		cvs._hint("先框选跨层区域再复制。")
 		return false
@@ -122,6 +123,8 @@ func copy(include_graph := false, include_spawn := false) -> bool:
 	var clip := {"world": true, "source": source, "layer_names": layer_names,
 		"groups": groups, "objects": objects, "anchors": anchors, "extent": selection.size,
 		"snap_offset": _root_center(selection.position) - selection.position}
+	if follow_edges:
+		clip.edge_origin = {"area": selection, "grid": cvs.grid, "frame": cvs.layer_xform(cvs.collision_index())}
 	if include_graph:
 		var graph: Dictionary = cvs.cell_graph()
 		var visible := _visible_layers()
@@ -142,6 +145,8 @@ func copy(include_graph := false, include_spawn := false) -> bool:
 	cvs._region_clip = clip
 	cvs._last_copy_region = true
 	var extras := "，含格图" if clip.has("graph") else ""
+	if follow_edges:
+		extras += "，重映射副本的框内格边引用"
 	if clip.has("spawn"):
 		extras += "，粘贴将设置目标出生点"
 	cvs._hint("已复制跨层区域%s。Ctrl+V 预览，左键放置。" % extras)
@@ -218,9 +223,15 @@ func paste_at(pos: Vector2) -> void:
 		cvs._hint(target.error)
 		return
 	var source: Dictionary = clip.source
+	var map_edge := Callable()
+	if clip.has("edge_origin"):
+		var edge: Dictionary = clip.edge_origin
+		map_edge = EdgeRef.region_mapper(edge.grid, Vector2i(source.meta.w, source.meta.h), edge.frame,
+			edge.area, cvs.grid, Vector2i(cvs.map_data.meta.w, cvs.map_data.meta.h),
+			cvs.layer_xform(cvs.collision_index()), origin)
 	var clone := ClonePlan.build(
 		{"data": {"meta": source.meta, "objects": clip.objects}, "manifest": cvs.manifest, "map": source.map,
-			"cell_ids": target.get("cell_ids", {})},
+			"cell_ids": target.get("cell_ids", {}), "map_edge": map_edge},
 		{"data": cvs.extract(), "manifest": cvs.manifest, "map": cvs.cur_map_name},
 		PackedStringArray(), false, source.staged)
 	if clone.status != "ok":

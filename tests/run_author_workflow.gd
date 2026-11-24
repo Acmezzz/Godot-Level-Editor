@@ -230,7 +230,8 @@ func run():
 			{"id": "terrain", "kind": "scene", "shape": "tile", "atlas": "terrain.png", "cell": 16},
 			{"id": "free-ramp", "kind": "entity", "code": "RAMP", "visual": {"type": "poly"}},
 			{"id": "door", "kind": "entity", "code": "DOOR", "ports": [{"id":"open","type":"door","x": 5,"y": 4}],
-				"fields": [{"id":"label", "type":"string"}, {"id":"route_cell", "kind":"choice", "source":"cell:"}]}],
+				"fields": [{"id":"label", "type":"string"}, {"id":"route_cell", "kind":"choice", "source":"cell:"},
+					{"id":"route_edge", "type":"edge_ref"}, {"id":"boundary_edge", "type":"edge_ref"}]}],
 		"playtest": {"executable": OS.get_executable_path(), "report": true, "projectEntry": true,
 			"args": ["--headless", "--path", "%projectpath%", "--", "--map=%mapfile%", "--verify"]},
 		"mapGenerators": {"slope_room": {"name": "Slope Room", "fields": [
@@ -1710,7 +1711,9 @@ func author_world_region_move(app, manifest: Dictionary) -> void:
 	baseline.spawn = [0, 0]
 	baseline.objects[0].x = 0
 	baseline.objects[0].y = 0
-	baseline.objects[0].props = {"route_cell": "copy-a"}
+	baseline.objects[0].props = {"route_cell": "copy-a",
+		"route_edge": {"map": baseline.meta.code, "cell": [0, 0], "edge": "0,0|0,1"},
+		"boundary_edge": {"map": baseline.meta.code, "cell": [0, 0], "edge": "0,0|1,0"}}
 	await cvs.load_data(baseline, "rule_hex", true)
 	var initial: Dictionary = cvs.extract()
 	var lower_px: Vector2 = cvs.grid.cell_center_px(Vector2i.ZERO)
@@ -1732,7 +1735,8 @@ func author_world_region_move(app, manifest: Dictionary) -> void:
 	var n: EntityNode = cvs.ents_all()[0]
 	var entity_px: Vector2 = n.get_parent().to_global(n.position - n.sort_anchor())
 	var min_corner := lower_px.min(upper_px).min(entity_px) - Vector2(2, 2)
-	var max_corner := lower_px.max(upper_px).max(entity_px) + Vector2(2, 2)
+	var edge_end: Vector2 = cvs.grid.cell_center_px(Vector2i.DOWN)
+	var max_corner := lower_px.max(upper_px).max(entity_px).max(edge_end) + Vector2(2, 2)
 	var mouse := InputEventMouseButton.new()
 	mouse.button_index = MOUSE_BUTTON_LEFT
 	mouse.pressed = true
@@ -1757,10 +1761,11 @@ func author_world_region_move(app, manifest: Dictionary) -> void:
 	check(not cvs._paste_mode and cvs._world_region_move.selection.has_point(lower_px), "cancel paste preserves the source selection")
 	app._layout_ctrl._on_map_menu_id(18)
 	for flag: CheckBox in collect(app, "CheckBox"):
-		if flag.text == "包括框内的出生点":
+		if flag.text in ["包括框内的出生点", "副本引用跟随框内规则格边"]:
 			flag.button_pressed = true
 	press(app, "复制选区")
-	check(cvs._region_clip.has("graph") and cvs._region_clip.has("spawn"), "the dialog includes both selected payloads")
+	check(cvs._region_clip.has("graph") and cvs._region_clip.has("spawn") and cvs._region_clip.has("edge_origin"),
+		"the dialog includes the chosen payloads and edge remapping")
 	var snap_offset: Vector2 = cvs._region_clip.snap_offset
 	var copy_origin := min_corner + snap_offset
 	app._paste()
@@ -1780,6 +1785,10 @@ func author_world_region_move(app, manifest: Dictionary) -> void:
 		and copied.spawn == [1, 0] and copied.objects[1].props.route_cell == "copy-a-copy",
 		"paste adds both tile grids, collision metadata and a fresh instance without replacing the source")
 	var graph: Dictionary = copied.meta.cellGraph
+	check(copied.objects[1].props.route_edge.edge == "1,0|1,1"
+		and copied.objects[1].props.boundary_edge == initial.objects[0].props.boundary_edge
+		and copied.objects[0].props.route_edge == initial.objects[0].props.route_edge,
+		"only the copied object's wholly selected edge is moved to its translated root cells")
 	check(graph.cells.size() == 5 and graph.edges.size() == 3
 		and graph.cells[0].neighbors == ["copy-b", "outside"]
 		and graph.cells[3].neighbors == ["copy-b-copy"] and graph.cells[4].space == "copy-upper"
@@ -1847,8 +1856,9 @@ func _copy_test_polygon(center: Vector2) -> Array:
 func _check_world_move_restore(ok: bool, actual: Dictionary, expected: Dictionary, op: String) -> void:
 	var diffs := []
 	for key in expected:
-		var a := JSON.stringify(actual.get(key))
-		var b := JSON.stringify(expected[key])
+		# Undo snapshots and disk round trips parse JSON numbers as floats.
+		var a := JSON.stringify(JSON.parse_string(JSON.stringify(actual.get(key))))
+		var b := JSON.stringify(JSON.parse_string(JSON.stringify(expected[key])))
 		if a != b:
 			diffs.append("%s: %s vs %s" % [key, a, b])
 	check(ok and actual.size() == expected.size() and diffs.is_empty(),
