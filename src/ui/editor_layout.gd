@@ -204,7 +204,7 @@ func _build_global_bar() -> PanelContainer:
 	var cfg: Button = app.UiKitScript.button("试玩配置", func(): app._playtest_ctrl.open_configuration(), "ghost")
 	cfg.tooltip_text = "每图初始能力 / 血量"
 	bar.add_child(cfg)
-	var play = app.UiKitScript.button("▶  试玩", app._playtest_ctrl.on_play, "primary")
+	var play = app.UiKitScript.button("▶  试玩", func(): app._playtest_ctrl.on_play(), "primary")
 	play.tooltip_text = "保存并启动游戏（当前地图）"
 	bar.add_child(play)
 	return panel_wrap
