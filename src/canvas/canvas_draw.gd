@@ -285,7 +285,9 @@ func _draw() -> void:
 			_draw_grid_region(cvs._region_sel.position, cvs._region_sel.size, selected_li, Color(1.0, 0.85, 0.3, 0.8))
 	# 区域拖动预览：整块幽灵按当前格偏移跟手，松手才真搬。
 	# 每层瓦片在自己的层局部格里，预览按层变换到世界（E02）。
-	if cvs._move_active and not cvs._move_snap.is_empty():
+	if cvs.world_region_mode:
+		cvs._world_region_move.draw(cvs._move_snap)
+	if cvs._move_active and not cvs._move_snap.is_empty() and not cvs._move_snap.has("world"):
 		var md: Vector2i = cvs._move_cell_delta
 		# 区域原点按投影几何平移（与 _finish_region_move 同一原语）
 		var morg: Vector2i = cvs._region_sel.position + md

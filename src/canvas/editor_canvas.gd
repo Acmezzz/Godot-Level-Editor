@@ -55,6 +55,8 @@ var snap_to_grid := true
 ## 框选开关（左栏「框选」按钮）：打开后任意层普通左键拖动都进入框选；
 ## 关闭时保留 Ctrl+拖动作为兼容入口。输入分派见 canvas_input.gd。
 var select_mode := false
+var world_region_mode := false
+var _world_region_move
 var zoom := 2.0
 var manifest: Dictionary
 ## E2：根 app 引用（引用字段写入口需要状态栏/确认框）。由 editor_layout 在挂树前注入；
@@ -239,6 +241,7 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	_paste_mode = false
 	_region_sel = Rect2i(-1, 0, 0, 0)
 	_region_layer = ""
+	_world_region_move.selection = Rect2()
 	# 剪贴板是纯数据快照（E12）：切图后仍可用，不随载图清空
 	# （区域剪贴板自带源图名/码，跨图粘贴时据此补配对地图字段）。
 	_collision_meta.clear()
@@ -501,6 +504,7 @@ func _ready() -> void:
 	z_index = 5   # canvas 自绘（网格/幽灵/碰撞叠加/出生标记）盖在地图子树之上
 	_selection_ops_ctrl = preload("res://src/canvas/selection_ops.gd").new(self)
 	_region_ops_ctrl = preload("res://src/canvas/region_ops.gd").new(self)
+	_world_region_move = preload("res://src/canvas/world_region_move.gd").new(self)
 	_layer_ops_ctrl = preload("res://src/canvas/layer_ops.gd").new(self)
 	_entity_factory_ctrl = preload("res://src/canvas/entity_factory.gd").new(self)
 	_undo_history_ctrl = preload("res://src/core/undo_history.gd").new(self)
@@ -1450,6 +1454,8 @@ func end_gesture() -> void:
 ## 返回是否取消了某手势（调用方据此给状态栏反馈）。
 func cancel_preview_gesture() -> bool:
 	match gesture:
+		Gesture.BOX:
+			pass
 		Gesture.ENTITY_DRAG:
 			for i in _drag_entities.size():
 				if is_instance_valid(_drag_entities[i]):

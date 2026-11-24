@@ -491,7 +491,11 @@ func _shortcut_input(event: InputEvent) -> void:
 		_on_open()
 		get_viewport().set_input_as_handled()
 		return
-	# Esc 只在区域粘贴预览时消费：取消预览
+	if k == KEY_ESCAPE and canvas.world_region_mode:
+		_toggle_world_region_mode()
+		get_viewport().set_input_as_handled()
+		return
+	# Esc 取消区域粘贴预览
 	if k == KEY_ESCAPE and canvas._paste_mode:
 		canvas.cancel_paste_mode()
 		_set_status(" 已取消区域粘贴预览")
@@ -578,8 +582,23 @@ func _toggle_grid() -> void:
 func _toggle_select_mode() -> void:
 	if canvas == null:
 		return
+	if canvas.world_region_mode:
+		_toggle_world_region_mode()
 	canvas.select_mode = not canvas.select_mode
 	_set_status("框选已%s —— 左键拖动框选，选中后可整组拖动" % ("打开" if canvas.select_mode else "关闭"))
+	_refresh_view_toggles()
+
+func _toggle_world_region_mode() -> void:
+	canvas.cancel_preview_gesture()
+	canvas.cancel_paste_mode()
+	canvas.world_region_mode = not canvas.world_region_mode
+	canvas._world_region_move.selection = Rect2()
+	canvas._region_sel = Rect2i()
+	canvas._region_layer = ""
+	if canvas.world_region_mode:
+		canvas.select_mode = false
+	_set_status("跨层搬动：左键框选，框内拖动，右键清除。" if canvas.world_region_mode else "跨层搬动已关闭。")
+	canvas.queue_redraw()
 	_refresh_view_toggles()
 
 ## 吸附开关：关掉后摆放/拖动落在任意像素位置（数据存浮点格坐标，亚格摆放）
@@ -597,6 +616,9 @@ func _cut() -> void:
 	if not map_loaded:
 		_set_status("无地图：先新建或打开一张地图")
 		return
+	if canvas.world_region_mode:
+		_set_status("跨层框选仅用于搬动。剪切请先退出该模式。")
+		return
 	if canvas.place_kind == "object":
 		canvas.cut_selection()
 	else:
@@ -606,6 +628,9 @@ func _copy() -> void:
 	if not map_loaded:
 		_set_status("无地图：先新建或打开一张地图")
 		return
+	if canvas.world_region_mode:
+		_set_status("跨层框选仅用于搬动。复制请先退出该模式。")
+		return
 	if canvas.place_kind == "object":
 		canvas.copy_selection()
 	else:
@@ -614,6 +639,9 @@ func _copy() -> void:
 func _paste() -> void:
 	if not map_loaded:
 		_set_status("无地图：先新建或打开一张地图")
+		return
+	if canvas.world_region_mode:
+		_set_status("粘贴请先退出跨层搬动模式。")
 		return
 	# 区域剪贴板走幽灵预览（左键落位），实体剪贴板直接贴到光标处
 	if canvas._last_copy_region and not canvas._region_clip.is_empty():

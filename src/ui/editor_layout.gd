@@ -22,6 +22,7 @@ var _meta_cursor: Label
 var _dirty_badge: PanelContainer
 # 画布视图开关（网格 / 框选）
 var _grid_btn: Button
+var _world_region_btn: Button
 var _select_btn: Button
 var _snap_btn: Button
 ## 层下拉（决定画在哪）。按钮显示当前层名，弹层里每层一行 + 👁/🔒。
@@ -496,6 +497,9 @@ func _build_status_bar() -> PanelContainer:
 	_select_btn = app.UiKitScript.button("框选", app._toggle_select_mode, "toggle")
 	_select_btn.tooltip_text = "打开后左键拖动框选；关闭则正常涂刷 / 放置"
 	h.add_child(_select_btn)
+	_world_region_btn = app.UiKitScript.button("跨层搬动", app._toggle_world_region_mode, "toggle")
+	_world_region_btn.tooltip_text = "按画布范围搬动可见图层的瓦片、实例及根碰撞"
+	h.add_child(_world_region_btn)
 	# 吸附开关：关掉后摆放物可落在任意像素位置（存浮点格坐标），默认开
 	_snap_btn = app.UiKitScript.button("吸附", app._toggle_snap, "toggle")
 	_snap_btn.tooltip_text = "摆放/拖动吸附到格（关掉后可按像素摆放，坐标存浮点）"
@@ -586,6 +590,8 @@ func _refresh_view_toggles() -> void:
 		_grid_btn.set_pressed_no_signal(app.canvas.show_grid)
 	if _select_btn:
 		_select_btn.set_pressed_no_signal(app.canvas != null and app.canvas.select_mode)
+	if _world_region_btn:
+		_world_region_btn.set_pressed_no_signal(app.canvas.world_region_mode)
 	if _snap_btn:
 		_snap_btn.set_pressed_no_signal(app.canvas == null or app.canvas.snap_to_grid)
 	_refresh_layer_panel()

@@ -165,6 +165,9 @@ func _begin_region_move(pos: Vector2) -> void:
 
 
 func _move_region_preview(pos: Vector2) -> void:
+	if cvs._move_snap.has("world"):
+		cvs._world_region_move.preview(pos)
+		return
 	var lid: String = cvs._move_snap.get("tile_layer", "")
 	var grid: GridSpace = cvs.grid
 	var d: Vector2i
@@ -206,6 +209,9 @@ func _finish_region_move() -> void:
 	var delta: Vector2i = cvs._move_cell_delta
 	cvs._move_snap = {}
 	cvs._move_cell_delta = Vector2i.ZERO
+	if active and snap.has("world"):
+		cvs._world_region_move.finish(snap)
+		return
 	if not active or delta == Vector2i.ZERO:
 		return
 	if snap.has("tile_layer"):

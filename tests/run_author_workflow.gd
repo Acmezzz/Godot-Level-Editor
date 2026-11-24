@@ -1209,6 +1209,7 @@ func run():
 	await author_basis_copy(app, manifest)
 	await author_multilevel_grid(app, manifest)
 	await author_tile_layer_conversion(app, manifest)
+	await author_world_region_move(app, manifest)
 	print("WORKFLOW-DONE failures=", failures)
 	quit(1 if failures else 0)
 
@@ -1689,3 +1690,79 @@ func author_tile_layer_conversion(app, manifest: Dictionary) -> void:
 	check(saved.get("status") == "ok", "save layer migration")
 	await app._load_map_file(path)
 	check(cvs.extract().tiles.get(copy, []) == source.tiles[floor], "converted tiles reopen with preserved indices")
+
+func author_world_region_move(app, manifest: Dictionary) -> void:
+	var path := Maps.path_for(manifest, "rule_hex")
+	await app._load_map_file(path)
+	var cvs = app.canvas
+	var baseline: Dictionary = cvs.extract()
+	var ground: String = cvs.layer_id(0)
+	var upper: String = cvs.layer_id(1)
+	var copy: String = cvs.layer_id(2)
+	for lid in [ground, upper, copy]:
+		baseline.tiles.erase(lid)
+	baseline.meta.layers[1].offset = [12.0, 3.0]
+	baseline.meta.layers[1].scale = 1.5
+	baseline.tiles[ground] = [[0, 0, "terrain", 0, 0], [2, 0, "terrain", 0, 0]]
+	baseline.tiles[upper] = [[0, 0, "terrain", 0, 0]]
+	baseline.collision = [{"x": 0, "y": 0, "type": "solid", "material": "ice"}]
+	baseline.objects[0].x = 0
+	baseline.objects[0].y = 0
+	await cvs.load_data(baseline, "rule_hex", true)
+	var initial: Dictionary = cvs.extract()
+	var lower_px: Vector2 = cvs.grid.cell_center_px(Vector2i.ZERO)
+	var step: Vector2 = cvs.grid.cell_center_px(Vector2i.RIGHT) - lower_px
+	var upper_px: Vector2 = cvs.to_layer_world(1, cvs.tile_grid_for_layer(1).cell_center_px(Vector2i.ZERO))
+	var n: EntityNode = cvs.ents_all()[0]
+	var entity_px: Vector2 = n.get_parent().to_global(n.position - n.sort_anchor())
+	var min_corner := lower_px.min(upper_px).min(entity_px) - Vector2(2, 2)
+	var max_corner := lower_px.max(upper_px).max(entity_px) + Vector2(2, 2)
+	var mouse := InputEventMouseButton.new()
+	mouse.button_index = MOUSE_BUTTON_LEFT
+	mouse.pressed = true
+	cvs.snap_to_grid = true
+	press(app, "跨层搬动")
+	var input = cvs._canvas_input_ctrl
+	input._on_left_press(min_corner, mouse)
+	input._on_left_release(max_corner)
+	cvs.set_layer_locked(1, true)
+	input._on_left_press(lower_px, mouse)
+	check(not cvs._move_active, "a selected locked layer refuses a cross-layer move")
+	cvs.set_layer_locked(1, false)
+	input._on_left_press(lower_px, mouse)
+	input._on_left_release(lower_px + step * 2)
+	check(cvs.extract() == initial, "a blocked cross-layer move writes none of its members")
+	input._on_left_press(lower_px, mouse)
+	cvs._move_region_preview(lower_px + step)
+	var plan: Dictionary = cvs._move_snap.get("plan", {})
+	check(plan.get("positions", []).size() == 3, "cross-layer preview plans two tile grids and root collision")
+	input._on_left_release(lower_px + step)
+	var moved: Dictionary = cvs.extract()
+	var dest_upper: Vector2i = cvs.tile_grid_for_layer(1).pick_cell(cvs.to_layer_local(1, upper_px + step))
+	var upper_row: Array = moved.tiles[upper][0]
+	check(moved.tiles[ground].any(func(row): return row[0] == 1 and row[1] == 0)
+		and Vector2i(upper_row[0], upper_row[1]) == dest_upper and dest_upper != Vector2i.ZERO
+		and moved.collision[0].x == 1 and moved.collision[0].material == "ice"
+		and moved.objects[0].code == initial.objects[0].code
+		and (n.get_parent().to_global(n.position - n.sort_anchor()) - entity_px).is_equal_approx(step)
+		and moved.meta.cellGraph == initial.meta.cellGraph and moved.spawn == initial.spawn,
+		"move both tile grids and collision with their own cells and translate the same instance in pixels")
+	var undo_ok: bool = await cvs.undo()
+	_check_world_move_restore(undo_ok, cvs.extract(), initial, "undo")
+	var redo_ok: bool = await cvs.redo()
+	_check_world_move_restore(redo_ok, cvs.extract(), moved, "redo")
+	press(app, "跨层搬动")
+	var saved: Dictionary = await app._map_file_ctrl.commit_document("保存跨层搬动")
+	check(saved.get("status") == "ok", "save the cross-layer move")
+	await app._load_map_file(path)
+	_check_world_move_restore(true, cvs.extract(), moved, "save and reopen")
+
+func _check_world_move_restore(ok: bool, actual: Dictionary, expected: Dictionary, op: String) -> void:
+	var diffs := []
+	for key in expected:
+		var a := JSON.stringify(actual.get(key))
+		var b := JSON.stringify(expected[key])
+		if a != b:
+			diffs.append("%s: %s vs %s" % [key, a, b])
+	check(ok and actual.size() == expected.size() and diffs.is_empty(),
+		"one %s restores the entire cross-layer move: %s" % [op, "; ".join(diffs)])

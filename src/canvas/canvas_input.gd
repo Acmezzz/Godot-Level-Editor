@@ -203,6 +203,13 @@ func _on_left_press(pos: Vector2, b: InputEventMouseButton) -> void:
 	if cvs._paste_mode:
 		cvs._paste_region(cvs._cell_of(pos))
 		return
+	if cvs.world_region_mode:
+		if cvs._world_region_move.selection.has_point(pos):
+			cvs._world_region_move.begin_move(pos)
+		else:
+			cvs.begin_gesture(cvs.Gesture.BOX, MOUSE_BUTTON_LEFT)
+			cvs._drag_start = pos
+		return
 	if cvs._is_grid_layer(cvs.active_layer):
 		_on_tile_layer_press(pos, b)
 		return
@@ -308,6 +315,11 @@ func _on_tile_layer_press(pos: Vector2, b: InputEventMouseButton) -> void:
 
 ## 右键 = 擦除。实体放置模式删实体、其余擦瓦片/碰撞，语义与左键对称。
 func _on_right_press(pos: Vector2, shift := false, alt := false) -> void:
+	if cvs.world_region_mode:
+		cvs.cancel_preview_gesture()
+		cvs._world_region_move.selection = Rect2()
+		cvs.queue_redraw()
+		return
 	if shift:
 		if alt:
 			if not cvs._geometry_draw.remove_part_at(pos):
@@ -374,7 +386,9 @@ func _on_left_release(pos: Vector2) -> void:
 		return
 	match cvs.gesture:
 		cvs.Gesture.REGION_MOVE:
-			# 先收尾再清手势：_finish_region_move 靠 gesture 判断这次搬动是否有效
+			if cvs._move_snap.has("world"):
+				cvs._world_region_move.preview(pos)
+			# _finish_region_move uses the current gesture to check whether this move is active.
 			cvs._finish_region_move()
 			cvs.end_gesture()
 		cvs.Gesture.SPAWN_DRAG:
@@ -397,7 +411,9 @@ func _on_left_release(pos: Vector2) -> void:
 			cvs.end_gesture()
 		cvs.Gesture.BOX:
 			cvs.end_gesture()
-			if cvs.place_kind == "object" and not cvs._is_grid_layer(cvs.active_layer):
+			if cvs.world_region_mode:
+				cvs._world_region_move.select_area(cvs._drag_start, pos)
+			elif cvs.place_kind == "object" and not cvs._is_grid_layer(cvs.active_layer):
 				cvs._box_select(cvs._drag_start, pos)
 			else:
 				cvs._region_ops_ctrl.select_region(cvs._drag_start, pos)
