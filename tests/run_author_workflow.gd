@@ -3323,16 +3323,45 @@ func author_signal_room(app, project: String) -> void:
 	await _author_signal_content(app, library, "tune", "", "relay-tuning")
 	await _author_signal_screen(app, "watch-deck", "Tune the relay", "project-clear", path)
 	await _author_signal_content(app, library, "watch", "")
+	var write_ok := true
+	for i in range(260):
+		var id := "project-extra-%03d" % i
+		write_ok = Store.write(manifest, "signal", id, {
+			"scope": "project", "function": manifest.functions.signal.code, "name": "Extra %03d" % i, "fields": {},
+		}) and write_ok
+	check(write_ok, "write 260 unrelated content nodes for the flow workshop")
 	library.open()
 	press(_visible_popup(app), "流程关系…")
 	await process_frame
 	var flow := _visible_popup(app)
 	var source: OptionButton = flow.find_child("FlowSource", true, false)
 	var target: OptionButton = flow.find_child("FlowTarget", true, false)
-	select_metadata(source, "signal\u0001project-watch")
+	var local: CheckButton = flow.find_child("FlowDirectOnly", true, false)
+	var canvas = flow.find_child("FlowCanvas", true, false)
+	check(local.button_pressed and canvas.data.nodes.size() <= 3,
+		"large projects open on direct relations instead of drawing every node")
+	var source_search: LineEdit = flow.find_child("FlowSourceSearch", true, false)
+	source_search.text = "signal project-watch"
+	source_search.text_changed.emit(source_search.text)
+	source_search.text_submitted.emit(source_search.text)
+	check(source.get_selected_metadata() == "signal\u0001project-watch" and source.item_count <= 2,
+		"search by type and ID selects the intended content despite unrelated nodes")
 	select_metadata(target, "watch-deck")
 	press(flow, "应用关系")
-	select_metadata(source, "@view\u0001watch-deck")
+	var links: ItemList = flow.find_child("FlowDirectLinks", true, false)
+	check(links.item_count == 1 and canvas.data.nodes.size() == 2, "linking refreshes the focused view")
+	links.item_activated.emit(0)
+	check(source.get_selected_metadata() == "@view\u0001watch-deck" and links.item_count == 2,
+		"follow an edge to the screen even when its name does not match the source filter")
+	links.select(1)
+	press(flow, "定位引用字段")
+	check(source.get_selected_metadata() == "signal\u0001project-watch" and target.get_selected_metadata() == "watch-deck",
+		"the inbound relation selects its original editable field")
+	links.item_activated.emit(0)
+	var target_search: LineEdit = flow.find_child("FlowTargetSearch", true, false)
+	target_search.text = "project-tune"
+	target_search.text_changed.emit(target_search.text)
+	check(target.item_count == 3, "target search keeps the current link and the matching candidate")
 	for i in target.item_count:
 		var candidate = target.get_item_metadata(i)
 		if candidate is Dictionary and candidate == {"function": "signal", "content": "project-tune"}:

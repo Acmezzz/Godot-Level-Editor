@@ -137,6 +137,7 @@ func _open_flow() -> void:
 		"选择内容、屏幕以及它们的出口。接线写回内容字段、按钮或热点；游戏决定何时跳转。")
 	var pop: PopupPanel = shell.pop
 	var body: VBoxContainer = shell.body
+	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	var node := OptionButton.new()
 	node.name = "FlowSource"
 	var slot := OptionButton.new()
@@ -145,24 +146,52 @@ func _open_flow() -> void:
 	var broken := OptionButton.new()
 	broken.name = "FlowMissingLinks"
 	broken.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	body.add_child(Kit.field_row("来源", node, 64))
-	body.add_child(Kit.field_row("引用字段", slot, 64))
-	body.add_child(Kit.field_row("目标", target, 64))
-	body.add_child(Kit.field_row("待修引用", broken, 64))
+	var source_search := LineEdit.new()
+	source_search.name = "FlowSourceSearch"
+	source_search.placeholder_text = "按内容名、类型或 ID 查找；回车选中首个匹配"
+	var target_search := LineEdit.new()
+	target_search.name = "FlowTargetSearch"
+	target_search.placeholder_text = "按名称、类型或 ID 筛选可接目标"
+	node.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	target.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	body.add_child(Kit.field_row("查找来源", source_search, 82))
+	body.add_child(Kit.field_row("来源", node, 82))
+	body.add_child(Kit.field_row("引用字段", slot, 82))
+	body.add_child(Kit.field_row("筛选目标", target_search, 82))
+	body.add_child(Kit.field_row("目标", target, 82))
+	body.add_child(Kit.field_row("待修引用", broken, 82))
+	var neighbors_only := CheckButton.new()
+	neighbors_only.name = "FlowDirectOnly"
+	neighbors_only.text = "只显示当前项及直接关系"
+	body.add_child(neighbors_only)
+	var links := ItemList.new()
+	links.name = "FlowDirectLinks"
+	links.custom_minimum_size.y = 78
+	links.tooltip_text = "双击前往相连内容或屏幕；选中后可定位引用字段。"
+	body.add_child(links)
 	var notice := Kit.hint_label("", 640)
 	body.add_child(notice)
 	var scroll := ScrollContainer.new()
-	scroll.custom_minimum_size = Vector2(650, 300)
+	scroll.custom_minimum_size = Vector2(650, 200)
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	var view := RelGraphView.new()
+	view.name = "FlowCanvas"
 	view.expand_layout = true
 	view.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	view.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.add_child(view)
 	body.add_child(scroll)
-	var state := {"graph": {}, "slots": [], "saving": false}
+	var state := {"graph": {}, "index": {}, "slots": [], "source_positions": {}, "search_terms": {}, "saving": false}
 	var selected := func(opt: OptionButton) -> String:
 		return str(opt.get_selected_metadata()) if opt.selected >= 0 else ""
+	var tokenize := func(query: String) -> PackedStringArray:
+		return query.strip_edges().to_lower().split(" ", false)
+	var matches := func(key: String, words: PackedStringArray) -> bool:
+		var terms: String = state.search_terms[key]
+		for word in words:
+			if not terms.contains(word):
+				return false
+		return true
 	var fill_targets := func():
 		target.clear()
 		target.add_item("（未设置 / 断开）")
@@ -174,13 +203,17 @@ func _open_flow() -> void:
 		var edge: Dictionary = state.slots[slot.selected]
 		var match_idx := 0
 		var from_view: bool = edge.fn_id == RelGraph.VIEW_KIND
+		var words: PackedStringArray = tokenize.call(target_search.text)
 		for item in state.graph.nodes:
 			if (from_view and item.fn_id == RelGraph.VIEW_KIND) or (not from_view and item.fn_id != edge.fn):
+				continue
+			var is_current: bool = item.cid == edge.value and item.fn_id == edge.fn
+			if not is_current and not matches.call(item.key, words):
 				continue
 			target.add_item("%s · %s" % [item.name, item.cid])
 			target.set_item_metadata(target.item_count - 1,
 				{"function": item.fn_id, "content": item.cid} if from_view else item.cid)
-			if item.cid == edge.value and item.fn_id == edge.fn:
+			if is_current:
 				match_idx = target.item_count - 1
 		if match_idx == 0 and edge.value != "":
 			target.add_item("（失效引用）" + str(edge.value))
@@ -188,10 +221,25 @@ func _open_flow() -> void:
 			target.set_item_metadata(match_idx, edge.value)
 			target.set_item_disabled(match_idx, true)
 		target.select(match_idx)
+	var show_graph := func(key: String):
+		view.highlighted = key
+		if neighbors_only.button_pressed:
+			view.set_data(RelGraph.neighborhood(state.index, key))
+		view.reveal.call_deferred(key, scroll)
+		view.queue_redraw()
 	var fill_slots := func():
 		var key: String = selected.call(node)
-		view.highlighted = key
-		view.queue_redraw()
+		show_graph.call(key)
+		links.clear()
+		for direction in ["outgoing", "incoming"]:
+			for edge in state.index[direction].get(key, []):
+				if direction == "incoming" and edge.from == key:
+					continue
+				var other: String = edge.to if direction == "outgoing" else edge.from
+				var item: Dictionary = state.index.nodes[other]
+				var row := links.add_item("%s %s · %s · %s" % [
+					"去往 →" if direction == "outgoing" else "来自 ←", edge.label, item.name, item.cid])
+				links.set_item_metadata(row, {"edge": edge, "other": other})
 		slot.clear()
 		state.slots = state.graph.slots.get(key, [])
 		for edge in state.slots:
@@ -204,35 +252,63 @@ func _open_flow() -> void:
 			slot.select(0)
 		slot.disabled = slot.item_count == 0
 		fill_targets.call()
-	var refresh := func(key: String):
-		state.graph = RelGraph.build_project(source)
+	var fill_sources := func(key: String):
 		node.clear()
-		var names := {}
+		state.source_positions.clear()
+		var words: PackedStringArray = tokenize.call(source_search.text)
 		for item in state.graph.nodes:
+			if item.key != key and not matches.call(item.key, words):
+				continue
 			node.add_item("屏幕 · " + item.cid if item.fn_id == RelGraph.VIEW_KIND else "%s · %s · %s" % [item.fn_id, item.name, item.cid])
 			node.set_item_metadata(node.item_count - 1, item.key)
-			names[item.key] = "%s/%s" % [item.fn_id, item.cid]
-			if item.key == key:
-				node.select(node.item_count - 1)
+			state.source_positions[item.key] = node.item_count - 1
+		if state.source_positions.has(key):
+			node.select(state.source_positions[key])
+		node.disabled = node.item_count == 0
+	var refresh := func(key: String):
+		state.graph = RelGraph.build_project(source)
+		state.index = RelGraph.navigation(state.graph)
+		state.search_terms.clear()
+		var kinds := Functions.functions(source)
+		for item in state.graph.nodes:
+			var kind: String = "屏幕" if item.fn_id == RelGraph.VIEW_KIND else str(kinds[item.fn_id].get("name", ""))
+			state.search_terms[item.key] = ("%s %s %s %s" % [kind, item.fn_id, item.name, item.cid]).to_lower()
+		if view.data.is_empty():
+			neighbors_only.set_pressed_no_signal(state.graph.nodes.size() > 250)
+		fill_sources.call(key)
 		broken.clear()
 		broken.add_item("选择一条待修引用…" if not state.graph.external.is_empty() else "没有待修引用")
 		broken.set_item_disabled(0, true)
 		for edge in state.graph.external:
-			broken.add_item("%s · %s → %s/%s" % [names[edge.from], edge.label, edge.fn, edge.value])
+			broken.add_item("%s/%s · %s → %s/%s" % [edge.fn_id, edge.cid, edge.label, edge.fn, edge.value])
 		broken.select(0)
 		broken.disabled = state.graph.external.is_empty()
-		view.set_data(state.graph)
+		if not neighbors_only.button_pressed:
+			view.set_data(state.graph)
 		fill_slots.call()
 		notice.text = "%d 条关系，%d 条失效引用，%d 个内容文件无法读取。可改接已建立分支或条件行内的引用。" % [
 			state.graph.edges.size(), state.graph.external.size(), state.graph.bad.size()]
 	var pick := func(key: String):
-		for i in node.item_count:
-			if node.get_item_metadata(i) == key:
-				node.select(i)
-				fill_slots.call()
-				break
+		if not state.source_positions.has(key):
+			fill_sources.call(key)
+		node.select(state.source_positions[key])
+		fill_slots.call()
 	node.item_selected.connect(func(_i: int): fill_slots.call())
 	slot.item_selected.connect(func(_i: int): fill_targets.call())
+	source_search.text_changed.connect(func(_text: String):
+		fill_sources.call(selected.call(node)))
+	source_search.text_submitted.connect(func(query: String):
+		var words: PackedStringArray = tokenize.call(query)
+		for i in node.item_count:
+			var key := str(node.get_item_metadata(i))
+			if matches.call(key, words):
+				pick.call(key)
+				break)
+	target_search.text_changed.connect(func(_text: String): fill_targets.call())
+	neighbors_only.toggled.connect(func(local: bool):
+		if not local:
+			view.set_data(state.graph)
+		show_graph.call(selected.call(node)))
 	view.on_pick = pick
 	var pick_edge := func(edge: Dictionary):
 		pick.call(edge.from)
@@ -241,12 +317,18 @@ func _open_flow() -> void:
 			slot.select(i)
 			fill_targets.call()
 	view.on_edge = pick_edge
+	links.item_activated.connect(func(i: int):
+		pick.call(links.get_item_metadata(i).other))
 	broken.item_selected.connect(func(i: int):
 		if i > 0:
 			pick_edge.call(state.graph.external[i - 1])
 			broken.select(0))
 	var actions := Kit.hbox(6)
 	body.add_child(actions)
+	actions.add_child(Kit.button("定位引用字段", func():
+		var items := links.get_selected_items()
+		if not items.is_empty():
+			pick_edge.call(links.get_item_metadata(items[0]).edge), "ghost"))
 	actions.add_child(Kit.button("应用关系", func():
 		if state.saving or not is_same(app.manifest, source) or slot.selected < 0 or target.selected < 0 or target.is_item_disabled(target.selected):
 			return
@@ -296,10 +378,10 @@ func _open_flow() -> void:
 		notice.text = "关系已保存。" if result.status == "ok" else (
 			"关系未变。" if result.status == "noop" else "写入未完成；请根据刷新后的关系重试。"), "primary"))
 	actions.add_child(Kit.button("编辑选中项", func():
-		var i := node.selected
-		if i < 0 or not is_same(app.manifest, source):
+		var key: String = selected.call(node)
+		if key.is_empty() or not is_same(app.manifest, source):
 			return
-		var item: Dictionary = state.graph.nodes[i]
+		var item: Dictionary = state.index.nodes[key]
 		pop.hide()
 		if item.fn_id == RelGraph.VIEW_KIND:
 			ReferenceViews.open.call_deferred(app, item.cid)
@@ -312,7 +394,7 @@ func _open_flow() -> void:
 		pop.hide()
 		open.call_deferred(), "ghost"))
 	refresh.call("")
-	app._open_popup(pop, Vector2i(750, 530))
+	app._open_popup(pop, Vector2i(750, mini(680, int(app.get_viewport_rect().size.y) - 40)))
 
 func open_issue(jump: Dictionary) -> void:
 	var fn: String = jump.fn

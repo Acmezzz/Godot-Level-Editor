@@ -32,10 +32,38 @@ static func build_project(manifest: Dictionary) -> Dictionary:
 	kinds.sort()
 	return _build(manifest, kinds, {}, "")
 
+## Index saved relations once for navigation. Unset and broken references stay in the full graph.
+static func navigation(graph: Dictionary) -> Dictionary:
+	var index := {"nodes": {}, "incoming": {}, "outgoing": {}}
+	for node: Dictionary in graph.nodes:
+		index.nodes[node.key] = node
+		index.incoming[node.key] = []
+		index.outgoing[node.key] = []
+	for edge: Dictionary in graph.edges:
+		if not index.nodes.has(edge.to):
+			continue
+		index.incoming[edge.to].append(edge)
+		index.outgoing[edge.from].append(edge)
+	return index
+
+static func neighborhood(index: Dictionary, key: String) -> Dictionary:
+	if not index.nodes.has(key):
+		return {"nodes": [], "edges": []}
+	var local := {key: index.nodes[key]}
+	var edges: Array = index.outgoing[key].duplicate()
+	for edge: Dictionary in edges:
+		local[edge.to] = index.nodes[edge.to]
+	for edge: Dictionary in index.incoming[key]:
+		if edge.from != key:
+			local[edge.from] = index.nodes[edge.from]
+			edges.append(edge)
+	return {"nodes": local.values(), "edges": edges}
+
 static func _build(manifest: Dictionary, kinds: Array, extra: Dictionary, scope: String) -> Dictionary:
 	var graph := {"nodes": [], "edges": [], "external": [], "bad": [], "slots": {}}
 	var catalog := {}
 	var contents := {}
+	var steps_by_code := {}
 	if scope.is_empty():
 		catalog[VIEW_KIND] = {}
 		for id in References.view_ids(manifest):
@@ -71,9 +99,11 @@ static func _build(manifest: Dictionary, kinds: Array, extra: Dictionary, scope:
 				if not steps[i] is Dictionary:
 					continue
 				var row: Dictionary = steps[i]
-				var step_decl := StepDecls.step_by_code(manifest, str(row.get("step", "")))
+				var code := str(row.get("step", ""))
+				if not steps_by_code.has(code):
+					steps_by_code[code] = StepDecls.step_by_code(manifest, code)
 				var fields: Dictionary = row.fields if row.get("fields") is Dictionary else {}
-				var sdecls = step_decl.get("fields", [])
+				var sdecls = steps_by_code[code].get("fields", [])
 				if sdecls is Array:
 					_collect(manifest, key, base, sdecls, fields, i, graph, catalog, "步骤%d" % (i + 1))
 	if scope.is_empty():

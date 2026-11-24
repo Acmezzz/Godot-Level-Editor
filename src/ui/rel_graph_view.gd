@@ -28,8 +28,16 @@ func _ready() -> void:
 
 func set_data(d: Dictionary) -> void:
 	data = d
+	_hover = ""
 	_layout()
 	queue_redraw()
+
+func reveal(key: String, scroll: ScrollContainer) -> void:
+	if not _pos.has(key):
+		return
+	var center: Vector2 = _pos[key] - scroll.size * 0.5
+	scroll.scroll_horizontal = maxi(0, roundi(center.x))
+	scroll.scroll_vertical = maxi(0, roundi(center.y))
 
 func _layout() -> void:
 	_pos.clear()
@@ -103,7 +111,6 @@ func _layout() -> void:
 		for i in arr.size():
 			_pos[str(arr[i])] = Vector2(col_w * int(c) + _radius, height * 0.5 - h * 0.5 + step * i)
 	# 边段缓存（绘制与点击命中共用）：多行管道 → 目标列靠左的单行下移 14px 错开
-	_segs.clear()
 	var lanes := {}
 	for e in edges:
 		var ed2: Dictionary = e
