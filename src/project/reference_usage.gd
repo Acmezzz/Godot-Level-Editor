@@ -222,43 +222,6 @@ static func _as_list(v) -> Array:
 		return []
 	return [v]
 
-static func asset_usage(manifest: Dictionary, asset_id: String, current_map := "",
-		current_rows: Array = []) -> Dictionary:
-	var by_map := {}
-	var bad: Array = []
-	# R29：资产删除判定同样驱动破坏性动作，读磁盘实际内容
-	var maps := MapStore.read_all_fresh(manifest, bad)
-	for map_name in maps:
-		# V4 P0-4：当前图不能整张跳过（解绑后放弃改动会恢复正式文件里的绑定），
-		# 磁盘命中与活体命中取并集，见 content_usage 同名注释。
-		var is_current := current_map != "" and str(map_name) == current_map
-		var rows: Array = []
-		for obj in ((maps[map_name] as Dictionary).get("objects", []) as Array):
-			if not (obj is Dictionary):
-				continue
-			if str((obj as Dictionary).get("asset", "")) != asset_id:
-				continue
-			rows.append({
-				"id": str((obj as Dictionary).get("code", "")),
-				"x": floori(float((obj as Dictionary).get("x", 0))),
-				"y": floori(float((obj as Dictionary).get("y", 0))),
-			})
-		if is_current:
-			var have := {}
-			for r in rows:
-				have[str((r as Dictionary).get("id", ""))] = true
-			for r2 in current_rows:
-				if r2 is Dictionary and not have.has(str((r2 as Dictionary).get("id", ""))):
-					rows.append(r2)
-		if not rows.is_empty():
-			by_map[str(map_name)] = rows
-	if current_map != "" and not by_map.has(current_map) and not current_rows.is_empty():
-		by_map[current_map] = current_rows   # 新建未保存的图不在磁盘列表里
-	var unreadable: Array = []
-	for b in bad:
-		unreadable.append(str((b as Dictionary).get("name", "")))
-	return {"by_map": by_map, "unreadable": unreadable, "incomplete": not unreadable.is_empty()}
-
 static func asset_deletion_usage(manifest: Dictionary, asset_id: String, live: Dictionary, staged: Array) -> Dictionary:
 	var bad: Array = []
 	var maps_dir := str(manifest.get("_maps_dir", ""))

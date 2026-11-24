@@ -127,32 +127,4 @@ func test_asset_label_and_category() -> void:
 	ok(AssetDecl.placeable(m, "I1"), "图片可摆放")
 	ok(not AssetDecl.placeable(m, "nope"), "未知资产不可摆放")
 
-## 使用统计与引用自检同源：坏图显形为 incomplete，不假装零引用
-func test_asset_usage_reports_unreadable() -> void:
-	_wipe()
-	var m := _fake_manifest()
-	var d := MapStore.new_map("m1", 8, 8)
-	(d.objects as Array).append({"asset": "door", "code": "D1", "layer": str(d.meta.layers[0].id), "x": 2, "y": 3})
-	MapStore.write(m, "m1", d)
-	var u := ReferenceUsage.asset_usage(m, "door")
-	eq((u.get("by_map", {}) as Dictionary).size(), 1, "统计到一张图")
-	eq(((u.get("by_map", {}) as Dictionary)["m1"] as Array).size(), 1, "统计到一个实例")
-	ok(not bool(u.get("incomplete", false)), "全部可读 = 完整")
-	# 当前图 = 磁盘行 ∪ 画布行（V4 P0-4：磁盘正式文件里的绑定不能因画布解绑而消失）
-	u = ReferenceUsage.asset_usage(m, "door", "m1", [{"id": "D9", "x": 9, "y": 9}])
-	var cur_rows: Array = (u.get("by_map", {}) as Dictionary)["m1"]
-	var ids: Array = []
-	for r in cur_rows:
-		ids.append(str((r as Dictionary).get("id", "")))
-	ok(ids.has("D1"), "当前图磁盘行保留：%s" % str(ids))
-	ok(ids.has("D9"), "当前图画布行并入：%s" % str(ids))
-	# 注入坏图
-	var f := FileAccess.open(str(m._maps_dir).path_join("bad.json"), FileAccess.WRITE)
-	f.store_string("{oops")
-	f.close()
-	u = ReferenceUsage.asset_usage(m, "door")
-	ok(bool(u.get("incomplete", false)), "坏图让统计标记不完整")
-	ok((u.get("unreadable", []) as Array).has("bad"), "列出坏图名")
-	_wipe()
-
 ## 解绑后内容文件仍在库里；绑定重新加回 → 引用索引恢复（同一批数据源）

@@ -44,7 +44,7 @@ func build() -> void:
 		var btn: Button = Kit.button(str(spec[1]), _on_mode.bind(mode), "toggle")
 		btn.tooltip_text = {"map": "关卡：摆放地图（Esc 返回）",
 			"content": "内容：给实例挂功能、填内容（Esc 返回）",
-			"asset": "资产：资产图鉴与实例分布（Esc 返回）"}.get(mode, "")
+			"asset": "资产：资产图鉴与功能挂载（Esc 返回）"}.get(mode, "")
 		_mode_btns[mode] = btn
 		add_child(btn)
 

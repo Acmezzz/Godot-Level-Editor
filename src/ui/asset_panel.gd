@@ -1,7 +1,7 @@
 extends VBoxContainer
 ## 资产目录（工作台 →「资产」）：左列图鉴（图集 / 场景图片 / 实体三类都在），右侧详情。
 ## 两种职责，读的时候别混：
-##   **只读清点** —— 缩略图/尺寸/实例分布（当前图读画布内存、其余图读磁盘），纯展示，不改任何数据。
+##   **只读清点** —— 缩略图和尺寸，纯展示，不改任何数据。
 ##   **写清单** —— 图鉴名称、自带功能挂载、删除资产；都通过 app.gd 注入的 save_manifest 回调走
 ##                 清单保存路径（剥内部键 → 校验 → 写盘），本面板不自己写文件。
 ## 写回动作由 app.gd 注入：manifest 字典、save_manifest 回调。视觉统一走 UiTheme / UiKit。
@@ -244,7 +244,7 @@ func _show_detail(sid: String) -> void:
 		name_edit.text = ""
 		thumb.texture = null
 		_mount_rows({})
-		# extra 里挂着实例分布与删除按钮，也必须清掉
+		# extra 里挂着资产操作按钮，也必须清掉
 		for child in extra.get_children():
 			extra.remove_child(child)
 			child.queue_free()
@@ -271,7 +271,6 @@ func _show_detail(sid: String) -> void:
 		child.queue_free()
 	_add_config_section(sid)
 	_add_scan_section(sid)
-	_add_distribution_section(sid)
 	var already: bool = bool(_edef.get("disabled", false))
 	var del := Kit.button("永久删除（不可恢复）" if already else "删除此资产",
 		func(): _delete_asset_checked(sid), "ghost")
@@ -424,98 +423,6 @@ func _add_scan_section(sid: String) -> void:
 			if await _persist():
 				refresh_list(sid), "primary"))
 		box.add_child(r2)
-
-## 实例分布（只读视图）：按地图折叠列实例 id 与坐标，供清点/删除检查。
-## 自带功能的值 = 实例绑定内容（内容编辑器填），未填的用声明 default（游戏侧兜底）。
-var _dist_rows: VBoxContainer
-
-func _add_distribution_section(sid: String) -> void:
-	extra.add_child(Kit.section_label("实例分布"))
-	_dist_rows = Kit.vbox(4)
-	extra.add_child(_dist_rows)
-	_fill_distribution(sid)
-
-func _fill_distribution(sid: String) -> void:
-	if _dist_rows == null:
-		return
-	for c in _dist_rows.get_children():
-		_dist_rows.remove_child(c)
-		c.queue_free()
-	var usage := _usage(sid)
-	var dist: Dictionary = usage.get("by_map", {})
-	# C3：读不出的源文件必须显形——否则「没有实例」是假的
-	var unreadable: Array = usage.get("unreadable", [])
-	if not unreadable.is_empty():
-		_dist_rows.add_child(Kit.text_label(
-			"⚠ 统计不完整：%d 张地图读不出来（%s），这些图的引用未计入" % [
-				unreadable.size(), ", ".join(PackedStringArray(unreadable))],
-			Th.WARN, Th.FS_SMALL))
-	if dist.is_empty():
-		_dist_rows.add_child(Kit.hint_label("没有已放置实例", 220))
-		return
-	var total := 0
-	for map_name in dist:
-		total += (dist[map_name] as Array).size()
-		# 每张地图一个折叠段（默认收起，展开时才建行——懒构建）。
-		_dist_rows.add_child(_dist_map_section(str(map_name), dist[map_name]))
-	var foot := "共 %d 个实例 / %d 张地图 · 自带功能值在内容编辑器按实例填（未填的用声明默认值）" % [total, dist.size()]
-	_dist_rows.add_child(Kit.hint_label(foot, 460))
-
-## 单张地图的折叠段：标题按钮切换，首展时才构建行。
-func _dist_map_section(map_name: String, rows: Array) -> Control:
-	var box := Kit.vbox(2)
-	var built := {"done": false}
-	var body := Kit.vbox(2)
-	body.visible = false
-	var head := Kit.button(_dist_head_text(map_name, rows.size(), false), Callable(), "ghost")
-	head.alignment = HORIZONTAL_ALIGNMENT_LEFT
-	head.pressed.connect(func():
-		if not built.done:
-			built.done = true
-			for r in rows:
-				body.add_child(_dist_row(map_name, r))
-		body.visible = not body.visible
-		head.text = _dist_head_text(map_name, rows.size(), body.visible))
-	box.add_child(head)
-	box.add_child(body)
-	return box
-
-func _dist_head_text(map_name: String, n: int, open: bool) -> String:
-	return ("▾ " if open else "▸ ") + "%s × %d" % [map_name, n]
-
-## 全项目使用统计（C3）：唯一实现是 ReferenceUsage.asset_usage（与引用自检共用读盘），
-## 这里只补「当前图以画布内存为底」的差异——磁盘底册+内存补丁的混合体
-## 会让新增未保存的实例不出现、已删除的还留着。
-func _usage(sid: String) -> Dictionary:
-	var cur := ""
-	var live_rows: Array = []
-	if host != null and host.canvas != null and is_instance_valid(host.canvas):
-		cur = str(host.cur_map_name)
-		for e in host.canvas.ents_all():
-			var n := e as EntityNode
-			if n == null or n.asset != sid:
-				continue
-			var c: Vector2i = n.cell()
-			live_rows.append({"id": n.code, "x": c.x, "y": c.y})
-	return ReferenceUsage.asset_usage(manifest, sid, cur, live_rows)
-
-## 分布行（只读）：id · 坐标。值在内容编辑器按实例填，这里不再提供第二套编辑入口
-## （旧 props.stats 双写就是两个编辑面各写各的造成的分裂）。
-func _dist_row(map_name: String, r: Dictionary) -> Control:
-	var row := Kit.hbox(10)
-	var rid := str(r.get("id", ""))
-	var ids := Kit.text_label(rid, Th.TEXT_MUTE, Th.FS_META)
-	ids.custom_minimum_size = Vector2(84, 0)
-	ids.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	ids.tooltip_text = "%s  (%d,%d)" % [map_name, int(r.get("x", 0)), int(r.get("y", 0))]
-	row.add_child(ids)
-	var pos := Kit.text_label("(%d, %d)" % [int(r.get("x", 0)), int(r.get("y", 0))], Th.TEXT_MUTE, Th.FS_META)
-	pos.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	pos.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	row.add_child(pos)
-	return row
-
-
 
 ## 删除资产前引用检查——列出仍在使用该类型的地图与实例数；有引用需确认
 func _deletion_usage(sid: String) -> Dictionary:
