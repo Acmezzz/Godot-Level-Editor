@@ -4,9 +4,7 @@ extends RefCounted
 ## 跨图引用写的是地图码，所以本来就不破）；duplicate_map 是**整图复制**，会发新实例码/内容 ID、
 ## 重映射组内引用、为目标图重发地图码，并按 A2 顺序先写内容后写地图。
 ## 以静态函数为主，带少量静态状态：_cache（读缓存）与 project_rev（写盘版本号，派生缓存据此重扫）。
-## 写盘单入口 write_text/write_json：先写 .tmp 再原子替换。两种回滚保险别混：
-##   内容 —— ContentStore 覆盖前 rotate_history 出 3 层 .history（与地图同权，误写可回滚）。
-## 两者深度与各入口提交的文件集合由 docs/EDITOR_FEATURES.md §7.3 唯一规定，此处不复述数字。
+## write_text/write_json 先写临时文件再替换。内容文件轮转深度见 EDITOR_FEATURES §7.3。
 ## manifest 除取 _maps_dir 外，还随读取传入 map_data_validation 做结构校验（查实体类型/功能声明）。
 ## 注意：路径引用（preload）而非全局类名，避免 headless 首次扫描时的 class_name 缓存问题。
 
@@ -126,7 +124,7 @@ static func new_map(name: String, w: int, h: int, proj := "", topo := "") -> Dic
 
 ## 全项目地图码索引。一次扫描同时给出四张视图，避免 code_map / code_conflicts /
 ## 引用解析各扫一遍盘（§5「引用扫描反复读盘」：原先每个引用要读全部地图文件两次）：
-##   by_name  {图名: 码}   by_code {码: [图名...]}（>1 = 撞码）   map {码: 图名}（= code_map，取字典序末位）
+##   by_name {图名: 码}；by_code {码: [图名...]}；map {唯一的码: 图名}。
 ##   unreadable [图名]（文件在、但读不出或结构校验不过 → 引用解析报 unreadable 而非 missing）
 ##   names [图名]（目录里的全部地图，含读不出的）
 ## 带缓存（F1/P03）：签名 = 目录列举清单 + 各图 mtime，不再每图 open 取长度——
@@ -148,7 +146,6 @@ static func code_index(m: Dictionary) -> Dictionary:
 		return _ci_cache
 	var by_name := {}
 	var by_code := {}
-	var plain := {}
 	var unreadable: Array = []
 	var paths := {}
 	for mn in names:
@@ -164,11 +161,14 @@ static func code_index(m: Dictionary) -> Dictionary:
 		if c == "":
 			continue
 		by_name[n] = c
-		plain[c] = n   # 撞码时保留字典序末位（历史行为），冲突由 by_code 摆出全部路径
 		if not by_code.has(c):
 			by_code[c] = []
 		(by_code[c] as Array).append(n)
-	_ci_cache = {"by_name": by_name, "by_code": by_code, "map": plain,
+	var unique := {}
+	for code in by_code:
+		if by_code[code].size() == 1:
+			unique[code] = by_code[code][0]
+	_ci_cache = {"by_name": by_name, "by_code": by_code, "map": unique,
 		"unreadable": unreadable, "names": names, "paths": paths}
 	_ci_key = key
 	return _ci_cache
@@ -222,9 +222,7 @@ static func identity_error(m: Dictionary, name: String, data: Dictionary, move_f
 		return ""
 	return "地图码 %s 已由其他地图使用：%s" % [code, "、".join(matches)]
 
-## 项目内重复地图码 → {code: [图名...]}（>1 个文件共用同码）。审计/引用解析据此拒绝猜测。
-## 引用解析侧的「一码一图」表（code_map）在撞码时只保留最后读到的图名——
-## 这正是必须用本函数把全部路径摆出来的原因。
+## 项目内的重复地图码及冲突文件。
 static func code_conflicts(m: Dictionary) -> Dictionary:
 	var by_code: Dictionary = code_index(m).get("by_code", {})
 	var out := {}

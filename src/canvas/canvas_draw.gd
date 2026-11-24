@@ -196,7 +196,7 @@ func _draw() -> void:
 	if not exits.is_empty():
 		var fnt: Font = ThemeDB.fallback_font   # Node2D 无 Control 主题接口，用引擎兜底字体
 		if fnt != null:
-			# 值 = 地图码（v7）：显示时码→名解析一次（code_map 带缓存）；老数据存名兜底原样显示
+			# 唯一码显示图名，无法解析时保留原值。
 			var cm: Dictionary = cvs.exit_map_names
 			for it in exits:
 				var shown := str(it[1])
