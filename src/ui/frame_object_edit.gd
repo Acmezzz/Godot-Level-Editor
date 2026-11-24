@@ -1,12 +1,15 @@
 extends RefCounted
-## Two clicks on a frozen frame: select an existing instance or vertex, then choose a destination.
+## Draft instance moves and contour edits against the current game frame.
 
 const Picks := preload("res://src/project/frame_picks.gd")
+const Geometry := preload("res://src/map/object_geometry.gd")
 const Ink := Color("ffda67")
+enum Edit {MOVE, INSERT, DELETE}
 
 var canvas: EditorCanvas
 var target: EntityNode
 var vertex := Vector2i(-1, -1)
+var edit := Edit.MOVE
 var origin := Vector2.ZERO
 var destination := Vector2.ZERO
 var local_point := Vector2.ZERO
@@ -21,9 +24,10 @@ func _init(cvs: EditorCanvas) -> void:
 func clear() -> void:
 	target = null
 	vertex = Vector2i(-1, -1)
+	edit = Edit.MOVE
 	rings.clear()
 	can_apply = false
-	status = "先点选实例或轮廓顶点，再点同一图层的目标位置。右键重选。"
+	status = "左键选实例或顶点，再点同层目标。Shift + 左键选顶点后插点；Ctrl + 左键选顶点后确认删除。右键重选。"
 
 func ready() -> bool:
 	return can_apply
@@ -40,12 +44,12 @@ func input(event: InputEvent, pixel: Vector2, regions: Array) -> bool:
 	if event.button_index != MOUSE_BUTTON_LEFT:
 		return false
 	if target == null:
-		_select(pixel, regions)
-	else:
+		_select(pixel, regions, Edit.DELETE if event.ctrl_pressed else Edit.INSERT if event.shift_pressed else Edit.MOVE)
+	elif edit != Edit.DELETE:
 		_destinate(pixel, regions)
 	return true
 
-func _select(pixel: Vector2, regions: Array) -> void:
+func _select(pixel: Vector2, regions: Array, action: Edit) -> void:
 	var hit := Picks.at(regions, pixel, "objectEdit")
 	var value = hit.get("value")
 	var code := str(value.get("inst", "")) if value is Dictionary else str(value) if value is String else ""
@@ -56,6 +60,9 @@ func _select(pixel: Vector2, regions: Array) -> void:
 	var li := canvas._layer_index_of(entity.layer_id)
 	if li < 0 or canvas.is_layer_locked(li):
 		status = "实例所在层已锁定或不存在。"
+		return
+	if action != Edit.MOVE and not value is Dictionary:
+		status = "插入和删除需先点选游戏标出的轮廓顶点。"
 		return
 	if value is Dictionary:
 		var ring = value.get("ring")
@@ -69,9 +76,25 @@ func _select(pixel: Vector2, regions: Array) -> void:
 		if ring >= available.size() or index >= available[int(ring)].size():
 			status = "游戏返回的轮廓顶点不存在。"
 			return
+		if action == Edit.DELETE:
+			var minimum := Geometry.minimum(visual)
+			if available[int(ring)].size() <= minimum:
+				status = "此轮廓至少保留 %d 个顶点。" % minimum
+				return
+			available[int(ring)].remove_at(int(index))
+			if not _check_rings(entity, available):
+				return
 		vertex = Vector2i(int(ring), int(index))
 	target = entity
+	edit = action
 	origin = pixel
+	if edit == Edit.DELETE:
+		can_apply = true
+		status = "确认删除 %s 的顶点 %d/%d。右键重选。" % [code, vertex.x + 1, vertex.y + 1]
+		return
+	if edit == Edit.INSERT:
+		status = "请点同层位置，在 %s 的顶点 %d/%d 之后插入新点。右键重选。" % [code, vertex.x + 1, vertex.y + 1]
+		return
 	status = "已选 %s · %s。请点同层目标；右键重选。" % [
 		code, "顶点 %d/%d" % [vertex.x + 1, vertex.y + 1] if vertex.x >= 0 else "实例"]
 
@@ -85,22 +108,33 @@ func _destinate(pixel: Vector2, regions: Array) -> void:
 	var li := canvas._layer_index_of(target.layer_id)
 	if vertex.x >= 0:
 		var world := canvas.to_layer_world(li, local_point)
-		rings = canvas._selection_ops_ctrl._geometry_rings(target)
-		rings[vertex.x][vertex.y] = target.geometry_point_from_world(world)
-		var issue: String = canvas._selection_ops_ctrl._geometry_problem(target, rings)
-		if issue != "":
-			status = issue
+		var candidate: Array = canvas._selection_ops_ctrl._geometry_rings(target)
+		var point := target.geometry_point_from_world(world)
+		if edit == Edit.INSERT:
+			candidate[vertex.x].insert(vertex.y + 1, point)
+		else:
+			candidate[vertex.x][vertex.y] = point
+		if not _check_rings(target, candidate):
 			return
 	destination = pixel
 	can_apply = true
 	status = "新位置 (%.2f, %.2f) · 确认后写入。" % [local_point.x, local_point.y]
+
+func _check_rings(entity: EntityNode, candidate: Array) -> bool:
+	var issue: String = canvas._selection_ops_ctrl._geometry_problem(entity, candidate)
+	if not issue.is_empty():
+		status = issue
+		return false
+	rings = candidate
+	return true
 
 func apply() -> bool:
 	var li := canvas._layer_index_of(target.layer_id)
 	if canvas.is_layer_locked(li):
 		return false
 	if vertex.x >= 0:
-		canvas._selection_ops_ctrl._commit_ring(target, rings, vertex.x, "已移动实景顶点")
+		canvas._selection_ops_ctrl._commit_ring(target, rings, vertex.x,
+			["已移动实景顶点", "已插入实景顶点", "已删除实景顶点"][edit])
 		return true
 	var before: Dictionary = canvas._undo_history_ctrl.inst_rows([target])
 	if not before.get("ok", false):
@@ -119,8 +153,8 @@ func draw(frame: TextureRect, rect: Rect2) -> void:
 		return
 	var scale := rect.size / frame.texture.get_size()
 	var start := rect.position + origin * scale
-	frame.draw_circle(start, 5.0, Ink)
-	if can_apply:
+	frame.draw_circle(start, 5.0, Color.SALMON if edit == Edit.DELETE else Ink)
+	if can_apply and edit != Edit.DELETE:
 		var end := rect.position + destination * scale
 		frame.draw_line(start, end, Ink, 2.0, true)
 		frame.draw_circle(end, 5.0, Ink)

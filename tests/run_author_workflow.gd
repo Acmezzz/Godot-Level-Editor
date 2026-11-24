@@ -1788,12 +1788,14 @@ func _wait_for_pick_frame(pop: PopupPanel) -> PopupPanel:
 		return null
 	return pop
 
-func _click_pick_frame(pop: PopupPanel, at: Vector2, button := MOUSE_BUTTON_LEFT) -> Button:
+func _click_pick_frame(pop: PopupPanel, at: Vector2, button := MOUSE_BUTTON_LEFT, modifier := KEY_NONE) -> Button:
 	var frame: TextureRect = pop.find_child("MapGamePreviewFrame", true, false)
 	var extent := Vector2(720, 1280)
 	var fitted := extent * minf(frame.size.x / extent.x, frame.size.y / extent.y)
 	var mouse := InputEventMouseButton.new()
 	mouse.button_index = button
+	mouse.ctrl_pressed = modifier == KEY_CTRL
+	mouse.shift_pressed = modifier == KEY_SHIFT
 	mouse.pressed = true
 	mouse.position = (frame.size - fitted) * 0.5 + fitted * at
 	frame.gui_input.emit(mouse)
@@ -1932,11 +1934,33 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 	apply.pressed.emit()
 	if await _wait_for_pick_frame(move_pop) == null:
 		return
-	move_pop.hide()
 	var edited: Array = cvs.extract().objects.filter(func(row): return row.code == outline.code)
-	var points: Array = edited[0].props.points
-	check(points != outline.props.points and points[0] == outline.props.points[0] and points[2] == outline.props.points[2],
+	var moved: Array = edited[0].props.points
+	check(moved != outline.props.points and moved[0] == outline.props.points[0] and moved[2] == outline.props.points[2],
 		"adjust only the specified vertex while preserving identity and other vertices")
+	check(_click_pick_frame(move_pop, Vector2(0.73, 0.26), MOUSE_BUTTON_LEFT, KEY_CTRL).disabled,
+		"a three-point contour cannot lose a vertex")
+	check(_click_pick_frame(move_pop, Vector2(0.65, 0.25), MOUSE_BUTTON_LEFT, KEY_SHIFT).disabled,
+		"inserting a vertex first selects its predecessor")
+	check(_click_pick_frame(move_pop, Vector2(0.15, 0.25)).disabled, "inserting on another layer is rejected")
+	apply = _click_pick_frame(move_pop, Vector2(0.70, 0.25))
+	check(not apply.disabled and _frame_contour_points(cvs, outline.code) == moved, "insert is a draft until applied")
+	apply.pressed.emit()
+	if await _wait_for_pick_frame(move_pop) == null:
+		return
+	var inserted := _frame_contour_points(cvs, outline.code)
+	check(inserted.size() == 4 and inserted[0] == moved[0] and inserted[2] == moved[1] and inserted[3] == moved[2],
+		"the new vertex follows the chosen predecessor in the projected ring")
+	apply = _click_pick_frame(move_pop, Vector2(0.73, 0.26), MOUSE_BUTTON_LEFT, KEY_CTRL)
+	check(not apply.disabled and _frame_contour_points(cvs, outline.code) == inserted, "deletion awaits confirmation")
+	apply.pressed.emit()
+	if await _wait_for_pick_frame(move_pop) == null:
+		return
+	move_pop.hide()
+	var points := _frame_contour_points(cvs, outline.code)
+	check(points == [inserted[0], inserted[1], inserted[3]], "the fresh frame identifies the reindexed vertex for deletion")
+	check(await cvs.undo() and _frame_contour_points(cvs, outline.code) == inserted, "one undo restores the deleted vertex")
+	check(await cvs.undo() and _frame_contour_points(cvs, outline.code) == moved, "the next undo removes the inserted vertex")
 	check(await cvs.undo() and cvs.extract().objects.any(func(row): return row.get("code") == outline.code and row.props.points == outline.props.points),
 		"one undo restores the original outline")
 	check(cvs._ent_by_code_index()[doors[0].code].position.is_equal_approx(Vector2(32, 24)), "undoing the vertex leaves the instance move")
@@ -1944,8 +1968,10 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 		"the next undo restores the original anchor")
 	check(await cvs.redo() and cvs._ent_by_code_index()[doors[0].code].position.is_equal_approx(Vector2(32, 24)),
 		"redo moves the same stable instance")
-	check(await cvs.redo() and cvs.extract().objects.any(func(row): return row.get("code") == outline.code and row.props.points == points),
+	check(await cvs.redo() and _frame_contour_points(cvs, outline.code) == moved,
 		"the next redo reapplies the edited vertex")
+	check(await cvs.redo() and _frame_contour_points(cvs, outline.code) == inserted, "redo restores the inserted vertex")
+	check(await cvs.redo() and _frame_contour_points(cvs, outline.code) == points, "redo deletes the original vertex again")
 	var saved: Dictionary = await app._map_file_ctrl.commit_document("保存实景落点及连接")
 	check(saved.get("status") == "ok", "publish positions and port selected from the game frame")
 	await app._load_map_file(path)
@@ -1959,6 +1985,12 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 		and result.get("opened") == doors[1].code
 		and result.get("contours", []).size() == 1 and result.contours[0].props.points == points,
 		"game reloads both view positions and the projected polygon, and opens the selected door: " + str(report))
+
+func _frame_contour_points(cvs: EditorCanvas, code: String) -> Array:
+	for row in cvs.extract().objects:
+		if row.get("code") == code:
+			return row.props.points
+	return []
 
 func _drag_pick_frame(pop: PopupPanel, a: Vector2, b: Vector2) -> Button:
 	var frame: TextureRect = pop.find_child("MapGamePreviewFrame", true, false)
