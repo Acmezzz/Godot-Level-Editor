@@ -45,6 +45,8 @@ static func at(regions: Array, pixel: Vector2, mode: String) -> Dictionary:
 		if uv.x < -0.00001 or uv.y < -0.00001 or uv.x + uv.y > 1.00001:
 			continue
 		var value = region.targets.get(mode)
+		if mode == "objectEdit":
+			value = region.targets.get("vertex", region.targets.get("entity"))
 		if mode == "placement":
 			if region.layer == "":
 				if region.occludes:

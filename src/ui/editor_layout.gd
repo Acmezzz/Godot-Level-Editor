@@ -196,13 +196,15 @@ func _build_global_bar() -> PanelContainer:
 	map_menu.add_item("调整地图尺寸", 5)
 	map_menu.add_item("批量替换瓦片…", 6)
 	map_menu.add_item("关卡游戏画面预览…", 14)
-	map_menu.add_separator()
+	map_menu.add_item("实景调整实例和顶点…", 17)
 	map_menu.add_separator()
 	map_menu.add_item("检查项目完整性", 30)
 	map_menu.add_item("切换项目…", 20)
 	map_menu.id_pressed.connect(_on_map_menu_id)
 	app._map_btn.pressed.connect(func():
-		map_menu.set_item_disabled(map_menu.get_item_index(14), not MapGamePreview.available(app))
+		var no_preview := not MapGamePreview.available(app)
+		map_menu.set_item_disabled(map_menu.get_item_index(14), no_preview)
+		map_menu.set_item_disabled(map_menu.get_item_index(17), no_preview)
 		map_menu.set_item_disabled(map_menu.get_item_index(15), not MapGeneratorDialog.available(app))
 		map_menu.set_item_disabled(map_menu.get_item_index(16), not MapGeneratorDialog.can_regenerate(app))
 		_popup_below(map_menu, app._map_btn))
@@ -254,6 +256,8 @@ func _on_map_menu_id(id: int) -> void:
 			app._on_map_history()
 		14:
 			MapGamePreview.open(app)
+		17:
+			MapGamePreview.open_object_edit(app)
 		15:
 			MapGeneratorDialog.open(app)
 		16:

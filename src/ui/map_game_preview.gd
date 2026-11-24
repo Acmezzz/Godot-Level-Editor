@@ -7,6 +7,7 @@ const FieldWidgets := preload("res://src/ui/field_widgets.gd")
 const Assets := preload("res://src/assets/asset_decl.gd")
 const Geometry := preload("res://src/map/object_geometry.gd")
 const TileBrush := preload("res://src/ui/frame_tile_brush.gd")
+const ObjectEdit := preload("res://src/ui/frame_object_edit.gd")
 const CAPABILITY := "mapFrame"
 
 static func available(app) -> bool:
@@ -14,7 +15,7 @@ static func available(app) -> bool:
 
 static func open(app) -> void:
 	if app.map_loaded and app.canvas.place_kind != "object" and app.canvas.source_of_asset(app.canvas.paint_asset) >= 0:
-		_open(app, "placement", Callable(), {"tile_brush": TileBrush.new(app.canvas)})
+		_open(app, "placement", Callable(), {"interaction": TileBrush.new(app.canvas), "confirm_label": "应用笔画"})
 		return
 	var asset: String = app.canvas.stamp_asset if app.map_loaded else ""
 	var choose := func(value: Dictionary) -> Dictionary:
@@ -46,6 +47,11 @@ static func open(app) -> void:
 			return {"text": title + " · " + canvas.layer_name(li) + " · 可创建形状",
 				"apply": func(): return canvas._tool_ops_ctrl.place_object(asset, li, points[0], true, points) != null}
 	_open(app, "placement", choose, draft)
+
+static func open_object_edit(app) -> void:
+	if available(app):
+		_open(app, "objectEdit", Callable(), {"title": "实景调整实例和顶点",
+			"interaction": ObjectEdit.new(app.canvas), "confirm_label": "应用调整"})
 
 static func open_reference(app, decl: Dictionary, resolve: Callable, commit: Callable) -> void:
 	var mode := FieldWidgets.pick_mode(decl)

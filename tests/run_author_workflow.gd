@@ -1903,6 +1903,39 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 	var final_tiles: Dictionary = cvs.extract().tiles
 	check(final_tiles.get(primary, []).size() < painted.get(primary, []).size()
 		and final_tiles.get(upper, []) == painted.get(upper, []), "right button erases the picked tile without touching another layer")
+	app._layout_ctrl._on_map_menu_id(17)
+	var move_pop := await _render_pick_frame(app)
+	if move_pop == null:
+		return
+	check(_click_pick_frame(move_pop, Vector2(0.15, 0.25)).disabled, "instance selection alone cannot apply a move")
+	check(_click_pick_frame(move_pop, Vector2(0.65, 0.25)).disabled, "a destination in another layer cannot move the instance")
+	apply = _click_pick_frame(move_pop, Vector2(0.25, 0.25))
+	check(not apply.disabled and cvs._ent_by_code_index()[doors[0].code].position.is_equal_approx(Vector2(24, 24)),
+		"the mapped move stays in the draft until confirmed")
+	apply.pressed.emit()
+	await process_frame
+	check(cvs._ent_by_code_index()[doors[0].code].position.is_equal_approx(Vector2(32, 24)), "apply moves the selected instance")
+	check(await cvs.undo() and cvs._ent_by_code_index()[doors[0].code].position.is_equal_approx(Vector2(24, 24)),
+		"undo restores the original anchor")
+	check(await cvs.redo() and cvs._ent_by_code_index()[doors[0].code].position.is_equal_approx(Vector2(32, 24)),
+		"redo moves the same stable instance")
+	app._layout_ctrl._on_map_menu_id(17)
+	var vertex_pop := await _render_pick_frame(app)
+	if vertex_pop == null:
+		return
+	_click_pick_frame(vertex_pop, Vector2(0.75, 0.25))
+	check(_click_pick_frame(vertex_pop, Vector2(0.65, 0.25)).disabled, "a collapsed edge cannot be confirmed")
+	apply = _click_pick_frame(vertex_pop, Vector2(0.73, 0.26))
+	check(not apply.disabled, "a new valid outline vertex location is enabled")
+	apply.pressed.emit()
+	await process_frame
+	var edited: Array = cvs.extract().objects.filter(func(row): return row.code == outline.code)
+	var points: Array = edited[0].props.points
+	check(points != outline.props.points and points[0] == outline.props.points[0] and points[2] == outline.props.points[2],
+		"adjust only the specified vertex while preserving identity and other vertices")
+	check(await cvs.undo() and cvs.extract().objects.any(func(row): return row.get("code") == outline.code and row.props.points == outline.props.points),
+		"one undo restores the original outline")
+	check(await cvs.redo(), "redo reapplies the edited vertex")
 	var saved: Dictionary = await app._map_file_ctrl.commit_document("保存实景落点及连接")
 	check(saved.get("status") == "ok", "publish positions and port selected from the game frame")
 	await app._load_map_file(path)
@@ -1910,11 +1943,11 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 	var report := await launch_and_read(app, false)
 	var result: Dictionary = report.get("result", {})
 	var picks: Array = result.get("picks", [])
-	check(report.get("status") == "ready" and picks.size() == 2 and picks[0].point == [24.0, 24.0]
+	check(report.get("status") == "ready" and picks.size() == 2 and picks[0].point == [32.0, 24.0]
 		and absf(float(picks[1].point[0]) - (48.0 + (48.0 + 32.0 / 7.0) * 1.5)) < 0.02
 		and absf(float(picks[1].point[1]) - (16.0 + (32.0 + 64.0 / 7.0) * 1.5)) < 0.02
 		and result.get("opened") == doors[1].code
-		and result.get("contours", []).size() == 1 and result.contours[0].props.points == outline.props.points,
+		and result.get("contours", []).size() == 1 and result.contours[0].props.points == points,
 		"game reloads both view positions and the projected polygon, and opens the selected door: " + str(report))
 
 func _drag_pick_frame(pop: PopupPanel, a: Vector2, b: Vector2) -> Button:

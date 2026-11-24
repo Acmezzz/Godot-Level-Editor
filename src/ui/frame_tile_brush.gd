@@ -62,6 +62,9 @@ func _extend(pixel: Vector2, regions: Array) -> void:
 		if cells.size() > count:
 			traces.append([span.screen_a, span.screen_b])
 
+func ready() -> bool:
+	return not groups.is_empty()
+
 func message() -> String:
 	var count := 0
 	for layer in groups:

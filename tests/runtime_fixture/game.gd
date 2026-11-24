@@ -291,6 +291,19 @@ func _compose_pick_frame(surface: SubViewport, size: Vector2i, dir: String, requ
 			if row.get("asset") == "door" and row.get("layer") == layer:
 				region["targets"] = {"entity": row.code, "port": {"map": map.meta.code, "inst": row.code, "port": "open"}}
 				break
+		for row in map.objects:
+			if row.get("asset") != "free-ramp" or row.get("layer") != layer:
+				continue
+			var points: Array = row.get("props", {}).get("points", [])
+			var anchor := (Vector2(row.x, row.y) + Vector2(0.5, 0.5)) * 16.0
+			for k in points.size():
+				var p: Array = points[k]
+				var uv := (anchor + Vector2(p[0], p[1]) - local) / 32.0
+				var bary := Vector3(1.0 - uv.x - uv.y, uv.x * (2.0 if i == 1 else 1.0), uv.y)
+				var screen := PackedVector2Array(region.screen.map(func(v): return Vector2(v[0], v[1])))
+				var center := (screen[0] * bary.x + screen[1] * bary.y + screen[2] * bary.z) / (bary.x + bary.y + bary.z)
+				regions.append({"screen": [[center.x - 7, center.y - 7], [center.x + 10, center.y - 7], [center.x - 7, center.y + 10]],
+					"targets": {"vertex": {"inst": row.code, "ring": 0, "index": k}}})
 		regions.append(region)
 	var picks := FileAccess.open(dir.path_join("picks.json"), FileAccess.WRITE)
 	picks.store_string(JSON.stringify({"version": 1, "token": request.token, "regions": regions}))
