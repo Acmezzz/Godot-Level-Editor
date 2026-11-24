@@ -9,6 +9,7 @@ const RefFields := preload("res://src/content/ref_fields.gd")
 const MapPreview := preload("res://src/ui/map_game_preview.gd")
 const Preview := preload("res://src/ui/screen_layout_canvas.gd")
 const FlowTarget := preload("res://src/content/flow_target.gd")
+const Targets := preload("res://src/project/startup_targets.gd")
 
 static func render(form: VBoxContainer, preview: Preview, state: Dictionary) -> void:
 	preview.cancel_placement()
@@ -234,6 +235,9 @@ static func render(form: VBoxContainer, preview: Preview, state: Dictionary) -> 
 		var spec = Layout.output_spec(state.modules, item, output)
 		var options: Array = state.named_targets.filter(func(option):
 			return FlowTarget.allows(spec, option.value)) if spec is Dictionary else state.targets
+		if spec is Dictionary:
+			for arrival in Targets.arrival_options(state.manifest, spec):
+				options.append({"label": arrival.name, "value": arrival.target})
 		_add_element_target(form, options, item, output, outlets[output])
 	if item.kind in ["button", "module"]:
 		_add_focus_fields(form, preview, state, item, refresh)

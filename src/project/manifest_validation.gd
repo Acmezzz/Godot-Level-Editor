@@ -125,6 +125,10 @@ static func _validate_startup(data: Dictionary, issues: Array[Dictionary]) -> vo
 	for kind in ["screens", "maps"]:
 		if startup.has(kind) and not startup[kind] is bool:
 			_add(issues, "error", "startup." + kind, "must be a boolean")
+	var ports = startup.get("arrivalPorts", [])
+	if not ports is Array or not ports.all(func(id): return id is String and id != ""):
+		_add(issues, "error", "startup.arrivalPorts", "must be an array of non-empty port types")
+		return
 	var kinds = startup.get("contentTypes", [])
 	if not kinds is Array:
 		_add(issues, "error", "startup.contentTypes", "must be an array of declared function IDs")
@@ -139,6 +143,8 @@ static func _validate_startup(data: Dictionary, issues: Array[Dictionary]) -> vo
 	if not startup.has("target"):
 		return
 	var target = startup.target
+	if FlowTarget.kind(target) == "map" and target.has("port") and FlowTarget.allows(startup, target):
+		return
 	if target is Dictionary:
 		if target.size() == 2 and target.get("function") is String and target.function in kinds \
 				and target.get("content") is String and ContentStore.is_valid_id(target.content):
@@ -747,7 +753,7 @@ static func _check_condition_fields(fields: Variant, path: String, conditions: D
 		var child := path + "." + str(fd.get("id", "?"))
 		if fd.get("kind") == "input" and fd.get("type") == "flow_target":
 			if not FlowTarget.declaration_valid(fd):
-				_add(issues, "error", child, "flow_target requires maps, screens or a non-empty contentTypes array")
+				_add(issues, "error", child, "flow_target requires at least one domain: maps, screens, contentTypes or arrivalPorts")
 			elif fd.has("default") and not (fd.default is Dictionary and fd.default.is_empty()) and not FlowTarget.allows(fd, fd.default):
 				_add(issues, "error", child + ".default", "flow target is not in the declared domains")
 		if fd.get("kind") == "input" and fd.get("type") == "curve" and fd.has("default") and not Keyframes.valid(fd.default):

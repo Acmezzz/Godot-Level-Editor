@@ -220,7 +220,7 @@ func _open_flow() -> void:
 			if mixed and (not FlowTarget.allows(edge.decl, address) \
 					or (address.has("content") and not item.get("project_content", false))):
 				continue
-			var is_current: bool = item.cid == edge.value and item.fn_id == edge.fn
+			var is_current: bool = address == edge.get("target") if mixed else item.cid == edge.value and item.fn_id == edge.fn
 			if not is_current and not matches.call(item.key, words):
 				continue
 			var label := _flow_node_label(item, true)
@@ -229,6 +229,15 @@ func _open_flow() -> void:
 			target.set_item_metadata(target.item_count - 1, choice)
 			if is_current:
 				match_idx = target.item_count - 1
+		if mixed:
+			for arrival in StartupTargets.arrival_options(source, edge.decl):
+				var is_current: bool = arrival.target == edge.get("target")
+				if not is_current and not Array(words).all(func(word): return arrival.name.to_lower().contains(word)):
+					continue
+				target.add_item(arrival.name)
+				target.set_item_metadata(target.item_count - 1, arrival.target)
+				if is_current:
+					match_idx = target.item_count - 1
 		var missing = edge.get("target", {}) if mixed else edge.value
 		var has_missing: bool = missing != null and not (missing is Dictionary and missing.is_empty()) \
 			and not (missing is String and missing.is_empty())

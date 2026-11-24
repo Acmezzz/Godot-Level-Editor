@@ -139,7 +139,7 @@ static func _collect_maps(manifest: Dictionary, graph: Dictionary, catalog: Dict
 		var data := MapStore.read(manifest, node.name)
 		for ref in MapFlow.references(manifest, data):
 			var address := _flow_address(ref.value)
-			if FlowTarget.allows(ref.decl, ref.value) and catalog.get(address[0], {}).get(address[1], false):
+			if _typed_target_exists(manifest, catalog, ref.decl, ref.value, address):
 				var label: String = ref.decl.get("name", ref.field)
 				graph.edges.append({"from": node.key, "to": _key(address[0], address[1]),
 					"fn_id": MAP_KIND, "cid": node.cid, "fn": address[0], "value": address[1],
@@ -160,7 +160,7 @@ static func _collect_maps(manifest: Dictionary, graph: Dictionary, catalog: Dict
 					"fn_id": MAP_KIND, "cid": node.cid, "fn": address[0], "value": address[1],
 					"label": "%s · %s" % [code, ref.path.trim_prefix(".")], "field": ref.field,
 					"map_instance": code, "target": ref.value}
-				if FlowTarget.allows(ref.decl, ref.value) and catalog.get(address[0], {}).get(address[1], false):
+				if _typed_target_exists(manifest, catalog, ref.decl, ref.value, address):
 					graph.edges.append(edge)
 				else:
 					graph.external.append(edge)
@@ -196,7 +196,8 @@ static func _collect_views(manifest: Dictionary, graph: Dictionary, catalog: Dic
 					var spec = ScreenLayout.output_spec(modules, row, output) if not output.is_empty() else null
 					var typed := spec is Dictionary
 					var direct: bool = (typed or manifest.get("directViewTargets") == true) and ScreenLayout.view_target(current)
-					var to_map: bool = (typed or manifest.get("directMapTargets") == true) and ScreenLayout.map_target(current)
+					var to_map: bool = FlowTarget.kind(current) == "map" if typed else (
+						manifest.get("directMapTargets") == true and ScreenLayout.map_target(current))
 					if current != null and not direct and not to_map and not ScreenLayout.content_target(current):
 						continue
 					var fn: String = MAP_KIND if to_map else (VIEW_KIND if direct else (current.function if current != null else ""))
@@ -210,7 +211,7 @@ static func _collect_views(manifest: Dictionary, graph: Dictionary, catalog: Dic
 					if current == null:
 						continue
 					var destinations: Dictionary = catalog.get(fn, {})
-					var valid: bool = FlowTarget.allows(spec, current) and destinations.get(value, false) if typed else destinations.has(value)
+					var valid: bool = _typed_target_exists(manifest, catalog, spec, current, [fn, value]) if typed else destinations.has(value)
 					if valid:
 						edge["to"] = _key(fn, value)
 						graph.edges.append(edge)
@@ -322,7 +323,7 @@ static func _collect(manifest: Dictionary, from_key: String, base: Dictionary, d
 				"shown_present": values.has(field),
 				"multi": false, "flow_target": true, "target": target, "fn": address[0], "value": address[1]})
 			graph.slots[from_key].append(edge)
-			if FlowTarget.allows(fd, target) and catalog.get(edge.fn, {}).get(edge.value, false):
+			if _typed_target_exists(manifest, catalog, fd, target, address):
 				edge["to"] = _key(edge.fn, edge.value)
 				graph.edges.append(edge)
 			elif target != null and not (target is Dictionary and target.is_empty()):
@@ -461,6 +462,11 @@ static func _flow_address(target: Variant) -> Array[String]:
 		"map": return [MAP_KIND, target.map]
 		"content": return [target.function, target.content]
 	return ["", ""]
+
+static func _typed_target_exists(manifest: Dictionary, catalog: Dictionary, decl: Dictionary,
+		target: Variant, address: Array) -> bool:
+	return FlowTarget.allows(decl, target) and catalog.get(address[0], {}).get(address[1], false) \
+		and (not target.has("port") or StartupTargets.destination_available(manifest, decl, target))
 
 ## 写回结果归一：老回调返回 bool；表单 _content_write 返回 "ok"/"conflict"/"fail"。
 ## 字符串非空即真会漏判失败，必须显式认 "ok"（F1/P04）。

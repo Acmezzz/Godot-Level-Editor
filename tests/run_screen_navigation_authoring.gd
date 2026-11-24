@@ -28,6 +28,7 @@ func run() -> void:
 			project.path_join(file)) == OK, "install the standalone game " + file)
 	var declaration := {"projectName": "Screen Navigation", "directMapTargets": true,
 		"assets": [{"id": "relay", "kind": "entity", "code": "RLY1", "visual": {"mode": "rect", "color": "#62cabb"},
+			"ports": [{"id": "door", "x": 0, "y": 0, "type": "arrival"}, {"id": "wire", "x": 4, "y": 0, "type": "signal"}],
 			"fields": [{"id": "exit_target", "kind": "input", "type": "flow_target",
 				"maps": true, "screens": true, "contentTypes": ["signal"]},
 				{"id": "local_signal", "kind": "input", "type": "flow_target",
@@ -35,14 +36,15 @@ func run() -> void:
 		"startup": {"screens": true}, "viewports": [{"id": "handheld", "w": 480, "h": 720}],
 		"mapOutputs": {"completed": {"name": "Course completed",
 			"maps": true, "screens": true, "contentTypes": ["signal"]},
-			"retry": {"name": "Retry the course", "maps": true}},
+			"retry": {"name": "Retry the course", "arrivalPorts": ["arrival"]}},
 		"mapContentSlots": {"round": {"name": "Round rules",
 			"contentTypes": ["round_rules"], "contentMapContext": "inherit"}},
 		"mapGenerators": {"course": {"contentType": "course_rules",
 			"parameterFields": ["projection", "placements"]}},
 		"preview": {"version": 1, "executable": OS.get_executable_path(), "capabilities": ["generateMap"],
 			"args": ["--headless", "--path", "%projectpath%", "--"]},
-		"screenModules": {"signal-latch": {"name": "Latch", "outputs": {"accepted": {"name": "Continue", "screens": true}}, "fields": [
+		"screenModules": {"course-door": {"outputs": {"accepted": {"name": "Enter", "arrivalPorts": ["arrival"]}}},
+			"signal-latch": {"name": "Latch", "outputs": {"accepted": {"name": "Continue", "screens": true}}, "fields": [
 			{"id": "presses", "kind": "input", "type": "int", "min": 1, "default": 1}]}},
 		"functions": {"course_rules": {"code": "CRUL", "name": "Course rules", "fields": [
 			{"id": "projection", "code": "PROJ", "kind": "choice", "options": ["orthogonal", "isometric"]},
@@ -239,7 +241,8 @@ func run() -> void:
 	map_flow = popup()
 	completed = map_flow.find_child("MapFlow_completed", true, false)
 	choose(completed, JSON.stringify({"view": "results"}))
-	choose(map_flow.find_child("MapFlow_retry", true, false), JSON.stringify({"map": map_code}))
+	var arrival := {"map": map_code, "inst": pawn_code, "port": "door"}
+	choose(map_flow.find_child("MapFlow_retry", true, false), JSON.stringify(arrival))
 	press(map_flow, "应用")
 	check(Audit._ref_checks(canvas.extract(), orphan_manifest, "course").any(func(issue):
 		return issue.jump.type == "map_flow" and issue.jump.field == "completed"),
@@ -297,9 +300,10 @@ func run() -> void:
 	check(local_signal.content != original_signal.content and source.objects[0].props.local_signal == original_signal
 		and Store.read(manifest, local_signal.function, local_signal.content).fields.ACTR == copy_host,
 		"the instance outlet alone brings its map-scoped signal into the copy")
-	check(copy.meta.flowOutputs == {"completed": {"view": "results"}, "retry": {"map": copy_code}}
+	var copy_arrival := {"map": copy_code, "inst": copy_host, "port": "door"}
+	check(copy.meta.flowOutputs == {"completed": {"view": "results"}, "retry": copy_arrival}
 		and copy.objects[0].props.exit_target == {"map": copy_code} and copy_fields.RTRY == {"map": copy_code}
-		and source.meta.flowOutputs.retry == {"map": map_code}
+		and source.meta.flowOutputs.retry == arrival
 		and source.objects[0].props.exit_target == {"map": map_code}
 		and Store.read(manifest, round_target.function, round_target.content).fields.RTRY == {"map": map_code},
 		"self-directed outlets follow the copy, and the screen outlet and source remain intact")
@@ -310,7 +314,7 @@ func run() -> void:
 		and Store.read(manifest, round_target.function, round_target.content).fields.ROLE == host_target,
 		"the copy owns both documents on the remapped path; the source documents are unchanged")
 	app._set_mode("content")
-	await add_screen("instructions", "Enter course", {}, {"map": copy_code})
+	await add_screen("instructions", "Enter course", {"module": "course-door"}, copy_arrival)
 	await add_screen("welcome", "Start tutorial", {"module": "signal-latch"}, {"view": "instructions"})
 	await add_screen("debrief", "Read results", {}, timeline_target)
 	app.project_shell.content_editor._library.open()
@@ -437,6 +441,7 @@ func run() -> void:
 		and result.get("roundRules") == copy_rules.content and result.get("roundInputs") == 3
 		and result.get("roundHost") == copy_host
 		and result.get("localActor") == copy_host
+		and result.get("arrivalPort") == "door" and result.get("arrivalInstance") == copy_host
 		and result.get("placed") == copy.objects.map(func(row): return row.code) and result.get("text") == "Screen sequence complete",
 		"the game reads the map-level completion outlet and reaches the conclusion: %s" % [report])
 	end = Time.get_ticks_msec() + 2000
@@ -502,7 +507,7 @@ func add_screen(id: String, label: String, module: Dictionary, target: Dictionar
 	var caption: LineEdit = pop.find_child("LayoutElement_text", true, false)
 	caption.text = label
 	caption.text_changed.emit(label)
-	if not module.is_empty():
+	if module.get("module") == "signal-latch":
 		pop.find_child("LayoutModuleField_presses", true, false).value = 2
 	var control: OptionButton = pop.find_child("LayoutElementTarget" if module.is_empty() else "LayoutOutput_accepted", true, false)
 	choose(control, target)

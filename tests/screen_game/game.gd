@@ -50,11 +50,12 @@ func _follow_target(target: Dictionary, content_board := "") -> void:
 	if target.has("view"):
 		_show_view(target.view)
 	elif target.has("map"):
-		_show_map_target(target.map)
+		_show_map_target(target)
 	else:
 		_show_content(target, content_board)
 
-func _show_map_target(code: String) -> void:
+func _show_map_target(destination: Dictionary) -> void:
+	var code: String = destination.map
 	for filename in DirAccess.get_files_at("res://maps"):
 		if not filename.ends_with(".json"):
 			continue
@@ -65,6 +66,11 @@ func _show_map_target(code: String) -> void:
 		_clear_screen()
 		var pawns := _draw_relay(self, map, _relay_camera(size))
 		entered_board = {"board": code, "placed": pawns.keys()}
+		if destination.has("port"):
+			if not pawns.has(destination.inst):
+				_finish("The arrival instance is missing.")
+				return
+			entered_board.merge({"arrivalInstance": destination.inst, "arrivalPort": destination.port})
 		for row in map.objects:
 			var target: Dictionary = row.get("props", {}).get("local_signal", {})
 			if not target.is_empty():

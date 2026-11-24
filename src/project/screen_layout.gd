@@ -43,7 +43,7 @@ static func view_target(value: Variant) -> bool:
 	return FlowTarget.kind(value) == "view"
 
 static func map_target(value: Variant) -> bool:
-	return FlowTarget.kind(value) == "map"
+	return FlowTarget.kind(value) == "map" and not value.has("port")
 
 static func target_at(row: Dictionary, output: String) -> Variant:
 	return row.get("target") if output.is_empty() else row.get("outputs", {}).get(output)

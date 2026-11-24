@@ -25,7 +25,7 @@ static func declaration_issues(manifest: Dictionary) -> Array[Dictionary]:
 					or not FlowTarget.declaration_valid(decl):
 				result.append({"path": path, "severity": "error",
 					"message": "requires a non-empty ID, optional name and at least one destination domain"})
-			elif section == CONTENT and (decl.get("maps", false) or decl.get("screens", false)):
+			elif section == CONTENT and (decl.get("maps", false) or decl.get("screens", false) or not decl.get("arrivalPorts", []).is_empty()):
 				result.append({"path": path, "severity": "error", "message": "content slots only accept contentTypes"})
 			elif decl.has("contentMapContext") and (decl.contentMapContext not in ["independent", "inherit"] \
 					or decl.get("contentTypes", []).is_empty()):

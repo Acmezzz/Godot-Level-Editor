@@ -180,6 +180,10 @@ static func view_reference_issues(manifest: Dictionary, view_id := "", used_cont
 	for ref in ReferenceIndex.view_map_refs(manifest):
 		if view_id != "" and ref.view != view_id:
 			continue
+		if ref.has("domains"):
+			if not StartupTargets.destination_available(manifest, ref.domains, ref.target):
+				out.append(_view_issue(ref, _flow_target_message(ref.target)))
+			continue
 		if map_index.is_empty():
 			map_index = MapStore.code_index(manifest)
 		if ReferenceIndex.resolve_graph_map(map_index, ref.target.map).status != "ok":

@@ -94,7 +94,8 @@ static func view_transition_refs(manifest: Dictionary) -> Array:
 
 static func view_map_refs(manifest: Dictionary) -> Array:
 	return _view_connections(manifest).filter(func(ref):
-		return ScreenLayout.map_target(ref.target) and (ref.has("domains") or manifest.get("directMapTargets") == true))
+		return (ref.has("domains") and FlowTarget.kind(ref.target) == "map") \
+			or (ScreenLayout.map_target(ref.target) and manifest.get("directMapTargets") == true))
 
 ## Map transitions exclusively use stable codes, with the same uniqueness checks as graph edges.
 static func map_target_options(manifest: Dictionary) -> Array[Dictionary]:

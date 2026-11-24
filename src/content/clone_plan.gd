@@ -247,6 +247,7 @@ static func build(src: Dictionary, dst: Dictionary, codes: PackedStringArray = P
 		"whole_map": self_copy}
 	if self_copy:
 		spatial_refs["map_copy"] = _map_copy_codes(sdata, ddata)
+		spatial_refs["map_instances"] = instance_map
 	var scoped_ids := {}
 	if self_copy:
 		var roots: Array = MapFlow.scoped_content(m, sdata).map(func(ref): return ref.value)
@@ -637,7 +638,7 @@ static func whole_map_document(src: Dictionary, new_name: String, new_code: Stri
 	var map_copy := _map_copy_codes(sdata, doc)
 	var outputs := MapFlow.targets(doc, MapFlow.OUTPUTS)
 	for id in outputs:
-		outputs[id] = _copied_map_target(outputs[id], map_copy)
+		outputs[id] = _copied_map_target(outputs[id], map_copy, plan.instance_map)
 	for ref in MapFlow.scoped_content(m, sdata):
 		var key := content_key(ref.value.function, ref.value.content)
 		if plan.scoped_ids.has(key):
@@ -650,14 +651,16 @@ static func _map_copy_codes(source: Dictionary, target: Dictionary) -> Dictionar
 	var copy: String = target.get("meta", {}).get("code", "")
 	return {code: copy} if code != "" and copy != "" else {}
 
-static func _copied_map_target(value: Variant, codes: Dictionary) -> Variant:
+static func _copied_map_target(value: Variant, codes: Dictionary, instances: Dictionary) -> Variant:
 	if FlowTarget.kind(value) == "map" and codes.has(value.map):
+		if value.has("port"):
+			return {"map": codes[value.map], "inst": instances[value.inst], "port": value.port} if instances.has(value.inst) else value
 		return {"map": codes[value.map]}
 	return value
 
 static func _remap_flow_map(field: Dictionary, key: String, values: Dictionary, scope: Dictionary) -> void:
 	var value = values.get(key, field.get("default"))
-	var mapped = _copied_map_target(value, scope.map_copy)
+	var mapped = _copied_map_target(value, scope.map_copy, scope.map_instances)
 	if mapped != value:
 		values[key] = mapped
 
