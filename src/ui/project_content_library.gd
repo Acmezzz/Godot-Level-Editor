@@ -114,9 +114,13 @@ func _open_flow() -> void:
 	var node := OptionButton.new()
 	var slot := OptionButton.new()
 	var target := OptionButton.new()
+	var broken := OptionButton.new()
+	broken.name = "FlowMissingLinks"
+	broken.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	body.add_child(Kit.field_row("内容", node, 64))
 	body.add_child(Kit.field_row("引用字段", slot, 64))
 	body.add_child(Kit.field_row("目标", target, 64))
+	body.add_child(Kit.field_row("待修引用", broken, 64))
 	var notice := Kit.hint_label("", 640)
 	body.add_child(notice)
 	var scroll := ScrollContainer.new()
@@ -171,11 +175,20 @@ func _open_flow() -> void:
 	var refresh := func(key: String):
 		state.graph = RelGraph.build_project(source)
 		node.clear()
+		var names := {}
 		for item in state.graph.nodes:
 			node.add_item("%s · %s · %s" % [item.fn_id, item.name, item.cid])
 			node.set_item_metadata(node.item_count - 1, item.key)
+			names[item.key] = "%s/%s" % [item.fn_id, item.cid]
 			if item.key == key:
 				node.select(node.item_count - 1)
+		broken.clear()
+		broken.add_item("选择一条待修引用…" if not state.graph.external.is_empty() else "没有待修引用")
+		broken.set_item_disabled(0, true)
+		for edge in state.graph.external:
+			broken.add_item("%s · %s → %s/%s" % [names[edge.from], edge.label, edge.fn, edge.value])
+		broken.select(0)
+		broken.disabled = state.graph.external.is_empty()
 		view.set_data(state.graph)
 		fill_slots.call()
 		notice.text = "%d 条关系，%d 条失效引用，%d 个内容文件无法读取。可改接已建立分支或条件行内的引用。" % [
@@ -189,12 +202,17 @@ func _open_flow() -> void:
 	node.item_selected.connect(func(_i: int): fill_slots.call())
 	slot.item_selected.connect(func(_i: int): fill_targets.call())
 	view.on_pick = pick
-	view.on_edge = func(edge: Dictionary):
+	var pick_edge := func(edge: Dictionary):
 		pick.call(edge.from)
 		var i: int = state.slots.find(edge)
 		if i >= 0:
 			slot.select(i)
 			fill_targets.call()
+	view.on_edge = pick_edge
+	broken.item_selected.connect(func(i: int):
+		if i > 0:
+			pick_edge.call(state.graph.external[i - 1])
+			broken.select(0))
 	var actions := Kit.hbox(6)
 	body.add_child(actions)
 	actions.add_child(Kit.button("应用关系", func():
@@ -227,6 +245,9 @@ func _open_flow() -> void:
 		var item: Dictionary = state.graph.nodes[i]
 		pop.hide()
 		_open_item.call_deferred(item.fn_id, item.cid)))
+	actions.add_child(Kit.button("重新扫描", func():
+		if is_same(app.manifest, source):
+			refresh.call(selected.call(node)), "ghost"))
 	actions.add_child(Kit.button("返回内容库", func():
 		pop.hide()
 		open.call_deferred(), "ghost"))

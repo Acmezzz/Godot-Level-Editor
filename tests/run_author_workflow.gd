@@ -720,6 +720,41 @@ func run():
 		and chosen_entry.get("content") == "project-timing"
 		and chosen_report.get("result", {}).get("schedule") == seconds,
 		"the same independent game starts from the library-selected session: " + str(chosen_report))
+	await create_ending(app, ce._library, "finish-alt", "Reached the replacement", str(flow_map.meta.code), "EXIT")
+	ce._library.open()
+	pop = collect(app, "PopupPanel").filter(func(p): return p.visible).back()
+	press(pop, "流程关系…")
+	await process_frame
+	pop = collect(app, "PopupPanel").filter(func(p): return p.visible).back()
+	var missing_links: OptionButton = pop.find_child("FlowMissingLinks", true, false)
+	check(missing_links.disabled, "saved flow opens without broken branches")
+	# Simulate the game project temporarily removing the target file outside the editor.
+	var old_ending := Store.path_for(manifest, "ending", "project-finish")
+	var held_ending := project.path_join("held-ending.json")
+	check(DirAccess.rename_absolute(old_ending, held_ending) == OK, "temporarily remove the target from the content directory")
+	press(pop, "重新扫描")
+	check(not missing_links.disabled and missing_links.item_count == 2
+		and missing_links.get_item_text(1).contains("ending/project-finish"), "rescan exposes the missing nested branch target")
+	missing_links.select(1)
+	missing_links.item_selected.emit(1)
+	graph_options = collect(pop, "OptionButton")
+	check(graph_options[0].get_selected_metadata() == "campaign\u0001project-acceptance"
+		and graph_options[2].get_selected_metadata() == "project-finish", "broken reference selects its exact source and field")
+	select_metadata(graph_options[2], "")
+	press(pop, "应用关系")
+	var repaired_routes: Array = Store.read(manifest, "campaign", "project-acceptance").steps[2].fields.BRCH
+	check(missing_links.disabled and not repaired_routes[0].has("DEST") and repaired_routes[1].DEST == "project-retry",
+		"disconnect clears the missing reference without changing the sibling branch")
+	select_metadata(graph_options[2], "project-finish-alt")
+	press(pop, "应用关系")
+	check(DirAccess.rename_absolute(held_ending, old_ending) == OK, "restore the old file for the separate screen references")
+	pop.hide()
+	await process_frame
+	var repaired_report := await launch_and_read(app, true)
+	check(repaired_report.get("result", {}).get("ending") == "Reached the replacement"
+		and repaired_report.get("result", {}).get("missEnding") == "Try again"
+		and repaired_report.get("result", {}).get("flowGoal") == {"map": flow_map.meta.code, "inst": "EXIT"},
+		"the independent game uses the repaired route while preserving the retry branch: " + str(repaired_report))
 	var data := Maps.new_map("board", 10, 10)
 	var remote := Maps.new_map("remote", 10, 10)
 	remote.meta["code"] = "RMT2"
