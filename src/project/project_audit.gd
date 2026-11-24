@@ -712,6 +712,9 @@ static func _content_sections(manifest: Dictionary, fn: String, data: Dictionary
 
 static func _collect_spatial_contexts(manifest: Dictionary, data: Dictionary, name: String,
 		contexts: Dictionary, label := "") -> void:
+	var context_label := label if label != "" else name
+	for ref in MapFlow.scoped_content(manifest, data):
+		_add_map_context(contexts, _content_key(ref.value.function, ref.value.content), data, name, context_label)
 	var objects = data.get("objects", [])
 	if not objects is Array:
 		return
@@ -725,10 +728,12 @@ static func _collect_spatial_contexts(manifest: Dictionary, data: Dictionary, na
 			var cid := str(binding.get("content", ""))
 			if fn == "" or cid == "":
 				continue
-			var key := _content_key(fn, cid)
-			if not contexts.has(key):
-				contexts[key] = {}
-			contexts[key][label if label != "" else name] = {"map": data, "name": name}
+			_add_map_context(contexts, _content_key(fn, cid), data, name, context_label)
+
+static func _add_map_context(contexts: Dictionary, key: String, data: Dictionary, name: String, label: String) -> void:
+	if not contexts.has(key):
+		contexts[key] = {}
+	contexts[key][label] = {"map": data, "name": name}
 
 static func _contextual_content_checks(manifest: Dictionary, fn: String, cid: String,
 		data: Dictionary, contexts: Dictionary, overrides: Dictionary, prefix := "", probe := Callable()) -> Array:

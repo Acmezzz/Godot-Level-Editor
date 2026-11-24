@@ -33,7 +33,8 @@ func run() -> void:
 		"startup": {"screens": true}, "viewports": [{"id": "handheld", "w": 480, "h": 720}],
 		"mapOutputs": {"completed": {"name": "Course completed",
 			"maps": true, "screens": true, "contentTypes": ["signal"]}},
-		"mapContentSlots": {"round": {"name": "Round rules", "contentTypes": ["round_rules"]}},
+		"mapContentSlots": {"round": {"name": "Round rules",
+			"contentTypes": ["round_rules"], "contentMapContext": "inherit"}},
 		"mapGenerators": {"course": {"contentType": "course_rules",
 			"parameterFields": ["projection", "placements"]}},
 		"preview": {"version": 1, "executable": OS.get_executable_path(), "capabilities": ["generateMap"],
@@ -49,7 +50,8 @@ func run() -> void:
 				"maps": true, "screens": true, "contentTypes": ["signal"]}]},
 			"sequence": {"code": "SEQN", "name": "Sequence", "steps": true},
 			"round_rules": {"code": "ROND", "name": "Round rules", "fields": [
-				{"id": "inputs", "code": "INPT", "kind": "input", "type": "int", "min": 1, "max": 4}]},
+				{"id": "inputs", "code": "INPT", "kind": "input", "type": "int", "min": 1, "max": 4},
+				{"id": "host", "code": "HOST", "kind": "choice", "source": "entity_inst:relay"}]},
 			"signal": {"code": "SIGN", "name": "Signal", "fields": [
 			{"id": "text", "code": "TEXT", "kind": "input", "type": "string"},
 			{"id": "actor", "code": "ACTR", "kind": "choice", "source": "entity_inst:relay"},
@@ -197,7 +199,14 @@ func run() -> void:
 	choose(completed, JSON.stringify({"function": "signal", "content": "project-finished"}))
 	var round_slot: OptionButton = map_flow.find_child("MapContent_round", true, false)
 	choose(round_slot, JSON.stringify(round_target))
-	press(map_flow, "应用")
+	press(map_flow, "应用并编辑内容…")
+	await process_frame
+	form = popup()
+	check(form.find_child("ReferenceContextMap", true, false).get_selected_metadata() == map_code,
+		"editing the bound rules opens with the owning map selected")
+	choose(field_control(form, "host"), pawn_code)
+	press(form, "保存")
+	form.hide()
 	delete_reason = app.project_shell.content_editor._form._delete_blocked_reason("signal", "project-finished")
 	check("地图出口" in delete_reason, "an unsaved map outlet protects its destination content")
 	delete_reason = app.project_shell.content_editor._form._delete_blocked_reason(round_target.function, round_target.content)
@@ -267,6 +276,8 @@ func run() -> void:
 		"BRD1": map_code, "ROUT": {"function": "signal", "content": "project-finished"}},
 		"the timeline keeps the paired map alongside the graph-authored destination")
 	var findings := Audit.audit(manifest)
+	check(not findings.any(func(issue): return issue.get("path", "").begins_with("round_rules/project-three-inputs.host")),
+		"the bound rules validate their local host against the owning map")
 	check(not findings.any(func(issue): return issue.get("path", "").begins_with("signal/project-finished.actor")),
 		"the timeline outlet propagates the selected map to the ending's local actor reference")
 	var graph := Flow.build_project(manifest)
@@ -315,6 +326,7 @@ func run() -> void:
 		and result.get("endingActor") == pawn_code and result.get("endingBoard") == map_code
 		and result.get("runtimeCourse", []).map(func(x): return int(x)) == [3, 5] and result.get("board") == map_code
 		and result.get("roundRules") == round_target.content and result.get("roundInputs") == 3
+		and result.get("roundHost") == pawn_code
 		and result.get("placed") == [pawn_code, "R001"] and result.get("text") == "Screen sequence complete",
 		"the game reads the map-level completion outlet and reaches the conclusion: %s" % [report])
 	print("SCREEN-NAV-DONE failures=", failures)

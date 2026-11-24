@@ -79,6 +79,11 @@ func _show_map_target(code: String) -> void:
 					"res://content/%s/%s.json" % [round_target.function, round_target.content]))
 				required = int(config.fields.INPT)
 				entered_board["roundRules"] = round_target.content
+				if config.fields.has("HOST"):
+					if not pawns.has(config.fields.HOST):
+						_finish("The round host is missing from this board.")
+						return
+					entered_board["roundHost"] = config.fields.HOST
 			entered_board["roundInputs"] = 0
 			var leave := Button.new()
 			leave.text = "Finish course (0/%d)" % required

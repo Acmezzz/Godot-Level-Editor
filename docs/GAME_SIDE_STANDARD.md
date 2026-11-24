@@ -201,6 +201,10 @@
 地图保存引用 `meta.contentSlots.round = {"function":"round_rules","content":"project-ranked"}`；
 编辑器不复制内容字段，游戏按项目内容契约读回字段（保存键为执行码），按自己的规则使用。
 未设置的槽不写入地图；改变共用内容会影响所有仍引用该条目的地图。
+若内容读取地图内的实例、端口或格，可在内容槽或允许内容目标的地图出口上声明
+`"contentMapContext":"inherit"`。游戏把绑定所在的地图传给内容，自检也对每张绑定地图分别解析本图引用。
+作者可用「应用并编辑内容…」打开内容表单，并自动选中绑定所在的地图作为引用上下文。
+缺省或 `"independent"` 不传地图；共享内容若使用本图引用，该引用需在每张绑定地图中成立。
 如需从关卡回到屏幕，可在资产实例声明 `{"id":"exit_view","kind":"choice","source":"view:"}`。
 作者为每个实例选择目标；游戏在自身的通关或交互逻辑中读取 `props.exit_view` 并按该 ID 切屏。
 同一个出口需要兼容不同类型时，可声明 `{"id":"exit_target","kind":"input","type":"flow_target","maps":true,"screens":true,"contentTypes":["story"]}`。

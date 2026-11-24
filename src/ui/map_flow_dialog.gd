@@ -3,6 +3,7 @@ extends RefCounted
 const Flow := preload("res://src/map/map_flow.gd")
 const SlotField := preload("res://src/ui/destination_slot_field.gd")
 const Kit := preload("res://src/ui/ui_kit.gd")
+const FlowTarget := preload("res://src/content/flow_target.gd")
 
 static func available(app) -> bool:
 	if not app.map_loaded:
@@ -31,6 +32,24 @@ static func open(app, focus_section := "", focus := "") -> void:
 	body.add_child(scroll)
 	var original := {}
 	var draft := {}
+	var apply := func():
+		pop.hide()
+		if not is_same(canvas.map_data, source) or not is_same(app.manifest, manifest):
+			return false
+		if draft != original:
+			canvas.push_undo()
+			for section in draft:
+				if draft[section].is_empty():
+					source.meta.erase(section)
+				else:
+					source.meta[section] = draft[section]
+			canvas._mark_map()
+			app._set_status("地图内容与出口已更新；保存地图后生效。")
+		return true
+	var open_content := func(target: Dictionary, context: String):
+		if apply.call():
+			var library = app.project_shell.content_editor._library
+			library._open_item.call_deferred(target.function, target.content, context)
 	for section in Flow.SECTIONS:
 		var saved := Flow.targets(source, section)
 		original[section] = saved.duplicate(true)
@@ -39,23 +58,12 @@ static func open(app, focus_section := "", focus := "") -> void:
 		var declarations := Flow.declarations(manifest, section).duplicate()
 		if not declarations.is_empty() or not saved.is_empty():
 			_build_section(rows, scroll, manifest, section, declarations, values,
-				focus if section == focus_section else "")
-	body.add_child(Kit.popup_buttons(func():
-		pop.hide()
-		if not is_same(canvas.map_data, source) or not is_same(app.manifest, manifest) or draft == original:
-			return
-		canvas.push_undo()
-		for section in draft:
-			if draft[section].is_empty():
-				source.meta.erase(section)
-			else:
-				source.meta[section] = draft[section]
-		canvas._mark_map()
-		app._set_status("地图内容与出口已更新；保存地图后生效。"), pop.hide, "应用", "取消"))
+				focus if section == focus_section else "", open_content.bind(canvas.cur_map_code()))
+	body.add_child(Kit.popup_buttons(apply, pop.hide, "应用", "取消"))
 	app._open_popup(pop)
 
 static func _build_section(rows: VBoxContainer, scroll: ScrollContainer, manifest: Dictionary, section: String,
-		declarations: Dictionary, values: Dictionary, focus: String) -> void:
+		declarations: Dictionary, values: Dictionary, focus: String, open_content: Callable) -> void:
 	var is_outlet := section == Flow.OUTPUTS
 	rows.add_child(Kit.section_header("流程出口" if is_outlet else "关联内容"))
 	for id in values:
@@ -63,15 +71,25 @@ static func _build_section(rows: VBoxContainer, scroll: ScrollContainer, manifes
 			declarations[id] = {"name": id + "（声明已移除）"}
 	for id in declarations:
 		var decl: Dictionary = declarations[id]
+		var can_edit := func() -> bool:
+			return FlowTarget.kind(values.get(id)) == "content" and FlowTarget.allows(decl, values[id])
+		var edit := Kit.button("应用并编辑内容…", func(): open_content.call(values[id]), "ghost") \
+			if decl.get("contentMapContext") == "inherit" else null
+		if edit != null:
+			edit.disabled = not can_edit.call()
 		var set_value := func(target: Dictionary) -> bool:
 			if target.is_empty():
 				values.erase(id)
 			else:
 				values[id] = target
+			if edit != null:
+				edit.disabled = not can_edit.call()
 			return true
 		var control := SlotField.build(manifest, decl, values.get(id, {}), set_value)
 		control.name = ("MapFlow_" if is_outlet else "MapContent_") + id.validate_node_name()
 		var row := Kit.field_row(decl.get("name", id), control)
+		if edit != null:
+			row.add_child(edit)
 		rows.add_child(row)
 		if id == focus:
 			Kit.highlight_field_row(row)

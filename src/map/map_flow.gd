@@ -27,7 +27,16 @@ static func declaration_issues(manifest: Dictionary) -> Array[Dictionary]:
 					"message": "requires a non-empty ID, optional name and at least one destination domain"})
 			elif section == CONTENT and (decl.get("maps", false) or decl.get("screens", false)):
 				result.append({"path": path, "severity": "error", "message": "content slots only accept contentTypes"})
+			elif decl.has("contentMapContext") and (decl.contentMapContext not in ["independent", "inherit"] \
+					or decl.get("contentTypes", []).is_empty()):
+				result.append({"path": path + ".contentMapContext", "severity": "error",
+					"message": "must be independent or inherit on a slot that accepts content"})
 	return result
+
+static func scoped_content(manifest: Dictionary, data: Dictionary) -> Array[Dictionary]:
+	return references(manifest, data).filter(func(ref):
+		return ref.decl.get("contentMapContext") == "inherit" and FlowTarget.kind(ref.value) == "content" \
+			and FlowTarget.allows(ref.decl, ref.value))
 
 static func targets(data: Dictionary, section: String) -> Dictionary:
 	var values = data.get("meta", {}).get(section, {})
