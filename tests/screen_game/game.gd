@@ -375,6 +375,7 @@ func _course_map(parameters: Dictionary, target: Dictionary) -> Dictionary:
 	if parameters.projection == "isometric" and not objects.is_empty():
 		objects.resize(1)
 		objects[0]["props"] = {"landing": [16, 48]}
+		objects.append({"asset": objects[0].asset, "code": "R002", "layer": "base", "x": 7, "y": 2})
 	return {"version": target.version,
 		"meta": {"code": target.code, "name": target.name, "w": 12, "h": 8,
 			"gridProjection": parameters.projection,

@@ -1675,6 +1675,13 @@ func extract() -> Dictionary:
 	# 保存、草稿与撤销快照直接读取会拿到半途坐标。提取前先取消未完成的预览手势归位。
 	cancel_preview_gesture()
 	return _undo_history_ctrl.extract()
+
+func arrival_snapshot() -> Dictionary:
+	var objects := []
+	for entity: EntityNode in ents_all():
+		if entity.code != "":
+			objects.append({"code": entity.code, "asset": entity.asset})
+	return {"meta": map_data.meta, "objects": objects}
 ## —— 拆到 src/canvas/canvas_draw.gd 的委托（调用点保持不变） ——
 func _draw() -> void:
 	_canvas_draw_ctrl._draw()

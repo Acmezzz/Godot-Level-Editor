@@ -426,7 +426,9 @@ func _resolve_options(decl: Dictionary, project_scope := false, saved_only := fa
 
 	var src := str(decl.get("source", ""))
 	if src == "editor:flow-target":
-		return StartupTargets.destination_options(manifest, decl.domains).map(func(option):
+		var working_map: Dictionary = app.canvas.arrival_snapshot() if not project_scope and not saved_only \
+			and app.map_loaded and not decl.domains.get("arrivalPorts", []).is_empty() else {}
+		return StartupTargets.destination_options(manifest, decl.domains, working_map).map(func(option):
 			return {"v": JSON.stringify(option.target), "t": option.name})
 	if src == "view:":
 		return ReferenceIndex.view_ids(manifest).map(func(id: String): return {"v": id, "t": id})

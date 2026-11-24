@@ -243,7 +243,6 @@ func run() -> void:
 	map_flow = popup()
 	completed = map_flow.find_child("MapFlow_completed", true, false)
 	choose(completed, JSON.stringify({"view": "results"}))
-	var arrival := {"map": map_code, "inst": pawn_code, "port": "door"}
 	var retiring := {"map": map_code, "inst": "R001", "port": "door"}
 	choose(map_flow.find_child("MapFlow_retry", true, false), JSON.stringify(retiring))
 	press(map_flow, "应用")
@@ -289,13 +288,22 @@ func run() -> void:
 		and regenerated.objects[0].props.get("exit_target") == {"view": "results"}
 		and Array(regenerated.objects[0].props.get("landing", [])).map(func(n): return int(n)) == [16, 48],
 		"adopt generated geometry without erasing the map or instance outlets: %s" % [regenerated.objects[0]])
+	var replacement := {"map": map_code, "inst": "R002", "port": "door"}
+	check(not Maps.read(manifest, "course").objects.any(func(row): return row.code == "R002"),
+		"the replacement door only exists in the working map before rewiring")
 	MapFlowDialog.open(app)
 	map_flow = popup()
-	choose(map_flow.find_child("MapFlow_retry", true, false), JSON.stringify(arrival))
+	choose(map_flow.find_child("MapFlow_retry", true, false), JSON.stringify(replacement))
 	press(map_flow, "应用")
+	app._set_mode("content", pawn_code)
+	exit_picker = app.project_shell.content_editor.root.find_child("InstanceValue_exit_target", true, false)
+	choose(exit_picker, JSON.stringify(replacement))
+	app.project_shell.content_editor.commit_fields()
 	published = await app._map_file_ctrl.commit_document("保存重生成的地图和实例出口")
-	check(published.get("status") == "ok" and Maps.read(manifest, "course").objects[0].props.exit_target == {"view": "results"},
-		"the kept instance outlet is published with the new projection")
+	var rewired := Maps.read(manifest, "course")
+	check(published.get("status") == "ok" and rewired.meta.flowOutputs.retry == replacement
+		and rewired.objects[0].props.exit_target == replacement,
+		"publish both outlets together with the replacement door")
 	app._set_mode("content")
 	var editor = app.project_shell.content_editor
 	editor._library._open_item("signal", "project-finished")
@@ -348,9 +356,10 @@ func run() -> void:
 		and Store.read(manifest, local_signal.function, local_signal.content).fields.ACTR == copy_host,
 		"the instance outlet alone brings its map-scoped signal into the copy")
 	var copy_arrival := {"map": copy_code, "inst": copy_host, "port": "door"}
-	check(copy.meta.flowOutputs == {"completed": {"view": "results"}, "retry": copy_arrival}
+	var copy_retry := {"map": copy_code, "inst": copy.objects[1].code, "port": "door"}
+	check(copy.meta.flowOutputs == {"completed": {"view": "results"}, "retry": copy_retry}
 		and copy.objects[0].props.exit_target == {"map": copy_code} and copy_fields.RTRY == {"map": copy_code}
-		and source.meta.flowOutputs.retry == arrival
+		and source.meta.flowOutputs.retry == replacement
 		and source.objects[0].props.exit_target == {"map": map_code}
 		and Store.read(manifest, round_target.function, round_target.content).fields.RTRY == {"map": map_code},
 		"self-directed outlets follow the copy, and the screen outlet and source remain intact")

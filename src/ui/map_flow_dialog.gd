@@ -32,6 +32,7 @@ static func open(app, focus_section := "", focus := "") -> void:
 	body.add_child(scroll)
 	var original := {}
 	var draft := {}
+	var working_map := canvas.arrival_snapshot()
 	var apply := func():
 		pop.hide()
 		if not is_same(canvas.map_data, source) or not is_same(app.manifest, manifest):
@@ -58,12 +59,12 @@ static func open(app, focus_section := "", focus := "") -> void:
 		var declarations := Flow.declarations(manifest, section).duplicate()
 		if not declarations.is_empty() or not saved.is_empty():
 			_build_section(rows, scroll, manifest, section, declarations, values,
-				focus if section == focus_section else "", open_content.bind(canvas.cur_map_code()))
+				focus if section == focus_section else "", open_content.bind(canvas.cur_map_code()), working_map)
 	body.add_child(Kit.popup_buttons(apply, pop.hide, "应用", "取消"))
 	app._open_popup(pop)
 
 static func _build_section(rows: VBoxContainer, scroll: ScrollContainer, manifest: Dictionary, section: String,
-		declarations: Dictionary, values: Dictionary, focus: String, open_content: Callable) -> void:
+		declarations: Dictionary, values: Dictionary, focus: String, open_content: Callable, working_map: Dictionary) -> void:
 	var is_outlet := section == Flow.OUTPUTS
 	rows.add_child(Kit.section_header("流程出口" if is_outlet else "关联内容"))
 	for id in values:
@@ -85,7 +86,7 @@ static func _build_section(rows: VBoxContainer, scroll: ScrollContainer, manifes
 			if edit != null:
 				edit.disabled = not can_edit.call()
 			return true
-		var control := SlotField.build(manifest, decl, values.get(id, {}), set_value)
+		var control := SlotField.build(manifest, decl, values.get(id, {}), set_value, working_map)
 		control.name = ("MapFlow_" if is_outlet else "MapContent_") + id.validate_node_name()
 		var row := Kit.field_row(decl.get("name", id), control)
 		if edit != null:

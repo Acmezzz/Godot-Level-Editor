@@ -12,12 +12,12 @@ const AssetDecl := preload("res://src/assets/asset_decl.gd")
 static func options(manifest: Dictionary) -> Array[Dictionary]:
 	return destination_options(manifest, manifest.startup)
 
-static func destination_options(manifest: Dictionary, domains: Dictionary) -> Array[Dictionary]:
+static func destination_options(manifest: Dictionary, domains: Dictionary, working_map := {}) -> Array[Dictionary]:
 	var result: Array[Dictionary] = []
 	if domains.get("maps") == true:
 		for row in Refs.map_target_options(manifest):
 			result.append({"name": "地图 · %s [%s]" % [row.name, row.code], "target": {"map": row.code}})
-	result.append_array(arrival_options(manifest, domains))
+	result.append_array(arrival_options(manifest, domains, "", working_map))
 	if domains.get("screens") == true:
 		for id in Refs.view_ids(manifest):
 			result.append({"name": "屏幕 · " + id, "target": {"view": id}})
@@ -30,18 +30,26 @@ static func destination_options(manifest: Dictionary, domains: Dictionary) -> Ar
 					"target": {"function": kind, "content": cid}})
 	return result
 
-static func arrival_options(manifest: Dictionary, domains: Dictionary, map_code := "") -> Array[Dictionary]:
+static func arrival_options(manifest: Dictionary, domains: Dictionary, map_code := "", working_map := {}) -> Array[Dictionary]:
 	var result: Array[Dictionary] = []
 	var types: Array = domains.get("arrivalPorts", [])
 	if types.is_empty():
 		return result
+	var meta: Dictionary = working_map.get("meta", {})
+	var live_code: String = meta.get("code", "")
 	for row in Refs.map_target_options(manifest):
-		if map_code != "" and row.code != map_code:
+		if row.code == live_code or (map_code != "" and row.code != map_code):
 			continue
 		var map := Maps.read(manifest, row.name)
-		for port in RefFields.port_options(manifest, row.code, map.get("objects", []), types):
-			result.append({"name": "入场 · %s · %s" % [row.name, port.t], "target": JSON.parse_string(port.v)})
+		_append_arrivals(result, manifest, row.name, row.code, map, types)
+	if live_code != "" and (map_code == "" or map_code == live_code):
+		_append_arrivals(result, manifest, meta.get("name", "") + "（当前地图）", live_code, working_map, types)
 	return result
+
+static func _append_arrivals(result: Array[Dictionary], manifest: Dictionary, name: String,
+		code: String, map: Dictionary, types: Array) -> void:
+	for port in RefFields.port_options(manifest, code, map.get("objects", []), types):
+		result.append({"name": "入场 · %s · %s" % [name, port.t], "target": JSON.parse_string(port.v)})
 
 static func available(manifest: Dictionary, target: Dictionary) -> bool:
 	if target.is_empty():
