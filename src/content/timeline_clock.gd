@@ -170,13 +170,18 @@ static func from_decl(manifest: Dictionary, fn_id: String, content: Dictionary) 
 	var FunctionDecls := preload("res://src/content/function_decl.gd")
 	var decl: Dictionary = FunctionDecls.function_decl(manifest, fn_id)
 	var timebase := str(decl.get("timebase", "seconds"))
+	if timebase not in ["frames", "beats"]:
+		timebase = "seconds"
 	var tp = decl.get("timePreview", null)
 	var cfg := {"subdivisions": DEFAULT_SUBDIVISIONS}
 	var missing: Array = []
 	var refs := {}
 	if tp is Dictionary:
 		var tpd: Dictionary = tp
-		cfg["subdivisions"] = tpd.get("subdivisionsPerBeat", DEFAULT_SUBDIVISIONS)
+		var subdivisions_value = tpd.get("subdivisionsPerBeat")
+		if subdivisions_value is int or subdivisions_value is float:
+			if subdivisions_value > 0 and subdivisions_value == floorf(float(subdivisions_value)):
+				cfg["subdivisions"] = subdivisions_value
 		var fields: Dictionary = content.get("fields", {}) if content.get("fields", null) is Dictionary else {}
 		var fmap := _field_code_map(decl.get("fields", []))
 		# 帧率

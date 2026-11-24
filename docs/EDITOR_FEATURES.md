@@ -958,7 +958,7 @@ Shift + 左键选已有顶点，再点同层位置，可在所选顶点之后插
 | 字段 `type` 不在 `string`/`int`/`float`/`bool`/`color`/`vector2`/`range`/`asset_ref`/`array`/`port_ref`/`viewport_ref`/`edge_ref`/`curve` | 错误 |
 | 功能/条件/步骤/音频/时机 id 空或重复（数组写法）/ 步骤条目（dict 写法值）不是对象 / 功能 id 不是合法内容目录名（只允许字母/数字/`_`/`-`，**不允许点号**，与 `ContentStore.is_valid_kind` 同规则） | 错误 |
 | 功能引用未声明的条件 | 错误 |
-| 功能 `triggers` 不是数组或引用未声明的时机 / `timing` 不是对象或 `timing.mode` 不在 `instant`/`duration`/`continuous` | 错误 |
+| 功能 `triggers` 不是数组或引用未声明的时机 | 错误 |
 | `playtest.flags/params` 结构错：id 空或重复 / name 空 / flags 缺 `arg` / params 的 `arg` 不含 `%d` | 错误 |
 | 顶层键形态错：`contentDir` 非 string、`contentDir` 含 `..` 或绝对路径、`screenSize` 不是 [w, h] 数值 | 错误 |
 | `viewports` 非数组 / 条目非对象 / `id` 空或重复 / `w`·`h` 缺失或非正数 | 错误 |
@@ -1015,7 +1015,7 @@ godot --headless --path "<编辑器工程>" --script res://tests/run_tests.gd
 | `test_content_id.gd` | 三池字段码收集器（dict/array 写法、空码过滤）、五段身份码拼装与缺段拒发、码形状 |
 | `test_decl_pools.gd` | 功能/条件池归一化、steps 标记保留、功能码查重、字段码跨功能查重、条件补码避让 |
 | `test_step_audio.gd` | 步骤池归一化与按码查询、步骤补码避让三池占用、音频池归一化与补码、时机池归一化/补码/按码反查（时机码不进字段码空间）、时间轴缺省计算/非阻塞与轨道/回写净化/冲突对 |
-| `test_validators.gd` | 清单校验：合法零错误、kind 缺失、条目码池内重复、字段码**跨池**同码、步骤 dict 值非对象、未声明条件/实体/音频码重、功能 id 字符集、时机池 id/码重复与引用校验、`timing.mode` 非法、新字段类型全合法 |
+| `test_validators.gd` | 清单校验：合法零错误、kind 缺失、条目码池内重复、字段码**跨池**同码、步骤 dict 值非对象、未声明条件/实体/音频码重、功能 id 字符集、时机池 id/码重复与引用校验、新字段类型全合法 |
 | `test_map_v4.gd` | v6 模板、层栈校验、瓦片 6 元精确校验（第 3 位资产 id、第 6 位 alt 0-7）、`objects[]` 各道防线（code 查重、场景实例不得发码、图集场景不可摆放、层归属、transform/visible/zPolicy 类型、entities 旧键报错）、碰撞条目（旧数组形态报错）、层参数类型、spawn、decode_text 门槛 |
 | `test_grid_space.gd` | GridSpace 正交/等距/六边形往返换算 + 格原语自洽（中心/多边形/纹理落位/格线）、collisionTypes 池归一化 |
 | `test_assets.gd` | `assets[]` 归一化：kind 分派、未知键保留、palette 展平、非正方形 `cell`、`editorSize`/`sizeFields` 尺寸、编辑期原件入口、挂载过滤 |

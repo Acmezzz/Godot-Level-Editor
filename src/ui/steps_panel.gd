@@ -646,7 +646,8 @@ func _steps_timebase() -> String:
 	var d = fns.get(_steps_fn_id, null)
 	if not (d is Dictionary):
 		return "seconds"
-	return str((d as Dictionary).get("timebase", "seconds"))
+	var unit := str(d.get("timebase", "seconds"))
+	return unit if unit in ["frames", "beats"] else "seconds"
 
 ## 时间轴点选：只换选中与表单，不重建视图（拖拽进行中 picked 会被发多次）。
 func _steps_pick_tl(idx: int) -> void:

@@ -125,11 +125,6 @@ func test_trigger_pool_and_refs() -> void:
 	m3["triggers"] = [{"id": "on_enter", "code": "T111"}]
 	(m3.functions.f1 as Dictionary)["triggers"] = ["nope"]
 	ok(_errs_of(m3).size() >= 1, "功能引用未声明时机报错")
-	var m4 := _good()
-	m4["triggers"] = [{"id": "on_enter", "code": "T111"}]
-	(m4.functions.f1 as Dictionary)["triggers"] = ["on_enter"]
-	(m4.functions.f1 as Dictionary)["timing"] = {"mode": "bogus"}
-	ok(_errs_of(m4).size() >= 1, "timing.mode 非法报错")
 
 func test_new_input_types_accepted() -> void:
 	var m := _good()
@@ -188,18 +183,6 @@ func test_collision_types_decl() -> void:
 	m3["collisionTypes"] = [{"id": "a"}, {"id": "a"}]
 	ok(_errs_of(m3).size() >= 1, "数组写法 id 重复报错")
 
-func test_fn_timebase_enum() -> void:
-	var m := _good()
-	(m.functions.f1 as Dictionary)["timebase"] = "frames"
-	eq(_errs_of(m).size(), 0, "timebase frames 合法")
-	var m2 := _good()
-	(m2.functions.f1 as Dictionary)["timebase"] = "beats"
-	eq(_errs_of(m2).size(), 0, "timebase beats 合法")
-	var m3 := _good()
-	(m3.functions.f1 as Dictionary)["timebase"] = "warp"
-	ok(_errs_of(m3).size() >= 1, "timebase 非法枚举报错")
-
-## A6：playtest.executable + args 结构化启动声明的校验
 func test_playtest_structured_launch() -> void:
 	var m := _good()
 	m["playtest"] = {"executable": "game.exe", "args": ["--path", "%projectpath%", "--", "--map=%mapfile%"]}

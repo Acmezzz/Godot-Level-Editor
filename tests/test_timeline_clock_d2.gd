@@ -2,7 +2,6 @@ extends "res://tests/_suite_base.gd"
 ## D2：TimelineClock 帧/拍换算、timePreview 声明解析（id→码）、小数帧标记与量化。
 
 const TimelineClock := preload("res://src/content/timeline_clock.gd")
-const V := preload("res://src/project/manifest_validation.gd")
 const StepTimeline := preload("res://src/content/step_timeline.gd")
 
 ## 验收：60 fps 的第 12 帧预览 = 0.2 秒
@@ -148,38 +147,6 @@ func test_from_decl_tempo_segments() -> void:
 	eq(float((tempo[1] as Dictionary).get("bpm", 0.0)), 60.0, "第二段 BPM")
 	var clock := TimelineClock.new("beats", cfg)
 	eq(snappedf(clock.seconds_at(6.0), 0.001), 4.25, "端到端：第 6 拍 = 4.25 秒")
-
-## 声明校验：timePreview 引用未声明字段/步骤 = 错误；非正整数细分 = 错误
-func test_time_preview_validation() -> void:
-	var base := {
-		"tileSize": 16,
-		"assets": [{"id": "door", "kind": "entity", "prefab": "res://d.tscn"}],
-		"functions": {"f1": {
-			"name": "F", "code": "F111",
-			"fields": [{"id": "fps", "code": "A111", "kind": "input", "type": "int"}],
-			"timePreview": {"fpsField": "fps"},
-		}},
-	}
-	eq(_errs(base).size(), 0, "合法 timePreview 零错误")
-	var bad_field := base.duplicate(true)
-	(bad_field.functions.f1 as Dictionary)["timePreview"] = {"fpsField": "nope"}
-	ok(_errs(bad_field).size() >= 1, "引用未声明字段报错")
-	var bad_sub := base.duplicate(true)
-	(bad_sub.functions.f1 as Dictionary)["timePreview"] = {"subdivisionsPerBeat": 0}
-	ok(_errs(bad_sub).size() >= 1, "0 细分报错")
-	var bad_step := base.duplicate(true)
-	(bad_step.functions.f1 as Dictionary)["timePreview"] = {"tempoStep": "ghost"}
-	ok(_errs(bad_step).size() >= 1, "引用未声明步骤报错")
-	var not_obj := base.duplicate(true)
-	(not_obj.functions.f1 as Dictionary)["timePreview"] = "frames"
-	ok(_errs(not_obj).size() >= 1, "timePreview 非对象报错")
-
-func _errs(m: Dictionary) -> Array:
-	var out := []
-	for e in V.validate(m):
-		if str(e.get("severity")) == "error":
-			out.append(str(e.get("path")) + " " + str(e.get("message")))
-	return out
 
 ## 秒基 + 无 timePreview：零配置也能用，原值即秒
 func test_seconds_passthrough() -> void:

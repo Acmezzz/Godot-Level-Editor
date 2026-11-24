@@ -1,6 +1,6 @@
 extends RefCounted
 class_name FunctionDecl
-## 功能/字段声明域（从 manifest.gd 拆出）：functions 归一化视图、码补发/查重、
+## 功能/字段声明域（从 manifest.gd 拆出）：functions 归一化视图、码补发、
 ## 码↔名双向查找、CODES.md 生成。声明域只依赖 manifest 字典本身，全部静态函数。
 
 ## 归一化结果缓存：content_editor 重建右栏时逐字段调用 function_fields 等，
@@ -23,29 +23,6 @@ static func ensure_codes(m: Dictionary) -> bool:
 	var rows := PoolPrint.items(m.get("functions"))
 	var entries_changed := PoolPrint.ensure_entry_codes(rows)
 	return PoolPrint.ensure_field_codes(m, rows) or entries_changed
-
-## 重复的功能码 / 字段码（校验用，不改数据）：[{scope, code}]
-static func duplicate_codes(m: Dictionary) -> Array:
-	var out: Array = []
-	var seen := {}
-	var fseen := {}   # 字段码跨功能查重：字段码是一个全局码空间，A 功能占了 B 功能就不能再占
-	for pair in PoolPrint.items(m.get("functions", null)):
-		var d: Dictionary = pair.body
-		var code := str(d.get("code", ""))
-		if code != "":
-			if seen.has(code):
-				out.append({"scope": str(pair.id), "code": code})
-			seen[code] = true
-		for fd in d.get("fields", []) if d.get("fields", []) is Array else []:
-			if not (fd is Dictionary):
-				continue
-			var fcode := str((fd as Dictionary).get("code", ""))
-			if fcode == "":
-				continue
-			if fseen.has(fcode):
-				out.append({"scope": str(pair.id) + "." + str((fd as Dictionary).get("id", "")), "code": fcode})
-			fseen[fcode] = true
-	return out
 
 static func functions(m: Dictionary) -> Dictionary:
 	var key := _key(m)

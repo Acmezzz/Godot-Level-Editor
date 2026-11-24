@@ -1,14 +1,9 @@
 extends RefCounted
-## 清单结构与能力校验：assets/functions/conditions/steps/audio 的类型与
-## id/码唯一性（图层已退役为地图 meta.layers，归 map_data_validation 校验）、
-## 字段 kind 必须显式 input/choice、挂载功能必须已声明、功能引用的条件必须已声明、
-## 功能/条件/步骤字段码同空间唯一、步骤码与音频码池内唯一。
+## 检查编辑器读取和保存所依赖的清单结构、身份及引用。
 
-const DeclarationPool := preload("res://src/content/declaration_pool.gd")
 const FunctionDecls := preload("res://src/content/function_decl.gd")
 const ConditionDecls := preload("res://src/content/condition_decl.gd")
 const StepDecls := preload("res://src/content/step_decl.gd")
-const AudioDecls := preload("res://src/content/audio_decl.gd")
 const TriggerDecls := preload("res://src/content/trigger_decl.gd")
 const CollisionTypes := preload("res://src/assets/collision_types.gd")
 const ContentStore := preload("res://src/content/content_store.gd")
@@ -37,18 +32,8 @@ static func validate(data: Dictionary, project_dir := "") -> Array[Dictionary]:
 			_add(issues, "error", "assets", "must be an array")
 		else:
 			_validate_assets(data, project_dir, issues)
-	if data.has("functions"):
-		_validate_functions(data, issues)
-	if data.has("conditions"):
-		_validate_conditions(data, issues)
-	if data.has("steps"):
-		_validate_steps(data, issues)
-	_validate_field_codes(data, issues)
+	_validate_declarations(data, issues)
 	_validate_content_field_shapes(data, issues)
-	if data.has("audio"):
-		_validate_audio(data, issues)
-	if data.has("triggers"):
-		_validate_triggers(data, issues)
 	if data.has("collisionTypes"):
 		_validate_collision_types(data, issues)
 	_validate_playtest(data, issues)
@@ -144,202 +129,59 @@ static func _validate_startup(data: Dictionary, issues: Array[Dictionary]) -> vo
 ## 功能/字段声明：结构 + 身份码唯一性 + 字段种类合法性。
 ## 码重复是**错误**：两个声明同码等于静默别名，磁盘上的引用会指向不确定的那个。
 ## 功能 id 重复同样是**错误**（内容目录按功能 id 分目录；数组写法不查会静默后者覆盖前者）。
-static func _validate_functions(data: Dictionary, issues: Array[Dictionary]) -> void:
-	var decl = data.get("functions", null)
-	if not (decl is Dictionary or decl is Array):
-		_add(issues, "error", "functions", "must be an object or an array")
-		return
-	# 功能 id 查重：dict 写法键天然唯一，array 写法可能重复——重复/空 id 都报错
-	# （内容目录按功能 id 分目录，不查的话归一化会静默后者覆盖前者）
-	var decl_ids := {}
-	if decl is Array:
-		for d0 in decl:
-			if not (d0 is Dictionary):
-				continue
-			var fid0 := str((d0 as Dictionary).get("id", ""))
-			if fid0 == "" or decl_ids.has(fid0):
-				_add(issues, "error", "functions",
-					"function ids must be non-empty and unique (array form, seen: %s)" % fid0)
-			decl_ids[fid0] = true
-	elif decl is Dictionary:
-		for k0 in (decl as Dictionary).keys():
-			if str(k0) == "":
-				_add(issues, "error", "functions", "function ids must be non-empty (dict form)")
-	# 功能 id 同时是内容目录名与内容 ID 第四段——字符集必须过**目录名**规则（C07：
-	# 与 ContentStore.is_valid_kind 同一条权威规则）。`dlg.one` 这类带点的 id 会被
-	# 内容目录校验拒绝，若这里放行就是「声明能载入、第一次编辑才失败」。
-	for fid2 in FunctionDecls.functions(data):
-		if not ContentStore.is_valid_kind(fid2):
-			_add(issues, "error", "functions.%s" % str(fid2),
-				"function id must be a valid content folder name: letters/digits/_/- (no dot, no leading/trailing dash)")
-	var dup := FunctionDecls.duplicate_codes(data)
-	for d in dup:
-		_add(issues, "error", "functions", "duplicate code %s (%s)" % [str(d.get("code", "")), str(d.get("scope", ""))])
-	var norm: Dictionary = FunctionDecls.functions(data)
-	for fid in norm:
-		var d: Dictionary = norm[fid]
-		if d.has("repeatable") and not d.repeatable is bool:
-			_add(issues, "error", "functions.%s.repeatable" % fid, "must be a boolean")
-		# 缺码不是错误：load_from 在 validate 之后调 ensure_codes 补发（新声明补码的正常路径）。
-		# 只有「重复」是错误——上面 duplicate_codes 已报。
-		_validate_fields(d.get("fields", []), "functions.%s.fields" % fid, issues)
-		# 功能引用的条件：同清单内按 id 引用（同挂载模型），引用未声明的条件 = 错误
-		var conds = d.get("conditions", [])
-		if not (conds is Array):
-			_add(issues, "error", "functions.%s.conditions" % str(fid), "must be an array of condition ids")
-		else:
-			for c0 in conds:
-				var c0s := str(c0)
-				if c0s == "" or not ConditionDecls.conditions(data).has(c0s):
-					_add(issues, "error", "functions.%s.conditions" % str(fid),
-						"condition \"%s\" is not declared" % c0s)
-		# 功能声明的 triggers 是时机 id 白名单；按 id 引用时机池，未声明 = 错误。
-		var trs = d.get("triggers", [])
-		if not (trs is Array):
-			_add(issues, "error", "functions.%s.triggers" % str(fid), "must be an array of trigger ids")
-		else:
-			for t0 in trs:
-				var t0s := str(t0)
-				if t0s == "" or not TriggerDecls.triggers(data).has(t0s):
-					_add(issues, "error", "functions.%s.triggers" % str(fid),
-						"trigger \"%s\" is not declared" % t0s)
-		var timing = d.get("timing", null)
-		if timing != null:
-			if not (timing is Dictionary):
-				_add(issues, "error", "functions.%s.timing" % str(fid), "must be an object")
-			elif str((timing as Dictionary).get("mode", "")) != "" \
-					and not ["instant", "duration", "continuous"].has(str((timing as Dictionary).get("mode"))):
-				_add(issues, "error", "functions.%s.timing.mode" % str(fid),
-					"must be instant / duration / continuous")
-		# R-10 时间基：seconds（缺省）/ frames / beats——时间轴刻度/吸附单位随声明
-		var tb := str(d.get("timebase", "seconds"))
-		if str(d.get("timebase", null)) != "" and d.get("timebase", null) != null \
-				and not ["seconds", "frames", "beats"].has(tb):
-			_add(issues, "error", "functions.%s.timebase" % str(fid),
-				"must be seconds / frames / beats")
-		_validate_time_preview(data, d, str(fid), issues)
-## timePreview 声明校验（D2）：引用必须指向本功能已声明的字段 ID / 已声明的步骤 ID；
-## subdivisionsPerBeat 必须是正整数。缺声明项不算错误（预览退化为原单位编辑），
-## 但**写错引用**（引用了不存在的字段/步骤）必须报出来——那是配置错误不是缺省。
-static func _validate_time_preview(data: Dictionary, fn_decl: Dictionary, fid: String,
-		issues: Array[Dictionary]) -> void:
-	var tp = fn_decl.get("timePreview", null)
-	if tp == null:
-		return
-	if not (tp is Dictionary):
-		_add(issues, "error", "functions.%s.timePreview" % fid, "must be an object")
-		return
-	var tpd: Dictionary = tp
-	var fids := {}
-	for fd in (fn_decl.get("fields", []) as Array) if fn_decl.get("fields", []) is Array else []:
-		if fd is Dictionary:
-			fids[str((fd as Dictionary).get("id", ""))] = true
-	for key in ["fpsField", "audioField", "offsetField", "frameAssetField"]:
-		if not tpd.has(key):
+## 声明条目按池查 ID 与执行码；功能、条件和步骤的字段码共享一个空间。
+static func _validate_declarations(data: Dictionary, issues: Array[Dictionary]) -> void:
+	var references := {"conditions": ConditionDecls.conditions(data), "triggers": TriggerDecls.triggers(data)}
+	var field_codes := {}
+	for section in ["functions", "conditions", "steps", "audio", "triggers"]:
+		var decl = data.get(section, {})
+		if not (decl is Dictionary or decl is Array):
+			_add(issues, "error", section, "must be an object or an array")
 			continue
-		var val := str(tpd.get(key, ""))
-		if val == "":
-			continue
-		if not fids.has(val):
-			_add(issues, "error", "functions.%s.timePreview.%s" % [fid, key],
-				"field \"%s\" is not declared on this function" % val)
-	var tempo_step := str(tpd.get("tempoStep", ""))
-	if tempo_step != "":
-		var StepDecls := preload("res://src/content/step_decl.gd")
-		var sd: Dictionary = StepDecls.step_decl(data, tempo_step)
-		if sd.is_empty():
-			_add(issues, "error", "functions.%s.timePreview.tempoStep" % fid,
-				"step \"%s\" is not declared" % tempo_step)
-		else:
-			var bpm_field := str(tpd.get("bpmField", ""))
-			if bpm_field != "":
-				var sids := {}
-				for fd2 in (sd.get("fields", []) as Array) if sd.get("fields", []) is Array else []:
-					if fd2 is Dictionary:
-						sids[str((fd2 as Dictionary).get("id", ""))] = true
-				if not sids.has(bpm_field):
-					_add(issues, "error", "functions.%s.timePreview.bpmField" % fid,
-						"field \"%s\" is not declared on step \"%s\"" % [bpm_field, tempo_step])
-	if tpd.has("subdivisionsPerBeat"):
-		var spb = tpd.get("subdivisionsPerBeat")
-		if not _is_positive_integer(spb):
-			_add(issues, "error", "functions.%s.timePreview.subdivisionsPerBeat" % fid,
-				"must be a positive integer")
-
-## 条件声明：结构 + id 唯一性 + 字段种类合法性（与功能声明同一套规则）。
-## 条件按 id 被功能声明引用（清单内人类名，条件无执行码）；字段码与功能字段同空间。
-static func _validate_conditions(data: Dictionary, issues: Array[Dictionary]) -> void:
-	var decl = data.get("conditions", null)
-	if not (decl is Dictionary or decl is Array):
-		_add(issues, "error", "conditions", "must be an object or an array")
-		return
-	# id 查重（数组写法可能重复；dict 写法查空键）
-	var cseen := {}
-	if decl is Array:
+		var ids := {}
+		var codes := {}
 		for item in decl:
-			if not (item is Dictionary):
-				_add(issues, "error", "conditions", "entries must be objects")
+			var row = decl[item] if decl is Dictionary else item
+			if not row is Dictionary:
+				_add(issues, "error", section, "entries must be objects")
 				continue
-			var cid0 := str((item as Dictionary).get("id", ""))
-			if cid0 == "" or cseen.has(cid0):
-				_add(issues, "error", "conditions",
-					"condition ids must be non-empty and unique (array form, seen: %s)" % cid0)
-			cseen[cid0] = true
-	elif decl is Dictionary:
-		for k0 in (decl as Dictionary).keys():
-			if str(k0) == "":
-				_add(issues, "error", "conditions", "condition ids must be non-empty (dict form)")
-	# 字段 id / kind / type（归一化视图逐条件查）
-	for cid in ConditionDecls.conditions(data):
-		var d: Dictionary = ConditionDecls.conditions(data)[cid]
-		_validate_fields(d.get("fields", []), "conditions.%s.fields" % cid, issues, false)
+			var id := str(item if decl is Dictionary else row.get("id", ""))
+			var path := "%s.%s" % [section, id]
+			if id.strip_edges().is_empty() or ids.has(id):
+				_add(issues, "error", path, "id must be non-empty and unique")
+			ids[id] = true
+			var code := str(row.get("code", ""))
+			if section != "conditions" and code != "":
+				if codes.has(code):
+					_add(issues, "error", path + ".code", "duplicate code: " + code)
+				codes[code] = true
+			if section in ["functions", "conditions", "steps"]:
+				var fields = row.get("fields", [])
+				if not fields is Array:
+					_add(issues, "error", path + ".fields", "must be an array")
+				else:
+					_validate_fields(fields, path + ".fields", issues, section == "functions")
+					for field in fields:
+						if not field is Dictionary:
+							continue
+						var field_code := str(field.get("code", ""))
+						if field_code == "":
+							continue
+						if field_codes.has(field_code):
+							_add(issues, "error", path + ".fields", "duplicate field code: " + field_code)
+						field_codes[field_code] = true
+			if section == "functions":
+				if not ContentStore.is_valid_kind(id):
+					_add(issues, "error", path, "function id must be a valid content folder name")
+				for key in references:
+					var refs = row.get(key, [])
+					if not refs is Array:
+						_add(issues, "error", path + "." + key, "must be an array of ids")
+						continue
+					for ref in refs:
+						if not references[key].has(str(ref)):
+							_add(issues, "error", path + "." + key, "undeclared id: " + str(ref))
 
-## 音频池：id 非空唯一（array 写法查重）、码池内唯一（重复=静默别名，报错）、
-## path 缺失只警告（条目占位合法，播放归游戏侧）。
-static func _validate_audio(data: Dictionary, issues: Array[Dictionary]) -> void:
-	var decl = data.get("audio", null)
-	if not (decl is Dictionary or decl is Array):
-		_add(issues, "error", "audio", "must be an object or an array")
-		return
-	var ids := {}
-	var codes := {}
-	for pair in DeclarationPool.items(decl):
-		var aid := str(pair.id)
-		if aid == "" or ids.has(aid):
-			_add(issues, "error", "audio",
-				"audio ids must be non-empty and unique (seen: %s)" % aid)
-		ids[aid] = true
-		var body: Dictionary = pair.body
-		var c := str(body.get("code", ""))
-		if c != "" and codes.has(c):
-			_add(issues, "error", "audio", "duplicate code %s (%s)" % [c, aid])
-		codes[c] = true
-		if str(body.get("path", "")) == "":
-			_add(issues, "warning", "audio.%s" % aid, "audio path is empty")
-		if body.has("previewPath") and (not body.previewPath is String
-				or AudioDecls.preview_relative_path(body.previewPath) == ""):
-			_add(issues, "error", "audio.%s.previewPath" % aid, "must be a non-empty project-relative audio path")
-
-## 时机池：id 非空唯一（array 写法查重）、码池内唯一（重复 = 静默别名，报错）。
-## 时机不含字段，字段码空间完全不碰它。
-static func _validate_triggers(data: Dictionary, issues: Array[Dictionary]) -> void:
-	var decl = data.get("triggers", null)
-	if not (decl is Dictionary or decl is Array):
-		_add(issues, "error", "triggers", "must be an object or an array")
-		return
-	var ids := {}
-	var codes := {}
-	for pair in DeclarationPool.items(decl):
-		var tid := str(pair.id)
-		if tid == "" or ids.has(tid):
-			_add(issues, "error", "triggers",
-				"trigger ids must be non-empty and unique (seen: %s)" % tid)
-		ids[tid] = true
-		var body: Dictionary = pair.body
-		var c := str(body.get("code", ""))
-		if c != "" and codes.has(c):
-			_add(issues, "error", "triggers", "duplicate code %s (%s)" % [c, tid])
-		codes[c] = true
 
 ## 碰撞类型池：形状枚举 + 颜色形态；id 非空唯一（数组写法）。
 static func _validate_collision_types(data: Dictionary, issues: Array[Dictionary]) -> void:
@@ -446,59 +288,6 @@ static func _validate_playtest(data: Dictionary, issues: Array[Dictionary]) -> v
 
 ## 步骤池：id 非空唯一（array 写法查重）、条目码池内唯一、字段 id/kind/type 合法、
 ## 步骤字段码与功能/条件字段同空间查重（跨池同码 = 静默合并，报错）。
-static func _validate_steps(data: Dictionary, issues: Array[Dictionary]) -> void:
-	var decl = data.get("steps", null)
-	if not (decl is Dictionary or decl is Array):
-		_add(issues, "error", "steps", "must be an object or an array")
-		return
-	var sseen := {}
-	if decl is Array:
-		for item in decl:
-			if not (item is Dictionary):
-				_add(issues, "error", "steps", "entries must be objects")
-				continue
-			var sid0 := str((item as Dictionary).get("id", ""))
-			if sid0 == "" or sseen.has(sid0):
-				_add(issues, "error", "steps",
-					"step ids must be non-empty and unique (array form, seen: %s)" % sid0)
-			sseen[sid0] = true
-	elif decl is Dictionary:
-		for k0 in (decl as Dictionary).keys():
-			if str(k0) == "":
-				_add(issues, "error", "steps", "step ids must be non-empty (dict form)")
-			elif not ((decl as Dictionary)[k0] is Dictionary):
-				_add(issues, "error", "steps", "step entries must be objects (dict form, key: %s)" % str(k0))
-	# 条目码池内唯一（内容 steps[].step 存码，重复 = 静默别名）
-	var ecodes := {}
-	for pair in DeclarationPool.items(decl):
-		var ec := str((pair.body as Dictionary).get("code", ""))
-		if ec != "":
-			if ecodes.has(ec):
-				_add(issues, "error", "steps", "duplicate step code %s (%s)" % [ec, str(pair.id)])
-			ecodes[ec] = true
-	# 字段 id / kind / type（归一化视图逐步骤查）
-	for sid in StepDecls.steps(data):
-		var d: Dictionary = StepDecls.steps(data)[sid]
-		_validate_fields(d.get("fields", []), "steps.%s.fields" % sid, issues, false)
-
-# 功能、条件和步骤的顶层字段共享码空间。
-static func _validate_field_codes(data: Dictionary, issues: Array[Dictionary]) -> void:
-	var seen := {}
-	var pools := {"functions": FunctionDecls.functions(data), "conditions": ConditionDecls.conditions(data),
-		"steps": StepDecls.steps(data)}
-	for section in pools:
-		var pool: Dictionary = pools[section]
-		for id in pool:
-			for field in pool[id].get("fields", []):
-				if not field is Dictionary:
-					continue
-				var code := str(field.get("code", ""))
-				if code.is_empty():
-					continue
-				if section != "functions" and seen.has(code):
-					_add(issues, "error", "%s.%s.fields" % [section, id], "duplicate field code across pools: " + code)
-				seen[code] = true
-
 ## 资产表：kind/shape 合法、id 唯一、scene 的图集或图片二选一、entity 的呈现二选一、
 ## 挂载功能必须已声明、palette 条目结构。
 static func _validate_assets(data: Dictionary, project_dir: String, issues: Array[Dictionary]) -> void:
