@@ -32,7 +32,10 @@ func _ready() -> void:
 		await _play_relay(JSON.parse_string(map_bytes.get_string_from_utf8()))
 		return
 	var entry := _decode(args["--editor-entry"]) if args.has("--editor-entry") else {"function": "signal", "content": "project-default"}
-	_show_content(entry)
+	if entry.has("view"):
+		_show_view(entry.view)
+	else:
+		_show_content(entry)
 
 func _decode(encoded: String) -> Dictionary:
 	return JSON.parse_string(Marshalls.base64_to_utf8(encoded))
@@ -58,19 +61,22 @@ func _show_content(target: Dictionary) -> void:
 		if verify:
 			_finish("", label.text)
 		return
+	_show_view(view_id, cid == "project-watch")
+
+func _show_view(view_id: String, test_cancel := false) -> void:
 	for view in manifest.get("views", []):
 		if view.view_id != view_id:
 			continue
 		screens.append(view_id)
 		var buttons := _draw_screen(self, view.layout, size, "")
 		if verify:
-			if buttons.is_empty() or visited.size() > 8:
+			if buttons.is_empty() or screens.size() > 8:
 				_finish("The authored route did not reach a conclusion.")
 				return
 			var button: Button = buttons[0]
 			await get_tree().process_frame
 			var click := InputEventAction.new()
-			if cid == "project-watch" and not cancel_target.is_empty():
+			if test_cancel and not cancel_target.is_empty():
 				click.action = &"ui_cancel"
 				click.pressed = true
 				Input.parse_input_event(click)

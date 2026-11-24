@@ -363,6 +363,9 @@ static func open(app, view_id := "", jump := {}) -> void:
 			row["layout"] = state.layout.duplicate(true)
 	var duplicate_view := Kit.button("复制视图…", Callable(), "ghost")
 	var delete_view := Kit.button("删除视图…", Callable(), "ghost")
+	var play_view := Kit.button("试玩已保存视图", Callable(), "ghost")
+	play_view.visible = Playtest.allows_view_entry(source)
+	play_view.tooltip_text = "从此屏幕启动独立游戏。只读取已保存版本，当前修改仍留在窗口。"
 	var show_row := func(index: int):
 		restore_editing.call()
 		state.row = index
@@ -371,6 +374,7 @@ static func open(app, view_id := "", jump := {}) -> void:
 		id.editable = index < 0
 		duplicate_view.disabled = index < 0
 		delete_view.disabled = index < 0
+		play_view.disabled = index < 0
 		image_path.text = str(row.get("image", ""))
 		var current_hotspots = row.get("hotspots")
 		preview.hotspots = current_hotspots.duplicate(true) if current_hotspots is Array else []
@@ -444,6 +448,12 @@ static func open(app, view_id := "", jump := {}) -> void:
 	var buttons := Kit.hbox(6)
 	buttons.add_child(duplicate_view)
 	buttons.add_child(delete_view)
+	buttons.add_child(play_view)
+	play_view.pressed.connect(func():
+		if state.saving or state.row < 0 or not current.call():
+			return
+		if app._map_file_ctrl.play_view(baseline[state.row].view_id):
+			notice.text = "已启动此视图的已保存版本。当前编辑仍留在此窗口。")
 	duplicate_view.pressed.connect(func():
 		if state.saving:
 			return

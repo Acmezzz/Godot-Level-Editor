@@ -23,6 +23,7 @@ const DocumentSession := preload("res://src/project/document_session.gd")
 const DocumentCommit := preload("res://src/project/document_commit.gd")
 const EntryStore := preload("res://src/content/content_store.gd")
 const EntryFunctions := preload("res://src/content/function_decl.gd")
+const References := preload("res://src/project/reference_index.gd")
 
 var app   # 宿主引用
 
@@ -1457,17 +1458,40 @@ func on_play(spawn_tiles: Vector2i = Vector2i(-1, -1), project_entry := false, e
 				or selected.data.get("function") != EntryFunctions.fn_code(app.manifest, entry.function):
 			app._set_status("试玩中止：所选项目入口已删除、无法读取或声明不匹配。")
 			return
-	var request := Playtest.request_report(app.manifest, digest)
-	if bool(app.manifest.get("playtest", {}).get("report", false)) and request.is_empty():
-		app._set_status("试玩中止：无法创建加载回执目录")
-		return
 	var args: PackedStringArray = PackedStringArray() if project_entry else app._play_args(spawn_tiles)
 	if not entry.is_empty():
 		args.append(Playtest.entry_arg(entry.function, entry.content))
+	var subject := play_path.get_file() if not project_entry else (
+		"项目入口 %s / %s" % [entry.function, entry.content] if not entry.is_empty() else "项目入口")
+	_start_playtest(play_path, digest, args, subject)
+
+## Screen entries use the published manifest. They never submit the open map or layout.
+func play_view(view_id: String) -> bool:
+	if _play_pid > 0 and Playtest.is_alive(_play_pid):
+		app._set_status("已有试玩正在运行，请关闭该游戏后再启动")
+		return false
+	if not Playtest.allows_view_entry(app.manifest):
+		app._set_status("游戏未开放从屏幕启动试玩。")
+		return false
+	if not References.view_ids(app.manifest).has(view_id):
+		app._set_status("试玩中止：所选屏幕已经不存在。")
+		return false
+	var manifest_path := str(app.manifest._dir).path_join("editor/editor_manifest.json")
+	var digest := EntryStore.file_digest(manifest_path)
+	if digest == "" or digest != app.manifest.get("_manifest_digest", ""):
+		app._set_status("试玩中止：磁盘清单已变化，请重新打开项目。")
+		return false
+	return _start_playtest("", "", PackedStringArray([Playtest.view_entry_arg(view_id)]), "屏幕 " + view_id)
+
+func _start_playtest(play_path: String, digest: String, args: PackedStringArray, subject: String) -> bool:
+	var request := Playtest.request_report(app.manifest, digest)
+	if bool(app.manifest.get("playtest", {}).get("report", false)) and request.is_empty():
+		app._set_status("试玩中止：无法创建加载回执目录")
+		return false
 	var play_res := Playtest.launch_tracked(app.manifest, play_path, args, request)
 	if not play_res.get("ok", false):
 		app._set_status(" 试玩失败: " + str(play_res.get("error", "")))
-		return
+		return false
 	_play_pid = int(play_res.get("pid", 0))
 	_play_started_msec = Time.get_ticks_msec()
 	_play_program = str(play_res.get("program", ""))
@@ -1479,12 +1503,11 @@ func on_play(spawn_tiles: Vector2i = Vector2i(-1, -1), project_entry := false, e
 	var tail := Playtest.log_tail(str(app.manifest.get("_dir", "")), 2)
 	# R24：平台查不了进程就明说「跟踪不可用」，不给假的「仍在运行」。
 	var track_note := "" if Playtest.tracking_available() else "（此平台无法跟踪进程退出）"
-	var subject := play_path.get_file() if not project_entry else (
-		"项目入口 %s / %s" % [entry.function, entry.content] if not entry.is_empty() else "项目入口")
 	app._set_status(" 试玩启动: %s %s%s%s%s" % [what, subject,
 		"（跟踪包装进程）" if not _play_tracked else "",
 		track_note,
 		("；日志: " + tail) if tail != "" else ""])
+	return true
 
 ## 试玩进程跟踪：退出后回报一次（OS.is_process_running，无子进程）
 

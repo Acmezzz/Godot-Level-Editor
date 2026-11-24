@@ -3400,7 +3400,7 @@ func author_signal_room(app, project: String) -> void:
 		"preview": {"version": 1, "executable": OS.get_executable_path(), "args": launch,
 			"capabilities": ["screenLayout", "mapFrame"]},
 		"playtest": {"executable": OS.get_executable_path(), "args": launch + ["--verify", "--map=%mapfile%"],
-			"report": true, "projectEntry": true, "entryFunctions": ["signal"]}}
+			"report": true, "projectEntry": true, "entryFunctions": ["signal"], "viewEntry": true}}
 	var path := project.path_join("editor/editor_manifest.json")
 	check(Maps.write_json(path, manifest), "write only the second game's module and viewport declarations")
 	var import_log := PackedStringArray()
@@ -3581,7 +3581,28 @@ func author_signal_room(app, project: String) -> void:
 	check(cancellation.get("status") == "ready" and cancelled.get("visited") == ["project-watch", "project-cancelled"]
 		and cancelled.get("outlets") == ["cancelled"] and cancelled.get("text") == "Signal cancelled",
 		"the same module obeys its separately authored cancel outlet: " + str(cancellation))
+	await _play_saved_signal_view(app, path)
 	await _author_relay_map(app, manifest)
+
+func _play_saved_signal_view(app, manifest_path: String) -> void:
+	ReferenceViews.open(app, "watch-deck", {"element": app.manifest.views[1].layout.elements[0].id})
+	var popup := _visible_popup(app)
+	var text: LineEdit = popup.find_child("LayoutElement_text", true, false)
+	text.text = "Draft relay caption"
+	text.text_changed.emit(text.text)
+	var digest := Store.file_digest(manifest_path)
+	press(popup, "试玩已保存视图")
+	var report := await wait_for_playtest(app._map_file_ctrl)
+	var result: Dictionary = report.get("result", {})
+	check(report.get("status") == "ready" and report.get("mapDigest") == ""
+		and result.get("screens") == ["watch-deck", "relay-tuning"]
+		and result.get("visited") == ["project-tune", "project-clear"]
+		and result.get("buttons") == ["Tune the relay", "Confirm the signal"]
+		and result.get("text") == "Signal verified",
+		"the independent game starts at the selected saved screen and follows its authored outlets")
+	check(popup.visible and text.text == "Draft relay caption" and digest == Store.file_digest(manifest_path),
+		"screen playtest neither publishes nor closes the unsaved layout")
+	popup.hide()
 
 func _author_relay_map(app, manifest: Dictionary) -> void:
 	app._set_mode("map")

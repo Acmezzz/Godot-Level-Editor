@@ -20,7 +20,16 @@ static func allows_entry(m: Dictionary, function_id: String) -> bool:
 	return config.get("projectEntry", false) and config.get("entryFunctions", []).has(function_id)
 
 static func entry_arg(function_id: String, content_id: String) -> String:
-	var entry := {"version": PROTOCOL, "function": function_id, "content": content_id}
+	return _encode_entry({"function": function_id, "content": content_id})
+
+static func allows_view_entry(m: Dictionary) -> bool:
+	return m.get("playtest", {}).get("viewEntry", false) == true
+
+static func view_entry_arg(view_id: String) -> String:
+	return _encode_entry({"view": view_id})
+
+static func _encode_entry(target: Dictionary) -> String:
+	var entry := target.merged({"version": PROTOCOL})
 	return "--editor-entry=" + Marshalls.utf8_to_base64(JSON.stringify(entry))
 
 static func request_report(m: Dictionary, map_digest: String) -> Dictionary:

@@ -425,7 +425,7 @@ static func _validate_playtest(data: Dictionary, issues: Array[Dictionary]) -> v
 		_add(issues, "error", "playtest.executable", "must be a path string")
 	elif exe is String and (exe as String).strip_edges() == "" and pt2.has("executable"):
 		_add(issues, "warning", "playtest.executable", "empty executable: falls back to playCommand")
-	for feature in ["report", "projectEntry"]:
+	for feature in ["report", "projectEntry", "viewEntry"]:
 		if not pt2.has(feature):
 			continue
 		if not pt2[feature] is bool:
@@ -855,6 +855,7 @@ static func _validate_screen_modules(data: Dictionary, issues: Array[Dictionary]
 	if not raw is Dictionary:
 		_add(issues, "error", "screenModules", "must be an object keyed by module ID")
 		return
+	var conditions := ConditionDecls.conditions(data)
 	for id in raw:
 		var path := "screenModules." + str(id)
 		var decl = raw[id]
@@ -888,6 +889,24 @@ static func _validate_screen_modules(data: Dictionary, issues: Array[Dictionary]
 					_add(issues, "error", place + ".type", "must name a supported input type")
 			elif field.get("kind") != "choice":
 				_add(issues, "error", place + ".kind", "must be input or choice")
+		_check_condition_fields(fields, path + ".fields", conditions, true, issues)
+		_check_module_map_pairs(fields, path + ".fields", issues)
+
+static func _check_module_map_pairs(fields: Array, path: String, issues: Array[Dictionary], depth := 0) -> void:
+	if depth > 4:
+		return
+	for field in fields:
+		if not field is Dictionary:
+			continue
+		var at := path + "." + str(field.get("id", "?"))
+		if field.has("mapField"):
+			var pair = field.mapField
+			if not pair is String or pair.is_empty() or not fields.any(func(sibling):
+				return sibling is Dictionary and sibling.get("id") == pair and sibling.get("kind") == "choice" \
+					and sibling.get("source") == "map" and not bool(sibling.get("multiple", false))):
+				_add(issues, "error", at + ".mapField", "must name a single map choice in the same row")
+		if field.get("type") == "array" and field.get("of") == "record" and field.get("fields") is Array:
+			_check_module_map_pairs(field.fields, at + ".fields", issues, depth + 1)
 
 ## C5：项目参考 views（[{view_id, image, pixel_size, hotspots}]）：view_id 非空唯一、
 ## image/pixel_size/hotspots 可选但类型必对（image 字符串、pixel_size 正数、hotspots 数组）。

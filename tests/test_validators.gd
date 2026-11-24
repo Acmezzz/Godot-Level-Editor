@@ -254,3 +254,18 @@ func test_playtest_entry_functions() -> void:
 	m.playtest.entryFunctions = ["f1"]
 	m.playtest.projectEntry = false
 	eq(_errs_of(m).size(), 1, "entry functions require project entry support")
+
+func test_screen_playtest_and_map_pairs() -> void:
+	var m := _good()
+	m["playtest"] = {"viewEntry": true}
+	eq(_errs_of(m).size(), 1, "a direct screen entry needs the structured launch")
+	m.playtest["executable"] = "game.exe"
+	var record := {"id": "targets", "kind": "input", "type": "array", "of": "record", "fields": [
+		{"id": "map", "kind": "choice", "source": "map"},
+		{"id": "floor", "kind": "choice", "source": "layer:", "mapField": "map"},
+		{"id": "start", "kind": "input", "type": "vector2", "pickSpace": "layer", "layerField": "floor", "mapField": "map"},
+	]}
+	m["screenModules"] = {"relay": {"fields": [record]}}
+	eq(_errs_of(m).size(), 0, "screen launch does not require a project-content entry or an open map")
+	record.fields[1]["mapField"] = "missing"
+	eq(_errs_of(m).size(), 2, "reject a missing sibling map and a mismatched coordinate layer")
