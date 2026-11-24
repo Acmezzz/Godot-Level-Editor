@@ -10,6 +10,8 @@ const Kit := preload("res://src/ui/ui_kit.gd")
 const CellGraphEditor := preload("res://src/ui/cell_graph_editor.gd")
 const References := preload("res://src/project/reference_index.gd")
 const WorldEditor := preload("res://src/ui/world_layout_editor.gd")
+const EventLayers := preload("res://src/project/event_layers.gd")
+const EventLayerDialog := preload("res://src/ui/event_layers_dialog.gd")
 
 var app
 var after_switch: Callable   # 切图后宿主可选回调（项目页用它回到内容视图）
@@ -78,6 +80,8 @@ func _refresh_map_menu() -> void:
 	_switch_menu.add_item("编辑当前地图格图…", _MENU_CELL_GRAPH)
 	_switch_menu.set_item_disabled(_switch_menu.item_count - 1, not app.map_loaded)
 	_switch_menu.add_item("编辑项目世界布局…", _MENU_WORLD)
+	if not EventLayers.types(app.manifest).is_empty() or not app.manifest.get(EventLayers.KEY, {}).is_empty():
+		_switch_menu.add_item("图组事件层…", _MENU_EVENTS)
 	# 草稿恢复入口（A3）：只列真正有草稿的地图码，避免菜单变成大杂烩
 	var draft_keys: Array = preload("res://src/map/recovery.gd").list_drafts(app.manifest)
 	if draft_keys.is_empty():
@@ -88,6 +92,7 @@ func _refresh_map_menu() -> void:
 const _MENU_DRAFTS := 100000
 const _MENU_CELL_GRAPH := 100001
 const _MENU_WORLD := 100002
+const _MENU_EVENTS := 100003
 
 ## 草稿列表弹窗：每份草稿给「恢复 / 查看正式图 / 丢弃」三个选择。
 func _open_draft_picker() -> void:
@@ -138,6 +143,9 @@ func draft_pick(draft_key: String, action: String) -> void:
 		after_switch.call()
 
 func _on_map_selected(id: int) -> void:
+	if id == _MENU_EVENTS:
+		EventLayerDialog.open(app)
+		return
 	if id == _MENU_WORLD:
 		WorldEditor.open(app)
 		return

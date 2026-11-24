@@ -433,6 +433,10 @@ func _open_flow() -> void:
 			var section: String = edge.project_section
 			var before: Dictionary = source[section].duplicate(true)
 			var current: Dictionary = before if edge.field == "" else before.get(edge.field, {})
+			var layer: String = edge.get("event_layer", "")
+			if layer != "":
+				var previous = before.get(layer, {}).get("events", {}).get(edge.field)
+				current = edge.decl if previous == edge.decl.get("target") else {}
 			var chosen = target.get_selected_metadata()
 			var next: Dictionary = chosen if chosen is Dictionary else {}
 			if current != edge.decl or (not next.is_empty() and not StartupTargets.destination_available(source, current, next)):
@@ -449,16 +453,23 @@ func _open_flow() -> void:
 				notice.text = "关系未变。"
 				return
 			var candidate := source.duplicate(true)
-			var draft: Dictionary = candidate[section] if edge.field == "" else candidate[section][edge.field]
-			if next.is_empty():
-				draft.erase("target")
-			else:
-				draft["target"] = next
-			if section == "startup":
-				if context_map.is_empty():
-					draft.erase("contentMap")
+			if layer != "":
+				var events: Dictionary = candidate[section][layer].events
+				if next.is_empty():
+					events.erase(edge.field)
 				else:
-					draft["contentMap"] = context_map
+					events[edge.field] = next
+			else:
+				var draft: Dictionary = candidate[section] if edge.field == "" else candidate[section][edge.field]
+				if next.is_empty():
+					draft.erase("target")
+				else:
+					draft["target"] = next
+				if section == "startup":
+					if context_map.is_empty():
+						draft.erase("contentMap")
+					else:
+						draft["contentMap"] = context_map
 			var guard := func() -> bool:
 				return is_instance_valid(pop) and pop.visible and is_same(app.manifest, source) and source.get(section) == before
 			state.saving = true

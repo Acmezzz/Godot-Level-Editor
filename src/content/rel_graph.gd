@@ -21,6 +21,7 @@ const MapStore := preload("res://src/map/map_store.gd")
 const MapFlow := preload("res://src/map/map_flow.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
 const ProjectSlots := preload("res://src/project/project_content_slots.gd")
+const EventLayers := preload("res://src/project/event_layers.gd")
 const VIEW_KIND := "@view"
 const MAP_KIND := "@map"
 const PROJECT_KIND := "@project"
@@ -119,8 +120,9 @@ static func _build(manifest: Dictionary, kinds: Array) -> Dictionary:
 
 static func _collect_project(manifest: Dictionary, graph: Dictionary, catalog: Dictionary) -> void:
 	var slots := ProjectSlots.declarations(manifest)
+	var events := EventLayers.references(manifest)
 	var startup: Dictionary = manifest.get("startup", {})
-	if not manifest.has("startup") and slots.is_empty():
+	if not manifest.has("startup") and slots.is_empty() and events.is_empty():
 		return
 	var key := _key(PROJECT_KIND, "root")
 	graph.nodes.append({"key": key, "cid": "root", "fn_id": PROJECT_KIND, "name": "项目入口与规则"})
@@ -129,14 +131,19 @@ static func _collect_project(manifest: Dictionary, graph: Dictionary, catalog: D
 		_add_project_slot(graph, catalog, manifest, key, "startup", "", "正式启动入口", startup)
 	for id in slots:
 		_add_project_slot(graph, catalog, manifest, key, ProjectSlots.KEY, id, slots[id].get("name", id), slots[id])
+	for event in events:
+		var decl: Dictionary = event.domains.merged({"target": event.target})
+		_add_project_slot(graph, catalog, manifest, key, EventLayers.KEY, event.code, event.name, decl, event.layer)
 
 static func _add_project_slot(graph: Dictionary, catalog: Dictionary, manifest: Dictionary, key: String,
-		section: String, id: String, label: String, decl: Dictionary) -> void:
+		section: String, id: String, label: String, decl: Dictionary, event_layer := "") -> void:
 	var target = decl.get("target")
 	var address := _flow_address(target)
 	var edge := {"from": key, "fn_id": PROJECT_KIND, "cid": "root", "field": id, "label": label,
 		"project_section": section, "decl": decl.duplicate(true), "target": target, "flow_target": true,
 		"multi": false, "fn": address[0], "value": address[1]}
+	if event_layer != "":
+		edge["event_layer"] = event_layer
 	graph.slots[key].append(edge)
 	if _typed_target_exists(manifest, catalog, decl, target, address):
 		edge["to"] = _key(address[0], address[1])

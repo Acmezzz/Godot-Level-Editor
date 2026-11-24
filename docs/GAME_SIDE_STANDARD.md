@@ -78,7 +78,7 @@
 | `tiles` | — | 非法键：出现即校验报错；瓦片资产在 `assets[]`（`kind: "scene"`, `shape: "tile"`） |
 | `entities` | — | 非法键：出现即校验报错；实体资产在 `assets[]`（`kind: "entity"`） |
 | `functions` | dict \| array | 功能声明，见 2.5 |
-| `triggers` | dict \| array | 时机池，见 2.5.4。只有 `{id, name}`，是功能/绑定引用的标签 |
+| `triggers` | dict \| array | 时机池，见 2.5.4。可为图组事件声明 `eventTargets` |
 | `collisionTypes` | dict \| array | 碰撞类型池，见 2.8：画布画什么形状/颜色 + 游戏侧解释标签 gameplay |
 | `contentDir` | string | 内容根目录（相对工程根），缺省 `content`；不允许 `..` 或绝对路径 |
 | `playtest` | object | 可选。试玩面板声明驱动：`flags: [{id, name, arg}]`（勾选后启动参数**原样追加** arg）、`params: [{id, name, arg(含 %d), def, min, max}]`（数字参数，值 ≠ def 才追加）。值只存编辑器本地 prefs，键 = `<项目根>|<地图码>`（A6：两项目同名地图不串）。未声明 = 面板空态提示 |
@@ -94,7 +94,8 @@
 | `mapGenerators` | object | 可选。按生成器 ID 声明从游戏生成可编辑地图的参数。需同时声明 `preview.capabilities` 包含 `generateMap`。 |
 | `mapOutputs` | object | 可选。为地图声明具名流程出口；游戏触发，作者接线。 |
 | `mapContentSlots` | object | 可选。为地图声明具名内容槽，可绑定内容库中已保存的规则或配置。 |
-| `projectContentSlots` | object | 可选。声明项目级内容槽，由作者绑定跨入口共用的规则或配置。 |
+| `eventLayers` | object | 作者保存的图组事件层，以稳定层 ID 为键。见下文。 |
+| `projectContentSlots` | object | 旧项目的具名内容绑定；新共享事件使用 `eventLayers`。 |
 | `viewports` | array | 可选（C5）。具名参考画幅 `[{id, w, h}]`：宽屏/竖屏/分屏的坐标域身份，id 非空唯一、w/h 必填正数；`viewport_ref` 字段的下拉候选来自这里 |
 | `screenModules` | object | 可选。按模块 ID 提供作者可加入布局的成品控件，以及编辑器可配置的字段声明。游戏负责创建控件及执行行为。 |
 | `views` | array | 可选（C5）。参考视图 `[{view_id, image, pixel_size, hotspots}]`：`view_id` 必填，`image`/`pixel_size`/`hotspots` 可省；hotspot = `{rect: [nx,ny,nw,nh] 全 0..1, target: 对象}`。编辑器可编辑参考图、绘制热点和选择内容目标；游戏定义点击行为 |
@@ -1383,12 +1384,26 @@ main.gd
 正式入口与 `playtest.entryFunctions`（哪些内容可单独试玩）是独立声明。项目自检报告无法读取的已保存入口；
 删除当前入口引用的内容或屏幕前，请先更换或清除入口。
 
-共用配置可与启动入口独立声明，例如
-`{"projectContentSlots":{"scoring":{"name":"计分规则","contentTypes":["score_rules"]}}}`。
-游戏声明允许的独立内容功能 ID；作者在内容库保存条目，再在工作台「项目规则…」选择。
-编辑器写入 `projectContentSlots.scoring.target = {"function":"score_rules","content":"project-double"}`。
-游戏读取对应的内容文件并执行规则；没有 `target` 表示作者未选择，可由游戏沿用默认规则。
-所有入口读取同一个项目清单；游戏自行决定在哪些流程使用该配置。
+图组事件层与启动入口独立。游戏在某个时机条目声明允许的目标，例如：
+
+```json
+{"triggers":{"round_finished":{"code":"FIN1","name":"关卡结算","eventTargets":{"screens":true}}}}
+```
+
+作者可新建一个层，为 `FIN1` 选择结算屏。编辑器在项目清单写入：
+
+```json
+{"eventLayers":{"LYR1":{"name":"共用结算","maps":["MAP1","MAP3"],"events":{"FIN1":{"view":"results"}}}}}
+```
+
+层的键、`maps` 中的地图码、`events` 中的时机码和目标 ID 才是身份；`name` 只用于展示。
+省略 `maps` 代表适用于全部地图，包括以后新增的地图；显式空数组不匹配任何地图。
+地图触发事件时，游戏按当前地图码选取匹配的层，并用时机码查 `events` 中的目标；
+各层可重叠，执行先后和冲突策略由游戏决定。没有地图的入口若要复用规则，也可由游戏读取未限定地图的层。
+`eventTargets` 与流程目标使用同一组域：`screens`、`maps`、`contentTypes`、`arrivalPorts`。
+内容目标保存为 `{"function":"功能声明ID","content":"内容ID"}`；游戏按功能声明解析执行码。
+既有 `projectContentSlots` 和 `mapContentSlots` 不自动改写，由旧游戏继续读取；
+切到新模型时，由游戏把原规则映射到时机声明，再由作者确定适用范围。单图专属出口继续使用 `mapOutputs`。
 
 **可选：游戏加载回执和无地图入口。** 清单设 `playtest.projectEntry: true` 后，工作台
 显示「试玩项目」：先提交工作台数据，再以空的 `%mapfile%` 启动。游戏可将独立内容 ID

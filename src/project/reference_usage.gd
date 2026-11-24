@@ -3,6 +3,7 @@ extends RefCounted
 
 const FlowTarget := preload("res://src/content/flow_target.gd")
 const ProjectSlots := preload("res://src/project/project_content_slots.gd")
+const EventLayers := preload("res://src/project/event_layers.gd")
 const MapStore := preload("res://src/map/map_store.gd")
 const MapFlow := preload("res://src/map/map_flow.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
@@ -348,6 +349,9 @@ static func view_inbound_refs(manifest: Dictionary, id: String, staged: Array,
 	var refs: Array[String] = []
 	if manifest.get("startup", {}).get("target", {}) == {"view": id}:
 		refs.append("正式启动入口")
+	for event in EventLayers.references(manifest):
+		if event.target == {"view": id}:
+			refs.append("事件层 · " + event.name)
 	for ref in ReferenceIndex.view_transition_refs(manifest):
 		if ref.target.view == id and ref.view != id:
 			refs.append("%s · %s" % [ref.view, ref.path])
@@ -524,7 +528,8 @@ static func inbound_content(manifest: Dictionary, fn_id: String, cid: String,
 			"instances": usage.get("by_map", {}),
 			"contents": content_inbound_refs(manifest, fn_id, cid),
 			"views": ReferenceIndex.view_content_refs(manifest).filter(func(ref): return ref.fn == fn_id and ref.cid == cid),
-			"project_slots": ProjectSlots.references(manifest).filter(func(ref): return ref.target == target),
+			"project_slots": (ProjectSlots.references(manifest) + EventLayers.references(manifest)).filter(
+				func(ref): return ref.target == target),
 			"drafts": draft_inbound_refs(manifest, cid, fn_id),
 		},
 	}
