@@ -98,10 +98,11 @@ static func render(tree: SceneTree, manifest: Dictionary, capability: String, su
 		return _failed("无法启动游戏预览进程。")
 	var deadline := Time.get_ticks_msec() + TIMEOUT_MS
 	while OS.is_process_running(pid):
-		if not keep.call() or Time.get_ticks_msec() >= deadline:
+		var wanted: bool = keep.call()
+		if not wanted or Time.get_ticks_msec() >= deadline:
 			OS.kill(pid)
 			_cleanup(dir)
-			return _failed("游戏预览已取消。" if not keep.call() else "游戏预览超时，未返回画面。")
+			return _failed("游戏预览超时，未返回画面。" if wanted else "游戏预览已取消。")
 		await tree.create_timer(0.08).timeout
 	var result := _read_result(dir, token, viewport, capability) if keep.call() else _failed("游戏预览已取消。")
 	_cleanup(dir)

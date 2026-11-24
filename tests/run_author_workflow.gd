@@ -1562,7 +1562,9 @@ func run():
 	app.canvas._paint_pushed = false
 	app.canvas._tool_ops_ctrl.place_object("button-art", 1, app.canvas.grid.cell_center_px(Vector2i(2, 1)))
 	check(app.canvas.set_spawn_cell(Vector2i(3, 1)), "set the authored chunk entrance")
-	app.canvas.layer_set_blend(0, "add")
+	await app.canvas.layer_set_blend(0, "add")
+	await app.canvas.layer_set_param(0, "offset", Vector2(12, 4))
+	await app.canvas.layer_set_param(0, "scale", 1.5)
 	app.canvas.apply_cell_graph({"spaces": {"deck": {"layer": overlay_id, "origin": [8, 4], "axisX": [1, 0.25]}},
 		"cells": [
 			{"id": "author-entry", "space": "deck", "polygon": [[0, 0], [16, 0], [8, 12]]},
@@ -1589,7 +1591,8 @@ func run():
 			and row.removedObject and row.seedObject and row.addedObject and row.tilePatched \
 			and row.spawn[0] == 3 and row.spawn[1] == 1 and row.blend == "add" and row.decor == 2 \
 			and row.authorRoute == "author-exit" and row.authorEdge == "author-stairs" \
-			and row.seedRoute == "seed-exit-%d" % int(row.seed) and row.overlay == overlay_id),
+			and row.seedRoute == "seed-exit-%d" % int(row.seed) and row.overlay == overlay_id \
+			and row.seedWorldX == 12 + float(row.seed) * 1.5 and row.seedWorldY == 5.5),
 		"both seeds keep their own playable route and accept the authored route, decor and entrance: " + str(object_report))
 	await author_resize(app, manifest)
 	await author_projection_copy(app, manifest)

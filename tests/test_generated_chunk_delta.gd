@@ -4,6 +4,34 @@ const Delta := preload("res://src/map/generated_chunk_delta.gd")
 const Generated := preload("res://src/map/generated_map_merge.gd")
 const Maps := preload("res://src/map/map_store.gd")
 
+func test_layer_frame_and_grid_changes_have_distinct_overlay_rules() -> void:
+	var base := Maps.new_map("seed", 8, 8, "orthogonal")
+	var layer: String = base.meta.layers[0].id
+	base.tiles[layer] = [[1, 2, "terrain", 0, 0, 0]]
+	var authored := base.duplicate(true)
+	authored.meta.layers[0].offset = [12, 4]
+	authored.meta.layers[0].scale = 1.5
+	authored.meta.layers[0].parallax = 0.75
+	Generated.attach(authored, base, "demo", {})
+	var runtime := base.duplicate(true)
+	runtime.tiles[layer].append([4, 3, "terrain", 0, 0, 0])
+	var result := Delta.apply(runtime, Delta.compile(authored, Delta.CONTENT))
+	eq(result.error, "", "the new frame applies to the whole compatible seed layer")
+	if result.has("map"):
+		eq(result.map.tiles[layer], runtime.tiles[layer], "tile coordinates remain local")
+		eq(result.map.meta.layers[0], authored.meta.layers[0], "all edited frame parameters are carried over")
+		ok(not runtime.meta.layers[0].has("offset"), "runtime input is untouched")
+	authored.meta.layers[0].tileGrid = {"gridProjection": "isometric"}
+	authored.tiles[layer] = [[2, 1, "terrain", 0, 0, 0]]
+	var migration := Delta.compile(authored, Delta.CONTENT)
+	var conflict := Delta.apply(runtime, migration)
+	ok(not conflict.has("map") and conflict.error.contains("格系"), "do not reinterpret a seed's extra tiles")
+	result = Delta.apply(base, migration)
+	eq(result.error, "", "an unchanged tile table can be replaced with the authored migration")
+	if result.has("map"):
+		eq(result.map.tiles[layer], authored.tiles[layer], "use only the migrated tile coordinates")
+	ok(not Delta.compile(authored, Delta.GRID).error.is_empty(), "grid-only mode does not modify the frame")
+
 func test_content_delta_changes_layer_stack_without_discarding_seed_tiles() -> void:
 	var base := Maps.new_map("seed", 8, 8, "orthogonal")
 	base.meta.layers = [{"id": "base", "name": "Base"}, {"id": "strip", "name": "Strip"}, {"id": "back", "name": "Back"}]

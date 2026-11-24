@@ -9,6 +9,7 @@ const Validation := preload("res://src/project/manifest_validation.gd")
 const Layout := preload("res://src/project/screen_layout.gd")
 const Id := preload("res://src/content/content_id.gd")
 const GamePreview := preload("res://src/project/game_preview.gd")
+const FrameDialog := preload("res://src/ui/game_frame_dialog.gd")
 const Audit := preload("res://src/project/project_audit.gd")
 
 class Preview extends Control:
@@ -203,11 +204,8 @@ static func open(app, view_id := "") -> void:
 	var shell: Dictionary = app._popup_body("项目参考视图",
 		"拖动绘制热点，点击选中。热点可指向内容；游戏决定如何显示参考图和响应点击。")
 	var pop: PopupPanel = shell.pop
-	# Keep unpublished layouts open while the game's separate window has focus.
-	pop.popup_window = false
-	pop.window_input.connect(func(event: InputEvent):
-		if event.is_action_pressed("ui_cancel"):
-			pop.hide())
+	FrameDialog.keep_on_focus_loss(pop)
+	var window: WeakRef = weakref(pop)
 	var body: VBoxContainer = shell.body
 	var list := OptionButton.new()
 	var id := LineEdit.new()
@@ -519,13 +517,13 @@ static func open(app, view_id := "") -> void:
 		var viewport := Vector2i(preview.viewport_size.round())
 		var locale := preview.locale
 		var revision: int = state.render_revision
-		var keep := func() -> bool:
-			return is_instance_valid(pop) and pop.visible and is_same(app.manifest, source) \
-				and state.render_revision == revision
+		var keep := FrameDialog.visible_request(window, func():
+			return is_same(app.manifest, source) and state.render_revision == revision)
 		game_render.disabled = true
 		notice.text = "游戏正在渲染当前布局…"
 		var result := await GamePreview.render(app.get_tree(), source, "screenLayout", snapshot, viewport, locale, keep)
-		if not is_instance_valid(pop) or not pop.visible:
+		var owner: Window = window.get_ref()
+		if owner == null or not owner.visible:
 			return
 		game_render.disabled = false
 		if not keep.call():

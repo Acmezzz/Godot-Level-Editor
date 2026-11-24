@@ -13,6 +13,11 @@ static func keep_on_focus_loss(pop: PopupPanel) -> void:
 		if event.is_action_pressed("ui_cancel"):
 			pop.hide())
 
+static func visible_request(window: WeakRef, current: Callable) -> Callable:
+	return func() -> bool:
+		var owner: Window = window.get_ref()
+		return owner != null and owner.visible and current.call()
+
 static func open(app, capability: String, options: Dictionary, snapshot: Callable, valid: Callable) -> void:
 	var manifest: Dictionary = app.manifest
 	var shell: Dictionary = app._popup_body(options.title, options.hint)
@@ -112,13 +117,15 @@ static func open(app, capability: String, options: Dictionary, snapshot: Callabl
 		picks.current = Callable()
 		clear_selection.call()
 		frame.texture = null
-	var keep := func() -> bool:
-		return is_instance_valid(pop) and pop.visible and is_same(app.manifest, manifest) and valid.call()
+	var window: WeakRef = weakref(pop)
+	var keep := visible_request(window, func(): return is_same(app.manifest, manifest) and valid.call())
 	var render_frame := func():
 		if render.disabled:
 			return
 		if not keep.call():
-			pop.hide()
+			var owner: Window = window.get_ref()
+			if owner != null:
+				owner.hide()
 			return
 		reset.call()
 		var preset: String = picker.get_selected_metadata()
@@ -147,8 +154,9 @@ static func open(app, capability: String, options: Dictionary, snapshot: Callabl
 		notice.text = "游戏正在渲染当前快照…"
 		var result := await GamePreview.render(app.get_tree(), manifest, capability, built.subject, viewport, "", keep)
 		if not keep.call():
-			if is_instance_valid(pop) and pop.visible:
-				pop.hide()
+			var owner: Window = window.get_ref()
+			if owner != null:
+				owner.hide()
 			return
 		render.disabled = false
 		picker.disabled = false

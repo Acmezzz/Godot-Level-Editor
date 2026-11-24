@@ -13,6 +13,7 @@ const ReferenceViews := preload("res://src/ui/reference_view_library.gd")
 const References := preload("res://src/project/reference_index.gd")
 const Kit := preload("res://src/ui/ui_kit.gd")
 const FrameReference := preload("res://src/ui/map_game_preview.gd")
+const FrameDialog := preload("res://src/ui/game_frame_dialog.gd")
 
 var host
 var app
@@ -423,6 +424,7 @@ func _open_item(kind: String, cid: String, context := "", field := "", draft := 
 	var shell: Dictionary = app._popup_body(title + " · " + str(fn.get("name", kind)),
 		"保存写入内容文件。依赖其他字段的引用选项会在保存后更新。")
 	var pop: PopupPanel = shell.pop
+	FrameDialog.keep_on_focus_loss(pop)
 	var body: VBoxContainer = shell.body
 	var notice := Label.new()
 	notice.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART

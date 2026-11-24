@@ -3,7 +3,8 @@ extends RefCounted
 
 const GRID := "gridDelta"
 const CONTENT := "contentDelta"
-const LAYER_STYLE := ["name", "visible", "ySort", "blend"]
+const LAYER_FRAME := ["offset", "scale", "parallax", "tileGrid"]
+const LAYER_OVERRIDES := ["name", "visible", "ySort", "blend"] + LAYER_FRAME
 
 static func compatibility_problem(a: Dictionary, b: Dictionary, authored_stack := false) -> String:
 	for field in ["w", "h", "gridProjection", "gridTopology", "gridBasis"]:
@@ -19,10 +20,10 @@ static func compatibility_problem(a: Dictionary, b: Dictionary, authored_stack :
 		return "图层声明无效。"
 	if before.keys()[0] != after.keys()[0] or (not authored_stack and before.keys() != after.keys()):
 		return "首层或生成图层顺序不一致。"
+	if authored_stack:
+		return ""
 	for id in before:
-		if not after.has(id):
-			continue
-		for field in ["offset", "scale", "parallax", "tileGrid"]:
+		for field in LAYER_FRAME:
 			if not _same(before[id].get(field), after[id].get(field)):
 				return "图层 %s 的空间变换或格系不一致。" % id
 	return ""
@@ -88,17 +89,25 @@ static func compile(authored: Dictionary, mode: String) -> Dictionary:
 		var new_spawn = authored.get("spawn", [2, 2])
 		if not _same(original_spawn, new_spawn):
 			result["spawn"] = new_spawn
-		var styles := {}
+		var overrides := {}
+		var grid_replacements := {}
 		for id in authored_layers:
 			if not baseline_layers.has(id):
 				continue
+			var original: Dictionary = baseline_layers[id]
+			var layer: Dictionary = authored_layers[id]
 			var edits := {}
-			for key in LAYER_STYLE:
-				if not _same(baseline_layers[id].get(key), authored_layers[id].get(key)):
-					edits[key] = authored_layers[id].get(key)
+			for key in LAYER_OVERRIDES:
+				if not _same(original.get(key), layer.get(key)):
+					edits[key] = layer.get(key)
 			if not edits.is_empty():
-				styles[id] = edits
-		result["layer_style"] = styles
+				overrides[id] = edits
+			if edits.has("tileGrid"):
+				# The keys of the two tile tables belong to different spaces.
+				grid_replacements[id] = {"base": _grid_index(base.get("tiles", {}).get(id, []), true),
+					"rows": authored.get("tiles", {}).get(id, [])}
+		result["layer_overrides"] = overrides
+		result["grid_replacements"] = grid_replacements
 		var topology := _compile_graph(base.meta.get("cellGraph", {}), meta.get("cellGraph", {}), meta.layers)
 		if topology.has("error"):
 			return topology
@@ -154,11 +163,11 @@ static func apply(runtime: Dictionary, plan: Dictionary) -> Dictionary:
 	if plan.mode == CONTENT:
 		var runtime_layers := _layer_index(meta.layers)
 		var layers: Array = []
-		var styles: Dictionary = plan.get("layer_style", {})
+		var overrides: Dictionary = plan.get("layer_overrides", {})
 		for authored_layer: Dictionary in plan.meta.layers:
 			var layer: Dictionary = runtime_layers.get(authored_layer.id, authored_layer).duplicate(true)
-			for key in styles.get(layer.id, {}):
-				var value = styles[layer.id][key]
+			for key in overrides.get(layer.id, {}):
+				var value = overrides[layer.id][key]
 				if value == null:
 					layer.erase(key)
 				else:
@@ -192,12 +201,19 @@ static func apply(runtime: Dictionary, plan: Dictionary) -> Dictionary:
 	out["collision"] = collision
 	var tiles: Dictionary = runtime.get("tiles", {}).duplicate()
 	var removed: Dictionary = plan.get("removed_layers", {})
+	var replacements: Dictionary = plan.get("grid_replacements", {})
 	for id in removed:
 		if not _same(_grid_index(tiles.get(id, []), true), removed[id]):
 			return {"error": "移除的图层 %s 含有不同于基线的种子瓦片。" % id}
 		tiles.erase(id)
 	for layer in out.meta.layers:
 		var id: String = layer.id
+		if replacements.has(id):
+			var migration: Dictionary = replacements[id]
+			if not _same(_grid_index(tiles.get(id, []), true), migration.base):
+				return {"error": "图层 %s 已更换格系，但当前种子的瓦片不同于基线。请保留原层并新增独立格系图层。" % id}
+			tiles[id] = migration.rows.duplicate(true)
+			continue
 		var patched = _apply_grid(tiles.get(id, []), plan.grid.tiles[id], true)
 		if patched == null:
 			return {"error": "运行时瓦片格位无效或重复：%s。" % id}

@@ -936,6 +936,12 @@ func _sample_grid_delta() -> Array:
 		var author_exit := _current if author_route else ""
 		var author_edge := _traversed_edge if author_route else ""
 		var seed_exit := _current if _load_board(chunk.map, "seed-entry") and _advance_board() else ""
+		var seed_world := Vector2.ZERO
+		for row in objects:
+			if row.asset == "button-art" and row.layer == "base":
+				var layer: Dictionary = chunk.map.meta.layers[0]
+				seed_world = _vector(layer.get("offset", [0, 0])) + Vector2(row.x, row.y) * float(layer.get("scale", 1.0))
+				break
 		var overlay := ""
 		for layer in chunk.map.meta.layers:
 			if (layer.name == "Author overlay"
@@ -951,6 +957,7 @@ func _sample_grid_delta() -> Array:
 			"spawn": chunk.map.spawn, "blend": chunk.map.meta.layers[0].get("blend", ""),
 			"authorRoute": author_exit, "authorEdge": author_edge, "seedRoute": seed_exit,
 			"overlay": overlay,
+			"seedWorldX": seed_world.x, "seedWorldY": seed_world.y,
 			"decor": objects.filter(func(row): return row.asset == "button-art").size(),
 			"seedCell": rows.any(func(row): return row.x == seed and row.y == 0),
 			"deleted": not rows.any(func(row): return row.x == 3 and row.y == 0),
