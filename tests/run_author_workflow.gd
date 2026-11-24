@@ -42,10 +42,10 @@ func select_metadata(opt: OptionButton, value: String) -> void:
 	check(false, "missing option " + value)
 
 func launch_and_read(app, project_entry: bool) -> Dictionary:
-	var controller = app._map_file_ctrl
-	await controller.on_play(Vector2i(-1, -1), project_entry)
-	if int(controller._play_pid) <= 0:
-		return {}
+	await app._map_file_ctrl.on_play(Vector2i(-1, -1), project_entry)
+	return await wait_for_playtest(app._map_file_ctrl)
+
+func wait_for_playtest(controller) -> Dictionary:
 	var deadline := Time.get_ticks_msec() + 12000
 	while Time.get_ticks_msec() < deadline:
 		await create_timer(0.05).timeout
@@ -320,6 +320,7 @@ func run():
 				"fields": [{"id":"label", "type":"string"}, {"id":"route_cell", "kind":"choice", "source":"cell:"},
 					{"id":"route_edge", "type":"edge_ref"}, {"id":"boundary_edge", "type":"edge_ref"}]}],
 		"playtest": {"executable": OS.get_executable_path(), "report": true, "projectEntry": true,
+			"entryFunctions": ["second_sequence", "frame_sequence"],
 			"args": ["--headless", "--path", "%projectpath%", "--", "--map=%mapfile%", "--verify"]},
 		"mapGenerators": {"slope_room": {"name": "Slope Room", "fields": [
 			{"id": "start", "name": "Starting column", "kind": "input", "type": "int", "min": 2, "max": 5, "default": 2},
@@ -696,6 +697,29 @@ func run():
 	check(screen_art.get("fit") == "cover" and screen_art.get("size") == [96.0, 32.0]
 		and screen_art.get("pixel") == "264dab",
 		"independent game resolves and decodes the image chosen by the author: " + str(screen_art))
+	ce._library.open()
+	pop = collect(app, "PopupPanel").filter(func(p): return p.visible).back()
+	select_metadata(collect(pop, "OptionButton").front(), "second_sequence")
+	var entry_list: ItemList = collect(pop, "ItemList").front()
+	for i in entry_list.item_count:
+		if entry_list.get_item_metadata(i) == "project-timing":
+			entry_list.select(i)
+			entry_list.item_selected.emit(i)
+			break
+	var entry_launch: Button = collect(pop, "Button").filter(func(b): return b.text == "试玩所选内容").front()
+	check(entry_launch.is_visible_in_tree() and not entry_launch.disabled, "declared project content appears as a playable entry")
+	var prior_request: String = app._map_file_ctrl._play_report_request.token
+	entry_launch.pressed.emit()
+	var entry_until := Time.get_ticks_msec() + 5000
+	while app._map_file_ctrl._play_report_request.get("token") == prior_request and Time.get_ticks_msec() < entry_until:
+		await process_frame
+	var chosen_report := await wait_for_playtest(app._map_file_ctrl)
+	var chosen_entry: Dictionary = chosen_report.get("result", {}).get("entry", {})
+	check(chosen_report.get("status") == "ready" and chosen_report.get("mapDigest") == ""
+		and chosen_entry.get("version") == 1 and chosen_entry.get("function") == "second_sequence"
+		and chosen_entry.get("content") == "project-timing"
+		and chosen_report.get("result", {}).get("schedule") == seconds,
+		"the same independent game starts from the library-selected session: " + str(chosen_report))
 	var data := Maps.new_map("board", 10, 10)
 	var remote := Maps.new_map("remote", 10, 10)
 	remote.meta["code"] = "RMT2"

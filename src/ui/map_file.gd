@@ -21,6 +21,8 @@ const MapConvert := preload("res://src/map/map_convert.gd")
 const ProjectAudit := preload("res://src/project/project_audit.gd")
 const DocumentSession := preload("res://src/project/document_session.gd")
 const DocumentCommit := preload("res://src/project/document_commit.gd")
+const EntryStore := preload("res://src/content/content_store.gd")
+const EntryFunctions := preload("res://src/content/function_decl.gd")
 
 var app   # 宿主引用
 
@@ -1414,11 +1416,14 @@ func offer_draft_recovery() -> void:
 		names.append(str(k))
 	app._set_status(" 发现 %d 份未完成草稿：打开地图菜单可恢复（%s）" % [names.size(), ", ".join(PackedStringArray(names))])
 
-func on_play(spawn_tiles: Vector2i = Vector2i(-1, -1), project_entry := false) -> void:
+func on_play(spawn_tiles: Vector2i = Vector2i(-1, -1), project_entry := false, entry := {}) -> void:
 	if _play_pid > 0 and Playtest.is_alive(_play_pid):
 		app._set_status("已有试玩正在运行，请关闭该游戏后再启动")
 		return
 	if project_entry and not bool(app.manifest.get("playtest", {}).get("projectEntry", false)):
+		return
+	if not entry.is_empty() and (not project_entry or not Playtest.allows_entry(app.manifest, entry.function)):
+		app._set_status("游戏未开放此内容类型作为试玩入口。")
 		return
 	if not project_entry and not app.map_loaded:
 		app._set_status(" 无地图：先新建或打开一张地图")
@@ -1446,11 +1451,19 @@ func on_play(spawn_tiles: Vector2i = Vector2i(-1, -1), project_entry := false) -
 	if not project_entry and (maps_root == "" or play_path.get_base_dir() != maps_root):
 		app._set_status(" 试玩中止：地图不在当前项目 maps 目录内，拒绝启动")
 		return
+	if not entry.is_empty():
+		var selected := EntryStore.read_ex(app.manifest, entry.function, entry.content)
+		if selected.status != "ok" or selected.data.get("scope") != "project" \
+				or selected.data.get("function") != EntryFunctions.fn_code(app.manifest, entry.function):
+			app._set_status("试玩中止：所选项目入口已删除、无法读取或声明不匹配。")
+			return
 	var request := Playtest.request_report(app.manifest, digest)
 	if bool(app.manifest.get("playtest", {}).get("report", false)) and request.is_empty():
 		app._set_status("试玩中止：无法创建加载回执目录")
 		return
 	var args: PackedStringArray = PackedStringArray() if project_entry else app._play_args(spawn_tiles)
+	if not entry.is_empty():
+		args.append(Playtest.entry_arg(entry.function, entry.content))
 	var play_res := Playtest.launch_tracked(app.manifest, play_path, args, request)
 	if not play_res.get("ok", false):
 		app._set_status(" 试玩失败: " + str(play_res.get("error", "")))
@@ -1466,7 +1479,9 @@ func on_play(spawn_tiles: Vector2i = Vector2i(-1, -1), project_entry := false) -
 	var tail := Playtest.log_tail(str(app.manifest.get("_dir", "")), 2)
 	# R24：平台查不了进程就明说「跟踪不可用」，不给假的「仍在运行」。
 	var track_note := "" if Playtest.tracking_available() else "（此平台无法跟踪进程退出）"
-	app._set_status(" 试玩启动: %s %s%s%s%s" % [what, "项目入口" if project_entry else play_path.get_file(),
+	var subject := play_path.get_file() if not project_entry else (
+		"项目入口 %s / %s" % [entry.function, entry.content] if not entry.is_empty() else "项目入口")
+	app._set_status(" 试玩启动: %s %s%s%s%s" % [what, subject,
 		"（跟踪包装进程）" if not _play_tracked else "",
 		track_note,
 		("；日志: " + tail) if tail != "" else ""])

@@ -15,6 +15,14 @@ const TAIL_BYTES := 64 * 1024
 const PROTOCOL := 1
 const MAX_REPORT_BYTES := 64 * 1024
 
+static func allows_entry(m: Dictionary, function_id: String) -> bool:
+	var config: Dictionary = m.get("playtest", {})
+	return config.get("projectEntry", false) and config.get("entryFunctions", []).has(function_id)
+
+static func entry_arg(function_id: String, content_id: String) -> String:
+	var entry := {"version": PROTOCOL, "function": function_id, "content": content_id}
+	return "--editor-entry=" + Marshalls.utf8_to_base64(JSON.stringify(entry))
+
 static func request_report(m: Dictionary, map_digest: String) -> Dictionary:
 	var pt = m.get("playtest", {})
 	if not pt is Dictionary or not bool(pt.get("report", false)):

@@ -137,6 +137,21 @@ func _ready() -> void:
 			_report("ready", "", outcome)
 	else:
 		var content_dir := str(manifest.get("contentDir", "content"))
+		if args.has("--editor-entry"):
+			var entry := _parse(Marshalls.base64_to_utf8(str(args["--editor-entry"])))
+			if entry.get("version") != 1 or entry.get("function") not in ["frame_sequence", "second_sequence"]:
+				_fail("Unknown selected project entry")
+				return
+			var schedule := _read_schedule(entry.function, content_dir, entry.content)
+			if schedule.is_empty():
+				_fail("Selected project entry has no schedule")
+				return
+			_report("ready", "", {"entry": entry, "schedule": schedule})
+			_caption = str(entry.content)
+			queue_redraw()
+			if _headless:
+				get_tree().quit()
+			return
 		var entry_text := FileAccess.get_file_as_string("res://".path_join(content_dir).path_join(
 			"campaign/project-acceptance.json"))
 		_entry = _parse(entry_text)
@@ -1048,10 +1063,10 @@ func _add_solid_pieces(terrain: StaticBody2D, anchor: Vector2, rings: Array) -> 
 			child.shape = shape
 			terrain.add_child(child)
 
-func _read_schedule(fn_id: String, content_dir: String) -> Array:
+func _read_schedule(fn_id: String, content_dir: String, id := "project-timing") -> Array:
 	var decl: Dictionary = _manifest.functions[fn_id]
 	var content := _parse(FileAccess.get_file_as_string("res://".path_join(content_dir).path_join(fn_id)
-		.path_join("project-timing.json")))
+		.path_join(id + ".json")))
 	if content.get("function") != decl.code:
 		return []
 	var rate := _sequence_rate(content, decl)

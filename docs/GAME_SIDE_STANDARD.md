@@ -86,6 +86,7 @@
 | `playtest` | object | 可选。试玩面板声明驱动：`flags: [{id, name, arg}]`（勾选后启动参数**原样追加** arg）、`params: [{id, name, arg(含 %d), def, min, max}]`（数字参数，值 ≠ def 才追加）。值只存编辑器本地 prefs，键 = `<项目根>|<地图码>`（A6：两项目同名地图不串）。未声明 = 面板空态提示 |
 | `playtest.executable` | string | 可选（A6）。结构化启动：可执行文件路径，支持 `%projectpath%`/`%mapfile%`；配置后编辑器用 `OS.create_process()` **直接启动**，退出状态代表游戏本体 |
 | `playtest.args` | string[] | 可选（A6）。参数字符串数组，逐项替换 `%mapfile%`、`%projectpath%`（**不加引号**，空格路径由数组分段保证）。Godot 项目示例：`['--path', '%projectpath%', '--', '--map=%mapfile%']`。未配 `executable` 时退回 `playCommand` 模板，状态栏会标明跟踪的是包装进程 |
+| `playtest.entryFunctions` | string[] | 可选，须启用 `projectEntry: true`。填写允许作者从内容库启动的功能声明 ID；列表成员必须已声明且互不重复。 |
 | `preview` | object | 可选。声明独立进程渲染预览，可请求 `screenLayout`、`mapFrame`、`worldFrame` 和 `timelineFrame`。与试玩配置分开。 |
 | `mapGenerators` | object | 可选。按生成器 ID 声明从游戏生成可编辑地图的参数。需同时声明 `preview.capabilities` 包含 `generateMap`。 |
 | `viewports` | array | 可选（C5）。具名参考画幅 `[{id, w, h}]`：宽屏/竖屏/分屏的坐标域身份，id 非空唯一、w/h 必填正数；`viewport_ref` 字段的下拉候选来自这里 |
@@ -1208,6 +1209,13 @@ main.gd
 **可选：游戏加载回执和无地图入口。** 清单设 `playtest.projectEntry: true` 后，工作台
 显示「试玩项目」：先提交工作台数据，再以空的 `%mapfile%` 启动。游戏可将独立内容 ID
 作为项目入口（例如 `project-campaign`）。普通「试玩」仍使用当前地图。
+
+若另声明 `playtest.entryFunctions`，作者可在内容库选择该类型的独立项目内容并点「试玩所选内容」。
+工作台仍先完成提交，启动时 `%mapfile%` 为空，并在结构化参数中追加
+`--editor-entry=<Base64 编码的 UTF-8 JSON>`。解码后为
+`{"version":1,"function":"功能声明 ID","content":"所选内容 ID"}`。
+游戏按功能和内容 ID 加载入口，并自行决定如何运行它。未收到该参数时沿用游戏默认入口。
+此参数独立于 `--editor-playtest`，不要求启用加载回执。
 
 设 `playtest.report: true` 后，结构化 argv 末尾增加
 `--editor-playtest=<Base64 编码的 UTF-8 JSON>`，解码得到

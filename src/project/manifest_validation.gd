@@ -431,6 +431,21 @@ static func _validate_playtest(data: Dictionary, issues: Array[Dictionary]) -> v
 			_add(issues, "error", "playtest." + feature, "must be a boolean")
 		elif pt2[feature] and (not exe is String or str(exe).strip_edges() == ""):
 			_add(issues, "error", "playtest." + feature, "requires a structured executable launch")
+	if pt2.has("entryFunctions"):
+		var entries = pt2.entryFunctions
+		if pt2.get("projectEntry") != true:
+			_add(issues, "error", "playtest.entryFunctions", "requires projectEntry: true")
+		if not entries is Array:
+			_add(issues, "error", "playtest.entryFunctions", "must be an array of function IDs")
+		else:
+			var declared := FunctionDecls.functions(data)
+			var seen := {}
+			for i in entries.size():
+				var id = entries[i]
+				if not id is String or not declared.has(id) or seen.has(id):
+					_add(issues, "error", "playtest.entryFunctions[%d]" % i, "must be a unique declared function ID")
+				else:
+					seen[id] = true
 	var args = pt2.get("args", null)
 	if args != null:
 		if not (args is Array):

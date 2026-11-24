@@ -244,3 +244,13 @@ func test_playtest_arg_substitution() -> void:
 	eq(str(out[1]), "D:/proj with space", "projectpath 替换")
 	eq(str(out[3]), "--map=D:/proj with space/maps/a.json", "mapfile 替换（含空格原样）")
 	eq(str(out[0]), "--path", "无变量参数不变")
+
+func test_playtest_entry_functions() -> void:
+	var m := _good()
+	m["playtest"] = {"executable": "game.exe", "projectEntry": true, "entryFunctions": ["f1"]}
+	eq(_errs_of(m).size(), 0, "accept a declared project entry function")
+	m.playtest.entryFunctions = ["f1", "f1", "unknown"]
+	eq(_errs_of(m).size(), 2, "reject duplicate and unknown entry functions")
+	m.playtest.entryFunctions = ["f1"]
+	m.playtest.projectEntry = false
+	eq(_errs_of(m).size(), 1, "entry functions require project entry support")

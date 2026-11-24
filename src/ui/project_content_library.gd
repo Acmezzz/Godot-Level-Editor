@@ -48,16 +48,34 @@ func open() -> void:
 			kinds.select(kinds.item_count - 1)
 	var selected_kind := func() -> String:
 		return str(kinds.get_selected_metadata()) if kinds.selected >= 0 else ""
+	var eligible := {}
+	var selected_entry := func() -> Dictionary:
+		var selected := list.get_selected_items()
+		if selected.is_empty() or not eligible.has(selected[0]):
+			return {}
+		return {"function": selected_kind.call(), "content": list.get_item_metadata(selected[0])}
+	var play := Kit.button("试玩所选内容", func():
+		var entry: Dictionary = selected_entry.call()
+		if not entry.is_empty():
+			pop.hide()
+			app._map_file_ctrl.on_play(Vector2i(-1, -1), true, entry), "ghost")
+	var update_play := func():
+		play.visible = Playtest.allows_entry(manifest, selected_kind.call())
+		play.disabled = selected_entry.call().is_empty()
 	var refill := func():
 		list.clear()
+		eligible.clear()
 		var kind: String = selected_kind.call()
 		for cid in Store.list_ids(manifest, kind):
 			var rd := Store.read_ex(manifest, kind, str(cid))
 			var label := str(rd.data.get("name", "")) if rd.status == "ok" else "[读取失败]"
 			var idx := list.add_item("%s  %s" % [label, cid])
 			list.set_item_metadata(idx, cid)
+			if rd.status == "ok" and rd.data.get("scope") == "project" and rd.data.get("function") == kinds_data[kind].get("code"):
+				eligible[idx] = true
 			if kind == _last_kind and cid == _last_id:
 				list.select(idx)
+		update_play.call()
 	var edit := func(idx: int):
 		var kind: String = selected_kind.call()
 		var cid := str(list.get_item_metadata(idx))
@@ -65,6 +83,7 @@ func open() -> void:
 		_open_item.call_deferred(kind, cid)
 	kinds.item_selected.connect(func(_idx: int): refill.call())
 	list.item_activated.connect(edit)
+	list.item_selected.connect(func(_idx: int): update_play.call())
 	var add := Kit.button("新建…", func():
 		var kind: String = selected_kind.call()
 		pop.hide()
@@ -76,6 +95,7 @@ func open() -> void:
 		_open_flow.call_deferred())
 	relations.disabled = keys.is_empty()
 	controls.add_child(relations)
+	controls.add_child(play)
 	if keys.is_empty():
 		body.add_child(Kit.hint_label("游戏工程侧为项目声明功能后，这里才有可创建的内容类型。", 420))
 	body.add_child(Kit.popup_buttons(func():
