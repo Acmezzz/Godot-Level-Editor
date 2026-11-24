@@ -2709,6 +2709,32 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 	if await _wait_for_pick_frame(edge_pop) == null:
 		return
 	edge_pop.hide()
+	app._layout_ctrl._on_map_menu_id(23)
+	var vertex_pop := await _render_pick_frame(app)
+	if vertex_pop == null:
+		return
+	var vertex_tools: OptionButton = vertex_pop.find_child("MapGamePreviewTool", true, false)
+	vertex_tools.select(4)
+	vertex_tools.item_selected.emit(4)
+	var old_polygon: Array = cvs.cell_graph().cells[1].polygon.duplicate(true)
+	var vertex_pos := Vector2(0.65, 0.25)
+	check(_click_pick_frame(vertex_pop, vertex_pos, MOUSE_BUTTON_LEFT, KEY_CTRL).disabled,
+		"a triangular graph cell cannot lose a vertex")
+	_click_pick_frame(vertex_pop, vertex_pos, MOUSE_BUTTON_RIGHT)
+	_click_pick_frame(vertex_pop, vertex_pos)
+	check(_click_pick_frame(vertex_pop, Vector2(0.15, 0.24)).disabled, "a vertex cannot be moved into another coordinate space")
+	apply = _click_pick_frame(vertex_pop, Vector2(0.66, 0.255))
+	check(not apply.disabled and cvs.cell_graph().cells[1].polygon == old_polygon, "vertex motion stays in the draft")
+	apply.pressed.emit()
+	if await _wait_for_pick_frame(vertex_pop) == null:
+		return
+	vertex_pop.hide()
+	var edited_polygon: Array = cvs.cell_graph().cells[1].polygon.duplicate(true)
+	check(Vector2(edited_polygon[0][0], edited_polygon[0][1]).distance_to(Vector2(6.5507, 11.7391)) < 0.02
+		and edited_polygon.slice(1) == old_polygon.slice(1) and cvs.cell_graph().edges[0].id == edge_id,
+		"moving a projected vertex preserves the other vertices and existing edge identity")
+	check(await cvs.undo() and cvs.cell_graph().cells[1].polygon == old_polygon, "undo restores the previous contour")
+	check(await cvs.redo() and cvs.cell_graph().cells[1].polygon == edited_polygon, "redo restores the moved vertex")
 	var saved: Dictionary = await app._map_file_ctrl.commit_document("保存实景落点及连接")
 	check(saved.get("status") == "ok", "publish positions and port selected from the game frame")
 	await app._load_map_file(path)
@@ -2729,6 +2755,8 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 		and result.switchCopies[0].message == "Draft copied from the game frame"
 		and result.get("authoredRoute") == "exit-floor"
 		and result.get("authoredEdge") == authored_edge.get("id")
+		and absf(float(result.arrivalVertex[0]) - 127.6522) < 0.04
+		and absf(float(result.arrivalVertex[1]) - 78.6087) < 0.04
 		and result.get("contours", []).size() == 1 and result.contours[0].props == compound,
 		"game reloads both view positions and the projected polygon, and opens the selected door: " + str(report))
 

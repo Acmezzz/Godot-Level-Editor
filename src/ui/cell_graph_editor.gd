@@ -499,12 +499,17 @@ static func open(app) -> void:
 		if operation == "insert" and vertex <= points.size():
 			points.insert(vertex, [point.x, point.y])
 		elif vertex < points.size() and operation == "move":
+			if points[vertex] == [point.x, point.y]:
+				return
 			points[vertex] = [point.x, point.y]
 		elif vertex < points.size() and operation == "remove":
 			if points.size() <= 3:
 				notice.text = "一个格至少需要三个顶点。"
 				return
 			points.remove_at(vertex)
+		else:
+			return
+		cells[idx].erase(GraphTiles.GENERATED_KEY)
 		notice.text = ""
 		render.call(idx))
 	top.add_child(Kit.button("添加格", func():

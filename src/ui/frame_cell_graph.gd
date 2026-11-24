@@ -7,9 +7,11 @@ const Picks := preload("res://src/project/frame_picks.gd")
 const Kit := preload("res://src/ui/ui_kit.gd")
 const GraphEditor := preload("res://src/ui/cell_graph_editor.gd")
 const Id := preload("res://src/content/content_id.gd")
+const GraphTiles := preload("res://src/map/cell_graph_tiles.gd")
 const INK := Color("ffda67")
-enum Tool {POLYGON, NEIGHBOR, EDGE, EDIT_EDGE}
-const TOOLS := ["绘制新格", "切换有向邻接", "新建独立连接", "编辑独立连接"]
+enum Tool {POLYGON, NEIGHBOR, EDGE, EDIT_EDGE, VERTEX}
+enum VertexEdit {MOVE, INSERT, REMOVE}
+const TOOLS := ["绘制新格", "切换有向邻接", "新建独立连接", "编辑独立连接", "编辑格顶点"]
 signal controls_changed
 
 var canvas: EditorCanvas
@@ -30,6 +32,9 @@ var screen := PackedVector2Array()
 var from := ""
 var status := ""
 var pending := {}
+var vertex_cell := {}
+var vertex_index := -1
+var vertex_edit := VertexEdit.MOVE
 
 func _init(cvs: EditorCanvas) -> void:
 	canvas = cvs
@@ -112,6 +117,9 @@ func clear() -> void:
 	screen.clear()
 	from = ""
 	pending.clear()
+	vertex_cell = {}
+	vertex_index = -1
+	vertex_edit = VertexEdit.MOVE
 	id_field.visible = tool == Tool.POLYGON
 	space_picker.visible = tool == Tool.POLYGON
 	edge_controls.visible = tool in [Tool.EDGE, Tool.EDIT_EDGE]
@@ -137,6 +145,8 @@ func clear() -> void:
 			_reset_edge_delete()
 			edge_delete.disabled = true
 			status = "点选起点格，在下拉中选一条出边。可改属性、点新终点或删除。右键重选。"
+		Tool.VERTEX:
+			status = "点顶点后选新位置。Shift + 点顶点可在其后插点；Ctrl + 点顶点可删除。右键重选。"
 
 func ready() -> bool:
 	return not pending.is_empty()
@@ -161,30 +171,93 @@ func input(event: InputEvent, pixel: Vector2, regions: Array) -> bool:
 		_pick_point(pixel, regions)
 	elif tool == Tool.EDIT_EDGE:
 		_pick_edge_edit(pixel, regions)
+	elif tool == Tool.VERTEX:
+		_pick_vertex(pixel, regions, event)
 	else:
 		_pick_link(pixel, regions)
 	return true
 
 func _pick_point(pixel: Vector2, regions: Array) -> void:
-	var graph := canvas.cell_graph()
 	var sid: String = space_picker.get_selected_metadata()
+	var point := _mapped_point(pixel, regions, sid)
+	if point.is_empty():
+		return
+	if points.size() >= Geometry.MAX_POINTS:
+		status = "顶点已到上限。右键撤末点。"
+		return
+	points.append(point)
+	screen.append(pixel)
+	_validate_polygon()
+
+func _mapped_point(pixel: Vector2, regions: Array, sid: String) -> Array:
+	var graph := canvas.cell_graph()
 	var space: Dictionary = graph.get("spaces", {}).get(sid, {})
 	var layer: String = space.get("layer", "")
 	var basis := Graph.space_transform(graph, sid)
 	if not _layer_editable(layer) or not Graph.invertible(basis):
 		status = "空间的图层不可编辑，或空间坐标轴不可逆。"
-		return
+		return []
 	var hit := Picks.at(regions, pixel, "collision" if layer.is_empty() else "placement")
 	if hit.is_empty() or hit.value.get("layer", "") != layer:
 		status = "该点没有映射到所选空间的图层。"
-		return
-	if points.size() >= Geometry.MAX_POINTS:
-		status = "顶点已到上限。右键撤末点。"
-		return
+		return []
 	var point: Vector2 = basis.affine_inverse() * hit.value.point
-	points.append([point.x, point.y])
-	screen.append(pixel)
-	_validate_polygon()
+	return [point.x, point.y]
+
+func _pick_vertex(pixel: Vector2, regions: Array, event: InputEventMouseButton) -> void:
+	if vertex_index < 0:
+		var hit := Picks.at(regions, pixel, "cellVertex")
+		var value = hit.get("value")
+		if value is Dictionary:
+			var id = value.get("cell")
+			var index = value.get("index")
+			if id is String and (index is int or index is float) and index >= 0 and index == floorf(index):
+				for row in canvas.cell_graph().get("cells", []):
+					if row is Dictionary and row.get("id") == id and row.get("polygon") is Array and index < row.polygon.size():
+						vertex_cell = row
+						vertex_index = int(index)
+						break
+		if vertex_index < 0:
+			status = "请选择游戏标出的格顶点。"
+			return
+		if not _layer_editable(Graph.layer_of_cell(canvas.cell_graph(), vertex_cell.id)):
+			clear()
+			status = "该格所在图层已锁定或隐藏。"
+			return
+		screen.append(pixel)
+		vertex_edit = VertexEdit.REMOVE if event.ctrl_pressed else VertexEdit.INSERT if event.shift_pressed else VertexEdit.MOVE
+		status = "已选 %s 的顶点 %d。请选同空间的新位置。" % [vertex_cell.id, vertex_index + 1]
+		if vertex_edit == VertexEdit.REMOVE:
+			var polygon: Array = vertex_cell.polygon.duplicate()
+			polygon.remove_at(vertex_index)
+			_validate_vertex_polygon(polygon)
+		return
+	if vertex_edit == VertexEdit.REMOVE:
+		return
+	pending.clear()
+	screen.resize(1)
+	var point := _mapped_point(pixel, regions, vertex_cell.get("space", ""))
+	if point.is_empty():
+		return
+	var polygon: Array = vertex_cell.polygon.duplicate()
+	if vertex_edit == VertexEdit.INSERT:
+		polygon.insert(vertex_index + 1, point)
+	else:
+		polygon[vertex_index] = point
+	if _validate_vertex_polygon(polygon):
+		screen.append(pixel)
+
+func _validate_vertex_polygon(polygon: Array) -> bool:
+	var issue := Geometry.problem(polygon, Geometry.POLY)
+	if not issue.is_empty():
+		status = issue + " 右键重选。"
+		return false
+	if polygon == vertex_cell.polygon:
+		status = "格顶点未改变。"
+		return false
+	pending = {"id": vertex_cell.id, "polygon": polygon}
+	status = "%s · %s顶点 · 确认后写入。" % [vertex_cell.id, ["移动", "插入", "删除"][vertex_edit]]
+	return true
 
 func _validate_polygon() -> void:
 	pending.clear()
@@ -298,6 +371,14 @@ func apply() -> bool:
 			return false
 		var cells: Array = graph.get_or_add("cells", [])
 		cells.append(pending.duplicate(true))
+	elif tool == Tool.VERTEX:
+		if not _layer_editable(Graph.layer_of_cell(graph, pending.id)):
+			return false
+		for row in graph.cells:
+			if row is Dictionary and row.get("id") == pending.id:
+				row.polygon = pending.polygon
+				row.erase(GraphTiles.GENERATED_KEY)
+				break
 	elif tool == Tool.EDGE:
 		if not _layer_editable(Graph.layer_of_cell(graph, pending.from)):
 			return false

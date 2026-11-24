@@ -84,9 +84,10 @@ func _ready() -> void:
 			player.position = grid.cell_center_px(start)
 			add_child(player)
 			var route := _current if _load_board(map, "entry") and _advance_board() else ""
+			var arrival := Vector2.ZERO if route.is_empty() else Vector2(_cells[route].polygon[0])
 			_report("ready", "", {"picks": lanes, "opened": _activate_switch(map, manifest), "contours": contours,
 				"playerStart": [player.position.x, player.position.y], "switchCopies": copies, "authoredRoute": route,
-				"authoredEdge": _traversed_edge})
+				"authoredEdge": _traversed_edge, "arrivalVertex": [arrival.x, arrival.y]})
 		elif map.get("meta", {}).get("name") == "rule_hex" and not map.meta.get("cellGraph", {}).is_empty():
 			var route := _check_floor_route(map)
 			if route.is_empty():
@@ -346,6 +347,10 @@ func _compose_pick_frame(surface: SubViewport, size: Vector2i, dir: String, requ
 				var uv := (basis * _vector(point) - (root if i == 0 else local)) / 32.0
 				var w := Vector3(1.0 - uv.x - uv.y, uv.x * (2.0 if i == 1 else 1.0), uv.y)
 				projected.append((screen[0] * w.x + screen[1] * w.y + screen[2] * w.z) / (w.x + w.y + w.z))
+			for j in projected.size():
+				var p := projected[j]
+				regions.append({"screen": [[p.x - 7, p.y - 7], [p.x + 10, p.y - 7], [p.x - 7, p.y + 10]],
+					"targets": {"cellVertex": {"cell": cell.id, "index": j}}})
 			var indices := Geometry2D.triangulate_polygon(projected)
 			for j in range(0, indices.size(), 3):
 				var tri := []
