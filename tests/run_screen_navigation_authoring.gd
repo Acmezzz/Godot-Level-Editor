@@ -1,5 +1,5 @@
 extends SceneTree
-## Author a title screen, route its module directly to another screen, and play from startup.
+## Author and play a title → tutorial → map → results → conclusion route.
 
 const Manifest := preload("res://src/project/manifest.gd")
 const Maps := preload("res://src/map/map_store.gd")
@@ -24,7 +24,8 @@ func run() -> void:
 		check(DirAccess.copy_absolute(ProjectSettings.globalize_path("res://tests/screen_game/" + file),
 			project.path_join(file)) == OK, "install the standalone game " + file)
 	var declaration := {"projectName": "Screen Navigation", "directViewTargets": true, "directMapTargets": true,
-		"assets": [{"id": "relay", "kind": "entity", "code": "RLY1", "visual": {"mode": "rect", "color": "#62cabb"}}],
+		"assets": [{"id": "relay", "kind": "entity", "code": "RLY1", "visual": {"mode": "rect", "color": "#62cabb"},
+			"fields": [{"id": "exit_view", "kind": "choice", "source": "view:"}]}],
 		"startup": {"screens": true}, "viewports": [{"id": "handheld", "w": 480, "h": 720}],
 		"screenModules": {"signal-latch": {"name": "Latch", "outputs": {"accepted": "Continue"}, "fields": [
 			{"id": "presses", "kind": "input", "type": "int", "min": 1, "default": 1}]}},
@@ -43,6 +44,17 @@ func run() -> void:
 	app.manifest = manifest
 	app._build_editor_ui()
 	app._set_mode("content")
+	app.project_shell.content_editor._library.open()
+	press(popup(), "新建…")
+	await process_frame
+	var form := popup()
+	var inputs := collect(form, "LineEdit")
+	inputs[0].text = "Finished"
+	inputs[1].text = "finished"
+	inputs[2].text = "Screen sequence complete"
+	press(form, "保存")
+	form.hide()
+	await add_screen("results", "See result", {}, {"function": "signal", "content": "project-finished"})
 	app._set_mode("map")
 	app._on_new()
 	var create := popup()
@@ -59,8 +71,24 @@ func run() -> void:
 	var pawn: EntityNode = canvas._tool_ops_ctrl.place_object("relay", 0, Vector2(48, 48), true)
 	var pawn_code := pawn.code
 	var map_code := canvas.cur_map_code()
+	app._set_mode("content", pawn_code)
+	var exit_picker: OptionButton = app.project_shell.content_editor.root.find_child("InstanceValue_exit_view", true, false)
+	choose(exit_picker, "results")
+	app.project_shell.content_editor.commit_fields()
+	var live_uses := Audit.view_inbound_refs(manifest, "results", [], canvas.extract(), "course")
+	check(live_uses.refs.any(func(ref): return pawn_code in ref and "exit_view" in ref),
+		"a live map instance prevents deleting its destination")
+	app._set_mode("map")
 	var published: Dictionary = await app._map_file_ctrl.commit_document("保存教学关卡")
 	check(published.get("status") == "ok", "publish the destination map")
+	var saved_uses := Audit.view_inbound_refs(manifest, "results", [])
+	check(saved_uses.refs.any(func(ref): return pawn_code in ref and "exit_view" in ref),
+		"the saved map instance protects the same destination")
+	var orphan_manifest := manifest.duplicate(true)
+	orphan_manifest.views = []
+	check(Audit._ref_checks(canvas.extract(), orphan_manifest, "course").any(func(issue):
+		return issue.jump.code == pawn_code and issue.jump.prop == "exit_view"),
+		"map audit pinpoints the instance if the destination is externally removed")
 	app._set_mode("content")
 	await add_screen("instructions", "Enter course", {}, {"map": map_code})
 	await add_screen("welcome", "Start tutorial", {"module": "signal-latch"}, {"view": "instructions"})
@@ -73,7 +101,8 @@ func run() -> void:
 	var inbound := Audit.view_inbound_refs(manifest, "instructions", [])
 	check(not inbound.refs.is_empty() and "welcome" in inbound.refs[0], "the destination screen has the expected inbound reference")
 	var broken := manifest.duplicate(true)
-	broken.views[1].layout.elements[0].outputs.accepted.view = "missing-screen"
+	var welcome: Dictionary = broken.views.filter(func(row): return row.view_id == "welcome")[0]
+	welcome.layout.elements[0].outputs.accepted.view = "missing-screen"
 	check(Audit.view_reference_issues(broken, "welcome").any(func(issue): return issue.path.ends_with(".outputs.accepted")),
 		"diagnostics identify the particular missing destination")
 	press(app.project_shell, "启动入口…")
@@ -93,9 +122,10 @@ func run() -> void:
 		controller.poll_playtest()
 	var report: Dictionary = controller._play_report_result
 	var result: Dictionary = report.get("result", {})
-	check(report.get("status") == "ready" and result.get("screens") == ["welcome", "instructions"]
-		and result.get("visited") == [] and result.get("board") == map_code and result.get("placed") == [pawn_code],
-		"the game follows the two direct transitions and loads the authored map object: %s" % [report])
+	check(report.get("status") == "ready" and result.get("screens") == ["welcome", "instructions", "results"]
+		and result.get("visited") == ["project-finished"] and result.get("board") == map_code
+		and result.get("placed") == [pawn_code] and result.get("text") == "Screen sequence complete",
+		"the game loads the authored map object, follows its screen reference and reaches the conclusion: %s" % [report])
 	print("SCREEN-NAV-DONE failures=", failures)
 	quit(0 if failures == 0 else 1)
 

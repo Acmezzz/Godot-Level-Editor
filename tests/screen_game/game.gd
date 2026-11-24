@@ -17,6 +17,7 @@ var latch_inputs: Array[int] = []
 var outlets: Array[String] = []
 var screen_frames: Array[Dictionary] = []
 var cancel_target := {}
+var entered_board := {}
 var verify := false
 
 func _ready() -> void:
@@ -62,8 +63,21 @@ func _show_map_target(code: String) -> void:
 		cancel_target = {}
 		_clear_screen()
 		var pawns := _draw_relay(self, map, _relay_camera(size))
+		entered_board = {"board": code, "placed": pawns.keys()}
+		for row in map.objects:
+			var exit_view: String = row.get("props", {}).get("exit_view", "")
+			if exit_view.is_empty():
+				continue
+			var leave := Button.new()
+			leave.text = "Finish course"
+			leave.position = Vector2(16, 16)
+			add_child(leave)
+			leave.pressed.connect(func(): _follow_target.call_deferred({"view": exit_view}))
+			if verify:
+				await _verify_button(leave)
+			return
 		if verify:
-			_finish("", "Board entered", {"board": code, "placed": pawns.keys()})
+			_finish("", "Board entered")
 		return
 	_finish("Missing target map: " + code)
 
@@ -143,17 +157,21 @@ func _show_view(view_id: String, test_cancel := false) -> void:
 				click.pressed = true
 				Input.parse_input_event(click)
 				return
-			click.action = &"ui_accept"
-			button.grab_focus()
-			for i in 4:
-				if not is_instance_valid(button) or not button.is_inside_tree():
-					break
-				for pressed in [true, false]:
-					click.pressed = pressed
-					Input.parse_input_event(click)
-					await get_tree().process_frame
+			await _verify_button(button)
 		return
 	_finish("Missing signal screen: " + view_id)
+
+func _verify_button(button: Button) -> void:
+	var click := InputEventAction.new()
+	click.action = &"ui_accept"
+	button.grab_focus()
+	for i in 4:
+		if not is_instance_valid(button) or not button.is_inside_tree():
+			break
+		for pressed in [true, false]:
+			click.pressed = pressed
+			Input.parse_input_event(click)
+			await get_tree().process_frame
 
 func _unhandled_input(event: InputEvent) -> void:
 	if not cancel_target.is_empty() and event.is_action_pressed("ui_cancel"):
@@ -356,7 +374,8 @@ func _finish(error: String, text := "", extra := {}) -> void:
 		var result := {"version": 1, "token": report.token, "status": "ready" if error.is_empty() else "error",
 			"message": error, "mapDigest": _map_digest(), "manifestDigest": digest.finish().hex_encode(),
 			"result": {"visited": visited, "screens": screens, "buttons": opened_buttons,
-				"latchInputs": latch_inputs, "outlets": outlets, "text": text, "screenFrames": screen_frames}.merged(extra)}
+				"latchInputs": latch_inputs, "outlets": outlets, "text": text, "screenFrames": screen_frames}
+				.merged(entered_board).merged(extra)}
 		if draft_digest != "":
 			result["viewDigest"] = draft_digest
 		_write_json(path + ".tmp", result)

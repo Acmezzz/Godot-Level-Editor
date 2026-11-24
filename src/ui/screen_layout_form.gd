@@ -321,7 +321,7 @@ static func _add_module_fields(form: VBoxContainer, state: Dictionary, item: Dic
 static func _module_map_values(manifest: Dictionary, decl: Dictionary, id: String, value: Variant) -> Array:
 	if decl.get("type") != "array" and RefFields.describe(decl).kind != "map":
 		return []
-	return References.module_field_refs(manifest, [decl], {id: value}) \
+	return References.property_refs(manifest, [decl], {id: value}) \
 		.filter(func(ref): return ref.kind == "map").map(func(ref): return [ref.path, ref.value])
 
 static func commit_fields(state: Dictionary) -> void:

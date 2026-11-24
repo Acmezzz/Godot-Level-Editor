@@ -325,7 +325,8 @@ static func open(app, view_id := "", jump := {}) -> void:
 		var key: String = rows[at].view_id
 		var block_reason := func() -> String:
 			var staged: Array = app.project_shell.content_editor.staged_rows_current_doc()
-			var uses := Audit.view_inbound_refs(source, key, staged)
+			var live: Dictionary = app.canvas.extract() if app.map_loaded else {}
+			var uses := Audit.view_inbound_refs(source, key, staged, live, app.cur_map_name)
 			if not uses.refs.is_empty():
 				return "视图仍被引用：" + "、".join(uses.refs.slice(0, 3)) + "。请先修改引用字段。"
 			if not uses.bad.is_empty():

@@ -1238,7 +1238,8 @@ static func _fields_pointing(manifest: Dictionary, kind: String, target: String,
 	return out
 
 ## Ignore outgoing references from the view being removed along with its own layout.
-static func view_inbound_refs(manifest: Dictionary, id: String, staged: Array) -> Dictionary:
+static func view_inbound_refs(manifest: Dictionary, id: String, staged: Array,
+		live_map := {}, live_name := "") -> Dictionary:
 	var refs: Array[String] = []
 	if manifest.get("startup", {}).get("target", {}) == {"view": id}:
 		refs.append("正式启动入口")
@@ -1249,6 +1250,17 @@ static func view_inbound_refs(manifest: Dictionary, id: String, staged: Array) -
 	for ref in ReferenceIndex.view_module_refs(manifest):
 		if ref.kind == "view" and ref.value == id and ref.view != id:
 			refs.append("%s · %s" % [ref.view, ref.path])
+	var scan_map := func(data: Dictionary, name: String):
+		for ref in _map_view_refs(manifest, data):
+			if ref.value == id:
+				var label := "%s · %s" % [name, ref.path]
+				if not refs.has(label):
+					refs.append(label)
+	var maps := MapStore.read_all_fresh(manifest, bad)
+	for name in maps:
+		scan_map.call(maps[name], name)
+	if not live_map.is_empty():
+		scan_map.call(live_map, live_name)
 	var inspect := func(kind: String, cid: String, data: Dictionary):
 		for section in _content_sections(manifest, kind, data):
 			for field in _fields_pointing(manifest, "view", id, section.decls, section.values):
@@ -1268,6 +1280,7 @@ static func view_inbound_refs(manifest: Dictionary, id: String, staged: Array) -
 		if draft.is_empty() or not rows is Array:
 			bad.append({"name": "草稿 " + str(key)})
 			continue
+		scan_map.call(draft.get("snapshot", {}), "草稿 " + str(key))
 		for row in rows:
 			if not row is Dictionary or not row.get("data") is Dictionary:
 				bad.append({"name": "草稿 " + str(key)})
@@ -1275,6 +1288,24 @@ static func view_inbound_refs(manifest: Dictionary, id: String, staged: Array) -
 			var kind := str(row.get("fn_id", ""))
 			inspect.call(kind, "草稿 %s · %s" % [key, row.get("cid", row.get("id", kind))], row.data)
 	return {"refs": refs, "bad": bad}
+
+static func _map_view_refs(manifest: Dictionary, data: Dictionary) -> Array:
+	var result := []
+	var declarations := {}
+	for row in data.get("objects", []):
+		if not row is Dictionary or not row.get("props", {}) is Dictionary:
+			continue
+		var asset: String = row.get("asset", "")
+		if not declarations.has(asset):
+			declarations[asset] = _fields_of(manifest, asset)
+		if declarations[asset].is_empty():
+			continue
+		var code: String = row.get("code", "")
+		var path := "%s(%s)" % [asset, code]
+		for ref in ReferenceIndex.property_refs(manifest, declarations[asset], row.get("props", {}), {"code": code}, path):
+			if ref.kind == "view":
+				result.append(ref)
+	return result
 
 ## R15：草稿里的资产使用（快照实例的 asset 键 + 待提交内容载荷的字段值）。
 ## 返回引用它的草稿键数组；读不出的草稿按「有使用」保守处理。
@@ -1306,6 +1337,13 @@ static func asset_draft_refs(manifest: Dictionary, asset_id: String, bad: Array 
 ## 地图属性以字段 id 寻址；内容以字段码寻址。自动清理只支持顶层摆放物属性。
 static func _ref_checks(data: Dictionary, manifest: Dictionary, map_name: String, overrides := {}, probe := Callable()) -> Array:
 	var out: Array = []
+	if not probe.is_valid():
+		var views := ReferenceIndex.view_ids(manifest)
+		for ref in _map_view_refs(manifest, data):
+			if not views.has(ref.value):
+				out.append({"kind": "ref", "severity": "warning", "path": "%s · %s" % [map_name, ref.path],
+					"message": "引用的参考视图不存在：" + ref.value, "map": map_name,
+					"jump": {"type": "entity", "map": map_name, "code": ref.code, "prop": ref.field}})
 	var declarations := {}
 	var objects = data.get("objects", [])
 	if not objects is Array:

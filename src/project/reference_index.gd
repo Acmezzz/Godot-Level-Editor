@@ -155,11 +155,11 @@ static func view_module_refs(manifest: Dictionary) -> Array:
 			if not module is Dictionary or not module.get("fields", []) is Array or not props is Dictionary:
 				continue
 			var source := {"view": str(view.get("view_id", "")), "element": str(row.get("id", ""))}
-			out.append_array(module_field_refs(manifest, module.get("fields", []), props,
+			out.append_array(property_refs(manifest, module.get("fields", []), props,
 				source, "views[%d].layout.elements[%d].props" % [i, j]))
 	return out
 
-static func module_field_refs(manifest: Dictionary, decls: Array, values: Dictionary,
+static func property_refs(manifest: Dictionary, decls: Array, values: Dictionary,
 		source := {}, prefix := "") -> Array:
 	var out := []
 	# RefFields uses this index for map resolution.
