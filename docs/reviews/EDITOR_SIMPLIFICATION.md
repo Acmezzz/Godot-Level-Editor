@@ -1,0 +1,167 @@
+# 编辑器精简：逐文件决策与续作记录
+
+依据：[EDITOR_FEATURES.md](../EDITOR_FEATURES.md)。下表记录文档审查时的去留判断，以及随后已经落地的变更。文档只能说明文件承担什么职责；删除前还要读实际实现，确认能力有无替代以及是否涉及已有数据。被引用不代表有价值，文件少也不代表架构更简单。
+
+## 不变的约束
+
+- 游戏侧提供资产、功能、规则和生成行为；编辑器让作者编辑、拼装并保存配置。试玩调用游戏，不为每类游戏另写验证流程。
+- 可执行内容的身份链是 **地图码 → 实体类型码 → 实例码 → 功能执行码 → 内容 ID**。显示名、地图文件名和数组位置不能当作执行身份。稳定机器 ID 可以做声明键；显示名可以改。文档把内容 ID 第四段写为「功能人类 ID」，需要区分它是稳定声明键还是展示名；不能默默把显示名当执行码，也不能直接改掉已发布的 ID。
+- 场景资产只供摆放。场景摆放行可以引用源资产和图层并有变换，但没有执行实例码、功能绑定、内容链。场景与实体可以共用位置和绘制逻辑，执行职责必须隔离。
+- 不用子代理；中途不跑测试或验收。所有删减和合并完成后，只跑一个相关测试；不跑全量。分批提交 Git。
+- 一套数据、一条编辑路径。只在读入、写入和有数据损失风险的操作边界做必要检查，不堆多层防线。
+
+## 删减顺序
+
+| 顺序 | 取舍 | 保留 |
+|---|---|---|
+| 1 | 内容表单里的局部关系图与项目流程图重复，删局部图。项目流程图是否缩成只读定位面板可再判断。 | 按 ID 查来向、去向，定位源字段；原表单能完整改引用。 |
+| 2 | 日常不需要扫全项目、汇总诊断和常驻问题抽屉。把仍有用的查询从自检拆出后，收掉面板和扫描编排。 | 清单与地图的基本结构和 ID 检查；字段旁提示；删除目标时按需查来向。 |
+| 3 | 普通保存取消预演、二次确认和逐文件日志，进一步合并薄会话与计划层。 | 清单码 → 内容 → 地图；单文件原子写，失败即停，已写文件保留；确实外部改动时的确认和单份草稿。改名、复制另看需要哪些写入保证。 |
+| 4 | 游戏实景预览不再维护第二套关卡编辑器。优先减旋转、翻转、删除、复制、孔洞维护和完整格图操作等重复入口。 | 游戏出图、透视及分屏等原画布无法替代的映射拾取；必须从实景定位时，确认后走同一编辑动作。 |
+| 5 | 程序生成地图由游戏生成。编辑器移除多种子间按摆放位置、格图、图层和出口逐项对账的复杂差量路径，前提是明确现有差量数据如何保留或迁移。 | 编辑生成参数、导入游戏返回的地图、按地图码布置世界分块、整块覆盖；重生成产出独立新图。 |
+| 6 | 项目规则、每图规则和共享事件的重复配置改用同一个事件层模型。 | 一层事件只配置一次，范围可选全部地图或任意地图码集合，例如 ABCDEFG、BCDEF、AEG；不引入章节。保留正式启动入口和单图特有出口，规则执行仍归游戏。 |
+
+## 文档点名的生产文件
+
+「删候选」「并候选」不代表当前文件一定多余；按实际职责决定。此表中的路径均相对于 `src/`。
+
+| 文件 | 判断及处理 |
+|---|---|
+| app.gd | 瘦：留入口、视图和快捷键，减没有独立逻辑的宿主转发。 |
+| editor.tscn | 留：应用入口。 |
+| core/constants.gd | 并候选：跨域常量才集中，不把私有地图、碰撞常量全挪出来。 |
+| core/undo_history.gd | 留：编辑撤销；无码场景用现有快照或内存目标，不发执行码。 |
+| project/manifest.gd | 瘦：留读取、路径和补码；减旧格式兜底及内置特例。 |
+| project/manifest_validation.gd | 瘦：留坏结构、重复 ID、无效路径和破坏执行身份的检查；可选展示项局部提示。 |
+| project/asset_scan.gd | 删候选：若以清单为准，减自动登记、指纹改名、缺失跟踪；显式登记仍可补实体码。 |
+| project/reference_index.gd | 留：按 ID 解析目标，复用来向查询；图名只展示或打开文件。 |
+| project/project_audit.gd | 删汇总职责：分离仍用于删除检查、选点或复制的查询，再去掉全项目扫描编排。 |
+| project/spatial_reference_check.gd | 并：空间引用规则留在各引用类型，共用目标解析，去掉审计专用包装。 |
+| project/document_session.gd | 并候选：留当前文档、暂存和磁盘基线，少一层快照传递。 |
+| project/document_commit.gd | 大瘦：普通保存与冻结写入分开，去掉普通保存日志、多余预演和通用钩子。 |
+| project/playtest.gd | 留：按声明和已选 ID 启动游戏；进程跟踪保持简单。 |
+| map/map_format.gd | 留：落盘格式与瓦片变换编码。 |
+| map/map_store.gd | 瘦：读写、原子替换和必要缓存；历史减掉重复路径。 |
+| map/map_data_validation.gd | 瘦：坏结构、重复码、场景带执行绑定应该拦；可修的引用不挡开图。 |
+| map/map_view_data.gd | 留：画布和预览共用格空间、变换和锚点。 |
+| map/cell_graph.gd | 留：任意多边形格、有向连接；复杂的增量导入、旧格补边可后置。 |
+| map/edge_ref.gd | 留：格边身份、共边判断；复杂候选枚举可瘦。 |
+| map/map_convert.gd | 删候选：低频迁图工具，移出常驻界面不影响新图选格系。 |
+| map/recovery.gd | 大瘦：优先留单份草稿，减多轮正式历史和提交日志。 |
+| canvas/editor_canvas.gd | 留装载、相机、序列化，瘦同名转发层。 |
+| canvas/grid_space.gd | 留：正交、等距、六边、三角、斜基统一几何。 |
+| canvas/entity_node.gd | 留：共用摆放变换；实体才有执行身份。 |
+| canvas/entity_poly_view.gd | 留轮廓和路径；附加外环、孔洞的复杂入口可后置，已有几何数据不静默丢弃。 |
+| canvas/canvas_draw.gd | 瘦：留网格、预览、选区；双视野框和固定角色角标可减。 |
+| canvas/canvas_input.gd | 留：拾取和手势的统一入口。 |
+| canvas/tool_ops.gd | 瘦：放置、涂刷、擦除留；简化自动碰撞，复用实景确认后的编辑动作。 |
+| canvas/ref_ops.gd | 留：表单、画布拾取和连线共享引用写入口。 |
+| canvas/editor_state.gd | 并候选：只有选中状态和通知时可归画布。 |
+| canvas/selection_ops.gd | 留：单选、多选、移动、剪贴板；专用接线把手可后置。 |
+| canvas/region_ops.gd | 瘦：留区域复制、剪切、粘贴、移动；框外引用或出生点跟随可后置。 |
+| canvas/layer_ops.gd | 留：图层稳定 ID、顺序、锁定和显隐；显示层不承担事件作用域。 |
+| canvas/entity_factory.gd | 并候选：保留实体发码的唯一入口；场景创建不经发码。 |
+| canvas/collision_view.gd | 留：手工碰撞的可视化。 |
+| canvas/tri_tile_view.gd | 留：三角瓦片的独立绘制路径。 |
+| canvas/tile_replace.gd | 后置或并：如保留，优先做简单选区替换和一步撤销；减详细冲突预览。 |
+| canvas/tileset_cache.gd | 留：避免重复读图集、建资源。 |
+| assets/asset_decl.gd | 留：明确场景、实体、图集的声明归一化。 |
+| assets/builtin_kinds.gd | 删候选：项目可声明通用矩形触发实体后，取消内置资产注入；旧地图固定码需迁移。 |
+| assets/collision_types.gd | 并候选：碰撞类型、颜色、默认值归碰撞数据职责。 |
+| assets/image_probe.gd | 删缩略图裁边；资产选择用统一缩放居中。 |
+| content/declaration_pool.gd | 留：声明读取、查重、补码统一归这里。 |
+| content/function_decl.gd | 留执行码和功能字段；通用操作归声明池，码表可改按需。 |
+| content/condition_decl.gd | 并候选：留条件参数和字段码规则，去掉重复读取、补码、码表拼接。 |
+| content/audio_decl.gd | 并候选：保留音频稳定码，去掉独立归一化和补码。 |
+| content/trigger_decl.gd | 并候选：无字段声明走共用声明池，保留时机码和白名单。 |
+| content/step_decl.gd | 并候选：保留步骤码和参数，复用声明池。 |
+| content/step_timeline.gd | 留有效时间与轨道计算；同轨重叠是否有问题由游戏声明。 |
+| content/timeline_clock.gd | 并候选：如果只供时间轴，秒、帧、拍换算归时间轴数据层。 |
+| content/clone_plan.gd | 留：新 ID、组内重连、组外保留；减预演报告和特殊分支。 |
+| content/batch_ops.gd | 删候选：批改是可后置工具；别误删共享内容绑定。 |
+| content/rel_graph.gd | 删局部建图；项目级引用枚举与字段写回分开。 |
+| content/ref_fields.gd | 留：声明字段的目标类型、地图配对和作用域。 |
+| content/content_id.gd | 留：身份生成、拼装与冲突处理。 |
+| content/content_store.gd | 留按 ID 读写；精简历史和额外写入时机。 |
+| ui/ui_theme.gd | 留：统一视觉定义。 |
+| ui/ui_kit.gd | 留真正共享的控件，局部包装归面板。 |
+| ui/editor_layout.gd | 留：关卡界面骨架。 |
+| ui/layer_panel.gd | 留常用图层操作，低频迁移、格图生成不堆在主入口。 |
+| ui/issues_drawer.gd | 删候选：去掉全项目自检后，错误页和字段提示替代常驻抽屉。 |
+| ui/popups.gd | 并：共用弹窗和徽章归 UI Kit，主题归主题模块。 |
+| ui/session_context.gd | 并候选：保留当前地图、选中实例，减少逐面板恢复协议。 |
+| ui/project_shell.gd | 并候选：若只负责换标题、状态栏和转发保存，可归公共布局。 |
+| ui/top_bar_nav.gd | 并候选：导航只保留一套，薄按钮包装可归界面骨架。 |
+| ui/palette_panel.gd | 留资产选择；减最近使用、深分类和统计等次要层次。 |
+| ui/map_file.gd | 留地图生命周期；普通保存不再干跑，也不走多套历史入口。 |
+| ui/playtest_controller.gd | 大瘦：留项目、地图、内容等按 ID 试玩入口；反馈仪表和逐步骤跳转后置。 |
+| ui/reference_view_library.gd | 留屏幕选择、编辑和保存；减重复预览与草稿入口。 |
+| ui/screen_layout_canvas.gd | 留：模块摆放、拖动、缩放是无地图内容制作。 |
+| ui/screen_layout_form.gd | 留：布局和模块引用共用字段控件；复杂预览诊断按需求后置。 |
+| ui/map_resize.gd | 留调整尺寸及裁剪；短弹窗与对应操作可以合并。 |
+| ui/tile_replace_dialog.gd | 并候选：如果保留批量替换，只需简单源、目标、数量确认。 |
+| ui/project_picker.gd | 留切项目；旧单项目配置兼容可限为一次迁移。 |
+| ui/collision_dialog.gd | 删候选：手工碰撞保留；若留辅助生成，一个简单填充动作即可。 |
+| ui/content_editor.gd | 留：实例 → 功能 → 内容主入口。 |
+| ui/fn_bind.gd | 留：编辑顺序、时机、启用与绑定身份。 |
+| ui/content_form.gd | 留声明式表单；局部关系图删，批改待取舍。 |
+| ui/rel_graph_view.gd | 留一套项目关系视图用到的绘制、定位；不再维护独立局部图。 |
+| ui/steps_panel.gd | 留：演出、谱面、时序规则的步骤编辑。 |
+| ui/timeline_view.gd | 留轨道和时长编辑；波形、逐点实景取样可后置。 |
+| ui/content_preview.gd | 并候选：留内容工作台定位，用共享地图渲染做只读模式。 |
+| ui/field_widgets.gd | 留：声明式字段、数组、记录、引用及曲线，是类型无关的主要扩展点。 |
+| ui/asset_panel.gd | 瘦：保留浏览与挂载；分布和删除来向按需查询。 |
+
+## 开发文件
+
+| 文件 | 判断 |
+|---|---|
+| tools/screenshot.gd | 无固定截图产出需求就删。 |
+| tools/warn_scan.gd | 无发布用途就删，不设日常全量门槛。 |
+| tools/f2_pilot.gd | 与作者流程重复的加载、补码、写读可以合并。 |
+| tools/f1_bench.gd | 并入统一性能采样。 |
+| tools/perf_sample.gd | 可留，按实际性能问题使用。 |
+| tools/projection_baseline.gd | 格系改造结束且无后续使用时可归档。 |
+| tools/migrate_project.gd | 旧数据仍在时保留一次性迁移；旧名转码放这里。 |
+| tests/run_author_workflow.gd | 可留一条最短流程，不加逐类型验收。 |
+| tests/run_tests.gd | 保留已有运行入口，这批不跑全量。 |
+| tests/_suite_base.gd | 随仍用的套件。 |
+| tests/test_content_id.gd | 留 ID 链和唯一性。 |
+| tests/test_decl_pools.gd | 声明池合并后收拢重复用例。 |
+| tests/test_step_audio.gd | 补码归声明池测试，时间归时间轴测试。 |
+| tests/test_validators.gd | 只留会实际拦读写的规则。 |
+| tests/test_map_v4.gd | 正文地图已是 v7，按实际覆盖判断是迁移测试还是当前格式测试。 |
+| tests/test_grid_space.gd | 留几何、拾取、锚点与共享视图计算。 |
+| tests/test_audit.gd | 随自检职责删减，ID 查询案例迁到引用测试。 |
+| tests/test_assets.gd | 留资产分类和声明边界。 |
+| tests/test_entity_node.gd | 留位置、锚点、变换。 |
+| tests/test_stores.gd | 留读写、改名不破 ID、复制新码；历史用例随功能改。 |
+| tests/test_asset_scan.gd | 自动扫描删则随删。 |
+| tests/test_audit_c3.gd | 审计随功能改，挂载补齐迁到绑定或声明测试。 |
+| tests/test_batch_e2.gd | 只保留仍存在的批量动作覆盖。 |
+| tests/test_clone_plan.gd | 留组内重连、组外不变和实例专属内容独立。 |
+| tests/test_geometry.gd | 留基础几何；随高级工具删减。 |
+| tests/test_map_convert.gd | 转换工具删则随删。 |
+| tests/test_ref_fields.gd | 留稳定 ID、配对地图和作用域。 |
+| tests/test_rel_graph.gd | 留项目图；局部图专用用例随局部图移除。 |
+| tests/test_session_context_e1.gd | 简化后无独立规则则并。 |
+| tests/test_e1_e3_units.gd | 悬浮说明无需单设；裁剪归地图操作。 |
+| tests/test_step_timeline_d1.gd | 留显式时间与默认顺延，警告随功能调整。 |
+| tests/test_timeline_clock_d2.gd | 可并入时间轴测试。 |
+| tests/test_tri_render.gd | 留三角格独立绘制。 |
+| tests/test_c1_records.gd | 留记录内引用和复制重映射。 |
+| tests/test_c2_lib.gd | 留实际使用的来向索引，减审计汇总用例。 |
+| tests/test_c4_cell.gd | 留格 ID、拾取和有向连接。 |
+| tests/test_edge_ref.gd | 留规范边、共边和跨图 ID，审计报告随功能调整。 |
+
+## 截至本记录的进度
+
+| 状态 | 证据 |
+|---|---|
+| 已提交 | 从 `c887909` 到 `b4fa904`：移除地图 PNG／统计导出、缩略图探测、自动审计修复与部分告警、旧 shell 试玩、原地生成合并；集中声明池补码，区分场景与实体，合并地图尺寸入口。保留的只读自检、世界分块差量仍待取舍。 |
+| 已提交 | `91fde52`：地图引用与候选只解析稳定地图码，取消按文件名匹配。 |
+| 已提交 | `6ea5780`：移除内容表单的局部关系图；保留项目流程关系入口。 |
+| 已提交 | `66c5f8f`：普通保存取消干跑、二次确认和写入日志。保留清单、内容、地图的依赖顺序及外部改动处理；冻结改名／复制路径仍独立。 |
+| 进行中 | 复制、区域粘贴和格图剪贴板去掉图名身份参数；场景复制只保留摆放语义。检查签名与调用点，再单独提交。 |
+| 待处理 | 审计查询与报告解耦、读写校验减重、普通保存剩余层次、实景重复操作、世界差量与事件层。表里的「候选」须结合源码与已有数据决定。 |
+| 验证 | 本轮没跑测试。全部完成后按要求只运行一个相关检查。既有未跟踪的 `src/content/flow_target.gd.uid` 不计入清理提交。 |
