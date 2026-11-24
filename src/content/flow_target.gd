@@ -7,12 +7,11 @@ static func kind(value: Variant) -> String:
 	if value.size() == 3 and _has_id(value, "map") and _has_id(value, "inst") and _has_id(value, "port"):
 		return "map"
 	if value.size() == 1:
-		if value.get("view") is String and value.view != "":
+		if _has_id(value, "view"):
 			return "view"
-		if value.get("map") is String and value.map != "":
+		if _has_id(value, "map"):
 			return "map"
-	if value.size() == 2 and value.get("function") is String and value.get("content") is String \
-			and value.function != "" and value.content != "":
+	if value.size() == 2 and _has_id(value, "function") and _has_id(value, "content"):
 		return "content"
 	return ""
 

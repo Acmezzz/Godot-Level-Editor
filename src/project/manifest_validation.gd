@@ -116,16 +116,8 @@ static func _validate_startup(data: Dictionary, issues: Array[Dictionary]) -> vo
 	if not startup.has("target"):
 		return
 	var target = startup.target
-	if FlowTarget.kind(target) == "map" and target.has("port") and FlowTarget.allows(startup, target):
+	if FlowTarget.allows(startup, target) and (not target.has("content") or ContentStore.is_valid_id(target.content)):
 		return
-	if target is Dictionary:
-		if target.size() == 2 and target.get("function") is String and target.function in kinds \
-				and target.get("content") is String and ContentStore.is_valid_id(target.content):
-			return
-		if target.size() == 1:
-			for pair in [["view", "screens"], ["map", "maps"]]:
-				if startup.get(pair[1]) == true and target.get(pair[0]) is String and not target[pair[0]].is_empty():
-					return
 	_add(issues, "error", "startup.target", "must select a permitted {function, content}, {view}, {map} or {map, inst, port}")
 
 ## 功能/字段声明：结构 + 身份码唯一性 + 字段种类合法性。

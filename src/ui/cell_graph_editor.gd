@@ -307,7 +307,7 @@ static func open(app) -> void:
 	columns.add_child(scroll)
 	body.add_child(notice)
 	var state := {"index": -1, "commits": [], "edge": "", "space": null, "pending_target": false, "spaces": spaces,
-		"project": project, "map_name": str(cvs.cur_map_name), "map_code": str(cvs.cur_map_code())}
+		"project": project, "map_code": str(cvs.cur_map_code())}
 	var flush := func() -> bool:
 		for commit in state.commits:
 			if not bool(commit.call()):
@@ -802,7 +802,7 @@ static func _build_edge_destination(form: VBoxContainer, edge: Dictionary, cells
 	var selected := 0
 	for name in index.get("names", []):
 		var code := str(index.get("by_name", {}).get(name, ""))
-		if code == "" or name == state.map_name or code == state.map_code or RefIndex.resolve_map_code(index, code).status != "ok":
+		if code == state.map_code or RefIndex.resolve_map_code(index, code).status != "ok":
 			continue
 		maps.add_item("%s · %s" % [name, code])
 		maps.set_item_metadata(maps.item_count - 1, code)
