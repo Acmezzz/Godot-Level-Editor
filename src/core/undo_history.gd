@@ -36,7 +36,7 @@ func _restore(snapshot) -> void:
 		await cvs.load_data(d, cvs.cur_map_name, true, true)
 
 
-## 整图快照入栈：全局操作（区域/层/尺寸/转换/批量替换/自动碰撞）与
+## 整图快照入栈：全局操作（区域/层/尺寸/转换/批量替换）与
 ## 无实例码的场景图片改动走这条。写入口在控制器上，画布只做转发不带状态。
 func push_undo() -> void:
 	if cvs.map_root == null or not is_instance_valid(cvs.map_root):
@@ -138,7 +138,7 @@ func _apply_entry(entry, forward: bool) -> bool:
 ## stroke_touch_*（只记 before），手势结束 stroke_end() 定格 before/after 成差量条目。
 ## 条目 = {"kind": "delta", "cells": [{kind, layer, cell:[x,y], before, after}]}，
 ## undo 应用 before、redo 应用 after（同一条目双向复用）。全局操作（区域/尺寸/层操作/
-## 批量替换/自动碰撞）仍走整图快照（push_undo 不变）。
+## 批量替换）仍走整图快照（push_undo 不变）。
 
 var _stroke_open := false
 var _stroke_cells: Array = []   # 进行中的笔画 [{kind, layer, cell, before}]
@@ -417,6 +417,8 @@ func undo_content_only() -> String:
 ## undo/redo 恢复差量条目：逐格写回 before/after（资产缺失的源按空格恢复）。
 func _restore_delta(entry: Dictionary, forward: bool) -> void:
 	var field := "after" if forward else "before"
+	var touched_layers := {}
+	var touched_coll := false
 	for s in (entry.get("cells", []) as Array):
 		var st: Dictionary = s
 		var c := Vector2i(int((st.get("cell", [0, 0]) as Array)[0]), int((st.get("cell", [0, 0]) as Array)[1]))
@@ -426,11 +428,13 @@ func _restore_delta(entry: Dictionary, forward: bool) -> void:
 			if tn == null:
 				continue
 			var lid := str(st.get("layer", ""))
+			touched_layers[cvs._layer_index_of(lid)] = true
 			if v == null:
 				cvs.erase_tile(lid, tn, c)
 			else:
 				cvs.write_tile_row(lid, tn, v)
 		else:
+			touched_coll = true
 			if v == null:
 				cvs.set_collision_cell(c, false)
 			else:
@@ -441,23 +445,25 @@ func _restore_delta(entry: Dictionary, forward: bool) -> void:
 	# 差量恢复不走 load_data 重建：P01 精细重画标记按改动种类逐项打（瓦片/碰撞）。
 	# 阶段三：按层失效——只重画真正被改到的那些层（一笔只画一层是常态），
 	# 也不再补一刀全量 _mark：窄入口各自已抬 map_rev / emit modified。
-	var cells_arr: Array = entry.get("cells", []) as Array
-	var touched_layers := {}
-	var touched_coll := false
-	for s2 in cells_arr:
-		var st2: Dictionary = s2
-		if str(st2.get("kind", "")) != "tile":
-			touched_coll = true
-			continue
-		var li2: int = cvs._layer_index_of(str(st2.get("layer", "")))
-		if li2 >= 0:
-			touched_layers[li2] = true
 	for li3 in touched_layers:
 		cvs._mark_tiles_layer(int(li3))
 	if touched_coll:
 		cvs._mark_collision()
-	if cells_arr.is_empty():
-		cvs._mark()   # 空条目理论不存在：兜底置脏，不许静默丢改动
+
+## Automatic generation and undo use the same cell writer. Compare complete
+## states so replace can clear old shapes and metadata without recording no-ops.
+func apply_collision_batch(changes: Dictionary) -> void:
+	var cells := []
+	for c: Vector2i in changes:
+		var before = _collision_state(c)
+		var after = changes[c]
+		if before != after:
+			cells.append({"kind": "collision", "cell": [c.x, c.y], "before": before, "after": after})
+	if cells.is_empty():
+		return
+	var entry := {"kind": "delta", "cells": cells}
+	_restore_delta(entry, true)
+	_push_entry(entry)
 
 ## —— 差量状态捕获辅助 ——
 ## 层码 → TileMapLayer（层没了返回 null：差量恢复对丢失层跳过，不炸）。
@@ -616,10 +622,12 @@ func extract() -> Dictionary:
 	if used.size == Vector2i.ZERO:
 		used = Rect2i(Vector2i.ZERO, Vector2i(Constants.DEFAULT_MAP_W, Constants.DEFAULT_MAP_H))
 	# 以整个读入的地图为底：游戏侧写进顶层的自定义键原样保留（此前 6 键白名单会蒸发它们）
-	var out: Dictionary = cvs.map_data.duplicate(true) if cvs.map_data is Dictionary else {}
-	var meta0: Dictionary = out.get("meta", {}) if out.get("meta", {}) is Dictionary else {}
+	var out: Dictionary = cvs.map_data.duplicate() if cvs.map_data is Dictionary else {}
+	for rebuilt in ["tiles", "collision", "objects", "entities", "spawn"]:
+		out.erase(rebuilt)
+	out = out.duplicate(true)
 	# 以当前地图 meta 为底（保留游戏侧自定义键），只覆盖编辑器管辖的 name/w/h
-	var meta: Dictionary = meta0.duplicate(true)
+	var meta: Dictionary = out.get("meta", {}) if out.get("meta", {}) is Dictionary else {}
 	if not meta.has("w"):
 		meta["w"] = int(used.end.x + 2)
 	if not meta.has("h"):

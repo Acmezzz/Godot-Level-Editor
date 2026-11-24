@@ -322,26 +322,21 @@ func generate_collision(strategy := "full", replace := false, one_way_top := fal
 	if src == null:
 		_hint("切到一个瓦片层再用自动碰撞（当前是碰撞元层）")
 		return 0
-	# 预判：无可生成（且不是替换模式）就不压撤销快照——与 _erase_hits 的「不压空撤销」同纪律
-	if not replace and count_auto_collision(strategy, false, src_idx) == 0:
-		_hint("没有可生成的碰撞格（换策略或换层再试）")
-		return 0
-	cvs.push_undo()
-	if replace:
-		for c in collision.get_used_cells():
-			set_collision_cell(c, false)
+	var changes := {}
 	var added := 0
+	var state := {"type": "one_way" if strategy == "top" and one_way_top else "solid", "shape": "", "raw": {}}
 	for c in src.get_used_cells():
 		if not _collision_wanted(c, strategy, src_idx):
 			continue
-		if collision.get_cell_source_id(c) != -1:
+		if not replace and collision.get_cell_source_id(c) != -1:
 			continue
-		# 顶部策略可生成 one_way（自动碰撞策略扩展，契约类型 one_way）
-		var typ := "one_way" if (strategy == "top" and one_way_top) else "solid"
-		set_collision_cell(c, true, typ)
+		changes[c] = state
 		added += 1
-	_mark_collision()   # P01：自动碰撞只写碰撞层，红块重画即可
-	cvs.queue_redraw()
+	if replace:
+		for c in collision.get_used_cells():
+			if not changes.has(c):
+				changes[c] = null
+	cvs._undo_history_ctrl.apply_collision_batch(changes)
 	return added
 
 ## 预览：不写入，只算会新增多少格

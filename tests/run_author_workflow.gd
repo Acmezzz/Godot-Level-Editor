@@ -1444,8 +1444,51 @@ func run():
 	await author_world_region_move(app, manifest)
 	await author_frame_picks(app, manifest)
 	await author_transformed_terrain(app, manifest)
+	await author_collision_batch(app, manifest)
 	print("WORKFLOW-DONE failures=", failures)
 	quit(1 if failures else 0)
+
+func author_collision_batch(app, manifest: Dictionary) -> void:
+	var map := Maps.new_map("collision_batch", 224, 224)
+	var lid: String = map.meta.layers[0].id
+	map.meta.layers.append({"id": "backdrop", "name": "Backdrop"})
+	map.tiles[lid] = [[2, 2, "terrain", 0, 0, 0], [3, 2, "terrain", 0, 0, 0]]
+	var backdrop := []
+	for y in 200:
+		for x in 200:
+			backdrop.append([x, y, "terrain", 0, 0, 0])
+	map.tiles["backdrop"] = backdrop
+	map.collision = [{"x": 2, "y": 2, "shape": "r45", "gameRule": {"power": 8}},
+		{"x": 6, "y": 4, "type": "hazard"}]
+	var path := Maps.path_for(manifest, "collision_batch")
+	check(Maps.write(manifest, "collision_batch", map), "save the large-map collision fixture")
+	await app._load_map_file(path)
+	var cvs: EditorCanvas = app.canvas
+	var history = cvs._undo_history_ctrl
+	var started := Time.get_ticks_usec()
+	var baseline: String = history._snapshot()
+	var snapshot_us := Time.get_ticks_usec() - started
+	var root_before := cvs.map_root
+	started = Time.get_ticks_usec()
+	var generated := cvs.generate_collision("top", true, true, 0)
+	var generate_us := Time.get_ticks_usec() - started
+	var patch: Dictionary = history.undo_stack.back() if history.undo_stack.back() is Dictionary else {}
+	check(generated == 2 and patch.get("kind") == "delta" and patch.get("cells", []).size() == 3
+		and cvs._collision_meta[Vector2i(2, 2)].type == "one_way"
+		and not cvs._collision_meta[Vector2i(2, 2)].has("raw"), "replace records only three changed collision cells")
+	cvs.generate_collision("top", true, true, 0)
+	check(history.undo_stack.size() == 1, "identical regeneration adds no undo step")
+	check(await cvs.undo() and is_same(root_before, cvs.map_root)
+		and cvs._collision_meta[Vector2i(2, 2)].shape == "r45"
+		and cvs._collision_meta[Vector2i(2, 2)].raw.gameRule.power == 8
+		and cvs._collision_meta[Vector2i(6, 4)].type == "hazard",
+		"undo restores old geometry and game metadata without rebuilding unrelated layers")
+	check(await cvs.redo() and is_same(root_before, cvs.map_root)
+		and cvs.collision.get_cell_source_id(Vector2i(6, 4)) == -1
+		and cvs.layer_tiles[cvs._layer_index_of("backdrop")].get_used_cells().size() == 40000,
+		"redo restores generated cells and leaves the backdrop intact")
+	print("COLLISION-BATCH snapshot_us=", snapshot_us, " snapshot_text_bytes=", baseline.to_utf8_buffer().size(),
+		" apply_us=", generate_us, " delta_text_bytes=", JSON.stringify(patch).to_utf8_buffer().size())
 
 func author_transformed_terrain(app, manifest: Dictionary) -> void:
 	await app._load_map_file(Maps.path_for(manifest, "platform"))
