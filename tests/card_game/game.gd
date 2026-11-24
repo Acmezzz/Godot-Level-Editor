@@ -28,7 +28,11 @@ func run() -> void:
 	project_manifest = JSON.parse_string(FileAccess.get_file_as_string("res://editor/editor_manifest.json"))
 	if entry.is_empty():
 		entry = project_manifest.get("startup", {}).get("target", {})
-	scoring = project_manifest.get("projectContentSlots", {}).get("scoring", {}).get("target", {})
+	# A mapless encounter uses the first project-wide scoring binding.
+	for layer in project_manifest.get("eventLayers", {}).values():
+		if not layer.has("maps") and layer.get("events", {}).has("SCOR"):
+			scoring = layer.events.SCOR
+			break
 	if not scoring.is_empty():
 		multiplier = int(fields(scoring.function, scoring.content).MULT)
 	rules = fields(entry.get("function", ""), entry.get("content", ""))

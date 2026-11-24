@@ -5,6 +5,7 @@ const Manifest := preload("res://src/project/manifest.gd")
 const Maps := preload("res://src/map/map_store.gd")
 const Store := preload("res://src/content/content_store.gd")
 const Flow := preload("res://src/content/rel_graph.gd")
+const EventLayerDialog := preload("res://src/ui/event_layers_dialog.gd")
 const Editor := preload("res://src/editor.tscn")
 var app
 var failures := 0
@@ -24,7 +25,7 @@ func run() -> void:
 	var declarations := {
 		"projectName": "Market Hand",
 		"startup": {"contentTypes": ["encounter"]},
-		"projectContentSlots": {"scoring": {"name": "Scoring", "contentTypes": ["score_rules"]}},
+		"triggers": {"scoring": {"name": "Scoring", "code": "SCOR", "eventTargets": {"contentTypes": ["score_rules"]}}},
 		"functions": {
 			"score_rules": {"name": "Score rules", "code": "SCRL", "fields": [
 				{"id": "multiplier", "code": "MULT", "kind": "input", "type": "int", "min": 1}]},
@@ -67,16 +68,20 @@ func run() -> void:
 	field(scoring, "multiplier").value = 2
 	save(scoring)
 	var rule_target := {"function": "score_rules", "content": "project-double"}
-	var global_rules := await open_project_flow_slots()
-	var project_slots: OptionButton = global_rules.find_child("FlowSlot", true, false)
-	project_slots.select(1)
-	project_slots.item_selected.emit(1)
-	var scorer: OptionButton = global_rules.find_child("FlowTarget", true, false)
-	check(scorer.item_count == 2, "the scoring slot offers only compatible published contents")
-	choose(scorer, rule_target)
-	press(global_rules, "应用关系")
-	check(app.manifest.projectContentSlots.scoring.get("target") == rule_target, "project rule was published from the graph")
-	global_rules.hide()
+	EventLayerDialog.open(app)
+	await process_frame
+	var event_popup := visible_popup()
+	press(event_popup, "新建层")
+	var scorer: OptionButton = collect(event_popup, "OptionButton").back()
+	check(scorer.item_count == 2, "the scoring event offers only compatible published contents")
+	choose(scorer, JSON.stringify(rule_target))
+	press(event_popup, "保存事件层")
+	await process_frame
+	var layer_ids: Array = app.manifest.get("eventLayers", {}).keys()
+	if not check(layer_ids.size() == 1, "the scoring event layer was published"):
+		finish()
+		return
+	var layer_id: String = layer_ids[0]
 	var encounter := await new_content("encounter", "harbor")
 	field(encounter, "target").value = 14
 	var deck: Control = field(encounter, "deck")
@@ -129,9 +134,9 @@ func run() -> void:
 	var form = app.project_shell.content_editor._form
 	check(form._delete_blocked_reason("encounter", "project-harbor").contains("正式启动入口"),
 		"deletion identifies the active startup target")
-	check(app.manifest.projectContentSlots.scoring.target == rule_target
-		and form._delete_blocked_reason("score_rules", "project-double").contains("项目规则"),
-		"the published project rule survives reloading and protects its referenced content")
+	check(app.manifest.eventLayers[layer_id].events.SCOR == rule_target
+		and form._delete_blocked_reason("score_rules", "project-double").contains("图组事件层"),
+		"the published event layer survives reloading and protects its referenced content")
 	press(app.project_shell, "试玩项目")
 	var controller = app._playtest_ctrl
 	var end := Time.get_ticks_msec() + 12000
