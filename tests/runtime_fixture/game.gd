@@ -1,6 +1,5 @@
 extends Node2D
 
-const ChunkDelta := preload("res://generated_chunk_delta.gd")
 const Grid := preload("res://src/canvas/grid_space.gd")
 const ViewData := preload("res://map_view_data.gd")
 const Geometry := preload("res://object_geometry.gd")
@@ -173,8 +172,6 @@ func _ready() -> void:
 					return
 				outcome["generatedChunks"] = streamed.samples
 				outcome["streaming"] = streamed.lifecycle
-				if manifest.worldLayout.chunks.values().any(func(row): return row.get("generatedMode") in [ChunkDelta.GRID, ChunkDelta.CONTENT]):
-					outcome["seedPatches"] = _sample_grid_delta()
 			_report("ready", "", outcome)
 	else:
 		var content_dir := str(manifest.get("contentDir", "content"))
@@ -883,87 +880,22 @@ func _generated_slots(manifest: Dictionary) -> Dictionary:
 	for code in chunks:
 		var key: String = chunks[code].get("generatedKey", "")
 		if key != "":
-			slots[key] = {"code": code, "mode": chunks[code].get("generatedMode", "")}
+			slots[key] = code
 	return slots
 
 func _trim_row() -> Dictionary:
 	return {"asset": "door", "code": "TRIM", "layer": "base", "x": 1, "y": 0}
 
-func _generated_chunk(cell: Vector2i, slots: Dictionary, seed := 0) -> Dictionary:
+func _generated_chunk(cell: Vector2i, slots: Dictionary) -> Dictionary:
 	var key := "slope/%d/%d" % [cell.x, cell.y]
-	var binding: Dictionary = slots.get(key, {})
-	var saved := _map_with_code(binding.code) if not binding.is_empty() else {}
-	var mode := str(binding.get("mode", ""))
-	if not saved.is_empty() and mode == "":
+	var saved := _map_with_code(slots[key]) if slots.has(key) else {}
+	if not saved.is_empty():
 		return {"key": key, "map": saved, "authored": true}
 	var first := 2 + posmod(cell.x, 4)
 	var map := _slope_room({"version": 7, "code": key, "name": key}, first)
 	map.collision.append({"x": first + 2, "y": 3, "shape": "l45"})
-	if mode == ChunkDelta.CONTENT:
-		# Keep the shared entrance platform even when this seed extends the route.
-		map.collision.append({"x": first - 1, "y": 4})
-		map.objects[0].props = {"seedColor": seed}
-		map.objects.append(_trim_row())
-		var exit_id := "seed-exit-%d" % seed
-		map.meta["cellGraph"] = {"cells": [
-			{"id": "seed-entry", "polygon": [[0, 0], [12, 0], [6, 10]], "neighbors": [exit_id]},
-			{"id": exit_id, "polygon": [[12, 0], [24, 0], [18, 10]]}]}
-		if seed != 0:
-			map.objects.append({"asset": "door", "code": "S%d" % seed, "layer": "base", "x": seed, "y": 0})
-			map.objects.append({"asset": "button-art", "layer": "base", "x": seed, "y": 1})
-	else:
-		map.objects[0].code = "SEED"
-	if seed != 0:
-		map.collision.append_array([{"x": seed, "y": 0}, {"x": 3, "y": 0}])
-	var applied := false
-	if not saved.is_empty() and mode in [ChunkDelta.GRID, ChunkDelta.CONTENT]:
-		var patched := ChunkDelta.apply(map, ChunkDelta.compile(saved, mode))
-		applied = patched.error == ""
-		if applied:
-			map = patched.map
-	return {"key": key, "map": map, "authored": applied}
-
-func _sample_grid_delta() -> Array:
-	var samples: Array = []
-	var slots := _generated_slots(_manifest)
-	for seed in [7, 8]:
-		var chunk := _generated_chunk(Vector2i(2, 0), slots, seed)
-		var rows: Array = chunk.map.collision
-		var objects: Array = chunk.map.objects
-		var gate: Array = objects.filter(func(row): return row.get("code") == "GATE")
-		var props: Dictionary = gate[0].get("props", {}) if not gate.is_empty() else {}
-		var author_route := _load_board(chunk.map, "author-entry") and _advance_board()
-		var author_exit := _current if author_route else ""
-		var author_edge := _traversed_edge if author_route else ""
-		var seed_exit := _current if _load_board(chunk.map, "seed-entry") and _advance_board() else ""
-		var seed_world := Vector2.ZERO
-		for row in objects:
-			if row.asset == "button-art" and row.layer == "base":
-				var layer: Dictionary = chunk.map.meta.layers[0]
-				seed_world = _vector(layer.get("offset", [0, 0])) + Vector2(row.x, row.y) * float(layer.get("scale", 1.0))
-				break
-		var overlay := ""
-		for layer in chunk.map.meta.layers:
-			if (layer.name == "Author overlay"
-					and chunk.map.tiles.get(layer.id, []).any(func(row): return row[0] == 2 and row[1] == 2)
-					and objects.any(func(row): return row.asset == "button-art" and row.layer == layer.id)
-					and chunk.map.meta.cellGraph.spaces.deck.layer == layer.id):
-				overlay = layer.id
-		samples.append({"seed": seed, "applied": chunk.authored, "gate": _traverse_platform(chunk.map).get("gate", ""),
-			"gateLabel": props.get("label", ""), "gateSeed": props.get("seedColor", -1),
-			"removedObject": not objects.any(func(row): return row.get("code") == "TRIM"),
-			"seedObject": objects.any(func(row): return row.get("code") == "S%d" % seed),
-			"addedObject": objects.any(func(row): return row.get("props", {}).get("label") == "extra"),
-			"spawn": chunk.map.spawn, "blend": chunk.map.meta.layers[0].get("blend", ""),
-			"authorRoute": author_exit, "authorEdge": author_edge, "seedRoute": seed_exit,
-			"overlay": overlay,
-			"seedWorldX": seed_world.x, "seedWorldY": seed_world.y,
-			"decor": objects.filter(func(row): return row.asset == "button-art").size(),
-			"seedCell": rows.any(func(row): return row.x == seed and row.y == 0),
-			"deleted": not rows.any(func(row): return row.x == 3 and row.y == 0),
-			"solidLanding": rows.any(func(row): return row.x == 5 and row.y == 3 and not row.has("shape")),
-			"tilePatched": chunk.map.tiles.get("base", []).any(func(row): return row[0] == 1 and row[1] == 1)})
-	return samples
+	map.objects[0].code = "SEED"
+	return {"key": key, "map": map, "authored": false}
 
 func _mount_chunk(world: Node2D, cell: Vector2i, data: Dictionary) -> StaticBody2D:
 	var body := StaticBody2D.new()

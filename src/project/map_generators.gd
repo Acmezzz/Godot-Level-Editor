@@ -8,6 +8,20 @@ const Keyframes := preload("res://src/content/keyframe_curve.gd")
 const TYPES := ["int", "float", "bool", "string", "asset_ref", "vector2", "curve", "array"]
 const CHOICE_SOURCES := ["map", "view:", "audio:"]
 
+## Only regeneration parameters are needed for newly generated maps.
+static func origin(map: Dictionary) -> Dictionary:
+	var meta: Dictionary = map.get("meta", {})
+	var source = meta.get("generatorSource")
+	if source is Dictionary and source.get("version") == 1 and source.get("owner") == meta.get("code"):
+		return source
+	return {}
+
+
+static func remember(map: Dictionary, generator: String, parameters: Dictionary) -> void:
+	map.meta["generatorSource"] = {"version": 1, "owner": map.meta.code,
+		"generator": generator, "parameters": parameters.duplicate(true)}
+
+
 static func issues(manifest: Dictionary) -> Array[Dictionary]:
 	var out: Array[Dictionary] = []
 	if not manifest.has("mapGenerators"):

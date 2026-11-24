@@ -6,7 +6,6 @@ const Generators := preload("res://src/project/map_generators.gd")
 const Runner := preload("res://src/project/game_preview.gd")
 const FrameDialog := preload("res://src/ui/game_frame_dialog.gd")
 const Maps := preload("res://src/map/map_store.gd")
-const ChunkDelta := preload("res://src/map/generated_chunk_delta.gd")
 
 var _app
 var _source: Dictionary
@@ -34,7 +33,7 @@ static func available(app) -> bool:
 static func can_regenerate(app) -> bool:
 	if not app.map_loaded or not available(app):
 		return false
-	var row := ChunkDelta.origin(app.canvas.map_data)
+	var row := Generators.origin(app.canvas.map_data)
 	return row.get("generator") is String and row.get("parameters") is Dictionary \
 		and app.manifest.mapGenerators.has(row.generator)
 
@@ -53,7 +52,7 @@ static func open(app, regenerate := false) -> void:
 	ui._source = app.manifest
 	ui._pop = shell.pop
 	if regenerate:
-		var source := ChunkDelta.origin(app.canvas.map_data)
+		var source := Generators.origin(app.canvas.map_data)
 		ui._origin = {"generator": source.generator, "parameters": source.parameters}
 	FrameDialog.keep_on_focus_loss(ui._pop)
 	shell.body.add_child(ui)
@@ -201,7 +200,7 @@ func _run() -> void:
 		return
 	map.meta.name = name_
 	map.meta.code = code
-	ChunkDelta.attach(map, id, params)
+	Generators.remember(map, id, params)
 	_result = {"map": map, "name": name_, "manifest": public}
 	_accept.disabled = false
 	var tiles := 0

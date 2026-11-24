@@ -19,7 +19,7 @@ var _surface: WorldCanvas
 var _notice: Label
 var _fields: Array[SpinBox] = []
 var _generated_key: LineEdit
-var _generated_mode: OptionButton
+var _replace_legacy: Button
 var _names := {}
 var _selected := ""
 var _saving := false
@@ -82,17 +82,8 @@ func _build() -> void:
 	_generated_key.max_length = Layout.GENERATED_KEY_LIMIT
 	_generated_key.text_changed.connect(_edit_generated_key)
 	add_child(Kit.field_row("生成分块键", _generated_key, 90))
-	_generated_mode = OptionButton.new()
-	_generated_mode.name = "WorldGeneratedMode"
-	_generated_mode.size_flags_horizontal = SIZE_EXPAND_FILL
-	var modes := ["", Layout.DELTA_MODE, Layout.CONTENT_DELTA_MODE]
-	var titles := ["整块替换", "只覆盖瓦片与碰撞差量", "覆盖内容差量（含有限格图）"]
-	for i in modes.size():
-		_generated_mode.add_item(titles[i])
-		_generated_mode.set_item_metadata(i, modes[i])
-	_generated_mode.tooltip_text = "保留种子未编辑的数据。实体按实例码匹配；移动或删除无码摆放物时，当前种子须包含原摆放。"
-	_generated_mode.item_selected.connect(func(i: int): _edit_generated_mode(str(modes[i])))
-	add_child(Kit.field_row("生成覆盖", _generated_mode, 90))
+	_replace_legacy = Kit.button("改为整块替换", _replace_legacy_mode)
+	add_child(_replace_legacy)
 	_notice = Label.new()
 	_notice.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	add_child(_notice)
@@ -139,11 +130,7 @@ func _select(code: String) -> void:
 		_fields[i].set_value_no_signal(float(chunk.get("origin" if i < 2 else "size", [0, 0] if i < 2 else [128, 128])[i % 2]))
 	_generated_key.editable = not chunk.is_empty()
 	_generated_key.text = str(chunk.get("generatedKey", ""))
-	_generated_mode.disabled = not chunk.has("generatedKey")
-	for i in _generated_mode.item_count:
-		if _generated_mode.get_item_metadata(i) == str(chunk.get("generatedMode", "")):
-			_generated_mode.select(i)
-			break
+	_replace_legacy.visible = chunk.has("generatedMode")
 	_surface.queue_redraw()
 
 func _add_chunk() -> void:
@@ -182,20 +169,17 @@ func _edit_generated_key(value: String) -> void:
 	if key.is_empty():
 		row.erase("generatedKey")
 		row.erase("generatedMode")
-		_generated_mode.select(0)
 	else:
 		row["generatedKey"] = key
-	_generated_mode.disabled = key.is_empty()
+	_replace_legacy.visible = row.has("generatedMode")
 	_surface.queue_redraw()
 
-func _edit_generated_mode(mode: String) -> void:
-	if _saving or not _draft.chunks.has(_selected) or not _draft.chunks[_selected].has("generatedKey"):
+func _replace_legacy_mode() -> void:
+	if _saving or not _draft.chunks.has(_selected):
 		return
-	var row: Dictionary = _draft.chunks[_selected]
-	if mode != "":
-		row["generatedMode"] = mode
-	else:
-		row.erase("generatedMode")
+	_draft.chunks[_selected].erase("generatedMode")
+	_replace_legacy.hide()
+	_notice.text = "保存后游戏将使用整张作者地图覆盖此分块。原地图和生成基线不变。"
 
 func _open_selected() -> void:
 	if _saving:
@@ -224,17 +208,6 @@ func _save() -> void:
 		var issue: Dictionary = issues[0]
 		_notice.text = "布局未保存：%s · %s" % [issue.path, issue.message]
 		return
-	var catalog := Maps.code_index(_source)
-	for code in _draft.chunks:
-		var row: Dictionary = _draft.chunks[code]
-		var mode := str(row.get("generatedMode", ""))
-		if not Layout.is_delta_mode(mode) or row == _baseline.chunks.get(code):
-			continue
-		var names: Array = catalog.by_code.get(code, [])
-		var problem := Layout.delta_problem(Maps.read(_source, names[0]), mode) if names.size() == 1 else "地图缺失或重码。"
-		if problem != "":
-			_notice.text = "分块 %s：%s" % [code, problem]
-			return
 	_saving = true
 	var ok: bool = await _app._save_manifest_file_async(_can_save, candidate, "worldLayout") if _can_save() else false
 	_saving = false

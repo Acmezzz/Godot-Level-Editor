@@ -1,6 +1,6 @@
 extends "res://tests/_suite_base.gd"
 
-const Delta := preload("res://src/map/generated_chunk_delta.gd")
+const Delta := preload("res://tools/legacy/generated_chunk_delta.gd")
 const Maps := preload("res://src/map/map_store.gd")
 
 func test_content_delta_applies_map_flow_by_slot() -> void:

@@ -356,8 +356,7 @@ func run():
 	for filename in ["project.godot", "main.tscn", "game.gd"]:
 		check(DirAccess.copy_absolute(ProjectSettings.globalize_path(RuntimeFixture + filename),
 			project.path_join(filename)) == OK, "copy independent runtime " + filename)
-	check(DirAccess.copy_absolute(ProjectSettings.globalize_path("res://src/map/generated_chunk_delta.gd"),
-		project.path_join("generated_chunk_delta.gd")) == OK, "install the same delta implementation in the independent game")
+
 	DirAccess.make_dir_recursive_absolute(project.path_join("src/canvas"))
 	check(DirAccess.copy_absolute(ProjectSettings.globalize_path("res://src/canvas/grid_space.gd"),
 		project.path_join("src/canvas/grid_space.gd")) == OK, "install the standalone grid contract in the independent game")
@@ -1492,87 +1491,6 @@ func run():
 		and not lifecycle[3].resident.has("slope/2/0") and lifecycle[3].overrideShape == false
 		and lifecycle.all(func(entry): return entry.resident.size() == 3),
 		"continuous movement reuses preloaded chunk nodes and removes expired collision bodies: " + str(lifecycle))
-	app.canvas.active_layer = app.canvas.collision_index()
-	check(app.canvas._tool_ops_ctrl.erase_cells([Vector2i(3, 0)]), "author erases a generated collision cell")
-	app.canvas._undo_history_ctrl.stroke_end()
-	app.canvas._paint_pushed = false
-	app.canvas.active_layer = 0
-	app.canvas.paint_asset = "terrain"
-	app.canvas.paint_cell = Vector2i.ZERO
-	app.canvas._paint(Vector2i.ONE)
-	app.canvas._undo_history_ctrl.stroke_end()
-	app.canvas._paint_pushed = false
-	var grid_save: Dictionary = await app._map_file_ctrl.commit_document("保存格位差量来源")
-	check(grid_save.get("status") == "ok", "save the authored add and erase actions")
-	app._nav_bars[0]._switch_menu.id_pressed.emit(100002)
-	await process_frame
-	pop = collect(app, "PopupPanel").filter(func(p): return p.visible).back()
-	world_list = pop.find_child("WorldMapList", true, false)
-	select_metadata(world_list, edited_room.meta.code)
-	select_metadata(pop.find_child("WorldGeneratedMode", true, false), WorldLayout.DELTA_MODE)
-	press(pop, "保存世界布局")
-	await process_frame
-	check(manifest.worldLayout.chunks[edited_room.meta.code].get("generatedMode") == "gridDelta", "publish the selected delta mode")
-	pop.hide()
-	var delta_report := await launch_and_read(app, false)
-	var patches: Array = delta_report.get("result", {}).get("seedPatches", [])
-	check(patches.size() == 2 and patches[0].seed == 7 and patches[1].seed == 8
-		and patches.all(func(row): return (row.applied and row.seedCell and row.deleted and row.solidLanding
-			and row.tilePatched and row.gate == "SEED")),
-		"each seed keeps its own generated cells and entities, adds the author's tile and solid landing, and erases the authored cell: " + str(delta_report))
-	app.canvas.commit_selection(app.canvas._ent_by_code_index().get("TRIM"))
-	check(app.canvas.selected_entity != null, "pick the generated object to remove")
-	app.canvas.delete_selection()
-	app.canvas.commit_selection(app.canvas._ent_by_code_index().get("GATE"))
-	app.canvas.selected_entity.props["label"] = "author"
-	app.canvas._mark()
-	app.canvas.active_layer = 0
-	app.canvas.stamp_asset = "door"
-	app.canvas._tool_ops_ctrl.place_object(app.canvas.stamp_asset, app.canvas.active_layer, app.canvas.grid.cell_center_px(Vector2i(1, 1)))
-	app.canvas.selected_entity.props["label"] = "extra"
-	app.canvas._mark()
-	await app.canvas.layer_add("Author overlay")
-	var overlay_id: String = app.canvas.layer_id(1)
-	app.canvas.active_layer = 1
-	app.canvas.paint_asset = "terrain"
-	app.canvas.paint_cell = Vector2i.ZERO
-	app.canvas._paint(Vector2i(2, 2))
-	app.canvas._undo_history_ctrl.stroke_end()
-	app.canvas._paint_pushed = false
-	app.canvas._tool_ops_ctrl.place_object("button-art", 1, app.canvas.grid.cell_center_px(Vector2i(2, 1)))
-	check(app.canvas.set_spawn_cell(Vector2i(3, 1)), "set the authored chunk entrance")
-	await app.canvas.layer_set_blend(0, "add")
-	await app.canvas.layer_set_param(0, "offset", Vector2(12, 4))
-	await app.canvas.layer_set_param(0, "scale", 1.5)
-	app.canvas.apply_cell_graph({"spaces": {"deck": {"layer": overlay_id, "origin": [8, 4], "axisX": [1, 0.25]}},
-		"cells": [
-			{"id": "author-entry", "space": "deck", "polygon": [[0, 0], [16, 0], [8, 12]]},
-			{"id": "author-exit", "space": "deck", "polygon": [[16, 0], [32, 0], [24, 12]]}],
-		"edges": [{"id": "author-stairs", "from": "author-entry", "to": "author-exit",
-			"type": "stairs", "props": {"cost": 3}}]})
-	var object_save: Dictionary = await app._map_file_ctrl.commit_document("保存分块摆放物差量")
-	check(object_save.get("status") == "ok", "save generated object edit, deletion and addition")
-	app._nav_bars[0]._switch_menu.id_pressed.emit(100002)
-	await process_frame
-	pop = collect(app, "PopupPanel").filter(func(p): return p.visible).back()
-	world_list = pop.find_child("WorldMapList", true, false)
-	select_metadata(world_list, edited_room.meta.code)
-	select_metadata(pop.find_child("WorldGeneratedMode", true, false), WorldLayout.CONTENT_DELTA_MODE)
-	press(pop, "保存世界布局")
-	await process_frame
-	check(manifest.worldLayout.chunks[edited_room.meta.code].get("generatedMode") == WorldLayout.CONTENT_DELTA_MODE,
-		"publish both grid and stable instance edits")
-	pop.hide()
-	var object_report := await launch_and_read(app, false)
-	var objects: Array = object_report.get("result", {}).get("seedPatches", [])
-	check(objects.size() == 2 and objects.all(func(row):
-		return row.applied and row.gate == "GATE" and row.gateLabel == "author" and row.gateSeed == row.seed \
-			and row.removedObject and row.seedObject and row.addedObject and row.tilePatched \
-			and row.spawn[0] == 3 and row.spawn[1] == 1 and row.blend == "add" and row.decor == 2 \
-			and row.authorRoute == "author-exit" and row.authorEdge == "author-stairs" \
-			and row.seedRoute == "seed-exit-%d" % int(row.seed) and row.overlay == overlay_id \
-			and row.seedWorldX == 12 + float(row.seed) * 1.5 and row.seedWorldY == 5.5),
-		"both seeds keep their own playable route and accept the authored route, decor and entrance: " + str(object_report))
 	await author_resize(app, manifest)
 	await author_projection_copy(app, manifest)
 	await author_rule_grids(app, manifest)

@@ -3,10 +3,6 @@ extends RefCounted
 
 const LIMIT := 10000000
 const GENERATED_KEY_LIMIT := 120
-const ChunkDelta := preload("res://src/map/generated_chunk_delta.gd")
-const DELTA_MODE := ChunkDelta.GRID
-const CONTENT_DELTA_MODE := ChunkDelta.CONTENT
-
 static func issues(manifest: Dictionary) -> Array[Dictionary]:
 	var out: Array[Dictionary] = []
 	if not manifest.has("worldLayout"):
@@ -22,9 +18,6 @@ static func issues(manifest: Dictionary) -> Array[Dictionary]:
 			out.append({"severity": "error", "path": "worldLayout.chunks." + str(code),
 				"message": "requires a map code, integer origin [x,y] and positive integer size [w,h] within the coordinate limit"})
 			continue
-		if row.has("generatedMode") and (not row.has("generatedKey") or not is_delta_mode(row.generatedMode)):
-			out.append({"severity": "error", "path": "worldLayout.chunks.%s.generatedMode" % code,
-				"message": "gridDelta/contentDelta require a generatedKey; omit generatedMode for whole chunk replacement"})
 		if not row.has("generatedKey"):
 			continue
 		var key = row.generatedKey
@@ -36,12 +29,6 @@ static func issues(manifest: Dictionary) -> Array[Dictionary]:
 		else:
 			generated_keys[key] = code
 	return out
-
-static func is_delta_mode(mode: Variant) -> bool:
-	return mode is String and mode in [DELTA_MODE, CONTENT_DELTA_MODE]
-
-static func delta_problem(map: Dictionary, mode := DELTA_MODE) -> String:
-	return str(ChunkDelta.compile(map, mode).error)
 
 static func valid_generated_key(value: Variant) -> bool:
 	if not value is String or value.is_empty() or value.length() > GENERATED_KEY_LIMIT or value != value.strip_edges():
