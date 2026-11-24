@@ -414,13 +414,7 @@ func _entities() -> Array:
 	return out
 
 func _find_ent(code: String) -> EntityNode:
-	if code == "" or not _map_ready():
-		return null
-	for e in app.canvas.ents_all():
-		var n := e as EntityNode
-		if n != null and n.code == code:
-			return n
-	return null
+	return app.canvas.entity_by_code(code) if not code.is_empty() and _map_ready() else null
 
 func _current_spr() -> EntityNode:
 	return _find_ent(_selected_ent)

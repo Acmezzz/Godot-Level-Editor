@@ -628,13 +628,6 @@ func _process(_delta: float) -> void:
 	_playtest_ctrl.poll_playtest()
 
 # 按实例码找实例节点（层栈化后跨全部层容器查）
-func _ent_by_id(id: String) -> EntityNode:
-	for e in canvas.ents_all():
-		var n := e as EntityNode
-		if n != null and n.code == id:
-			return n
-	return null
-
 # —— 实体属性（面板已删，只剩碰撞生成弹窗与选中状态维护） ——
 func _on_entity_selected(n: EntityNode) -> void:
 	# 用户看到的是画布下沿那条极简信息条；参数编辑走内容编辑器与资产目录。

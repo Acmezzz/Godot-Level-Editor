@@ -437,6 +437,7 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 			_collision_meta[ccell] = {"type": tname, "shape": sname}
 			if not cextras.is_empty():
 				(_collision_meta[ccell] as Dictionary)["raw"] = cextras
+	_ent_by_id_dirty = true
 	# 摆放物：objects[] 统一收场景图片与实体（数据形状一致，仅 entity 带 code）。
 	# 位置 = 浮点格坐标 + anchor 换算；transform/visible/zPolicy 缺省整键省略。
 	# 行→节点转换与撤销差量共用一份（_undo_history_ctrl._node_from_row），这里只补 C09 挂载。
@@ -506,7 +507,6 @@ func _ready() -> void:
 	_region_ops_ctrl = preload("res://src/canvas/region_ops.gd").new(self)
 	_world_region_move = preload("res://src/canvas/world_region_move.gd").new(self)
 	_layer_ops_ctrl = preload("res://src/canvas/layer_ops.gd").new(self)
-	_entity_factory_ctrl = preload("res://src/canvas/entity_factory.gd").new(self)
 	_undo_history_ctrl = preload("res://src/core/undo_history.gd").new(self)
 	_canvas_draw_ctrl = preload("res://src/canvas/canvas_draw.gd").new(self)
 	_canvas_input_ctrl = preload("res://src/canvas/canvas_input.gd").new(self)
@@ -732,7 +732,7 @@ func _hint(t: String) -> void:
 	cursor_info.emit(t)
 
 # —— 实例身份：4 位码（唯一身份：引用/重映射/连线全用它） ——
-## 码出生时在本图活跃实例集内查重（`_fresh_inst_code` 撞码重摇），不查已删实例的历史码——
+## 码出生时在本图活跃实例集内查重（撞码重摇），不查已删实例的历史码——
 ## 所以「不回收」是编辑流程约定，不是全工程扫描保证。
 # 重建代数——load_data 是协程，期间再进一次 load_data 时，先进者按代数退出防孤儿 map_root
 var _rebuild_gen := 0
@@ -824,7 +824,7 @@ var ref_highlight := ""
 ## E1：把相机对到某实例（选点确认后切回视图时，目标必须真的出现在视野里；
 ## 否则「已选目标」只存在于数据里，用户看不到自己刚指的那一格）。
 func focus_entity_code(code: String) -> bool:
-	var n = _ent_by_code_index().get(code, null)
+	var n := entity_by_code(code)
 	if n == null or not is_instance_valid(n):
 		return false
 	cam_pos = _w_for(n as EntityNode)
@@ -868,7 +868,6 @@ var _move_cell_delta := Vector2i.ZERO
 var _selection_ops_ctrl   # SelectionOps：实体选区/剪贴板控制器
 var _region_ops_ctrl   # RegionOps：区域复制/剪切/粘贴/搬迁控制器
 var _layer_ops_ctrl   # LayerOps：层栈运行时与管理
-var _entity_factory_ctrl   # EntityFactory：实体工厂/实例码发号
 var _undo_history_ctrl   # 撤销/重做控制器
 var _canvas_draw_ctrl   # CanvasDraw：绘制控制器
 var _canvas_input_ctrl   # CanvasInput：鼠标输入路由控制器
@@ -1376,11 +1375,14 @@ func _ent_by_code_index() -> Dictionary:
 		var out := {}
 		for e0 in ents_all():
 			var n := e0 as EntityNode
-			if n != null and n.code != "":
+			if n != null and n.is_entity() and n.code != "":
 				out[n.code] = n
 		_ent_by_id = out
 		_ent_by_id_dirty = false
 	return _ent_by_id
+
+func entity_by_code(code: String) -> EntityNode:
+	return _ent_by_code_index().get(code) as EntityNode
 
 ## 实例码是否指向本图实例（引用字段高亮用：跨图引用码在本图不存在，不能高亮）。
 func is_entity_code_local(code: String) -> bool:
@@ -1734,7 +1736,7 @@ func _has_terrain_in(c: Vector2i, li: int) -> bool:
 	var tn := _layer_node(li)
 	return tn != null and tn.get_cell_source_id(c) != -1
 
-## —— 拆到 src/canvas/layer_ops.gd / entity_factory.gd / tool_ops.gd（调用点保持不变） ——
+## —— 拆到 src/canvas/layer_ops.gd / tool_ops.gd（调用点保持不变） ——
 
 func layers_decl() -> Array:
 	return _layer_ops_ctrl.layers_decl()
@@ -1786,13 +1788,24 @@ func layer_set_param(i: int, key: String, v) -> void:
 	await _layer_ops_ctrl.layer_set_param(i, key, v)
 func _load_snap_layers(snap: Dictionary, active_id: String) -> void:
 	await _layer_ops_ctrl._load_snap_layers(snap, active_id)
+## 图片和实体共用画布节点；只有实体进入实例码索引。
 func make_object(aid: String) -> EntityNode:
-	return _entity_factory_ctrl.make_object(aid)
+	return EntityNode.create(manifest, aid, entity_display_size(aid), tile_w, thumbs, grid)
+
 func entity_display_size(aid: String) -> Vector2:
-	return _entity_factory_ctrl.entity_display_size(aid)
+	var size: Vector2 = ent_sizes.get(aid, Vector2.ZERO)
+	return size if size != Vector2.ZERO else Vector2(grid.tile)
+
 func is_placeable(aid: String) -> bool:
-	return _entity_factory_ctrl.is_placeable(aid)
+	var asset := AssetDecl.by_id(manifest, aid)
+	return not asset.get("disabled", false) and (asset.get("kind") == "entity" or asset.get("shape") == "image")
+
 func _ensure_code(n: EntityNode) -> void:
-	_entity_factory_ctrl._ensure_code(n)
-func _fresh_inst_code() -> String:
-	return _entity_factory_ctrl._fresh_inst_code()
+	if not n.is_entity() or n.code != "":
+		return
+	var index := _ent_by_code_index()
+	var code := ContentIdRef.new_inst_code()
+	while index.has(code):
+		code = ContentIdRef.new_inst_code()
+	n.code = code
+	index[code] = n

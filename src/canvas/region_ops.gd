@@ -303,21 +303,20 @@ func _layer_region_changed(message: String) -> void:
 
 ## 按模板重建一个实例节点（层按模板里的层码找，找不到落最底层）。
 ## 区域拖动/区域粘贴共用这一个入口，避免两处各写一遍落层逻辑。
-func _instantiate(t: Dictionary, origin: Vector2i, lnames := {}, missed: Array = [], same_map := true) -> EntityNode:
+func _instantiate(t: Dictionary, row: Dictionary, origin: Vector2i, lnames := {}, missed: Array = [], same_map := true) -> EntityNode:
 	var aid := str(t.get("asset", ""))
-	if aid == "":
+	if not cvs.is_placeable(aid):
 		return null
 	var n: EntityNode = cvs.make_object(aid)
-	if not cvs.is_placeable(aid):
-		n.queue_free()   # 目标项目没有这个资产（或不是可摆放类型）：跳过，不落空节点
-		return null
 	# R11：实例落层与瓦片同一条规则——层码直配 → 唯一层名 → 记入 missed。
 	var li: int = _paste_layer_index(str(t.get("layer", "")), lnames, missed, same_map)
 	n.layer_id = cvs.layer_id(li)
 	if n.layer_id == "":
 		n.layer_id = cvs.layer_id(0)
-	n.props = (t.get("props", {}) as Dictionary).duplicate(true)
-	n.functions = (t.get("functions", []) as Array).duplicate(true)
+	n.props = (row.get("props", {}) as Dictionary).duplicate(true)
+	if n.is_entity():
+		n.code = str(row.get("code", ""))
+		n.functions = (row.get("functions", []) as Array).duplicate(true)
 	n.data_transform = (t.get("transform", {}) as Dictionary).duplicate(true)
 	n.z_policy = str(t.get("zPolicy", "auto"))
 	n.visible_flag = bool(t.get("visible", true))
@@ -332,9 +331,6 @@ func _instantiate(t: Dictionary, origin: Vector2i, lnames := {}, missed: Array =
 		n.position = cvs.grid.region_origin_px(origin) + (t.pixel_offset as Vector2) + n.sort_anchor()
 	var ei: int = cvs._layer_index_of(n.layer_id)
 	cvs._place_in_layer(n, maxi(ei, 0))
-	# 新实例按需发码（场景实例不产码）；旧码只作为引用重映射的键
-	if n.is_entity() and n.code == "":
-		n.code = cvs._fresh_inst_code()
 	return n
 
 ## object 摆放模式下区域复制/剪切 = 实体剪贴板（复用实体半区）
@@ -588,27 +584,16 @@ func _paste_region(origin: Vector2i) -> void:
 			cvs.set_collision_cell(cc, true, str(t[2]), str(t[3]), raw_p)
 		else:
 			cvs.set_collision_cell(cc, true, "solid", "", {})
-	# 行与剪贴板条目一一对应（ClonePlan 不跳行）：对账下标按**剪贴板行序**推进（R11：跳过的实例不消费计划项）。
-	var pasted: Array = []
-	var ridx := 0
-	for t in cvs._region_clip.get("ents", []):   # 键统一为 ents（预览也读 ents）
-		var tpl := t as Dictionary
-		var n := _instantiate(tpl, origin, lnames, missed, same_map)
-		if n == null:
-			ridx += 1
-			continue
-		# 重映射后的行覆盖身份/引用/绑定（位置与变换来自模板，已由 _instantiate 落好）
-		if ridx < remapped.size():
-			var row: Dictionary = remapped[ridx]
-			if str(row.get("code", "")) != "":
-				n.code = str(row.get("code", ""))
-			if row.get("props", null) is Dictionary:
-				n.props = (row.get("props", {}) as Dictionary).duplicate(true)
-			if row.get("functions", null) is Array:
-				n.functions = (row.get("functions", []) as Array).duplicate(true)
-			n.refresh_visual()
-		pasted.append(n)
-		ridx += 1
+	# ClonePlan 与剪贴板保持同一行序。先落盘面已有的计划码，再补缺码实体。
+	var missing_codes: Array[EntityNode] = []
+	var templates: Array = cvs._region_clip.get("ents", [])
+	for i in remapped.size():
+		var n := _instantiate(templates[i], remapped[i], origin, lnames, missed, same_map)
+		if n != null and n.is_entity() and n.code.is_empty():
+			missing_codes.append(n)
+	cvs._ent_by_id_dirty = true
+	for n in missing_codes:
+		cvs._ensure_code(n)
 	cvs._mark()   # 区域粘贴含实体，保持索引置脏
 	cvs._paste_mode = false
 	var n_new: int = (plan.get("pending_contents", []) as Array).size()

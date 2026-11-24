@@ -53,7 +53,6 @@ src/
 │   ├── selection_ops.gd    单选/框选/组拖、实体剪贴板、引用连线把手与顶点把手（E2）
 │   ├── region_ops.gd       区域操作：快照/复制/剪切/粘贴/拖动搬迁 + 层与引用重映射
 │   ├── layer_ops.gd        层栈运行时与管理：三段容器/显隐锁定/增删改名移（editor_canvas 拆出）
-│   ├── entity_factory.gd   实体工厂：建节点/实例码发号/占位尺寸（editor_canvas 拆出）
 │   ├── collision_view.gd   碰撞格可视化：把隐形碰撞格画成半透明色块（按类型分色）
 │   ├── tri_tile_view.gd    B3 三角格自绘瓦片层：按三角形轮廓贴图集切片（TileMapLayer 表达不了半格）
 │   ├── tile_replace.gd     E2 批量替换瓦片的纯数据层：选区扫描 + 目标图集冲突计划
