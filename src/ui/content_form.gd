@@ -418,6 +418,9 @@ func project_reference_options(decl: Dictionary, context: String) -> Array:
 	var scoped := decl.duplicate()
 	scoped["_mapKey"] = context
 	var options := _resolve_options(scoped, true)
+	if source == "edge:coordinates" and not options.is_empty():
+		options[0]["code"] = ""
+		return options
 	if source.begins_with("port:") or source.begins_with("edge:"):
 		var local: Array = []
 		for option in options:
@@ -530,6 +533,11 @@ func _resolve_options(decl: Dictionary, project_scope := false, saved_only := fa
 		var emap := str(decl.get("_mapKey", ""))
 		if project_scope and emap == "":
 			return []
+		if src == "edge:coordinates":
+			if not saved_only and can_pick_on_canvas(emap):
+				return [RefFields.edge_context(app.canvas.map_data.meta, manifest)]
+			var map := RefFields.edge_map(manifest, emap) if emap != "" else {}
+			return [] if map.is_empty() else [RefFields.edge_context(map.meta, manifest)]
 		if not saved_only and can_pick_on_canvas(emap):
 			return app.canvas._edge_candidates()
 		return RefFields.edge_candidates(manifest, emap) if emap != "" else []

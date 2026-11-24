@@ -313,6 +313,7 @@ func _draw_screen(parent: Node, layout: Dictionary, extent: Vector2, locale: Str
 						if row.get("module") == "course-door":
 							runtime_course["screenMarker"] = row.get("props", {}).get("marker", {})
 							runtime_course["screenCrossing"] = row.get("props", {}).get("crossing", {})
+							runtime_course["screenCheckpoint"] = row.get("props", {}).get("checkpoint", {})
 						opened_buttons.append(button.text)
 						_follow_target.call_deferred(target))
 					buttons.append(button)

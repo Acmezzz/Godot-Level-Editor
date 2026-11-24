@@ -388,44 +388,94 @@ static func _build_object_reference(decl: Dictionary, value: Variant, source: St
 	var maps: Array = []
 	if str(decl.get("mapField", "")) == "" and str(decl.get("_mapKey", "")) == "" and resolve.is_valid():
 		maps = resolve.call({"source": "editor:reference-maps"})
-	if maps.is_empty():
+	var edge := source == "edge:" and resolve.is_valid()
+	if maps.is_empty() and not edge:
 		return _build_choice(choice, encoded.call(current), func(raw): return on_set.call(decode.call(raw)), resolve)
 	var box := Kit.vbox(3)
 	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var map := OptionButton.new()
-	map.name = "ReferenceTargetMap"
-	if maps[0].v != "":
-		map.add_item("选择目标地图…")
-		map.set_item_metadata(0, "")
-	var selected := 0
-	for item in maps:
-		map.add_item(item.t)
-		var index := map.item_count - 1
-		map.set_item_metadata(index, item.v)
-		if item.v == current.get("map", ""):
-			selected = index
-	map.select(selected)
-	box.add_child(map)
+	var map: OptionButton
+	if not maps.is_empty():
+		map = OptionButton.new()
+		map.name = "ReferenceTargetMap"
+		if maps[0].v != "":
+			map.add_item("选择目标地图…")
+			map.set_item_metadata(0, "")
+		var selected := 0
+		for item in maps:
+			map.add_item(item.t)
+			var index := map.item_count - 1
+			map.set_item_metadata(index, item.v)
+			if item.v == current.get("map", ""):
+				selected = index
+		map.select(selected)
+		box.add_child(map)
+	var value_box := Kit.vbox(3)
+	box.add_child(value_box)
 	var state := {"target": current, "commit": Callable()}
 	var render := func():
-		if box.get_child_count() > 1:
-			var old := box.get_child(1)
-			box.remove_child(old)
+		for old in value_box.get_children():
+			value_box.remove_child(old)
 			old.queue_free()
-		var key: String = map.get_selected_metadata()
+		var key: String = map.get_selected_metadata() if map != null else str(decl.get("_mapKey", ""))
 		var scoped := choice.merged({"_mapKey": key}, true)
-		var field := _build_choice(scoped, encoded.call(state.target), func(raw: String):
-			var next: Dictionary = decode.call(raw)
+		var apply := func(next: Dictionary):
 			var result = on_set.call(next)
 			if not result is bool or result:
 				state.target = next
-			return result, resolve)
+				return true
+			return false
+		var field := _build_choice(scoped, encoded.call(state.target),
+			func(raw: String): return apply.call(decode.call(raw)), resolve)
 		field.ctl.name = "ReferenceTargetValue"
-		box.add_child(field.ctl)
+		value_box.add_child(field.ctl)
 		state.commit = field.commit
+		if edge:
+			_add_edge_coordinates(value_box, scoped, state.target, resolve, func(next: Dictionary):
+				var opt: OptionButton = field.ctl
+				var raw: String = encoded.call(next)
+				for i in opt.item_count:
+					if opt.get_item_metadata(i) == raw:
+						opt.select(i)
+						return field.commit.call()
+				opt.add_item(next.edge.replace("|", " — "))
+				opt.set_item_metadata(opt.item_count - 1, raw)
+				opt.select(opt.item_count - 1)
+				return field.commit.call())
 	render.call()
-	map.item_selected.connect(func(_i: int): render.call())
+	if map != null:
+		map.item_selected.connect(func(_i: int): render.call())
 	return {"ctl": box, "commit": func(): return state.commit.call()}
+
+static func _add_edge_coordinates(box: VBoxContainer, decl: Dictionary, value: Dictionary,
+		resolve: Callable, apply: Callable) -> void:
+	var row := Kit.hbox(4)
+	var entry := LineEdit.new()
+	entry.name = "EdgeCoordinates"
+	entry.placeholder_text = "x1,y1|x2,y2"
+	entry.tooltip_text = "输入共边的两个根格坐标，顺序不限。"
+	entry.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	entry.text = str(value.get("edge", ""))
+	var note := Label.new()
+	note.name = "EdgeCoordinatesStatus"
+	note.hide()
+	var submit := func():
+		var contexts: Array = resolve.call(decl.merged({"source": "edge:coordinates"}, true))
+		if contexts.is_empty():
+			note.text = "请先选择可读的目标地图。"
+		else:
+			var target := RefFields.edge_at_coordinates(contexts[0], entry.text)
+			if not target.is_empty():
+				if apply.call(target):
+					entry.text = target.edge
+					note.hide()
+				return
+			note.text = "请输入地图范围内的两个共边格坐标。"
+		note.show()
+	entry.text_submitted.connect(func(_text: String): submit.call())
+	row.add_child(entry)
+	row.add_child(Kit.button("用坐标", submit, "ghost"))
+	box.add_child(row)
+	box.add_child(note)
 
 ## array：可增删行容器，每行一个元素控件；值 = 各行 state.v 按顺序收集。
 ## 行删除前先冲刷该行连续控件的待写值（commit），行序变动靠行字典引用而非闭包下标。

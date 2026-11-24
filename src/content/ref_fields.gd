@@ -306,13 +306,25 @@ static func port_options(manifest: Dictionary, map_key: String, objects: Array, 
 ## 按规范代表边（EdgeRef.canonical_edge）去重排序。返回 [{v: JSON({map, cell, edge}), t: "(x,y)-(x,y)"}]。
 ## 地图解析失败 / 读不到返回空（控件保留原值，不静默改写）。
 static func edge_candidates(manifest: Dictionary, map_key: String) -> Array:
+	return edge_candidates_of(edge_map(manifest, map_key), manifest)
+
+static func edge_map(manifest: Dictionary, map_key: String) -> Dictionary:
 	var rm: Dictionary = ReferenceIndex.resolve_map(manifest, map_key)
-	if str(rm.get("status", "")) != "ok":
-		return []
-	var name := str(rm.get("key", ""))
-	if name == "":
-		return []
-	return edge_candidates_of(MapStore.read(manifest, name), manifest)
+	return MapStore.read(manifest, str(rm.key)) if rm.status == "ok" else {}
+
+static func edge_context(meta: Dictionary, manifest: Dictionary) -> Dictionary:
+	return {"code": str(meta.get("code", "")), "grid": GridSpace.resolve(meta, manifest).grid,
+		"w": int(meta.get("w", 120)), "h": int(meta.get("h", 56))}
+
+static func edge_at_coordinates(context: Dictionary, coordinates: String) -> Dictionary:
+	var ends := EdgeRef.parse_edge(coordinates)
+	if ends.size() != 2:
+		return {}
+	var a := Vector2i(ends[0][0], ends[0][1])
+	var b := Vector2i(ends[1][0], ends[1][1])
+	if EdgeRef.segment(context.grid, a, b, context.w, context.h).is_empty():
+		return {}
+	return EdgeRef.value_of(context.code, a, b)
 
 ## 已读地图文档 → 边候选（画布对内存文档直接调，避免再读盘）。瓦片格号按生效拓扑解析。
 static func edge_candidates_of(data: Dictionary, manifest: Dictionary) -> Array:

@@ -17,8 +17,7 @@ const ViewData := preload("res://src/map/map_view_data.gd")
 const Graph := preload("res://src/map/cell_graph.gd")
 const Layout := preload("res://src/project/screen_layout.gd")
 const Picks := preload("res://src/project/frame_picks.gd")
-const EdgeRef := preload("res://src/map/edge_ref.gd")
-const K := preload("res://src/core/constants.gd")
+const RefFields := preload("res://src/content/ref_fields.gd")
 const CAPABILITY := "mapFrame"
 
 class ReferenceSelection extends RefCounted:
@@ -316,9 +315,7 @@ static func open_reference(app, decl: Dictionary, resolve: Callable, commit: Cal
 			source["source"] = "port:" + ",".join(PackedStringArray(FieldWidgets.canvas_pick_types(decl)))
 		"edge":
 			prepare = func(map: Dictionary, _current: Callable) -> String:
-				var meta: Dictionary = map.meta
-				edge_scope.assign({"code": meta.code, "grid": GridSpace.resolve(meta, app.manifest).grid,
-					"w": int(meta.get("w", K.DEFAULT_MAP_W)), "h": int(meta.get("h", K.DEFAULT_MAP_H))})
+				edge_scope.assign(RefFields.edge_context(map.meta, app.manifest))
 				return ""
 	var match_target := func(value: Variant) -> Dictionary:
 		if mode == "edge":
@@ -366,16 +363,10 @@ static func open_reference(app, decl: Dictionary, resolve: Callable, commit: Cal
 static func _match_edge(value: Variant, scope: Dictionary) -> Dictionary:
 	if not value is Dictionary or value.get("map") != scope.code or not value.get("edge") is String:
 		return {}
-	var ends := EdgeRef.parse_edge(value.edge)
-	if ends.size() != 2:
-		return {}
-	var a := Vector2i(ends[0][0], ends[0][1])
-	var b := Vector2i(ends[1][0], ends[1][1])
-	if EdgeRef.segment(scope.grid, a, b, scope.w, scope.h).is_empty():
-		return {}
-	var canonical := EdgeRef.value_of(scope.code, a, b)
+	var canonical := RefFields.edge_at_coordinates(scope, value.edge)
 	var cell = value.get("cell")
-	if value.edge != canonical.edge or not cell is Array or cell.size() != 2 or cell[0] != a.x or cell[1] != a.y:
+	if canonical.is_empty() or value.edge != canonical.edge or not cell is Array or cell.size() != 2 \
+			or cell[0] != canonical.cell[0] or cell[1] != canonical.cell[1]:
 		return {}
 	return {"v": canonical, "t": canonical.edge.replace("|", " — ")}
 

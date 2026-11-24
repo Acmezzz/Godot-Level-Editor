@@ -48,7 +48,8 @@ func run() -> void:
 			"args": ["--rendering-method", "gl_compatibility", "--audio-driver", "Dummy", "--path", "%projectpath%", "--"]},
 		"screenModules": {"course-door": {"outputs": {"accepted": {"name": "Enter", "arrivalPorts": ["arrival"]}},
 			"fields": [{"id": "marker", "kind": "input", "type": "port_ref", "of": "signal"},
-				{"id": "crossing", "kind": "input", "type": "edge_ref"}]},
+				{"id": "crossing", "kind": "input", "type": "edge_ref"},
+				{"id": "checkpoint", "kind": "input", "type": "edge_ref"}]},
 			"signal-latch": {"name": "Latch", "outputs": {"accepted": {"name": "Continue", "screens": true}}, "fields": [
 			{"id": "presses", "kind": "input", "type": "int", "min": 1, "default": 1}]}},
 		"functions": {"course_rules": {"code": "CRUL", "name": "Course rules", "fields": [
@@ -600,6 +601,7 @@ func run() -> void:
 		and result.get("arrivalPort") == "door" and result.get("arrivalInstance") == copy_host
 		and result.get("screenMarker") == {"map": copy_code, "inst": copy_host, "port": "wire"}
 		and result.get("screenCrossing") == {"map": copy_code, "cell": [1.0, 1.0], "edge": "1,1|2,1"}
+		and result.get("screenCheckpoint") == {"map": copy_code, "cell": [2.0, 2.0], "edge": "2,2|3,2"}
 		and result.get("remotePort") == remote_port
 		and result.get("placed") == copy.objects.map(func(row): return row.code) and result.get("text") == "Screen sequence complete",
 		"the game reads the map-level completion outlet and reaches the conclusion: %s" % [report])
@@ -715,6 +717,16 @@ func add_screen(id: String, label: String, module: Dictionary, target: Dictionar
 			return
 		if not await pick_relay_reference(pop, "marker", target.map):
 			return
+		var checkpoint: Control = pop.find_child("LayoutModuleField_checkpoint", true, false)
+		choose(checkpoint.find_child("ReferenceTargetMap", true, false), target.map)
+		var coordinates: LineEdit = checkpoint.find_child("EdgeCoordinates", true, false)
+		coordinates.text = "0,0|2,2"
+		coordinates.text_submitted.emit(coordinates.text)
+		check(checkpoint.find_child("EdgeCoordinatesStatus", true, false).visible,
+			"coordinate entry rejects two cells that do not share an edge")
+		coordinates.text = "3,2|2,2"
+		coordinates.text_submitted.emit(coordinates.text)
+		check(coordinates.text == "2,2|3,2", "coordinate entry accepts and orders an empty-map edge")
 	var control: OptionButton = pop.find_child("LayoutElementTarget" if module.is_empty() else "LayoutOutput_accepted", true, false)
 	choose(control, target)
 	press(pop, "保存参考视图")
