@@ -152,6 +152,9 @@ func _jump_to(it: Dictionary) -> void:
 	var typ := str(j.get("type", ""))
 	if typ == "" or app.canvas == null:
 		return
+	if typ == "content":
+		app.project_shell.content_editor._library.open_issue(j)
+		return
 	if typ == "asset":
 		# A4：停用/待确认的资产在资产页有恢复与候选按钮
 		app._set_mode("asset", str(j.get("id", "")))

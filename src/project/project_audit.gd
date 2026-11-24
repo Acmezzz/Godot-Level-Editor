@@ -286,7 +286,7 @@ static func _content_ref_checks(manifest: Dictionary, kind: String, cid: String,
 				if sc != "" and StepDecls.step_by_code(manifest, sc).is_empty():
 					out.append({"kind": "content", "severity": "warning", "path": "%s.steps[%d]" % [label, i],
 						"message": "步骤码不在清单步骤池里: %s" % sc,
-						"map": "", "jump": {}})
+						"map": "", "jump": _content_jump(kind, cid, "", "", i)})
 	var findings: Array = []
 	var targets := {}
 	for ref in _content_links(manifest, kind, data, findings):
@@ -294,14 +294,20 @@ static func _content_ref_checks(manifest: Dictionary, kind: String, cid: String,
 		if not targets.has(key):
 			targets[key] = ContentStore.read_ex(manifest, ref.fn, ref.cid).status
 		if targets[key] == "missing":
-			findings.append({"path": ref.path, "message": "引用的内容不存在：%s/%s" % [ref.fn, ref.cid]})
+			findings.append({"path": ref.path, "field": ref.field, "step_index": ref.step_index,
+				"message": "引用的内容不存在：%s/%s" % [ref.fn, ref.cid]})
 		elif targets[key] != "ok":
-			findings.append({"path": ref.path, "message": "引用的内容无法读取：%s/%s (%s)" % [
+			findings.append({"path": ref.path, "field": ref.field, "step_index": ref.step_index,
+				"message": "引用的内容无法读取：%s/%s (%s)" % [
 				ref.fn, ref.cid, targets[key]]})
 	for issue in findings:
 		out.append({"kind": "content", "severity": "warning", "path": label + "." + str(issue.path),
-			"message": str(issue.message), "map": "", "jump": {}})
+			"message": str(issue.message), "map": "",
+			"jump": _content_jump(kind, cid, issue.field, "", issue.step_index)})
 	return out
+
+static func _content_jump(fn: String, cid: String, field: String, map_context: String, step_index: int) -> Dictionary:
+	return {"type": "content", "fn": fn, "id": cid, "field": field, "context": map_context, "step_index": step_index}
 
 static func _as_list(v) -> Array:
 	if v is Array:
@@ -538,7 +544,7 @@ static func _content_links(manifest: Dictionary, source_fn: String, data: Dictio
 		findings: Array = []) -> Array:
 	var out: Array = []
 	for section in _content_sections(manifest, source_fn, data):
-		_collect_content_links(manifest, section.decls, section.values, source_fn, section.prefix, out, findings)
+		_collect_content_links(manifest, section.decls, section.values, source_fn, section.prefix, out, findings, section.step_index)
 	return out
 
 static func _content_sections(manifest: Dictionary, fn: String, data: Dictionary) -> Array:
@@ -549,7 +555,7 @@ static func _content_sections(manifest: Dictionary, fn: String, data: Dictionary
 			var fields = ConditionDecls.condition_decl(manifest, str(condition)).get("fields")
 			if fields is Array:
 				decls.append_array(fields)
-	var out: Array = [{"decls": decls, "values": data.get("fields"), "prefix": ""}]
+	var out: Array = [{"decls": decls, "values": data.get("fields"), "prefix": "", "step_index": -1}]
 	var steps = data.get("steps")
 	if steps is Array:
 		for i in steps.size():
@@ -559,7 +565,7 @@ static func _content_sections(manifest: Dictionary, fn: String, data: Dictionary
 			var sd := StepDecls.step_by_code(manifest, str(step.get("step", "")))
 			var fields = sd.get("fields")
 			if fields is Array:
-				out.append({"decls": fields, "values": step.get("fields"), "prefix": "steps[%d]." % i})
+				out.append({"decls": fields, "values": step.get("fields"), "prefix": "steps[%d]." % i, "step_index": i})
 	return out
 
 static func _collect_spatial_contexts(manifest: Dictionary, data: Dictionary, name: String,
@@ -597,7 +603,8 @@ static func _contextual_content_checks(manifest: Dictionary, fn: String, cid: St
 				elif label != "":
 					path += " · 地图 " + str(label)
 				out.append({"kind": "content", "severity": "warning", "path": path,
-					"message": issue.message, "map": context.name, "jump": {}})
+					"message": issue.message, "map": context.name,
+					"jump": _content_jump(fn, cid, issue.prop, context.name, section.step_index) if prefix == "" else {}})
 	return out
 
 ## 传播状态由 (功能, 内容, 入口, 当前地图) 唯一确定。分支只传地图，不替游戏计算条件；
@@ -880,7 +887,7 @@ static func draft_inbound_refs(manifest: Dictionary, cid: String, fn_id := "") -
 	return out
 
 static func _collect_content_links(manifest: Dictionary, decls: Array, values, source_fn: String,
-		prefix: String, out: Array, findings: Array, depth := 0) -> void:
+		prefix: String, out: Array, findings: Array, step_index: int, depth := 0, root_field := "") -> void:
 	if not values is Dictionary or depth > 8:
 		return
 	for fd in decls:
@@ -894,19 +901,24 @@ static func _collect_content_links(manifest: Dictionary, decls: Array, values, s
 			continue
 		var value = values[key]
 		var path := prefix + id
+		var field := id if root_field == "" else root_field
 		if fd.get("type") == "array" and fd.get("of") == "condition":
+			var first := findings.size()
 			_check_condition_rows(manifest, fd, value, path, findings)
+			for i in range(first, findings.size()):
+				findings[i].merge({"field": field, "step_index": step_index})
 		for scope in RefFields.nested_scopes(manifest, fd, value):
 			var subpath := path + "#%d." % int(scope.path[0])
 			if scope.path.size() == 2:
 				subpath += "fields."
-			_collect_content_links(manifest, scope.decls, scope.values, source_fn, subpath, out, findings, depth + 1)
+			_collect_content_links(manifest, scope.decls, scope.values, source_fn, subpath, out, findings, step_index, depth + 1, field)
 		var desc := RefFields.describe(fd)
 		if desc.kind == "view":
 			var views := ReferenceIndex.view_ids(manifest)
 			for entry in _as_list(value):
 				if not _empty_reference_value(entry) and not views.has(entry):
-					findings.append({"path": path, "message": "引用的参考视图不存在：" + str(entry)})
+					findings.append({"path": path, "field": field, "step_index": step_index,
+						"message": "引用的参考视图不存在：" + str(entry)})
 			continue
 		if desc.kind != "content":
 			continue
@@ -917,7 +929,7 @@ static func _collect_content_links(manifest: Dictionary, decls: Array, values, s
 		for cid in _as_list(value):
 			if cid is String and cid != "" and not distinct.has(cid):
 				distinct[cid] = true
-				out.append({"fn": want_fn, "cid": cid, "path": path,
+				out.append({"fn": want_fn, "cid": cid, "path": path, "field": field, "step_index": step_index,
 					"map_context": fd.get("contentMapContext", ""),
 					"map_key": RefFields.paired_map_value(fd, decls, values)})
 

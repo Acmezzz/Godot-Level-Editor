@@ -146,7 +146,7 @@ func _open_steps_editor(i: int) -> void:
 	_steps_map = _current_map_key()
 	_mount_target()
 
-func open_content(fn_id: String, cid: String, context := "", step_index := -1) -> bool:
+func open_content(fn_id: String, cid: String, context := "", step_index := -1, field := "") -> bool:
 	if not host.commit_fields() or not FunctionDecls.fn_has_steps(manifest, fn_id) or cid == "":
 		return false
 	_project_target = true
@@ -162,6 +162,16 @@ func open_content(fn_id: String, cid: String, context := "", step_index := -1) -
 	_mount_target()
 	if step_index >= 0:
 		_steps_pick(step_index)
+		if field != "" and _steps_form != null:
+			for row in _steps_form.get_children():
+				if row.get_meta("field_id", "") == field:
+					Kit.highlight_field_row(row)
+					var ancestor := row.get_parent()
+					while ancestor != null and not ancestor is ScrollContainer:
+						ancestor = ancestor.get_parent()
+					if ancestor is ScrollContainer:
+						ancestor.ensure_control_visible.call_deferred(row)
+					break
 	return true
 
 func _mount_target() -> void:
@@ -1059,6 +1069,7 @@ func _step_field_row(fd: Dictionary, sfd: Dictionary, siblings: Array, shown: Di
 	if built.get("commit") is Callable and (built.commit as Callable).is_valid():
 		_pending_commits.append(built.commit)
 	var row := Kit.field_row(label, built.ctl, 96)
+	row.set_meta("field_id", str(fd.get("id", "")))
 	var tip := FieldWidgets.decl_tooltip(fd)
 	if tip != "":
 		row.tooltip_text = tip

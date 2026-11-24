@@ -291,7 +291,18 @@ func _open_flow() -> void:
 	refresh.call("")
 	app._open_popup(pop, Vector2i(750, 530))
 
-func _open_item(kind: String, cid: String) -> void:
+func open_issue(jump: Dictionary) -> void:
+	var fn: String = jump.fn
+	var cid: String = jump.id
+	var field: String = jump.field
+	var context: String = jump.context
+	var step_index: int = jump.step_index
+	if step_index >= 0 and Functions.fn_has_steps(manifest, fn):
+		host._steps.open_content(fn, cid, context, step_index, field)
+	elif host.commit_fields():
+		_open_item(fn, cid, context, field)
+
+func _open_item(kind: String, cid: String, context := "", field := "") -> void:
 	var fn := Functions.function_decl(manifest, kind)
 	if fn.is_empty():
 		return
@@ -300,7 +311,7 @@ func _open_item(kind: String, cid: String) -> void:
 	var rd := Store.read_ex(source, kind, cid) if not creating else {}
 	var readable: bool = creating or rd.get("status") == "ok"
 	var data: Dictionary = {"name": "", "fields": {}, "scope": "project"} if creating else rd.get("data", {})
-	var state := {"id": cid, "digest": str(rd.get("digest", "")), "new": creating, "map": ""}
+	var state := {"id": cid, "digest": str(rd.get("digest", "")), "new": creating, "map": context}
 	var shell: Dictionary = app._popup_body("编辑 · " + str(fn.get("name", kind)),
 		"保存写入内容文件。依赖其他字段的引用选项会在保存后更新。")
 	var pop: PopupPanel = shell.pop
@@ -350,8 +361,14 @@ func _open_item(kind: String, cid: String) -> void:
 			form.remove_child(child)
 			child.queue_free()
 		_build_fields(form, fn, fields, commits, notice, str(state.map), refresh)
+		if field != "":
+			for row in form.get_children():
+				if row.get_meta("field_id", "") == field:
+					Kit.highlight_field_row(row)
+					scroll.ensure_control_visible.call_deferred(row)
+					break
 	form.set_meta("render_fields", render)
-	var map_selector: OptionButton = host._form.reference_context_selector("", func(key: String) -> bool:
+	var map_selector: OptionButton = host._form.reference_context_selector(context, func(key: String) -> bool:
 		for commit in commits:
 			if not bool(commit.call()):
 				return false
@@ -488,6 +505,7 @@ func _build_field(form: VBoxContainer, fd: Dictionary, siblings: Array, values: 
 	if commit.is_valid():
 		commits.append(commit)
 	var row := Kit.field_row(str(fd.get("name", fd.get("id", key))), built.ctl, 92)
+	row.set_meta("field_id", str(fd.get("id", "")))
 	row.tooltip_text = Widgets.decl_tooltip(fd)
 	form.add_child(row)
 	if Widgets.wants_frame_pick(fd) and Widgets.frame_value_available(fd, built):

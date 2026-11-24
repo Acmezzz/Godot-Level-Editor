@@ -130,6 +130,12 @@ static func field_row(label: String, control: Control, label_w := 72) -> HBoxCon
 	h.add_child(control)
 	return h
 
+static func highlight_field_row(row: Control) -> void:
+	var style := UiTheme.box(Color(UiTheme.WARN, 0.14), UiTheme.WARN, UiTheme.R_INNER, 6, 3)
+	row.set_meta("issue_highlight", true)
+	row.draw.connect(func(): row.draw_style_box(style, Rect2(Vector2.ZERO, row.size)))
+	row.queue_redraw()
+
 ## 分段头部：标题 + 右侧可选操作按钮
 static func section_header(title: String, action: Button = null) -> HBoxContainer:
 	var h := hbox(8)

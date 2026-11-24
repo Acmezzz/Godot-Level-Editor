@@ -3161,6 +3161,18 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 		"a missing layer is locatable and preserves the original reference")
 	check(await cvs.undo() and not Audit._ref_checks(cvs.extract(), manifest, "frame_pick").any(
 		func(issue): return issue.jump.get("prop") == "motion_layer"), "undo restores the referenced layer")
+	var campaign := Store.read(manifest, "campaign", "project-acceptance")
+	campaign.steps[2].fields.BRCH[0].DEST = "missing-content"
+	var findings := Audit._content_ref_checks(manifest, "campaign", "project-acceptance", campaign)
+	var nested := findings.filter(func(issue): return issue.path.ends_with("steps[2].routes#0.destination"))
+	check(nested.size() == 1, "nested branch issue retains its exact path")
+	if nested.size() == 1:
+		await app._layout_ctrl._issues_ctrl._jump_to(nested[0])
+		var issue_steps = editor._steps
+		check(issue_steps._steps_sel == 2 and issue_steps._steps_form.get_children().any(
+			func(row): return row.get_meta("field_id", "") == "routes" and row.get_meta("issue_highlight", false)),
+			"the issue drawer opens the owning step and marks the outer branch field")
+		issue_steps._teardown_steps_host()
 
 func _frame_contour_points(cvs: EditorCanvas, code: String) -> Array:
 	return _frame_contour_props(cvs, code).get("points", [])
@@ -3282,8 +3294,17 @@ func author_signal_room(app, project: String) -> void:
 		"the start content stores a chosen screen without creating a map")
 	var changed := manifest.duplicate(true)
 	changed.views = manifest.get("views", []).filter(func(view): return view.view_id != "watch-deck")
-	check(Audit.audit(changed).any(func(issue): return issue.path == "signal/project-watch.screen" and issue.message.contains("watch-deck")),
+	var broken_screen := Audit.audit(changed).filter(
+		func(issue): return issue.path == "signal/project-watch.screen" and issue.message.contains("watch-deck"))
+	check(broken_screen.size() == 1,
 		"a missing referenced screen is reported against its content field")
+	if broken_screen.size() == 1:
+		await app._layout_ctrl._issues_ctrl._jump_to(broken_screen[0])
+		var issue_form := _visible_popup(app)
+		check(collect(issue_form, "LineEdit")[1].text == "project-watch" and collect(issue_form, "HBoxContainer").any(
+			func(row): return row.get_meta("field_id", "") == "screen" and row.get_meta("issue_highlight", false)),
+			"the issue drawer opens the shared content and marks the screen field without an active map")
+		issue_form.hide()
 	library.open()
 	var pop: PopupPanel = _visible_popup(app)
 	var entries: ItemList = collect(pop, "ItemList").front()

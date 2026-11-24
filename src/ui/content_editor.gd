@@ -764,7 +764,7 @@ func _build_instance_values(spr: EntityNode) -> Control:
 		if FieldWidgets.wants_frame_pick(fd) and FieldWidgets.frame_value_available(fd, built):
 			frame_pick.call(row, fd, pair, apply, built.get("pick_values", Callable()))
 		if fid == _field_focus:
-			row.add_theme_stylebox_override("panel", Th.box(Color(Th.WARN, 0.14), Th.WARN, Th.R_INNER, 6, 3))
+			Kit.highlight_field_row(row)
 		box.add_child(row)
 		_pending_commits.append(built.commit)
 	if box.get_child_count() > 1:
@@ -879,7 +879,7 @@ func _build_ref_row(fd: Dictionary, props: Dictionary, fdecls: Array = []) -> Co
 		row.add_child(frame_pick)
 	# E1：问题抽屉跳「某字段悬空」——对应行加一次醒目标记（重建后即消失）
 	if fid == _field_focus:
-		row.add_theme_stylebox_override("panel", Th.box(Color(Th.WARN, 0.14), Th.WARN, Th.R_INNER, 6, 3))
+		Kit.highlight_field_row(row)
 		row.tooltip_text = "问题定位：这个引用字段需要处理"
 	return row
 
