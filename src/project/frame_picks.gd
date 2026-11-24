@@ -21,23 +21,34 @@ static func read(bytes: PackedByteArray, token: String, size: Vector2i) -> Dicti
 		if absf(u.cross(v)) < 0.001:
 			continue
 		var targets = row.get("targets", {})
-		var placement = row.get("placement", {})
-		var points := _triangle(placement.get("local")) if placement is Dictionary else PackedVector2Array()
-		var layer := str(placement.get("layer", "")) if points.size() == 3 else ""
-		var reciprocal := Vector3.ONE
-		if layer != "" and placement.has("reciprocalW"):
-			var raw = placement.reciprocalW
-			if raw is Array and raw.size() == 3 and raw.all(func(w): return _number(w) and w > 0.0):
-				var greatest := maxf(float(raw[0]), maxf(float(raw[1]), float(raw[2])))
-				reciprocal = Vector3(float(raw[0]) / greatest, float(raw[1]) / greatest, float(raw[2]) / greatest)
-				if minf(reciprocal.x, minf(reciprocal.y, reciprocal.z)) <= 0.0:
-					layer = ""
+		var placement := _mapping(row.get("placement"))
+		if not placement.is_empty():
+			var layer := str(row.placement.get("layer", ""))
+			if layer.is_empty():
+				placement = {}
 			else:
-				layer = ""
+				placement["layer"] = layer
 		regions.append({"screen": screen, "inverse": Transform2D(u, v, screen[0]).affine_inverse(),
 			"label": str(row.get("label", "")).left(120), "targets": targets if targets is Dictionary else {},
-			"layer": layer, "local": points, "reciprocal": reciprocal, "occludes": row.get("occludes") == true})
+			"placement": placement, "collision": _mapping(row.get("collision")), "occludes": row.get("occludes") == true})
 	return {"regions": regions}
+
+static func _mapping(value: Variant) -> Dictionary:
+	if not value is Dictionary:
+		return {}
+	var points := _triangle(value.get("local"))
+	if points.size() != 3:
+		return {}
+	var reciprocal := Vector3.ONE
+	if value.has("reciprocalW"):
+		var raw = value.reciprocalW
+		if not raw is Array or raw.size() != 3 or not raw.all(func(w): return _number(w) and w > 0.0):
+			return {}
+		var greatest := maxf(float(raw[0]), maxf(float(raw[1]), float(raw[2])))
+		reciprocal = Vector3(float(raw[0]) / greatest, float(raw[1]) / greatest, float(raw[2]) / greatest)
+		if minf(reciprocal.x, minf(reciprocal.y, reciprocal.z)) <= 0.0:
+			return {}
+	return {"local": points, "reciprocal": reciprocal}
 
 static func at(regions: Array, pixel: Vector2, mode: String) -> Dictionary:
 	for region in regions:
@@ -48,11 +59,12 @@ static func at(regions: Array, pixel: Vector2, mode: String) -> Dictionary:
 		if mode == "objectEdit":
 			value = region.targets.get("vertex", region.targets.get("entity"))
 		if mode == "placement":
-			if region.layer == "":
+			var mapping: Dictionary = region.placement
+			if mapping.is_empty():
 				if region.occludes:
 					break
 				continue
-			value = {"layer": region.layer, "point": _local_point(region, uv)}
+			value = {"layer": mapping.layer, "point": _local_point(mapping, uv)}
 		elif value == null:
 			if region.occludes:
 				break
@@ -62,11 +74,12 @@ static func at(regions: Array, pixel: Vector2, mode: String) -> Dictionary:
 
 ## Split at triangle boundaries before mapping a stroke. Even a narrow foreground
 ## blocker or a gap between separate projections must not be bridged in map space.
-static func placement_spans(regions: Array, a: Vector2, b: Vector2) -> Array:
+static func brush_spans(regions: Array, a: Vector2, b: Vector2, mode: String) -> Array:
 	var breaks: Array[float] = [0.0, 1.0]
 	var candidates := []
 	for region in regions:
-		if region.layer == "" and not region.occludes:
+		var mapping: Dictionary = region[mode]
+		if mapping.is_empty() and not region.occludes:
 			continue
 		var inv: Transform2D = region.inverse
 		var lo: Vector2 = inv * a
@@ -87,7 +100,7 @@ static func placement_spans(regions: Array, a: Vector2, b: Vector2) -> Array:
 			continue
 		breaks.append(entry)
 		breaks.append(exit)
-		candidates.append({"entry": entry, "exit": exit, "region": region})
+		candidates.append({"entry": entry, "exit": exit, "inverse": inv, "mapping": mapping})
 	breaks.sort()
 	var spans := []
 	for i in breaks.size() - 1:
@@ -99,13 +112,13 @@ static func placement_spans(regions: Array, a: Vector2, b: Vector2) -> Array:
 		for c in candidates:
 			if mid < c.entry or mid > c.exit:
 				continue
-			var region: Dictionary = c.region
-			if region.layer != "":
+			var mapping: Dictionary = c.mapping
+			if not mapping.is_empty():
 				var p := a.lerp(b, t0)
 				var q := a.lerp(b, t1)
-				var inverse: Transform2D = region.inverse
-				spans.append({"layer": region.layer, "a": _local_point(region, inverse * p),
-					"b": _local_point(region, inverse * q), "screen_a": p, "screen_b": q})
+				var inverse: Transform2D = c.inverse
+				spans.append({"layer": mapping.get("layer", ""), "a": _local_point(mapping, inverse * p),
+					"b": _local_point(mapping, inverse * q), "screen_a": p, "screen_b": q})
 			break
 	return spans
 

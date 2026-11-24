@@ -2260,11 +2260,13 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 	map.meta.layers[1].offset = [48, 16]
 	map.meta.layers[1].scale = 1.5
 	map.objects = [{"asset": "switch", "code": "PICK", "layer": primary, "x": 0, "y": 0}]
+	map.collision = [{"x": 1, "y": 1, "type": "solid", "material": "ice"}]
 	check(Maps.write(manifest, "frame_pick", map), "make a map with two game view lanes")
 	var path := Maps.path_for(manifest, "frame_pick")
 	var original_hash := FileAccess.get_sha256(path)
 	await app._load_map_file(path)
 	var cvs = app.canvas
+	app._on_layer(0)
 	cvs.stamp_asset = "door"
 	cvs.place_kind = "object"
 	cvs.snap_to_grid = true
@@ -2362,6 +2364,39 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 	var final_tiles: Dictionary = cvs.extract().tiles
 	check(final_tiles.get(primary, []).size() < painted.get(primary, []).size()
 		and final_tiles.get(upper, []) == painted.get(upper, []), "right button erases the picked tile without touching another layer")
+	var original_layer: int = cvs.active_layer
+	app._on_layer(cvs.collision_index())
+	cvs.collision_type = "one_way"
+	cvs.collision_shape = "r45"
+	app._layout_ctrl._on_map_menu_id(14)
+	var collision_pop := await _render_pick_frame(app)
+	if collision_pop == null:
+		return
+	check(_click_pick_frame(collision_pop, occluder).disabled, "foreground occludes the root collision mapping too")
+	var before_collision: Array = cvs.extract().collision
+	var collision_steps: int = cvs.undo_step_count()
+	apply = _drag_pick_frame(collision_pop, Vector2(0.11, 0.25), Vector2(0.86, 0.25))
+	check(not apply.disabled and cvs.extract().collision == before_collision, "projected root collision remains a draft")
+	apply.pressed.emit()
+	await process_frame
+	var authored_collision: Array = cvs.extract().collision
+	check(cvs.undo_step_count() == collision_steps + 1 and authored_collision.any(func(row): return row.x == 5 and row.y == 3)
+		and authored_collision.all(func(row): return row.x != 3 and row.x != 4 and row.type == "one_way" and row.shape == "r45")
+		and authored_collision.any(func(row): return row.x == 1 and row.y == 1 and row.get("material") == "ice")
+		and cvs.extract().tiles == final_tiles, "one collision stroke uses both root projections, preserves raw metadata and leaves tiles alone")
+	check(await cvs.undo() and cvs.extract().collision == before_collision, "undo restores the original root collision")
+	check(await cvs.redo() and cvs.extract().collision == authored_collision, "redo restores the authored slopes")
+	app._layout_ctrl._on_map_menu_id(14)
+	var collision_erase := await _render_pick_frame(app)
+	if collision_erase == null:
+		return
+	apply = _click_pick_frame(collision_erase, Vector2(0.12, 0.25), MOUSE_BUTTON_RIGHT)
+	check(not apply.disabled, "right click drafts root collision erase")
+	apply.pressed.emit()
+	await process_frame
+	check(cvs.collision.get_cell_source_id(Vector2i(1, 1)) == -1 and cvs.extract().tiles == final_tiles,
+		"collision erase removes the picked root cell and no tiles")
+	app._on_layer(original_layer)
 	app._layout_ctrl._on_map_menu_id(17)
 	var move_pop := await _render_pick_frame(app)
 	if move_pop == null:

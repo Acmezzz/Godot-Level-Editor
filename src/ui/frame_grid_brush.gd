@@ -1,17 +1,19 @@
 extends RefCounted
-## Accumulates a draft of tile cells from visible screen segments; applies one undo entry.
+## Draft tile or root collision cells from visible screen segments; apply as one stroke.
 
 const Picks := preload("res://src/project/frame_picks.gd")
 
 var canvas: EditorCanvas
+var collision: bool
 var groups := {}
 var traces := []
 var last := Vector2.ZERO
 var button := 0
 var erasing := false
 
-func _init(cvs: EditorCanvas) -> void:
+func _init(cvs: EditorCanvas, on_collision := false) -> void:
 	canvas = cvs
+	collision = on_collision
 
 func clear() -> void:
 	groups.clear()
@@ -42,11 +44,11 @@ func input(event: InputEvent, pixel: Vector2, regions: Array) -> bool:
 	return false
 
 func _extend(pixel: Vector2, regions: Array) -> void:
-	var spans := Picks.placement_spans(regions, last, pixel)
+	var spans := Picks.brush_spans(regions, last, pixel, "collision" if collision else "placement")
 	last = pixel
 	var meta: Dictionary = canvas.map_data.meta
 	for span in spans:
-		var layer := canvas._layer_index_of(span.layer)
+		var layer := canvas.collision_index() if collision else canvas._layer_index_of(span.layer)
 		if layer < 0 or canvas.is_layer_locked(layer):
 			continue
 		var grid := canvas.tile_grid_for_layer(layer)
@@ -54,12 +56,13 @@ func _extend(pixel: Vector2, regions: Array) -> void:
 		var b := grid.pick_cell(span.b)
 		if not grid.cell_in_map(a, int(meta.w), int(meta.h)) or not grid.cell_in_map(b, int(meta.w), int(meta.h)):
 			continue
-		var cells: Dictionary = groups.get_or_add(layer, {})
+		var cells: Dictionary = groups.get(layer, {})
 		var count := cells.size()
 		for cell: Vector2i in canvas._tool_ops_ctrl._brush_cells_multi(grid.cells_between(a, b)):
 			if grid.cell_in_map(cell, int(meta.w), int(meta.h)):
 				cells[cell] = true
 		if cells.size() > count:
+			groups[layer] = cells
 			traces.append([span.screen_a, span.screen_b])
 
 func ready() -> bool:
@@ -70,9 +73,12 @@ func message() -> String:
 	for layer in groups:
 		count += groups[layer].size()
 	if count == 0:
+		if collision:
+			return "请在游戏提供的根碰撞映射区内拖动。碰撞层须解锁。"
 		return "请在未锁定的可编辑区域内拖动。"
-	return "待%s %d 格 · %d 层。确认后写入；改用另一鼠标键会清除当前草稿。" % [
-		"擦除" if erasing else "涂刷", count, groups.size()]
+	var target := "碰撞层" if collision else "%d 层" % groups.size()
+	return "待%s %d 格 · %s。确认后写入；改用另一鼠标键会清除当前草稿。" % [
+		"擦除" if erasing else "涂刷", count, target]
 
 func apply() -> bool:
 	for layer: int in groups:
@@ -85,6 +91,8 @@ func apply() -> bool:
 		var cells: Array = groups[layer].keys()
 		if erasing:
 			changed = canvas._tool_ops_ctrl.erase_cells(cells, layer) or changed
+		elif collision:
+			changed = canvas._tool_ops_ctrl.paint_collision_cells(cells) or changed
 		else:
 			changed = canvas._tool_ops_ctrl.paint_tile_cells(layer, cells) or changed
 	canvas.end_gesture()

@@ -6,7 +6,7 @@ const FrameDialog := preload("res://src/ui/game_frame_dialog.gd")
 const FieldWidgets := preload("res://src/ui/field_widgets.gd")
 const Assets := preload("res://src/assets/asset_decl.gd")
 const Geometry := preload("res://src/map/object_geometry.gd")
-const TileBrush := preload("res://src/ui/frame_tile_brush.gd")
+const GridBrush := preload("res://src/ui/frame_grid_brush.gd")
 const ObjectEdit := preload("res://src/ui/frame_object_edit.gd")
 const CAPABILITY := "mapFrame"
 
@@ -14,8 +14,12 @@ static func available(app) -> bool:
 	return app.map_loaded and GamePreview.supports(app.manifest, CAPABILITY)
 
 static func open(app) -> void:
+	if app.map_loaded and app.canvas._is_grid_layer(app.canvas.active_layer):
+		_open(app, "collision", Callable(), {"title": "关卡游戏画面 · 碰撞笔刷",
+			"interaction": GridBrush.new(app.canvas, true), "confirm_label": "应用碰撞笔画"})
+		return
 	if app.map_loaded and app.canvas.place_kind != "object" and app.canvas.source_of_asset(app.canvas.paint_asset) >= 0:
-		_open(app, "placement", Callable(), {"interaction": TileBrush.new(app.canvas), "confirm_label": "应用笔画"})
+		_open(app, "placement", Callable(), {"interaction": GridBrush.new(app.canvas), "confirm_label": "应用笔画"})
 		return
 	var asset: String = app.canvas.stamp_asset if app.map_loaded else ""
 	var choose := func(value: Dictionary) -> Dictionary:

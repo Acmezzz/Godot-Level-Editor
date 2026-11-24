@@ -297,9 +297,11 @@ func _compose_pick_frame(surface: SubViewport, size: Vector2i, dir: String, requ
 		var down := start + Vector2(0.0, size.y * 0.4)
 		var layer: String = map.meta.layers[i].id
 		var local := Vector2(16 + i * 32, 16 + i * 16)
+		var root := Vector2(16 + i * 64, 16 + i * 32)
 		var region := {"label": "View " + str(i + 1),
 			"screen": [[start.x, start.y], [right.x, right.y], [down.x, down.y]],
-			"placement": {"layer": layer, "local": [[local.x, local.y], [local.x + 32, local.y], [local.x, local.y + 32]]}}
+			"placement": {"layer": layer, "local": [[local.x, local.y], [local.x + 32, local.y], [local.x, local.y + 32]]},
+			"collision": {"local": [[root.x, root.y], [root.x + 32, root.y], [root.x, root.y + 32]]}}
 		if i == 0:
 			var triangle := Polygon2D.new()
 			triangle.polygon = PackedVector2Array([start, right, down])
@@ -314,6 +316,7 @@ func _compose_pick_frame(surface: SubViewport, size: Vector2i, dir: String, requ
 			for vertex in mesh:
 				weights.append(-1.0 / vertex.z)
 			region.placement.reciprocalW = weights
+			region.collision.reciprocalW = weights
 		for row in map.objects:
 			if row.get("asset") == "door" and row.get("layer") == layer:
 				region["targets"] = {"entity": row.code, "port": {"map": map.meta.code, "inst": row.code, "port": "open"}}

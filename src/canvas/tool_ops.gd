@@ -49,7 +49,7 @@ func _brush_cells_multi(cells: Array) -> Array:
 
 
 ## 瓦片/碰撞笔画不压整图快照（H01）：首个真实改动前 stroke_begin 开始差量记录。
-## 实例增删与全局操作仍走 push_undo 整图快照，不在这里。
+## 实例增删使用独立的历史入口，不计入笔画。
 func _ensure_stroke_undo() -> void:
 	if not cvs._paint_pushed:
 		cvs._undo_history_ctrl.stroke_begin()
@@ -66,26 +66,27 @@ func _paint(c: Vector2i) -> void:
 		return
 	# 有真实改动才 _mark：拖动涂刷每个 mouse-motion 都进这里，无条件 mark 会让
 	# 碰撞视图整层重画、内容预览按 map_rev 的缓存反复失效重建（热路径）
-	var changed := false
-	# 碰撞元层涂刷走统一入口（类型/形状元数据跟笔刷的 collision_type/shape 走）
 	if cvs._is_grid_layer(cvs.active_layer):
-		for bc in _brush_cells(c):
-			var had: bool = cvs.collision.get_cell_source_id(bc) != -1
-			var cm = cvs._collision_meta.get(bc, null)
-			# 缺省值归一后比较（E13）：无 meta = solid+矩形；重复画同一缺省不在撤销栈里留空步
-			var ct := str(cm.get("type", "solid")) if cm != null else "solid"
-			var cs := str(cm.get("shape", "")) if cm != null else ""
-			var same: bool = had and ct == cvs.collision_type and cs == cvs.collision_shape
-			if not same:
-				_ensure_stroke_undo()
-				cvs._undo_history_ctrl.stroke_touch_collision(bc)
-				cvs.set_collision_cell(bc, true, cvs.collision_type, cvs.collision_shape)
-				changed = true
-		if changed:
-			cvs._mark_collision()   # P01：只改碰撞，红块镜像重画；瓦片/实体都没动
-		return
-	paint_tile_cells(cvs.active_layer, _brush_cells(c))
+		paint_collision_cells(_brush_cells(c))
+	else:
+		paint_tile_cells(cvs.active_layer, _brush_cells(c))
 
+func paint_collision_cells(cells: Array) -> bool:
+	if cvs.is_layer_locked(cvs.collision_index()):
+		return false
+	var changed := false
+	for bc: Vector2i in cells:
+		var meta: Dictionary = cvs._collision_meta.get(bc, {})
+		if cvs.collision.get_cell_source_id(bc) != -1 and meta.get("type", "solid") == cvs.collision_type \
+				and meta.get("shape", "") == cvs.collision_shape:
+			continue
+		_ensure_stroke_undo()
+		cvs._undo_history_ctrl.stroke_touch_collision(bc)
+		cvs.set_collision_cell(bc, true, cvs.collision_type, cvs.collision_shape)
+		changed = true
+	if changed:
+		cvs._mark_collision()
+	return changed
 
 func paint_tile_cells(li: int, cells: Array) -> bool:
 	if cvs.is_layer_locked(li):
