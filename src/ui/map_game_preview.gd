@@ -29,14 +29,16 @@ class ReferenceSelection extends RefCounted:
 	var regions: Array
 	var status: String
 	var ordered: bool
+	var layer: String
 	var clicks: PackedVector2Array
 
-	func _init(kind: String, lookup: Callable, save: Callable, current: Callable, sequence: bool) -> void:
+	func _init(kind: String, lookup: Callable, save: Callable, current: Callable, sequence: bool, target_layer: String) -> void:
 		mode = kind
 		match_target = lookup
 		commit = save
 		read = current
 		ordered = sequence
+		layer = target_layer
 		initial = read.call()
 		clear()
 
@@ -77,7 +79,7 @@ class ReferenceSelection extends RefCounted:
 			return true
 		if event.button_index != MOUSE_BUTTON_LEFT:
 			return false
-		var hit := Picks.at(hits, pixel, mode)
+		var hit := Picks.at(hits, pixel, mode, layer)
 		var candidate: Dictionary = {} if hit.is_empty() else match_target.call(hit.value)
 		if candidate.is_empty():
 			status = "这里没有此字段可选的目标。当前已选 %d 项。" % selected.size()
@@ -87,7 +89,7 @@ class ReferenceSelection extends RefCounted:
 			selected.erase(value)
 		else:
 			selected.append(value)
-			if mode == "collision":
+			if mode in ["collision", "placement"]:
 				clicks.append(pixel)
 		_update_message()
 		return true
@@ -99,7 +101,7 @@ class ReferenceSelection extends RefCounted:
 
 	func draw(frame: TextureRect, rect: Rect2) -> void:
 		var scale := rect.size / frame.texture.get_size()
-		if mode == "collision":
+		if mode in ["collision", "placement"]:
 			var line := PackedVector2Array()
 			for point in clicks:
 				line.append(rect.position + point * scale)
@@ -263,14 +265,15 @@ static func add_reference_button(app, row: Control, decl: Dictionary, pair: Call
 	if context == "" and (project_scope or not app.map_loaded) and not decl.has("mapField"):
 		return
 	var button := Kit.button("实景选…", func():
-		var key: String = pair.call()
+		var scope: Array = pair.call()
+		var key: String = scope[0]
 		var effective := key if key != "" else context
 		if (project_scope and effective == "") or not reference_available(app, effective):
 			app._set_status("请先选择此记录的配对地图。")
 			return
-		var scoped := decl.merged({"_mapKey": effective}, true)
+		var scoped := decl.merged({"_mapKey": effective, "_pickLayer": scope[1]}, true)
 		var save := func(value) -> bool:
-			if not is_instance_valid(row) or not row.is_inside_tree() or row.is_queued_for_deletion() or pair.call() != key:
+			if not is_instance_valid(row) or not row.is_inside_tree() or row.is_queued_for_deletion() or pair.call() != scope:
 				return false
 			# A temporary map resolves a local reference; it is not part of the authored value.
 			if key.is_empty() and not context.is_empty() and value is Dictionary:
@@ -286,6 +289,10 @@ static func add_reference_button(app, row: Control, decl: Dictionary, pair: Call
 static func open_reference(app, decl: Dictionary, resolve: Callable, commit: Callable, window: Window,
 		read := Callable()) -> void:
 	var mode := FieldWidgets.pick_mode(decl)
+	var layer := str(decl.get("_pickLayer", ""))
+	if mode == "placement" and layer.is_empty():
+		app._set_status("请先选择此字段所属的图层。")
+		return
 	var source := decl.duplicate()
 	match mode:
 		"entity":
@@ -295,13 +302,14 @@ static func open_reference(app, decl: Dictionary, resolve: Callable, commit: Cal
 		"edge":
 			source["source"] = "edge:"
 	var match_target := func(value: Variant) -> Dictionary:
-		if mode == "collision":
+		if mode in ["collision", "placement"]:
 			var point: Vector2 = value.point
 			var lo := float(decl.get("min", -999999))
 			var hi := float(decl.get("max", 999999))
 			if point.x < lo or point.x > hi or point.y < lo or point.y > hi:
 				return {}
-			return {"v": [point.x, point.y], "t": "地图坐标 (%.2f, %.2f)" % [point.x, point.y]}
+			var space := "图层 " + layer if mode == "placement" else "地图"
+			return {"v": [point.x, point.y], "t": "%s坐标 (%.2f, %.2f)" % [space, point.x, point.y]}
 		for row in resolve.call(source):
 			var candidate = FieldWidgets.decode_pick(mode, str(row.v))
 			if candidate != null and candidate == value:
@@ -314,10 +322,12 @@ static func open_reference(app, decl: Dictionary, resolve: Callable, commit: Cal
 		return {"text": "该画面目标不在字段的候选范围内。"}
 	var key := str(decl.get("_mapKey", ""))
 	var local: bool = key == "" or (app.map_loaded and key in [app.canvas.cur_map_code(), app.canvas.cur_map_name])
-	var parent := {"parent": window} if window is PopupPanel else {}
+	var parent := {"pick_layer": layer}
+	if window is PopupPanel:
+		parent["parent"] = window
 	var ordered := FieldWidgets.ordered_frame_pick(decl)
 	if ordered or bool(decl.get("multiple", false)):
-		var selection := ReferenceSelection.new(mode, match_target, commit, read, ordered)
+		var selection := ReferenceSelection.new(mode, match_target, commit, read, ordered, layer)
 		parent.merge({"interaction": selection, "on_picks": selection.set_regions, "confirm_label": "应用选择"})
 	if local:
 		_open(app, mode, choose, parent)

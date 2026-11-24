@@ -66,7 +66,7 @@ func write_fixture_audio(project: String) -> bool:
 	stream.data = data
 	return stream.save_to_wav(project.path_join("rhythm.wav")) == OK
 
-func create_ending(app, library, id: String, message: String, map_context := "", goal := "", next := "") -> void:
+func create_ending(app, library, id: String, message: String, map_context := "", goal := "", next := "", layer := "") -> void:
 	library.open()
 	var pop = collect(app, "PopupPanel").filter(func(p): return p.visible).back()
 	select_metadata(collect(pop, "OptionButton").front(), "ending")
@@ -154,6 +154,26 @@ func create_ending(app, library, id: String, message: String, map_context := "",
 				select_metadata(opt, goal)
 			if next != "" and range(opt.item_count).any(func(i): return opt.get_item_metadata(i) == next):
 				select_metadata(opt, next)
+	if layer != "":
+		for opt in collect(pop, "OptionButton"):
+			if range(opt.item_count).any(func(i): return opt.get_item_metadata(i) == layer):
+				select_metadata(opt, layer)
+				break
+		var layer_picker: Button = pop.find_child("FrameFieldReference_layer_path", true, false)
+		check(layer_picker != null, "library exposes the chosen layer's path picker")
+		if layer_picker != null:
+			layer_picker.pressed.emit()
+			var frame := await _render_pick_frame(app)
+			if frame != null:
+				check(_click_pick_frame(frame, Vector2(0.15, 0.25)).disabled, "the other layer does not add a point")
+				check(_click_pick_frame(frame, Vector2(0.74, 0.20)).disabled, "the foreground blocks the chosen layer")
+				var confirm := _click_pick_frame(frame, Vector2(0.65, 0.25))
+				_click_pick_frame(frame, Vector2(0.75, 0.25))
+				check(not confirm.disabled and not Store.list_ids(app.manifest, "ending").has("project-layer-path"),
+					"perspective points stay in the draft until applied and saved")
+				confirm.pressed.emit()
+				await process_frame
+				await process_frame
 	press(pop, "保存")
 	pop.hide()
 	await process_frame
@@ -368,6 +388,9 @@ func run():
 				{"id":"goal_group", "code":"GGRP", "kind":"choice", "source":"entity_inst:door", "multiple":true},
 				{"id":"goal_route", "code":"GROT", "kind":"input", "type":"array", "of":"choice", "source":"entity_inst:door"},
 				{"id":"camera_path", "code":"CPTH", "kind":"input", "type":"array", "of":"vector2", "pickSpace":"map"},
+				{"id":"path_layer", "code":"PLID", "kind":"choice", "source":"layer:"},
+				{"id":"layer_path", "code":"LPTH", "kind":"input", "type":"array", "of":"vector2",
+					"pickSpace":"layer", "layerField":"path_layer"},
 				{"id":"next", "code":"HOP1", "kind":"choice", "source":"content:ending",
 					"contentMapContext":"inherit"},
 				{"id":"retry_chart", "code":"AGAN", "name":"Retry chart", "kind":"choice",
@@ -2965,8 +2988,20 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 	check(cvs.cell_graph().edges[0].id == edge_id and cvs.cell_graph().edges[0].props.cost == 2
 		and cvs.cell_graph().edges[0].toMap == destination_code and cvs.cell_graph().edges[0].to == "remote",
 		"the edited edge retains its original ID, new cost, and cross-map destination after reopening")
+	await create_ending(app, editor._library, "layer-path", "Layer path", str(map.meta.code), "", "", upper)
+	var layer_fields: Dictionary = Store.read(manifest, "ending", "project-layer-path").get("fields", {})
+	var layer_path: Array = layer_fields.get("LPTH", [])
+	check(layer_fields.get("PLID") == upper and layer_path.size() == 2
+		and Vector2(layer_path[0][0], layer_path[0][1]).distance_to(Vector2(48.0 + 32.0 / 7.0, 32.0 + 64.0 / 7.0)) < 0.02
+		and Vector2(layer_path[1][0], layer_path[1][1]).distance_to(Vector2(48.0 + 32.0 / 3.0, 32.0 + 32.0 / 3.0)) < 0.02,
+		"the saved path contains both perspective-correct local positions in click order")
 	var report := await launch_and_read(app, false)
 	var result: Dictionary = report.get("result", {})
+	var played_path: Array = result.get("layerPath", [])
+	check(played_path.size() == 2
+		and Vector2(played_path[0][0], played_path[0][1]).distance_to(Vector2(48, 16) + Vector2(48.0 + 32.0 / 7.0, 32.0 + 64.0 / 7.0) * 1.5) < 0.02
+		and Vector2(played_path[1][0], played_path[1][1]).distance_to(Vector2(136, 80)) < 0.02,
+		"the independent game transforms the saved local path using the chosen layer")
 	var picks: Array = result.get("picks", [])
 	check(report.get("status") == "ready" and picks.size() == 2 and picks[0].point == [32.0, 24.0]
 		and absf(float(picks[1].point[0]) - (48.0 + (48.0 + 32.0 / 7.0) * 1.5)) < 0.02

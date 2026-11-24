@@ -85,7 +85,16 @@ func _ready() -> void:
 			add_child(player)
 			var route := _current if _load_board(map, "entry") and _advance_board() else ""
 			var arrival := Vector2.ZERO if route.is_empty() else Vector2(_cells[route].polygon[0])
+			var path_fields: Dictionary = _parse(FileAccess.get_file_as_string("res://content/ending/project-layer-path.json")).get("fields", {})
+			var layer_path := []
+			for layer in map.meta.layers:
+				if layer.id != path_fields.get("PLID"):
+					continue
+				for point in path_fields.get("LPTH", []):
+					var anchor := _vector(layer.offset) + _vector(point) * float(layer.scale)
+					layer_path.append([anchor.x, anchor.y])
 			_report("ready", "", {"picks": lanes, "opened": _activate_switch(map, manifest), "contours": contours,
+				"layerPath": layer_path,
 				"openedBackup": _activate_switch(map, manifest, "backup"),
 				"playerStart": [player.position.x, player.position.y], "switchCopies": copies, "authoredRoute": route,
 				"authoredEdge": _traversed_edge, "arrivalMap": _board_code, "arrivalVertex": [arrival.x, arrival.y]})

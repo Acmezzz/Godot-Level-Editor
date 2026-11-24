@@ -50,7 +50,7 @@ static func _mapping(value: Variant) -> Dictionary:
 			return {}
 	return {"local": points, "reciprocal": reciprocal}
 
-static func at(regions: Array, pixel: Vector2, mode: String) -> Dictionary:
+static func at(regions: Array, pixel: Vector2, mode: String, layer := "") -> Dictionary:
 	for region in regions:
 		var uv: Vector2 = region.inverse * pixel
 		if uv.x < -0.00001 or uv.y < -0.00001 or uv.x + uv.y > 1.00001:
@@ -60,7 +60,7 @@ static func at(regions: Array, pixel: Vector2, mode: String) -> Dictionary:
 			value = region.targets.get("vertex", region.targets.get("entity"))
 		if mode in ["placement", "collision"]:
 			var mapping: Dictionary = region[mode]
-			if mapping.is_empty():
+			if mapping.is_empty() or (mode == "placement" and layer != "" and mapping.layer != layer):
 				if region.occludes:
 					break
 				continue

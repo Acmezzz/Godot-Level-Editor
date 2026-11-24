@@ -48,14 +48,14 @@ static func wants_canvas_pick(decl: Dictionary) -> bool:
 	return pick_mode(decl) in ["cell", "edge", "port"]
 
 static func wants_frame_pick(decl: Dictionary) -> bool:
-	return pick_mode(decl) in ["cell", "edge", "port", "collision"] or RefFields.describe(decl).kind == "entity_inst"
+	return pick_mode(decl) in ["cell", "edge", "port", "collision", "placement"] or RefFields.describe(decl).kind == "entity_inst"
 
-static func map_point_pick(decl: Dictionary) -> bool:
-	return decl.get("pickSpace") == "map" and kind_of(decl) == KIND_INPUT and RefFields.vector_dims(decl) == 2 \
+static func frame_point_pick(decl: Dictionary) -> bool:
+	return decl.get("pickSpace") in ["map", "layer"] and kind_of(decl) == KIND_INPUT and RefFields.vector_dims(decl) == 2 \
 		and (type_of(decl) == "vector2" or (type_of(decl) == "array" and decl.get("of") == "vector2"))
 
 static func ordered_frame_pick(decl: Dictionary) -> bool:
-	if map_point_pick(decl):
+	if frame_point_pick(decl):
 		return type_of(decl) == "array"
 	return type_of(decl) == "array" and decl.get("of") == "choice" and not bool(decl.get("multiple", false)) \
 		and RefFields.describe(decl).kind in ["entity_inst", "cell"]
@@ -69,8 +69,8 @@ static func wants_edge_pick(decl: Dictionary) -> bool:
 	return type_of(decl) == "edge_ref"
 
 static func pick_mode(decl: Dictionary) -> String:
-	if map_point_pick(decl):
-		return "collision"
+	if frame_point_pick(decl):
+		return "placement" if decl.pickSpace == "layer" else "collision"
 	if type_of(decl) == "port_ref":
 		return "port"
 	if wants_cell_pick(decl):
@@ -666,7 +666,7 @@ static func _build_record(decl: Dictionary, value, on_set: Callable,
 		var row := Kit.field_row(str(sd.get("name", sub_key)), built.ctl, 96)
 		box.add_child(row)
 		if frame_pick.is_valid() and wants_frame_pick(sd) and frame_value_available(sd, built):
-			var pair := func() -> String: return RefFields.paired_map_value(sd, fields_arr, value)
+			var pair := func() -> Array[String]: return RefFields.frame_scope(sd, fields_arr, value)
 			frame_pick.call(row, sd, pair, set_value, built.get("pick_values", Callable()))
 		commits.append(built.commit)
 	return {"ctl": panel, "commit": func() -> bool:
@@ -776,7 +776,7 @@ static func _build_choice_multi(decl: Dictionary, value, on_set: Callable,
 	return {"ctl": box, "commit": push, "pick_values": func(): return pend.v.duplicate()}
 
 static func frame_value_available(decl: Dictionary, built: Dictionary) -> bool:
-	return built.has("pick_values") if map_point_pick(decl) or ordered_frame_pick(decl) or bool(decl.get("multiple", false)) else true
+	return built.has("pick_values") if frame_point_pick(decl) or ordered_frame_pick(decl) or bool(decl.get("multiple", false)) else true
 
 static func _norm_option(o) -> Dictionary:
 	if o is Dictionary:

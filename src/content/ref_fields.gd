@@ -350,7 +350,9 @@ static func wants_empty_option(decl: Dictionary) -> bool:
 
 ## 在兄弟声明里找配对地图字段的声明（无则空字典）。
 static func paired_map_decl(decl: Dictionary, siblings: Array) -> Dictionary:
-	var want := str(decl.get("mapField", ""))
+	return _sibling_decl(str(decl.get("mapField", "")), siblings)
+
+static func _sibling_decl(want: String, siblings: Array) -> Dictionary:
 	if want == "":
 		return {}
 	for fd in siblings:
@@ -361,7 +363,14 @@ static func paired_map_decl(decl: Dictionary, siblings: Array) -> Dictionary:
 ## 读配对地图字段的当前值：值键优先用配对声明的 code，缺省退回它的 id
 ## （实例 props 的键是 id；内容/步骤的键是 code）。
 static func paired_map_value(decl: Dictionary, siblings: Array, values: Dictionary) -> String:
-	var pm := paired_map_decl(decl, siblings)
+	return _sibling_value(paired_map_decl(decl, siblings), values)
+
+## Captured as one scope so either sibling changing invalidates a pending frame pick.
+static func frame_scope(decl: Dictionary, siblings: Array, values: Dictionary) -> Array[String]:
+	var layer := _sibling_decl(str(decl.get("layerField", "")), siblings) if decl.get("pickSpace") == "layer" else {}
+	return [paired_map_value(decl, siblings, values), _sibling_value(layer, values)]
+
+static func _sibling_value(pm: Dictionary, values: Dictionary) -> String:
 	if pm.is_empty():
 		return ""
 	var key := str(pm.get("code", ""))

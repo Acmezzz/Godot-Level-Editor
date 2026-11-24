@@ -425,8 +425,8 @@ func _build_field(form: VBoxContainer, fd: Dictionary, siblings: Array, values: 
 	if key == "":
 		return
 	var decl := fd.duplicate(true)
-	var pair := func() -> String: return Refs.paired_map_value(fd, siblings, values)
-	var map_key: String = pair.call()
+	var pair := func() -> Array[String]: return Refs.frame_scope(fd, siblings, values)
+	var map_key: String = pair.call()[0]
 	if map_key != "":
 		decl["_mapKey"] = map_key
 	var set_value := func(v) -> bool:
@@ -436,7 +436,7 @@ func _build_field(form: VBoxContainer, fd: Dictionary, siblings: Array, values: 
 			values[key] = v
 		return true
 	var use := func(v) -> bool:
-		if pair.call() != map_key:
+		if pair.call()[0] != map_key:
 			notice.text = "请先保存配对地图，再选择新的引用值。"
 			return false
 		return set_value.call(v)

@@ -226,7 +226,7 @@ func _build_form_block() -> Control:
 			if not (fd2 is Dictionary):
 				continue
 			cond_fds.append(fd2)
-			box.add_child(_build_field_row(i, fn_id, fd2, cur, fields + cond_fds, target))
+			box.add_child(_build_field_row(i, fn_id, fd2, cur, fields + cfields, target))
 	if content_id == "":
 		box.add_child(Kit.hint_label("首次修改任意字段即创建内容条目。", RIGHT_W - 40))
 	var undeclared := _undeclared_block(fields, cond_fds, cur)
@@ -285,18 +285,23 @@ func _build_field_row(i: int, fn_id: String, fd: Dictionary, cur: Dictionary, si
 		if tk != "":
 			d = fd.duplicate(true)
 			d["_mapKey"] = tk
+	var resolve_scope := func() -> Array[String]: return RefFields.frame_scope(fd, siblings, cur)
 	var expected := {"present": cur.has(key), "value": cur.get(key)}.duplicate(true)
-	var apply := func(v) -> bool:
+	var set_value := func(v, check_scope: Callable) -> bool:
 		if not _form_binding_matches(i, target):
 			return false
 		var cid := str(target.binding.get("content", ""))
 		var had_content := cid != ""
-		var check_pair := func(values: Dictionary) -> bool:
-			return not paired or RefFields.paired_map_value(fd, siblings, values) == tk
-		var ok := _set_field(i, fn_id, key, v, expected, check_pair)
-		if ok and not had_content and i < _current_fns().size():
+		if not _set_field(i, fn_id, key, v, expected, check_scope):
+			return false
+		if expected.present:
+			cur[key] = expected.value
+		if not had_content and i < _current_fns().size():
 			target.binding = _current_fns()[i]
-		return ok
+		return true
+	var apply := func(v) -> bool:
+		return set_value.call(v, func(values: Dictionary):
+			return not paired or RefFields.paired_map_value(fd, siblings, values) == tk)
 	var options := func(decl: Dictionary) -> Array:
 		return _resolve_options(decl, bool(target.project_scope))
 	var frame_pick := func(row: Control, nested: Dictionary, pair: Callable, save: Callable, read: Callable):
@@ -318,15 +323,12 @@ func _build_field_row(i: int, fn_id: String, fd: Dictionary, cur: Dictionary, si
 			"临时切到画布点格图里的一格（按多边形命中）；确认才写入，取消不改当前值"
 		pick.add_theme_font_size_override("font_size", Th.FS_META)
 		row.add_child(pick)
-	if FieldWidgets.wants_frame_pick(fd) and FieldWidgets.frame_value_available(fd, built) \
-			and (not bool(target.project_scope) or tk != "") and FrameReference.reference_available(app, tk):
-		row.add_child(Kit.button("实景选…", func():
-			var save := func(value) -> bool:
-				if not apply.call(value):
-					return false
-				_rebuild_right()
-				return true
-			FrameReference.open_reference(app, d, options, save, row.get_window(), built.get("pick_values", Callable())), "ghost"))
+	if FieldWidgets.wants_frame_pick(fd) and FieldWidgets.frame_value_available(fd, built):
+		var save := func(value) -> bool:
+			var scope: Array = resolve_scope.call()
+			return set_value.call(value, func(fields: Dictionary): return RefFields.frame_scope(fd, siblings, fields) == scope)
+		FrameReference.add_reference_button(app, row, fd, resolve_scope, save, options, bool(target.project_scope),
+			_rebuild_right, "", built.get("pick_values", Callable()))
 	return row
 
 func _form_binding_matches(i: int, target: Dictionary) -> bool:

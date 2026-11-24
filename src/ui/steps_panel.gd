@@ -1072,14 +1072,14 @@ func _step_field_row(fd: Dictionary, sfd: Dictionary, siblings: Array, shown: Di
 		pick.add_theme_font_size_override("font_size", Th.FS_META)
 		row.add_child(pick)
 	if FieldWidgets.wants_frame_pick(fd) and FieldWidgets.frame_value_available(fd, built):
-		var pair := func() -> String:
+		var pair := func() -> Array[String]:
 			var index: int = shown.index
 			var steps: Array = shown.steps
-			return RefFields.paired_map_value(fd, siblings, steps[index].get("fields", {}))
+			return RefFields.frame_scope(fd, siblings, steps[index].get("fields", {}))
 		var save := func(value) -> bool:
-			var expected: String = pair.call()
+			var expected: Array = pair.call()
 			return _set_step_field(shown, key, value, rev,
-				func(fields: Dictionary): return RefFields.paired_map_value(fd, siblings, fields) == expected)
+				func(fields: Dictionary): return RefFields.frame_scope(fd, siblings, fields) == expected)
 		FrameReference.add_reference_button(app, row, fd, pair, save, _resolve_options, _project_scope,
 			_rebuild_steps_form_from_data, _reference_context, built.get("pick_values", Callable()))
 	return row

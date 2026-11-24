@@ -67,6 +67,7 @@ static func open(app, capability: String, options: Dictionary, snapshot: Callabl
 	var render := Kit.button(options.button, Callable(), "primary")
 	render.name = options.prefix + "Render"
 	var mode := str(options.get("pick_mode", ""))
+	var pick_layer := str(options.get("pick_layer", ""))
 	var choose: Callable = options.get("pick", Callable())
 	var draw_shape: Callable = options.get("draw_shape", Callable())
 	var drafting := draw_shape.is_valid()
@@ -178,6 +179,8 @@ static func open(app, capability: String, options: Dictionary, snapshot: Callabl
 				notice.text += " · 游戏未提供可拾取区域"
 			elif mode == "collision" and not picks.regions.any(func(region): return not region.collision.is_empty()):
 				notice.text += " · 游戏未提供根空间映射"
+			elif pick_layer != "" and not picks.regions.any(func(region): return region.placement.get("layer") == pick_layer):
+				notice.text += " · 游戏未提供所选图层的映射"
 			elif interaction != null:
 				notice.text = interaction.message()
 			else:
@@ -256,7 +259,7 @@ static func open(app, capability: String, options: Dictionary, snapshot: Callabl
 				notice.text = "请点击画面内的区域。"
 				return
 			var pixel: Vector2 = (event.position - rect.position) / rect.size * frame.texture.get_size()
-			var hit := FramePicks.at(picks.regions, pixel, mode)
+			var hit := FramePicks.at(picks.regions, pixel, mode, pick_layer)
 			if hit.is_empty():
 				notice.text = "这里没有此工具需要的目标。"
 				return

@@ -688,8 +688,16 @@ static func _check_condition_fields(fields: Variant, path: String, conditions: D
 		var child := path + "." + str(fd.get("id", "?"))
 		if fd.has("pickSpace"):
 			var point: bool = fd.get("type") == "vector2" or (fd.get("type") == "array" and fd.get("of") == "vector2")
-			if fd.pickSpace != "map" or fd.get("kind") != "input" or not point or fd.get("dims", 2) != 2:
-				_add(issues, "error", child + ".pickSpace", "map picking requires a two-dimensional vector2 or array of vector2")
+			if fd.pickSpace not in ["map", "layer"] or fd.get("kind") != "input" or not point or fd.get("dims", 2) != 2:
+				_add(issues, "error", child + ".pickSpace", "map or layer picking requires a two-dimensional vector2 or array of vector2")
+			elif fd.pickSpace == "layer":
+				var layer_field := str(fd.get("layerField", ""))
+				if layer_field == "" or not fields.any(func(sibling):
+					return sibling is Dictionary and sibling.get("id") == layer_field \
+						and sibling.get("kind") == "choice" and sibling.get("type") != "array" \
+						and sibling.get("source") == "layer:" and not bool(sibling.get("multiple", false)) \
+						and sibling.get("mapField", "") == fd.get("mapField", "")):
+					_add(issues, "error", child + ".layerField", "must name a single layer: choice in the same row with the same mapField")
 		if fd.has("contentMapContext"):
 			var mode = fd.contentMapContext
 			var at := child + ".contentMapContext"
