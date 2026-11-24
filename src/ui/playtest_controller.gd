@@ -6,6 +6,7 @@ const Recovery := preload("res://src/map/recovery.gd")
 const EntryStore := preload("res://src/content/content_store.gd")
 const EntryFunctions := preload("res://src/content/function_decl.gd")
 const References := preload("res://src/project/reference_index.gd")
+const StartupTargets := preload("res://src/project/startup_targets.gd")
 
 var app
 var files: RefCounted
@@ -49,16 +50,18 @@ func on_play(spawn_tiles: Vector2i = Vector2i(-1, -1), project_entry := false, e
 	_start_playtest(play_path, digest, args, subject)
 
 ## Published resource entries leave the current editing session untouched.
-func play_map_entry(map_code: String) -> bool:
+func play_map_entry(target: Dictionary) -> bool:
 	if not Playtest.allows_map_entry(app.manifest):
 		return false
-	var entry := References.resolve_graph_map(app.MapStore.code_index(app.manifest), map_code)
-	if entry.status != "ok":
-		app._set_status("试玩中止：所选地图已不可用。")
+	if not StartupTargets.destination_available(app.manifest, Playtest.map_entry_domains(app.manifest), target):
+		app._set_status("试玩中止：所选地图或入场端口已不可用。")
 		return false
 	if not _published_manifest_current():
 		return false
-	return _start_playtest("", "", PackedStringArray([Playtest.map_entry_arg(map_code)]), "地图入口 " + str(entry.key))
+	var subject := "地图入口 " + str(target.map)
+	if target.has("port"):
+		subject += " · %s / %s" % [target.inst, target.port]
+	return _start_playtest("", "", PackedStringArray([Playtest.map_entry_arg(target)]), subject)
 
 func play_view(view_id: String, draft := {}) -> bool:
 	var is_draft := not draft.is_empty()

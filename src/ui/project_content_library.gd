@@ -149,6 +149,11 @@ func _open_flow() -> void:
 	var play_map := Kit.button("试玩所选地图", Callable(), "ghost")
 	play_map.visible = Playtest.allows_map_entry(source)
 	play_map.tooltip_text = "从已保存地图的正式流程进入游戏，保留当前草稿及项目启动设置。"
+	var entry_ports := OptionButton.new()
+	entry_ports.name = "FlowPlayMapEntry"
+	entry_ports.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	var entry_row := Kit.field_row("试玩入口", entry_ports, 82)
+	var entry_domains := Playtest.map_entry_domains(source)
 	var broken := OptionButton.new()
 	broken.name = "FlowMissingLinks"
 	broken.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
@@ -166,6 +171,7 @@ func _open_flow() -> void:
 	body.add_child(Kit.field_row("筛选目标", target_search, 82))
 	body.add_child(Kit.field_row("目标", target, 82))
 	body.add_child(Kit.field_row("待修引用", broken, 82))
+	body.add_child(entry_row)
 	var neighbors_only := CheckButton.new()
 	neighbors_only.name = "FlowDirectOnly"
 	neighbors_only.text = "只显示当前项及直接关系"
@@ -255,7 +261,19 @@ func _open_flow() -> void:
 		view.queue_redraw()
 	var fill_slots := func():
 		var key: String = selected.call(node)
-		play_map.disabled = state.index.nodes.get(key, {}).get("fn_id") != RelGraph.MAP_KIND
+		var source_node: Dictionary = state.index.nodes.get(key, {})
+		play_map.disabled = source_node.get("fn_id") != RelGraph.MAP_KIND
+		entry_row.hide()
+		entry_ports.clear()
+		if not play_map.disabled and play_map.visible and not entry_domains.arrivalPorts.is_empty():
+			var arrivals := StartupTargets.arrival_options(source, entry_domains, source_node.cid)
+			if not arrivals.is_empty():
+				entry_row.show()
+				entry_ports.add_item("默认入场")
+				entry_ports.set_item_metadata(0, {"map": source_node.cid})
+				for arrival in arrivals:
+					entry_ports.add_item(arrival.name)
+					entry_ports.set_item_metadata(entry_ports.item_count - 1, arrival.target)
 		show_graph.call(key)
 		links.clear()
 		for direction in ["outgoing", "incoming"]:
@@ -372,8 +390,10 @@ func _open_flow() -> void:
 	actions.add_child(play_map)
 	play_map.pressed.connect(func():
 		var item: Dictionary = state.index.nodes.get(selected.call(node), {})
-		if is_same(app.manifest, source) and item.get("fn_id") == RelGraph.MAP_KIND \
-				and app._playtest_ctrl.play_map_entry(item.cid):
+		if not is_same(app.manifest, source) or item.get("fn_id") != RelGraph.MAP_KIND:
+			return
+		var entry: Dictionary = entry_ports.get_selected_metadata() if entry_ports.selected >= 0 else {"map": item.cid}
+		if app._playtest_ctrl.play_map_entry(entry):
 			pop.hide())
 	actions.add_child(Kit.button("定位引用字段", func():
 		var items := links.get_selected_items()

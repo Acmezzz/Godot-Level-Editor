@@ -483,6 +483,11 @@ static func _validate_playtest(data: Dictionary, issues: Array[Dictionary]) -> v
 			_add(issues, "error", "playtest." + feature, "requires a structured executable launch")
 	if pt2.get("viewDraft") == true and pt2.get("report") != true:
 		_add(issues, "error", "playtest.viewDraft", "requires report: true to verify the loaded draft")
+	if pt2.has("mapEntryPorts"):
+		var types = pt2.mapEntryPorts
+		if pt2.get("mapEntry") != true or not types is Array or types.is_empty() \
+				or not types.all(func(id): return id is String and not id.strip_edges().is_empty()):
+			_add(issues, "error", "playtest.mapEntryPorts", "requires mapEntry: true and a non-empty array of port types")
 	if pt2.has("entryFunctions"):
 		var entries = pt2.entryFunctions
 		if pt2.get("projectEntry") != true:

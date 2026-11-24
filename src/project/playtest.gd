@@ -28,8 +28,11 @@ static func allows_view_entry(m: Dictionary) -> bool:
 static func allows_map_entry(m: Dictionary) -> bool:
 	return m.get("playtest", {}).get("mapEntry", false) == true
 
-static func map_entry_arg(map_code: String) -> String:
-	return _encode_entry({"map": map_code})
+static func map_entry_domains(m: Dictionary) -> Dictionary:
+	return {"maps": allows_map_entry(m), "arrivalPorts": m.get("playtest", {}).get("mapEntryPorts", [])}
+
+static func map_entry_arg(target: Dictionary) -> String:
+	return _encode_entry(target)
 
 static func allows_view_draft(m: Dictionary) -> bool:
 	var config: Dictionary = m.get("playtest", {})

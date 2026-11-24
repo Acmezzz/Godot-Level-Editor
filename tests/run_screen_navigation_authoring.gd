@@ -71,6 +71,7 @@ func run() -> void:
 			{"id": "route", "code": "ROUT", "kind": "input", "type": "flow_target",
 				"maps": true, "screens": true, "contentTypes": ["signal"], "contentMapContext": "paired", "mapField": "board"}]}},
 		"playtest": {"executable": OS.get_executable_path(), "report": true, "projectEntry": true, "mapEntry": true,
+			"mapEntryPorts": ["arrival"],
 			"args": ["--path", "%projectpath%", "--audio-driver", "Dummy", "--", "--verify"]}}
 	check(Maps.write_json(project.path_join("editor/editor_manifest.json"), declaration), "install only game declarations")
 	var manifest := Manifest.load_from(project)
@@ -416,6 +417,7 @@ func run() -> void:
 	var current_host: EntityNode = canvas._ent_by_code_index()[copy_host]
 	check(canvas.duplicate_selected_at_offset([current_host], Vector2i(2, 2)), "duplicate a portal with its own arrival")
 	var new_host: EntityNode = canvas.selected_multi[0]
+	var new_host_code := new_host.code
 	check(new_host.code != copy_host and new_host.props.exit_target == {
 		"map": copy_code, "inst": new_host.code, "port": "door"} and current_host.props.exit_target == copy_arrival,
 		"only the duplicated portal points to the duplicated arrival instance")
@@ -465,6 +467,9 @@ func run() -> void:
 	await process_frame
 	flow = popup()
 	choose(flow.find_child("FlowSource", true, false), "@map\u0001" + copy_code)
+	var entries: OptionButton = flow.find_child("FlowPlayMapEntry", true, false)
+	check(entries.item_count == copy.objects.size() + 1, "entry choices exclude other maps and ports of other types")
+	choose(entries, {"map": copy_code, "inst": new_host_code, "port": "door"})
 	press(flow, "试玩所选地图")
 	end = Time.get_ticks_msec() + 8000
 	while controller._play_report_result.is_empty() and Time.get_ticks_msec() < end:
@@ -473,10 +478,11 @@ func run() -> void:
 	report = controller._play_report_result
 	result = report.get("result", {})
 	check(report.get("status") == "ready" and result.get("board") == copy_code
+		and result.get("arrivalPort") == "door" and result.get("arrivalInstance") == new_host_code
 		and result.get("screens") == ["results", "debrief"]
 		and result.get("text") == "Screen sequence complete"
 		and app.manifest.startup.target == {"view": "welcome"},
-		"the selected map enters its normal flow without changing project startup: %s" % [report])
+		"the selected arrival starts the normal map flow without changing project startup: %s" % [report])
 	print("SCREEN-NAV-DONE failures=", failures)
 	quit(0 if failures == 0 else 1)
 

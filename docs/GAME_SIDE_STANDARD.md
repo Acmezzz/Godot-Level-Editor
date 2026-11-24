@@ -89,6 +89,7 @@
 | `playtest.entryFunctions` | string[] | 可选，须启用 `projectEntry: true`。填写允许作者从内容库启动的功能声明 ID；列表成员必须已声明且互不重复。 |
 | `playtest.viewEntry` | bool | 可选，须配置结构化启动。开启后，作者可以从参考视图启动该屏幕的已保存版本，不要求配置 `projectEntry`。 |
 | `playtest.mapEntry` | bool | 可选，须配置结构化启动。开启后，作者可以从项目流程图按地图码试玩已保存的地图入口。 |
+| `playtest.mapEntryPorts` | string[] | 可选，须开启 `mapEntry`。列出允许作为地图试玩入口的端口类型。 |
 | `playtest.viewDraft` | bool | 可选，须配置结构化启动并开启 `report: true`。开启后，作者可以试玩当前屏幕的未保存布局。 |
 | `preview` | object | 可选。声明独立进程渲染预览，可请求 `screenLayout`、`mapFrame`、`worldFrame` 和 `timelineFrame`。与试玩配置分开。 |
 | `mapGenerators` | object | 可选。按生成器 ID 声明从游戏生成可编辑地图的参数。需同时声明 `preview.capabilities` 包含 `generateMap`。 |
@@ -1415,6 +1416,7 @@ main.gd
 
 声明 `playtest.mapEntry: true` 后，项目流程图的「试玩所选地图」会以空的 `%mapfile%` 启动，
 并发送同一个 `--editor-entry` 参数，解码为 `{"version":1,"map":"地图码"}`。
+如果声明 `mapEntryPorts`，作者可在默认入场之外选用该地图上匹配类型的端口，参数同时包含 `inst` 和 `port`。
 游戏应按正常地图目标的入场逻辑加载该地图。编辑器不提交当前地图草稿，也不修改正式启动入口。
 此方式与从屏幕和项目内容进入一样，加载回执的 `mapDigest` 为空。
 

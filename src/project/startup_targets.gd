@@ -29,12 +29,14 @@ static func destination_options(manifest: Dictionary, domains: Dictionary) -> Ar
 					"target": {"function": kind, "content": cid}})
 	return result
 
-static func arrival_options(manifest: Dictionary, domains: Dictionary) -> Array[Dictionary]:
+static func arrival_options(manifest: Dictionary, domains: Dictionary, map_code := "") -> Array[Dictionary]:
 	var result: Array[Dictionary] = []
 	var types: Array = domains.get("arrivalPorts", [])
 	if types.is_empty():
 		return result
 	for row in Refs.map_target_options(manifest):
+		if map_code != "" and row.code != map_code:
+			continue
 		var map := Maps.read(manifest, row.name)
 		for port in RefFields.port_options(manifest, row.code, map.get("objects", []), types):
 			result.append({"name": "入场 · %s · %s" % [row.name, port.t], "target": JSON.parse_string(port.v)})
