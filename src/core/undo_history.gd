@@ -36,7 +36,7 @@ func _restore(snapshot) -> void:
 		await cvs.load_data(d, cvs.cur_map_name, true, true)
 
 
-## 整图快照入栈：全局操作（区域/层/尺寸/转换/批量替换）与
+## 整图快照入栈：全局操作（区域/层/尺寸/转换）与
 ## 无实例码的场景图片改动走这条。写入口在控制器上，画布只做转发不带状态。
 func push_undo() -> void:
 	if cvs.map_root == null or not is_instance_valid(cvs.map_root):
@@ -137,8 +137,7 @@ func _apply_entry(entry, forward: bool) -> bool:
 ## 涂刷/擦除笔画不再压整图快照：首个真实改动前 stroke_begin()，改动逐格
 ## stroke_touch_*（只记 before），手势结束 stroke_end() 定格 before/after 成差量条目。
 ## 条目 = {"kind": "delta", "cells": [{kind, layer, cell:[x,y], before, after}]}，
-## undo 应用 before、redo 应用 after（同一条目双向复用）。全局操作（区域/尺寸/层操作/
-## 批量替换）仍走整图快照（push_undo 不变）。
+## undo 应用 before、redo 应用 after（同一条目双向复用）。区域、尺寸、层操作仍可用整图快照。
 
 var _stroke_open := false
 var _stroke_cells: Array = []   # 进行中的笔画 [{kind, layer, cell, before}]
@@ -424,11 +423,13 @@ func _restore_delta(entry: Dictionary, forward: bool) -> void:
 		var c := Vector2i(int((st.get("cell", [0, 0]) as Array)[0]), int((st.get("cell", [0, 0]) as Array)[1]))
 		var v = st.get(field, null)
 		if str(st.get("kind", "")) == "tile":
-			var tn := _tile_layer(str(st.get("layer", "")))
-			if tn == null:
-				continue
 			var lid := str(st.get("layer", ""))
-			touched_layers[cvs._layer_index_of(lid)] = true
+			if not touched_layers.has(lid):
+				touched_layers[lid] = cvs._layer_index_of(lid)
+			var li: int = touched_layers[lid]
+			if li < 0:
+				continue
+			var tn: TileMapLayer = cvs.layer_tiles[li]
 			if v == null:
 				cvs.erase_tile(lid, tn, c)
 			else:
@@ -445,10 +446,12 @@ func _restore_delta(entry: Dictionary, forward: bool) -> void:
 	# 差量恢复不走 load_data 重建：P01 精细重画标记按改动种类逐项打（瓦片/碰撞）。
 	# 阶段三：按层失效——只重画真正被改到的那些层（一笔只画一层是常态），
 	# 也不再补一刀全量 _mark：窄入口各自已抬 map_rev / emit modified。
-	for li3 in touched_layers:
-		cvs._mark_tiles_layer(int(li3))
+	for li in touched_layers.values():
+		if li >= 0:
+			cvs._mark_tiles_layer(li)
 	if touched_coll:
 		cvs._mark_collision()
+	cvs.queue_redraw()
 
 ## Automatic generation and undo use the same cell writer. Compare complete
 ## states so replace can clear old shapes and metadata without recording no-ops.
@@ -459,6 +462,20 @@ func apply_collision_batch(changes: Dictionary) -> void:
 		var after = changes[c]
 		if before != after:
 			cells.append({"kind": "collision", "cell": [c.x, c.y], "before": before, "after": after})
+	_apply_cell_batch(cells)
+
+func apply_tile_batch(rows_by_layer: Dictionary) -> void:
+	var cells := []
+	for lid: String in rows_by_layer:
+		var layer := _tile_layer(lid)
+		for row: Array in rows_by_layer[lid]:
+			var c := Vector2i(int(row[0]), int(row[1]))
+			var before = _tile_state(lid, layer, c)
+			if before != row:
+				cells.append({"kind": "tile", "layer": lid, "cell": [c.x, c.y], "before": before, "after": row})
+	_apply_cell_batch(cells)
+
+func _apply_cell_batch(cells: Array) -> void:
 	if cells.is_empty():
 		return
 	var entry := {"kind": "delta", "cells": cells}

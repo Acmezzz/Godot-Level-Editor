@@ -1,14 +1,27 @@
 extends RefCounted
 ## TileReplace：按选区 + 源资产/图集格批量替换瓦片（E2）。纯数据：只算计划，不改画布。
 ##
-## 计划 = {cells: [{c: Vector2i, src_layer: int, src: int, atlas: Vector2i, alt: int}],
+## 计划 = {cells: [{c, layer, atlas, old_atlas, old_source, alt}],
 ##         conflicts: [{c, why}], total: n}
 ## 冲突判据（「目标图集不能表示原变换时先列冲突」）：
 ##   ① 目标资产在清单里不存在 / 不是瓦片；
-##   ② 源切片坐标超出目标图集边界（目标图集比源小）；
-##   ③ 原格子带变换 alt，但目标切片没有对应 alternative（Godot 需显式建 alternative；
-##      TilesetCache.set_cell_alt 会自动补建，所以这里只在「目标图集没有该切片」时判冲突）。
+##   ② 所选切片超出目标图集边界，或由调用方确认切片未加载。
 ## 通过后由调用方一次撤销 + 逐格写（写盘走既有 extract/撤销栈）。
+
+static func _candidate_cells(layer: TileMapLayer, selection: Rect2i) -> Array[Vector2i]:
+	var area := selection.intersection(layer.get_used_rect())
+	if not area.has_area():
+		return []
+	# Small selections should not allocate or scan every occupied cell of a large layer.
+	if area.get_area() <= 1024:
+		var cells: Array[Vector2i] = []
+		for y in range(area.position.y, area.end.y):
+			for x in range(area.position.x, area.end.x):
+				var cell := Vector2i(x, y)
+				if layer.get_cell_source_id(cell) >= 0:
+					cells.append(cell)
+		return cells
+	return layer.get_used_cells()
 
 ## 选区里出现过的瓦片资产 id（去重，按首见顺序）。入口用它列出「源资产」候选——
 ## 不能再用 collect(cvs, sel, "") 反推：collect 的 src_asset 为空时按契约返回空表。
@@ -23,7 +36,7 @@ static func sources_in(cvs, sel: Rect2i, selection_layer := "") -> Array:
 		var layer: TileMapLayer = cvs.layer_tiles[li]
 		if layer == null or not is_instance_valid(layer):
 			continue
-		for c in layer.get_used_cells():
+		for c in _candidate_cells(layer, sel):
 			if not sel.has_point(c):
 				continue
 			var aid := str(cvs.asset_of_source(layer.get_cell_source_id(c)))
@@ -43,8 +56,7 @@ static func collect(cvs, sel: Rect2i, src_asset: String, src_cell := Vector2i(-1
 		if lid == "" or (selection_layer != "" and lid != selection_layer):
 			continue
 		var layer: TileMapLayer = cvs.layer_tiles[li]
-		# P05：只走该层实际存在的格再按选区过滤，不按面积 × 层数扫描
-		for c in layer.get_used_cells():
+		for c in _candidate_cells(layer, sel):
 			if not sel.has_point(c):
 				continue
 			var sid := layer.get_cell_source_id(c)

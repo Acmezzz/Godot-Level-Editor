@@ -276,6 +276,8 @@ func run():
 	var tile_art := Image.create(16, 16, false, Image.FORMAT_RGB8)
 	tile_art.fill(Color("#4e8764"))
 	check(tile_art.save_png(project.path_join("terrain.png")) == OK, "write terrain atlas")
+	tile_art.fill(Color("#a98861"))
+	check(tile_art.save_png(project.path_join("terrain-alt.png")) == OK, "write replacement atlas")
 	var manifest := {"_dir": project, "_maps_dir": project.path_join("maps"), "projectName": "Workflow",
 		"cellGraphEdgeTypes": {"stairs": {"name": "Stairs", "fields": [
 			{"id": "cost", "kind": "input", "type": "int", "min": 1, "default": 9}]}},
@@ -319,6 +321,7 @@ func run():
 			{"id": "switch", "kind": "entity", "code": "SWCH", "functions":["reaction"], "fields": [{"id":"target","type":"port_ref","of":"door"}]},
 			{"id": "button-art", "kind": "scene", "shape": "image", "texture": "button.png"},
 			{"id": "terrain", "kind": "scene", "shape": "tile", "atlas": "terrain.png", "cell": 16},
+			{"id": "terrain-alt", "kind": "scene", "shape": "tile", "atlas": "terrain-alt.png", "cell": 16},
 			{"id": "free-ramp", "kind": "entity", "code": "RAMP", "visual": {"type": "poly"}},
 			{"id": "door", "kind": "entity", "code": "DOOR", "ports": [{"id":"open","type":"door","x": 5,"y": 4}],
 				"fields": [{"id":"label", "type":"string"}, {"id":"route_cell", "kind":"choice", "source":"cell:"},
@@ -1452,7 +1455,7 @@ func author_collision_batch(app, manifest: Dictionary) -> void:
 	var map := Maps.new_map("collision_batch", 224, 224)
 	var lid: String = map.meta.layers[0].id
 	map.meta.layers.append({"id": "backdrop", "name": "Backdrop"})
-	map.tiles[lid] = [[2, 2, "terrain", 0, 0, 0], [3, 2, "terrain", 0, 0, 0]]
+	map.tiles[lid] = [[2, 2, "terrain", 0, 0, 5], [3, 2, "terrain", 0, 0, 0]]
 	var backdrop := []
 	for y in 200:
 		for x in 200:
@@ -1489,6 +1492,29 @@ func author_collision_batch(app, manifest: Dictionary) -> void:
 		"redo restores generated cells and leaves the backdrop intact")
 	print("COLLISION-BATCH snapshot_us=", snapshot_us, " snapshot_text_bytes=", baseline.to_utf8_buffer().size(),
 		" apply_us=", generate_us, " delta_text_bytes=", JSON.stringify(patch).to_utf8_buffer().size())
+	var backdrop_index := cvs._layer_index_of("backdrop")
+	cvs.set_layer_locked(backdrop_index, true)
+	cvs._region_sel = Rect2i(2, 2, 2, 1)
+	cvs._region_layer = lid
+	var revision := cvs.tile_rev
+	app._tile_replace_ctrl.open()
+	var pop: PopupPanel = collect(app, "PopupPanel").filter(func(item): return item.visible).back()
+	select_metadata(collect(pop, "OptionButton")[1], "terrain-alt")
+	press(pop, "替换")
+	var tile_patch: Dictionary = history.undo_stack.back() if history.undo_stack.back() is Dictionary else {}
+	var layer: TileMapLayer = cvs.layer_tiles[0]
+	var cell := Vector2i(2, 2)
+	check(tile_patch.get("cells", []).size() == 2 and cvs.tile_rev == revision + 1
+		and cvs.asset_of_source(layer.get_cell_source_id(cell)) == "terrain-alt"
+		and cvs.extract().tiles[lid].any(func(row): return row == [2, 2, "terrain-alt", 0, 0, 5]),
+		"replace only touches the selected layer and preserves the tile transform bits")
+	check(await cvs.undo() and is_same(root_before, cvs.map_root)
+		and cvs.asset_of_source(layer.get_cell_source_id(cell)) == "terrain",
+		"tile batch undo restores original source without rebuilding the canvas")
+	check(await cvs.redo() and is_same(root_before, cvs.map_root)
+		and cvs.asset_of_source(layer.get_cell_source_id(cell)) == "terrain-alt"
+		and cvs.layer_tiles[backdrop_index].get_used_cells().size() == 40000,
+		"tile batch redo reapplies the replacement and leaves the locked backdrop intact")
 
 func author_transformed_terrain(app, manifest: Dictionary) -> void:
 	await app._load_map_file(Maps.path_for(manifest, "platform"))

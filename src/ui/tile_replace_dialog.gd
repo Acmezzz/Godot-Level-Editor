@@ -2,12 +2,11 @@ extends RefCounted
 ## TileReplaceDialog：按当前区域选区批量替换瓦片（E2）。宿主 = app。
 ##
 ## 流程：选区（瓦片/碰撞层框选，_region_sel）→ 选源资产（选区里出现的图集）与目标资产／切片
-## → 预览「替换几格 / 冲突几格」→ 应用 = 一笔撤销快照 + 逐格写（含变换位保留）。
+## → 预览「替换几格 / 冲突几格」→ 应用 = 一个格差量撤销步骤（保留变换位）。
 ## 冲突（目标图集表达不了原变换）先列出，不写那些格——绝不半截替换。
 
 const TileReplace := preload("res://src/canvas/tile_replace.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
-const TilesetCache := preload("res://src/canvas/tileset_cache.gd")
 const Kit := preload("res://src/ui/ui_kit.gd")
 
 var app
@@ -157,25 +156,24 @@ func _apply(plan: Dictionary, dst_asset: String) -> void:
 	if cells.is_empty() or dst_asset == "":
 		app._set_status(" 没有可替换的格")
 		return
-	if app.canvas._any_layer_locked():
-		app._set_status(" 有图层处于锁定状态：解锁后再替换瓦片")
-		return
 	var src: int = app.canvas.source_of_asset(dst_asset)
 	if src < 0:
 		app._set_status(" 替换失败：目标资产没有可用图集（图集文件缺失？）")
 		return
+	var rows := {}
 	for e: Dictionary in cells:
 		var li: int = app.canvas._layer_index_of(e.layer)
 		if li < 0 or not TileReplace.cell_matches(app.canvas.layer_tiles[li], e) \
 				or not TileReplace.slice_available(app.canvas.layer_tiles[li], src, e.atlas):
 			app._set_status("源瓦片或目标切片已变化，请重新预览")
 			return
-	app.canvas.push_undo()
-	for e: Dictionary in cells:
-		var li: int = app.canvas._layer_index_of(e.layer)
+		if app.canvas.is_layer_locked(li):
+			app._set_status("替换涉及锁定的图层：解锁后再替换瓦片")
+			return
 		var c: Vector2i = e.c
 		var atlas: Vector2i = e.atlas
-		app.canvas.write_tile_row(e.layer, app.canvas.layer_tiles[li], [c.x, c.y, dst_asset, atlas.x, atlas.y, e.alt])
-	app.canvas._mark_tiles()
-	app.canvas.queue_redraw()
+		if not rows.has(e.layer):
+			rows[e.layer] = []
+		rows[e.layer].append([c.x, c.y, dst_asset, atlas.x, atlas.y, e.alt])
+	app.canvas._undo_history_ctrl.apply_tile_batch(rows)
 	app._set_status("已替换 %d 格瓦片（Ctrl+Z 撤销）" % cells.size())
