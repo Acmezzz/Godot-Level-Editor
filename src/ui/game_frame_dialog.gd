@@ -92,29 +92,6 @@ static func open(app, capability: String, options: Dictionary, snapshot: Callabl
 		picks.apply = Callable()
 		confirm.disabled = true
 		frame.queue_redraw()
-	if options.has("controls"):
-		var controls: Control = options.controls
-		body.add_child(controls)
-		body.move_child(controls, frame.get_index())
-		options.controls_changed.connect(func():
-			if frame.texture != null:
-				notice.text = interaction.message()
-				confirm.disabled = not interaction.ready()
-				picks.apply = interaction.apply
-				frame.queue_redraw())
-	if options.has("tools"):
-		var tools := OptionButton.new()
-		tools.name = options.prefix + "Tool"
-		for label in options.tools:
-			tools.add_item(label)
-		var row := Kit.field_row("实景工具", tools, 82)
-		body.add_child(row)
-		body.move_child(row, frame.get_index())
-		tools.item_selected.connect(func(index: int):
-			interaction.tool = index
-			clear_selection.call()
-			if frame.texture != null and not picks.regions.is_empty():
-				notice.text = interaction.message())
 	var reset := func():
 		picks.regions = []
 		picks.current = Callable()
@@ -221,8 +198,6 @@ static func open(app, capability: String, options: Dictionary, snapshot: Callabl
 		frame.mouse_filter = Control.MOUSE_FILTER_STOP
 		var is_current := func() -> bool:
 			return keep.call() and (not picks.current.is_valid() or picks.current.call())
-		if options.has("bind_current"):
-			options.bind_current.call(pop, func(): return is_current.call() and frame.texture != null)
 		var set_draft_action := func():
 			var option: Dictionary = draw_shape.call(picks.draft)
 			notice.text = option.text
@@ -231,7 +206,7 @@ static func open(app, capability: String, options: Dictionary, snapshot: Callabl
 			frame.queue_redraw()
 		if interaction != null:
 			frame.gui_input.connect(func(event: InputEvent):
-				if not (event is InputEventMouseButton or event is InputEventMouseMotion) or frame.texture == null or picks.regions.is_empty():
+				if not event is InputEventMouseButton or frame.texture == null or picks.regions.is_empty():
 					return
 				if not is_current.call():
 					clear_selection.call()
@@ -324,10 +299,7 @@ static func open(app, capability: String, options: Dictionary, snapshot: Callabl
 			if not is_instance_valid(pop) or not pop.visible:
 				return
 			if applied:
-				if options.get("refresh_on_apply", false):
-					await render_frame.call()
-				else:
-					pop.hide()
+				pop.hide()
 			else:
 				clear_selection.call()
 				notice.text = "选点未写入，请核对当前资产、图层或字段。")

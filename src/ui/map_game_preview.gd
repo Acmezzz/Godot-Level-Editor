@@ -7,14 +7,10 @@ const Kit := preload("res://src/ui/ui_kit.gd")
 const FieldWidgets := preload("res://src/ui/field_widgets.gd")
 const Assets := preload("res://src/assets/asset_decl.gd")
 const Geometry := preload("res://src/map/object_geometry.gd")
-const GridBrush := preload("res://src/ui/frame_grid_brush.gd")
-const ObjectEdit := preload("res://src/ui/frame_object_edit.gd")
-const CellGraphEdit := preload("res://src/ui/frame_cell_graph.gd")
 const Maps := preload("res://src/map/map_store.gd")
 const RefIndex := preload("res://src/project/reference_index.gd")
 const Recovery := preload("res://src/map/recovery.gd")
 const ViewData := preload("res://src/map/map_view_data.gd")
-const Graph := preload("res://src/map/cell_graph.gd")
 const Layout := preload("res://src/project/screen_layout.gd")
 const Picks := preload("res://src/project/frame_picks.gd")
 const RefFields := preload("res://src/content/ref_fields.gd")
@@ -123,13 +119,6 @@ static func available(app) -> bool:
 	return app.map_loaded and GamePreview.supports(app.manifest, CAPABILITY)
 
 static func open(app) -> void:
-	if app.map_loaded and app.canvas._is_grid_layer(app.canvas.active_layer):
-		_open(app, "collision", Callable(), {"title": "关卡游戏画面 · 碰撞笔刷",
-			"interaction": GridBrush.new(app.canvas, true), "confirm_label": "应用碰撞笔画"})
-		return
-	if app.map_loaded and app.canvas.place_kind != "object" and app.canvas.source_of_asset(app.canvas.paint_asset) >= 0:
-		_open(app, "placement", Callable(), {"interaction": GridBrush.new(app.canvas), "confirm_label": "应用笔画"})
-		return
 	var asset: String = app.canvas.stamp_asset if app.map_loaded else ""
 	var choose := func(value: Dictionary) -> Dictionary:
 		var canvas: EditorCanvas = app.canvas
@@ -161,12 +150,6 @@ static func open(app) -> void:
 				"apply": func(): return canvas._tool_ops_ctrl.place_object(asset, li, points[0], true, points) != null}
 	_open(app, "placement", choose, draft)
 
-static func open_object_edit(app) -> void:
-	if available(app):
-		_open(app, "objectEdit", Callable(), {"title": "实景调整实例和轮廓",
-			"interaction": ObjectEdit.new(app.canvas), "tools": ObjectEdit.TOOLS,
-			"confirm_label": "应用调整", "refresh_on_apply": true})
-
 static func open_spawn(app) -> void:
 	var choose := func(value: Dictionary) -> Dictionary:
 		var canvas: EditorCanvas = app.canvas
@@ -179,51 +162,6 @@ static func open_spawn(app) -> void:
 			"apply": func(): return canvas.set_spawn_cell(cell)}
 	_open(app, "collision", choose, {"title": "实景设置出生点", "confirm_label": "应用出生点",
 		"initial": "渲染后，点击有根空间映射的地点，再确认出生点。"})
-
-static func open_cell_graph(app) -> void:
-	if not available(app):
-		return
-	var editor := CellGraphEdit.new(app.canvas)
-	var index := Maps.code_index(app.manifest)
-	var maps := []
-	for name in index.names:
-		var code: String = index.by_name.get(name, "")
-		if code != "" and code != app.canvas.cur_map_code() and RefIndex.resolve_map_code(index, code).status == "ok":
-			maps.append({"name": name, "code": code})
-	var controls := editor.controls(maps)
-	var bind_current := func(parent: Window, current: Callable):
-		editor.destination_button.pressed.connect(func(): _open_cell_destination(app, editor, parent, current))
-	_open(app, "cellGraphEdit", Callable(), {"title": "实景编辑格图", "interaction": editor,
-		"tools": CellGraphEdit.TOOLS, "controls": controls, "controls_changed": editor.controls_changed,
-		"bind_current": bind_current,
-		"confirm_label": "应用格图调整", "refresh_on_apply": true})
-
-static func _open_cell_destination(app, editor, parent: Window, source_current: Callable) -> void:
-	if not source_current.call() or not editor.destination_row.visible:
-		return
-	var manifest: Dictionary = app.manifest
-	var code: String = editor.destination_map.get_selected_metadata()
-	var source := [editor.tool, editor.from, editor.pending.get("id", "")]
-	var valid := func() -> bool:
-		return source_current.call() and editor.destination_row.visible \
-			and source == [editor.tool, editor.from, editor.pending.get("id", "")]
-	var rendered := {}
-	var prepare := func(map: Dictionary, current: Callable) -> String:
-		var cells := Graph.cell_ids(Graph.graph_of(map.meta))
-		if cells.is_empty():
-			return "请先在目标地图创建格并保存。"
-		rendered.assign({"cells": cells, "current": current})
-		return ""
-	var choose := func(cell: String) -> Dictionary:
-		if not rendered.cells.has(cell):
-			return {"text": "请选择目标地图已有的格。"}
-		var current: Callable = rendered.current
-		return {"text": "终点：%s / %s" % [code, cell],
-			"apply": func(): return editor.set_destination(code, cell, current)}
-	FrameDialog.open(app, CAPABILITY, {"title": "跨地图选择终点 · " + code, "button": "渲染目标地图",
-		"hint": "目标地图使用已保存版本。确认选点后，回到起点地图应用连接。",
-		"prefix": "MapGamePreview", "default_label": "当前画布大小", "pick_mode": "cell", "pick": choose,
-		"camera": true, "parent": parent}, _saved_snapshot.bind(app, manifest, code, prepare), valid)
 
 static func _saved_snapshot(preset: String, app, manifest: Dictionary, key: String,
 		prepare: Callable) -> Dictionary:

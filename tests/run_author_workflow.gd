@@ -2583,209 +2583,6 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 	var linked: Array = cvs.extract().objects.filter(func(row): return row.code == "PICK")
 	check(linked[0].get("props", {}).get("target", {}).get("inst") == doors[1].code, "confirm writes the instance port field")
 	app._set_mode("map")
-	cvs.place_kind = "tile"
-	cvs.paint_asset = "terrain"
-	cvs.paint_cell = Vector2i.ZERO
-	cvs.brush_size = 1
-	app._layout_ctrl._on_map_menu_id(14)
-	var paint_pop := await _render_pick_frame(app)
-	if paint_pop == null:
-		return
-	var before_tiles: Dictionary = cvs.extract().tiles
-	var apply := _drag_pick_frame(paint_pop, Vector2(0.11, 0.25), Vector2(0.86, 0.25))
-	check(not apply.disabled and cvs.extract().tiles == before_tiles, "mapped stroke is a draft until confirmed")
-	apply.pressed.emit()
-	await process_frame
-	var painted: Dictionary = cvs.extract().tiles
-	check(not painted.get(primary, []).is_empty() and not painted.get(upper, []).is_empty()
-		and painted[primary].all(func(row): return row[0] in [1, 2])
-		and painted[upper].all(func(row): return row[0] in [3, 4]),
-		"one screen drag paints both projected layers and does not bridge the unmapped gap")
-	check(await cvs.undo() and cvs.extract().tiles == before_tiles, "one undo reverses the complete multilayer stroke")
-	check(await cvs.redo() and cvs.extract().tiles == painted, "redo restores the full stroke")
-	app._layout_ctrl._on_map_menu_id(14)
-	var erase_pop := await _render_pick_frame(app)
-	if erase_pop == null:
-		return
-	apply = _click_pick_frame(erase_pop, Vector2(0.12, 0.25), MOUSE_BUTTON_RIGHT)
-	apply.pressed.emit()
-	await process_frame
-	var final_tiles: Dictionary = cvs.extract().tiles
-	check(final_tiles.get(primary, []).size() < painted.get(primary, []).size()
-		and final_tiles.get(upper, []) == painted.get(upper, []), "right button erases the picked tile without touching another layer")
-	var original_layer: int = cvs.active_layer
-	app._on_layer(cvs.collision_index())
-	cvs.collision_type = "one_way"
-	cvs.collision_shape = "r45"
-	app._layout_ctrl._on_map_menu_id(14)
-	var collision_pop := await _render_pick_frame(app)
-	if collision_pop == null:
-		return
-	check(_click_pick_frame(collision_pop, occluder).disabled, "foreground occludes the root collision mapping too")
-	var before_collision: Array = cvs.extract().collision
-	var collision_steps: int = cvs.undo_step_count()
-	apply = _drag_pick_frame(collision_pop, Vector2(0.11, 0.25), Vector2(0.86, 0.25))
-	check(not apply.disabled and cvs.extract().collision == before_collision, "projected root collision remains a draft")
-	apply.pressed.emit()
-	await process_frame
-	var authored_collision: Array = cvs.extract().collision
-	check(cvs.undo_step_count() == collision_steps + 1 and authored_collision.any(func(row): return row.x == 5 and row.y == 3)
-		and authored_collision.all(func(row): return row.x != 3 and row.x != 4 and row.type == "one_way" and row.shape == "r45")
-		and authored_collision.any(func(row): return row.x == 1 and row.y == 1 and row.get("material") == "ice")
-		and cvs.extract().tiles == final_tiles, "one collision stroke uses both root projections, preserves raw metadata and leaves tiles alone")
-	check(await cvs.undo() and cvs.extract().collision == before_collision, "undo restores the original root collision")
-	check(await cvs.redo() and cvs.extract().collision == authored_collision, "redo restores the authored slopes")
-	app._layout_ctrl._on_map_menu_id(14)
-	var collision_erase := await _render_pick_frame(app)
-	if collision_erase == null:
-		return
-	apply = _click_pick_frame(collision_erase, Vector2(0.12, 0.25), MOUSE_BUTTON_RIGHT)
-	check(not apply.disabled, "right click drafts root collision erase")
-	apply.pressed.emit()
-	await process_frame
-	check(cvs.collision.get_cell_source_id(Vector2i(1, 1)) == -1 and cvs.extract().tiles == final_tiles,
-		"collision erase removes the picked root cell and no tiles")
-	app._on_layer(original_layer)
-	app._layout_ctrl._on_map_menu_id(17)
-	var move_pop := await _render_pick_frame(app)
-	if move_pop == null:
-		return
-	check(_click_pick_frame(move_pop, Vector2(0.15, 0.25)).disabled, "instance selection alone cannot apply a move")
-	check(_click_pick_frame(move_pop, Vector2(0.65, 0.25)).disabled, "a destination in another layer cannot move the instance")
-	apply = _click_pick_frame(move_pop, Vector2(0.25, 0.25))
-	check(not apply.disabled and cvs._ent_by_code_index()[doors[0].code].position.is_equal_approx(Vector2(24, 24)),
-		"the mapped move stays in the draft until confirmed")
-	apply.pressed.emit()
-	var move_frame: TextureRect = move_pop.find_child("MapGamePreviewFrame", true, false)
-	check(move_pop.visible and apply.disabled and move_frame.texture == null, "applying drops the old draft and frame immediately")
-	apply.pressed.emit()
-	if await _wait_for_pick_frame(move_pop) == null:
-		return
-	check(apply.disabled and move_frame.texture.get_size() == Vector2(720, 1280), "the same picker refreshes at the selected size without a draft")
-	check(cvs._ent_by_code_index()[doors[0].code].position.is_equal_approx(Vector2(32, 24)), "apply moves the selected instance")
-	_click_pick_frame(move_pop, Vector2(0.75, 0.25))
-	check(_click_pick_frame(move_pop, Vector2(0.65, 0.25)).disabled, "a collapsed edge cannot be confirmed")
-	apply = _click_pick_frame(move_pop, Vector2(0.73, 0.26))
-	check(not apply.disabled, "a new valid outline vertex location is enabled")
-	apply.pressed.emit()
-	if await _wait_for_pick_frame(move_pop) == null:
-		return
-	var edited: Array = cvs.extract().objects.filter(func(row): return row.code == outline.code)
-	var moved: Array = edited[0].props.points
-	check(moved != outline.props.points and moved[0] == outline.props.points[0] and moved[2] == outline.props.points[2],
-		"adjust only the specified vertex while preserving identity and other vertices")
-	check(_click_pick_frame(move_pop, Vector2(0.73, 0.26), MOUSE_BUTTON_LEFT, KEY_CTRL).disabled,
-		"a three-point contour cannot lose a vertex")
-	check(_click_pick_frame(move_pop, Vector2(0.65, 0.25), MOUSE_BUTTON_LEFT, KEY_SHIFT).disabled,
-		"inserting a vertex first selects its predecessor")
-	check(_click_pick_frame(move_pop, Vector2(0.15, 0.25)).disabled, "inserting on another layer is rejected")
-	apply = _click_pick_frame(move_pop, Vector2(0.70, 0.25))
-	check(not apply.disabled and _frame_contour_points(cvs, outline.code) == moved, "insert is a draft until applied")
-	apply.pressed.emit()
-	if await _wait_for_pick_frame(move_pop) == null:
-		return
-	var inserted := _frame_contour_points(cvs, outline.code)
-	check(inserted.size() == 4 and inserted[0] == moved[0] and inserted[2] == moved[1] and inserted[3] == moved[2],
-		"the new vertex follows the chosen predecessor in the projected ring")
-	apply = _click_pick_frame(move_pop, Vector2(0.73, 0.26), MOUSE_BUTTON_LEFT, KEY_CTRL)
-	check(not apply.disabled and _frame_contour_points(cvs, outline.code) == inserted, "deletion awaits confirmation")
-	apply.pressed.emit()
-	if await _wait_for_pick_frame(move_pop) == null:
-		return
-	move_pop.hide()
-	var points := _frame_contour_points(cvs, outline.code)
-	check(points == [inserted[0], inserted[1], inserted[3]], "the fresh frame identifies the reindexed vertex for deletion")
-	check(await cvs.undo() and _frame_contour_points(cvs, outline.code) == inserted, "one undo restores the deleted vertex")
-	check(await cvs.undo() and _frame_contour_points(cvs, outline.code) == moved, "the next undo removes the inserted vertex")
-	check(await cvs.undo() and cvs.extract().objects.any(func(row): return row.get("code") == outline.code and row.props.points == outline.props.points),
-		"one undo restores the original outline")
-	check(cvs._ent_by_code_index()[doors[0].code].position.is_equal_approx(Vector2(32, 24)), "undoing the vertex leaves the instance move")
-	check(await cvs.undo() and cvs._ent_by_code_index()[doors[0].code].position.is_equal_approx(Vector2(24, 24)),
-		"the next undo restores the original anchor")
-	check(await cvs.redo() and cvs._ent_by_code_index()[doors[0].code].position.is_equal_approx(Vector2(32, 24)),
-		"redo moves the same stable instance")
-	check(await cvs.redo() and _frame_contour_points(cvs, outline.code) == moved,
-		"the next redo reapplies the edited vertex")
-	check(await cvs.redo() and _frame_contour_points(cvs, outline.code) == inserted, "redo restores the inserted vertex")
-	check(await cvs.redo() and _frame_contour_points(cvs, outline.code) == points, "redo deletes the original vertex again")
-	app._layout_ctrl._on_map_menu_id(17)
-	var rings_pop := await _render_pick_frame(app)
-	if rings_pop == null:
-		return
-	var tools: OptionButton = rings_pop.find_child("MapGamePreviewTool", true, false)
-	tools.item_selected.emit(2)
-	_click_pick_frame(rings_pop, Vector2(0.65, 0.25))
-	_click_pick_frame(rings_pop, Vector2(0.659, 0.27))
-	_click_pick_frame(rings_pop, Vector2(0.674, 0.265))
-	check(_click_pick_frame(rings_pop, Vector2(0.15, 0.25)).disabled, "a hole cannot collect points from a different layer")
-	apply = _click_pick_frame(rings_pop, Vector2(0.659, 0.292))
-	check(not apply.disabled and not _frame_contour_props(cvs, outline.code).has("holes"), "the new hole awaits confirmation")
-	check(_click_pick_frame(rings_pop, Vector2.ZERO, MOUSE_BUTTON_RIGHT).disabled, "undo the last draft point without editing the map")
-	_click_pick_frame(rings_pop, Vector2(0.659, 0.292)).pressed.emit()
-	if await _wait_for_pick_frame(rings_pop) == null:
-		return
-	tools.item_selected.emit(1)
-	_click_pick_frame(rings_pop, Vector2(0.65, 0.25))
-	_click_pick_frame(rings_pop, Vector2(0.78, 0.25))
-	_click_pick_frame(rings_pop, Vector2(0.83, 0.25))
-	apply = _click_pick_frame(rings_pop, Vector2(0.78, 0.29))
-	check(not apply.disabled, "a separate closed ring can be added in the perspective view")
-	apply.pressed.emit()
-	if await _wait_for_pick_frame(rings_pop) == null:
-		return
-	var compound := _frame_contour_props(cvs, outline.code)
-	check(compound.get("holes", []).size() == 1 and compound.get("parts", []).size() == 1, "the same instance holds both new rings")
-	tools.item_selected.emit(3)
-	check(_click_pick_frame(rings_pop, Vector2(0.65, 0.25)).disabled, "the primary outer ring cannot be deleted")
-	apply = _click_pick_frame(rings_pop, Vector2(0.659, 0.292))
-	check(not apply.disabled, "the refreshed frame identifies the new hole for removal")
-	apply.pressed.emit()
-	if await _wait_for_pick_frame(rings_pop) == null:
-		return
-	check(not _frame_contour_props(cvs, outline.code).has("holes"), "confirmation removes the selected hole")
-	apply = _click_pick_frame(rings_pop, Vector2(0.78, 0.29))
-	check(not apply.disabled, "the extra outer ring remains selectable after ring indexes change")
-	apply.pressed.emit()
-	if await _wait_for_pick_frame(rings_pop) == null:
-		return
-	rings_pop.hide()
-	check(not _frame_contour_props(cvs, outline.code).has("parts"), "confirmation removes the selected extra outer ring")
-	check(await cvs.undo() and _frame_contour_props(cvs, outline.code).has("parts"), "one undo restores the extra outer ring")
-	check(await cvs.undo() and _frame_contour_props(cvs, outline.code) == compound, "the next undo restores the hole")
-	app._layout_ctrl._on_map_menu_id(17)
-	var arrange := await _render_pick_frame(app)
-	if arrange == null:
-		return
-	var arrange_tools: OptionButton = arrange.find_child("MapGamePreviewTool", true, false)
-	var door_code: String = doors[0].code
-	var door: EntityNode = cvs._ent_by_code_index()[door_code]
-	for tool in [4, 5]:
-		arrange_tools.select(tool)
-		arrange_tools.item_selected.emit(tool)
-		var before_transform := door.data_transform.duplicate(true)
-		apply = _click_pick_frame(arrange, Vector2(0.15, 0.25))
-		check(not apply.disabled and door.data_transform == before_transform, "instance transform stays in the draft")
-		apply.pressed.emit()
-		if await _wait_for_pick_frame(arrange) == null:
-			return
-	check(is_equal_approx(float(door.data_transform.get("rotation", 0.0)), PI / 2) and door.flipped_h(),
-		"rotate and flip the same instance in the refreshed preview")
-	arrange_tools.select(6)
-	arrange_tools.item_selected.emit(6)
-	var removal_root: Node2D = cvs.map_root
-	var steps_before_removal: int = cvs.undo_step_count()
-	apply = _click_pick_frame(arrange, Vector2(0.15, 0.25))
-	check(not apply.disabled and cvs._ent_by_code_index().has(door_code), "projected deletion needs confirmation")
-	apply.pressed.emit()
-	if await _wait_for_pick_frame(arrange) == null:
-		return
-	check(cvs.undo_step_count() == steps_before_removal + 1 and not cvs._ent_by_code_index().has(door_code)
-		and _click_pick_frame(arrange, Vector2(0.15, 0.25)).disabled, "removal refreshes picks and records one step")
-	arrange.hide()
-	check(await cvs.undo() and cvs.map_root == removal_root and cvs._ent_by_code_index()[door_code].flipped_h(),
-		"deletion undo restores the transformed instance without rebuilding the map")
-	check(await cvs.redo() and not cvs._ent_by_code_index().has(door_code), "redo removes only the selected instance")
-	check(await cvs.undo(), "restore the door before publishing the preview edits")
 	var before_spawn: Array = cvs.extract().spawn
 	var root: Node2D = cvs.map_root
 	var steps: int = cvs.undo_step_count()
@@ -2806,7 +2603,7 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 	cvs.set_layer_locked(cvs.collision_index(), true)
 	check(_click_pick_frame(spawn_pop, Vector2(0.65, 0.25)).disabled, "root collision lock prevents moving spawn")
 	cvs.set_layer_locked(cvs.collision_index(), false)
-	apply = _click_pick_frame(spawn_pop, Vector2(0.65, 0.25))
+	var apply := _click_pick_frame(spawn_pop, Vector2(0.65, 0.25))
 	check(not apply.disabled and cvs.extract().spawn == before_spawn and FileAccess.get_sha256(path) == original_hash,
 		"the projected spawn stays a draft until confirmed")
 	apply.pressed.emit()
@@ -2849,279 +2646,18 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 	input._on_object_layer_press(handle.handle, mouse)
 	input._on_left_release(upper_port)
 	check(source_switch.props.target == previous, "the wire reconnects to the transformed port on the upper layer")
-	var source_id := "%s-SWCH-PICK-reaction-preview" % cvs.cur_map_code()
-	source_switch.functions = [{"fn": "REAC", "tr": "TUCH", "content": source_id}]
-	editor.stage_clone("reaction", source_id, {"id": source_id, "function": "REAC",
-		"fields": {"RMES": "Draft copied from the game frame"}}, "PICK")
-	cvs._mark_ents()
-	app._layout_ctrl._on_map_menu_id(17)
-	var copy_pop := await _render_pick_frame(app)
-	if copy_pop == null:
-		return
-	var copy_tools: OptionButton = copy_pop.find_child("MapGamePreviewTool", true, false)
-	copy_tools.select(7)
-	copy_tools.item_selected.emit(7)
-	var object_count: int = cvs.ents_all().size()
-	check(_click_pick_frame(copy_pop, Vector2(0.11, 0.34)).disabled, "copy needs a destination after selecting the switch")
-	check(_click_pick_frame(copy_pop, occluder).disabled, "copy cannot use an occluded destination")
-	apply = _click_pick_frame(copy_pop, Vector2(0.65, 0.25))
-	check(not apply.disabled and cvs.ents_all().size() == object_count, "cross-layer copy stays a draft until confirmed")
-	apply.pressed.emit()
-	if await _wait_for_pick_frame(copy_pop) == null:
-		return
-	copy_pop.hide()
-	var copied_switches: Array = cvs.ents_all().filter(func(n): return n.asset == "switch" and n.code != "PICK")
-	if copied_switches.size() != 1:
-		check(false, "one switch was copied")
-		return
-	var copy: EntityNode = copied_switches[0]
-	var copy_code := copy.code
-	var copy_id: String = copy.functions[0].content
-	check(copy.layer_id == upper and copy.props.target == source_switch.props.target and copy_id != source_id
-		and copy.position.is_equal_approx(Vector2(48.0 + 32.0 / 7, 32.0 + 64.0 / 7))
-		and not FileAccess.file_exists(Store.path_for(manifest, "reaction", copy_id)),
-		"copy has a fresh identity and staged content, preserves its outside port reference and lands in the perspective layer")
-	check(await cvs.undo() and not cvs._ent_by_code_index().has(copy_code) and cvs.map_root == root,
-		"undo removes just the copy in place")
-	check(await cvs.redo() and cvs._ent_by_code_index().has(copy_code), "redo restores the same copy ID")
-	app._layout_ctrl._on_map_menu_id(23)
-	var graph_pop := await _render_pick_frame(app)
-	if graph_pop == null:
-		return
-	var graph_id: LineEdit = graph_pop.find_child("FrameGraphCellId", true, false)
-	var graph_space: OptionButton = graph_pop.find_child("FrameGraphSpace", true, false)
-	select_metadata(graph_space, "upper-side")
-	graph_id.text = "exit-floor"
-	check(_click_pick_frame(graph_pop, Vector2(0.15, 0.25)).disabled, "cannot draw a layer-bound cell from a different view")
-	_click_pick_frame(graph_pop, Vector2(0.65, 0.25))
-	_click_pick_frame(graph_pop, Vector2(0.75, 0.25))
-	apply = _click_pick_frame(graph_pop, Vector2(0.65, 0.35))
-	check(not apply.disabled and cvs.cell_graph().cells.size() == 1, "mapped polygon stays a draft")
-	apply.pressed.emit()
-	if await _wait_for_pick_frame(graph_pop) == null:
-		return
-	var drawn: Dictionary = cvs.cell_graph().cells.back()
-	check(drawn.id == "exit-floor" and drawn.space == "upper-side"
-		and Vector2(drawn.polygon[0][0], drawn.polygon[0][1]).distance_to(Vector2(44.0 / 7, 78.0 / 7)) < 0.02,
-		"perspective picks are converted to the selected space's local polygon")
-	var graph_tools: OptionButton = graph_pop.find_child("MapGamePreviewTool", true, false)
-	graph_tools.select(1)
-	graph_tools.item_selected.emit(1)
-	_click_pick_frame(graph_pop, Vector2(0.15, 0.24))
-	apply = _click_pick_frame(graph_pop, Vector2(0.68, 0.28))
-	check(not apply.disabled and cvs.cell_graph().cells[0].neighbors.is_empty(), "link stays a draft across the two views")
-	apply.pressed.emit()
-	if await _wait_for_pick_frame(graph_pop) == null:
-		return
-	graph_pop.hide()
-	check(cvs.cell_graph().cells[0].neighbors == ["exit-floor"] and cvs.cell_graph().cells[1].neighbors.is_empty(),
-		"only the selected outgoing direction is added")
-	check(await cvs.undo() and cvs.cell_graph().cells[0].neighbors.is_empty(), "undo removes the authored link")
-	check(await cvs.redo() and cvs.cell_graph().cells[0].neighbors == ["exit-floor"], "redo restores the same link")
-	app._layout_ctrl._on_map_menu_id(23)
-	var edge_pop := await _render_pick_frame(app)
-	if edge_pop == null:
-		return
-	var edge_tools: OptionButton = edge_pop.find_child("MapGamePreviewTool", true, false)
-	edge_tools.select(2)
-	edge_tools.item_selected.emit(2)
-	select_metadata(edge_pop.find_child("FrameGraphEdgeType", true, false), "stairs")
-	var edge_cost: SpinBox = edge_pop.find_child("FrameEdgeProperty_cost", true, false)
-	check(edge_cost.value == 9, "declared edge defaults appear in the game frame editor")
-	edge_cost.value = 3
-	_click_pick_frame(edge_pop, Vector2(0.15, 0.24))
-	apply = _click_pick_frame(edge_pop, Vector2(0.68, 0.28))
-	check(not apply.disabled and cvs.cell_graph().get("edges", []).is_empty(), "typed edge remains a draft until confirmation")
-	apply.pressed.emit()
-	if await _wait_for_pick_frame(edge_pop) == null:
-		return
-	edge_pop.hide()
-	var authored_edge: Dictionary = cvs.cell_graph().get("edges", [{}]).front()
-	check(authored_edge.get("from") == "entry" and authored_edge.get("to") == "exit-floor"
-		and authored_edge.get("type") == "stairs" and authored_edge.get("props", {}).get("cost") == 3
-		and cvs.cell_graph().cells[0].neighbors == ["exit-floor"], "typed edge preserves its own cost and the parallel simple link")
-	check(await cvs.undo() and cvs.cell_graph().get("edges", []).is_empty(), "one undo removes only the typed edge")
-	var edge_redo: bool = await cvs.redo()
-	var restored_edges: Array = cvs.cell_graph().get("edges", [])
-	check(edge_redo and restored_edges.size() == 1 and restored_edges[0].id == authored_edge.get("id")
-		and restored_edges[0].from == "entry" and restored_edges[0].to == "exit-floor"
-		and restored_edges[0].type == "stairs" and int(restored_edges[0].props.cost) == 3,
-		"redo restores the same typed edge identity and cost")
-	var edge_id: String = authored_edge.get("id", "")
-	var graph_root: Node2D = cvs.map_root
-	app._layout_ctrl._on_map_menu_id(23)
-	edge_pop = await _render_pick_frame(app)
-	if edge_pop == null:
-		return
-	edge_tools = edge_pop.find_child("MapGamePreviewTool", true, false)
-	edge_tools.select(3)
-	edge_tools.item_selected.emit(3)
-	apply = _click_pick_frame(edge_pop, Vector2(0.15, 0.24))
-	check(apply.disabled, "editing waits for a specific outgoing edge")
-	var existing: OptionButton = edge_pop.find_child("FrameExistingEdge", true, false)
-	select_metadata(existing, edge_id)
-	var delete_edge: CheckBox = edge_pop.find_child("FrameDeleteEdge", true, false)
-	delete_edge.button_pressed = true
-	apply.pressed.emit()
-	if await _wait_for_pick_frame(edge_pop) == null:
-		return
-	check(cvs.cell_graph().edges.is_empty() and cvs.cell_graph().cells[0].neighbors == ["exit-floor"],
-		"confirmed deletion removes only the selected explicit edge")
-	check(await cvs.undo() and cvs.map_root == graph_root and cvs.cell_graph().edges[0].id == edge_id,
-		"undo restores the same edge without rebuilding unrelated map data")
-	edge_pop.find_child("MapGamePreviewRender", true, false).pressed.emit()
-	if await _wait_for_pick_frame(edge_pop) == null:
-		return
-	_click_pick_frame(edge_pop, Vector2(0.15, 0.24))
-	select_metadata(existing, edge_id)
-	edge_cost = edge_pop.find_child("FrameEdgeProperty_cost", true, false)
-	edge_cost.value = 2
-	apply = _click_pick_frame(edge_pop, Vector2(0.15, 0.24))
-	check(not apply.disabled and cvs.cell_graph().edges[0].to == "exit-floor", "retargeting only changes the draft before confirmation")
-	apply.pressed.emit()
-	if await _wait_for_pick_frame(edge_pop) == null:
-		return
-	check(cvs.cell_graph().edges[0].to == "entry" and cvs.cell_graph().edges[0].props.cost == 2
-		and cvs.cell_graph().edges[0].id == edge_id, "editing retargets and changes cost without replacing the edge identity")
-	_click_pick_frame(edge_pop, Vector2(0.15, 0.24))
-	select_metadata(existing, edge_id)
-	apply = _click_pick_frame(edge_pop, Vector2(0.68, 0.28))
-	apply.pressed.emit()
-	if await _wait_for_pick_frame(edge_pop) == null:
-		return
-	edge_pop.hide()
-	app._layout_ctrl._on_map_menu_id(23)
-	var vertex_pop := await _render_pick_frame(app)
-	if vertex_pop == null:
-		return
-	var vertex_tools: OptionButton = vertex_pop.find_child("MapGamePreviewTool", true, false)
-	vertex_tools.select(4)
-	vertex_tools.item_selected.emit(4)
-	var old_polygon: Array = cvs.cell_graph().cells[1].polygon.duplicate(true)
-	var vertex_pos := Vector2(0.65, 0.25)
-	check(_click_pick_frame(vertex_pop, vertex_pos, MOUSE_BUTTON_LEFT, KEY_CTRL).disabled,
-		"a triangular graph cell cannot lose a vertex")
-	_click_pick_frame(vertex_pop, vertex_pos, MOUSE_BUTTON_RIGHT)
-	_click_pick_frame(vertex_pop, vertex_pos)
-	check(_click_pick_frame(vertex_pop, Vector2(0.15, 0.24)).disabled, "a vertex cannot be moved into another coordinate space")
-	apply = _click_pick_frame(vertex_pop, Vector2(0.66, 0.255))
-	check(not apply.disabled and cvs.cell_graph().cells[1].polygon == old_polygon, "vertex motion stays in the draft")
-	apply.pressed.emit()
-	if await _wait_for_pick_frame(vertex_pop) == null:
-		return
-	vertex_pop.hide()
-	var edited_polygon: Array = cvs.cell_graph().cells[1].polygon.duplicate(true)
-	check(Vector2(edited_polygon[0][0], edited_polygon[0][1]).distance_to(Vector2(6.5507, 11.7391)) < 0.02
-		and edited_polygon.slice(1) == old_polygon.slice(1) and cvs.cell_graph().edges[0].id == edge_id,
-		"moving a projected vertex preserves the other vertices and existing edge identity")
-	check(await cvs.undo() and cvs.cell_graph().cells[1].polygon == old_polygon, "undo restores the previous contour")
-	check(await cvs.redo() and cvs.cell_graph().cells[1].polygon == edited_polygon, "redo restores the moved vertex")
-	app._layout_ctrl._on_map_menu_id(23)
-	var delete_pop := await _render_pick_frame(app)
-	if delete_pop == null:
-		return
-	var delete_tools: OptionButton = delete_pop.find_child("MapGamePreviewTool", true, false)
-	delete_tools.select(5)
-	delete_tools.item_selected.emit(5)
-	var graph_before_delete: Dictionary = cvs.cell_graph().duplicate(true)
-	var root_before_delete: Node2D = cvs.map_root
-	cvs.set_layer_locked(1, true)
-	check(_click_pick_frame(delete_pop, Vector2(0.68, 0.28)).disabled, "locked graph cells cannot be selected for deletion")
-	cvs.set_layer_locked(1, false)
-	apply = _click_pick_frame(delete_pop, Vector2(0.68, 0.28))
-	check(not apply.disabled and cvs.cell_graph() == graph_before_delete, "the selected cell remains in the map until confirmation")
-	apply.pressed.emit()
-	if await _wait_for_pick_frame(delete_pop) == null:
-		return
-	check(cvs.cell_graph().cells.size() == 1 and cvs.cell_graph().cells[0].neighbors.is_empty()
-		and cvs.cell_graph().edges.is_empty() and _click_pick_frame(delete_pop, Vector2(0.68, 0.28)).disabled,
-		"removing a cell clears its explicit and simple inbound connections and refreshes game picks")
-	delete_pop.hide()
-	check(await cvs.undo() and cvs.map_root == root_before_delete and cvs.cell_graph() == graph_before_delete,
-		"one undo restores the cell and its connections without rebuilding the map")
-	destination.meta.cellGraph = {"cells": [{"id": "remote", "polygon": [[20, 20], [30, 22], [22, 31]], "neighbors": []}]}
 	destination.objects = [{"asset": "door", "code": "DIST", "layer": destination.meta.layers[0].id, "x": 1, "y": 1}]
-	check(Maps.write(manifest, "frame_pick_destination", destination), "save a second map with a projected graph cell")
-	app._layout_ctrl._on_map_menu_id(23)
-	edge_pop = await _render_pick_frame(app)
-	if edge_pop == null:
-		return
-	edge_tools = edge_pop.find_child("MapGamePreviewTool", true, false)
-	edge_tools.select(2)
-	edge_tools.item_selected.emit(2)
-	_click_pick_frame(edge_pop, Vector2(0.15, 0.24))
-	var map_picker: OptionButton = edge_pop.find_child("FrameGraphDestinationMap", true, false)
-	var pick_destination: Button = edge_pop.find_child("FrameGraphPickDestination", true, false)
-	select_metadata(map_picker, destination_code)
-	pick_destination.pressed.emit()
-	var target_pop := await _render_pick_frame(app)
-	if target_pop == null or target_pop == edge_pop:
-		check(false, "open a separate target frame while preserving the source")
-		return
-	var target_point := Vector2(24, 24)
-	var default_pick := _frame_pick_at_world(target_pop, target_point)
-	var confirm_target := _click_pick_frame(target_pop, default_pick)
-	check(not confirm_target.disabled and cvs.cell_graph() == graph_before_delete,
-		"picking in the second map does not modify the open map")
-	var before_camera: Array = [cvs.cam_pos, cvs.zoom]
-	for entry in [["X", "60"], ["Y", "70"], ["Zoom", "6"]]:
-		var field: LineEdit = target_pop.find_child("MapGamePreviewCamera" + entry[0], true, false)
-		field.text = entry[1]
-		field.text_changed.emit(field.text)
-	var target_frame: TextureRect = target_pop.find_child("MapGamePreviewFrame", true, false)
-	check(confirm_target.disabled and target_frame.texture == null, "changing the target camera clears old pixels and the pending pick")
-	target_pop.find_child("MapGamePreviewRender", true, false).pressed.emit()
-	if await _wait_for_pick_frame(target_pop) == null:
-		return
-	check(_click_pick_frame(target_pop, default_pick).disabled, "the previous screen position no longer picks the cell")
-	var zoomed_pick := Vector2(0.5, 0.5) + (target_point - Vector2(60, 70)) * 6.0 / Vector2(720, 1280)
-	var pixel := Vector2i(zoomed_pick * target_frame.texture.get_size())
-	check(target_frame.texture.get_image().get_pixelv(pixel).g > 0.6
-		and not _click_pick_frame(target_pop, zoomed_pick).disabled
-		and [cvs.cam_pos, cvs.zoom] == before_camera,
-		"the game draws and maps the cell at the requested center and scale without moving the editor canvas")
-	confirm_target.pressed.emit()
-	await process_frame
-	apply = edge_pop.find_child("MapGamePreviewConfirmPick", true, false)
-	check(not apply.disabled and cvs.cell_graph() == graph_before_delete, "confirming the remote cell only updates the new edge draft")
-	apply.pressed.emit()
-	if await _wait_for_pick_frame(edge_pop) == null:
-		return
-	var new_edge: Dictionary = cvs.cell_graph().edges.back()
-	check(new_edge.toMap == destination_code and new_edge.to == "remote" and new_edge.from == "entry" and new_edge.id != edge_id,
-		"new edge stores the target map and cell together")
-	check(await cvs.undo() and cvs.cell_graph() == graph_before_delete, "one undo removes the cross-map edge")
-	edge_pop.find_child("MapGamePreviewRender", true, false).pressed.emit()
-	if await _wait_for_pick_frame(edge_pop) == null:
-		return
-	edge_tools.select(3)
-	edge_tools.item_selected.emit(3)
-	_click_pick_frame(edge_pop, Vector2(0.15, 0.24))
-	select_metadata(edge_pop.find_child("FrameExistingEdge", true, false), edge_id)
-	pick_destination.pressed.emit()
-	target_pop = await _render_pick_frame(app)
-	if target_pop == null or target_pop == edge_pop:
-		check(false, "reopen the destination picker for an existing edge")
-		return
-	_click_pick_frame(target_pop, _frame_pick_at_world(target_pop, target_point)).pressed.emit()
-	await process_frame
-	check(cvs.cell_graph() == graph_before_delete, "remote retargeting preserves the original until source confirmation")
-	apply.pressed.emit()
-	if await _wait_for_pick_frame(edge_pop) == null:
-		return
-	edge_pop.hide()
-	check(cvs.cell_graph().edges[0].toMap == destination_code and cvs.cell_graph().edges[0].to == "remote",
-		"the existing edge now targets the second map")
+	check(Maps.write(manifest, "frame_pick_destination", destination), "save the map used by the paired port")
 	app._set_mode("content", "PICK")
 	var backup: Button = editor.root.find_child("FrameReference_backup", true, false)
 	check(backup != null, "a paired cross-map port exposes a game frame picker")
 	if backup == null:
 		return
 	backup.pressed.emit()
-	target_pop = await _render_pick_frame(app)
+	var target_pop := await _render_pick_frame(app)
 	if target_pop == null:
 		return
-	var confirm_remote := _click_pick_frame(target_pop, _frame_pick_at_world(target_pop, target_point))
+	var confirm_remote := _click_pick_frame(target_pop, _frame_pick_at_world(target_pop, Vector2(24, 24)))
 	var switch: EntityNode = cvs._ent_by_code_index()["PICK"]
 	check(not confirm_remote.disabled and not switch.props.has("backup"),
 		"the remote port is selectable and remains unwritten until confirmation")
@@ -3206,10 +2742,7 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 		and Vector2(reopened_motion[0][0], reopened_motion[0][1]).is_equal_approx(Vector2(motion[0][0], motion[0][1]))
 		and Vector2(reopened_motion[1][0], reopened_motion[1][1]).is_equal_approx(Vector2(motion[1][0], motion[1][1])),
 		"instance motion path and layer survive reopening")
-	check(cvs.extract().tiles == final_tiles and cvs.extract().spawn == [5, 3], "mapped tile edits and spawn survive save and reopen")
-	check(cvs.cell_graph().edges[0].id == edge_id and cvs.cell_graph().edges[0].props.cost == 2
-		and cvs.cell_graph().edges[0].toMap == destination_code and cvs.cell_graph().edges[0].to == "remote",
-		"the edited edge retains its original ID, new cost, and cross-map destination after reopening")
+	check(cvs.extract().spawn == [5, 3], "mapped spawn survives reopening")
 	await create_ending(app, editor._library, "layer-path", "Layer path", str(map.meta.code), "", "", upper)
 	var layer_fields: Dictionary = Store.read(manifest, "ending", "project-layer-path").get("fields", {})
 	var layer_path: Array = layer_fields.get("LPTH", [])
@@ -3233,19 +2766,11 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 	check(report.get("status") == "ready" and picks.size() == 2 and picks[0].point == [32.0, 24.0]
 		and absf(float(picks[1].point[0]) - (48.0 + (48.0 + 32.0 / 7.0) * 1.5)) < 0.02
 		and absf(float(picks[1].point[1]) - (16.0 + (32.0 + 64.0 / 7.0) * 1.5)) < 0.02
-		and result.get("opened") == ""
-		and result.get("openedByCopy") == doors[1].code
+		and result.get("opened") == doors[1].code
 		and result.get("openedBackup") == "DIST"
-		and absf(float(picks[0].transform.rotation) - PI / 2.0) < 0.001 and picks[0].transform.flip_h == true
 		and result.get("playerStart") == [88.0, 56.0]
-		and result.get("switchCopies", []).size() == 1 and result.switchCopies[0].code == copy_code
-		and result.switchCopies[0].layer == upper and result.switchCopies[0].target.inst == doors[1].code
-		and result.switchCopies[0].message == "Draft copied from the game frame"
-		and result.get("authoredRoute") == "remote" and result.get("arrivalMap") == destination_code
-		and result.get("authoredEdge") == authored_edge.get("id")
-		and result.get("arrivalVertex") == [20.0, 20.0]
-		and result.get("contours", []).size() == 1 and result.contours[0].props == compound,
-		"game reloads both view positions and the projected polygon, and opens the selected door: " + str(report))
+		and result.get("contours", []).size() == 1 and result.contours[0].props == outline.props,
+		"game reloads both view positions, the polygon, and the chosen ports: " + str(report))
 	var upper_index: int = cvs._layer_index_of(upper)
 	await cvs.layer_del(upper_index)
 	check(cvs._ent_by_code_index()["PICK"].props.motion_layer == upper,
@@ -3287,31 +2812,6 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 		and extended.steps.slice(0, 3) == campaign_source.steps
 		and Store.read(manifest, "campaign", "project-acceptance") == campaign_source,
 		"the saved segment preserves beat offsets and nested branches without altering either original")
-
-func _frame_contour_points(cvs: EditorCanvas, code: String) -> Array:
-	return _frame_contour_props(cvs, code).get("points", [])
-
-func _frame_contour_props(cvs: EditorCanvas, code: String) -> Dictionary:
-	for row in cvs.extract().objects:
-		if row.get("code") == code:
-			return row.props
-	return {}
-
-func _drag_pick_frame(pop: PopupPanel, a: Vector2, b: Vector2) -> Button:
-	var frame: TextureRect = pop.find_child("MapGamePreviewFrame", true, false)
-	var extent := Vector2(frame.texture.get_size())
-	var fitted := extent * minf(frame.size.x / extent.x, frame.size.y / extent.y)
-	var origin := (frame.size - fitted) * 0.5
-	var confirm := _click_pick_frame(pop, a)
-	var drag := InputEventMouseMotion.new()
-	drag.button_mask = MOUSE_BUTTON_MASK_LEFT
-	drag.position = origin + fitted * b
-	frame.gui_input.emit(drag)
-	var release := InputEventMouseButton.new()
-	release.button_index = MOUSE_BUTTON_LEFT
-	release.position = drag.position
-	frame.gui_input.emit(release)
-	return confirm
 
 func author_signal_room(app, project: String) -> void:
 	DirAccess.make_dir_recursive_absolute(project.path_join("editor"))

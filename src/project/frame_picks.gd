@@ -56,8 +56,6 @@ static func at(regions: Array, pixel: Vector2, mode: String, layer := "") -> Dic
 		if uv.x < -0.00001 or uv.y < -0.00001 or uv.x + uv.y > 1.00001:
 			continue
 		var value = region.targets.get(mode)
-		if mode == "objectEdit":
-			value = region.targets.get("vertex", region.targets.get("entity"))
 		if mode in ["placement", "collision"]:
 			var mapping: Dictionary = region[mode]
 			if mapping.is_empty() or (mode == "placement" and layer != "" and mapping.layer != layer):
@@ -73,56 +71,6 @@ static func at(regions: Array, pixel: Vector2, mode: String, layer := "") -> Dic
 			continue
 		return {"value": value, "screen": region.screen, "label": region.label}
 	return {}
-
-## Split at triangle boundaries before mapping a stroke. Even a narrow foreground
-## blocker or a gap between separate projections must not be bridged in map space.
-static func brush_spans(regions: Array, a: Vector2, b: Vector2, mode: String) -> Array:
-	var breaks: Array[float] = [0.0, 1.0]
-	var candidates := []
-	for region in regions:
-		var mapping: Dictionary = region[mode]
-		if mapping.is_empty() and not region.occludes:
-			continue
-		var inv: Transform2D = region.inverse
-		var lo: Vector2 = inv * a
-		var hi: Vector2 = inv * b
-		var start := Vector3(lo.x, lo.y, 1.0 - lo.x - lo.y)
-		var end := Vector3(hi.x, hi.y, 1.0 - hi.x - hi.y)
-		var entry := 0.0
-		var exit := 1.0
-		for k in 3:
-			if start[k] < 0.0 and end[k] < 0.0:
-				entry = 2.0
-				break
-			if start[k] < 0.0:
-				entry = maxf(entry, start[k] / (start[k] - end[k]))
-			elif end[k] < 0.0:
-				exit = minf(exit, start[k] / (start[k] - end[k]))
-		if entry >= exit:
-			continue
-		breaks.append(entry)
-		breaks.append(exit)
-		candidates.append({"entry": entry, "exit": exit, "inverse": inv, "mapping": mapping})
-	breaks.sort()
-	var spans := []
-	for i in breaks.size() - 1:
-		var t0 := breaks[i]
-		var t1 := breaks[i + 1]
-		if t1 <= t0:
-			continue
-		var mid := (t0 + t1) * 0.5
-		for c in candidates:
-			if mid < c.entry or mid > c.exit:
-				continue
-			var mapping: Dictionary = c.mapping
-			if not mapping.is_empty():
-				var p := a.lerp(b, t0)
-				var q := a.lerp(b, t1)
-				var inverse: Transform2D = c.inverse
-				spans.append({"layer": mapping.get("layer", ""), "a": _local_point(mapping, inverse * p),
-					"b": _local_point(mapping, inverse * q), "screen_a": p, "screen_b": q})
-			break
-	return spans
 
 static func _local_point(region: Dictionary, uv: Vector2) -> Vector2:
 	var local: PackedVector2Array = region.local

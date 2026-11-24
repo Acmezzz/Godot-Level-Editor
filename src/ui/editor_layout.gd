@@ -178,9 +178,7 @@ func _build_global_bar() -> PanelContainer:
 	map_menu.add_item("地图内容与出口…", 24)
 	map_menu.add_item("批量替换瓦片…", 6)
 	map_menu.add_item("关卡游戏画面预览…", 14)
-	map_menu.add_item("实景调整实例和轮廓…", 17)
 	map_menu.add_item("实景设置出生点…", 22)
-	map_menu.add_item("实景编辑格图…", 23)
 	map_menu.add_item("复制跨层选区选项…", 18)
 	map_menu.add_item("跨层搬动选项…", 19)
 	map_menu.add_item("最近试玩反馈…", 21)
@@ -190,9 +188,7 @@ func _build_global_bar() -> PanelContainer:
 	app._map_btn.pressed.connect(func():
 		var no_preview := not MapGamePreview.available(app)
 		map_menu.set_item_disabled(map_menu.get_item_index(14), no_preview)
-		map_menu.set_item_disabled(map_menu.get_item_index(17), no_preview)
 		map_menu.set_item_disabled(map_menu.get_item_index(22), no_preview)
-		map_menu.set_item_disabled(map_menu.get_item_index(23), no_preview)
 		map_menu.set_item_disabled(map_menu.get_item_index(15), not MapGeneratorDialog.available(app))
 		map_menu.set_item_disabled(map_menu.get_item_index(16), not MapGeneratorDialog.can_regenerate(app))
 		map_menu.set_item_disabled(map_menu.get_item_index(24), not MapFlowDialog.available(app))
@@ -243,12 +239,8 @@ func _on_map_menu_id(id: int) -> void:
 			app._on_map_history()
 		14:
 			MapGamePreview.open(app)
-		17:
-			MapGamePreview.open_object_edit(app)
 		22:
 			MapGamePreview.open_spawn(app)
-		23:
-			MapGamePreview.open_cell_graph(app)
 		24:
 			MapFlowDialog.open(app)
 		18:
