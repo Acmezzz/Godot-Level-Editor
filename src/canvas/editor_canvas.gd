@@ -1307,10 +1307,7 @@ func _mark(ents_changed := true) -> void:
 	modified.emit()
 
 func apply_cell_graph(graph: Dictionary) -> void:
-	push_undo()
-	map_data.meta["cellGraph"] = graph.duplicate(true)
-	_mark_map()
-	queue_redraw()
+	_undo_history_ctrl.commit_cell_graph(graph)
 
 func _mark_map() -> void:
 	modified_flag = true

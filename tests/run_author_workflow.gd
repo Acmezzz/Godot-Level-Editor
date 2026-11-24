@@ -2666,10 +2666,55 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 		and restored_edges[0].from == "entry" and restored_edges[0].to == "exit-floor"
 		and restored_edges[0].type == "stairs" and int(restored_edges[0].props.cost) == 3,
 		"redo restores the same typed edge identity and cost")
+	var edge_id: String = authored_edge.get("id", "")
+	var graph_root: Node2D = cvs.map_root
+	app._layout_ctrl._on_map_menu_id(23)
+	edge_pop = await _render_pick_frame(app)
+	if edge_pop == null:
+		return
+	edge_tools = edge_pop.find_child("MapGamePreviewTool", true, false)
+	edge_tools.select(3)
+	edge_tools.item_selected.emit(3)
+	apply = _click_pick_frame(edge_pop, Vector2(0.15, 0.24))
+	check(apply.disabled, "editing waits for a specific outgoing edge")
+	var existing: OptionButton = edge_pop.find_child("FrameExistingEdge", true, false)
+	select_metadata(existing, edge_id)
+	var delete_edge: CheckBox = edge_pop.find_child("FrameDeleteEdge", true, false)
+	delete_edge.button_pressed = true
+	apply.pressed.emit()
+	if await _wait_for_pick_frame(edge_pop) == null:
+		return
+	check(cvs.cell_graph().edges.is_empty() and cvs.cell_graph().cells[0].neighbors == ["exit-floor"],
+		"confirmed deletion removes only the selected explicit edge")
+	check(await cvs.undo() and cvs.map_root == graph_root and cvs.cell_graph().edges[0].id == edge_id,
+		"undo restores the same edge without rebuilding unrelated map data")
+	edge_pop.find_child("MapGamePreviewRender", true, false).pressed.emit()
+	if await _wait_for_pick_frame(edge_pop) == null:
+		return
+	_click_pick_frame(edge_pop, Vector2(0.15, 0.24))
+	select_metadata(existing, edge_id)
+	edge_cost = edge_pop.find_child("FrameEdgeProperty_cost", true, false)
+	edge_cost.value = 2
+	apply = _click_pick_frame(edge_pop, Vector2(0.15, 0.24))
+	check(not apply.disabled and cvs.cell_graph().edges[0].to == "exit-floor", "retargeting only changes the draft before confirmation")
+	apply.pressed.emit()
+	if await _wait_for_pick_frame(edge_pop) == null:
+		return
+	check(cvs.cell_graph().edges[0].to == "entry" and cvs.cell_graph().edges[0].props.cost == 2
+		and cvs.cell_graph().edges[0].id == edge_id, "editing retargets and changes cost without replacing the edge identity")
+	_click_pick_frame(edge_pop, Vector2(0.15, 0.24))
+	select_metadata(existing, edge_id)
+	apply = _click_pick_frame(edge_pop, Vector2(0.68, 0.28))
+	apply.pressed.emit()
+	if await _wait_for_pick_frame(edge_pop) == null:
+		return
+	edge_pop.hide()
 	var saved: Dictionary = await app._map_file_ctrl.commit_document("保存实景落点及连接")
 	check(saved.get("status") == "ok", "publish positions and port selected from the game frame")
 	await app._load_map_file(path)
 	check(cvs.extract().tiles == final_tiles and cvs.extract().spawn == [5, 3], "mapped tile edits and spawn survive save and reopen")
+	check(cvs.cell_graph().edges[0].id == edge_id and cvs.cell_graph().edges[0].props.cost == 2,
+		"the edited edge retains its original ID and new cost after reopening")
 	var report := await launch_and_read(app, false)
 	var result: Dictionary = report.get("result", {})
 	var picks: Array = result.get("picks", [])

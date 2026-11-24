@@ -113,7 +113,7 @@ func redo() -> bool:
 func _is_patch(entry) -> bool:
 	if not (entry is Dictionary):
 		return false
-	return str((entry as Dictionary).get("kind", "")) in ["delta", "ents", "content", "region_move", "spawn"]
+	return str((entry as Dictionary).get("kind", "")) in ["delta", "ents", "content", "region_move", "spawn", "cell_graph"]
 
 
 ## 条目 → 状态（undo 用 forward=false，redo 用 true）。返回是否真的应用了。
@@ -132,6 +132,8 @@ func _apply_entry(entry, forward: bool) -> bool:
 				_restore_region_move(d, forward)
 			"spawn":
 				_apply_spawn_position(d.after if forward else d.before)
+			"cell_graph":
+				_apply_cell_graph_state(d.after if forward else d.before)
 		return true
 	await _restore(entry)
 	return true
@@ -484,6 +486,24 @@ func commit_spawn_position(before: Vector2, after: Vector2) -> bool:
 	_push_entry({"kind": "spawn", "before": before, "after": after})
 	_apply_spawn_position(after)
 	return true
+
+func commit_cell_graph(graph: Dictionary) -> void:
+	var meta: Dictionary = cvs.map_data.meta
+	if meta.get("cellGraph") == graph:
+		return
+	var before := {"value": meta.cellGraph} if meta.has("cellGraph") else {}
+	before = before.duplicate(true)
+	var after := {"value": graph.duplicate(true)}
+	_push_entry({"kind": "cell_graph", "before": before, "after": after})
+	_apply_cell_graph_state(after)
+
+func _apply_cell_graph_state(state: Dictionary) -> void:
+	if state.is_empty():
+		cvs.map_data.meta.erase("cellGraph")
+	else:
+		cvs.map_data.meta["cellGraph"] = state.duplicate(true).value
+	cvs._mark_map()
+	cvs.queue_redraw()
 
 func _apply_spawn_position(position: Vector2) -> void:
 	cvs.spawn.position = position

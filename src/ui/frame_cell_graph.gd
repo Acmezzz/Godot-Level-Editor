@@ -8,8 +8,8 @@ const Kit := preload("res://src/ui/ui_kit.gd")
 const GraphEditor := preload("res://src/ui/cell_graph_editor.gd")
 const Id := preload("res://src/content/content_id.gd")
 const INK := Color("ffda67")
-enum Tool {POLYGON, NEIGHBOR, EDGE}
-const TOOLS := ["绘制新格", "切换有向邻接", "新建独立连接"]
+enum Tool {POLYGON, NEIGHBOR, EDGE, EDIT_EDGE}
+const TOOLS := ["绘制新格", "切换有向邻接", "新建独立连接", "编辑独立连接"]
 signal controls_changed
 
 var canvas: EditorCanvas
@@ -18,6 +18,10 @@ var id_field := LineEdit.new()
 var space_picker := OptionButton.new()
 var edge_controls := VBoxContainer.new()
 var edge_type := OptionButton.new()
+var edge_picker := OptionButton.new()
+var edge_delete := CheckBox.new()
+var new_type_row: Control
+var existing_edge_row: Control
 var edge_form := VBoxContainer.new()
 var edge_draft := {"props": {}}
 var edge_commits := []
@@ -62,7 +66,21 @@ func controls() -> Control:
 			edge_type.add_item(str(types[id].get("name", id)))
 			edge_type.set_item_metadata(edge_type.item_count - 1, id)
 	edge_type.item_selected.connect(func(_index: int): _build_edge_form())
-	edge_controls.add_child(Kit.field_row("连接类型", edge_type, 82))
+	new_type_row = Kit.field_row("连接类型", edge_type, 82)
+	edge_controls.add_child(new_type_row)
+	edge_picker.name = "FrameExistingEdge"
+	edge_picker.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	edge_picker.item_selected.connect(_select_existing_edge)
+	edge_delete.name = "FrameDeleteEdge"
+	edge_delete.text = "删除此连接"
+	edge_delete.toggled.connect(func(enabled: bool):
+		edge_form.visible = not enabled
+		_update_edge_status()
+		controls_changed.emit())
+	existing_edge_row = Kit.hbox(8)
+	existing_edge_row.add_child(edge_picker)
+	existing_edge_row.add_child(edge_delete)
+	edge_controls.add_child(existing_edge_row)
 	var scroll := ScrollContainer.new()
 	scroll.custom_minimum_size.y = 92
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
@@ -74,13 +92,19 @@ func controls() -> Control:
 	return form
 
 func _build_edge_form() -> void:
+	var kind: String = edge_type.get_selected_metadata()
+	edge_draft = {"props": Graph.edge_defaults(Graph.edge_types(canvas.manifest), kind)}
+	_show_edge_properties(kind)
+
+func _show_edge_properties(kind: String) -> void:
 	for child in edge_form.get_children():
 		edge_form.remove_child(child)
 		child.queue_free()
 	edge_commits.clear()
-	var kind: String = edge_type.get_selected_metadata()
 	var types := Graph.edge_types(canvas.manifest)
-	edge_draft = {"props": Graph.edge_defaults(types, kind)}
+	if not edge_draft.get("props", {}) is Dictionary:
+		edge_form.add_child(Kit.hint_label("属性格式无效，可移除此连接。", 300))
+		return
 	GraphEditor.add_edge_properties(edge_form, Graph.edge_fields(types, kind), edge_draft, "FrameEdgeProperty_", edge_commits)
 
 func clear() -> void:
@@ -90,7 +114,13 @@ func clear() -> void:
 	pending.clear()
 	id_field.visible = tool == Tool.POLYGON
 	space_picker.visible = tool == Tool.POLYGON
-	edge_controls.visible = tool == Tool.EDGE
+	edge_controls.visible = tool in [Tool.EDGE, Tool.EDIT_EDGE]
+	if new_type_row != null:
+		new_type_row.visible = tool == Tool.EDGE
+		existing_edge_row.visible = tool == Tool.EDIT_EDGE
+		if tool == Tool.EDGE:
+			edge_form.visible = true
+			_build_edge_form()
 	match tool:
 		Tool.POLYGON:
 			status = "输入新格 ID，选择空间，再在实景上依次描点；右键撤末点。"
@@ -98,6 +128,15 @@ func clear() -> void:
 			status = "依次点击起点格和终点格，确认后切换起点的有向邻接。右键重选。"
 		Tool.EDGE:
 			status = "选择连接类型和属性，再依次点击起点格和终点格。右键重选。"
+		Tool.EDIT_EDGE:
+			edge_draft = {"props": {}}
+			_show_edge_properties("")
+			edge_picker.clear()
+			edge_picker.add_item("请先在画面上选择起点格")
+			edge_picker.disabled = true
+			_reset_edge_delete()
+			edge_delete.disabled = true
+			status = "点选起点格，在下拉中选一条出边。可改属性、点新终点或删除。右键重选。"
 
 func ready() -> bool:
 	return not pending.is_empty()
@@ -120,6 +159,8 @@ func input(event: InputEvent, pixel: Vector2, regions: Array) -> bool:
 		return false
 	if tool == 0:
 		_pick_point(pixel, regions)
+	elif tool == Tool.EDIT_EDGE:
+		_pick_edge_edit(pixel, regions)
 	else:
 		_pick_link(pixel, regions)
 	return true
@@ -187,6 +228,68 @@ func _pick_link(pixel: Vector2, regions: Array) -> void:
 	status = "新建连接 %s → %s · 可应用。" % [from, to] if tool == Tool.EDGE \
 		else "%s邻接 %s → %s · 可应用。" % ["移除" if linked else "添加", from, to]
 
+func _pick_edge_edit(pixel: Vector2, regions: Array) -> void:
+	var graph := canvas.cell_graph()
+	var hit := Picks.at(regions, pixel, "cell")
+	if hit.is_empty() or not Graph.cell_ids(graph).has(hit.value):
+		status = "请选择游戏标出的已有格。"
+		return
+	if not pending.is_empty():
+		if edge_delete.button_pressed:
+			return
+		edge_draft["to"] = hit.value
+		edge_draft.erase("toMap")
+		screen.resize(1)
+		screen.append(pixel)
+		_update_edge_status()
+		return
+	if not _layer_editable(Graph.layer_of_cell(graph, hit.value)):
+		status = "起点格所在图层已锁定或隐藏。"
+		return
+	from = hit.value
+	screen = PackedVector2Array([pixel])
+	edge_picker.clear()
+	edge_picker.add_item("请选择一条出边")
+	for edge in graph.get("edges", []):
+		if not edge is Dictionary or edge.get("from") != from:
+			continue
+		var dest := _edge_destination(edge)
+		edge_picker.add_item("%s → %s · %s" % [edge.get("type", ""), dest, edge.id])
+		edge_picker.set_item_metadata(edge_picker.item_count - 1, edge.id)
+	edge_picker.disabled = edge_picker.item_count == 1
+	status = "格 %s 没有独立出边。" % from if edge_picker.disabled else "格 %s · 请选择要编辑的出边。" % from
+
+func _select_existing_edge(index: int) -> void:
+	pending.clear()
+	screen.resize(1)
+	_reset_edge_delete()
+	edge_delete.disabled = index == 0
+	edge_draft = {"props": {}}
+	if index == 0:
+		status = "请选择要编辑的出边。"
+	else:
+		var id: String = edge_picker.get_item_metadata(index)
+		for edge in canvas.cell_graph().get("edges", []):
+			if edge is Dictionary and edge.get("id") == id:
+				edge_draft = edge.duplicate(true)
+				pending = {"from": from, "id": id}
+				_update_edge_status()
+				break
+	_show_edge_properties(str(edge_draft.get("type", "")))
+	controls_changed.emit()
+
+func _reset_edge_delete() -> void:
+	edge_delete.set_pressed_no_signal(false)
+	edge_form.visible = true
+
+func _edge_destination(edge: Dictionary) -> String:
+	var map_code: String = edge.get("toMap", "")
+	return str(edge.to) if map_code.is_empty() else "%s / %s" % [map_code, edge.to]
+
+func _update_edge_status() -> void:
+	status = "确认删除独立边 %s。" % edge_draft.id if edge_delete.button_pressed else \
+		"%s → %s · %s。可改属性或点选本图新终点。" % [from, _edge_destination(edge_draft), edge_draft.id]
+
 func apply() -> bool:
 	var graph := canvas.cell_graph().duplicate(true)
 	if tool == 0:
@@ -207,6 +310,24 @@ func apply() -> bool:
 			id = Id.new_inst_code()
 		edges.append({"id": id, "from": pending.from, "to": pending.to,
 			"type": edge_type.get_selected_metadata(), "props": edge_draft.props.duplicate(true)})
+	elif tool == Tool.EDIT_EDGE:
+		if not _layer_editable(Graph.layer_of_cell(graph, pending.from)):
+			return false
+		if not edge_delete.button_pressed:
+			for commit: Callable in edge_commits:
+				if not commit.call():
+					return false
+		var edges: Array = graph.edges
+		for i in edges.size():
+			if not edges[i] is Dictionary or edges[i].get("id") != pending.id:
+				continue
+			if edge_delete.button_pressed:
+				edges.remove_at(i)
+			else:
+				if edges[i] == edge_draft:
+					return false
+				edges[i] = edge_draft.duplicate(true)
+			break
 	else:
 		if not _layer_editable(Graph.layer_of_cell(graph, pending.from)):
 			return false
