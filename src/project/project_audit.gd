@@ -1090,9 +1090,10 @@ static func _collect_content_links(manifest: Dictionary, decls: Array, values, s
 		var key := str(fd.get("code", ""))
 		if key == "":
 			key = id
-		if not values.has(key):
+		var desc := RefFields.describe(fd)
+		if not values.has(key) and desc.kind != "flow_target":
 			continue
-		var value = values[key]
+		var value = values.get(key, fd.get("default"))
 		var path := prefix + id
 		var field := id if root_field == "" else root_field
 		if fd.get("type") == "array" and fd.get("of") == "condition":
@@ -1105,7 +1106,6 @@ static func _collect_content_links(manifest: Dictionary, decls: Array, values, s
 			if scope.path.size() == 2:
 				subpath += "fields."
 			_collect_content_links(manifest, scope.decls, scope.values, source_fn, subpath, out, findings, step_index, depth + 1, field)
-		var desc := RefFields.describe(fd)
 		var ordered := RefFields.is_ordered_choice(fd)
 		var entries := _as_list(value)
 		if desc.kind == "flow_target":
@@ -1113,7 +1113,7 @@ static func _collect_content_links(manifest: Dictionary, decls: Array, values, s
 				findings.append({"path": path, "field": field, "step_index": step_index,
 					"message": _flow_target_message(value)})
 			if FlowTarget.kind(value) == "content":
-				out.append({"fn": value.function, "cid": value.content, "path": path, "field": field, "step_index": step_index})
+				out.append(_content_link(value.function, value.content, path, field, step_index, fd, decls, values))
 			continue
 		if desc.kind == "view":
 			var views := ReferenceIndex.view_ids(manifest)
@@ -1133,10 +1133,13 @@ static func _collect_content_links(manifest: Dictionary, decls: Array, values, s
 			var cid = entries[i]
 			if cid is String and cid != "" and (ordered or not distinct.has(cid)):
 				distinct[cid] = true
-				out.append({"fn": want_fn, "cid": cid, "path": "%s#%d" % [path, i] if ordered else path,
-					"field": field, "step_index": step_index,
-					"map_context": fd.get("contentMapContext", ""),
-					"map_key": RefFields.paired_map_value(fd, decls, values)})
+				out.append(_content_link(want_fn, cid, "%s#%d" % [path, i] if ordered else path,
+					field, step_index, fd, decls, values))
+
+static func _content_link(fn: String, cid: String, path: String, field: String, step_index: int,
+		decl: Dictionary, siblings: Array, values: Dictionary) -> Dictionary:
+	return {"fn": fn, "cid": cid, "path": path, "field": field, "step_index": step_index,
+		"map_context": decl.get("contentMapContext", ""), "map_key": RefFields.effective_map_value(decl, siblings, values, "code")}
 
 static func _check_condition_rows(manifest: Dictionary, fd: Dictionary, rows: Variant,
 		path: String, findings: Array) -> void:

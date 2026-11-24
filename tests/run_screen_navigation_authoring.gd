@@ -47,12 +47,18 @@ func run() -> void:
 				{"id": "column", "code": "COLM", "kind": "input", "type": "int", "min": 1, "max": 10}]},
 			{"id": "next", "code": "CNXT", "kind": "input", "type": "flow_target",
 				"maps": true, "screens": true, "contentTypes": ["signal"]}]},
+			"sequence": {"code": "SEQN", "name": "Sequence", "steps": true},
 			"round_rules": {"code": "ROND", "name": "Round rules", "fields": [
 				{"id": "inputs", "code": "INPT", "kind": "input", "type": "int", "min": 1, "max": 4}]},
 			"signal": {"code": "SIGN", "name": "Signal", "fields": [
 			{"id": "text", "code": "TEXT", "kind": "input", "type": "string"},
+			{"id": "actor", "code": "ACTR", "kind": "choice", "source": "entity_inst:relay"},
 			{"id": "next", "code": "NEXT", "kind": "input", "type": "flow_target",
 				"maps": true, "screens": true, "contentTypes": ["signal"]}]}},
+		"steps": {"handoff": {"code": "HDOF", "name": "Handoff", "fields": [
+			{"id": "board", "code": "BRD1", "kind": "choice", "source": "map"},
+			{"id": "route", "code": "ROUT", "kind": "input", "type": "flow_target",
+				"maps": true, "screens": true, "contentTypes": ["signal"], "contentMapContext": "paired", "mapField": "board"}]}},
 		"playtest": {"executable": OS.get_executable_path(), "report": true, "projectEntry": true,
 			"args": ["--path", "%projectpath%", "--audio-driver", "Dummy", "--", "--verify"]}}
 	check(Maps.write_json(project.path_join("editor/editor_manifest.json"), declaration), "install only game declarations")
@@ -207,9 +213,31 @@ func run() -> void:
 	published = await app._map_file_ctrl.commit_document("保存地图级出口")
 	check(published.get("status") == "ok", "publish the map-level completion outlet")
 	app._set_mode("content")
+	var editor = app.project_shell.content_editor
+	editor._library._open_item("signal", "project-finished")
+	form = popup()
+	choose(form.find_child("ReferenceContextMap", true, false), map_code)
+	choose(field_control(form, "actor"), pawn_code)
+	press(form, "保存")
+	form.hide()
+	editor._library.open()
+	choose(collect(popup(), "OptionButton")[0], "sequence")
+	press(popup(), "新建…")
+	await process_frame
+	form = popup()
+	inputs = collect(form, "LineEdit")
+	inputs[0].text = "Epilogue sequence"
+	inputs[1].text = "epilogue"
+	press(form, "保存并编辑演出")
+	await process_frame
+	editor._steps._steps_add("HDOF")
+	var sequence: PopupPanel = editor._steps._steps_pop
+	choose(field_control(sequence, "board"), map_code)
+	sequence.hide()
+	var timeline_target := {"function": "sequence", "content": "project-epilogue"}
 	await add_screen("instructions", "Enter course", {}, {"map": map_code})
 	await add_screen("welcome", "Start tutorial", {"module": "signal-latch"}, {"view": "instructions"})
-	await add_screen("debrief", "Read results", {}, {"function": "signal", "content": "project-results-router"})
+	await add_screen("debrief", "Read results", {}, timeline_target)
 	app.project_shell.content_editor._library.open()
 	press(popup(), "流程关系…")
 	await process_frame
@@ -230,7 +258,17 @@ func run() -> void:
 		press(flow, "应用关系")
 		var router := Store.read(manifest, "signal", "project-results-router")
 		check(router.get("fields", {}).get("NEXT") == destination, "graph writes the typed destination %s" % destination)
+	var sequence_key := "sequence\u0001project-epilogue"
+	choose(flow.find_child("FlowSource", true, false), sequence_key)
+	choose(targets, {"function": "signal", "content": "project-finished"})
+	press(flow, "应用关系")
 	flow.hide()
+	check(Store.read(manifest, "sequence", "project-epilogue").steps[0].fields == {
+		"BRD1": map_code, "ROUT": {"function": "signal", "content": "project-finished"}},
+		"the timeline keeps the paired map alongside the graph-authored destination")
+	var findings := Audit.audit(manifest)
+	check(not findings.any(func(issue): return issue.get("path", "").begins_with("signal/project-finished.actor")),
+		"the timeline outlet propagates the selected map to the ending's local actor reference")
 	var graph := Flow.build_project(manifest)
 	check(graph.edges.any(func(edge):
 		return edge.from == "@map\u0001" + map_code and edge.to == "@view\u0001results" and edge.field == "completed"),
@@ -273,13 +311,20 @@ func run() -> void:
 	var report: Dictionary = controller._play_report_result
 	var result: Dictionary = report.get("result", {})
 	check(report.get("status") == "ready" and result.get("screens") == ["welcome", "instructions", "results", "debrief"]
-		and result.get("visited") == ["project-course-rules", "project-results-router", "project-finished"]
+		and result.get("visited") == ["project-course-rules", "project-epilogue", "project-finished"]
+		and result.get("endingActor") == pawn_code and result.get("endingBoard") == map_code
 		and result.get("runtimeCourse", []).map(func(x): return int(x)) == [3, 5] and result.get("board") == map_code
 		and result.get("roundRules") == round_target.content and result.get("roundInputs") == 3
 		and result.get("placed") == [pawn_code, "R001"] and result.get("text") == "Screen sequence complete",
 		"the game reads the map-level completion outlet and reaches the conclusion: %s" % [report])
 	print("SCREEN-NAV-DONE failures=", failures)
 	quit(0 if failures == 0 else 1)
+
+func field_control(node: Node, id: String) -> OptionButton:
+	for row in collect(node, "HBoxContainer"):
+		if row.get_meta("field_id", "") == id:
+			return row.get_child(1) as OptionButton
+	return null
 
 func add_screen(id: String, label: String, module: Dictionary, target: Dictionary) -> void:
 	Views.open(app)

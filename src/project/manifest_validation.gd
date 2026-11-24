@@ -769,8 +769,10 @@ static func _check_condition_fields(fields: Variant, path: String, conditions: D
 			var at := child + ".contentMapContext"
 			if not mode is String or str(mode) not in ["independent", "inherit", "paired"]:
 				_add(issues, "error", at, "must be independent, inherit or paired")
-			elif not str(fd.get("source", "")).begins_with("content:"):
-				_add(issues, "error", at, "requires a content: choice source")
+			elif not str(fd.get("source", "")).begins_with("content:") and not (
+					fd.get("kind") == "input" and fd.get("type") == "flow_target"
+					and fd.get("contentTypes") is Array and not fd.contentTypes.is_empty()):
+				_add(issues, "error", at, "requires a content: choice or a flow_target that permits content")
 			elif mode == "paired":
 				var pair := str(fd.get("mapField", ""))
 				if pair == "" or not fields.any(func(sibling):

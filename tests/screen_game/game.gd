@@ -46,13 +46,13 @@ func _ready() -> void:
 		return
 	_follow_target(entry)
 
-func _follow_target(target: Dictionary) -> void:
+func _follow_target(target: Dictionary, content_board := "") -> void:
 	if target.has("view"):
 		_show_view(target.view)
 	elif target.has("map"):
 		_show_map_target(target.map)
 	else:
-		_show_content(target)
+		_show_content(target, content_board)
 
 func _show_map_target(code: String) -> void:
 	for filename in DirAccess.get_files_at("res://maps"):
@@ -124,7 +124,7 @@ func _load_view_draft(entry: Dictionary) -> bool:
 	manifest["views"] = views
 	return true
 
-func _show_content(target: Dictionary) -> void:
+func _show_content(target: Dictionary, content_board: String) -> void:
 	cancel_target = {}
 	var kind: String = target.function
 	var cid: String = target.content
@@ -135,6 +135,10 @@ func _show_content(target: Dictionary) -> void:
 	visited.append(cid)
 	_clear_screen()
 	var fields: Dictionary = data.get("fields", {})
+	if kind == "sequence":
+		var handoff: Dictionary = data.steps[0].fields
+		_follow_target.call_deferred(handoff.ROUT, str(handoff.BRD1))
+		return
 	if kind == "course_rules":
 		var placements: Array = fields.get("PLAC", []).map(func(row):
 			return {"asset": row.ASST, "column": row.COLM})
@@ -156,6 +160,17 @@ func _show_content(target: Dictionary) -> void:
 		return
 	var view_id: String = fields.get("PANE", "")
 	if view_id.is_empty():
+		if fields.has("ACTR"):
+			var found := false
+			for filename in DirAccess.get_files_at("res://maps"):
+				var map = JSON.parse_string(FileAccess.get_file_as_string("res://maps/" + filename))
+				if map is Dictionary and map.meta.code == content_board:
+					found = map.objects.any(func(row): return row.code == fields.ACTR)
+					break
+			if not found:
+				_finish("Ending actor is not on the supplied board.")
+				return
+			runtime_course.merge({"endingActor": fields.ACTR, "endingBoard": content_board})
 		var label := Label.new()
 		label.text = str(fields.get("TEXT", ""))
 		add_child(label)
