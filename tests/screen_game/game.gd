@@ -65,6 +65,13 @@ func _show_map_target(code: String) -> void:
 		_clear_screen()
 		var pawns := _draw_relay(self, map, _relay_camera(size))
 		entered_board = {"board": code, "placed": pawns.keys()}
+		for row in map.objects:
+			var target: Dictionary = row.get("props", {}).get("local_signal", {})
+			if not target.is_empty():
+				var signal_data: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(
+					"res://content/%s/%s.json" % [target.function, target.content]))
+				entered_board["localActor"] = signal_data.fields.ACTR
+				break
 		var exit_target: Dictionary = map.meta.get("flowOutputs", {}).get("completed", {})
 		if exit_target.is_empty():
 			for row in map.objects:

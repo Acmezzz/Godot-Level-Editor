@@ -29,7 +29,9 @@ func run() -> void:
 	var declaration := {"projectName": "Screen Navigation", "directViewTargets": true, "directMapTargets": true,
 		"assets": [{"id": "relay", "kind": "entity", "code": "RLY1", "visual": {"mode": "rect", "color": "#62cabb"},
 			"fields": [{"id": "exit_target", "kind": "input", "type": "flow_target",
-				"maps": true, "screens": true, "contentTypes": ["signal"]}]}],
+				"maps": true, "screens": true, "contentTypes": ["signal"]},
+				{"id": "local_signal", "kind": "input", "type": "flow_target",
+					"contentTypes": ["signal"], "contentMapContext": "inherit"}]}],
 		"startup": {"screens": true}, "viewports": [{"id": "handheld", "w": 480, "h": 720}],
 		"mapOutputs": {"completed": {"name": "Course completed",
 			"maps": true, "screens": true, "contentTypes": ["signal"]},
@@ -270,6 +272,9 @@ func run() -> void:
 	app._set_mode("content", pawn_code)
 	exit_picker = app.project_shell.content_editor.root.find_child("InstanceValue_exit_target", true, false)
 	choose(exit_picker, JSON.stringify({"map": map_code}))
+	var local_picker: OptionButton = app.project_shell.content_editor.root.find_child("InstanceValue_local_signal", true, false)
+	var original_signal := {"function": "signal", "content": "project-finished"}
+	choose(local_picker, JSON.stringify(original_signal))
 	app.project_shell.content_editor.commit_fields()
 	app._set_mode("map")
 	published = await app._map_file_ctrl.commit_document("保存实例重试出口")
@@ -288,6 +293,10 @@ func run() -> void:
 	var copy_fields: Dictionary = Store.read(manifest, copy_rules.function, copy_rules.content).fields
 	var copy_role: Dictionary = copy_fields.ROLE
 	var source := Maps.read(manifest, "course")
+	var local_signal: Dictionary = copy.objects[0].props.local_signal
+	check(local_signal.content != original_signal.content and source.objects[0].props.local_signal == original_signal
+		and Store.read(manifest, local_signal.function, local_signal.content).fields.ACTR == copy_host,
+		"the instance outlet alone brings its map-scoped signal into the copy")
 	check(copy.meta.flowOutputs == {"completed": {"view": "results"}, "retry": {"map": copy_code}}
 		and copy.objects[0].props.exit_target == {"map": copy_code} and copy_fields.RTRY == {"map": copy_code}
 		and source.meta.flowOutputs.retry == {"map": map_code}
@@ -337,6 +346,8 @@ func run() -> void:
 		"the bound rules validate their local host against the owning map")
 	check(not findings.any(func(issue): return issue.get("path", "").begins_with("signal/project-finished.actor")),
 		"the timeline outlet propagates the selected map to the ending's local actor reference")
+	check(not findings.any(func(issue): return issue.get("path", "").begins_with("signal/%s.actor" % local_signal.content)),
+		"the copied instance outlet propagates its board to the local signal")
 	var graph := Flow.build_project(manifest)
 	check(graph.edges.any(func(edge):
 		return edge.from == "@map\u0001" + map_code and edge.to == "@view\u0001results" and edge.field == "completed"),
@@ -384,6 +395,7 @@ func run() -> void:
 		and result.get("runtimeCourse", []).map(func(x): return int(x)) == [3, 5] and result.get("board") == copy_code
 		and result.get("roundRules") == copy_rules.content and result.get("roundInputs") == 3
 		and result.get("roundHost") == copy_host
+		and result.get("localActor") == copy_host
 		and result.get("placed") == copy.objects.map(func(row): return row.code) and result.get("text") == "Screen sequence complete",
 		"the game reads the map-level completion outlet and reaches the conclusion: %s" % [report])
 	print("SCREEN-NAV-DONE failures=", failures)

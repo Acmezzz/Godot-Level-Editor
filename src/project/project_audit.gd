@@ -721,6 +721,9 @@ static func _collect_spatial_contexts(manifest: Dictionary, data: Dictionary, na
 	for obj in objects:
 		if not obj is Dictionary or not obj.get("functions", []) is Array:
 			continue
+		for target in ReferenceIndex.inherited_property_targets(manifest,
+				_fields_of(manifest, obj.get("asset", "")), obj.get("props", {})):
+			_add_map_context(contexts, _content_key(target.function, target.content), data, name, context_label)
 		for binding in obj.get("functions", []):
 			if not binding is Dictionary:
 				continue

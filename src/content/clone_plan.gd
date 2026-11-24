@@ -28,6 +28,7 @@ const RefFields := preload("res://src/content/ref_fields.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
 const MapFlow := preload("res://src/map/map_flow.gd")
 const FlowTarget := preload("res://src/content/flow_target.gd")
+const ReferenceIndex := preload("res://src/project/reference_index.gd")
 
 static func _data(ctx: Dictionary) -> Dictionary:
 	if ctx.get("data", null) is Dictionary:
@@ -250,6 +251,8 @@ static func build(src: Dictionary, dst: Dictionary, codes: PackedStringArray = P
 	if self_copy:
 		var roots: Array = MapFlow.scoped_content(m, sdata).map(func(ref): return ref.value)
 		for row in selected:
+			var fields: Array = AssetDecl.by_id(m, row.get("asset", "")).get("fields", [])
+			roots.append_array(ReferenceIndex.inherited_property_targets(m, fields, row.get("props", {})))
 			for binding in row.get("functions", []):
 				if binding is Dictionary and binding.get("content", "") != "":
 					var fn := FunctionDecls.fn_id_of(m, binding.get("fn", ""))
@@ -265,9 +268,10 @@ static func build(src: Dictionary, dst: Dictionary, codes: PackedStringArray = P
 		var fn: String = key.get_slice("\u0001", 0)
 		scoped_copies[content_key(fn, scoped_ids[key])] = true
 	var out_objects: Array = []
+	var object_scope := spatial_refs.merged({"scoped_ids": scoped_ids}) if self_copy else spatial_refs
 	for r5 in selected:
 		out_objects.append(remap_row(r5 as Dictionary, instance_map, content_map, m,
-			cross_code, src_codes, conflicts, ddata, dst_map, source_key, src_map, spatial_refs))
+			cross_code, src_codes, conflicts, ddata, dst_map, source_key, src_map, object_scope))
 	# —— 内容副本内部引用：组内实例码/内容跳转按声明重映射（C05） ——
 	for pc in pending:
 		var scope := spatial_refs.merged({"scoped_ids": scoped_ids}) \
@@ -392,8 +396,13 @@ static func _remap_props(manifest: Dictionary, values: Dictionary, fields: Array
 		if not field is Dictionary:
 			continue
 		var id := str(field.get("id", ""))
-		if spatial_refs.has("map_copy") and RefFields.describe(field).kind == "flow_target":
-			_remap_flow_map(field, id, values, spatial_refs)
+		if spatial_refs.has("map_copy"):
+			var desc := RefFields.describe(field)
+			if desc.kind == "flow_target":
+				_remap_flow_map(field, id, values, spatial_refs)
+				if field.get("contentMapContext") == "inherit":
+					_remap_scoped_link(field, id, values, fields, "", desc, source_key, source_name,
+						_target_key(target_data, target_map), spatial_refs, {})
 		for scope in RefFields.nested_scopes(manifest, field, values.get(id)):
 			var path := "%s.%s#%d" % [owner, id, scope.path[0]]
 			if scope.path.size() == 2:
