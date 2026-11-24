@@ -1,32 +1,57 @@
 extends RefCounted
-## Copies the induced subgraph. Selection and storage use canvas pixels; paste
-## converts back into the destination graph spaces without changing their IDs.
+## Select graph cells in canvas pixels and edit them in their own spaces.
 
 const Graph := preload("res://src/map/cell_graph.gd")
 const Tiles := preload("res://src/map/cell_graph_tiles.gd")
+
+static func select_cells(graph: Dictionary, world: Transform2D, frames: Dictionary,
+		layers: Dictionary, area: Rect2) -> Array:
+	var selected := []
+	var source_spaces: Dictionary = graph.get("spaces", {})
+	var rows: Array = graph.get("cells", [])
+	for i in rows.size():
+		var row: Dictionary = rows[i]
+		var sid: String = row.get("space", "")
+		var space: Dictionary = source_spaces.get(sid, {})
+		var lid: String = space.get("layer", "")
+		if lid != "" and not layers.has(lid):
+			continue
+		var xf := world * Graph.space_transform(graph, sid, frames)
+		var poly := xf * Graph.points_of(row)
+		if poly.size() >= 3 and area.has_point(Graph._centroid(poly)):
+			selected.append({"index": i, "polygon": poly, "transform": xf, "layer": lid})
+	return selected
+
+static func translated_graph(graph: Dictionary, chosen: Array, delta: Vector2) -> Dictionary:
+	var result := graph.duplicate()
+	var rows: Array = graph.cells.duplicate()
+	result.cells = rows
+	for cell in chosen:
+		var row: Dictionary = rows[cell.index].duplicate()
+		var xf: Transform2D = cell.transform
+		var local := xf.affine_inverse().basis_xform(delta)
+		row.polygon = row.polygon.map(func(p): return [float(p[0]) + local.x, float(p[1]) + local.y])
+		# The generated ID encodes the original tile coordinate. After a move,
+		# keep the stable ID but stop treating this row as a generated tile.
+		row.erase(Tiles.GENERATED_KEY)
+		rows[cell.index] = row
+	return result
 
 static func capture(graph: Dictionary, world: Transform2D, frames: Dictionary, layers: Dictionary,
 		area: Rect2, map_name: String, map_code: String) -> Dictionary:
 	var cells := []
 	var selected := {}
 	var spaces := {}
-	var source_spaces: Dictionary = graph.get("spaces", {})
-	for row in graph.get("cells", []):
-		var sid: String = row.get("space", "")
-		var space: Dictionary = source_spaces.get(sid, {})
-		var lid: String = space.get("layer", "")
-		if lid != "" and not layers.has(lid):
-			continue
-		var poly := world * Graph.map_points(graph, row, frames)
-		if poly.size() < 3 or not area.has_point(Graph._centroid(poly)):
-			continue
+	for entry in select_cells(graph, world, frames, layers, area):
+		var row: Dictionary = graph.cells[entry.index]
 		var copy: Dictionary = row.duplicate(true)
 		copy.erase(Tiles.GENERATED_KEY)
-		copy.polygon = Array(poly).map(func(p: Vector2): return p - area.position)
+		copy.polygon = Array(entry.polygon).map(func(p: Vector2): return p - area.position)
 		cells.append(copy)
 		selected[row.id] = true
+		var sid: String = row.get("space", "")
 		if sid != "":
-			spaces[sid] = space.duplicate(true)
+			spaces[sid] = graph.spaces[sid].duplicate(true)
 	for row in cells:
 		if row.has("neighbors"):
 			row.neighbors = row.neighbors.filter(func(id): return selected.has(id))

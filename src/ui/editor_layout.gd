@@ -198,6 +198,7 @@ func _build_global_bar() -> PanelContainer:
 	map_menu.add_item("关卡游戏画面预览…", 14)
 	map_menu.add_item("实景调整实例和轮廓…", 17)
 	map_menu.add_item("复制跨层选区（含格图或出生点）…", 18)
+	map_menu.add_item("跨层搬动选项…", 19)
 	map_menu.add_separator()
 	map_menu.add_item("检查项目完整性", 30)
 	map_menu.add_item("切换项目…", 20)
@@ -260,7 +261,9 @@ func _on_map_menu_id(id: int) -> void:
 		17:
 			MapGamePreview.open_object_edit(app)
 		18:
-			_world_copy_options()
+			_world_region_options(false)
+		19:
+			_world_region_options(true)
 		15:
 			MapGeneratorDialog.open(app)
 		16:
@@ -270,24 +273,36 @@ func _on_map_menu_id(id: int) -> void:
 		30:
 			_run_audit(true)
 
-func _world_copy_options() -> void:
+func _world_region_options(moving: bool) -> void:
 	var cvs: EditorCanvas = app.canvas
-	if not app.map_loaded or not cvs.world_region_mode or not cvs._world_region_move.selection.has_area():
-		app._set_status("先打开「跨层搬动」并框选区域。")
+	if not app.map_loaded or not cvs.world_region_mode:
+		app._set_status("先打开「跨层搬动」模式。")
 		return
-	var shell: Dictionary = app._popup_body("复制跨层选区",
+	var tool = cvs._world_region_move
+	if not moving and not tool.selection.has_area():
+		app._set_status("先框选需要复制的区域。")
+		return
+	var shell: Dictionary = app._popup_body("跨层搬动选项" if moving else "复制跨层选区",
+		"拖动框内内容时包含下列项目。搬动格图保留格 ID、连边和引用。" if moving else
 		"格图只复制选中格之间的连接。带出生点粘贴会替换目标地图的出生点。")
 	var body: VBoxContainer = shell.body
 	var graph := CheckBox.new()
-	graph.text = "包括格图和内部连边"
-	graph.button_pressed = true
+	graph.text = "搬动框内格图" if moving else "包括格图和内部连边"
+	graph.button_pressed = tool.move_graph if moving else true
 	body.add_child(graph)
 	var spawn := CheckBox.new()
-	spawn.text = "包括框内的出生点"
+	spawn.text = "搬动框内出生点" if moving else "包括框内的出生点"
+	spawn.button_pressed = moving and tool.move_spawn
 	body.add_child(spawn)
 	var pop: PopupPanel = shell.pop
-	body.add_child(app.UiKitScript.button("复制选区", func():
-		if cvs._world_region_move.copy(graph.button_pressed, spawn.button_pressed):
+	body.add_child(app.UiKitScript.button("应用搬动选项" if moving else "复制选区", func():
+		if moving:
+			tool.move_graph = graph.button_pressed
+			tool.move_spawn = spawn.button_pressed
+			app._set_status("已更新跨层搬动选项：格图%s，出生点%s。" % [
+				"随框搬动" if tool.move_graph else "留在原位", "随框搬动" if tool.move_spawn else "留在原位"])
+			pop.hide()
+		elif tool.copy(graph.button_pressed, spawn.button_pressed):
 			pop.hide(), "primary"))
 	app._open_popup(pop)
 
@@ -526,7 +541,7 @@ func _build_status_bar() -> PanelContainer:
 	_select_btn.tooltip_text = "打开后左键拖动框选；关闭则正常涂刷 / 放置"
 	h.add_child(_select_btn)
 	_world_region_btn = app.UiKitScript.button("跨层搬动", app._toggle_world_region_mode, "toggle")
-	_world_region_btn.tooltip_text = "按画布范围搬动或复制可见图层的瓦片、实例及根碰撞"
+	_world_region_btn.tooltip_text = "框选后跨层搬动或复制；通过设置菜单选择是否搬动格图和出生点"
 	h.add_child(_world_region_btn)
 	# 吸附开关：关掉后摆放物可落在任意像素位置（存浮点格坐标），默认开
 	_snap_btn = app.UiKitScript.button("吸附", app._toggle_snap, "toggle")

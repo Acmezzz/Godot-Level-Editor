@@ -1722,7 +1722,8 @@ func author_world_region_move(app, manifest: Dictionary) -> void:
 		"spaces": {"copy-upper": {"layer": upper}},
 		"cells": [
 			{"id": "copy-a", "polygon": _copy_test_polygon(root_local), "neighbors": ["copy-b", "outside"]},
-			{"id": "copy-b", "space": "copy-upper", "polygon": _copy_test_polygon(upper_local), "neighbors": ["copy-a"]},
+			{"id": "copy-b", "space": "copy-upper", "polygon": _copy_test_polygon(upper_local), "neighbors": ["copy-a"],
+				"generatedFromTile": "fixture"},
 			{"id": "outside", "polygon": _copy_test_polygon(root_local + step * 3), "neighbors": ["copy-a"]}],
 		"edges": [
 			{"id": "stairs", "from": "copy-a", "to": "copy-b", "props": {"cost": 7.0}},
@@ -1794,14 +1795,21 @@ func author_world_region_move(app, manifest: Dictionary) -> void:
 	check(copy_save.get("status") == "ok", "save the cross-layer copy")
 	await app._load_map_file(path)
 	_check_world_move_restore(true, cvs.extract(), copied, "save and reopen copy")
-	await cvs.load_data(initial, "rule_hex", true)
+	await cvs.load_data(initial.duplicate(true), "rule_hex", true)
 	n = cvs.ents_all()[0]
+	app._layout_ctrl._on_map_menu_id(19)
+	for flag: CheckBox in collect(app, "CheckBox"):
+		if flag.text in ["搬动框内格图", "搬动框内出生点"]:
+			flag.button_pressed = true
+	press(app, "应用搬动选项")
 	input._on_left_press(min_corner, mouse)
 	input._on_left_release(max_corner)
 	input._on_left_press(lower_px, mouse)
 	cvs._move_region_preview(lower_px + step)
 	var plan: Dictionary = cvs._move_snap.get("plan", {})
 	check(plan.get("positions", []).size() == 3, "cross-layer preview plans two tile grids and root collision")
+	check(plan.get("spawn") == Vector2i.RIGHT and cvs._move_snap.graph_cells.size() == 2,
+		"preview includes opted in spawn and both graph spaces")
 	input._on_left_release(lower_px + step)
 	var moved: Dictionary = cvs.extract()
 	var upper_row: Array = moved.tiles[upper][0]
@@ -1810,8 +1818,15 @@ func author_world_region_move(app, manifest: Dictionary) -> void:
 		and moved.collision[0].x == 1 and moved.collision[0].material == "ice"
 		and moved.objects[0].code == initial.objects[0].code
 		and (n.get_parent().to_global(n.position - n.sort_anchor()) - entity_px).is_equal_approx(step)
-		and moved.meta.cellGraph == initial.meta.cellGraph and moved.spawn == initial.spawn,
+		and moved.spawn == [1, 0] and moved.objects[0].props.route_cell == "copy-a",
 		"move both tile grids and collision with their own cells and translate the same instance in pixels")
+	var moved_graph: Dictionary = moved.meta.cellGraph
+	check(moved_graph.edges == initial.meta.cellGraph.edges and moved_graph.cells[2] == initial.meta.cellGraph.cells[2]
+		and moved_graph.cells[0].neighbors == ["copy-b", "outside"] and moved_graph.cells[1].id == "copy-b"
+		and not moved_graph.cells[1].has("generatedFromTile")
+		and cvs.cell_centroid_world("copy-a").is_equal_approx(lower_px + step)
+		and cvs.cell_centroid_world("copy-b").is_equal_approx(upper_px + step),
+		"moving cells keeps their IDs and all edges while translating each polygon in its own space")
 	var undo_ok: bool = await cvs.undo()
 	_check_world_move_restore(undo_ok, cvs.extract(), initial, "undo")
 	var redo_ok: bool = await cvs.redo()

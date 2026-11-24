@@ -1,11 +1,13 @@
 extends RefCounted
-## Move or copy a canvas-space selection across tile grids, instances and root collision.
+## Move or copy a canvas-space selection across the map's editable layers.
 
 const ClonePlan := preload("res://src/content/clone_plan.gd")
 const GraphClip := preload("res://src/map/cell_graph_clip.gd")
 
 var cvs
 var selection := Rect2()
+var move_graph := false
+var move_spawn := false
 
 func _init(canvas) -> void:
 	cvs = canvas
@@ -18,6 +20,24 @@ func select_area(a: Vector2, b: Vector2) -> void:
 func begin_move(pos: Vector2) -> void:
 	var snap := _collect(true)
 	if snap.is_empty():
+		return
+	if move_graph:
+		var graph: Dictionary = cvs.cell_graph()
+		snap.graph_cells = GraphClip.select_cells(graph, cvs.map_root.get_global_transform(),
+			cvs._cell_layer_frames(graph), _visible_layers(), selection)
+		for cell in snap.graph_cells:
+			if cell.layer != "" and cvs.is_layer_locked(cvs._layer_index_of(cell.layer)):
+				cvs._hint("框内包含锁定层的格图多边形，无法搬动。")
+				return
+	if move_spawn and cvs.is_layer_visible(cvs.collision_index()):
+		var origin: Vector2 = cvs.spawn.get_global_position()
+		if selection.has_point(origin):
+			if cvs.is_layer_locked(cvs.collision_index()):
+				cvs._hint("出生点所在根碰撞层已锁定，无法搬动。")
+				return
+			snap.spawn = origin
+	if snap.groups.is_empty() and snap.objects.is_empty() and snap.get("graph_cells", []).is_empty() and not snap.has("spawn"):
+		cvs._hint("框内没有符合搬动选项的内容。")
 		return
 	cvs._move_snap = snap
 	cvs._move_grab = pos
@@ -64,10 +84,14 @@ func _collect(moving: bool) -> Dictionary:
 			cvs._hint("框内包含锁定层的实例，无法搬动。")
 			return {}
 		objects.append(n)
-	if moving and groups.is_empty() and objects.is_empty():
-		cvs._hint("框内没有瓦片、实例或根碰撞。")
-		return {}
 	return {"world": true, "groups": groups, "objects": objects, "plan": {}, "delta": Vector2.ZERO}
+
+func _visible_layers() -> Dictionary:
+	var visible := {}
+	for li in cvs.layer_count():
+		if cvs.is_layer_visible(li):
+			visible[cvs.layer_id(li)] = cvs.layer_name(li)
+	return visible
 
 func copy(include_graph := false, include_spawn := false) -> bool:
 	if not selection.has_area():
@@ -100,10 +124,7 @@ func copy(include_graph := false, include_spawn := false) -> bool:
 		"snap_offset": _root_center(selection.position) - selection.position}
 	if include_graph:
 		var graph: Dictionary = cvs.cell_graph()
-		var visible := {}
-		for li in cvs.layer_count():
-			if cvs.is_layer_visible(li):
-				visible[cvs.layer_id(li)] = cvs.layer_name(li)
+		var visible := _visible_layers()
 		var captured := GraphClip.capture(graph, cvs.map_root.get_global_transform(), cvs._cell_layer_frames(graph),
 			visible, selection, source.map, str(source.meta.get("code", "")))
 		if not captured.cells.is_empty():
@@ -133,6 +154,14 @@ func _root_center(pos: Vector2) -> Vector2:
 func _paste_origin(pos: Vector2, clip: Dictionary) -> Vector2:
 	return _root_center(pos) - clip.snap_offset if cvs.snap_to_grid else pos
 
+func _plan_spawn(plan: Dictionary, world: Vector2, action: String) -> void:
+	var grid: GridSpace = cvs.grid
+	var cell: Vector2i = cvs.root_cell(world)
+	if grid.cell_in_map(cell, int(cvs.map_data.meta.w), int(cvs.map_data.meta.h)):
+		plan.spawn = cell
+	else:
+		plan.error = "目标出生点超出地图，未%s。" % action
+
 func _paste_plan(origin: Vector2, clip: Dictionary, preview_only := false) -> Dictionary:
 	var same_map: bool = clip.source.map == cvs.cur_map_name and clip.source.meta.get("code") == cvs.map_data.meta.get("code")
 	var layers := {}
@@ -160,11 +189,9 @@ func _paste_plan(origin: Vector2, clip: Dictionary, preview_only := false) -> Di
 	plan.groups = groups
 	plan.layers = layers
 	if clip.has("spawn"):
-		var grid: GridSpace = cvs.grid
-		var spawn_cell: Vector2i = cvs.root_cell(origin + clip.spawn)
-		if not grid.cell_in_map(spawn_cell, int(cvs.map_data.meta.w), int(cvs.map_data.meta.h)):
-			return {"error": "目标出生点超出地图，未粘贴。"}
-		plan.spawn = spawn_cell
+		_plan_spawn(plan, origin + clip.spawn, "粘贴")
+		if plan.has("error"):
+			return plan
 	if clip.has("graph"):
 		var graph: Dictionary = cvs.cell_graph()
 		var world: Transform2D = cvs.map_root.get_global_transform()
@@ -230,6 +257,8 @@ func preview(pos: Vector2) -> void:
 		return
 	snap.delta = delta
 	snap.plan = {} if delta == Vector2.ZERO else _plan(snap.groups, delta)
+	if delta != Vector2.ZERO and snap.has("spawn") and not snap.plan.has("error"):
+		_plan_spawn(snap.plan, snap.spawn + delta, "搬动")
 	cvs.queue_redraw()
 
 func _plan(groups: Array, delta: Vector2, action := "搬动") -> Dictionary:
@@ -267,7 +296,9 @@ func finish(snap: Dictionary) -> void:
 		cvs._hint(plan.error)
 		cvs.queue_redraw()
 		return
-	var changed: bool = not snap.objects.is_empty()
+	var graph_cells: Array = snap.get("graph_cells", [])
+	var spawn_changed: bool = plan.has("spawn") and plan.spawn != cvs.root_cell(snap.spawn)
+	var changed: bool = not snap.objects.is_empty() or not graph_cells.is_empty() or spawn_changed
 	for i: int in snap.groups.size():
 		var group: Dictionary = snap.groups[i]
 		for j: int in group.rows.size():
@@ -282,10 +313,14 @@ func finish(snap: Dictionary) -> void:
 		_write_group(snap.groups[i], plan.positions[i], true)
 	for n: EntityNode in snap.objects:
 		n.position += cvs.world_delta_local(cvs._layer_index_of(n.layer_id), snap.delta)
+	if not graph_cells.is_empty():
+		cvs.map_data.meta["cellGraph"] = GraphClip.translated_graph(cvs.cell_graph(), graph_cells, snap.delta)
+	if plan.has("spawn"):
+		cvs.spawn.position = cvs.grid.cell_center_px(plan.spawn)
 	selection = Rect2()
 	cvs._mark()
 	cvs.queue_redraw()
-	cvs._hint("已跨层搬动选区（Ctrl+Z 撤销）。格图、格边和出生点保持原位。")
+	cvs._hint("已跨层搬动选区（Ctrl+Z 撤销）。")
 
 func _write_group(group: Dictionary, positions: Array, moving: bool) -> void:
 	if moving:
@@ -317,12 +352,9 @@ func draw_paste(pos: Vector2) -> void:
 		cvs.draw_circle(origin + anchor, 4.0 / cvs.zoom, color)
 	if clip.has("graph"):
 		for row in clip.graph.cells:
-			var poly := PackedVector2Array(row.polygon.map(func(p: Vector2): return origin + p))
-			poly.append(poly[0])
-			cvs.draw_polyline(poly, color, 2.0 / cvs.zoom)
+			_draw_graph_outline(Transform2D(0.0, origin) * PackedVector2Array(row.polygon), color)
 	if plan.has("spawn"):
-		var center := _root_center(origin + clip.spawn)
-		cvs.draw_arc(center, 7.0 / cvs.zoom, 0, TAU, 20, color, 2.0 / cvs.zoom)
+		_draw_spawn(plan.spawn, color)
 
 func draw(snap: Dictionary) -> void:
 	if selection.has_area():
@@ -342,6 +374,18 @@ func draw(snap: Dictionary) -> void:
 		var rect: Rect2 = cvs.layer_xform(cvs._layer_index_of(n.layer_id)) * n.aabb()
 		rect.position += delta
 		cvs.draw_rect(rect, color, false, 1.5)
+	for cell in snap.get("graph_cells", []):
+		_draw_graph_outline(Transform2D(0.0, delta) * cell.polygon, color)
+	if plan.has("spawn"):
+		_draw_spawn(plan.spawn, color)
+
+func _draw_graph_outline(poly: PackedVector2Array, color: Color) -> void:
+	poly.append(poly[0])
+	cvs.draw_polyline(poly, color, 2.0 / cvs.zoom)
+
+func _draw_spawn(cell: Vector2i, color: Color) -> void:
+	var center: Vector2 = cvs.to_layer_world(cvs.collision_index(), cvs.grid.cell_center_px(cell))
+	cvs.draw_arc(center, 7.0 / cvs.zoom, 0, TAU, 20, color, 2.0 / cvs.zoom)
 
 func _draw_cells(groups: Array, positions: Array) -> void:
 	for i in groups.size():
