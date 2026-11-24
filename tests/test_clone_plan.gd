@@ -26,13 +26,13 @@ func _manifest() -> Dictionary:
 	return {
 		"_dir": TMP, "_maps_dir": TMP.path_join("maps"), "contentDir": "content",
 		"assets": [
-			{"id": "door", "kind": "entity", "visual": {"type": "rect"},
+			{"id": "door", "kind": "entity", "code": "DOOR", "visual": {"type": "rect"},
 				"fields": [
 					{"id": "TGT", "type": "entity_ref", "mapField": "TMAP"},
 					{"id": "TMAP", "type": "map_ref"},
 					{"id": "NOTE", "type": "string"},
 				]},
-			{"id": "guard", "kind": "entity", "visual": {"type": "rect"},
+			{"id": "guard", "kind": "entity", "code": "GARD", "visual": {"type": "rect"},
 				"fields": [{"id": "TGT", "type": "entity_ref"}]},
 		],
 		"functions": [
@@ -220,9 +220,10 @@ func test_condition_parameters_keep_content_and_asset_dependencies() -> void:
 	var assets := Audit.asset_content_refs(m, "guard")
 	ok(assets.any(func(ref): return ref.kind == "dlg" and ref.id == "root" \
 		and ref.field == "predicates#0.fields.icon"), "删除保护找到条件参数中引用的资产")
-	var rows := [{"code": "AAAA", "functions": [{"fn": "FN01", "content": "root"},
+	var rows := [{"asset": "door", "code": "AAAA", "functions": [{"fn": "FN01", "content": "root"},
 		{"fn": "FN02", "content": "target"}]}]
-	var plan := ClonePlan.build({"manifest": m, "data": {"objects": rows}}, {}, PackedStringArray())
+	var plan := ClonePlan.build({"manifest": m, "data": {"meta": {"code": "SRC1"}, "objects": rows}},
+		{"meta": {"code": "DST1"}}, PackedStringArray())
 	eq(plan.status, "ok", "条件和被引用内容随同一组复制")
 	var copied: Array = plan.pending_contents.filter(func(row): return row.fn_id == "dlg")
 	if not copied.is_empty() and plan.content_map.has("ending"):
@@ -239,9 +240,10 @@ func test_clone_separates_same_id_and_prefers_staged() -> void:
 	ok(ContentStore.write(m, "dlg", "CID1", {"name": "disk"}), "源正式内容存在")
 	var staged := {ClonePlan.content_key("dlg", "CID1"): {"name": "edited"},
 		ClonePlan.content_key("other", "CID1"): {"name": "draft"}}
-	var rows := [{"code": "AAAA", "functions": [{"fn": "FN01", "content": "CID1"},
+	var rows := [{"asset": "door", "code": "AAAA", "functions": [{"fn": "FN01", "content": "CID1"},
 		{"fn": "FN02", "content": "CID1"}]}]
-	var plan := ClonePlan.build({"manifest": m, "data": {"objects": rows}}, {}, PackedStringArray(), false, staged)
+	var plan := ClonePlan.build({"manifest": m, "data": {"meta": {"code": "SRC1"}, "objects": rows}},
+		{"meta": {"code": "DST1"}}, PackedStringArray(), false, staged)
 	eq(plan.status, "ok", "同名内容分别复制")
 	eq(plan.pending_contents.map(func(r): return r.data.name), ["edited", "draft"], "使用源暂存载荷")
 	_wipe()

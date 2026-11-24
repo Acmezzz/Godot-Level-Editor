@@ -219,7 +219,9 @@ static func build(src: Dictionary, dst: Dictionary, codes: PackedStringArray = P
 				continue
 			if str(cdata.get("scope", "")) == "project":
 				continue
-			var new_cid := _new_content_id(m, fn_id, ddata, new_code, cid)
+			var type_code := str(AssetDecl.by_id(m, str(row.get("asset", ""))).get("code", ""))
+			var candidate := ContentId.content_id(target_code, type_code, new_code, fn_code)
+			var new_cid := ContentId.unique(m, fn_id, candidate)
 			if new_cid == "":
 				conflicts.append({"kind": "content_id", "id": cid,
 					"message": "新内容 ID 生成失败：%s" % cid})
@@ -563,29 +565,6 @@ static func _remap_scoped_link(field: Dictionary, key: String, values: Dictionar
 		values[key] = entries if value is Array else entries[0]
 		if mode == "paired":
 			pairs[_key_of(decls, field.mapField)] = target
-
-## 新内容 ID：优先按分层身份重组（目标图码 + 类型码 + 新实例码 + 功能 id），
-## 缺任一段时沿用源 ID 前缀 + 新随机内容段，最后查重。
-static func _new_content_id(manifest: Dictionary, fn_id: String, target_data: Dictionary,
-		new_inst_code: String, old_id: String) -> String:
-	var map_code := str((target_data.get("meta", {}) as Dictionary).get("code", "")) \
-		if (target_data.get("meta", {}) as Dictionary).get("code", null) != null else ""
-	var ent_code := ""
-	var cand := ""
-	if map_code != "" and new_inst_code != "":
-		# 类型码从源内容 ID 的第二段取（内容 ID = 图-类型-实例-功能-内容）
-		var segs := old_id.split("-", false)
-		if segs.size() >= 2:
-			ent_code = str(segs[1])
-	cand = ContentId.content_id(map_code, ent_code, new_inst_code, fn_id)
-	if cand == "":
-		# 老式内容 ID 不一定是五段（如 CID1）：沿用原 ID 作前缀，只换末段
-		var cut := old_id.rfind("-")
-		if cut < 0:
-			cand = old_id
-		else:
-			cand = old_id.substr(0, cut) + "-" + ContentId.new_inst_code()
-	return ContentId.unique(manifest, fn_id, cand)
 
 ## 计划里的冲突 → 给用户看的一行（预览弹窗/状态栏共用）。
 static func conflicts_text(conflicts: Array) -> String:

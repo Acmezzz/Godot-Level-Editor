@@ -23,8 +23,8 @@ func test_field_codes_forms_and_empty() -> void:
 	ok(ContentId.field_codes(dict_form).has("F333"), "dict 写法收集")
 
 func test_content_id_assembly() -> void:
-	var cid := str(ContentId.content_id("MAP1", "ENT1", "INS1", "fnid"))
-	ok(cid.begins_with("MAP1-ENT1-INS1-fnid-"), "前四段正确")
+	var cid := str(ContentId.content_id("MAP1", "ENT1", "INS1", "FUNC"))
+	ok(cid.begins_with("MAP1-ENT1-INS1-FUNC-"), "前四段正确")
 	eq(cid.length(), 26, "五段总长 26（4-4-4-4-6）")
 	for miss in [["", "ENT1", "ID", "f"], ["MAP1", "", "ID", "f"],
 			["MAP1", "ENT1", "", "f"], ["MAP1", "ENT1", "ID", ""]]:

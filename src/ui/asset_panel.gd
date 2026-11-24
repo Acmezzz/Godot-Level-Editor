@@ -21,6 +21,7 @@ var host = null  # 宿主 app（确认框复用其链路）
 var asset_list: ItemList
 var _filter_edit: LineEdit
 var mounts_box: VBoxContainer
+var mounts_section: VBoxContainer
 var name_edit: LineEdit
 var thumb: TextureRect
 var _detail_hint: Label
@@ -116,12 +117,13 @@ func build() -> void:
 	name_box.add_child(name_edit)
 	name_box.add_child(Kit.hint_label("名称即时写回清单，下次试玩生效"))
 
-	det.add_child(Kit.divider())
-	det.add_child(Kit.section_label("自带功能（挂载）"))
-	det.add_child(Kit.hint_label(
+	mounts_section = Kit.vbox(6)
+	det.add_child(mounts_section)
+	mounts_section.add_child(Kit.section_label("自带功能（挂载）"))
+	mounts_section.add_child(Kit.hint_label(
 		"类型自带、实例不可删的功能：从清单 functions 声明池里挑，值在内容编辑器按实例填。", 460))
 	mounts_box = Kit.vbox(6)
-	det.add_child(mounts_box)
+	mounts_section.add_child(mounts_box)
 
 	extra = Kit.vbox(8)
 	det.add_child(Kit.divider())
@@ -457,7 +459,8 @@ func _mount_rows(edef: Dictionary) -> void:
 	for c in mounts_box.get_children():
 		mounts_box.remove_child(c)
 		c.queue_free()
-	if edef.is_empty():
+	mounts_section.visible = edef.get("kind") == "entity"
+	if not mounts_section.visible:
 		return
 	var mounted: Array = edef.get("functions", []) if (edef.get("functions", []) is Array) else []
 	for mid in mounted:

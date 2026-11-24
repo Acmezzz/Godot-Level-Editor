@@ -429,12 +429,12 @@ func _current_fns() -> Array:
 	var n := _current_spr()
 	return n.functions if n != null else []
 
-## 分层内容 ID 的候选：地图码-实体码-实例码-功能id-内容码。
-## 三段身份码来自各层载体（地图 meta / 清单 assets / 实体 meta），缺段返回空串。
+## 分层内容 ID 的候选：地图码-实体码-实例码-功能执行码-内容码。
+## 身份来自地图、实例和清单声明，缺段不发号。
 func _content_id_for(n: EntityNode, fn_id: String) -> String:
-	var map_code := str((app.canvas.map_data.get("meta", {}) as Dictionary).get("code", ""))
+	var map_code: String = app.canvas.cur_map_code()
 	var ent_code := str(AssetDecl.by_id(manifest, n.asset).get("code", ""))
-	return ContentId.content_id(map_code, ent_code, n.code, fn_id)
+	return ContentId.content_id(map_code, ent_code, n.code, FunctionDecls.fn_code(manifest, fn_id))
 
 ## 写回附加功能：改的是该实例的 functions 数组 → InstanceKey 差量（§7.5 阶段二）。
 ## 内容条目留在库里，删绑定不等于删内容。

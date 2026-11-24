@@ -1,9 +1,7 @@
 extends RefCounted
 ## 分层身份码：地图-实体-实例-功能-内容 五段。
-## 前三段是各层实体的稳定身份码（4 位，出生时发放，存在载体上，改名不变）；
-## 功能段保留功能人类 id（显示壳，人眼可读）；真正的执行引用（functions[].fn、
-## 内容 "function"、fields 键）用 4 位执行码——见 function_decl.gd。
-## 内容段 6 位。名字（地图名/类型名）只是展示层，不进 ID。
+## 前四段是稳定身份码（4 位，改显示名不变）；末段是 6 位内容码。
+## 已发布的内容 ID 作为完整字符串读取，不按分段解释。
 ## 不挂 class_name，按项目惯例用 preload 引用。
 
 ## 可打印且不含 I/O/0/1 的字符集，长度 32，恰好覆盖 randi() 的低 5 位。
@@ -60,12 +58,12 @@ static func field_codes(m: Dictionary) -> Dictionary:
 						seen[fc] = true
 	return seen
 
-## 组装内容 ID：前三段稳定身份 + 功能人类 id，末段 6 位随机码保证唯一。
+## 组装内容 ID：地图、实体类型、实例、功能执行码，末段 6 位随机码保证唯一。
 ## 输入含空段（旧数据没发过码）时返回空串，不产出脏 ID。
-static func content_id(map_code: String, ent_code: String, inst_code: String, fn_id: String) -> String:
-	if map_code == "" or ent_code == "" or inst_code == "" or fn_id == "":
+static func content_id(map_code: String, ent_code: String, inst_code: String, fn_code: String) -> String:
+	if map_code == "" or ent_code == "" or inst_code == "" or fn_code == "":
 		return ""
-	return "%s-%s-%s-%s-%s" % [map_code, ent_code, inst_code, fn_id, _code(CONTENT_LEN)]
+	return "%s-%s-%s-%s-%s" % [map_code, ent_code, inst_code, fn_code, _code(CONTENT_LEN)]
 
 ## 在候选 ID 上查重；冲突时只换末段内容码（保留分层身份前缀），用尽次数返回空串。
 static func unique(m: Dictionary, fn_id: String, candidate: String, max_tries := 32) -> String:

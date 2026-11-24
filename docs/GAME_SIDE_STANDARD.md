@@ -1206,7 +1206,7 @@ v5 的定长数组条目校验报错（跑 `tools/migrate_project.gd`）。
 {"asset": "portal", "code": "QK3T", "layer": "K2M8", "x": 31.5, "y": 28,
  "props": {"target_point": "L8WM"},
  "functions": [
-   {"fn": "X7K2", "content": "TEST-FY9F-QK3T-dialogue-7M2XK9",
+   {"fn": "X7K2", "content": "TEST-FY9F-QK3T-DLOG-7M2XK9",
     "name": "打招呼", "order": 1, "parallel": false, "trigger": "T111"}
  ]}
 
@@ -1253,7 +1253,7 @@ v5 的定长数组条目校验报错（跑 `tools/migrate_project.gd`）。
 
 ```json
 {
-  "id": "TEST-FY9F-QK3T-dialogue-7M2XK9",
+  "id": "TEST-FY9F-QK3T-DLOG-7M2XK9",
   "function": "X7K2",
   "name": "打招呼",
   "fields": {"M3PQ": "你终于回来了。"}
@@ -1295,19 +1295,18 @@ v5 的定长数组条目校验报错（跑 `tools/migrate_project.gd`）。
 | 步骤码 | 4 | 清单 `steps[].code` | 加载清单时缺则补发（ensure_codes） |
 | 步骤字段码 | 4 | 清单 `steps[].fields[].code` | 同上 |
 | 音频码 | 4 | 清单 `audio[].code` | 加载清单时缺则补发（ensure_codes） |
-| 功能段 | — | 内容 ID 第四段 = 功能人类 id（显示壳；执行引用不用它） | 内容创建时取当次声明 |
 | 内容码 | 6 | 内容文件名 | 首次创建内容 |
 
 拼装（`content_id.gd::content_id`）：
 
 ```
-<地图码>-<实体码>-<实例码>-<功能id>-<内容码>
+<地图码>-<实体码>-<实例码>-<功能执行码>-<内容码>
 ```
 
 例：`TEST` 图上的 `portal`（实体码 `FY9F`）第 7 号实例（实例码 `QK3T`）挂对话：
 
 ```
-TEST-FY9F-QK3T-dialogue-7M2XK9
+TEST-FY9F-QK3T-DLOG-7M2XK9
 ```
 
 项目内容库创建的独立条目使用 `project-…` ID 与 `"scope": "project"`，文件仍在
@@ -1324,15 +1323,10 @@ TEST-FY9F-QK3T-dialogue-7M2XK9
 
 **实例内容的任一段缺失 → 不生成内容 ID**（返回空串），内容编辑器会提示「还没有身份码」，此时不写盘。
 
-**游戏侧的用途**：不需要解析这段 ID，只要把它当不透明字符串用
-（`ContentDB.load_content(fn, id)` 拼路径）。但可以做一件便宜的事——**按前缀反查归属**：
-前 4 段（到功能段为止）唯一确定「哪张图的哪类哪个实例的哪个功能」，
-用于「这个内容属于谁」的调试输出或分图校验。
+**读取规则**：新建或复制实例内容用当前的地图码、实体类型码、实例码和功能执行码发号。
+已经发布的内容 ID 保持原样。游戏按完整 ID 查找内容，不拆分旧 ID 来判断归属；
+执行功能取地图 `functions[].fn` 或内容文件 `"function"` 中的码。
 
-**名字（地图名 / 实体 `name`）一律不进 ID**，改名不破坏内容引用。
-
-**显示壳与执行引用**：内容 ID 第四段保留功能人类 id（显示壳，人眼可读）；
-磁盘上的**执行引用**写码——地图 `functions[].fn`、内容文件 `"function"`、内容 `fields` 的键。
 两端映射表：编辑器保存清单时生成 `editor/CODES.md`；游戏侧启动读清单重建同款映射
 （`functions[].code` ↔ `id`，`fields[].code` ↔ `id`）。
 
