@@ -55,27 +55,22 @@ static func invalidate_read_cache() -> void:
 	_cache.clear()
 	invalidate_code_map()
 
-## 统一文本解码、版本升级与结构校验；错误时不返回可编辑数据。
-## 先跑原始文档检查（版本缺失/超前、退役键），再抬版本号并做结构校验（D11）。
+## 校验原始地图后再更新内存中的格式版本。
 static func decode_text(text: String, source := "", manifest := {}) -> Dictionary:
 	var parsed = JSON.parse_string(text)
 	if not (parsed is Dictionary):
 		return {"ok": false, "data": {}, "errors": [{"path": source, "message": "JSON must be an object"}], "warnings": [], "migrated": false}
 	var data: Dictionary = parsed
-	var issues := MapValidator.precheck(data)
-	var migrated := false
-	if not issues.any(func(issue): return issue.severity == "error"):
-		migrated = upgrade(data)
-	issues.append_array(MapValidator.validate(data, manifest))
 	var errors: Array[Dictionary] = []
 	var warnings: Array[Dictionary] = []
-	for issue in issues:
+	for issue in MapValidator.validate(data, manifest):
 		if str(issue.severity) == "error":
 			errors.append(issue)
 		else:
 			warnings.append(issue)
-	return {"ok": errors.is_empty(), "data": data if errors.is_empty() else {},
-		"errors": errors, "warnings": warnings, "migrated": migrated}
+	var ok := errors.is_empty()
+	return {"ok": ok, "data": data if ok else {},
+		"errors": errors, "warnings": warnings, "migrated": upgrade(data) if ok else false}
 
 static func read_path(path: String, manifest := {}) -> Dictionary:
 	var observed := Recovery.observe(path)
@@ -278,9 +273,7 @@ static func write(m: Dictionary, name: String, data: Dictionary, move_from := ""
 
 ## 校验待写文档；返回首个错误文本，"" = 通过。
 static func write_error(m: Dictionary, data: Dictionary) -> String:
-	var issues := MapValidator.precheck(data)
-	issues.append_array(MapValidator.validate(data, m))
-	for issue in issues:
+	for issue in MapValidator.validate(data, m):
 		if str(issue.severity) == "error":
 			return "%s: %s" % [str(issue.path), str(issue.message)]
 	return ""

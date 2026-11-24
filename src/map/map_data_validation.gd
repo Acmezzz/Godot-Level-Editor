@@ -7,9 +7,7 @@ const ViewData := preload("res://src/map/map_view_data.gd")
 const GridSpaceScript := preload("res://src/canvas/grid_space.gd")
 const MapFlow := preload("res://src/map/map_flow.gd")
 
-## 原始文档前置检查（D11）：必须在 upgrade() 抬版本号之前跑。
-## 版本缺失/超前、退役顶层键都在这里拒收；低于当前格式只给警告（结构问题由 validate 各项报出）。
-static func precheck(data: Dictionary) -> Array[Dictionary]:
+static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 	var issues: Array[Dictionary] = []
 	if not data.has("version"):
 		_add(issues, "error", "version", "version is required")
@@ -24,21 +22,6 @@ static func precheck(data: Dictionary) -> Array[Dictionary]:
 	for key in ["terrain", "decor"]:
 		if data.has(key):
 			_add(issues, "error", key, "retired top-level key: run tools/migrate_project.gd")
-	return issues
-
-static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
-	var issues: Array[Dictionary] = []
-	# version：缺失/非数字 = 错误（结构契约没有锚点）；高于当前格式 = 错误（打不开新图）；
-	# 低于当前 = 警告（upgrade() 只抬版本号不迁移，结构问题由下面各项各自报出）
-	if not data.has("version") or not _is_integral_number(data["version"]):
-		_add(issues, "error", "version", "must be a number")
-	else:
-		var ver := int(data["version"])
-		if ver > MapFormat.VERSION:
-			_add(issues, "error", "version",
-				"map format %d is newer than this editor supports (%d)" % [ver, MapFormat.VERSION])
-		elif ver < MapFormat.VERSION:
-			_add(issues, "warning", "version", "older map format %d (upgraded in memory)" % ver)
 	for key in ["collision", "objects"]:
 		if data.has(key) and not (data[key] is Array):
 			_add(issues, "error", key, "must be an array")
@@ -74,8 +57,8 @@ static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 		_add(issues, "error", "tiles", "must be an object keyed by layer id")
 	elif tiles is Dictionary:
 		var known_assets := _asset_ids(manifest)
-		var tile_cells := {}   # R21：同层同坐标多瓦片 = 错误（编辑器读入会覆写）
-		for lid in tiles.keys():
+		for lid in tiles:
+			var tile_cells := {}
 			if not layer_ids.is_empty() and not layer_ids.has(str(lid)):
 				_add(issues, "error", "tiles." + str(lid), "unknown layer id")
 			if not (tiles[lid] is Array):
@@ -100,7 +83,7 @@ static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 					elif not known_assets.is_empty() and not known_assets.has(str(cell[2])):
 						_add(issues, "warning", p, "asset id is not in the current manifest: " + str(cell[2]))
 					if cell is Array and cell.size() >= 2 and _is_integral_number(cell[0]) and _is_integral_number(cell[1]):
-						var ck := "%s|%d|%d" % [str(lid), int(cell[0]), int(cell[1])]
+						var ck := Vector2i(int(cell[0]), int(cell[1]))
 						if tile_cells.has(ck):
 							_add(issues, "error", p, "duplicate tile cell on layer %s: (%d,%d)" % [str(lid), int(cell[0]), int(cell[1])])
 						tile_cells[ck] = true
@@ -115,7 +98,7 @@ static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 		var h := int(meta.get("h", 56)) if _is_integral_number(meta.get("h", 56)) else 56
 		if grid != null and not grid.cell_in_map(Vector2i(int(spawn[0]), int(spawn[1])), w, h):
 			_add(issues, "warning", "spawn", "spawn is outside the declared map bounds")
-	if data.get("entities", null) is Array:
+	if data.has("entities"):
 		_add(issues, "error", "entities", "retired: use objects[] with asset/transform (run tools/migrate_project.gd)")
 	if data.get("objects", null) is Array:
 		_validate_objects(data.objects, manifest, layer_ids, issues)
@@ -134,7 +117,7 @@ static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 			elif not (_is_integral_number(cell.x) and _is_integral_number(cell.y)):
 				_add(issues, "error", p, "collision x, y must be integral numbers")
 			else:
-				var ck2 := "%d|%d" % [int(cell.x), int(cell.y)]
+				var ck2 := Vector2i(int(cell.x), int(cell.y))
 				if coll_cells.has(ck2):
 					_add(issues, "error", p, "duplicate collision cell: (%d,%d)" % [int(cell.x), int(cell.y)])
 				else:
@@ -188,16 +171,10 @@ static func _validate_layers(meta: Dictionary, issues: Array[Dictionary], manife
 		if ldef.has("ySort") and not (ldef.ySort is bool):
 			_add(issues, "error", p + ".ySort", "must be a boolean")
 		var loff = ldef.get("offset", null)
-		if loff != null and not (loff is Array and (loff as Array).size() == 2 \
-				and ((loff as Array)[0] is int or (loff as Array)[0] is float) \
-				and ((loff as Array)[1] is int or (loff as Array)[1] is float)):
+		if loff != null and not (loff is Array and loff.size() == 2 and _is_number_pair(loff)):
 			_add(issues, "error", p + ".offset", "must be [x, y] numbers")
-		if ldef.has("scale"):
-			if not _finite_number(ldef.scale):
-				_add(issues, "error", p + ".scale", "must be a number")
-			elif float(ldef.scale) <= 0.0:
-				# 非正缩放 = 层塌成点/镜像翻转：坐标换算的逆变换退化（除零），必须拦
-				_add(issues, "error", p + ".scale", "must be > 0")
+		if ldef.has("scale") and (not _finite_number(ldef.scale) or float(ldef.scale) <= 0.0):
+			_add(issues, "error", p + ".scale", "must be a positive number")
 		# 层混合模式（v7）：缺省 mix（省略）；add/mul 写盘
 		if ldef.has("blend") and not (str(ldef.blend) in ["mix", "add", "mul"]):
 			_add(issues, "error", p + ".blend", "must be \"mix\" / \"add\" / \"mul\"")
