@@ -63,14 +63,15 @@ class Preview extends Control:
 			draw_rect(Rect2(area.position + r.position * area.size, r.size * area.size),
 				Color("#ffffff"), false, 2)
 
-	func _layout_rect(index: int, area: Rect2) -> Rect2:
-		var px := Layout.rect(elements[index], viewport_size)
+	func _layout_rect(px: Rect2, area: Rect2) -> Rect2:
 		return Rect2(area.position + px.position / viewport_size * area.size, px.size / viewport_size * area.size)
 
 	func _draw_layout(area: Rect2) -> void:
+		var resolved := Layout.rectangles(elements, viewport_size)
 		for i in elements.size():
 			var item: Dictionary = elements[i]
-			var bounds := _layout_rect(i, area)
+			var px: Rect2 = resolved.get(item.id, Rect2())
+			var bounds := _layout_rect(px, area)
 			if not bounds.has_area():
 				continue
 			var visible_rect := bounds.intersection(area)
@@ -92,7 +93,7 @@ class Preview extends Control:
 			var font := ThemeDB.fallback_font
 			var scale_px := area.size.x / viewport_size.x
 			var font_px := int(item.get("fontSize", Layout.DEFAULT_FONT_SIZE))
-			var overflow := text_overflows(item)
+			var overflow := _text_overflows(item, label, px)
 			var draw_size := maxi(1, roundi(font_px * scale_px))
 			var line_height := font.get_height(draw_size)
 			var pad := Vector2.ONE * 4 * scale_px
@@ -109,10 +110,12 @@ class Preview extends Control:
 				draw_rect(visible_rect, Color("#ff8877"), false, 2)
 
 	func text_overflows(item: Dictionary) -> bool:
-		var label := Layout.display_text(item, locale)
+		return _text_overflows(item, Layout.display_text(item, locale),
+			Layout.rectangles(elements, viewport_size).get(item.id, Rect2()))
+
+	func _text_overflows(item: Dictionary, label: String, bounds: Rect2) -> bool:
 		if label.is_empty():
 			return false
-		var bounds := Layout.rect(item, viewport_size)
 		var font := ThemeDB.fallback_font
 		var font_px := int(item.get("fontSize", Layout.DEFAULT_FONT_SIZE))
 		var lines := label.split("\n")
@@ -148,8 +151,9 @@ class Preview extends Control:
 				rectangle_drawn.emit(r)
 			else:
 				var count := elements.size() if editing_layout else hotspots.size()
+				var resolved := Layout.rectangles(elements, viewport_size) if editing_layout else {}
 				for i in range(count - 1, -1, -1):
-					var hit := _layout_rect(i, area).has_point(event.position) if editing_layout else Rect2(
+					var hit := _layout_rect(resolved.get(elements[i].id, Rect2()), area).intersection(area).has_point(event.position) if editing_layout else Rect2(
 						hotspots[i].rect[0], hotspots[i].rect[1], hotspots[i].rect[2], hotspots[i].rect[3]).has_point(point)
 					if hit:
 						picked.emit(i)
@@ -160,8 +164,10 @@ class Preview extends Control:
 	func _focus_input(event: InputEvent, area: Rect2) -> void:
 		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 			grab_focus()
+			var resolved := Layout.rectangles(elements, viewport_size)
 			for i in range(elements.size() - 1, -1, -1):
-				if Layout.focusable(elements[i]) and _layout_rect(i, area).intersection(area).has_point(event.position):
+				var row: Dictionary = elements[i]
+				if Layout.focusable(row) and _layout_rect(resolved.get(row.id, Rect2()), area).intersection(area).has_point(event.position):
 					focused_id = str(elements[i].id)
 					_focus_result(true)
 					break
@@ -781,6 +787,27 @@ static func _render_layout(form: VBoxContainer, preview: Preview, state: Diction
 	form.add_child(Kit.field_row("字号", font_size, 70))
 	form.add_child(overflow)
 	refresh_text.call()
+	var root := Rect2(Vector2.ZERO, fallback)
+	var parent_picker := OptionButton.new()
+	parent_picker.name = "LayoutElementParent"
+	parent_picker.add_item("画幅")
+	parent_picker.set_item_metadata(0, "")
+	var subtree := Layout.subtree_ids(preview.elements, item.id)
+	for row in preview.elements:
+		if subtree.has(row.id):
+			continue
+		var caption := Layout.display_text(row, preview.locale).get_slice("\n", 0)
+		parent_picker.add_item(row.id if caption == "" else "%s · %s" % [row.id, caption])
+		var index := parent_picker.item_count - 1
+		parent_picker.set_item_metadata(index, row.id)
+		if row.id == item.get("parent", ""):
+			parent_picker.select(index)
+	parent_picker.item_selected.connect(func(i: int):
+		var resolved := Layout.rectangles(preview.elements, fallback)
+		var parent: String = parent_picker.get_item_metadata(i)
+		Layout.reparent(item, parent, resolved[item.id], resolved.get(parent, root))
+		refresh.call())
+	form.add_child(Kit.field_row("布局父级", parent_picker, 70))
 	for axis in [["anchors", "锚点"], ["offsets", "像素偏移"]]:
 		var key: String = axis[0]
 		var values: Array = item.get(key, [0, 0, 0, 0]).duplicate()
@@ -803,13 +830,15 @@ static func _render_layout(form: VBoxContainer, preview: Preview, state: Diction
 			controls.add_child(sp)
 		form.add_child(Kit.field_row(str(axis[1]), controls, 70))
 	var fixed_bottom := Kit.button("固定底边", func():
-		var r := Layout.rect(item, fallback)
+		var resolved := Layout.rectangles(preview.elements, fallback)
+		var r: Rect2 = resolved[item.id]
+		var reference: Rect2 = resolved.get(item.get("parent", ""), root)
 		var a: Array = item.anchors.duplicate()
 		var o: Array = item.get("offsets", [0, 0, 0, 0]).duplicate()
 		a[1] = 1.0
 		a[3] = 1.0
-		o[1] = r.position.y - fallback.y
-		o[3] = r.end.y - fallback.y
+		o[1] = r.position.y - reference.end.y
+		o[3] = r.end.y - reference.end.y
 		item["anchors"] = a
 		item["offsets"] = o
 		refresh.call(), "ghost")
@@ -839,6 +868,12 @@ static func _render_layout(form: VBoxContainer, preview: Preview, state: Diction
 		preview.active_element = at + 1
 		refresh.call(), "ghost"))
 	actions.add_child(Kit.button("删除元素", func():
+		var resolved := Layout.rectangles(preview.elements, fallback)
+		var parent: String = item.get("parent", "")
+		var reference: Rect2 = resolved.get(parent, root)
+		for row in preview.elements:
+			if row.get("parent") == item.id:
+				Layout.reparent(row, parent, resolved[row.id], reference)
 		Layout.clear_focus_links(state.layout, preview.elements, item.id)
 		preview.elements.remove_at(at)
 		preview.active_element = mini(at, preview.elements.size() - 1)

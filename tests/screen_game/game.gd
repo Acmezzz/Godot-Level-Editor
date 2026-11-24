@@ -130,11 +130,11 @@ func _draw_screen(parent: Node, layout: Dictionary, extent: Vector2, locale: Str
 	background.size = extent
 	parent.add_child(background)
 	var buttons: Array[Button] = []
+	var geometry := _screen_rectangles(layout.elements, extent)
 	for row in layout.elements:
-		var anchors: Array = row.anchors
-		var offsets: Array = row.get("offsets", [0, 0, 0, 0])
-		var start := Vector2(anchors[0], anchors[1]) * extent + Vector2(offsets[0], offsets[1])
-		var finish := Vector2(anchors[2], anchors[3]) * extent + Vector2(offsets[2], offsets[3])
+		var bounds: Rect2 = geometry[row.id]
+		if not bounds.has_area():
+			continue
 		var caption := str(row.get("textLocales", {}).get(locale, row.get("text", "")))
 		var item: Control
 		match row.kind:
@@ -171,10 +171,31 @@ func _draw_screen(parent: Node, layout: Dictionary, extent: Vector2, locale: Str
 				var panel := ColorRect.new()
 				panel.color = Color("#286968")
 				item = panel
-		item.position = start
-		item.size = finish - start
+		item.position = bounds.position
+		item.size = bounds.size
 		parent.add_child(item)
 	return buttons
+
+func _screen_rectangles(elements: Array, extent: Vector2) -> Dictionary:
+	var by_parent := {}
+	for row in elements:
+		var parent_id: String = row.get("parent", "")
+		if not by_parent.has(parent_id):
+			by_parent[parent_id] = []
+		by_parent[parent_id].append(row)
+	var bounds := {"": Rect2(Vector2.ZERO, extent)}
+	var pending := [""]
+	while not pending.is_empty():
+		var parent_id: String = pending.pop_back()
+		var container: Rect2 = bounds[parent_id]
+		for row in by_parent.get(parent_id, []):
+			var a: Array = row.anchors
+			var o: Array = row.get("offsets", [0, 0, 0, 0])
+			var top_left := Vector2(a[0], a[1]) * container.size + Vector2(o[0], o[1])
+			var bottom_right := Vector2(a[2], a[3]) * container.size + Vector2(o[2], o[3])
+			bounds[row.id] = Rect2(container.position + top_left, bottom_right - top_left)
+			pending.append(row.id)
+	return bounds
 
 func _preview(path: String) -> void:
 	var request: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(path))

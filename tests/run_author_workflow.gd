@@ -3503,10 +3503,10 @@ func author_signal_room(app, project: String) -> void:
 	if manifest.views.size() == 3:
 		var original: Array = manifest.views[1].layout.elements
 		var copied: Array = manifest.views[2].layout.elements
-		check(original.size() == 1 and copied.size() == 2 and original[0] == copied[0]
+		check(original.size() == 2 and copied.size() == 3 and original[0] == copied[0] and original[1] == copied[2]
 			and copied[1].id != copied[0].id and copied[1].text == "A different button"
-			and copied[1].outputs == original[0].outputs,
-			"the copied element has a fresh ID and retains both authored outputs")
+			and copied[1].outputs == original[0].outputs and copied[1].parent == copied[2].id,
+			"the copied element has a fresh ID and retains its parent and both authored outputs")
 	ReferenceViews.open(app, "watch-deck-copy")
 	opened = _visible_popup(app)
 	press(opened, "删除视图…")
@@ -3860,6 +3860,38 @@ func _author_signal_screen(app, id: String, caption: String, content: String, ma
 				cancel.select(i)
 				cancel.item_selected.emit(i)
 				break
+		var module_id: String = preview.elements[0].id
+		var module_bounds: Rect2 = ReferenceViews.Layout.rectangles(preview.elements, preview.viewport_size)[module_id]
+		pointer.pressed = true
+		pointer.position = frame.position + frame.size * Vector2(0.1, 0.5)
+		preview._gui_input(pointer)
+		pointer.pressed = false
+		pointer.position = frame.position + frame.size * Vector2(0.9, 0.6)
+		preview._gui_input(pointer)
+		var panel_id: String = preview.elements[1].id
+		var kind: OptionButton = pop.find_child("LayoutElementKind", true, false)
+		kind.select(0)
+		kind.item_selected.emit(0)
+		press(pop, "下移一层")
+		var list_elements: OptionButton = pop.find_child("LayoutElementList", true, false)
+		list_elements.select(1)
+		list_elements.item_selected.emit(1)
+		select_metadata(pop.find_child("LayoutElementParent", true, false), panel_id)
+		check(ReferenceViews.Layout.rectangles(preview.elements, preview.viewport_size)[module_id].is_equal_approx(module_bounds),
+			"choosing a parent preserves the authored rectangle")
+		press(pop, "固定底边")
+		list_elements = pop.find_child("LayoutElementList", true, false)
+		list_elements.select(0)
+		list_elements.item_selected.emit(0)
+		check(pop.find_child("LayoutElementParent", true, false).item_count == 1,
+			"the parent picker excludes its own child")
+		pop.find_child("offsets_1", true, false).value += 40
+		pop.find_child("offsets_3", true, false).value += 40
+		module_bounds.position.y += 40
+		check(ReferenceViews.Layout.rectangles(preview.elements, preview.viewport_size)[module_id].is_equal_approx(module_bounds),
+			"a bottom anchored module follows its panel in the editor")
+		# Put the parent after its child in the file to exercise order-independent placement.
+		press(pop, "上移一层")
 	if manifest_path != "":
 		var before := Store.file_digest(manifest_path)
 		var render: Button = pop.find_child("GameRenderPreview", true, false)
@@ -3869,7 +3901,8 @@ func _author_signal_screen(app, id: String, caption: String, content: String, ma
 			await create_timer(0.08).timeout
 		var picture: TextureRect = pop.find_child("GameRenderedFrame", true, false)
 		check(picture.texture != null and picture.texture.get_size() == Vector2(480, 720)
-			and picture.texture.get_image().get_pixel(130, 480).to_html(false) == "cc711e"
+			and picture.texture.get_image().get_pixel(130, 520).to_html(false) == "cc711e"
+			and picture.texture.get_image().get_pixel(130, 480).to_html(false) == "10232b"
 			and Store.file_digest(manifest_path) == before,
 			"the second game renders its styling and the unsaved screen at the declared portrait size")
 	press(pop, "保存参考视图")
@@ -3880,6 +3913,7 @@ func _author_signal_screen(app, id: String, caption: String, content: String, ma
 	if id == "watch-deck":
 		var row: Dictionary = app.manifest.views.filter(func(view): return view.view_id == id)[0]
 		check(row.layout.elements[0].get("module") == "signal-latch"
+			and row.layout.elements[0].get("parent") == row.layout.elements[1].id
 			and row.layout.elements[0].get("focusable") == true
 			and row.layout.elements[0].get("props", {}).get("presses") == 2,
 			"the layout stores the module identity and the authored override")

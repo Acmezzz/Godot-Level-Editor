@@ -75,6 +75,38 @@ func test_layout_localized_variant_and_schema() -> void:
 	ok(ManifestValidation.validate(manifest).any(func(issue): return str(issue.path).ends_with("textLocales.en")),
 		"an undeclared translated locale is diagnosed at its value")
 
+func test_layout_parent_geometry_and_validation() -> void:
+	var root := {"id": "panel", "kind": "panel", "anchors": [0.25, 0.25, 0.75, 0.75]}
+	var group := {"id": "group", "kind": "panel", "parent": "panel", "anchors": [0.5, 0, 1, 1]}
+	var button := {"id": "button", "kind": "button", "parent": "group", "anchors": [0, 0.5, 1, 0.5],
+		"offsets": [0, 0, 0, 30]}
+	var elements := [button, root, group]
+	var viewport := Vector2(800, 600)
+	var design := ScreenLayout.rectangles(elements, viewport)
+	eq(design.button, Rect2(400, 300, 200, 30), "nested bounds are independent of flat draw order")
+	eq(ScreenLayout.rectangles(elements, Vector2(1200, 400)).button, Rect2(600, 200, 300, 30),
+		"nested anchors respond to the viewport while pixel offsets stay fixed")
+	eq(ScreenLayout.visible_focus(elements, viewport), [button], "focus uses the resolved child position")
+	eq(ScreenLayout.subtree_ids(elements, "panel").size(), 3, "a parent picker excludes the selected subtree")
+	ScreenLayout.reparent(button, "", design.button, Rect2(Vector2.ZERO, viewport))
+	eq(ScreenLayout.rectangles(elements, viewport).button, design.button, "reparent keeps the design rectangle")
+	button.parent = "group"
+	button.offsets = [0, 0, 0, 30]
+	var layout := {"viewport": "design", "elements": elements}
+	var sizes := {"design": viewport}
+	var issues: Array[Dictionary] = []
+	ScreenLayout.validate(layout, sizes, "layout", issues)
+	ok(issues.is_empty(), "parents may appear after children")
+	button.offsets[2] = -300
+	ScreenLayout.validate(layout, sizes, "layout", issues)
+	ok(issues.any(func(issue): return issue.path == "layout.elements[0]"), "validate dimensions against the parent")
+	for invalid in ["missing", "panel", "button"]:
+		issues.clear()
+		root.parent = invalid
+		ScreenLayout.validate(layout, sizes, "layout", issues)
+		ok(issues.any(func(issue): return issue.path == "layout.elements[1].parent"),
+			"missing, self and cyclic parents are rejected")
+
 func test_focus_skips_clipped_target_and_cleans_removed_links() -> void:
 	var layout := {"focusStart": "start", "elements": [
 		{"id": "start", "kind": "button", "anchors": [0, 0, 0.2, 0.2], "focus": {"right": "hidden"}},

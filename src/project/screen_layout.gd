@@ -1,5 +1,5 @@
 extends RefCounted
-## Ordered screen elements; edges are anchors relative to the viewport plus pixel offsets.
+## Flat draw order with edges anchored to a parent element or the viewport.
 
 const KINDS := ["panel", "text", "button"]
 const FALLBACK_SIZE := Vector2(1280, 720)
@@ -105,15 +105,20 @@ static func focusable(element: Variant) -> bool:
 	return kind in ["button", "module"] and element.get("focusable", kind == "button") == true
 
 static func visible_focus(elements: Array, viewport: Vector2) -> Array:
+	return _visible_focus(elements, viewport, rectangles(elements, viewport))
+
+static func _visible_focus(elements: Array, viewport: Vector2, resolved: Dictionary) -> Array:
 	var bounds := Rect2(Vector2.ZERO, viewport)
 	return elements.filter(func(row):
 		if not focusable(row):
 			return false
-		var r := rect(row, viewport)
+		var r: Rect2 = resolved.get(row.id, Rect2())
 		return r.has_area() and r.intersection(bounds).has_area())
 
 static func focus_start(layout: Dictionary, elements: Array, viewport: Vector2) -> String:
-	var options := visible_focus(elements, viewport)
+	return _initial_focus(layout, visible_focus(elements, viewport))
+
+static func _initial_focus(layout: Dictionary, options: Array) -> String:
 	var initial := str(layout.get("focusStart", ""))
 	for row in options:
 		if row.id == initial:
@@ -121,14 +126,15 @@ static func focus_start(layout: Dictionary, elements: Array, viewport: Vector2) 
 	return str(options[0].id) if not options.is_empty() else ""
 
 static func focus_step(layout: Dictionary, elements: Array, current: String, action: String, viewport: Vector2) -> String:
-	var options := visible_focus(elements, viewport)
+	var resolved := rectangles(elements, viewport)
+	var options := _visible_focus(elements, viewport, resolved)
 	var selected := -1
 	for i in options.size():
 		if options[i].id == current:
 			selected = i
 			break
 	if selected < 0:
-		return focus_start(layout, elements, viewport)
+		return _initial_focus(layout, options)
 	if action in ["next", "previous"]:
 		return str(options[posmod(selected + (1 if action == "next" else -1), options.size())].id)
 	if not DIRECTIONS.has(action):
@@ -137,14 +143,14 @@ static func focus_step(layout: Dictionary, elements: Array, current: String, act
 	var explicit := str(row.get("focus", {}).get(action, ""))
 	if explicit != "" and options.any(func(item): return item.id == explicit):
 		return explicit
-	var start := rect(row, viewport).get_center()
+	var start: Vector2 = resolved[row.id].get_center()
 	var direction: Vector2 = DIRECTIONS[action]
 	var best := INF
 	var target := current
 	for other in options:
 		if other.id == current:
 			continue
-		var delta := rect(other, viewport).get_center() - start
+		var delta: Vector2 = resolved[other.id].get_center() - start
 		var forward := delta.dot(direction)
 		if forward <= 0.0:
 			continue
@@ -179,12 +185,56 @@ static func sizes(manifest: Dictionary) -> Dictionary:
 			out[row.id] = Vector2(row.w, row.h)
 	return out
 
-static func rect(element: Dictionary, viewport: Vector2) -> Rect2:
+static func _rect(element: Dictionary, reference: Rect2) -> Rect2:
 	var a: Array = element.anchors
 	var o: Array = element.get("offsets", [0, 0, 0, 0])
-	var start := Vector2(a[0], a[1]) * viewport + Vector2(o[0], o[1])
-	var end := Vector2(a[2], a[3]) * viewport + Vector2(o[2], o[3])
-	return Rect2(start, end - start)
+	var start := Vector2(a[0], a[1]) * reference.size + Vector2(o[0], o[1])
+	var end := Vector2(a[2], a[3]) * reference.size + Vector2(o[2], o[3])
+	return Rect2(reference.position + start, end - start)
+
+## Resolve parent geometry in linear time, independently of draw order and without recursion.
+static func rectangles(elements: Array, viewport: Vector2) -> Dictionary:
+	var root := Rect2(Vector2.ZERO, viewport)
+	var children := _children_by_parent(elements)
+	var resolved := {}
+	var pending: Array = children.get("", []).duplicate()
+	while not pending.is_empty():
+		var row: Dictionary = pending.pop_back()
+		var parent: String = row.get("parent", "")
+		resolved[row.id] = _rect(row, resolved.get(parent, root))
+		pending.append_array(children.get(row.id, []))
+	return resolved
+
+static func _children_by_parent(elements: Array) -> Dictionary:
+	var children := {}
+	for row in elements:
+		var parent: String = row.get("parent", "")
+		if not children.has(parent):
+			children[parent] = []
+		children[parent].append(row)
+	return children
+
+static func subtree_ids(elements: Array, id: String) -> Dictionary:
+	var children := _children_by_parent(elements)
+	var visited := {id: true}
+	var pending := [id]
+	while not pending.is_empty():
+		for child in children.get(pending.pop_back(), []):
+			if not visited.has(child.id):
+				visited[child.id] = true
+				pending.append(child.id)
+	return visited
+
+## Keep the design rectangle and existing anchors when changing coordinate space.
+static func reparent(element: Dictionary, parent: String, bounds: Rect2, reference: Rect2) -> void:
+	if parent == "":
+		element.erase("parent")
+	else:
+		element["parent"] = parent
+	var a: Array = element.anchors
+	var start := bounds.position - reference.position - Vector2(a[0], a[1]) * reference.size
+	var end := bounds.end - reference.position - Vector2(a[2], a[3]) * reference.size
+	element["offsets"] = [start.x, start.y, end.x, end.y]
 
 static func validate(layout: Variant, viewports: Dictionary, path: String, issues: Array[Dictionary],
 		declarations := {}) -> void:
@@ -211,6 +261,7 @@ static func validate(layout: Variant, viewports: Dictionary, path: String, issue
 		return
 	var used := {}
 	var focus_ids := {}
+	var geometry := []
 	for i in elements.size():
 		var row = elements[i]
 		var p := "%s.elements[%d]" % [path, i]
@@ -221,7 +272,7 @@ static func validate(layout: Variant, viewports: Dictionary, path: String, issue
 		if not id is String or id.strip_edges() == "" or used.has(id):
 			_error(issues, p + ".id", "must be non-empty and unique within this layout")
 		else:
-			used[id] = true
+			used[id] = i
 			if focusable(row):
 				focus_ids[id] = true
 		if row.get("kind") == "module":
@@ -247,10 +298,8 @@ static func validate(layout: Variant, viewports: Dictionary, path: String, issue
 			_error(issues, p + ".anchors", "must be ordered [left, top, right, bottom] in 0..1")
 		if not _four(o):
 			_error(issues, p + ".offsets", "must be four finite pixel offsets")
-		elif valid:
-			var r := rect(row, viewports.get(vp, FALLBACK_SIZE))
-			if not r.has_area() or not r.is_finite():
-				_error(issues, p, "must have positive width and height in the design viewport")
+		elif valid and used.get(id) == i:
+			geometry.append(row)
 		for key in ["text", "style"]:
 			if row.has(key) and not row[key] is String:
 				_error(issues, p + "." + key, "must be a string")
@@ -274,6 +323,23 @@ static func validate(layout: Variant, viewports: Dictionary, path: String, issue
 			_error(issues, p + ".focusable", "must be a boolean on a button or screen module")
 	if layout.has("focusStart") and (not layout.focusStart is String or not focus_ids.has(layout.focusStart)):
 		_error(issues, path + ".focusStart", "must name a focusable element")
+	var valid_parents := true
+	for id in used:
+		var i: int = used[id]
+		var row: Dictionary = elements[i]
+		if row.has("parent") and (not row.parent is String or row.parent == id or not used.has(row.parent)):
+			_error(issues, "%s.elements[%d].parent" % [path, i], "must name another element in this layout")
+			valid_parents = false
+	if valid_parents and geometry.size() == used.size():
+		var resolved := rectangles(geometry, viewports.get(vp, FALLBACK_SIZE))
+		for id in used:
+			var p := "%s.elements[%d]" % [path, used[id]]
+			if not resolved.has(id):
+				_error(issues, p + ".parent", "must reach the viewport without a parent cycle")
+			else:
+				var r: Rect2 = resolved[id]
+				if not r.has_area() or not r.is_finite():
+					_error(issues, p, "must have positive width and height in the design viewport")
 	for i in elements.size():
 		var row = elements[i]
 		if not row is Dictionary or not row.has("focus"):
