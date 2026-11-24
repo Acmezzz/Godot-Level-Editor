@@ -50,6 +50,9 @@ func run() -> void:
 			"fields": [{"id": "marker", "kind": "input", "type": "port_ref", "of": "signal"},
 				{"id": "crossing", "kind": "input", "type": "edge_ref"},
 				{"id": "checkpoint", "kind": "input", "type": "edge_ref"}]},
+			"map-debrief": {"outputs": {"accepted": {"name": "Debrief", "contentTypes": ["sequence"],
+				"contentMapContext": "paired", "mapField": "board"}},
+				"fields": [{"id": "board", "kind": "choice", "source": "map"}]},
 			"signal-latch": {"name": "Latch", "outputs": {"accepted": {"name": "Continue", "screens": true}}, "fields": [
 			{"id": "presses", "kind": "input", "type": "int", "min": 1, "default": 1}]}},
 		"functions": {"course_rules": {"code": "CRUL", "name": "Course rules", "fields": [
@@ -63,7 +66,8 @@ func run() -> void:
 				"default": [{"time": 0, "value": 0}]},
 			{"id": "next", "code": "CNXT", "kind": "input", "type": "flow_target",
 				"maps": true, "screens": true, "contentTypes": ["signal"]}]},
-			"sequence": {"code": "SEQN", "name": "Sequence", "steps": true},
+			"sequence": {"code": "SEQN", "name": "Sequence", "steps": true, "fields": [
+				{"id": "host", "code": "DHST", "kind": "choice", "source": "entity_inst:relay"}]},
 			"round_rules": {"code": "ROND", "name": "Round rules", "fields": [
 				{"id": "inputs", "code": "INPT", "kind": "input", "type": "int", "min": 1, "max": 4},
 				{"id": "role", "code": "ROLE", "kind": "input", "type": "flow_target",
@@ -438,7 +442,12 @@ func run() -> void:
 	app._set_mode("content")
 	await add_screen("instructions", "Enter course", {"module": "course-door"}, copy_arrival)
 	await add_screen("welcome", "Start tutorial", {"module": "signal-latch"}, {"view": "instructions"})
-	await add_screen("debrief", "Read results", {}, timeline_target)
+	app.project_shell.content_editor._library._open_item("sequence", "project-epilogue", copy_code)
+	form = popup()
+	choose(field_control(form, "host"), copy_host)
+	press(form, "保存")
+	form.hide()
+	await add_screen("debrief", "Read results", {"module": "map-debrief", "board": copy_code}, timeline_target)
 	app.project_shell.content_editor._library.open()
 	press(popup(), "流程关系…")
 	await process_frame
@@ -482,6 +491,13 @@ func run() -> void:
 		"BRD1": map_code, "ROUT": route},
 		"the timeline keeps the paired map and the graph-authored destinations in order")
 	var findings := Audit.audit(manifest)
+	check(not findings.any(func(issue): return issue.path.begins_with("sequence/project-epilogue.host")),
+		"the screen outlet resolves the debrief host against the module's paired map")
+	var wrong_board := manifest.duplicate(true)
+	var debrief: Dictionary = wrong_board.views.filter(func(view): return view.view_id == "debrief")[0]
+	debrief.layout.elements[0].props.board = map_code
+	check(Audit.audit(wrong_board).any(func(issue): return issue.path.begins_with("sequence/project-epilogue.host")),
+		"changing the outlet's paired map makes the copied host unresolved")
 	check(not findings.any(func(issue): return issue.get("path", "").begins_with("round_host/")),
 		"the bound rules validate their local host against the owning map")
 	check(not findings.any(func(issue): return issue.get("path", "").begins_with("signal/project-finished.actor")),
@@ -610,6 +626,7 @@ func run() -> void:
 		and result.get("endingActor") == pawn_code and result.get("endingBoard") == map_code
 		and result.get("runtimeCourse", []).map(func(x): return int(x)) == [3, 5] and result.get("board") == copy_code
 		and result.get("runtimeRows", []).map(func(y): return int(y)) == [3, 4]
+		and result.get("debriefBoard") == copy_code and result.get("debriefHost") == copy_host
 		and result.get("roundRules") == copy_rules.content and result.get("roundInputs") == 3
 		and result.get("roundHost") == copy_host
 		and result.get("roundRelayPort") == upstream_port
@@ -717,6 +734,8 @@ func add_screen(id: String, label: String, module: Dictionary, target: Dictionar
 	caption.text_changed.emit(label)
 	if module.get("module") == "signal-latch":
 		pop.find_child("LayoutModuleField_presses", true, false).value = 2
+	if module.has("board"):
+		choose(pop.find_child("LayoutModuleField_board", true, false), module.board)
 	if module.get("module") == "course-door":
 		var marker: Control = pop.find_child("LayoutModuleField_marker", true, false)
 		var map: OptionButton = marker.find_child("ReferenceTargetMap", true, false)

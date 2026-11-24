@@ -36,6 +36,13 @@ static func output_labels(declarations: Dictionary, element: Dictionary) -> Dict
 static func output_spec(declarations: Dictionary, element: Dictionary, output: String) -> Variant:
 	return declarations.get(element.get("module", ""), {}).get("outputs", {}).get(output)
 
+static func paired_output_map(declarations: Dictionary, element: Dictionary, spec: Dictionary) -> String:
+	var module: Dictionary = declarations.get(element.get("module", ""), {})
+	for field in module.get("fields", []):
+		if field.id == spec.mapField:
+			return str(element.get("props", {}).get(field.id, field.get("default", "")))
+	return ""
+
 static func content_target(value: Variant) -> bool:
 	return value is Dictionary and value.size() == 2 and value.get("function") is String and value.get("content") is String
 

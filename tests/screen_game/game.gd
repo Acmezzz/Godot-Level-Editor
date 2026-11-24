@@ -163,6 +163,16 @@ func _show_content(target: Dictionary, content_board: String) -> void:
 	_clear_screen()
 	var fields: Dictionary = data.get("fields", {})
 	if kind == "sequence":
+		runtime_course["debriefBoard"] = content_board
+		for filename in DirAccess.get_files_at("res://maps"):
+			if not filename.ends_with(".json"):
+				continue
+			var map = JSON.parse_string(FileAccess.get_file_as_string("res://maps/" + filename))
+			if map is Dictionary and map.get("meta", {}).get("code") == content_board:
+				var host: String = fields.get("DHST", "")
+				if map.objects.any(func(row): return row.code == host):
+					runtime_course["debriefHost"] = host
+				break
 		var handoff: Dictionary = data.steps[0].fields
 		var targets: Array = handoff.ROUT
 		runtime_course["handoffTargets"] = targets
@@ -317,7 +327,10 @@ func _draw_screen(parent: Node, layout: Dictionary, extent: Vector2, locale: Str
 							runtime_course["screenCrossing"] = row.get("props", {}).get("crossing", {})
 							runtime_course["screenCheckpoint"] = row.get("props", {}).get("checkpoint", {})
 						opened_buttons.append(button.text)
-						_follow_target.call_deferred(target))
+						var spec = manifest.get("screenModules", {}).get(row.get("module", ""), {}).get("outputs", {}).get("accepted")
+						var board := "" if not spec is Dictionary or spec.get("contentMapContext") != "paired" \
+							else str(row.get("props", {}).get(spec.mapField, ""))
+						_follow_target.call_deferred(target, board))
 					buttons.append(button)
 				item = button
 			"text":

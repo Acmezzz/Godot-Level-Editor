@@ -140,6 +140,10 @@ static func _collect_view_targets(rows: Variant, view: Dictionary, prefix: Strin
 				var spec = ScreenLayout.output_spec(modules, row, str(id))
 				if spec is Dictionary:
 					ref["domains"] = spec
+					if spec.get("contentMapContext") == "paired" and ScreenLayout.content_target(ref.target):
+						ref["context_map"] = ScreenLayout.paired_output_map(modules, row, spec)
+						ref["field"] = spec.mapField
+						ref["output"] = id
 				out.append(ref)
 
 ## Use the same ID keys and defaults as the layout form. Condition rows use their own field codes.

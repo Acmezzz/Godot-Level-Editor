@@ -945,6 +945,14 @@ static func _validate_screen_modules(data: Dictionary, issues: Array[Dictionary]
 		if not fields is Array:
 			_add(issues, "error", path + ".fields", "must be an array")
 			continue
+		if outputs is Dictionary:
+			for output in outputs:
+				var spec = outputs[output]
+				if spec is Dictionary and (spec.has("contentMapContext") or spec.has("mapField")):
+					if spec.get("contentMapContext") != "paired" or not spec.get("contentTypes") is Array \
+							or spec.contentTypes.is_empty() or not _module_map_field(fields, spec.get("mapField")):
+						_add(issues, "error", path + ".outputs." + str(output),
+							"paired content context requires contentTypes and a single map choice in mapField")
 		var seen := {}
 		for i in fields.size():
 			var field = fields[i]
@@ -972,12 +980,15 @@ static func _check_module_map_pairs(fields: Array, path: String, issues: Array[D
 		var at := path + "." + str(field.get("id", "?"))
 		if field.has("mapField"):
 			var pair = field.mapField
-			if not pair is String or pair.is_empty() or not fields.any(func(sibling):
-				return sibling is Dictionary and sibling.get("id") == pair and sibling.get("kind") == "choice" \
-					and sibling.get("source") == "map" and not bool(sibling.get("multiple", false))):
+			if not _module_map_field(fields, pair):
 				_add(issues, "error", at + ".mapField", "must name a single map choice in the same row")
 		if field.get("type") == "array" and field.get("of") == "record" and field.get("fields") is Array:
 			_check_module_map_pairs(field.fields, at + ".fields", issues, depth + 1)
+
+static func _module_map_field(fields: Array, id: Variant) -> bool:
+	return id is String and not id.is_empty() and fields.any(func(field):
+		return field is Dictionary and field.get("id") == id and field.get("kind") == "choice" \
+			and field.get("source") == "map" and not bool(field.get("multiple", false)))
 
 ## C5：项目参考 views（[{view_id, image, pixel_size, hotspots}]）：view_id 非空唯一、
 ## image/pixel_size/hotspots 可选但类型必对（image 字符串、pixel_size 正数、hotspots 数组）。

@@ -15,6 +15,7 @@ const MapFlow := preload("res://src/map/map_flow.gd")
 const References := preload("res://src/project/reference_index.gd")
 const FlowTarget := preload("res://src/content/flow_target.gd")
 const StartupTargets := preload("res://src/project/startup_targets.gd")
+const ScreenLayout := preload("res://src/project/screen_layout.gd")
 const Kit := preload("res://src/ui/ui_kit.gd")
 const FrameReference := preload("res://src/ui/map_game_preview.gd")
 const FrameDialog := preload("res://src/ui/game_frame_dialog.gd")
@@ -480,6 +481,11 @@ func _open_flow() -> void:
 				refresh.call(edge.from)
 				notice.text = "目标已变更；请选择有效目标后重试。"
 				return
+			if FlowTarget.kind(next) == "content" and edge.get("decl", {}).get("contentMapContext") == "paired":
+				var key := ScreenLayout.paired_output_map(ScreenLayout.modules(source), edge.shown_rows[edge.index], edge.decl)
+				if References.resolve_map(source, key).status != "ok":
+					notice.text = "请先在屏幕布局为该模块选择配对地图。"
+					return
 			var changed := RelGraph.change_view_target(source, edge, next)
 			if changed.status != "ok":
 				refresh.call(edge.from)
