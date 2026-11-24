@@ -186,7 +186,7 @@ func _jump_to(it: Dictionary) -> void:
 			await app._open_map_by_name(map)
 		if app.map_loaded and map == app.cur_map_name:
 			app._set_mode("map")
-			MapFlowDialog.open(app, str(j.field))
+			MapFlowDialog.open(app, j.section, j.field)
 	elif map != "" and (map != app.cur_map_name or not app.map_loaded):
 		app._open_map_by_name(map)
 

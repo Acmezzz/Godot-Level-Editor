@@ -92,6 +92,7 @@
 | `preview` | object | 可选。声明独立进程渲染预览，可请求 `screenLayout`、`mapFrame`、`worldFrame` 和 `timelineFrame`。与试玩配置分开。 |
 | `mapGenerators` | object | 可选。按生成器 ID 声明从游戏生成可编辑地图的参数。需同时声明 `preview.capabilities` 包含 `generateMap`。 |
 | `mapOutputs` | object | 可选。为地图声明具名流程出口；游戏触发，作者接线。 |
+| `mapContentSlots` | object | 可选。为地图声明具名内容槽，可绑定内容库中已保存的规则或配置。 |
 | `viewports` | array | 可选（C5）。具名参考画幅 `[{id, w, h}]`：宽屏/竖屏/分屏的坐标域身份，id 非空唯一、w/h 必填正数；`viewport_ref` 字段的下拉候选来自这里 |
 | `screenModules` | object | 可选。按模块 ID 提供作者可加入布局的成品控件，以及编辑器可配置的字段声明。游戏负责创建控件及执行行为。 |
 | `views` | array | 可选（C5）。参考视图 `[{view_id, image, pixel_size, hotspots}]`：`view_id` 必填，`image`/`pixel_size`/`hotspots` 可省；hotspot = `{rect: [nx,ny,nw,nh] 全 0..1, target: 对象}`。编辑器可编辑参考图、绘制热点和选择内容目标；游戏定义点击行为 |
@@ -189,9 +190,16 @@
 
 地图本身的出口用 `mapOutputs` 声明。例如
 `{"mapOutputs":{"completed":{"name":"通关","maps":true,"screens":true,"contentTypes":["ending"]}}}`。
-每个 ID 的目标域沿用 `flow_target` 的规则。作者在「设置 → 地图流程出口」为各张地图接线；
+每个 ID 的目标域沿用 `flow_target` 的规则。作者在「设置 → 地图内容与出口」为各张地图接线；
 保存后由游戏从 `meta.flowOutputs.completed` 读取标准目标对象。映射中没有该 ID 表示未接线。
 例如游戏在完成一局比赛或达成清场条件时读取出口并跳转；不要求地图里存在触发器实例。
+
+地图也可绑定游戏用于入场、比赛、胜负判定或环境的共用内容。例如
+`{"mapContentSlots":{"round":{"name":"回合规则","contentTypes":["round_rules"]}}}`。
+作者在项目内容库编写 `round_rules` 条目，再在「地图内容与出口」为地图选择一个已保存的条目。
+地图保存引用 `meta.contentSlots.round = {"function":"round_rules","content":"project-ranked"}`；
+编辑器不复制内容字段，游戏按项目内容契约读回字段（保存键为执行码），按自己的规则使用。
+未设置的槽不写入地图；改变共用内容会影响所有仍引用该条目的地图。
 如需从关卡回到屏幕，可在资产实例声明 `{"id":"exit_view","kind":"choice","source":"view:"}`。
 作者为每个实例选择目标；游戏在自身的通关或交互逻辑中读取 `props.exit_view` 并按该 ID 切屏。
 同一个出口需要兼容不同类型时，可声明 `{"id":"exit_target","kind":"input","type":"flow_target","maps":true,"screens":true,"contentTypes":["story"]}`。

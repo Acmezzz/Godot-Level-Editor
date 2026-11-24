@@ -65,8 +65,9 @@ static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 			var tp: Dictionary = GridSpaceScript.parse_topology(meta, eff_proj)
 			if not bool(tp.get("ok", false)):
 				_add(issues, "error", "meta.gridTopology", str(tp.get("why", "invalid")))
-		if not meta.get(MapFlow.KEY, {}) is Dictionary:
-			_add(issues, "error", "meta." + MapFlow.KEY, "must be an object keyed by outlet ID")
+		for section in MapFlow.SECTIONS:
+			if not meta.get(section, {}) is Dictionary:
+				_add(issues, "error", "meta." + section, "must be an object keyed by slot ID")
 		layer_ids = _validate_layers(meta, issues, manifest)
 	var tiles = data.get("tiles", null)
 	if tiles != null and not (tiles is Dictionary):

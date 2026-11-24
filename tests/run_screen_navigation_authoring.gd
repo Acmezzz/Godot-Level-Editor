@@ -33,6 +33,7 @@ func run() -> void:
 		"startup": {"screens": true}, "viewports": [{"id": "handheld", "w": 480, "h": 720}],
 		"mapOutputs": {"completed": {"name": "Course completed",
 			"maps": true, "screens": true, "contentTypes": ["signal"]}},
+		"mapContentSlots": {"round": {"name": "Round rules", "contentTypes": ["round_rules"]}},
 		"mapGenerators": {"course": {"contentType": "course_rules",
 			"parameterFields": ["projection", "placements"]}},
 		"preview": {"version": 1, "executable": OS.get_executable_path(), "capabilities": ["generateMap"],
@@ -46,6 +47,8 @@ func run() -> void:
 				{"id": "column", "code": "COLM", "kind": "input", "type": "int", "min": 1, "max": 10}]},
 			{"id": "next", "code": "CNXT", "kind": "input", "type": "flow_target",
 				"maps": true, "screens": true, "contentTypes": ["signal"]}]},
+			"round_rules": {"code": "ROND", "name": "Round rules", "fields": [
+				{"id": "inputs", "code": "INPT", "kind": "input", "type": "int", "min": 1, "max": 4}]},
 			"signal": {"code": "SIGN", "name": "Signal", "fields": [
 			{"id": "text", "code": "TEXT", "kind": "input", "type": "string"},
 			{"id": "next", "code": "NEXT", "kind": "input", "type": "flow_target",
@@ -103,6 +106,18 @@ func run() -> void:
 	press(form, "保存")
 	form.hide()
 	var rules := {"function": "course_rules", "content": "project-course-rules"}
+	app.project_shell.content_editor._library.open()
+	choose(collect(popup(), "OptionButton")[0], "round_rules")
+	press(popup(), "新建…")
+	await process_frame
+	form = popup()
+	inputs = collect(form, "LineEdit")
+	inputs[0].text = "Three inputs"
+	inputs[1].text = "three-inputs"
+	collect(form, "SpinBox")[0].value = 3
+	press(form, "保存")
+	form.hide()
+	var round_target := {"function": "round_rules", "content": "project-three-inputs"}
 	await add_screen("results", "Play a procedural course", {}, rules)
 	app._set_mode("map")
 	Generator.open(app)
@@ -174,9 +189,13 @@ func run() -> void:
 	var map_flow := popup()
 	var completed: OptionButton = map_flow.find_child("MapFlow_completed", true, false)
 	choose(completed, JSON.stringify({"function": "signal", "content": "project-finished"}))
+	var round_slot: OptionButton = map_flow.find_child("MapContent_round", true, false)
+	choose(round_slot, JSON.stringify(round_target))
 	press(map_flow, "应用")
 	delete_reason = app.project_shell.content_editor._form._delete_blocked_reason("signal", "project-finished")
 	check("地图出口" in delete_reason, "an unsaved map outlet protects its destination content")
+	delete_reason = app.project_shell.content_editor._form._delete_blocked_reason(round_target.function, round_target.content)
+	check("地图内容" in delete_reason, "an unsaved round slot protects the reusable rules")
 	MapFlowDialog.open(app)
 	map_flow = popup()
 	completed = map_flow.find_child("MapFlow_completed", true, false)
@@ -216,6 +235,10 @@ func run() -> void:
 	check(graph.edges.any(func(edge):
 		return edge.from == "@map\u0001" + map_code and edge.to == "@view\u0001results" and edge.field == "completed"),
 		"the project graph reads the saved outlet from the map itself")
+	check(graph.edges.any(func(edge):
+		return edge.from == "@map\u0001" + map_code and edge.to == "round_rules\u0001project-three-inputs" \
+			and edge.get("map_section") == "contentSlots"),
+		"the project graph distinguishes a saved rules binding from an outlet")
 	check(graph.edges.any(func(edge): return edge.from == rules_key and edge.to == "@view\u0001debrief"),
 		"the project flow graph reloads the procedural course outlet")
 	check(graph.edges.any(func(edge): return edge.from == router_key and edge.to == "signal\u0001project-finished"),
@@ -252,6 +275,7 @@ func run() -> void:
 	check(report.get("status") == "ready" and result.get("screens") == ["welcome", "instructions", "results", "debrief"]
 		and result.get("visited") == ["project-course-rules", "project-results-router", "project-finished"]
 		and result.get("runtimeCourse", []).map(func(x): return int(x)) == [3, 5] and result.get("board") == map_code
+		and result.get("roundRules") == round_target.content and result.get("roundInputs") == 3
 		and result.get("placed") == [pawn_code, "R001"] and result.get("text") == "Screen sequence complete",
 		"the game reads the map-level completion outlet and reaches the conclusion: %s" % [report])
 	print("SCREEN-NAV-DONE failures=", failures)

@@ -1386,7 +1386,8 @@ static func _ref_checks(data: Dictionary, manifest: Dictionary, map_name: String
 			elif ref.kind == "flow_target" and not StartupTargets.destination_available(manifest, ref.decl, ref.value):
 				message = _flow_target_message(ref.value)
 			if message != "":
-				var jump := {"type": "map_flow", "map": map_name, "field": ref.field} if ref.get("map_outlet", false) \
+				var jump := {"type": "map_flow", "map": map_name, "field": ref.field,
+					"section": ref.map_section} if ref.has("map_section") \
 					else {"type": "entity", "map": map_name, "code": ref.code, "prop": ref.field}
 				out.append({"kind": "ref", "severity": "warning", "path": "%s · %s" % [map_name, ref.path],
 					"message": message, "map": map_name, "jump": jump})

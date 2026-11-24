@@ -1,34 +1,46 @@
 extends RefCounted
-## Named flow outlets shared by all maps in a game; the game decides when to follow each target.
+## Map-level links to named flow destinations and reusable rules in the project content library.
 
 const FlowTarget := preload("res://src/content/flow_target.gd")
-const KEY := "flowOutputs"
+const OUTPUTS := "flowOutputs"
+const CONTENT := "contentSlots"
+const SECTIONS := {OUTPUTS: "mapOutputs", CONTENT: "mapContentSlots"}
 
-static func declarations(manifest: Dictionary) -> Dictionary:
-	return manifest.get("mapOutputs", {})
+static func declarations(manifest: Dictionary, section: String) -> Dictionary:
+	var value = manifest.get(SECTIONS[section], {})
+	return value if value is Dictionary else {}
 
 static func declaration_issues(manifest: Dictionary) -> Array[Dictionary]:
 	var result: Array[Dictionary] = []
-	var outputs = manifest.get("mapOutputs", {})
-	if not outputs is Dictionary:
-		return [{"path": "mapOutputs", "severity": "error", "message": "must be an object keyed by outlet ID"}]
-	for id in outputs:
-		var decl = outputs[id]
-		if id.strip_edges() == "" or not decl is Dictionary or not decl.get("name", id) is String \
-				or not FlowTarget.declaration_valid(decl):
-			result.append({"path": "mapOutputs." + id, "severity": "error",
-				"message": "requires a non-empty ID, optional name and at least one destination domain"})
+	for section in SECTIONS:
+		var key: String = SECTIONS[section]
+		var rows = manifest.get(key, {})
+		if not rows is Dictionary:
+			result.append({"path": key, "severity": "error", "message": "must be an object keyed by slot ID"})
+			continue
+		for id in rows:
+			var decl = rows[id]
+			var path := "%s.%s" % [key, id]
+			if not id is String or id.strip_edges() == "" or not decl is Dictionary or not decl.get("name", id) is String \
+					or not FlowTarget.declaration_valid(decl):
+				result.append({"path": path, "severity": "error",
+					"message": "requires a non-empty ID, optional name and at least one destination domain"})
+			elif section == CONTENT and (decl.get("maps", false) or decl.get("screens", false)):
+				result.append({"path": path, "severity": "error", "message": "content slots only accept contentTypes"})
 	return result
 
-static func targets(data: Dictionary) -> Dictionary:
-	var values = data.get("meta", {}).get(KEY, {})
+static func targets(data: Dictionary, section: String) -> Dictionary:
+	var values = data.get("meta", {}).get(section, {})
 	return values if values is Dictionary else {}
 
 static func references(manifest: Dictionary, data: Dictionary) -> Array[Dictionary]:
-	var decls := declarations(manifest)
-	var values := targets(data)
 	var out: Array[Dictionary] = []
-	for id in values:
-		out.append({"kind": "flow_target", "field": id, "code": "地图出口 · " + id,
-			"path": "meta." + KEY + "." + id, "value": values[id], "decl": decls.get(id, {}), "map_outlet": true})
+	for section in SECTIONS:
+		var decls := declarations(manifest, section)
+		var values := targets(data, section)
+		var label := "地图出口" if section == OUTPUTS else "地图内容"
+		for id in values:
+			out.append({"kind": "flow_target", "field": id, "code": label + " · " + id,
+				"path": "meta.%s.%s" % [section, id], "value": values[id],
+				"decl": decls.get(id, {}), "map_section": section})
 	return out

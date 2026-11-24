@@ -131,7 +131,7 @@ static func _build(manifest: Dictionary, kinds: Array, extra: Dictionary, scope:
 	return graph
 
 static func _collect_maps(manifest: Dictionary, graph: Dictionary, catalog: Dictionary) -> void:
-	if MapFlow.declarations(manifest).is_empty():
+	if MapFlow.declarations(manifest, MapFlow.OUTPUTS).is_empty() and MapFlow.declarations(manifest, MapFlow.CONTENT).is_empty():
 		return
 	for node in graph.nodes:
 		if node.fn_id != MAP_KIND:
@@ -139,9 +139,11 @@ static func _collect_maps(manifest: Dictionary, graph: Dictionary, catalog: Dict
 		for ref in MapFlow.references(manifest, MapStore.read(manifest, node.name)):
 			var address := _flow_address(ref.value)
 			if FlowTarget.allows(ref.decl, ref.value) and catalog.get(address[0], {}).get(address[1], false):
+				var label: String = ref.decl.get("name", ref.field)
 				graph.edges.append({"from": node.key, "to": _key(address[0], address[1]),
 					"fn_id": MAP_KIND, "cid": node.cid, "fn": address[0], "value": address[1],
-					"label": ref.decl.get("name", ref.field), "field": ref.field})
+					"label": "使用内容 · " + label if ref.map_section == MapFlow.CONTENT else label,
+					"field": ref.field, "map_section": ref.map_section})
 
 static func _collect_views(manifest: Dictionary, graph: Dictionary, catalog: Dictionary) -> void:
 	var views = manifest.get("views", [])

@@ -193,7 +193,7 @@ func _build_global_bar() -> PanelContainer:
 	map_menu.add_item("地图历史…", 12)
 	map_menu.add_item("导出当前地图", 4)
 	map_menu.add_item("调整地图尺寸", 5)
-	map_menu.add_item("地图流程出口…", 24)
+	map_menu.add_item("地图内容与出口…", 24)
 	map_menu.add_item("批量替换瓦片…", 6)
 	map_menu.add_item("关卡游戏画面预览…", 14)
 	map_menu.add_item("实景调整实例和轮廓…", 17)

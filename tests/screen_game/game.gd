@@ -72,11 +72,23 @@ func _show_map_target(code: String) -> void:
 				if not exit_target.is_empty():
 					break
 		if not exit_target.is_empty():
+			var round_target: Dictionary = map.meta.get("contentSlots", {}).get("round", {})
+			var required := 1
+			if not round_target.is_empty():
+				var config: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(
+					"res://content/%s/%s.json" % [round_target.function, round_target.content]))
+				required = int(config.fields.INPT)
+				entered_board["roundRules"] = round_target.content
+			entered_board["roundInputs"] = 0
 			var leave := Button.new()
-			leave.text = "Finish course"
+			leave.text = "Finish course (0/%d)" % required
 			leave.position = Vector2(16, 16)
 			add_child(leave)
-			leave.pressed.connect(func(): _follow_target.call_deferred(exit_target))
+			leave.pressed.connect(func():
+				entered_board.roundInputs += 1
+				leave.text = "Finish course (%d/%d)" % [entered_board.roundInputs, required]
+				if entered_board.roundInputs == required:
+					_follow_target.call_deferred(exit_target))
 			if verify:
 				await _verify_button(leave)
 			return
