@@ -14,6 +14,7 @@ extends RefCounted
 ##      改动走 _write_fns，进画布撤销栈。
 ## 内容文件不是地图快照的一部分：撤销只回退地图，不回滚已写的内容文件。
 
+const FrameReference := preload("res://src/ui/map_game_preview.gd")
 const Kit := preload("res://src/ui/ui_kit.gd")
 const Th := preload("res://src/ui/ui_theme.gd")
 const ContentStore := preload("res://src/content/content_store.gd")
@@ -802,6 +803,16 @@ func _build_ref_row(fd: Dictionary, props: Dictionary, fdecls: Array = []) -> Co
 		pick.tooltip_text = "临时切到画布点一个实例；确认才写入，取消不改当前值"
 		pick.add_theme_font_size_override("font_size", Th.FS_META)
 		row.add_child(pick)
+		if FrameReference.available(app):
+			row.add_child(Kit.button("实景选…", func():
+				var save := func(value) -> bool:
+					if origin == null or not is_instance_valid(origin) or origin != _current_spr() \
+							or RefFields.paired_map_value(fd, fdecls, origin.props) != expected_map:
+						return false
+					await _set_prop_ref(fd, value)
+					_rebuild_right()
+					return origin.props.get(fid) == value
+				FrameReference.open_reference(app, d, _resolve_options, save), "ghost"))
 	# E1：问题抽屉跳「某字段悬空」——对应行加一次醒目标记（重建后即消失）
 	if fid == _field_focus:
 		row.add_theme_stylebox_override("panel", Th.box(Color(Th.WARN, 0.14), Th.WARN, Th.R_INNER, 6, 3))

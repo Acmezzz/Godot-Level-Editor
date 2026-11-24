@@ -3,6 +3,7 @@ extends RefCounted
 
 const Kit := preload("res://src/ui/ui_kit.gd")
 const GamePreview := preload("res://src/project/game_preview.gd")
+const FramePicks := preload("res://src/project/frame_picks.gd")
 const Layout := preload("res://src/project/screen_layout.gd")
 
 static func keep_on_focus_loss(pop: PopupPanel) -> void:
@@ -41,6 +42,21 @@ static func open(app, capability: String, options: Dictionary, snapshot: Callabl
 	body.add_child(notice)
 	var render := Kit.button(options.button, Callable(), "primary")
 	render.name = options.prefix + "Render"
+	var mode := str(options.get("pick_mode", ""))
+	var choose: Callable = options.get("pick", Callable())
+	var confirm := Kit.button("确认选点", Callable(), "primary")
+	confirm.name = options.prefix + "ConfirmPick"
+	confirm.disabled = true
+	var picks := {"regions": [], "selected": {}, "apply": Callable(), "current": Callable()}
+	var clear_selection := func():
+		picks.selected = {}
+		picks.apply = Callable()
+		confirm.disabled = true
+		frame.queue_redraw()
+	var reset := func():
+		picks.regions = []
+		clear_selection.call()
+		frame.texture = null
 	var keep := func() -> bool:
 		return is_instance_valid(pop) and pop.visible and is_same(app.manifest, manifest) and valid.call()
 	render.pressed.connect(func():
@@ -58,7 +74,7 @@ static func open(app, capability: String, options: Dictionary, snapshot: Callabl
 		var current: Callable = built.get("current", Callable())
 		render.disabled = true
 		picker.disabled = true
-		frame.texture = null
+		reset.call()
 		notice.text = "游戏正在渲染当前快照…"
 		var result := await GamePreview.render(app.get_tree(), manifest, capability, built.subject, viewport, "", keep)
 		if not keep.call():
@@ -74,13 +90,85 @@ static func open(app, capability: String, options: Dictionary, snapshot: Callabl
 			notice.text = "内容在渲染期间已变更，请重新渲染。"
 			return
 		frame.texture = ImageTexture.create_from_image(result.image)
-		notice.text = "游戏渲染快照 · %d × %d%s" % [viewport.x, viewport.y, built.get("summary", "")])
+		notice.text = "游戏渲染快照 · %d × %d%s" % [viewport.x, viewport.y, built.get("summary", "")]
+		if mode != "":
+			picks.current = current
+			picks.regions = result.get("picks", [])
+			var pick_error: String = result.get("pick_error", "")
+			if pick_error != "":
+				notice.text = pick_error
+			elif picks.regions.is_empty():
+				notice.text += " · 游戏未提供可拾取区域"
+			else:
+				notice.text += " · 点击画面后确认")
 	picker.item_selected.connect(func(_i: int):
-		frame.texture = null
+		reset.call()
 		notice.text = "画幅已更改，请重新渲染。")
+	if mode != "":
+		frame.mouse_filter = Control.MOUSE_FILTER_STOP
+		var is_current := func() -> bool:
+			return keep.call() and (not picks.current.is_valid() or picks.current.call())
+		frame.gui_input.connect(func(event: InputEvent):
+			if not event is InputEventMouseButton or event.button_index != MOUSE_BUTTON_LEFT or not event.pressed \
+					or frame.texture == null or picks.regions.is_empty():
+				return
+			clear_selection.call()
+			if not is_current.call():
+				notice.text = "内容已变更，请重新渲染。"
+				return
+			var rect := _image_rect(frame)
+			if not rect.has_point(event.position):
+				notice.text = "请点击画面内的区域。"
+				return
+			var pixel: Vector2 = (event.position - rect.position) / rect.size * frame.texture.get_size()
+			var hit := FramePicks.at(picks.regions, pixel, mode)
+			if hit.is_empty():
+				notice.text = "这里没有此工具需要的目标。"
+				return
+			var option: Dictionary = choose.call(hit.value)
+			notice.text = option.get("text", "此目标不适用于当前字段或资产。")
+			if option.has("apply"):
+				picks.selected = hit
+				picks.apply = option.apply
+				confirm.disabled = false
+			frame.queue_redraw())
+		frame.draw.connect(func():
+			if picks.selected.is_empty():
+				return
+			var rect := _image_rect(frame)
+			var scale := rect.size / frame.texture.get_size()
+			var line := PackedVector2Array()
+			for pixel: Vector2 in picks.selected.screen:
+				line.append(rect.position + pixel * scale)
+			line.append(line[0])
+			frame.draw_polyline(line, Color(1.0, 0.83, 0.35), 2.0, true))
+		confirm.pressed.connect(func():
+			if not is_current.call():
+				clear_selection.call()
+				notice.text = "内容已变更，请重新渲染。"
+				return
+			if confirm.disabled or not picks.apply.is_valid():
+				return
+			confirm.disabled = true
+			var applied: bool = await picks.apply.call()
+			if not is_instance_valid(pop) or not pop.visible:
+				return
+			if applied:
+				pop.hide()
+			else:
+				clear_selection.call()
+				notice.text = "选点未写入，请核对当前资产、图层或字段。")
 	var actions := Kit.hbox(8)
 	actions.add_child(Kit.spacer())
 	actions.add_child(Kit.button("关闭", pop.hide, "ghost"))
 	actions.add_child(render)
+	confirm.visible = mode != ""
+	actions.add_child(confirm)
 	body.add_child(actions)
 	app._open_popup(pop, Vector2i(740, 600))
+
+static func _image_rect(frame: TextureRect) -> Rect2:
+	var image_size := frame.texture.get_size()
+	var scale := minf(frame.size.x / image_size.x, frame.size.y / image_size.y)
+	var fitted := image_size * scale
+	return Rect2((frame.size - fitted) * 0.5, fitted)

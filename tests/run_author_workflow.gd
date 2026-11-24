@@ -1210,6 +1210,7 @@ func run():
 	await author_multilevel_grid(app, manifest)
 	await author_tile_layer_conversion(app, manifest)
 	await author_world_region_move(app, manifest)
+	await author_frame_picks(app, manifest)
 	print("WORKFLOW-DONE failures=", failures)
 	quit(1 if failures else 0)
 
@@ -1766,3 +1767,84 @@ func _check_world_move_restore(ok: bool, actual: Dictionary, expected: Dictionar
 			diffs.append("%s: %s vs %s" % [key, a, b])
 	check(ok and actual.size() == expected.size() and diffs.is_empty(),
 		"one %s restores the entire cross-layer move: %s" % [op, "; ".join(diffs)])
+func _render_pick_frame(app) -> PopupPanel:
+	var popups := collect(app, "PopupPanel").filter(func(p): return p.visible and p.find_child("MapGamePreviewRender", true, false) != null)
+	if popups.is_empty():
+		check(false, "open the game frame picker")
+		return null
+	var pop: PopupPanel = popups.back()
+	select_metadata(pop.find_child("MapGamePreviewViewport", true, false), "portrait")
+	var render: Button = pop.find_child("MapGamePreviewRender", true, false)
+	render.pressed.emit()
+	var until := Time.get_ticks_msec() + 13500
+	while is_instance_valid(render) and render.disabled and Time.get_ticks_msec() < until:
+		await create_timer(0.08).timeout
+	if not is_instance_valid(pop) or pop.find_child("MapGamePreviewFrame", true, false).texture == null:
+		check(false, "load the game frame picker")
+		return null
+	return pop
+
+func _click_pick_frame(pop: PopupPanel, at: Vector2) -> Button:
+	var frame: TextureRect = pop.find_child("MapGamePreviewFrame", true, false)
+	var extent := Vector2(720, 1280)
+	var fitted := extent * minf(frame.size.x / extent.x, frame.size.y / extent.y)
+	var mouse := InputEventMouseButton.new()
+	mouse.button_index = MOUSE_BUTTON_LEFT
+	mouse.pressed = true
+	mouse.position = (frame.size - fitted) * 0.5 + fitted * at
+	frame.gui_input.emit(mouse)
+	return pop.find_child("MapGamePreviewConfirmPick", true, false)
+
+func author_frame_picks(app, manifest: Dictionary) -> void:
+	var map := Maps.new_map("frame_pick", 10, 10, "orthogonal")
+	var primary: String = map.meta.layers[0].id
+	var upper: String = map.meta.layers[1].id
+	map.meta.layers[1].offset = [48, 16]
+	map.meta.layers[1].scale = 1.5
+	map.objects = [{"asset": "switch", "code": "PICK", "layer": primary, "x": 0, "y": 0}]
+	check(Maps.write(manifest, "frame_pick", map), "make a map with two game view lanes")
+	var path := Maps.path_for(manifest, "frame_pick")
+	var original_hash := FileAccess.get_sha256(path)
+	await app._load_map_file(path)
+	var cvs = app.canvas
+	cvs.stamp_asset = "door"
+	cvs.snap_to_grid = true
+	for i in 2:
+		app._layout_ctrl._on_map_menu_id(14)
+		var pop := await _render_pick_frame(app)
+		if pop == null:
+			return
+		check(_click_pick_frame(pop, Vector2(-0.12, 0.25)).disabled, "empty margin does not pick through the letterbox")
+		var approve := _click_pick_frame(pop, Vector2(0.15 + i * 0.5, 0.25))
+		check(not approve.disabled and cvs.ents_all().size() == i + 1, "mapped placement awaits explicit confirmation")
+		approve.pressed.emit()
+		await process_frame
+	var objects: Array = cvs.extract().objects
+	var doors: Array = objects.filter(func(row): return row.asset == "door")
+	if doors.size() != 2:
+		check(false, "both views can place a door")
+		return
+	check(doors[0].layer == primary and doors[1].layer == upper and doors[0].x == 1 and doors[0].y == 1
+		and doors[1].x == 3 and doors[1].y == 2 and FileAccess.get_sha256(path) == original_hash,
+		"both frame regions map to stable layer-local anchors without writing the file")
+	app._set_mode("content", "PICK")
+	var editor = app.project_shell.content_editor
+	press(editor.root, "实景选…")
+	var ref_pop := await _render_pick_frame(app)
+	if ref_pop == null:
+		return
+	var connect_port := _click_pick_frame(ref_pop, Vector2(0.65, 0.25))
+	check(not connect_port.disabled, "the secondary view exposes a matching declared port")
+	connect_port.pressed.emit()
+	await process_frame
+	var linked: Array = cvs.extract().objects.filter(func(row): return row.code == "PICK")
+	check(linked[0].get("props", {}).get("target", {}).get("inst") == doors[1].code, "confirm writes the instance port field")
+	var saved: Dictionary = await app._map_file_ctrl.commit_document("保存实景落点及连接")
+	check(saved.get("status") == "ok", "publish positions and port selected from the game frame")
+	await app._load_map_file(path)
+	var report := await launch_and_read(app, false)
+	var result: Dictionary = report.get("result", {})
+	var picks: Array = result.get("picks", [])
+	check(report.get("status") == "ready" and picks.size() == 2 and picks[0].point == [24.0, 24.0]
+		and picks[1].point == [132.0, 76.0] and result.get("opened") == doors[1].code,
+		"game reloads both view positions and opens the selected upper-layer door: " + str(report))

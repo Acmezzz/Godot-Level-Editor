@@ -2,6 +2,7 @@ extends RefCounted
 ## A game-owned tool receives one immutable request and produces a bounded result.
 ## The editor never loads a game scene or script into its own process.
 
+const FramePicks := preload("res://src/project/frame_picks.gd")
 const VERSION := 1
 const MAX_EDGE := 4096
 const MAX_PIXELS := 8 * 1024 * 1024
@@ -134,7 +135,13 @@ static func _read_result(dir: String, token: String, viewport: Vector2i, capabil
 	var image := Image.new()
 	if image.load_png_from_buffer(png) != OK or image.get_size() != viewport:
 		return _failed("无法读取游戏生成的 PNG。")
-	return {"image": image, "error": ""}
+	var result := {"image": image, "error": ""}
+	var pick_path := dir.path_join("picks.json")
+	if FileAccess.file_exists(pick_path):
+		var picks := FramePicks.read(_read_bounded(pick_path, FramePicks.MAX_BYTES), token, viewport)
+		result["picks"] = picks.get("regions", [])
+		result["pick_error"] = picks.get("error", "")
+	return result
 
 static func _matches_png_size(bytes: PackedByteArray, expected: Vector2i) -> bool:
 	if bytes.size() < 33 or bytes.slice(0, 8).hex_encode() != PNG_SIGNATURE \
@@ -152,7 +159,7 @@ static func _read_bounded(path: String, limit: int) -> PackedByteArray:
 	return file.get_buffer(length) if length > 0 and length <= limit else PackedByteArray()
 
 static func _cleanup(dir: String) -> void:
-	for name in ["request.json", "result.json", "frame.png", "map.json"]:
+	for name in ["request.json", "result.json", "frame.png", "map.json", "picks.json"]:
 		var path := dir.path_join(name)
 		if FileAccess.file_exists(path):
 			DirAccess.remove_absolute(path)

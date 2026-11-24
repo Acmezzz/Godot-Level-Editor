@@ -1731,9 +1731,6 @@ func _erase_at(pos: Vector2) -> void:
 func _erase_hits(pos: Vector2) -> bool:
 	return _tool_ops_ctrl._erase_hits(pos)
 
-func _stamp(c: Vector2i) -> void:
-	_tool_ops_ctrl._stamp(c)
-
 ## 自动碰撞委托（碰撞弹窗调用；源层缺省由画布回退到第一个普通层）
 func count_auto_collision(strategy := "full", replace := false, src_override := -1) -> int:
 	return _tool_ops_ctrl.count_auto_collision(strategy, replace, src_override)

@@ -8,6 +8,7 @@ extends RefCounted
 ## 时间单位（秒/帧/拍）由功能声明的 timebase 与 TimelineClock 解释，数据形态不变；
 ## 写盘时机与其他内容字段一致（工作副本 → 正式提交），不做逐键写盘。
 
+const FrameReference := preload("res://src/ui/map_game_preview.gd")
 const Kit := preload("res://src/ui/ui_kit.gd")
 const Th := preload("res://src/ui/ui_theme.gd")
 const ContentStore := preload("res://src/content/content_store.gd")
@@ -1055,6 +1056,14 @@ func _step_field_row(fd: Dictionary, sfd: Dictionary, siblings: Array, shown: Di
 			pick.tooltip_text = "临时切到画布点格图里的一格（按多边形命中）；确认才写入这一步，取消不改当前值"
 		pick.add_theme_font_size_override("font_size", Th.FS_META)
 		row.add_child(pick)
+		if FrameReference.available(app) and not bool(d.get("multiple", false)):
+			row.add_child(Kit.button("实景选…", func():
+				var save := func(value) -> bool:
+					if not apply.call(value):
+						return false
+					_rebuild_steps_form_from_data()
+					return true
+				FrameReference.open_reference(app, d, _resolve_options, save), "ghost"))
 	return row
 
 ## E1：步骤字段的画布选点。确认后按起手时的步骤令牌 + 版本写回：

@@ -204,24 +204,23 @@ func _erase_at(pos: Vector2) -> void:
 
 
 func _stamp(pos: Vector2, drawn: Array = []) -> void:
+	place_object(cvs.stamp_asset, cvs.active_layer, pos, false, drawn)
+
+
+func place_object(asset: String, layer: int, pos: Vector2, exact := false, drawn: Array = []) -> EntityNode:
 	if cvs.map_root == null:
 		cvs._hint("无地图：先新建或打开一张地图")
-		return
-	# 锁检查下沉到写入口本身，绕过 _apply_tool 的直调也拦住
-	if cvs.is_layer_locked(cvs.active_layer):
+		return null
+	if layer < 0 or layer >= cvs.layer_count():
+		cvs._hint("请选地图中的实例图层")
+		return null
+	if cvs.is_layer_locked(layer):
 		cvs._hint("当前图层已锁定：解锁后再放置")
-		return
-	# 碰撞元层不摆实例
-	if cvs.active_layer == cvs.collision_index():
-		cvs._hint("碰撞层不摆放实例：切回层栈再放")
-		return
-	if cvs.stamp_asset == "":
-		cvs._hint("先在左栏资产列表选一个资产再放置")
-		return
-	if not cvs.is_placeable(cvs.stamp_asset):
-		cvs._hint("这个资产不能直接摆放（图集瓦片请用涂刷）")
-		return
-	var n: EntityNode = cvs.make_object(cvs.stamp_asset)
+		return null
+	if not cvs.is_placeable(asset):
+		cvs._hint("请在资产列表选择可摆放的资产")
+		return null
+	var n: EntityNode = cvs.make_object(asset)
 	# §7.5 阶段二：实体新增走 InstanceKey 差量（只记录这一条）。场景图片没有实例码，
 	# 差量无从寻址——这类改动在动手前压整图快照。
 	var via_delta := n.is_entity()
@@ -255,15 +254,15 @@ func _stamp(pos: Vector2, drawn: Array = []) -> void:
 				pts = [Vector2(0, 0), Vector2(cw, 0), Vector2(0, ch)]
 		n.points_write(pts)
 	n.refresh_visual()   # props 就位后按 sizeFields 定尺寸
-	n.layer_id = cvs.layer_id(cvs.active_layer)
+	n.layer_id = cvs.layer_id(layer)
 	if drawn.is_empty():
-		n.position = cvs.snap_point(pos, n)
+		n.position = pos if exact else cvs.snap_point(pos, n)
 	# C09：放置即补齐类型挂载（不依赖选中事件），写出 mounted 继承行
 	if n.is_entity():
 		var fill: Dictionary = FunctionDecls.fill_bindings(cvs.manifest, n.asset, n.functions)
 		if bool(fill.get("changed", false)):
 			n.functions = fill.get("functions", [])
-	cvs._place_in_layer(n, cvs.active_layer)
+	cvs._place_in_layer(n, layer)
 	cvs._ensure_code(n)
 	# 快照已在动手前压好（场景图片）；实体走差量，这里是唯一的撤销记账点。
 	if via_delta:
@@ -272,6 +271,7 @@ func _stamp(pos: Vector2, drawn: Array = []) -> void:
 	# 放置即选中（"放置→配置"不断档）；连放不受影响。
 	# 走选择提交入口（E09）：单选/多选/信息条一起更新，Del 不会再删到旧组。
 	cvs.commit_selection(n)
+	return n
 
 ## —— 从 editor_canvas.gd 并入：碰撞自动生成（宿主经 cvs 转发） ——
 

@@ -53,7 +53,17 @@ func _ready() -> void:
 	if map_path != "":
 		_map_text = FileAccess.get_file_as_string(map_path)
 		var map := _parse(_map_text)
-		if map.get("meta", {}).get("name") == "rule_hex" and not map.meta.get("cellGraph", {}).is_empty():
+		if map.get("meta", {}).get("name") == "frame_pick":
+			var lanes := []
+			for i in map.meta.layers.size():
+				for row in map.objects:
+					if row.asset == "door" and row.layer == map.meta.layers[i].id:
+						var offset: Array = map.meta.layers[i].get("offset", [0, 0])
+						var anchor := (Vector2(row.x, row.y) + Vector2(0.5, 0.5)) * 16.0
+						anchor = Vector2(offset[0], offset[1]) + anchor * float(map.meta.layers[i].get("scale", 1.0))
+						lanes.append({"lane": i, "point": [anchor.x, anchor.y], "door": row.code})
+			_report("ready", "", {"picks": lanes, "opened": _activate_switch(map, manifest)})
+		elif map.get("meta", {}).get("name") == "rule_hex" and not map.meta.get("cellGraph", {}).is_empty():
 			var route := _check_floor_route(map)
 			if route.is_empty():
 				_fail("Authored floor route is missing or blocked")
@@ -156,7 +166,10 @@ func _render_preview(path: String) -> void:
 	if capability == "screenLayout":
 		_compose_screen_frame(surface, subject, size, str(request.get("locale", "")))
 	elif capability == "mapFrame":
-		_compose_map_frame(surface, subject, size)
+		if subject.get("map", {}).get("meta", {}).get("name") == "frame_pick":
+			_compose_pick_frame(surface, size, path.get_base_dir(), request)
+		else:
+			_compose_map_frame(surface, subject, size)
 	elif capability == "worldFrame":
 		_compose_world_frame(surface, subject, size)
 	else:
@@ -236,6 +249,33 @@ func _compose_screen_frame(surface: SubViewport, subject: Dictionary, size: Vect
 		control.position = lo
 		control.size = hi - lo
 		surface.add_child(control)
+
+func _compose_pick_frame(surface: SubViewport, size: Vector2i, dir: String, request: Dictionary) -> void:
+	var map: Dictionary = request.subject.map
+	_frame_rect(surface, Rect2(Vector2.ZERO, Vector2(size) * Vector2(0.5, 1)), Color("#34476c"))
+	_frame_rect(surface, Rect2(Vector2(size.x * 0.5, 0), Vector2(size) * Vector2(0.5, 1)), Color("#512e52"))
+	var regions := []
+	for i in 2:
+		var start := Vector2(size) * Vector2(0.05 + 0.5 * i, 0.15)
+		var right := start + Vector2(size.x * 0.4, 0.0)
+		var down := start + Vector2(0.0, size.y * 0.4)
+		var triangle := Polygon2D.new()
+		triangle.polygon = PackedVector2Array([start, right, down])
+		triangle.color = Color("#f29b41") if i == 0 else Color("#46c4ae")
+		surface.add_child(triangle)
+		var layer: String = map.meta.layers[i].id
+		var local := Vector2(16 + i * 32, 16 + i * 16)
+		var region := {"label": "View " + str(i + 1),
+			"screen": [[start.x, start.y], [right.x, right.y], [down.x, down.y]],
+			"placement": {"layer": layer, "local": [[local.x, local.y], [local.x + 32, local.y], [local.x, local.y + 32]]}}
+		for row in map.objects:
+			if row.get("asset") == "door" and row.get("layer") == layer:
+				region["targets"] = {"entity": row.code, "port": {"map": map.meta.code, "inst": row.code, "port": "open"}}
+				break
+		regions.append(region)
+	var picks := FileAccess.open(dir.path_join("picks.json"), FileAccess.WRITE)
+	picks.store_string(JSON.stringify({"version": 1, "token": request.token, "regions": regions}))
+	picks.close()
 
 func _compose_map_frame(surface: SubViewport, subject: Dictionary, size: Vector2i) -> void:
 	var world := _frame_world(surface, subject, size)

@@ -14,6 +14,7 @@ extends RefCounted
 ## 由 map_file.commit_document 与 MapStore/Recovery 负责——这里不直接写地图。
 ## 跨边界引用经 host 转发（同名 const 重声明 + 同名转发属性 + 同名包装方法）。
 
+const FrameReference := preload("res://src/ui/map_game_preview.gd")
 const Kit := preload("res://src/ui/ui_kit.gd")
 const Th := preload("res://src/ui/ui_theme.gd")
 const ContentStore := preload("res://src/content/content_store.gd")
@@ -314,6 +315,14 @@ func _build_field_row(i: int, fn_id: String, fd: Dictionary, cur: Dictionary, si
 			"临时切到画布点格图里的一格（按多边形命中）；确认才写入，取消不改当前值"
 		pick.add_theme_font_size_override("font_size", Th.FS_META)
 		row.add_child(pick)
+		if FrameReference.available(app) and not bool(d.get("multiple", false)):
+			row.add_child(Kit.button("实景选…", func():
+				var save := func(value) -> bool:
+					if not apply.call(value):
+						return false
+					_rebuild_right()
+					return true
+				FrameReference.open_reference(app, d, options, save), "ghost"))
 	return row
 
 func _form_binding_matches(i: int, target: Dictionary) -> bool:
