@@ -169,6 +169,7 @@ func _render_preview(path: String) -> void:
 	surface.render_target_update_mode = SubViewport.UPDATE_ONCE
 	add_child(surface)
 	var subject: Dictionary = request.get("subject", {})
+	var accepted := true
 	if capability == "screenLayout":
 		_compose_screen_frame(surface, subject, size, str(request.get("locale", "")))
 	elif capability == "mapFrame":
@@ -179,16 +180,17 @@ func _render_preview(path: String) -> void:
 	elif capability == "worldFrame":
 		_compose_world_frame(surface, subject, size)
 	else:
-		_compose_timeline_frame(surface, subject, size)
-	await RenderingServer.frame_post_draw
-	var image := surface.get_texture().get_image()
-	var status := "ready"
-	if image == null or image.is_empty() or image.save_png(path.get_base_dir().path_join("frame.png")) != OK:
-		status = "error"
+		accepted = _compose_timeline_frame(surface, subject, size)
+	var message := "The game could not sample this timeline."
+	if accepted:
+		await RenderingServer.frame_post_draw
+		var image := surface.get_texture().get_image()
+		message = "" if image != null and not image.is_empty() and image.save_png(
+			path.get_base_dir().path_join("frame.png")) == OK else "The engine could not capture a frame."
 	var report := FileAccess.open(path.get_base_dir().path_join("result.json"), FileAccess.WRITE)
 	if report != null:
-		report.store_string(JSON.stringify({"version": 1, "token": request.token, "status": status,
-			"message": "" if status == "ready" else "The engine could not capture a frame."}))
+		report.store_string(JSON.stringify({"version": 1, "token": request.token,
+			"status": "ready" if message.is_empty() else "error", "message": message}))
 		report.close()
 	get_tree().quit()
 
@@ -404,12 +406,33 @@ func _compose_world_frame(surface: SubViewport, subject: Dictionary, size: Vecto
 		if _has_preview_overlay(override.get("stagedContent", [])):
 			_frame_rect(chunk, Rect2(2, 2, 10, 10), Color("#46c4ae"))
 
-func _compose_timeline_frame(surface: SubViewport, subject: Dictionary, size: Vector2i) -> void:
+func _compose_timeline_frame(surface: SubViewport, subject: Dictionary, size: Vector2i) -> bool:
 	var time: Dictionary = subject.get("time", {})
 	var data: Dictionary = subject.get("data", {})
-	if subject.get("function") != "campaign" or subject.get("content") != "project-acceptance" \
-			or time.get("unit") != "beats" or data.get("fields", {}).get("CAPT") != "Staged frame":
-		return
+	var decl: Dictionary = subject.get("manifest", {}).get("functions", {}).get(subject.get("function"), {})
+	var unit := str(decl.get("timebase", "seconds"))
+	if decl.is_empty() or data.get("function") != decl.code or time.get("unit") != unit:
+		return false
+	if unit in ["frames", "seconds"]:
+		var rate := _sequence_rate(data, decl)
+		var raw := float(time.value)
+		var seconds = raw / rate if rate > 0.0 else null
+		if seconds == null:
+			if time.seconds != null:
+				return false
+		elif time.seconds == null or not is_equal_approx(seconds, float(time.seconds)):
+			return false
+		var active := false
+		for interval in _step_ranges(data.steps, 1.0):
+			if (raw >= interval[0] and raw < interval[1]) or raw == interval[0]:
+				active = true
+				break
+		var x := roundf(seconds * 100.0) if seconds != null else raw
+		_frame_rect(surface, Rect2(x, size.y * 0.5, 16, 16),
+			Color("#d75283") if active else Color("#479bb1"))
+		return true
+	if subject.get("function") != "campaign" or unit != "beats":
+		return false
 	var beat := float(time.get("value", 0.0))
 	var seconds := float(data.get("fields", {}).get("OFST", 0.0))
 	var last := 0.0
@@ -427,12 +450,11 @@ func _compose_timeline_frame(surface: SubViewport, subject: Dictionary, size: Ve
 			cue_reached = true
 	seconds += (beat - last) * 60.0 / bpm
 	if not is_equal_approx(seconds, float(time.get("seconds", -1.0))):
-		return
-	var cue := ColorRect.new()
-	cue.color = Color("#d75283") if cue_reached else Color("#479bb1")
-	cue.size = Vector2(16, 16)
-	cue.position = Vector2(roundf(seconds * 100.0), size.y * 0.5)
-	surface.add_child(cue)
+		return false
+	_frame_rect(surface, Rect2(roundf(seconds * 100.0), size.y * 0.5, 16, 16),
+		(Color("#d75283") if cue_reached else Color("#479bb1"))
+		if data.get("fields", {}).get("CAPT") == "Staged frame" else Color.WHITE)
+	return true
 
 func _reference_target(point: Vector2) -> String:
 	for view in _manifest.get("views", []):
@@ -1003,14 +1025,21 @@ func _read_schedule(fn_id: String, content_dir: String) -> Array:
 		.path_join("project-timing.json")))
 	if content.get("function") != decl.code:
 		return []
-	var rate := 1.0
+	var rate := _sequence_rate(content, decl)
+	return _step_ranges(content.steps, rate) if rate > 0.0 else []
+
+func _sequence_rate(content: Dictionary, decl: Dictionary) -> float:
 	if decl.get("timebase", "seconds") == "frames":
 		for field in decl.fields:
-			if field.id == decl.timePreview.fpsField:
-				rate = float(content.fields[field.code])
+			if field.id == decl.get("timePreview", {}).get("fpsField"):
+				return float(content.fields.get(field.code, 0.0))
+		return 0.0
+	return 1.0
+
+func _step_ranges(steps: Array, rate: float) -> Array:
 	var cursors := {}
 	var schedule := []
-	for step in content.steps:
+	for step in steps:
 		var track := int(step.get("track", 0))
 		var cursor := float(cursors.get(track, 0.0))
 		var at := float(step.get("at", cursor))

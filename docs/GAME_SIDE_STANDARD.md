@@ -167,7 +167,8 @@
 
 对 `timelineFrame`，`subject` 含 `function`（功能声明 ID）、`content`（内容 ID，未建绑定内容时为空）、
 `data`（当前内容快照，包括步骤、字段及暂存版本）、`manifest`（公开清单）和 `viewportId`（空串为默认 1280 × 720）。
-`time: {unit, value, seconds}` 给出播放头原始位置；`unit` 是 `seconds`、`frames` 或 `beats`，
+`time: {unit, value, seconds}` 给出选定的原单位位置（默认取自播放头，也可在预览窗口直接输入）；
+`unit` 是 `seconds`、`frames` 或 `beats`，
 有可用时钟时 `seconds` 为编辑器换算的参考秒数，含首拍偏移；缺配置时为 `null`。
 游戏按 `data` 与原始位置取样，决定该时刻的镜头、物体、特效等。实例绑定的演出还附 `map`、`camera`、
 `stagedContent`、`instance`（实例码）、`bindingId`（可为空）与 `bindingIndex`（绑定行下标）。

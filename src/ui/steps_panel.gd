@@ -550,7 +550,7 @@ func _build_steps_tabs(parent: Control) -> void:
 	if GamePreview.supports(manifest, TIMELINE_FRAME):
 		var render := Kit.button("游戏演出画面…", _open_game_frame, "ghost")
 		render.name = "TimelineGamePreview"
-		render.tooltip_text = "用游戏渲染播放头所在时刻；使用已应用的步骤和当前暂存内容。"
+		render.tooltip_text = "从播放头开始取样，可以直接输入其他时刻；使用已应用的步骤和当前暂存内容。"
 		_steps_tabs.add_child(render)
 	parent.add_child(_steps_tabs)
 
@@ -565,12 +565,17 @@ func _open_game_frame() -> void:
 	var valid := func() -> bool:
 		return is_instance_valid(timeline) and is_same(_steps_tl, timeline) \
 			and is_same(manifest, current_manifest) and _steps_identity_ok() and not session.stale(generation)
-	var capture := func(preset: String) -> Dictionary:
+	var capture := func(preset: String, input: String) -> Dictionary:
+		var value := input.strip_edges()
+		if not value.is_valid_float():
+			return {"error": "请输入有效的非负取样位置。"}
+		var raw := value.to_float()
+		if not is_finite(raw) or raw < 0.0:
+			return {"error": "请输入有效的非负取样位置。"}
 		# Read without updating the form's optimistic write baseline.
 		var data: Dictionary = host.read_content_staged(_steps_fn_id, _steps_cid) if _steps_cid != "" else _steps_data()
 		if data.is_empty():
 			return {"error": "演出内容无法读取。"}
-		var raw := timeline.playhead
 		var r := TimelineClock.from_decl(manifest, _steps_fn_id, data)
 		var clock := TimelineClock.new(r.get("timebase", "seconds"), r.get("cfg", {}))
 		var moment := {"value": raw, "unit": clock.timebase, "seconds": null}
@@ -589,14 +594,15 @@ func _open_game_frame() -> void:
 			subject["bindingIndex"] = _steps_i
 		var revision: int = session.revision
 		var matches := func() -> bool:
-			return session.revision == revision and timeline.playhead == raw \
+			return session.revision == revision \
 				and (_steps_cid == "" or host.read_content_staged(_steps_fn_id, _steps_cid) == data)
 		return {"subject": subject, "default_size": Vector2(1280, 720), "current": matches,
-			"summary": " · %.3f %s" % [raw, clock.timebase]}
-	FrameDialog.open(app, TIMELINE_FRAME, {"title": "游戏演出画面预览", "button": "渲染播放头",
-		"hint": "取当前播放头、已应用的演出内容和本图暂存数据，交给游戏渲染一帧。",
+			"summary": " · %s %s" % [value, clock.timebase]}
+	FrameDialog.open(app, TIMELINE_FRAME, {"title": "游戏演出画面预览", "button": "渲染取样",
+		"hint": "用已应用的演出内容和本图暂存数据，由游戏渲染选定时刻。",
 		"prefix": "TimelineGamePreview", "default_label": "默认 1280 × 720",
-		"initial": "关闭此窗口可回到时间轴，移动播放头后再取样。"}, capture, valid)
+		"sample": {"unit": _steps_timebase(), "value": timeline.playhead},
+		"initial": "起始位置来自播放头；在此修改取样位置不会移动播放头。"}, capture, valid)
 
 func _set_steps_view(mode: String) -> void:
 	if mode != "list" and mode != "timeline":

@@ -109,6 +109,24 @@ func time_edit(pop: PopupPanel, field: String, value: String, submit := true) ->
 	else:
 		editor.focus_exited.emit()
 
+func render_timeline_sample(pop: PopupPanel, value: String, pixel: Vector2i, color: String) -> void:
+	var input: LineEdit = pop.find_child("TimelineGamePreviewTime", true, false)
+	var frame: TextureRect = pop.find_child("TimelineGamePreviewFrame", true, false)
+	var render: Button = pop.find_child("TimelineGamePreviewRender", true, false)
+	input.text = value
+	input.text_changed.emit(value)
+	check(frame.texture == null, "changing the sample clears the old game image")
+	input.text_submitted.emit(value)
+	var deadline := Time.get_ticks_msec() + 13500
+	while is_instance_valid(render) and render.disabled and Time.get_ticks_msec() < deadline:
+		await create_timer(0.08).timeout
+	if not is_instance_valid(frame) or frame.texture == null:
+		check(false, "game returned a frame at " + value)
+		return
+	var image := frame.texture.get_image()
+	check(image.get_size() == Vector2i(720, 1280) and image.get_pixelv(pixel).to_html(false) == color,
+		"game rendered the expected timeline state at " + value)
+
 func author_timed_sequence(app, ce, fn_id: String, start: String, duration: String) -> void:
 	ce._library.open()
 	var pop: PopupPanel = collect(app, "PopupPanel").filter(func(p): return p.visible).back()
@@ -136,6 +154,20 @@ func author_timed_sequence(app, ce, fn_id: String, start: String, duration: Stri
 	time_edit(pop, "at", "", false)
 	ce._steps._steps_add("MARK")
 	time_edit(pop, "at", "0")
+	var playhead: float = ce._steps._steps_tl.playhead
+	press(pop, "游戏演出画面…")
+	var preview: PopupPanel = collect(app, "PopupPanel").filter(func(p): return p.visible).back()
+	var sample: LineEdit = preview.find_child("TimelineGamePreviewTime", true, false)
+	check(is_equal_approx(sample.text.to_float(), playhead), "new sampling window opens at the playhead")
+	select_metadata(preview.find_child("TimelineGamePreviewViewport", true, false), "portrait")
+	if fn_id == "frame_sequence":
+		await render_timeline_sample(preview, "16", Vector2i(67, 640), "d75283")
+		await render_timeline_sample(preview, "24", Vector2i(100, 640), "479bb1")
+	else:
+		await render_timeline_sample(preview, "0.2", Vector2i(20, 640), "d75283")
+		await render_timeline_sample(preview, "0.4", Vector2i(40, 640), "479bb1")
+	check(ce._steps._steps_tl.playhead == playhead, "resampling leaves the editor playhead unchanged")
+	preview.hide()
 	pop.hide()
 	await process_frame
 

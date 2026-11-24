@@ -31,6 +31,12 @@ static func open(app, capability: String, options: Dictionary, snapshot: Callabl
 		picker.add_item("%s · %d × %d" % [id, size.x, size.y])
 		picker.set_item_metadata(picker.item_count - 1, id)
 	body.add_child(Kit.field_row("出图画幅", picker, 82))
+	var sample: LineEdit
+	if options.has("sample"):
+		sample = LineEdit.new()
+		sample.name = options.prefix + "Time"
+		sample.text = str(options.sample.value)
+		body.add_child(Kit.field_row("取样 · " + str(options.sample.unit), sample, 82))
 	var frame := TextureRect.new()
 	frame.name = options.prefix + "Frame"
 	frame.custom_minimum_size.y = 260
@@ -87,7 +93,7 @@ static func open(app, capability: String, options: Dictionary, snapshot: Callabl
 			return
 		reset.call()
 		var preset: String = picker.get_selected_metadata()
-		var built: Dictionary = snapshot.call(preset)
+		var built: Dictionary = snapshot.call(preset, sample.text) if sample != null else snapshot.call(preset)
 		if not built.has("subject"):
 			notice.text = str(built.get("error", "无法读取当前工作副本。"))
 			return
@@ -95,6 +101,8 @@ static func open(app, capability: String, options: Dictionary, snapshot: Callabl
 		var current: Callable = built.get("current", Callable())
 		render.disabled = true
 		picker.disabled = true
+		if sample != null:
+			sample.editable = false
 		notice.text = "游戏正在渲染当前快照…"
 		var result := await GamePreview.render(app.get_tree(), manifest, capability, built.subject, viewport, "", keep)
 		if not keep.call():
@@ -103,6 +111,8 @@ static func open(app, capability: String, options: Dictionary, snapshot: Callabl
 			return
 		render.disabled = false
 		picker.disabled = false
+		if sample != null:
+			sample.editable = true
 		if not result.has("image"):
 			notice.text = result.error
 			return
@@ -124,6 +134,11 @@ static func open(app, capability: String, options: Dictionary, snapshot: Callabl
 			else:
 				notice.text += (" · 左键描点，右键撤末点" if drafting else " · 点击画面后确认")
 	render.pressed.connect(render_frame)
+	if sample != null:
+		sample.text_changed.connect(func(_value: String):
+			reset.call()
+			notice.text = "取样位置已更改，请重新渲染。")
+		sample.text_submitted.connect(func(_value: String): render_frame.call())
 	picker.item_selected.connect(func(_i: int):
 		reset.call()
 		notice.text = "画幅已更改，请重新渲染。")
