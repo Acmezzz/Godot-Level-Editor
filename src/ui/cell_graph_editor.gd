@@ -802,7 +802,7 @@ static func _build_edge_destination(form: VBoxContainer, edge: Dictionary, cells
 	var selected := 0
 	for name in index.get("names", []):
 		var code := str(index.get("by_name", {}).get(name, ""))
-		if code == "" or name == state.map_name or code == state.map_code or RefIndex.resolve_graph_map(index, code).status != "ok":
+		if code == "" or name == state.map_name or code == state.map_code or RefIndex.resolve_map_code(index, code).status != "ok":
 			continue
 		maps.add_item("%s · %s" % [name, code])
 		maps.set_item_metadata(maps.item_count - 1, code)
@@ -822,7 +822,7 @@ static func _build_edge_destination(form: VBoxContainer, edge: Dictionary, cells
 		if code == "":
 			options = Graph.cell_options({"cells": cells, "spaces": state.spaces})
 		else:
-			var resolved := RefIndex.resolve_graph_map(index, code)
+			var resolved := RefIndex.resolve_map_code(index, code)
 			if resolved.status == "ok":
 				var doc := MapStore.read(state.project, str(resolved.key))
 				if doc.get("meta", {}).get("code") == code:

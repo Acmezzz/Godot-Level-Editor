@@ -43,7 +43,6 @@ func _run() -> void:
 			{"id": "count", "name": "数量", "kind": "input", "type": "int", "min": 1, "default": 3},
 			{"id": "point", "name": "生成点", "kind": "choice", "source": "entity_inst:"},
 		]}},
-		"playCommand": "godot --path %projectpath% -- --map=%map%",
 	}
 	_write_json(PILOT.path_join("editor/editor_manifest.json"), manifest_doc)
 

@@ -146,8 +146,8 @@ func test_top_level_shapes_and_projection() -> void:
 	var m0 := _good()
 	eq(_errs_of(m0).size(), 0, "无顶层可选键 = 通过")
 	var m1 := _good()
-	m1["playCommand"] = 3
-	ok(_errs_of(m1).size() >= 1, "playCommand 非字符串报错")
+	m1["contentDir"] = 3
+	ok(_errs_of(m1).size() >= 1, "contentDir 非字符串报错")
 	var m2 := _good()
 	m2["contentDir"] = "../evil"
 	ok(_errs_of(m2).size() >= 1, "contentDir 含 .. 报错")

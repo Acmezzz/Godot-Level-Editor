@@ -30,7 +30,7 @@ src/
 │   ├── spatial_reference_check.gd  空间引用校验：实例、层、端口、格及格边
 │   ├── document_session.gd 文档会话（B1）：内容暂存行（按文档键查）、快照与按文档取行
 │   ├── document_commit.gd  统一提交（B1）：prepare 出提交计划、apply 按 hooks 逐文件写（含失败停点）
-│   └── playtest.gd         试玩：清单结构化 executable+args 直启 / 退回命令模板，跟踪进程
+│   └── playtest.gd         试玩：按清单的 executable 和 args 启动游戏，跟踪进程
 ├── map/                    —— 地图数据域 ——
 │   ├── map_format.gd       地图格式版本常量 + alt 变换位↔Godot alternative 位互转
 │   ├── map_store.gd        地图 JSON 读写：原子写、3 层历史备份、缓存、单文件替换
@@ -95,7 +95,6 @@ src/
 	├── screen_layout_form.gd  屏幕布局表单：元素属性、模块字段和引用
 	├── map_dialogs.gd      地图尺寸弹窗（map_file 拆出）
 	├── map_resize.gd       改尺寸的裁剪预览与实际裁剪（E3/D17，map_dialogs 拆出）
-	├── map_menu_identity.gd  地图菜单身份解析：按码/名/当前图判定，失效项不重复入列（E3）
 	├── tile_replace_dialog.gd  E2 批量替换瓦片弹窗：源/目标资产与切片、冲突预览、一笔撤销
 	├── project_picker.gd   项目选择页 + 项目记忆（app.gd 拆出）
 	├── props_panel.gd      只剩「从地形生成碰撞」弹窗
@@ -188,8 +187,6 @@ src/
 | `functions[].timebase` | 可选：`seconds`（缺省）/ `frames` / `beats`——演出时间轴刻度/吸附单位（R-10），数据形态不变 |
 | `audio` | 音频池：`{audioId: {name, code, path, previewPath?}}`；choice 字段 `audio:` 的选项来源，时间轴可试听项目内源文件 |
 | `triggers` | 时机池：`{triggerId: {name, code}}` 或数组；**无字段**，功能声明 `triggers` 白名单引用，绑定写时机码 |
-| `playCommand` | 试玩命令模板，支持 `%mapfile%` / `%projectpath%` |
-| `godotExe` | 可选：覆盖 `playCommand` 里的可执行文件（支持 `%projectpath%`） |
 | `contentDir` | 可选：内容根目录，默认 `content` |
 | `viewports` | 可选（C5）：具名参考画幅 `[{id, w, h}]`，`viewport_ref` 字段的下拉来源 |
 | `views` | 可选（C5）：参考视图 `[{view_id, image, pixel_size, hotspots, layout}]`，可在内容工作台编辑参考图、热点和布局 |
@@ -844,14 +841,10 @@ Shift + 左键选已有顶点，再点同层位置，可在所选顶点之后插
 
 | 功能 | 说明 |
 |---|---|
-| 试玩命令 | 优先用清单结构化配置 `playtest.executable` + `playtest.args`（直启、参数按数组传，空格路径无需转义；可执行文件不存在时提前报错）；否则退回 `playCommand` 模板 + `%mapfile%` / `%projectpath%` 替换（经 `cmd /c` / `sh -c` 执行） |
-| 可移植可执行文件 | 清单可选 `godotExe`（支持 `%projectpath%`）覆盖命令里的可执行文件，换机器不必改 `playCommand` |
-| 自动引号 | 占位符替换值含空格且模板未加引号时自动补引号 |
-| 可执行文件检查 | 首参是路径且文件不存在 → 提前报错，避免 `cmd /c` 假成功 |
+| 试玩启动 | `playtest.executable` 加 `playtest.args`；直接启动游戏，参数按数组传递。 |
 | 保存前置 | 试玩前先走统一提交（清单码 → 内容 → 地图），提交失败即中止；新建未落盘的图再补一次正式保存 |
 | 项目内路径守卫 | 试玩只接受 `maps/` 目录内的路径，越界拒绝启动 |
-| 进程跟踪 | 直启时跟踪的 pid 就是游戏本体；走 `playCommand` 模板时跟踪的是 `cmd /c` 包装进程（状态栏会说明）。`OS.is_process_running()` 系统调用，1 秒节流，启动后 4 秒内不判死，退出时报「运行 N 秒」；除 web 导出外均可跟踪 |
-| 日志尾随 | 退出时读 `<项目>/editor/playtest.log` 最后 4 行一起报 |
+| 进程跟踪 | 桌面版本跟踪游戏进程，退出时显示运行时长或游戏回执。 |
 | 试玩配置 | 弹窗由清单 `playtest.flags` / `playtest.params` 声明驱动渲染（flags → 勾选框启用时原样追加 arg；params → 数字参数，值 ≠ def 才追加）；值存 `user://playtest_prefs.json`，按地图独立，不写进地图 JSON；清单未声明 = 面板空态提示 |
 | 启动参数 | 追加声明里的 `arg`；带出生点参数时追加 `--spawnx/--spawny`（格坐标） |
 
@@ -979,7 +972,7 @@ Shift + 左键选已有顶点，再点同层位置，可在所选顶点之后插
 | 功能引用未声明的条件 | 错误 |
 | 功能 `triggers` 不是数组或引用未声明的时机 / `timing` 不是对象或 `timing.mode` 不在 `instant`/`duration`/`continuous` | 错误 |
 | `playtest.flags/params` 结构错：id 空或重复 / name 空 / flags 缺 `arg` / params 的 `arg` 不含 `%d` | 错误 |
-| 顶层键形态错：`playCommand`/`godotExe`/`contentDir` 非 string、`contentDir` 含 `..` 或绝对路径、`screenSize` 不是 [w, h] 数值 | 错误 |
+| 顶层键形态错：`contentDir` 非 string、`contentDir` 含 `..` 或绝对路径、`screenSize` 不是 [w, h] 数值 | 错误 |
 | `viewports` 非数组 / 条目非对象 / `id` 空或重复 / `w`·`h` 缺失或非正数 | 错误 |
 | `views` 非数组 / `view_id` 空或重复 / `image`·`pixel_size`·`hotspots` 给了但形态不对（`image` 非 string / `pixel_size` 非正数 / `hotspots` 非数组，三者均可省略）/ hotspot `rect` 不是 4 个 0..1 数 / `target` 给了但不是对象 | 错误 |
 | `assets[].ports` 非数组 / 条目非对象 / `id` 空或重复 / `x`·`y` 非数字 / `type` 非 string | 错误 |
@@ -1057,7 +1050,7 @@ godot --headless --path "<编辑器工程>" --script res://tests/run_tests.gd
 | `test_ref_fields.gd` | 引用字段描述、类型严格性、配对地图字段与地图目录校验（C06/C07/C10）、同格多目标按地图/实例码区分（B3-3） |
 | `test_rel_graph.gd` | E2-3 关系图纯数据层：节点/边生成、写回同一字段、断开删键、staged 并入、循环保留、写回状态串（`"ok"`/`"conflict"`/`"fail"`）判成功 |
 | `test_session_context_e1.gd` | E1 视图切换的身份校验与会话记忆（纯逻辑，无 UI） |
-| `test_e1_e3_units.gd` | E1 字段行悬浮说明（只拼已声明键，不发明说明/单位）；E3 地图菜单身份解析（失效/码变化/当前图）、改尺寸裁剪预览与实际裁剪同判据 |
+| `test_e1_e3_units.gd` | E1 字段行悬浮说明（只拼已声明键，不发明说明/单位）；改尺寸裁剪预览与实际裁剪同判据 |
 | `test_step_timeline_d1.gd` | D1 步骤时间轴单一数据源：补丁合并、净化、生效区间、结构版本与警告、全重叠告警截断（`MAX_WARNINGS` + 「另有 M 条」） |
 | `test_timeline_clock_d2.gd` | D2 帧/拍换算、`timePreview` 声明解析、小数帧标记与量化 |
 | `test_tri_render.gd` | B3 三角格 UV 口径纯函数：切片包围盒映射、不越出切片、退化输入不炸，`alt` 变换位生效 |
@@ -1101,7 +1094,7 @@ godot --headless --path "<编辑器工程>" --script res://tools/migrate_project
   整块区域粘贴、层参数与尺寸这类改动仍存整图快照——
   大图（数千格 + 数百实体）连续做全局操作仍有内存与耗时成本（10 万瓦片一次快照约 140 ms）。
 - 校验只做静态数据检查，不验证运行时可达性（例如落点是否在实心碰撞里）。
-- 试玩**启动**按平台分支（Windows 走 `cmd /c`，其它平台走 `sh -c`）；**进程跟踪**走 `OS.is_process_running()` 系统调用，除 web 导出外均可跟踪；web 导出无法查询进程，状态栏明示「此平台无法跟踪进程退出」，不假装仍在运行。
+- 试玩直接启动游戏进程。Web 版本无法跟踪进程退出。
 - `trigger_zone`（事件）的 `w/h` 用画布右下角把手拖拽调（R-04）；触发语义在绑定的 `functions[]`（timing + 时机码）。
 - 不做瓦片自动拼接（autotile）；碰撞自动生成是辅助功能，生成后仍可手改。
 - 无图集编辑器入口；新增瓦片组需要直接改清单。

@@ -506,7 +506,7 @@ func _open_flow() -> void:
 			if edge.get("flow_target", false):
 				resolved = next.is_empty() or StartupTargets.destination_available(source, edge.decl, next)
 			elif next.has("map"):
-				resolved = References.resolve_graph_map(app.MapStore.code_index(source), next.map).status == "ok"
+				resolved = References.resolve_map_code(app.MapStore.code_index(source), next.map).status == "ok"
 			elif next.has("view"):
 				resolved = References.view_ids(source).has(next.view)
 			elif not next.is_empty():
@@ -574,7 +574,7 @@ func _open_flow() -> void:
 		if item.fn_id == RelGraph.VIEW_KIND:
 			ReferenceViews.open.call_deferred(app, item.cid)
 		elif item.fn_id == RelGraph.MAP_KIND:
-			var map := References.resolve_graph_map(app.MapStore.code_index(source), item.cid)
+			var map := References.resolve_map_code(app.MapStore.code_index(source), item.cid)
 			if map.status == "ok":
 				if app.cur_map_name != map.key or not app.map_loaded:
 					await app._open_map_by_name(map.key)

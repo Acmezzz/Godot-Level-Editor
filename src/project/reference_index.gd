@@ -58,12 +58,16 @@ static func resolve_indexed_map(ci: Dictionary, map_key: String) -> Dictionary:
 		return {"status": "unreadable", "key": name, "key_code": map_key, "candidates": [name]}
 	return {"status": "ok", "key": name, "key_code": map_key, "candidates": [name]}
 
-## Cross-map graph edges require a stable code, never a file-name fallback.
-static func resolve_graph_map(index: Dictionary, code: String) -> Dictionary:
-	var resolved := resolve_indexed_map(index, code)
-	if resolved.status == "ok" and index.get("by_name", {}).get(resolved.key) != code:
+## Resolve a stable map code. File names never participate in this lookup.
+static func resolve_map_code(index: Dictionary, code: String) -> Dictionary:
+	if code == "":
+		return _unset_map()
+	var candidates: Array = index.get("by_code", {}).get(code, [])
+	if candidates.size() > 1:
+		return {"status": "ambiguous", "key": "", "candidates": candidates}
+	if candidates.is_empty():
 		return {"status": "missing", "key": "", "candidates": []}
-	return resolved
+	return {"status": "ok", "key": str(candidates[0]), "key_code": code, "candidates": candidates}
 
 static func view_ids(manifest: Dictionary) -> Array[String]:
 	var ids: Array[String] = []
@@ -103,7 +107,7 @@ static func map_target_options(manifest: Dictionary) -> Array[Dictionary]:
 	var out: Array[Dictionary] = []
 	for name in index.by_name:
 		var code: String = index.by_name[name]
-		if resolve_graph_map(index, code).status == "ok":
+		if resolve_map_code(index, code).status == "ok":
 			out.append({"name": name, "code": code})
 	return out
 

@@ -4,7 +4,7 @@ class_name EditorManifest
 ## 功能/条件/步骤/音频/时机声明、碰撞类型池、试玩配置。**图层不在清单里**——每张地图自带 meta.layers。
 ## 加载链：校验（manifest_validation）→ 补发缺失的分层身份码（ensure_codes）→ 并入内置种类
 ## （trigger_zone）→ 派生路径（_dir/_maps_dir、atlas_abs）→ 实体占位尺寸解析
-## （editorSize → prefab 碰撞形状 → 1 格）。地图名/路径安全校验也在这里（is_valid_map_name）。
+## （editorSize → 1 格）。地图名/路径安全校验也在这里（is_valid_map_name）。
 ## 写盘前剥内部键（`_` 前缀、atlas_abs、内置种类）——清单是游戏侧读的公共契约，不留编辑器私有状态。
 
 const BAD_NAME_CHARS := ["/", "\\", ":", "*", "?", "\"", "<", ">", "|"]
@@ -15,23 +15,6 @@ const StepDecls := preload("res://src/content/step_decl.gd")
 const AudioDecls := preload("res://src/content/audio_decl.gd")
 const TriggerDecls := preload("res://src/content/trigger_decl.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
-
-## 变量替换：%mapfile% 当前地图文件；%projectpath% 游戏项目根目录
-## 路径含空格且模板未自行加引号时自动补引号，避免经 cmd /c 后被拆成多个参数。
-static func substitute_vars(cmd: String, map_file: String, project_path: String) -> String:
-	return _substitute_one(_substitute_one(cmd, "%mapfile%", map_file), "%projectpath%", project_path)
-
-static func _substitute_one(cmd: String, token: String, value: String) -> String:
-	var idx := cmd.find(token)
-	while idx >= 0:
-		var quoted := idx > 0 and idx + token.length() < cmd.length() \
-			and cmd[idx - 1] == "\"" and cmd[idx + token.length()] == "\""
-		var repl := value
-		if not quoted and value.contains(" "):
-			repl = "\"" + value + "\""
-		cmd = cmd.substr(0, idx) + repl + cmd.substr(idx + token.length())
-		idx = cmd.find(token, idx + repl.length())
-	return cmd
 
 ## 参数数组用的替换：原样内联，不加引号（A6）。
 ## OS.create_process 直接收 argv，引号会变成值的一部分；路径含空格正是数组分段的价值所在。
@@ -293,31 +276,6 @@ static func merge_issued_codes(m: Dictionary, codes: Dictionary, restore_reserve
 		m["_codes_issued"] = true
 	return n
 
-## 试玩命令 = 模板 + 变量替换；清单可选 godotExe（支持 %projectpath%）覆盖可执行文件，
-## 便于换机器/多人协作时不必改 playCommand。
-static func resolved_play_command(m: Dictionary, map_file: String) -> String:
-	var cmd := substitute_vars(m.get("playCommand", ""), map_file, m.get("_dir", ""))
-	var exe_rel := str(m.get("godotExe", ""))
-	if exe_rel == "":
-		return cmd
-	var exe := substitute_vars(exe_rel, map_file, m.get("_dir", ""))
-	# 替换命令开头那段可执行文件（保留后续参数）
-	var first := ""
-	var rest := cmd
-	var s := cmd.strip_edges()
-	if s.begins_with("\""):
-		var end := s.find("\"", 1)
-		first = s.substr(1, end - 1) if end > 0 else ""
-		rest = s.substr(end + 1) if end > 0 else ""
-	else:
-		var sp := s.find(" ")
-		first = s if sp < 0 else s.substr(0, sp)
-		rest = "" if sp < 0 else s.substr(sp)
-	if first == "":
-		return cmd
-	return "\"" + exe + "\"" + rest
-
-## 地图文件路径：<项目>/maps/<名>.json；名称非法或路径逃出 maps 目录时返回 ""
 static func map_path(m: Dictionary, name: String) -> String:
 	if not is_valid_map_name(name):
 		return ""

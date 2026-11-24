@@ -65,7 +65,7 @@ static func needs_content_map(startup: Dictionary, target: Variant) -> bool:
 	return startup.get("contentMapContext") == "paired" and FlowTarget.kind(target) == "content"
 
 static func content_map_available(manifest: Dictionary, code: String) -> bool:
-	return code != "" and Refs.resolve_graph_map(Maps.code_index(manifest), code).status == "ok"
+	return code != "" and Refs.resolve_map_code(Maps.code_index(manifest), code).status == "ok"
 
 static func destination_available(manifest: Dictionary, domains: Dictionary, target: Variant, maps := {}) -> bool:
 	if not FlowTarget.allows(domains, target):
@@ -75,7 +75,7 @@ static func destination_available(manifest: Dictionary, domains: Dictionary, tar
 	if target.has("map"):
 		if maps.has(target.map):
 			return _map_destination_available(manifest, domains, target, maps[target.map])
-		var resolved := Refs.resolve_graph_map(Maps.code_index(manifest), target.map)
+		var resolved := Refs.resolve_map_code(Maps.code_index(manifest), target.map)
 		if resolved.status != "ok":
 			return false
 		if not target.has("port"):

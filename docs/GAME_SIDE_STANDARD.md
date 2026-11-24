@@ -81,11 +81,9 @@
 | `triggers` | dict \| array | 时机池，见 2.5.4。只有 `{id, name}`，是功能/绑定引用的标签 |
 | `collisionTypes` | dict \| array | 碰撞类型池，见 2.8：画布画什么形状/颜色 + 游戏侧解释标签 gameplay |
 | `contentDir` | string | 内容根目录（相对工程根），缺省 `content`；不允许 `..` 或绝对路径 |
-| `playCommand` | string | 试玩命令模板；支持 `%mapfile%`、`%projectpath%` |
-| `godotExe` | string | 可选，覆盖 `playCommand` 首个可执行文件路径；支持 `%projectpath%` |
 | `playtest` | object | 可选。试玩面板声明驱动：`flags: [{id, name, arg}]`（勾选后启动参数**原样追加** arg）、`params: [{id, name, arg(含 %d), def, min, max}]`（数字参数，值 ≠ def 才追加）。值只存编辑器本地 prefs，键 = `<项目根>|<地图码>`（A6：两项目同名地图不串）。未声明 = 面板空态提示 |
 | `playtest.executable` | string | 可选（A6）。结构化启动：可执行文件路径，支持 `%projectpath%`/`%mapfile%`；配置后编辑器用 `OS.create_process()` **直接启动**，退出状态代表游戏本体 |
-| `playtest.args` | string[] | 可选（A6）。参数字符串数组，逐项替换 `%mapfile%`、`%projectpath%`（**不加引号**，空格路径由数组分段保证）。Godot 项目示例：`['--path', '%projectpath%', '--', '--map=%mapfile%']`。未配 `executable` 时退回 `playCommand` 模板，状态栏会标明跟踪的是包装进程 |
+| `playtest.args` | string[] | 可选（A6）。参数字符串数组，逐项替换 `%mapfile%`、`%projectpath%`（**不加引号**，空格路径由数组分段保证）。Godot 项目示例：`['--path', '%projectpath%', '--', '--map=%mapfile%']`。未配置可执行文件则不启用试玩 |
 | `playtest.entryFunctions` | string[] | 可选，须启用 `projectEntry: true`。填写允许作者从内容库启动的功能声明 ID；列表成员必须已声明且互不重复。 |
 | `playtest.contentEntryMap` | bool | 可选，须启用 `projectEntry` 并声明 `entryFunctions`。允许为单项内容试玩选择已保存的配对地图。 |
 | `playtest.viewEntry` | bool | 可选，须配置结构化启动。开启后，作者可以从参考视图启动该屏幕的已保存版本，不要求配置 `projectEntry`。 |
@@ -107,7 +105,7 @@
 时机**id/码池内重复**、字段缺 `kind` 或 kind/type 非法、挂载引用未声明的功能、功能引用未声明的条件、
 功能引用未声明的时机、`timing.mode` 非法、`playtest` 结构错（flags 缺 `arg` / params 的 `arg` 缺 `%d` / id 重复 / name 空 /
 `executable` 非字符串 / `args` 非字符串数组）、
-顶层可选键形态错（`playCommand`/`godotExe`/`contentDir` 非字符串、`contentDir` 含 `..` 或绝对路径、`screenSize` 非 `[w,h]` 数值），
+顶层可选键形态错（`contentDir` 非字符串、`contentDir` 含 `..` 或绝对路径、`screenSize` 非 `[w,h]` 数值），
 以及 `assets[]` 里 `kind` 非法、scene 同时给 `atlas` 与 `texture`、entity 既无 `prefab` 也无 `visual`，
 判为**错误**（编辑器拒绝加载）。
 功能 id 与条件 id 重复都是错误
@@ -1908,7 +1906,7 @@ func _apply_door(inst: Node, fn: Dictionary) -> void:
 ## 10. 游戏工程接入检查清单
 
 要让一个**现有** Godot 工程能被编辑器接管，第 1、3、6、8 条缺一不可；
-其余按项目需要选（没有瓦片图集也能只用实体/内容；不想用试玩按钮就不配 `playCommand`）。
+其余按项目需要选（没有瓦片图集也能只用实体/内容；不想用试玩按钮就不配 `playtest.executable`）。
 
 | # | 项 | 验收方式 |
 |---|---|---|
@@ -1918,7 +1916,7 @@ func _apply_door(inst: Node, fn: Dictionary) -> void:
 | 4 | `assets[]` 里每个 `kind: "entity"` 有唯一 `id`，且 `prefab` 指向真实 `.tscn`（或声明了 `visual`） | 左栏资产列表出图 |
 | 5 | `editor/previews/*.png` 与 `thumb` 对应 | 画布上实体有缩略图 |
 | 6 | `maps/` 目录存在（可为空） | 新建地图能保存 |
-| 7 | `playCommand` 能拉起游戏并接收 `--map=` | 试玩按钮工作 |
+| 7 | `playtest.executable` 和 `playtest.args` 能拉起游戏并接收 `--map=` | 试玩按钮工作 |
 | 8 | 游戏侧 `MapLoader` 读 `meta.w/h`、`meta.layers`、`spawn`、`tiles`、`collision`、`objects` | 试玩画面与编辑画布一致 |
 | 9 | 游戏侧按 `objects[].asset` 查资产并实例化，注入 `code`/`props` | 传送门等按 props 行为正确 |
 | 10 | 若用功能系统：`functions` 已声明 + 游戏侧有对应消费代码 | 挂上功能后行为生效 |

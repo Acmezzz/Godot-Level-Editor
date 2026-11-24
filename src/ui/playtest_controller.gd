@@ -13,10 +13,9 @@ var files: RefCounted
 var _last_alive_poll := 0   # PF-04：存活轮询节流
 var _play_pid := 0
 var _play_started_msec: int = 0
-var _play_program := ""        # A6：实际启动的程序（结构化配置的 exe 或模板首个 token）
+var _play_program := ""
 var _play_report_request := {}
 var _play_report_result := {}
-var _play_tracked := true      # false = 跟踪的是包装进程（playCommand 模板）
 
 func _init(host, map_files: RefCounted) -> void:
 	app = host
@@ -122,16 +121,8 @@ func _start_playtest(play_path: String, digest: String, args: PackedStringArray,
 	_play_program = str(play_res.get("program", ""))
 	_play_report_request = request
 	_play_report_result = {}
-	_play_tracked = bool(play_res.get("tracked", false))
-	# 状态里说清「启动了什么、又在跟踪什么」：模板包装进程退出 ≠ 游戏退出
-	var what := _play_program.get_file() if _play_program != "" else "playCommand"
-	var tail := Playtest.log_tail(str(app.manifest.get("_dir", "")), 2)
-	# R24：平台查不了进程就明说「跟踪不可用」，不给假的「仍在运行」。
 	var track_note := "" if Playtest.tracking_available() else "（此平台无法跟踪进程退出）"
-	app._set_status(" 试玩启动: %s %s%s%s%s" % [what, subject,
-		"（跟踪包装进程）" if not _play_tracked else "",
-		track_note,
-		("；日志: " + tail) if tail != "" else ""])
+	app._set_status("试玩启动: %s %s%s" % [_play_program.get_file(), subject, track_note])
 	return true
 
 ## 试玩进程跟踪：退出后回报一次（OS.is_process_running，无子进程）
@@ -156,16 +147,11 @@ func poll_playtest() -> void:
 	if not _play_report_request.is_empty():
 		_play_report_result = Playtest.read_report(_play_report_request)
 	Playtest.clear_view_draft(_play_report_request)
-	# 试玩日志尾随——游戏侧写 editor/playtest.log，退出后取最后几行（无文件 = 原消息）
-	var tail := Playtest.log_tail(str(app.manifest.get("_dir", "")), 4)
-	var who := prog.get_file() if prog != "" else "进程"
-	var tracked_note := "" if _play_tracked else "（跟踪的包装进程已退出）"
+	var who := prog.get_file()
 	if not _play_report_request.is_empty():
 		app._set_status("试玩 %s 已退出 · %s" % [who, _play_report_summary()])
-	elif tail != "":
-		app._set_status(" 试玩%s退出（%s，%d 秒）· 日志: %s" % [who, tracked_note, secs, tail.replace("\n", " | ")])
 	else:
-		app._set_status(" 试玩%s已退出%s（运行 %d 秒）" % [who, tracked_note, secs])
+		app._set_status("试玩 %s 已退出（运行 %d 秒）" % [who, secs])
 
 func _play_report_summary() -> String:
 	match str(_play_report_result.get("status", "")):

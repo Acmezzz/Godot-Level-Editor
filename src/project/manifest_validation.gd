@@ -74,10 +74,9 @@ static func validate(data: Dictionary, project_dir := "") -> Array[Dictionary]:
 
 ## 顶层可选键结构校验（缺键走缺省，存在即校验形态）。
 static func _validate_top_level(data: Dictionary, issues: Array[Dictionary]) -> void:
-	for k in ["playCommand", "godotExe", "contentDir"]:
-		if data.has(k) and not (data[k] is String):
-			_add(issues, "error", k, "must be a string")
-	if data.has("contentDir"):
+	if data.has("contentDir") and not data.contentDir is String:
+		_add(issues, "error", "contentDir", "must be a string")
+	elif data.has("contentDir"):
 		var cd := str(data["contentDir"])
 		if cd != "" and (cd.begins_with("/") or cd.begins_with("\\") or cd.contains("..")):
 			_add(issues, "error", "contentDir", "must be a relative path without '..'")
@@ -402,7 +401,7 @@ static func _validate_playtest(data: Dictionary, issues: Array[Dictionary]) -> v
 	if exe != null and not (exe is String):
 		_add(issues, "error", "playtest.executable", "must be a path string")
 	elif exe is String and (exe as String).strip_edges() == "" and pt2.has("executable"):
-		_add(issues, "warning", "playtest.executable", "empty executable: falls back to playCommand")
+		_add(issues, "warning", "playtest.executable", "empty executable: playtest is disabled")
 	for feature in ["report", "projectEntry", "mapEntry", "viewEntry", "viewDraft", "contentEntryMap"]:
 		if not pt2.has(feature):
 			continue

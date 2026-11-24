@@ -1,8 +1,7 @@
 extends "res://tests/_suite_base.gd"
-## E1 / E3：字段行说明与地图菜单身份、改尺寸裁剪的纯逻辑。
+## E1 / E3：字段行说明与改尺寸裁剪的纯逻辑。
 
 const FieldWidgets := preload("res://src/ui/field_widgets.gd")
-const MapMenuIdentity := preload("res://src/ui/map_menu_identity.gd")
 const MapResize := preload("res://src/ui/map_resize.gd")
 
 ## E1：字段说明只从已声明的键拼（id/码/类型/范围/缺省），契约没有说明/单位键就不编
@@ -19,22 +18,6 @@ func test_decl_tooltip_from_declared_keys() -> void:
 	ok(t3.contains("来源 entity_inst:"), "choice 列 source: " + t3)
 	ok(not t3.contains("说明") and not t3.contains("单位"), "不凭空生成说明/单位字样")
 	eq(FieldWidgets.decl_tooltip({}), "", "空声明不出空串以外的内容")
-
-## E3：菜单项绑定身份解析——下标越界/文件消失/码变化/同名当前图/正常切换
-func test_map_menu_identity_resolve() -> void:
-	var binds := [{"name": "a", "code": "AAAA", "path": "a.json"},
-		{"name": "b", "code": "BBBB", "path": "b.json"}, {"name": "", "code": ""}]
-	eq(str(MapMenuIdentity.resolve(binds, 0, true, "AAAA", "b").status), MapMenuIdentity.OK, "身份一致")
-	eq(str(MapMenuIdentity.resolve(binds, 0, true, "AAAA", "a").status), MapMenuIdentity.SAME, "当前图")
-	eq(str(MapMenuIdentity.resolve(binds, 0, false, "", "a").status), MapMenuIdentity.MISSING, "文件消失")
-	eq(str(MapMenuIdentity.resolve(binds, 0, true, "ZZZZ", "a").status), MapMenuIdentity.RECODE, "码变化")
-	eq(str(MapMenuIdentity.resolve(binds, 2, true, "", "a").status), MapMenuIdentity.STALE, "空绑定")
-	eq(str(MapMenuIdentity.resolve(binds, 9, true, "", "a").status), MapMenuIdentity.STALE, "下标越界")
-	eq(str(MapMenuIdentity.resolve([], 0, true, "", "a").status), MapMenuIdentity.STALE, "空菜单")
-	# 老图无码：不做码比较，只按文件存在 + 图名
-	eq(str(MapMenuIdentity.resolve(binds, 1, true, "", "a").status), MapMenuIdentity.OK, "无码按名解析")
-	eq(str(MapMenuIdentity.resolve(binds, 0, true, "", "b").status), MapMenuIdentity.OK,
-		"文件此刻无码不误报失效")
 
 ## E3：改尺寸裁剪——预览计数与实际裁剪同判据，扩大不裁
 func test_map_resize_crop() -> void:

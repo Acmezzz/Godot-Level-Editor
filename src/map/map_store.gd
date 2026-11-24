@@ -194,13 +194,9 @@ static func _cm_signature(m: Dictionary, names: Array, manifest_hash: int) -> St
 		parts.append("%s@%d" % [str(mn), FileAccess.get_modified_time(p)])
 	return "|".join(parts)
 
-## 图名 → 地图码表（code_map 的反向视图；复用同一签名缓存，O(n) 反转一次）
+## 每个可读文件的地图码；重复码也保留，以便解析时明确报告冲突。
 static func name_to_code(m: Dictionary) -> Dictionary:
-	var out := {}
-	var cm := code_map(m)
-	for c in cm:
-		out[str(cm[c])] = str(c)
-	return out
+	return code_index(m).by_name
 
 ## 确保这张图有 meta.code：缺就发一个不与全项目冲突的新码并写回 data。
 ## 返回是否有改动（调用方据此置脏）。就地修改。

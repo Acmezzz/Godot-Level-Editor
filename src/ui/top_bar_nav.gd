@@ -8,7 +8,7 @@ extends HBoxContainer
 
 const Kit := preload("res://src/ui/ui_kit.gd")
 const CellGraphEditor := preload("res://src/ui/cell_graph_editor.gd")
-const MapMenuIdentity := preload("res://src/ui/map_menu_identity.gd")
+const References := preload("res://src/project/reference_index.gd")
 const WorldEditor := preload("res://src/ui/world_layout_editor.gd")
 
 var app
@@ -55,8 +55,7 @@ func set_mode(mode: String) -> void:
 func _on_mode(mode: String) -> void:
 	app._set_mode(mode)
 
-## E3：菜单项绑定弹出时的地图身份（图名 + 路径 + 地图码）。外部增删文件会让排序下标
-## 指向另一张图——点击一律按绑定身份解析，不看当下数组下标。
+## 菜单按弹出时的地图码绑定，图名用于显示和打开还没有地图码的文件。
 var _menu_binds: Array = []
 
 func _refresh_map_menu() -> void:
@@ -71,8 +70,7 @@ func _refresh_map_menu() -> void:
 		for i in names.size():
 			var nm := str(names[i])
 			_switch_menu.add_item(nm, i)
-			_menu_binds.append({"name": nm, "code": str(codes.get(nm, "")),
-				"path": app.MapStore.path_for(app.manifest, nm)})
+			_menu_binds.append({"name": nm, "code": str(codes.get(nm, ""))})
 			if nm == app.cur_map_name:
 				_switch_menu.set_item_as_checkable(i, true)
 				_switch_menu.set_item_checked(i, true)
@@ -149,39 +147,17 @@ func _on_map_selected(id: int) -> void:
 	if id == _MENU_DRAFTS:
 		_open_draft_picker()
 		return
-	# E3：按弹出时绑定的图名解析。点击时条目可能已失效（外部新增/改名/删除让排序下标漂移）。
-	# 绑定的图名 + 地图码仍指向同一个文件才切；否则刷新菜单并报告失效，
-	# 绝不按下标去读一份新的 list_maps。
-	var at := id
-	var nm := ""
-	var p := ""
-	var exists := false
-	if at >= 0 and at < _menu_binds.size() and _menu_binds[at] is Dictionary:
-		nm = str((_menu_binds[at] as Dictionary).get("name", ""))
-		p = EditorManifest.map_path(app.manifest, nm) if nm != "" else ""
-		exists = p != "" and FileAccess.file_exists(p)
-	# 身份校验：文件还在但地图码变了 = 同一个名字现在指着另一张图（重新生成/替换过）
-	var cur_code := ""
-	if exists:
-		cur_code = str((app.MapStore.read(app.manifest, nm).get("meta", {}) as Dictionary).get("code", ""))
-	var res: Dictionary = MapMenuIdentity.resolve(_menu_binds, at, exists, cur_code, str(app.cur_map_name))
-	match str(res.get("status", "")):
-		MapMenuIdentity.STALE:
-			_refresh_map_menu()
-			app._set_status("地图菜单条目已失效，列表已刷新：请重新选择")
+	if id < 0 or id >= _menu_binds.size():
+		return
+	var selected: Dictionary = _menu_binds[id]
+	var name_: String = selected.name
+	var code: String = selected.code
+	if code != "":
+		var resolved := References.resolve_map_code(app.MapStore.code_index(app.manifest), code)
+		if resolved.status != "ok":
+			app._set_status("无法按地图码打开：%s [%s]" % [name_, code])
 			return
-		MapMenuIdentity.MISSING:
-			_refresh_map_menu()
-			app._set_status("地图条目已失效：%s 已不存在（列表已刷新）" % nm)
-			return
-		MapMenuIdentity.RECODE:
-			_refresh_map_menu()
-			app._set_status("地图条目已失效：%s 的地图码已变化（列表已刷新，请重新选择）" % nm)
-			return
-		MapMenuIdentity.SAME:
-			return
-	# 切图是协程（可能有未保存确认弹窗）：必须等加载完成再回调宿主刷新，
-	# 否则内容/资产页会在旧画布内容上刷新（列表与地图名对不上）。
-	await app._open_map_by_name(nm)
+		name_ = resolved.key
+	await app._open_map_by_name(name_)
 	if after_switch.is_valid():
 		after_switch.call()

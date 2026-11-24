@@ -193,7 +193,7 @@ static func view_reference_issues(manifest: Dictionary, view_id := "") -> Array:
 			continue
 		if map_index.is_empty():
 			map_index = MapStore.code_index(manifest)
-		if ReferenceIndex.resolve_graph_map(map_index, ref.target.map).status != "ok":
+		if ReferenceIndex.resolve_map_code(map_index, ref.target.map).status != "ok":
 			out.append(_view_issue(ref, "地图目标不可用：" + ref.target.map))
 	for ref in ReferenceIndex.view_module_refs(manifest):
 		if view_id != "" and ref.view != view_id:
@@ -298,7 +298,7 @@ static func _graph_target_checks(data: Dictionary, manifest: Dictionary, name: S
 		if not cached_targets.has(code):
 			if index.is_empty():
 				index.append(MapStore.code_index(manifest))
-			var resolved := ReferenceIndex.resolve_graph_map(index[0], code)
+			var resolved := ReferenceIndex.resolve_map_code(index[0], code)
 			var target := {}
 			if resolved.status == "ok":
 				var dest := MapStore.read(manifest, str(resolved.key))
@@ -685,7 +685,7 @@ static func _collect_entry_contexts(manifest: Dictionary, contexts: Dictionary) 
 			if index.is_empty():
 				index = MapStore.code_index(manifest)
 			var resolved := ReferenceIndex.resolve_indexed_map(index, map_key) if ref.has("view") \
-				else ReferenceIndex.resolve_graph_map(index, map_key)
+				else ReferenceIndex.resolve_map_code(index, map_key)
 			cache[map_key] = MapStore.read(manifest, resolved.key) if resolved.status == "ok" else {}
 		var map: Dictionary = cache[map_key]
 		if map.is_empty():

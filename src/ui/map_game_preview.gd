@@ -188,7 +188,7 @@ static func open_cell_graph(app) -> void:
 	var maps := []
 	for name in index.names:
 		var code: String = index.by_name.get(name, "")
-		if code != "" and code != app.canvas.cur_map_code() and RefIndex.resolve_graph_map(index, code).status == "ok":
+		if code != "" and code != app.canvas.cur_map_code() and RefIndex.resolve_map_code(index, code).status == "ok":
 			maps.append({"name": name, "code": code})
 	var controls := editor.controls(maps)
 	var bind_current := func(parent: Window, current: Callable):
@@ -228,7 +228,7 @@ static func _open_cell_destination(app, editor, parent: Window, source_current: 
 static func _saved_snapshot(preset: String, app, manifest: Dictionary, key: String,
 		stable_code: bool, prepare: Callable) -> Dictionary:
 	var resolve := func() -> Dictionary:
-		return RefIndex.resolve_graph_map(Maps.code_index(manifest), key) if stable_code \
+		return RefIndex.resolve_map_code(Maps.code_index(manifest), key) if stable_code \
 			else RefIndex.resolve_map(manifest, key)
 	var resolved: Dictionary = resolve.call()
 	if resolved.status != "ok":
