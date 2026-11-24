@@ -3,6 +3,24 @@ extends "res://tests/_suite_base.gd"
 
 const StepTimeline := preload("res://src/content/step_timeline.gd")
 
+func test_copy_range_keeps_inherited_and_parallel_timing() -> void:
+	var steps := [
+		{"step": "A", "duration": 7},
+		{"step": "B", "duration": 3, "fields": {"routes": [{"to": "exit"}]}},
+		{"step": "C", "track": 1, "at": 5, "duration": 8, "blocking": false, "custom": "keep"},
+		{"step": "D"},
+	]
+	var segment := StepTimeline.copy_range(steps, 1, 3)
+	var placed := StepTimeline.offset_segment(segment, StepTimeline.end_time(steps))
+	eq(placed.map(func(step): return step.at), [15.0, 13.0, 18.0],
+		"最早生效步骤落在全轨结束处，继承起点仍保留相对时间")
+	eq(placed[1], {"step": "C", "track": 1, "at": 13.0, "duration": 8,
+		"blocking": false, "custom": "keep"}, "仅改起点")
+	placed[0].fields.routes[0].to = "other"
+	eq(segment[0].fields.routes[0].to, "exit", "再次粘贴使用原段落数据")
+	eq(steps[1].fields.routes[0].to, "exit", "原步骤字段独立")
+	ok(not steps[1].has("at"), "原步骤仍随前序")
+
 ## 计划验收数据：[{duration:2},{duration:1}] → 第二步生效起点 2；
 ## 右边拖到 4 只改时长（变 2），再归零并换新轨。
 func test_acceptance_two_steps_second_effective_at() -> void:

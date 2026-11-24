@@ -18,7 +18,7 @@ const DEFAULT_BLOCKING := true
 ## 顺序累加口径：每轨一个游标；显式 at 只推游标不缩游标。
 static func to_timeline(steps: Array) -> Array:
 	var out: Array = []
-	var cursors := {}   # track -> 游标（秒）
+	var cursors := {}   # track -> 游标（内容的原始时间单位）
 	for st in steps:
 		if not (st is Dictionary):
 			out.append({})
@@ -41,6 +41,34 @@ static func to_timeline(steps: Array) -> Array:
 			"blocking": blocking,
 		})
 	return out
+
+## 复制连续步骤，以段落中最早的生效起点为零。保留步骤顺序与游戏字段。
+static func copy_range(steps: Array, first: int, last: int) -> Array:
+	var timeline := to_timeline(steps)
+	var origin := INF
+	var segment: Array = []
+	for i in range(first, last + 1):
+		if not timeline[i].is_empty():
+			origin = minf(origin, float(timeline[i].at))
+	for i in range(first, last + 1):
+		if not timeline[i].is_empty():
+			var step: Dictionary = steps[i].duplicate(true)
+			step["at"] = float(timeline[i].at) - origin
+			segment.append(step)
+	return segment
+
+static func offset_segment(segment: Array, origin: float) -> Array:
+	var placed := segment.duplicate(true)
+	for step: Dictionary in placed:
+		step["at"] = origin + float(step.at)
+	return placed
+
+static func end_time(steps: Array) -> float:
+	var end := 0.0
+	for entry: Dictionary in to_timeline(steps):
+		if not entry.is_empty():
+			end = maxf(end, float(entry.at) + float(entry.duration))
+	return end
 
 ## 回写净化：删掉等于缺省的 duration/track/blocking 键；at 一旦显式就保留
 ## （时间轴语义里"排在几秒"本身就是信息）。返回净化副本，原数组不动。

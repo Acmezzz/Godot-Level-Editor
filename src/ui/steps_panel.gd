@@ -756,6 +756,8 @@ func _rebuild_steps_all() -> void:
 ## 步骤列表（列表视图）：空态 + 逐行渲染。
 var _steps_list_snapshot: Array = []
 var _steps_binding: Dictionary = {}
+var _copied_segment: Array = []
+var _segment_scope: Array = []
 
 func _rebuild_steps_list(arr: Array) -> void:
 	_steps_list_snapshot = arr.duplicate(true)
@@ -764,14 +766,102 @@ func _rebuild_steps_list(arr: Array) -> void:
 	for c in _steps_list.get_children():
 		_steps_list.remove_child(c)
 		c.queue_free()
+	var actions := Kit.hbox(6)
+	_steps_list.add_child(actions)
+	var copy := Kit.button("复制段落…", _copy_segment, "ghost")
+	copy.disabled = arr.is_empty()
+	actions.add_child(copy)
+	var paste := Kit.button("粘贴段落…", _paste_segment, "ghost")
+	paste.disabled = _copied_segment.is_empty() or _segment_scope != _current_segment_scope()
+	paste.tooltip_text = "追加已复制的步骤；可在同项目、同功能及同地图作用域内复用"
+	actions.add_child(paste)
 	if arr.is_empty():
 		_steps_list.add_child(Kit.hint_label("（空演出：添加步骤开始排）", 320))
-	var pool := StepDecls.steps(manifest)
 	for si in arr.size():
 		var st = arr[si]
 		if not (st is Dictionary):
 			continue
-		_steps_list.add_child(_steps_row(si, st, pool))
+		_steps_list.add_child(_steps_row(si, st))
+
+func _current_segment_scope() -> Array:
+	return [str(manifest.get("_dir", "")), _steps_fn_id, "" if _project_scope else _steps_map]
+
+func _segment_dialog(title: String, label: String, body: Control, accept: Callable) -> void:
+	var dialog := ConfirmationDialog.new()
+	dialog.title = title
+	dialog.ok_button_text = label
+	dialog.cancel_button_text = "取消"
+	dialog.min_size = Vector2i(380, 0)
+	dialog.add_child(body)
+	_steps_list.add_child(dialog)
+	dialog.confirmed.connect(accept)
+	dialog.visibility_changed.connect(func():
+		if not dialog.visible:
+			dialog.queue_free())
+	dialog.popup_centered()
+
+func _segment_range_input(count: int, initial: int) -> SpinBox:
+	var input := SpinBox.new()
+	input.min_value = 1
+	input.max_value = count
+	input.step = 1
+	input.value = initial
+	input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	return input
+
+func _copy_segment() -> void:
+	if not _flush_pending():
+		return
+	var arr: Array = _steps_data().get("steps", [])
+	if arr.is_empty():
+		return
+	var start := _segment_range_input(arr.size(), maxi(1, _steps_sel + 1))
+	var end := _segment_range_input(arr.size(), arr.size())
+	var body := Kit.vbox(6)
+	body.add_child(Kit.field_row("首步序号", start, 96))
+	body.add_child(Kit.field_row("末步序号", end, 96))
+	_segment_dialog("复制演出段落", "复制段落", body, func():
+		start.apply()
+		end.apply()
+		var first := int(minf(start.value, end.value)) - 1
+		var last := int(maxf(start.value, end.value)) - 1
+		_copied_segment = StepTimeline.copy_range(arr, first, last)
+		_segment_scope = _current_segment_scope()
+		app._set_status("已复制 %d 个步骤" % _copied_segment.size())
+		_rebuild_steps_list(arr))
+
+func _paste_segment() -> void:
+	if not _flush_pending():
+		return
+	var data := _steps_data()
+	if data.is_empty() or _segment_scope != _current_segment_scope():
+		return
+	var arr: Array = data.get("steps", [])
+	var revision := _steps_rev
+	var default_time := StepTimeline.end_time(arr)
+	var start := LineEdit.new()
+	start.text = str(default_time)
+	start.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var body := Kit.vbox(6)
+	body.add_child(Kit.hint_label("将 %d 个步骤追加到列表，保留段落内的相对时间。" % _copied_segment.size(), 340))
+	body.add_child(Kit.field_row("起点 / " + _steps_timebase(), start, 126))
+	_segment_dialog("粘贴演出段落", "粘贴段落", body, func():
+		var value := start.text.strip_edges()
+		if not value.is_valid_float() or not is_finite(value.to_float()) or value.to_float() < 0.0:
+			app._set_status("段落起点必须是非负时间数值")
+			return
+		_run_row_command(revision, arr, _append_segment.bind(value.to_float())))
+
+func _append_segment(origin: float) -> void:
+	var data := _steps_data()
+	var arr: Array = data.get("steps", [])
+	var first := arr.size()
+	arr.append_array(StepTimeline.offset_segment(_copied_segment, origin))
+	data["steps"] = arr
+	if _steps_write(data):
+		_steps_sel = first
+		_bump_steps_rev()
+		_rebuild_steps_all()
 
 ## D2：按 timePreview 声明建换算时钟，并把参考素材（帧序列 / 音频）解析成界面可用的值。
 ## 缺项只记录在 _steps_clock_missing 里（表单显示），不阻断原单位编辑。
@@ -910,7 +1000,7 @@ func _rebuild_steps_form_from_data() -> void:
 	_rebuild_steps_form(arr)
 
 ## 子面板里的一个步骤行：序号+名称（选中高亮）+ 上移/下移/复制/删除。
-func _steps_row(si: int, st: Dictionary, _pool: Dictionary) -> Control:
+func _steps_row(si: int, st: Dictionary) -> Control:
 	var sc := str(st.get("step", ""))
 	var decl: Dictionary = StepDecls.step_by_code(manifest, sc)
 	var known := not decl.is_empty()
@@ -1528,7 +1618,7 @@ func _steps_move(si: int, dir: int) -> void:
 	_bump_steps_rev()
 	_rebuild_steps_all()
 
-## 复制步骤：整条深拷贝（duplicate(true)，fields 再单独拷一层防共享嵌套），插到下一步；
+## 复制步骤：整条深拷贝，插到下一步；
 ## 步骤码引用清单声明、跨内容共享，无需重映射。
 func _steps_dup(si: int) -> void:
 	var data := _steps_data()
@@ -1536,7 +1626,6 @@ func _steps_dup(si: int) -> void:
 	if si < 0 or si >= arr.size() or not (arr[si] is Dictionary):
 		return
 	var cp: Dictionary = (arr[si] as Dictionary).duplicate(true)
-	cp["fields"] = (cp.get("fields", {}) as Dictionary).duplicate(true) if cp.get("fields", {}) is Dictionary else {}
 	arr.insert(si + 1, cp)
 	data["steps"] = arr
 	if not _steps_write(data):

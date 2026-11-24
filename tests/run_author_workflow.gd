@@ -3184,6 +3184,31 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 		and Store.read(manifest, "campaign", "project-acceptance") == campaign_source,
 		"duplicating an independent campaign preserves its nested branches and steps without changing the source")
 	campaign_copy.hide()
+	var segment_panel = editor._steps
+	check(segment_panel.open_content("campaign", "project-acceptance"), "open the source performance")
+	press(segment_panel._steps_pop, "列表")
+	press(segment_panel._steps_pop, "复制段落…")
+	var range_dialog: ConfirmationDialog = collect(segment_panel._steps_pop, "ConfirmationDialog").back()
+	var bounds := collect(range_dialog, "SpinBox")
+	bounds[0].get_line_edit().text = "2"
+	bounds[1].get_line_edit().text = "3"
+	range_dialog.confirmed.emit()
+	segment_panel._teardown_steps_host()
+	check(segment_panel.open_content("campaign", "project-campaign-copy"), "open another performance using the same declaration")
+	press(segment_panel._steps_pop, "列表")
+	press(segment_panel._steps_pop, "粘贴段落…")
+	var paste_dialog: ConfirmationDialog = collect(segment_panel._steps_pop, "ConfirmationDialog").back()
+	collect(paste_dialog, "LineEdit")[0].text = "12"
+	paste_dialog.confirmed.emit()
+	segment_panel._teardown_steps_host()
+	await process_frame
+	var extended := Store.read(manifest, "campaign", "project-campaign-copy")
+	var segment: Array = extended.get("steps", []).slice(3)
+	check(segment.size() == 2 and segment[0].get("at") == 12.0 and segment[1].get("at") == 13.0
+		and segment[1].get("fields") == campaign_source.steps[2].fields
+		and extended.steps.slice(0, 3) == campaign_source.steps
+		and Store.read(manifest, "campaign", "project-acceptance") == campaign_source,
+		"the saved segment preserves beat offsets and nested branches without altering either original")
 
 func _frame_contour_points(cvs: EditorCanvas, code: String) -> Array:
 	return _frame_contour_props(cvs, code).get("points", [])
