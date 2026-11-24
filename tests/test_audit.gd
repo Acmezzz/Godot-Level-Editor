@@ -59,6 +59,23 @@ func test_ref_checks_map_ref() -> void:
 	eq(out.size(), 1, "目标图不存在 → 1 条警告")
 	_wipe()
 
+func test_layer_ref_checks_nested_rows_and_target_scope() -> void:
+	var m := _fake_manifest()
+	m.assets = [{"id": "moving", "kind": "entity", "fields": [
+		{"id": "routes", "kind": "input", "type": "array", "of": "record", "fields": [
+			{"id": "scope", "code": "SCOP", "kind": "choice", "source": "map"},
+			{"id": "layer", "kind": "choice", "source": "layer:", "mapField": "scope"}]}]}]
+	var target := {"meta": {"code": "DEST", "layers": [{"id": "upper"}]}}
+	var data := {"meta": {"code": "HOME", "layers": [{"id": "upper"}]}, "objects": [
+		{"code": "MOVE", "asset": "moving", "props": {"routes": [{"scope": "DEST", "layer": "upper"}]}}]}
+	eq(ProjectAudit._ref_checks(data, m, "home", {"DEST": target}).size(), 0, "paired map owns the layer")
+	target.meta.layers.clear()
+	var out := ProjectAudit._ref_checks(data, m, "home", {"DEST": target})
+	eq(out.size(), 1, "same layer ID in the source map does not hide the missing target")
+	if out.size() == 1:
+		ok(out[0].path.ends_with("routes#0.layer") and out[0].jump.prop == "routes", "the issue identifies the row and jumps to its form")
+		ok(not out[0].has("fix"), "the editor preserves the authored reference for repair")
+
 ## C1：配对地图引用按目标图码集判定（同码在本图不存在但目标图存在 = 不报）
 func test_ref_checks_paired_map() -> void:
 	_wipe()

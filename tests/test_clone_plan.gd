@@ -47,6 +47,21 @@ func _manifest() -> Dictionary:
 func _wipe() -> void:
 	_nuke(TMP)
 
+func test_layer_scope_in_map_and_instance_copies() -> void:
+	var m := _manifest()
+	m.assets[0].fields.append({"id": "LAYER", "kind": "choice", "source": "layer:", "mapField": "TMAP"})
+	var row := {"code": "AAAA", "asset": "door", "props": {"LAYER": "upper", "TMAP": "SRC1"}}
+	var src := {"data": {"meta": {"code": "SRC1", "layers": [{"id": "upper"}]}, "objects": [row]}, "manifest": m, "map": "m1"}
+	var dst := {"data": {"meta": {"code": "DST1", "layers": [{"id": "upper"}]}}, "manifest": m, "map": "m2"}
+	var part := ClonePlan.build(src, dst)
+	eq(part.status, "ok", "copy with paired layer succeeds")
+	eq(part.map_patch.objects[0].props, {"LAYER": "upper", "TMAP": "SRC1"}, "matching ID on another map is not the same coordinate space")
+	var whole := ClonePlan.build(src, dst, PackedStringArray(), true, {}, true)
+	eq(whole.map_patch.objects[0].props.TMAP, "DST1", "whole-map copy uses its own copy of the layer")
+	m.assets[0].fields[-1].erase("mapField")
+	var unpaired := ClonePlan.build(src, dst)
+	eq(unpaired.status, "conflict", "unpaired cross-map layer reference needs a map scope")
+
 func test_region_cell_references_follow_the_copied_subgraph() -> void:
 	var m := _manifest()
 	m.assets[0].fields.append({"id": "CELLS", "kind": "choice", "source": "cell:", "multiple": true,

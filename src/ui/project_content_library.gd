@@ -475,7 +475,10 @@ func _build_field(form: VBoxContainer, fd: Dictionary, siblings: Array, values: 
 		if pair.call()[0] != map_key:
 			notice.text = "请先保存配对地图，再选择新的引用值。"
 			return false
-		return set_value.call(v)
+		set_value.call(v)
+		if siblings.any(func(other): return other is Dictionary and other.get("mapField") == fd.get("id")):
+			refresh.call_deferred()
+		return true
 	var options := func(d: Dictionary) -> Array:
 		return host._form.project_reference_options(d, context)
 	var frame_pick := func(row: Control, nested: Dictionary, nested_pair: Callable, save: Callable, read: Callable):

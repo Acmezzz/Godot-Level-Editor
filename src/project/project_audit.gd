@@ -1150,7 +1150,8 @@ static func _empty_reference_value(value: Variant) -> bool:
 		or (value is Dictionary and value.is_empty()) or (value is Array and value.is_empty())
 
 static func _spatial_fields(manifest: Dictionary, decls: Array, values: Variant, source: Dictionary,
-		map_name: String, overrides: Dictionary, coded: bool, prefix := "", depth := 0) -> Array:
+		map_name: String, overrides: Dictionary, coded: bool, prefix := "", depth := 0,
+		root_prop := "") -> Array:
 	var out: Array = []
 	if not values is Dictionary or depth > 8:
 		return out
@@ -1165,16 +1166,17 @@ static func _spatial_fields(manifest: Dictionary, decls: Array, values: Variant,
 		if _empty_reference_value(value):
 			continue
 		var path := prefix + id
+		var prop := id if root_prop == "" else root_prop
 		for scope in RefFields.nested_scopes(manifest, field, value):
 			var sub := "%s#%d." % [path, scope.path[0]]
 			if scope.path.size() == 2:
 				sub += "fields."
 			out.append_array(_spatial_fields(manifest, scope.decls, scope.values, source,
-				map_name, overrides, coded or scope.path.size() == 2, sub, depth + 1))
+				map_name, overrides, coded or scope.path.size() == 2, sub, depth + 1, prop))
 		var desc := RefFields.describe(field)
-		if desc.kind not in ["entity_inst", "port", "edge", "cell", "map"]:
+		if desc.kind not in ["entity_inst", "port", "edge", "cell", "map", "layer"]:
 			continue
-		var paired := RefFields.paired_map_value(field, decls, values)
+		var paired := RefFields.paired_map_value(field, decls, values, "code" if coded else "id")
 		var entries := _as_list(value) if desc.many or field.get("type") == "array" else [value]
 		for i in entries.size():
 			var entry = entries[i]
@@ -1183,7 +1185,7 @@ static func _spatial_fields(manifest: Dictionary, decls: Array, values: Variant,
 			var problem := _spatial_problem(manifest, desc.kind, source, map_name, entry, field, paired, overrides)
 			if not problem.is_empty() and str(problem.get("message", "")) != "":
 				out.append({"path": path + ("#%d" % i if value is Array else ""),
-					"prop": id, "message": problem.message, "fixable": bool(problem.get("fixable", false)),
+					"prop": prop, "message": problem.message, "fixable": bool(problem.get("fixable", false)),
 					"top_level": depth == 0 and not value is Array, "value": value})
 	return out
 
@@ -1191,9 +1193,9 @@ static func _spatial_problem(manifest: Dictionary, kind: String, source: Diction
 		value: Variant, field: Dictionary, paired: String, overrides: Dictionary) -> Dictionary:
 	var local_code := str(source.get("meta", {}).get("code", ""))
 	match kind:
-		"entity_inst":
+		"entity_inst", "layer":
 			if not value is String:
-				return {"message": "实例引用必须是实例码字符串", "fixable": false}
+				return {"message": ("图层引用必须是图层 ID 字符串" if kind == "layer" else "实例引用必须是实例码字符串"), "fixable": false}
 			var target := source
 			if not RefFields.map_key_local(paired, map_name, local_code):
 				if overrides.has(paired):
@@ -1203,10 +1205,16 @@ static func _spatial_problem(manifest: Dictionary, kind: String, source: Diction
 					target = MapStore.read(manifest, str(resolved.key)) if resolved.status == "ok" else {}
 			if target.is_empty():
 				return {}
+			var where := "目标图 %s" % paired if paired != "" else "本图"
+			if kind == "layer":
+				for layer in target.get("meta", {}).get("layers", []):
+					if layer is Dictionary and layer.get("id") == value:
+						return {}
+				# 保留 ID，作者可重新选择坐标空间；不要把原路径默认为别的空间。
+				return {"message": "%s不存在图层：%s" % [where, value], "fixable": false}
 			for row in target.get("objects", []):
 				if row is Dictionary and row.get("code", "") == value:
 					return {}
-			var where := "目标图 %s" % paired if paired != "" else "本图"
 			return {"message": "引用的实例码在%s不存在: %s" % [where, str(value)], "fixable": true}
 		"port":
 			if source.is_empty() and paired == "" and value is Dictionary \

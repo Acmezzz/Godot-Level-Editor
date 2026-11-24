@@ -5,6 +5,8 @@ extends RefCounted
 var host   # editor_layout 宿主
 var app    # 根应用（= host.app）
 const BasisFields := preload("res://src/ui/grid_basis_fields.gd")
+const Audit := preload("res://src/project/project_audit.gd")
+const LayerOps := preload("res://src/canvas/layer_ops.gd")
 const TILE_GRID_PRESETS := [
 	["沿用地图格", {}], ["独立正交", {"gridProjection": "orthogonal"}],
 	["独立等距", {"gridProjection": "isometric"}], ["独立六边", {"gridProjection": "hexagonal"}],
@@ -271,18 +273,42 @@ func _layer_mgr_row(i: int, decl: Dictionary) -> Control:
 	down.disabled = i >= app.canvas.layer_count() - 1
 	down.tooltip_text = "下移一层"
 	row.add_child(down)
-	var del = app.UiKitScript.button("删除", func():
-		var at := _idx_of_lid(lid)
-		var before: int = app.canvas.layer_count()
-		if at >= 0:
-			await app.canvas.layer_del(at)
-		if app.canvas.layer_count() == before:
-			app._set_status("至少保留一个图层")
-		_rebuild_layer_mgr()
-		app._sync_ui(), "ghost")
+	var del = app.UiKitScript.button("删除", func(): await _delete_layer(lid), "ghost")
 	del.tooltip_text = "删除该层及其瓦片、实体；绑定的格图空间会解绑并保留静态位置"
 	row.add_child(del)
 	return row
+
+func _delete_layer(lid: String) -> void:
+	if app.canvas.layer_count() <= 1:
+		app._set_status("至少保留一个图层")
+		return
+	var at := _idx_of_lid(lid)
+	if at < 0:
+		return
+	var editor = app.project_shell.content_editor
+	if not editor.commit_fields():
+		return
+	var before: Dictionary = app.canvas.extract()
+	var session = app._map_file_ctrl.sess
+	var generation: int = session.generation
+	var revision: int = session.revision
+	var impact := Audit.map_change_reference_impacts(app.manifest, app.cur_map_name, before,
+		LayerOps.without_layer(before, at), editor.staged_rows_current_doc())
+	if not impact.added.is_empty() or not impact.unreadable.is_empty():
+		var text := "删除图层会保留受影响的引用值。"
+		if not impact.added.is_empty():
+			text += "\n\n新增引用问题 %d 处：\n%s" % [impact.added.size(), "\n".join(impact.added.slice(0, 5))]
+		if not impact.unreadable.is_empty():
+			text += "\n\n另有 %d 个文件无法检查。" % impact.unreadable.size()
+		_layer_mgr.hide()
+		if not await app._confirm_action("删除图层", text, "删除图层"):
+			return
+		if session.stale(generation) or session.revision != revision:
+			app._set_status("地图已更改，请重新选择要删除的图层。")
+			return
+	await app.canvas.layer_del(at)
+	_rebuild_layer_mgr()
+	app._sync_ui()
 
 func _open_grid_conversion(lid: String, initial: Dictionary) -> void:
 	var cvs = app.canvas

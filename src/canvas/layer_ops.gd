@@ -214,14 +214,18 @@ func layer_del(i: int) -> void:
 		return
 	if layer_count() <= 1:
 		return
-	cvs.push_undo()
 	var snap := extract()
 	if snap.is_empty():
 		return
-	var active_id := layer_id(active_layer)
-	var lid := layer_id(i)
+	var next := without_layer(snap, i)
+	cvs.push_undo()
+	await _load_snap_layers(next, layer_id(active_layer))
+
+static func without_layer(snapshot: Dictionary, i: int) -> Dictionary:
+	var snap := snapshot.duplicate(true)
 	var meta: Dictionary = snap.get("meta", {})
 	var L: Array = meta.get("layers", [])
+	var lid: String = L[i].id
 	CellGraph.detach_layer(CellGraph.graph_of(meta), lid, MapViewData.layer_transform_of(L[i]))
 	L.remove_at(i)
 	meta["layers"] = L
@@ -234,7 +238,7 @@ func layer_del(i: int) -> void:
 		if o is Dictionary and str((o as Dictionary).get("layer", "")) != lid:
 			keep.append(o)
 	snap["objects"] = keep
-	await _load_snap_layers(snap, active_id)
+	return snap
 
 func layer_rename(i: int, name: String) -> void:
 	if map_root == null or not is_instance_valid(map_root):

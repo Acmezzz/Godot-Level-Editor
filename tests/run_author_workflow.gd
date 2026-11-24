@@ -156,6 +156,11 @@ func create_ending(app, library, id: String, message: String, map_context := "",
 				select_metadata(opt, next)
 	if layer != "":
 		for opt in collect(pop, "OptionButton"):
+			if opt.name != "ReferenceContextMap" and range(opt.item_count).any(func(i): return opt.get_item_metadata(i) == map_context):
+				select_metadata(opt, map_context)
+				break
+		await process_frame
+		for opt in collect(pop, "OptionButton"):
 			if range(opt.item_count).any(func(i): return opt.get_item_metadata(i) == layer):
 				select_metadata(opt, layer)
 				break
@@ -388,9 +393,10 @@ func run():
 				{"id":"goal_group", "code":"GGRP", "kind":"choice", "source":"entity_inst:door", "multiple":true},
 				{"id":"goal_route", "code":"GROT", "kind":"input", "type":"array", "of":"choice", "source":"entity_inst:door"},
 				{"id":"camera_path", "code":"CPTH", "kind":"input", "type":"array", "of":"vector2", "pickSpace":"map"},
-				{"id":"path_layer", "code":"PLID", "kind":"choice", "source":"layer:"},
+				{"id":"path_map", "code":"PMAP", "kind":"choice", "source":"map"},
+				{"id":"path_layer", "code":"PLID", "kind":"choice", "source":"layer:", "mapField":"path_map"},
 				{"id":"layer_path", "code":"LPTH", "kind":"input", "type":"array", "of":"vector2",
-					"pickSpace":"layer", "layerField":"path_layer"},
+					"pickSpace":"layer", "layerField":"path_layer", "mapField":"path_map"},
 				{"id":"next", "code":"HOP1", "kind":"choice", "source":"content:ending",
 					"contentMapContext":"inherit"},
 				{"id":"retry_chart", "code":"AGAN", "name":"Retry chart", "kind":"choice",
@@ -3082,7 +3088,7 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 	await create_ending(app, editor._library, "layer-path", "Layer path", str(map.meta.code), "", "", upper)
 	var layer_fields: Dictionary = Store.read(manifest, "ending", "project-layer-path").get("fields", {})
 	var layer_path: Array = layer_fields.get("LPTH", [])
-	check(layer_fields.get("PLID") == upper and layer_path.size() == 2
+	check(layer_fields.get("PMAP") == map.meta.code and layer_fields.get("PLID") == upper and layer_path.size() == 2
 		and Vector2(layer_path[0][0], layer_path[0][1]).distance_to(Vector2(48.0 + 32.0 / 7.0, 32.0 + 64.0 / 7.0)) < 0.02
 		and Vector2(layer_path[1][0], layer_path[1][1]).distance_to(Vector2(48.0 + 32.0 / 3.0, 32.0 + 32.0 / 3.0)) < 0.02,
 		"the saved path contains both perspective-correct local positions in click order")
@@ -3115,6 +3121,20 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 		and result.get("arrivalVertex") == [20.0, 20.0]
 		and result.get("contours", []).size() == 1 and result.contours[0].props == compound,
 		"game reloads both view positions and the projected polygon, and opens the selected door: " + str(report))
+	var before_delete: Dictionary = cvs.extract()
+	var upper_index: int = cvs._layer_index_of(upper)
+	var after_delete: Dictionary = cvs._layer_ops_ctrl.without_layer(before_delete, upper_index)
+	var impact := Audit.map_change_reference_impacts(manifest, "frame_pick", before_delete, after_delete)
+	check(impact.added.any(func(message): return message.contains("PICK).motion_layer"))
+		and impact.added.any(func(message): return message.contains("project-layer-path.path_layer")),
+		"deleting a layer previews affected instance and shared content paths: " + str(impact.added))
+	await cvs.layer_del(upper_index)
+	var problems := Audit._ref_checks(cvs.extract(), manifest, "frame_pick")
+	check(problems.any(func(issue): return issue.jump.get("code") == "PICK" and issue.jump.get("prop") == "motion_layer")
+		and cvs._ent_by_code_index()["PICK"].props.motion_layer == upper,
+		"a missing layer is locatable and preserves the original reference")
+	check(await cvs.undo() and not Audit._ref_checks(cvs.extract(), manifest, "frame_pick").any(
+		func(issue): return issue.jump.get("prop") == "motion_layer"), "undo restores the referenced layer")
 
 func _frame_contour_points(cvs: EditorCanvas, code: String) -> Array:
 	return _frame_contour_props(cvs, code).get("points", [])

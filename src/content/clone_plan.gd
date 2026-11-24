@@ -238,7 +238,8 @@ static func build(src: Dictionary, dst: Dictionary, codes: PackedStringArray = P
 		cross_code = _source_key(sdata, src_map)   # 同图粘贴 = ""，组外引用原样保留
 	# R10：源图身份键——配对地图字段的现值与它不符的引用指向第三张图，原样保留。
 	var source_key := _source_key(sdata, src_map)
-	var spatial_refs := {"cells": src.get("cell_ids", {}), "edge": src.get("map_edge", Callable())}
+	var spatial_refs := {"cells": src.get("cell_ids", {}), "edge": src.get("map_edge", Callable()),
+		"whole_map": self_copy}
 	var out_objects: Array = []
 	for r5 in selected:
 		out_objects.append(remap_row(r5 as Dictionary, instance_map, content_map, m,
@@ -380,7 +381,7 @@ static func _remap_field_map(manifest: Dictionary, values, decls: Array, instanc
 			continue
 		var kind := str(desc.get("kind", ""))
 		var cell := kind == "cell" and not cell_ids.is_empty()
-		if kind != "entity_inst" and kind != "content" and not cell:
+		if kind not in ["entity_inst", "content", "layer"] and not cell:
 			continue
 		var key := str(f.get("code", ""))
 		if key == "":
@@ -399,6 +400,10 @@ static func _remap_field_map(manifest: Dictionary, values, decls: Array, instanc
 			if pv != "" and pv != source_key and pv != source_name:
 				continue
 		var v = vals[key]
+		if kind == "layer":
+			_keep_layer_scope(v, owner, str(f.get("id", "")), _key_of(decls, pair),
+				pairs_to_fill, conflicts, cross_code, _target_key(target_data, target_map), spatial_refs)
+			continue
 		var touched := _touches(v, id_map)
 		if cell and cross_code != "" and touched and not _all_in(v, id_map):
 			conflicts.append(_split_cell_ref(owner, key))
@@ -512,7 +517,7 @@ static func _remap_entity_ref_fields(vals: Dictionary, fdecls: Array, owner: Str
 		var fid := str(f.get("id", ""))
 		var kind: String = RefFields.describe(f).kind
 		var cell := not cell_ids.is_empty() and kind == "cell"
-		if kind != "entity_inst" and not cell:
+		if kind not in ["entity_inst", "layer"] and not cell:
 			continue
 		var vv = vals.get(fid, null)
 		if _is_empty_value(vv):
@@ -523,6 +528,10 @@ static func _remap_entity_ref_fields(vals: Dictionary, fdecls: Array, owner: Str
 			var pv := str(vals.get(pair, ""))
 			if pv != "" and pv != source_key and pv != source_name:
 				continue
+		if kind == "layer":
+			_keep_layer_scope(vv, owner, fid, pair, pairs_to_fill, conflicts,
+				cross_code, _target_key(target_data, target_map), spatial_refs)
+			continue
 		var id_map: Dictionary = cell_ids if cell else instance_map
 		if _touches(vv, id_map):
 			if cross_code != "" and not _all_in(vv, id_map):
@@ -557,6 +566,26 @@ static func _remap_entity_ref_fields(vals: Dictionary, fdecls: Array, owner: Str
 	for k in pairs_to_fill:
 		vals[k] = pairs_to_fill[k]
 
+## 局部复制不移动坐标空间；整图副本带着原层 ID 和变换。
+static func _keep_layer_scope(value: Variant, owner: String, field: String, pair: String,
+		pairs: Dictionary, conflicts: Variant, source: String, target: String, spatial_refs: Dictionary) -> void:
+	if _is_empty_value(value):
+		return
+	var map_key := target if spatial_refs.get("whole_map", false) else source
+	if map_key == "":
+		return
+	if pair == "":
+		if source != "" and conflicts is Array:
+			conflicts.append({"kind": "ref_unpaired", "id": owner,
+				"message": "%s 的图层字段 %s 属于源图 %s；跨图复制需要为该字段声明配对地图。" % [owner, field, source]})
+		return
+	if pairs.has(pair) and pairs[pair] != map_key:
+		if conflicts is Array:
+			conflicts.append({"kind": "ref_pair_conflict", "id": owner,
+				"message": "%s 的图层字段 %s 与其他引用需要不同的配对地图：%s" % [owner, field, pair]})
+		return
+	pairs[pair] = map_key
+
 static func _split_cell_ref(owner: String, field: String) -> Dictionary:
 	return {"kind": "ref_pair_partial", "id": owner,
 		"message": "%s 的格图字段 %s 同时引用框内和框外的格，跨图时请拆分选择。" % [owner, field]}
@@ -580,7 +609,7 @@ static func _remap_object_refs(vals: Dictionary, decls: Array, instance_map: Dic
 		var value = vals.get(key)
 		if not value is Dictionary or value.is_empty():
 			continue
-		var map_key := RefFields.object_map_key(value, RefFields.paired_map_value(field, decls, vals))
+		var map_key := RefFields.object_map_key(value, RefFields.paired_map_value(field, decls, vals, "code" if coded else "id"))
 		if not RefFields.map_key_local(map_key, source_name, source_key):
 			# 固化隐式跨图归属，防随兄弟字段改指向。
 			if str(value.get("map", "")) == "":
