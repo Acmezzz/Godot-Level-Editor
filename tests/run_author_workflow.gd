@@ -1777,7 +1777,7 @@ func author_resize(app, manifest: Dictionary) -> void:
 	await app._load_map_file(target_path)
 	app._set_mode("map")
 	for accept in [false, true]:
-		app._open_size_dialog()
+		app._layout_ctrl._on_map_menu_id(5)
 		var popups := collect(app, "PopupPanel").filter(func(p): return p.visible)
 		var popup: PopupPanel = popups.back()
 		for spin in collect(popup, "SpinBox"):
