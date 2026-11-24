@@ -7,6 +7,8 @@ var verify := false
 var entry := {}
 var entry_source := "manifest"
 var rules := {}
+var scoring := {}
+var multiplier := 1
 var hand := VBoxContainer.new()
 var settlements: Array[Dictionary] = []
 var dealt: Array[String] = []
@@ -26,6 +28,9 @@ func run() -> void:
 	project_manifest = JSON.parse_string(FileAccess.get_file_as_string("res://editor/editor_manifest.json"))
 	if entry.is_empty():
 		entry = project_manifest.get("startup", {}).get("target", {})
+	scoring = project_manifest.get("projectContentSlots", {}).get("scoring", {}).get("target", {})
+	if not scoring.is_empty():
+		multiplier = int(fields(scoring.function, scoring.content).MULT)
 	rules = fields(entry.get("function", ""), entry.get("content", ""))
 	if rules.is_empty() or rules.get("DECK", []).is_empty():
 		finish("No authored encounter or deck")
@@ -71,7 +76,7 @@ func deal() -> void:
 		var count := int(copies.get(id, 1))
 		var button := Button.new()
 		button.text = "%s × %s (+%s each)" % [card.CAPT, count, card.POWR]
-		button.pressed.connect(resolve.bind(id, count * int(card.POWR)))
+		button.pressed.connect(resolve.bind(id, count * int(card.POWR) * multiplier))
 		hand.add_child(button)
 
 func resolve(cid: String, score: int) -> void:
@@ -95,7 +100,8 @@ func finish(error: String) -> void:
 	if not request.is_empty():
 		var report := {"version": 1, "token": request.token, "status": "ready" if error == "" else "error",
 			"message": error, "mapDigest": "", "manifestDigest": FileAccess.get_sha256("res://editor/editor_manifest.json"),
-			"result": {"entry": entry, "entrySource": entry_source, "settlements": settlements, "dealt": dealt}}
+			"result": {"entry": entry, "entrySource": entry_source, "scoring": scoring,
+				"settlements": settlements, "dealt": dealt}}
 		var file := FileAccess.open(request.path + ".tmp", FileAccess.WRITE)
 		file.store_string(JSON.stringify(report))
 		file.close()

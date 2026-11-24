@@ -1,8 +1,7 @@
 extends RefCounted
 
 const Flow := preload("res://src/map/map_flow.gd")
-const Targets := preload("res://src/project/startup_targets.gd")
-const Widgets := preload("res://src/ui/field_widgets.gd")
+const SlotField := preload("res://src/ui/destination_slot_field.gd")
 const Kit := preload("res://src/ui/ui_kit.gd")
 
 static func available(app) -> bool:
@@ -63,19 +62,16 @@ static func _build_section(rows: VBoxContainer, scroll: ScrollContainer, manifes
 		if not declarations.has(id):
 			declarations[id] = {"name": id + "（声明已移除）"}
 	for id in declarations:
-		var decl: Dictionary = declarations[id].merged({"kind": "input", "type": "flow_target"}, true)
-		var options := func(_decl: Dictionary) -> Array:
-			return Targets.destination_options(manifest, decl).map(func(row):
-				return {"v": JSON.stringify(row.target), "t": row.name})
+		var decl: Dictionary = declarations[id]
 		var set_value := func(target: Dictionary) -> bool:
 			if target.is_empty():
 				values.erase(id)
 			else:
 				values[id] = target
 			return true
-		var built := Widgets.build(decl, values.get(id, {}), set_value, options)
-		built.ctl.name = ("MapFlow_" if is_outlet else "MapContent_") + id.validate_node_name()
-		var row := Kit.field_row(decl.get("name", id), built.ctl)
+		var control := SlotField.build(manifest, decl, values.get(id, {}), set_value)
+		control.name = ("MapFlow_" if is_outlet else "MapContent_") + id.validate_node_name()
+		var row := Kit.field_row(decl.get("name", id), control)
 		rows.add_child(row)
 		if id == focus:
 			Kit.highlight_field_row(row)

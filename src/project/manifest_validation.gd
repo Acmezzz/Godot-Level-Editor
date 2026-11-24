@@ -17,6 +17,7 @@ const GamePreview := preload("res://src/project/game_preview.gd")
 const WorldLayout := preload("res://src/project/world_layout.gd")
 const MapGenerators := preload("res://src/project/map_generators.gd")
 const MapFlow := preload("res://src/map/map_flow.gd")
+const ProjectSlots := preload("res://src/project/project_content_slots.gd")
 
 ## input 字段类型白名单（与 field_widgets 一一对应）：新增类型必须同时有控件分支。
 const Keyframes := preload("res://src/content/keyframe_curve.gd")
@@ -53,6 +54,7 @@ static func validate(data: Dictionary, project_dir := "") -> Array[Dictionary]:
 	issues.append_array(WorldLayout.issues(data))
 	issues.append_array(MapGenerators.issues(data))
 	issues.append_array(MapFlow.declaration_issues(data))
+	issues.append_array(ProjectSlots.declaration_issues(data))
 	# tileSize：正整数像素（正方形格）或 [w,h] 两正整数（矩形格，B1：拒绝零/负/非整数）
 	var tile_size = data.get("tileSize", 16)
 	if tile_size is Array:

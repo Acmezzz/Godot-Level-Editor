@@ -1674,6 +1674,9 @@ func _delete_blocked_reason(fn_id: String, cid: String) -> String:
 			"；".join(PackedStringArray((ref.get("unreadable_sources", []) as Array).map(
 				func(x) -> String: return str(x))))
 	var edges: Dictionary = ref.get("edges", {})
+	var project_slots: Array = edges.get("project_slots", [])
+	if not project_slots.is_empty():
+		return " 删除中止：项目规则「%s」仍引用它。请先更换或清除该规则。" % project_slots[0].name
 	var by_map: Dictionary = edges.get("instances", {})
 	if not by_map.is_empty():
 		var lines: Array[String] = []

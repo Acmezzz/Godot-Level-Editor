@@ -25,7 +25,10 @@ func run() -> void:
 	var declarations := {
 		"projectName": "Market Hand",
 		"startup": {"contentTypes": ["encounter"]},
+		"projectContentSlots": {"scoring": {"name": "Scoring", "contentTypes": ["score_rules"]}},
 		"functions": {
+			"score_rules": {"name": "Score rules", "code": "SCRL", "fields": [
+				{"id": "multiplier", "code": "MULT", "kind": "input", "type": "int", "min": 1}]},
 			"card": {"name": "Card", "code": "CARD", "fields": [
 				{"id": "caption", "code": "CAPT", "kind": "input", "type": "string"},
 				{"id": "power", "code": "POWR", "kind": "input", "type": "int", "min": 0}]},
@@ -61,8 +64,19 @@ func run() -> void:
 		var pop := await new_content("settlement", result[0])
 		field(pop, "text").text = result[1]
 		save(pop)
+	var scoring := await new_content("score_rules", "double")
+	field(scoring, "multiplier").value = 2
+	save(scoring)
+	var rule_target := {"function": "score_rules", "content": "project-double"}
+	press(app.project_shell, "项目规则…")
+	var global_rules := visible_popup()
+	var scorer: OptionButton = global_rules.find_child("ProjectContent_scoring", true, false)
+	check(scorer.item_count == 2, "the scoring slot offers only compatible published contents")
+	choose(scorer, JSON.stringify(rule_target))
+	press(global_rules, "保存项目规则")
+	check(not global_rules.visible, "project rule was published by the editor")
 	var encounter := await new_content("encounter", "harbor")
-	field(encounter, "target").value = 7
+	field(encounter, "target").value = 14
 	var deck: Control = field(encounter, "deck")
 	press(deck, "+ 添加")
 	press(deck, "+ 添加")
@@ -120,6 +134,13 @@ func run() -> void:
 	var form = app.project_shell.content_editor._form
 	check(form._delete_blocked_reason("encounter", "project-harbor").contains("正式启动入口"),
 		"deletion identifies the active startup target")
+	check(app.manifest.projectContentSlots.scoring.target == rule_target
+		and form._delete_blocked_reason("score_rules", "project-double").contains("项目规则"),
+		"the published project rule survives reloading and protects its referenced content")
+	var broken_slot: Dictionary = app.manifest.duplicate(true)
+	broken_slot.projectContentSlots.scoring.target.content = "missing-rule"
+	check(Audit.audit(broken_slot).any(func(issue): return issue.get("jump", {}) == {"type": "project_slot", "id": "scoring"}),
+		"project audit identifies the specific slot with missing rules")
 	press(app.project_shell, "试玩项目")
 	var controller = app._playtest_ctrl
 	var end := Time.get_ticks_msec() + 12000
@@ -130,11 +151,12 @@ func run() -> void:
 	check(report.get("status") == "ready", "independent game returned a matching receipt: %s" % [report])
 	check(report.get("result", {}).get("entrySource") == "manifest",
 		"ordinary startup loaded the authored target without a command-line content override")
+	check(report.get("result", {}).get("scoring") == rule_target, "the game reads the authored project scoring reference")
 	check(report.get("result", {}).get("dealt") == ["project-courier", "project-sentry", "project-courier"],
 		"the game deals in the same order and retains the repeated card")
 	check(report.get("result", {}).get("settlements", []) == [
-		{"card": "project-courier", "score": 8.0, "outlet": "PASS", "target": "project-market-open", "text": "Market open"},
-		{"card": "project-sentry", "score": 6.0, "outlet": "FAIL", "target": "project-stand-down", "text": "Stand down"}],
+		{"card": "project-courier", "score": 16.0, "outlet": "PASS", "target": "project-market-open", "text": "Market open"},
+		{"card": "project-sentry", "score": 12.0, "outlet": "FAIL", "target": "project-stand-down", "text": "Stand down"}],
 		"both playable cards reach their authored settlement")
 	finish()
 

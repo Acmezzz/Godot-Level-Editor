@@ -10,6 +10,8 @@ extends VBoxContainer
 ## 各视图只负责自己的内容区（原来是各自带顶栏的全屏界面，顶栏已收进本壳）。
 
 const StartupDialog := preload("res://src/ui/startup_dialog.gd")
+const ProjectSlots := preload("res://src/project/project_content_slots.gd")
+const ProjectSlotsDialog := preload("res://src/ui/project_content_slots_dialog.gd")
 const Kit := preload("res://src/ui/ui_kit.gd")
 const Th := preload("res://src/ui/ui_theme.gd")
 const AssetPanelScript := preload("res://src/ui/asset_panel.gd")
@@ -69,6 +71,8 @@ func _build_top_bar() -> PanelContainer:
 	bar.add_child(save)
 	if manifest.has("startup"):
 		bar.add_child(Kit.button("启动入口…", func(): StartupDialog.open(app), "ghost"))
+	if not ProjectSlots.declarations(manifest).is_empty():
+		bar.add_child(Kit.button("项目规则…", func(): ProjectSlotsDialog.open(app), "ghost"))
 	if bool(manifest.get("playtest", {}).get("projectEntry", false)):
 		bar.add_child(Kit.button("试玩项目", func():
 			app._playtest_ctrl.on_play(Vector2i(-1, -1), true), "ghost"))

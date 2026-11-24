@@ -15,6 +15,7 @@ extends RefCounted
 ## 破坏性操作（如清空悬空）必须走 inbound_content / read_all_fresh，不吃旧缓存。
 
 const StartupTargets := preload("res://src/project/startup_targets.gd")
+const ProjectSlots := preload("res://src/project/project_content_slots.gd")
 const FlowTarget := preload("res://src/content/flow_target.gd")
 const ManifestValidation := preload("res://src/project/manifest_validation.gd")
 const MapStore := preload("res://src/map/map_store.gd")
@@ -55,6 +56,13 @@ static func audit(manifest: Dictionary, meta_out: Dictionary = {}) -> Array:
 				"message": "正式启动入口不可读取：%s。请在「启动入口」重新选择。" % JSON.stringify(startup_target)}))
 	# 2. 地图校验（读盘全图）+ 顺带收集被实例引用的内容（孤立内容判定用）
 	var used_content := {}
+	for ref in ProjectSlots.references(manifest):
+		if StartupTargets.destination_available(manifest, ref.domains, ref.target):
+			used_content[_content_key(ref.target.function, ref.target.content)] = true
+		else:
+			out.append({"kind": "ref", "severity": "warning", "path": ref.path,
+				"message": "项目规则引用不可用：" + JSON.stringify(ref.target),
+				"jump": {"type": "project_slot", "id": ref.id}})
 	var content_contexts := {}
 	var binding_missing: Array = []
 	var maps_dir := str(manifest.get("_maps_dir", ""))

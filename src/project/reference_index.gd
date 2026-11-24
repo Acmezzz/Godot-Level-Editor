@@ -11,6 +11,7 @@ const MapStore := preload("res://src/map/map_store.gd")
 const ManifestScript := preload("res://src/project/manifest.gd")
 const ScreenLayout := preload("res://src/project/screen_layout.gd")
 const FlowTarget := preload("res://src/content/flow_target.gd")
+const ProjectSlots := preload("res://src/project/project_content_slots.gd")
 
 ## 地图键（码或图名）解析 → {status, key(图名), candidates}。
 ## 一码多图（R09 拒绝猜测，候选 = 冲突图名列表）；键同时是图名又是另一张图的码 = ambiguous
@@ -248,6 +249,7 @@ static func inbound_content(manifest: Dictionary, fn_id: String, cid: String,
 		unreadable.append("地图 %s 读不出来" % str(u))
 	for bc in (usage.get("bad_contents", []) as Array):
 		unreadable.append(str(bc))
+	var target := {"function": fn_id, "content": cid}
 	return {
 		"complete": unreadable.is_empty(),
 		"unreadable_sources": unreadable,
@@ -255,6 +257,7 @@ static func inbound_content(manifest: Dictionary, fn_id: String, cid: String,
 			"instances": usage.get("by_map", {}),
 			"contents": PA.content_inbound_refs(manifest, fn_id, cid),
 			"views": view_content_refs(manifest).filter(func(ref): return ref.fn == fn_id and ref.cid == cid),
+			"project_slots": ProjectSlots.references(manifest).filter(func(ref): return ref.target == target),
 			"drafts": PA.draft_inbound_refs(manifest, cid, fn_id),
 		},
 	}
