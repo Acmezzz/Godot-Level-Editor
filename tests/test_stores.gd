@@ -466,10 +466,8 @@ func test_legacy_draft_requires_marker() -> void:
 	DirAccess.make_dir_recursive_absolute(str(m._maps_dir))
 	var marked := str(m._maps_dir).path_join("a.autosave.json")
 	MapStore.write_json(marked, {"_autosave_of": "a", "version": 7})
-	eq(Recovery.legacy_draft_owner(m, marked), "a", "带标记的识别为草稿")
 	var plain := str(m._maps_dir).path_join("foo.autosave.json")
 	MapStore.write_json(plain, {"version": 7})
-	eq(Recovery.legacy_draft_owner(m, plain), "", "无标记的按普通地图处理")
 	# 列表口径同一规则：正式图名就叫 foo.autosave 时必须列得出来（否则永远打不开）
 	var names := MapStore.list_maps(m)
 	ok(names.has("foo.autosave"), "缺标记的 foo.autosave 列为正式图：%s" % str(names))

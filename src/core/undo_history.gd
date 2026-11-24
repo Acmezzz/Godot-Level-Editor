@@ -333,7 +333,7 @@ func _apply_row_to_node(n: EntityNode, row: Dictionary) -> void:
 	n.props = (row.get("props", {}) as Dictionary).duplicate(true) \
 		if row.get("props", null) is Dictionary else {}
 	n.functions = (row.get("functions", []) as Array).duplicate(true) \
-		if row.get("functions", null) is Array else []
+		if (n.is_entity() or n.decl.is_empty()) and row.get("functions") is Array else []
 	n.data_transform = (row.get("transform", {}) as Dictionary).duplicate(true) \
 		if row.get("transform", null) is Dictionary else {}
 	n.raw = row.duplicate(true)
@@ -589,13 +589,6 @@ func _collision_state(c: Vector2i):
 		"raw": (cm as Dictionary).get("raw", {}) as Dictionary}
 
 
-## 实例功能绑定：整段深拷贝写入 functions；实体缺省写空数组，让"清空绑定"也能落盘。
-## 场景实例没有功能语义，非空才写（不产冗余键）。
-func _functions_field(n: EntityNode) -> Dictionary:
-	if not n.is_entity() and n.functions.is_empty():
-		return {}
-	return {"functions": n.functions.duplicate(true)}
-
 ## 单个实例 → 磁盘行（objects[] 条目）。extract() 与实例差量记录共用同一份口径：
 ## 以 n.raw 为底保留游戏侧自定义键，只覆盖编辑器管辖的键。
 ## 实例差量里 before/after 都用它生成，撤销时按行原样重建节点，不碰整图。
@@ -635,7 +628,10 @@ func _object_row(n: EntityNode) -> Dictionary:
 	else:
 		row.erase("zPolicy")
 	row["props"] = clean
-	row.merge(_functions_field(n), true)
+	if n.is_entity() or (unknown_asset and not n.functions.is_empty()):
+		row["functions"] = n.functions.duplicate(true)
+	else:
+		row.erase("functions")
 	return row
 
 ## 行 → 活体节点（load_data 的 objects 装载与实例差量恢复共用）。
@@ -646,7 +642,7 @@ func _node_from_row(row: Dictionary) -> EntityNode:
 	n.props = (row.get("props", {}) as Dictionary).duplicate(true) \
 		if row.get("props", null) is Dictionary else {}
 	n.functions = (row.get("functions", []) as Array).duplicate(true) \
-		if row.get("functions", null) is Array else []
+		if (n.is_entity() or n.decl.is_empty()) and row.get("functions") is Array else []
 	n.data_transform = (row.get("transform", {}) as Dictionary).duplicate(true) \
 		if row.get("transform", null) is Dictionary else {}
 	n.raw = row.duplicate(true)

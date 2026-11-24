@@ -464,7 +464,7 @@ func _build_palette_column() -> PanelContainer:
 	# 只占最小高度，让下面的「自动生成碰撞…」紧贴提示文字，而不是被顶到栏底
 	gh.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	grid_hint.add_child(gh)
-	var collision_gen: Button = app.UiKitScript.button("自动生成碰撞…", func(): app._open_collision_gen(), "plain")
+	var collision_gen: Button = app.UiKitScript.button("自动生成碰撞…", func(): preload("res://src/ui/collision_dialog.gd").open(app), "plain")
 	collision_gen.tooltip_text = "按地形轮廓整层生成（全部/仅边缘，可替换或叠加）"
 	collision_gen.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	grid_hint.add_child(collision_gen)
@@ -475,8 +475,6 @@ func _build_palette_column() -> PanelContainer:
 	app._coll_shape_opt = shape_opt
 
 	# 左栏只管「给画布喂什么」（图层 + 调色板）；
-	# 碰撞生成 / 地图文件 / 状态控制器仍在这里建，供 app 的委托调用不变。
-	app._props_panel_ctrl = preload("res://src/ui/props_panel.gd").new(app)
 	app._map_file_ctrl = preload("res://src/ui/map_file.gd").new(app)
 	app._playtest_ctrl = preload("res://src/ui/playtest_controller.gd").new(app, app._map_file_ctrl)
 	app._editor_state_ctrl = preload("res://src/canvas/editor_state.gd").new(app)

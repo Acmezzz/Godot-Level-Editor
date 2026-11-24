@@ -279,7 +279,11 @@ static func _validate_objects(objects: Array, manifest: Dictionary, layer_ids: D
 		if zp != "" and not ["auto", "below", "above"].has(zp):
 			_add(issues, "error", path + ".zPolicy", "must be auto / below / above")
 		if o.has("functions"):
-			_validate_functions(o.get("functions"), path + ".functions", manifest, issues)
+			if known.get(aid, {}).get("kind") == "scene":
+				if o.functions != []:
+					_add(issues, "error", path + ".functions", "scene placements cannot carry function bindings")
+			else:
+				_validate_functions(o.functions, path + ".functions", manifest, issues)
 
 ## 实例 functions 数组结构校验——[{fn, content, name, order, parallel}]。
 ## 空 content = 还没绑定内容（内容编辑器里会按需生成），不是错误；未知码只警告，

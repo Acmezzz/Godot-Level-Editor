@@ -356,7 +356,6 @@ func _ask_discard(action: String) -> bool:
 		message += "\n\n此外还有未落盘：%s。" % "、".join(PackedStringArray(extra))
 	# 自动保存草稿存得进、捞不出——放弃修改时至少把草稿路径说出来，
 	# 否则用户以为这份保险不存在。草稿从「地图 ▾ → 恢复草稿…」也能载入（见 top_bar_nav）。
-	# A3 草稿已迁到 editor/drafts/<地图码>.json；旧 maps/<名>.autosave.json 只作兼容来源。
 	var code := str((app.canvas.map_data.get("meta", {}) as Dictionary).get("code", "")) \
 		if app.canvas != null and app.canvas.map_data.get("meta", null) is Dictionary else ""
 	var draft_path := Recovery.draft_path(app.manifest, code, app.cur_map_name)
@@ -724,26 +723,18 @@ func load_map_file(p: String, expected_digest := "") -> void:
 	var data: Dictionary = result.data
 	if not result.warnings.is_empty():
 		app._set_status(" 地图已打开但有兼容警告: " + _format_issues(result.warnings))
-	# 旧草稿归位（A3）：maps/<名>.autosave.json 只有在带 _autosave_of 时才算草稿来源；
-	# 缺标记的按普通地图处理（不擅自当成草稿，也不会静默丢文件）。
-	var was_draft := str(p.get_file()).ends_with(".autosave.json")
 	var base := p.get_file().get_basename()
-	if was_draft:
-		var owner := Recovery.legacy_draft_owner(app.manifest, p)
-		if owner != "":
-			base = owner if owner != base.trim_suffix(".autosave") else base.trim_suffix(".autosave")
-			p = EditorManifest.map_path(app.manifest, base)
-		else:
-			was_draft = false   # 无来源标记：就是一普通地图文件，名字保留 .autosave
-	# 正式保存剥离 _autosave_of：重开时按正式图识别
-	if data.has("_autosave_of"):
-		data.erase("_autosave_of")
 	# 只认项目 maps 目录内的正式文件（D03）：项目外/别处的同名图必须显式导入，
 	# 否则保存会按当前项目拼路径，悄悄覆盖另一个文件。
 	var canon := str(p).simplify_path()
 	var maps_root := str(app.manifest.get("_maps_dir", "")).simplify_path()
 	var outside := maps_root != "" and not canon.begins_with(maps_root.path_join(""))
-	if outside and not was_draft:
+	if data.has("_autosave_of"):
+		if not outside:
+			app._set_status("旧草稿请移出 maps 目录，再作为新地图导入。")
+			return
+		data.erase("_autosave_of")
+	if outside:
 		if not await app._confirm_action("导入外部地图",
 			"这张图不在当前项目的 maps 目录内：\n%s\n\n导入会把它复制为项目内的 %s.json。" % [canon, base],
 			"导入并打开"):
@@ -770,7 +761,7 @@ func load_map_file(p: String, expected_digest := "") -> void:
 	if _doc_stale(gen):
 		return   # 读取/确认期间又发起了更新的切图请求：本次不再改画布
 	var baseline := str(result.get("digest", ""))
-	if was_draft or outside:
+	if outside:
 		baseline = Recovery.digest(p)
 	app.canvas.set_thumbs(app._entity_thumbs())
 	await app.canvas.load_data(data, base)
@@ -784,7 +775,7 @@ func load_map_file(p: String, expected_digest := "") -> void:
 	app._set_map_loaded(true)
 	app.canvas._undo_history_ctrl.clear_history()
 	# 画布重建成功后才发布文档身份（A2）：外部导入/切项目期间路径已变，旧根不得残留。
-	# 基线取此刻磁盘上的这份文件（草稿归位的情况：正式文件才是要对比的外部状态）。
+	# 基线取此刻磁盘上的这份文件。
 	sess.set_identity(str(app.manifest.get("_dir", "")), app.canvas.cur_map_code(),
 		base, str(p), baseline, FileAccess.get_modified_time(p))
 	sess.contents = {}
@@ -793,8 +784,7 @@ func load_map_file(p: String, expected_digest := "") -> void:
 	for lid in (data.get("tiles", {}) as Dictionary):
 		tcount += ((data.get("tiles", {}) as Dictionary)[lid] as Array).size()
 	var objs: Array = data.get("objects", [])
-	app._set_status(" 已打开 %s%s（%d 瓦片 / %d 摆放物）" % [
-		base, "（草稿归位，保存写回正式文件）" if was_draft else "", tcount, objs.size()])
+	app._set_status(" 已打开 %s（%d 瓦片 / %d 摆放物）" % [base, tcount, objs.size()])
 
 func _format_issues(issues: Array) -> String:
 	var lines: Array[String] = []
@@ -1182,7 +1172,6 @@ func _save_now(data: Dictionary, guard: Callable) -> bool:
 
 ## 自动保存草稿（A3）：写到 <项目>/editor/drafts/<地图码>.json，记录目标路径、
 ## 正式图基线摘要、地图快照、待提交文件与预留 ID，供崩溃/退出后整份恢复。
-## 旧位置（maps/<名>.autosave.json）只在 _autosave_of 命中时作为来源兼容读取。
 func maybe_autosave() -> void:
 	if not app.map_loaded or not app.canvas.modified_flag or app.cur_map_name == "":
 		return

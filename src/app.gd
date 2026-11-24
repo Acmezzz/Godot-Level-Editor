@@ -45,7 +45,6 @@ var _coll_type_opt: OptionButton
 @warning_ignore("unused_private_class_variable")
 var _coll_shape_opt: OptionButton
 var status: Label
-var _props_panel_ctrl   # ui/props_panel.gd 控制器（只剩「从地形生成碰撞」弹窗）
 var _map_file_ctrl   # 地图文件生命周期
 var _playtest_ctrl  # 试玩启动与反馈
 var _editor_state_ctrl   # canvas/editor_state.gd 控制器（状态流）
@@ -259,7 +258,6 @@ func _clear_project_session() -> void:
 	# 否则切项目回选择页后 _process / 菜单委托仍会打到旧控制器上（见 6b0c5de）。
 	_playtest_ctrl = null
 	_map_file_ctrl = null
-	_props_panel_ctrl = null
 	_editor_state_ctrl = null
 	_layout_ctrl = null
 	_palette_ctrl = null
@@ -677,9 +675,6 @@ func _ent_by_id(id: String) -> EntityNode:
 	return null
 
 # —— 实体属性（面板已删，只剩碰撞生成弹窗与选中状态维护） ——
-func _open_collision_gen() -> void:
-	_props_panel_ctrl.open_collision_gen()
-
 func _on_entity_selected(n: EntityNode) -> void:
 	# 用户看到的是画布下沿那条极简信息条；参数编辑走内容编辑器与资产目录。
 	selected_spr = n

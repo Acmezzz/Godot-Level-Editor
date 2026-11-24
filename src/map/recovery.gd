@@ -5,7 +5,6 @@ extends RefCounted
 ##   editor/history/maps/<码>/    —— 正式保存前的原文件快照，字典序 = 时间序（深度 HISTORY_KEEP）。
 ##   editor/pending/pending-*.json —— 多文件提交日志：逐条记录「要写哪个文件 + 写前/写后摘要」，
 ##                                   下次启动据此判每一条 written/pending/manual。
-## 旧版 maps/<名>.autosave.json 仅在带 _autosave_of 时视为草稿来源（见 is_legacy_draft 语义）。
 ## 本模块只做路径解析与 JSON/字节读写，不解释业务；不 preload map_store（避免反向依赖成环）。
 ## 各入口会提交哪些文件由 docs/EDITOR_FEATURES.md §7.3「各入口提交哪些文件」唯一规定。
 
@@ -179,14 +178,6 @@ static func list_drafts(m: Dictionary) -> Array:
 			out.append(base)
 	out.sort()
 	return out
-
-## 旧式草稿（maps/<名>.autosave.json）只在 _autosave_of 命中时作为草稿来源；
-## 缺标记的同名文件按普通地图处理（A3）。返回 "" = 不是可归位的草稿。
-static func legacy_draft_owner(m: Dictionary, path: String) -> String:
-	var data := read_json(path)
-	if str(data.get("_autosave_of", "")) == "":
-		return ""
-	return str(data.get("_autosave_of"))
 
 # ──────────── 地图历史：editor/history/maps/<地图码>/ ────────────
 

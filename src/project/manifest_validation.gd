@@ -519,11 +519,14 @@ static func _validate_assets(data: Dictionary, project_dir: String, issues: Arra
 		if kind != "scene" and kind != "entity":
 			_add(issues, "error", path + ".kind", "must be \"scene\" or \"entity\"")
 			continue
-		_validate_ports(ad, path, issues)
-		_validate_port_sources(ad, path, issues)
 		if kind == "scene":
+			for key in ["code", "functions", "ports"]:
+				if ad.has(key):
+					_add(issues, "error", path + "." + key, "only entity assets can declare " + key)
 			_validate_scene_asset(ad, path, project_dir, issues)
 		else:
+			_validate_ports(ad, path, issues)
+			_validate_port_sources(ad, path, issues)
 			_validate_entity_asset(data, ad, path, codes, issues)
 
 static func _validate_scene_asset(ad: Dictionary, path: String, project_dir: String, issues: Array[Dictionary]) -> void:

@@ -1,16 +1,9 @@
 extends RefCounted
-## 「从地形生成碰撞」弹窗控制器。右栏检查器删除后，字段编辑走内容编辑器与资产目录，
-## 这里只剩这一个辅助功能。
+## 选择源瓦片层，将地形转为碰撞格。
 const UiKitScript := preload("res://src/ui/ui_kit.gd")
 const UiThemeScript := preload("res://src/ui/ui_theme.gd")
 
-var app   # 宿主引用
-
-func _init(host) -> void:
-	app = host
-
-# —— 自动生成碰撞面板（辅助功能；手动摆放仍是首选） ——
-func open_collision_gen() -> void:
+static func open(app) -> void:
 	if not app.map_loaded:
 		app._set_status("无地图：先新建或打开一张地图")
 		return
@@ -92,7 +85,7 @@ func open_collision_gen() -> void:
 	body.add_child(btn_row)
 	app._open_popup(pop)
 
-func _collision_strategy(idx: int) -> String:
+static func _collision_strategy(idx: int) -> String:
 	match idx:
 		1: return "top"
 		2: return "outline"
