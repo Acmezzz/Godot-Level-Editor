@@ -3,6 +3,7 @@ extends Control
 
 var manifest: Dictionary
 var manifest_bytes: PackedByteArray
+var map_bytes: PackedByteArray
 var report := {}
 var visited: Array[String] = []
 var screens: Array[String] = []
@@ -23,6 +24,10 @@ func _ready() -> void:
 	verify = args.has("--verify")
 	if args.has("--editor-playtest"):
 		report = _decode(args["--editor-playtest"])
+	if args.get("--map", "") != "":
+		map_bytes = FileAccess.get_file_as_bytes(args["--map"])
+		await _play_relay(JSON.parse_string(map_bytes.get_string_from_utf8()))
+		return
 	var entry := _decode(args["--editor-entry"]) if args.has("--editor-entry") else {"function": "signal", "content": "project-default"}
 	_show_content(entry)
 
@@ -117,27 +122,108 @@ func _preview(path: String) -> void:
 	surface.size = extent
 	surface.render_target_update_mode = SubViewport.UPDATE_ONCE
 	add_child(surface)
-	_draw_screen(surface, request.subject.layout, Vector2(extent), request.locale)
-	await RenderingServer.frame_post_draw
 	var dir := path.get_base_dir()
+	if request.capability == "mapFrame":
+		var map: Dictionary = request.subject.map
+		var camera := _relay_camera(Vector2(extent))
+		_draw_relay(surface, map, camera)
+		_write_json(dir.path_join("picks.json"), {"version": 1, "token": request.token,
+			"regions": _relay_regions(map.meta.layers[0], Vector2(extent), camera)})
+	else:
+		_draw_screen(surface, request.subject.layout, Vector2(extent), request.locale)
+	await RenderingServer.frame_post_draw
 	var ok := surface.get_texture().get_image().save_png(dir.path_join("frame.png")) == OK
 	_write_json(dir.path_join("result.json"), {"version": 1, "token": request.token,
 		"status": "ready" if ok else "error"})
 	get_tree().quit(0 if ok else 1)
 
-func _finish(error: String, text := "") -> void:
+func _relay_camera(extent: Vector2) -> Transform2D:
+	return Transform2D(Vector2(3, 0), Vector2(0, 3), Vector2(extent.x * 0.5, extent.y / 9.0))
+
+func _iso(cell: Vector2) -> Vector2:
+	return Vector2(cell.x - cell.y, cell.x + cell.y) * 8.0
+
+func _relay_layer(layer: Dictionary) -> Transform2D:
+	var offset: Array = layer.get("offset", [0, 0])
+	return Transform2D(0.0, Vector2.ONE * float(layer.get("scale", 1)), 0.0, Vector2(offset[0], offset[1]))
+
+func _relay_regions(layer: Dictionary, extent: Vector2, camera: Transform2D) -> Array:
+	var inverse := (_relay_view(camera, layer)).affine_inverse()
+	var regions := []
+	for triangle in [[Vector2.ZERO, Vector2(extent.x, 0), extent],
+			[Vector2.ZERO, extent, Vector2(0, extent.y)]]:
+		var screen: Array = triangle.map(func(p: Vector2): return [p.x, p.y])
+		var local: Array = triangle.map(func(p: Vector2):
+			var q := inverse * p
+			return [q.x, q.y])
+		regions.append({"screen": screen, "placement": {"layer": layer.id, "local": local}})
+	return regions
+
+func _relay_view(camera: Transform2D, layer: Dictionary) -> Transform2D:
+	return camera * _relay_layer(layer)
+
+func _draw_relay(parent: Node, map: Dictionary, camera: Transform2D) -> Dictionary:
+	var xform := _relay_view(camera, map.meta.layers[0])
+	for y in int(map.meta.h):
+		for x in int(map.meta.w):
+			var diamond := Polygon2D.new()
+			var cell := Vector2(x, y)
+			var points := PackedVector2Array()
+			for corner in [Vector2.ZERO, Vector2.RIGHT, Vector2.ONE, Vector2.DOWN]:
+				points.append(xform * _iso(cell + corner))
+			diamond.polygon = points
+			diamond.color = Color("#19434e") if (x + y) % 2 == 0 else Color("#245464")
+			parent.add_child(diamond)
+	var pawns := {}
+	for row: Dictionary in map.objects:
+		var pawn := Polygon2D.new()
+		pawn.polygon = PackedVector2Array([Vector2(-7, 0), Vector2(0, -9), Vector2(7, 0), Vector2(0, 6)])
+		pawn.color = Color("#ffbe54") if row.asset == "relay" else Color("#67e8bb")
+		pawn.position = xform * _iso(Vector2(row.x, row.y) + Vector2(0.5, 0.5))
+		parent.add_child(pawn)
+		pawns[row.code] = pawn
+	return pawns
+
+func _play_relay(map: Dictionary) -> void:
+	var relay: Dictionary = map.objects.filter(func(row): return row.asset == "relay")[0]
+	var exit: Dictionary = map.objects.filter(func(row): return row.asset == "relay-exit")[0]
+	var layer: Dictionary = map.meta.layers[0]
+	var camera := _relay_camera(size)
+	var pawns := _draw_relay(self, map, camera)
+	var pawn: Node2D = pawns[relay.code]
+	var gate: Node2D = pawns[exit.code]
+	var points := []
+	for pair in relay.props.route:
+		var world := _relay_layer(layer) * Vector2(pair[0], pair[1])
+		await create_tween().tween_property(pawn, "position", camera * world, 0.12).finished
+		var reached := camera.affine_inverse() * pawn.position
+		points.append([reached.x, reached.y])
+	if not pawn.position.is_equal_approx(gate.position):
+		_finish("The relay did not reach the placed exit.")
+		return
+	_finish("", "Relay reached", {"route": points, "exit": exit.code})
+
+func _finish(error: String, text := "", extra := {}) -> void:
 	if not report.is_empty():
 		var digest := HashingContext.new()
 		digest.start(HashingContext.HASH_SHA256)
 		digest.update(manifest_bytes)
 		var path: String = report.path
 		var result := {"version": 1, "token": report.token, "status": "ready" if error.is_empty() else "error",
-			"message": error, "mapDigest": "", "manifestDigest": digest.finish().hex_encode(),
-			"result": {"visited": visited, "screens": screens, "buttons": opened_buttons, "text": text}}
+			"message": error, "mapDigest": _map_digest(), "manifestDigest": digest.finish().hex_encode(),
+			"result": {"visited": visited, "screens": screens, "buttons": opened_buttons, "text": text}.merged(extra)}
 		_write_json(path + ".tmp", result)
 		DirAccess.rename_absolute(path + ".tmp", path)
 	if verify or not error.is_empty():
 		get_tree().quit(0 if error.is_empty() else 1)
+
+func _map_digest() -> String:
+	if map_bytes.is_empty():
+		return ""
+	var digest := HashingContext.new()
+	digest.start(HashingContext.HASH_SHA256)
+	digest.update(map_bytes)
+	return digest.finish().hex_encode()
 
 func _write_json(path: String, value: Dictionary) -> void:
 	var file := FileAccess.open(path, FileAccess.WRITE)

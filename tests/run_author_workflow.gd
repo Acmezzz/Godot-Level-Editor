@@ -2432,13 +2432,13 @@ func _check_world_move_restore(ok: bool, actual: Dictionary, expected: Dictionar
 			diffs.append("%s: %s vs %s" % [key, a, b])
 	check(ok and actual.size() == expected.size() and diffs.is_empty(),
 		"one %s restores the entire cross-layer move: %s" % [op, "; ".join(diffs)])
-func _render_pick_frame(app, label := "") -> PopupPanel:
+func _render_pick_frame(app, label := "", preset := "portrait") -> PopupPanel:
 	var popups := collect(app, "PopupPanel").filter(func(p): return p.visible and p.find_child("MapGamePreviewRender", true, false) != null)
 	if popups.is_empty():
 		check(false, "open the game frame picker " + label)
 		return null
 	var pop: PopupPanel = popups.back()
-	select_metadata(pop.find_child("MapGamePreviewViewport", true, false), "portrait")
+	select_metadata(pop.find_child("MapGamePreviewViewport", true, false), preset)
 	var render: Button = pop.find_child("MapGamePreviewRender", true, false)
 	render.pressed.emit()
 	return await _wait_for_pick_frame(pop)
@@ -2455,7 +2455,7 @@ func _wait_for_pick_frame(pop: PopupPanel) -> PopupPanel:
 
 func _click_pick_frame(pop: PopupPanel, at: Vector2, button := MOUSE_BUTTON_LEFT, modifier := KEY_NONE) -> Button:
 	var frame: TextureRect = pop.find_child("MapGamePreviewFrame", true, false)
-	var extent := Vector2(720, 1280)
+	var extent := frame.texture.get_size()
 	var fitted := extent * minf(frame.size.x / extent.x, frame.size.y / extent.y)
 	var mouse := InputEventMouseButton.new()
 	mouse.button_index = button
@@ -3322,12 +3322,18 @@ func author_signal_room(app, project: String) -> void:
 	var launch := ["--path", "%projectpath%", "--audio-driver", "Dummy", "--"]
 	var manifest := {"_dir": project, "_maps_dir": project.path_join("maps"), "projectName": "Signal Room",
 		"viewports": [{"id": "handheld", "w": 480, "h": 720}],
+		"assets": [
+			{"id": "relay", "kind": "entity", "code": "RLY1", "fields": [
+				{"id": "route_layer", "kind": "choice", "source": "layer:"},
+				{"id": "route", "kind": "input", "type": "array", "of": "vector2",
+					"pickSpace": "layer", "layerField": "route_layer"}]},
+			{"id": "relay-exit", "kind": "entity", "code": "RXIT"}],
 		"functions": {"signal": {"code": "SIGN", "name": "Signal", "fields": [
 			{"id": "screen", "code": "PANE", "kind": "choice", "source": "view:"},
 			{"id": "text", "code": "TEXT", "kind": "input", "type": "string"}]}},
 		"preview": {"version": 1, "executable": OS.get_executable_path(), "args": launch,
-			"capabilities": ["screenLayout"]},
-		"playtest": {"executable": OS.get_executable_path(), "args": launch + ["--verify"],
+			"capabilities": ["screenLayout", "mapFrame"]},
+		"playtest": {"executable": OS.get_executable_path(), "args": launch + ["--verify", "--map=%mapfile%"],
 			"report": true, "projectEntry": true, "entryFunctions": ["signal"]}}
 	var path := project.path_join("editor/editor_manifest.json")
 	check(Maps.write_json(path, manifest), "write only the second game's module and viewport declarations")
@@ -3488,6 +3494,76 @@ func author_signal_room(app, project: String) -> void:
 		and result.get("buttons") == ["Tune the relay", "Confirm the signal"]
 		and result.get("text") == "Signal verified",
 		"the second game follows both authored buttons from the selected start content: " + str(report))
+	await _author_relay_map(app, manifest)
+
+func _author_relay_map(app, manifest: Dictionary) -> void:
+	app._set_mode("map")
+	app._on_new()
+	var popup := _visible_popup(app)
+	popup.find_child("NewMapName", true, false).text = "relay_deck"
+	select_metadata(popup.find_child("NewMapProjection", true, false), "isometric")
+	press(popup, "确定")
+	for i in 12:
+		await process_frame
+		if app.cur_map_name == "relay_deck" and app.map_loaded:
+			break
+	if app.cur_map_name != "relay_deck" or not app.map_loaded:
+		check(false, "create an isometric map in the second game")
+		return
+	var canvas: EditorCanvas = app.canvas
+	await canvas.layer_set_param(0, "offset", Vector2(12, 4))
+	await canvas.layer_set_param(0, "scale", 1.5)
+	var layer := canvas.layer_id(0)
+	var gate: EntityNode = canvas._tool_ops_ctrl.place_object("relay-exit", 0, Vector2(32, 48), true)
+	var relay: EntityNode = canvas._tool_ops_ctrl.place_object("relay", 0, Vector2(0, 16), true)
+	var gate_code := gate.code
+	var relay_code := relay.code
+	app._set_mode("content", relay_code)
+	var editor = app.project_shell.content_editor
+	select_metadata(editor.root.find_child("InstanceValue_route_layer", true, false), layer)
+	await process_frame
+	var picker: Button = editor.root.find_child("FrameFieldReference_route", true, false)
+	if picker == null:
+		check(false, "the second game exposes its authored layer-local relay route")
+		return
+	picker.pressed.emit()
+	var frame := await _render_pick_frame(app, "isometric relay", "handheld")
+	if frame == null:
+		return
+	var shot: TextureRect = frame.find_child("MapGamePreviewFrame", true, false)
+	var image := shot.texture.get_image()
+	check(image.get_pixel(420, 308).is_equal_approx(Color("#67e8bb")),
+		"the second renderer's exit appears at the expected projected pixel")
+	var confirm := _click_pick_frame(frame, Vector2(276, 164) / Vector2(480, 720))
+	_click_pick_frame(frame, Vector2(348, 236) / Vector2(480, 720))
+	_click_pick_frame(frame, Vector2(420, 308) / Vector2(480, 720))
+	check(not confirm.disabled and not relay.props.has("route"), "relay points stay in the frame draft")
+	confirm.pressed.emit()
+	await process_frame
+	await process_frame
+	app._set_mode("map")
+	var saved: Dictionary = await app._map_file_ctrl.commit_document("保存等距接力路线")
+	if saved.get("status") != "ok":
+		check(false, "save the second game's route: " + str(saved))
+		return
+	await app._load_map_file(Maps.path_for(manifest, "relay_deck"))
+	var reopened: EntityNode = canvas._ent_by_code_index()[relay_code]
+	check(canvas.extract().meta.gridProjection == "isometric" and reopened.props.get("route_layer") == layer
+		and _route_matches(reopened.props.get("route", []), [Vector2(0, 16), Vector2(16, 32), Vector2(32, 48)]),
+		"the saved second project retains its isometric projection, layer and three local waypoints")
+	var report := await launch_and_read(app, false)
+	var result: Dictionary = report.get("result", {})
+	check(report.get("status") == "ready" and result.get("exit") == gate_code
+		and _route_matches(result.get("route", []), [Vector2(12, 28), Vector2(36, 52), Vector2(60, 76)]),
+		"the second game moves through all authored world waypoints and reaches the placed exit: " + str(report))
+
+func _route_matches(rows: Array, expected: Array) -> bool:
+	if rows.size() != expected.size():
+		return false
+	for i in rows.size():
+		if Vector2(rows[i][0], rows[i][1]).distance_to(expected[i]) > 0.01:
+			return false
+	return true
 
 func _visible_popup(app) -> PopupPanel:
 	return collect(app, "PopupPanel").filter(func(p): return p.visible).back()

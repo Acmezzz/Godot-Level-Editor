@@ -683,7 +683,7 @@ Shift + 左键选已有顶点，再点同层位置，可在所选顶点之后插
 | 对象 | 内存里是什么 | 什么时候落盘 |
 |---|---|---|
 | **已落盘**内容的字段 | 直接改文件内容的工作副本 | 控件**失焦 / 回车 / `commit()`** 时即时写该内容文件（不每击键）。写前比对磁盘摘要，外部改过就拒写并提示 |
-| **尚未创建**的内容（新绑定第一次改字段） | 暂存行 `_staged[内容ID]` | `Ctrl+S` / 试玩前的统一提交（`flush_staged`）；暂存行只改内存，连撤销栈都不进。绑定被撤销后该行作废，不留孤儿文件 |
+| **尚未创建**的内容（新绑定第一次改字段） | 以 `(功能 ID, 内容 ID)` 寻址的暂存行 | `Ctrl+S` / 试玩前统一提交，按计划逐个写入仍被当前地图引用的暂存内容；暂存行不进画布撤销栈。绑定被撤销后，提交时会丢弃失去绑定的条目 |
 | 演出步骤（`steps`） | 与普通字段同一份内容数据 | 同上（同一次写） |
 | 实例绑定（`functions[]`、`props` 引用值） | 地图内存态 | `Ctrl+S` / 试玩前的统一提交；改绑定本身进画布撤销栈 |
 | 清单（码补发、挂载、资产改名） | 清单内存态 | 保存清单时（含统一提交） |
@@ -700,11 +700,11 @@ Shift + 左键选已有顶点，再点同层位置，可在所选顶点之后插
 |---|---|---|---|
 | 内容视图 Ctrl+S、顶栏「保存」 | ① 清单（仅当有待补发码）② 暂存内容每条一文件 ③ 当前地图（仅当画布脏） | `editor/pending/` 日志；地图写入前快照 | `project_shell.gd::save_current` → `map_file.gd::commit_document` → `document_commit.gd::prepare/apply` |
 | 地图菜单「保存」/ Ctrl+S（内容视图同一条） | 同上；无补码、无暂存、图不脏时退化为「无待写改动」 | 同上 | `app.gd::_on_save` → `map_file.gd::save_all` |
-| 顶栏「保存」（资产视图） | 只写 `editor/editor_manifest.json` | 无 | `project_shell.gd::save_current` 的 `_` 分支 → `app.gd::_save_manifest_file_async` |
+| 顶栏「保存」（资产视图） | 写 `editor/editor_manifest.json`，成功后尝试更新 `editor/CODES.md`；对照表写入失败不回滚清单 | 无 | `project_shell.gd::save_current` 的 `_` 分支 → `app.gd::_save_manifest_file_async` |
 | 试玩 | 同上；提交后地图文件仍不存在则补一次正式保存 | 同上 | `map_file.gd::on_play` |
 | 清除悬空引用 | ① 当前图脏则先走整条提交 ② 逐张改动过的地图各写一次 | 第①步同提交日志；第②步每图写前轮转 | `issues_drawer.gd` → `project_audit.gd::apply_ref_fixes` |
 | 地图改名 | ① 新名文件写入 ② 旧名文件删除 | 两文件一条日志 | `map_store.gd::rename_map` |
-| 复制整图 | ① 新内容 N 份 ② 新地图 1 份 | N+1 文件一条日志 | `map_store.gd::duplicate_map` |
+| 复制整图 / 转换后另存 | 若清单仍有待发布的补码，先由编辑器发布清单，再提交① 新内容 N 份 ② 新地图 1 份 | 新内容与新地图共用一条冻结计划日志 | `map_file.gd::_publish_map_copy` → `map_store.gd::apply_duplicate` |
 | 内容字段失焦 / 回车 / `commit()` | 单个内容文件（覆盖前轮转） | `.history` 3 轮 | `content_store.gd::write_ex` |
 | 内容库「删除」 | 单个内容文件（先轮转再删；轮转失败拒绝删） | `.history` 3 轮 | `content_store.gd::remove_ex` |
 | 画布编辑 / 撤销 / 重做 | 不写盘（只改内存） | — | `undo_history.gd` |
