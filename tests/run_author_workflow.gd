@@ -3046,6 +3046,7 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 	var motion_layer: OptionButton = editor.root.find_child("InstanceValue_motion_layer", true, false)
 	select_metadata(motion_layer, upper)
 	check(switch.props.get("motion_layer") == upper, "the instance layer field stores the selected layer ID")
+	await process_frame
 	var motion_picker: Button = editor.root.find_child("FrameFieldReference_motion_path", true, false)
 	check(motion_picker != null, "the instance can pick a motion path in its chosen layer")
 	if motion_picker == null:
@@ -3066,6 +3067,31 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 	check(motion.size() == 2 and await cvs.undo() and not switch.props.has("motion_path")
 		and switch.props.motion_layer == upper, "one undo removes the whole chosen path and leaves its layer")
 	check(await cvs.redo() and switch.props.get("motion_path") == motion, "redo restores the ordered path")
+	motion_layer = editor.root.find_child("InstanceValue_motion_layer", true, false)
+	select_metadata(motion_layer, primary)
+	var scope_dialogs := collect(app, "ConfirmationDialog").filter(func(d): return d.visible)
+	check(scope_dialogs.size() == 1 and switch.props.motion_layer == upper and switch.props.motion_path == motion,
+		"changing the layer waits for confirmation while keeping the authored path")
+	if scope_dialogs.size() != 1:
+		return
+	scope_dialogs[0].get_cancel_button().pressed.emit()
+	for i in 4:
+		await process_frame
+	motion_layer = editor.root.find_child("InstanceValue_motion_layer", true, false)
+	check(switch.props.motion_layer == upper and str(motion_layer.get_item_metadata(motion_layer.selected)) == upper,
+		"cancelling restores the original layer selection")
+	select_metadata(motion_layer, primary)
+	scope_dialogs = collect(app, "ConfirmationDialog").filter(func(d): return d.visible)
+	if scope_dialogs.size() != 1:
+		check(false, "changing the layer again opens the confirmation")
+		return
+	scope_dialogs[0].get_ok_button().pressed.emit()
+	for i in 4:
+		await process_frame
+	check(switch.props.motion_layer == primary and not switch.props.has("motion_path"),
+		"confirmed change clears coordinates from the old layer")
+	check(await cvs.undo() and switch.props.motion_layer == upper and switch.props.motion_path == motion,
+		"one undo restores both the layer and the path")
 	caption = editor.root.find_child("InstanceValue_caption", true, false)
 	caption.text = ""
 	# The mode transition flushes the pending text together with the map.

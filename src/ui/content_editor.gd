@@ -726,10 +726,14 @@ func _build_instance_values(spr: EntityNode) -> Control:
 		var fid: String = fd.id
 		var value = spr.props.get(fid, fd.get("default", FieldWidgets.default_for(fd)))
 		var written := {"value": spr.props.get(fid)}
+		var pair := func() -> Array[String]: return RefFields.frame_scope(fd, fields, spr.props, "id")
+		var scope: Array[String] = pair.call()
+		var current := func() -> bool:
+			return box.get_parent() == _r_body and is_instance_valid(spr) and spr == _current_spr() \
+				and spr.props.get(fid) == written.value
 		var apply := func(v) -> bool:
 			# 实例差量先恢复节点，再通知选中。旧控件失焦时不能盖掉刚恢复的值。
-			if box.get_parent() != _r_body or not is_instance_valid(spr) or spr != _current_spr() \
-					or spr.props.get(fid) != written.value:
+			if not current.call():
 				return false
 			app.canvas._ref_ops_ctrl.set_instance_value(spr, fid, v)
 			written.value = v
@@ -737,8 +741,7 @@ func _build_instance_values(spr: EntityNode) -> Control:
 			_preview.refresh()
 			return true
 		var decl: Dictionary = fd.duplicate()
-		var pair := func() -> Array[String]: return RefFields.frame_scope(fd, fields, spr.props, "id")
-		var paired := RefFields.paired_map_value(fd, fields, spr.props, "id")
+		var paired: String = scope[0]
 		if paired != "":
 			decl["_mapKey"] = paired
 		var frame_pick := func(row: Control, nested: Dictionary, nested_pair: Callable, save: Callable, read: Callable):
@@ -746,7 +749,14 @@ func _build_instance_values(spr: EntityNode) -> Control:
 				_rebuild_right, "", read)
 		# 普通控件在撤销通知时可能还有待提交值；过期值应丢弃。
 		# 实景确认则必须让弹窗知道是否真的写入。
-		var built := FieldWidgets.build(decl, value, func(v): apply.call(v), _resolve_options, "id", frame_pick)
+		var scope_selector: bool = RefFields.describe(fd).kind in ["map", "layer"]
+		var built := FieldWidgets.build(decl, value, func(v):
+			if not current.call() or pair.call() != scope:
+				return
+			if scope_selector:
+				_set_prop_ref(fd, v)
+			else:
+				apply.call(v), _resolve_options, "id", frame_pick)
 		var control: Control = built.ctl
 		control.name = "InstanceValue_" + fid
 		var row := Kit.field_row(str(fd.get("name", fid)), control, 96)
@@ -827,20 +837,20 @@ func _build_ref_row(fd: Dictionary, props: Dictionary, fdecls: Array = []) -> Co
 	elif object_ref:
 		d["kind"] = "input"
 		# §7.4：格边引用 = 对象值 {map, cell, edge}，FieldWidgets 的 edge_ref 分支统一编码成 JSON 走下拉
-		var emap := RefFields.paired_map_value(fd, fdecls, props)
+		var emap := RefFields.paired_map_value(fd, fdecls, props, "id")
 		if emap != "":
 			d["_mapKey"] = emap
 	else:
 		d["kind"] = "choice"
 		d["source"] = "entity_inst:" + str(fd.get("of", ""))
-		var target_map := RefFields.paired_map_value(fd, fdecls, props)
+		var target_map := RefFields.paired_map_value(fd, fdecls, props, "id")
 		if target_map != "":
 			d["_mapKey"] = target_map   # _resolve_options 据此枚举目标图实例
 	var expected_map := str(d.get("_mapKey", ""))
 	var origin := _current_spr()
 	var apply := func(v) -> void:
 		if origin == null or not is_instance_valid(origin) or origin != _current_spr() \
-				or RefFields.paired_map_value(fd, fdecls, origin.props) != expected_map:
+				or RefFields.paired_map_value(fd, fdecls, origin.props, "id") != expected_map:
 			return
 		_set_prop_ref(fd, v)
 	built = FieldWidgets.build(d, cur, apply, _resolve_options)
@@ -859,7 +869,7 @@ func _build_ref_row(fd: Dictionary, props: Dictionary, fdecls: Array = []) -> Co
 		var frame_pick := Kit.button("实景选…", func():
 			var save := func(value) -> bool:
 				if origin == null or not is_instance_valid(origin) or origin != _current_spr() \
-						or RefFields.paired_map_value(fd, fdecls, origin.props) != expected_map:
+						or RefFields.paired_map_value(fd, fdecls, origin.props, "id") != expected_map:
 					return false
 				await _set_prop_ref(fd, value)
 				_rebuild_right()
@@ -911,10 +921,9 @@ func _set_prop_ref(fd: Dictionary, value) -> void:
 	if spr == null or not is_instance_valid(spr) or not app.map_loaded:
 		return
 	var res: Dictionary = await app.canvas._ref_ops_ctrl.set_entity_ref(spr, fd, value)
-	if str(res.get("status", "")) == "cancelled":
-		# 取消：控件回填旧值，别让下拉停在新图上
-		_rebuild_right()
-		return
+	if RefFields.describe(fd).kind in ["map", "layer"]:
+		# 下拉回调结束后再重建，保住其他控件尚未提交的值。
+		_refresh_instance_scope.call_deferred(spr)
 	if str(res.get("status", "")) != "ok":
 		return
 	# 指向预览：高亮被指实例（仅当前图 entity_ref；跨图/地图/格边引用不高亮）——
@@ -925,6 +934,10 @@ func _set_prop_ref(fd: Dictionary, value) -> void:
 		target = value
 	if _preview != null:
 		_preview.set_highlight(target)
+
+func _refresh_instance_scope(spr: EntityNode) -> void:
+	if is_instance_valid(spr) and spr == _current_spr() and commit_fields():
+		reload_content_form()
 
 ## 左右列一起刷新（列表高亮、徽章、右栏表单都随绑定变化）
 func _refresh_all() -> void:

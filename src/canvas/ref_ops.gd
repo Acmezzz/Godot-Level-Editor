@@ -2,7 +2,7 @@ extends RefCounted
 ## RefOps：实例 props 引用字段的统一写入口（E2 空间连线 / E1 画布选点 / 内容表单下拉）。
 ##
 ## 三条路径写同一份数据就不能各写一遍规则：改配对地图字段时旧落点属于原图（C1），
-## 必须先确认再把配对引用一起清空；改动进画布撤销栈（props 是地图数据）。
+## 改图层同样可能使局部坐标失效。确认后一起清空旧值，并记为一步地图撤销。
 ## `host` = app（要状态栏/确认框），`cvs` = app.canvas（撤销与标记）。
 
 var app
@@ -28,20 +28,24 @@ func set_entity_ref(n: EntityNode, fd: Dictionary, value) -> Dictionary:
 	var props: Dictionary = n.props.duplicate(true)
 	if is_same(props.get(fid, null), value) or (typeof(props.get(fid)) == typeof(value) and props.get(fid) == value):
 		return {"status": "ok", "cleared": []}
-	# 该字段是否被其它 entity_ref 的 mapField 配对（改目标图 → 旧落点跨图失效）
 	var edef: Dictionary = AssetDecl.by_id(app.manifest, n.asset)
-	var paired_refs: Array = []
+	var cleared: Array[String] = []
 	for other in (edef.get("fields", []) as Array):
-		if other is Dictionary and str((other as Dictionary).get("mapField", "")) == fid:
-			if str(props.get(str((other as Dictionary).get("id", "")), "")) != "":
-				paired_refs.append(other)
-	if not paired_refs.is_empty():
+		if not other is Dictionary:
+			continue
+		var depends: bool = other.get("mapField", "") == fid \
+			or (other.get("pickSpace") == "layer" and other.get("layerField", "") == fid)
+		var dependent_id := str(other.get("id", ""))
+		if depends and _has_scope_value(props.get(dependent_id)):
+			cleared.append(dependent_id)
+	if not cleared.is_empty():
 		var source: Dictionary = app.manifest
 		var live_map: Dictionary = cvs.map_data
 		var asset_id := n.asset
 		var asset_decl := edef.duplicate(true)
-		var msg := "改目标地图会清空 %d 个已填引用（旧落点属于原图）。继续？" % paired_refs.size()
-		if not await app._confirm_action("改目标地图", msg, "改并清空"):
+		var title := "改目标图层" if RefFields.describe(fd).kind == "layer" else "改目标地图"
+		var msg := "将清空属于原坐标空间的字段：%s。继续？" % "、".join(cleared)
+		if not await app._confirm_action(title, msg, "改并清空"):
 			return {"status": "cancelled", "cleared": []}
 		if not app.map_loaded or app.canvas != cvs or not is_same(cvs.map_data, live_map) \
 				or not is_same(app.manifest, source) or not is_instance_valid(n) \
@@ -54,14 +58,12 @@ func set_entity_ref(n: EntityNode, fd: Dictionary, value) -> Dictionary:
 		props.erase(fid)
 	else:
 		props[fid] = value
-	var cleared: Array = []
-	for other2 in paired_refs:
-		var oid := str((other2 as Dictionary).get("id", ""))
-		props.erase(oid)
-		cleared.append(oid)
+	for id in cleared:
+		props.erase(id)
 	_commit_props(n, props)
 	# 指向预览：仅本图 entity_ref 高亮（跨图/地图引用在本图没有可亮对象）
-	var target := str(value) if value is String and app.canvas.is_entity_code_local(value) else ""
+	var target := str(value) if fd.get("type") == "entity_ref" and value is String \
+		and app.canvas.is_entity_code_local(value) else ""
 	cvs.ref_highlight = target
 	cvs.queue_redraw()
 	if empty:
@@ -72,6 +74,11 @@ func set_entity_ref(n: EntityNode, fd: Dictionary, value) -> Dictionary:
 	else:
 		app._set_status("引用「%s」→ %s（Ctrl+Z 撤销）" % [str(fd.get("name", fid)), str(value)])
 	return {"status": "ok", "cleared": cleared}
+
+static func _has_scope_value(value: Variant) -> bool:
+	if value is String or value is Array or value is Dictionary:
+		return not value.is_empty()
+	return value != null
 
 func set_instance_value(n: EntityNode, id: String, value: Variant) -> void:
 	var props := n.props.duplicate(true)
@@ -117,7 +124,7 @@ func local_refs(n: EntityNode) -> Array:
 	for fd in fields:
 		if not fd is Dictionary or fd.get("type") != "port_ref":
 			continue
-		var pair := RefFields.paired_map_value(fd, fields, n.props)
+		var pair := RefFields.paired_map_value(fd, fields, n.props, "id")
 		var value = n.props.get(fd.id)
 		if not cvs.is_local_port_map(pair) or (value is Dictionary and not cvs.is_local_port_map(str(value.get("map", "")))):
 			continue
