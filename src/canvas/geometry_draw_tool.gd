@@ -187,9 +187,10 @@ func finish() -> void:
 	if issue != "":
 		cvs._hint(issue + " 左键加点，右键撤掉末点。")
 		return
-	_clear()
-	cvs._tool_ops_ctrl._stamp(local[0], local)
-	cvs._hint("已绘制几何实体（Ctrl+Z 撤销）。")
+	var placed: EntityNode = cvs._tool_ops_ctrl.place_object(asset, index, local[0], true, local)
+	if placed != null:
+		_clear()
+		cvs._hint("已绘制几何实体（Ctrl+Z 撤销）。")
 
 func _write_parts(entity: EntityNode, parts: Array, hint: String) -> void:
 	var before: Dictionary = cvs._undo_history_ctrl.inst_rows([entity])

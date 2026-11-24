@@ -23,7 +23,7 @@ func _apply_tool(pos: Vector2) -> void:
 	# 后续 mouse-motion 却用 _active_local（根空间），同一笔前后格号不连续。
 	var lp: Vector2 = cvs._active_local(pos)
 	if cvs.place_kind == "object" and not cvs._is_grid_layer(cvs.active_layer):
-		_stamp(lp)
+		place_object(cvs.stamp_asset, cvs.active_layer, lp)
 	else:
 		_paint(cvs.tile_grid_for_layer(cvs.active_layer).pick_cell(lp))
 
@@ -201,10 +201,6 @@ func _erase_at(pos: Vector2) -> void:
 		return
 	# 碰撞元层擦除走统一入口（类型元数据一并清）——有真实改动才 _mark（热路径同 _paint）
 	erase_cells(_brush_cells(cvs._active_cell(pos)))
-
-
-func _stamp(pos: Vector2, drawn: Array = []) -> void:
-	place_object(cvs.stamp_asset, cvs.active_layer, pos, false, drawn)
 
 
 func place_object(asset: String, layer: int, pos: Vector2, exact := false, drawn: Array = []) -> EntityNode:

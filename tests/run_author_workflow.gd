@@ -12,7 +12,7 @@ const GraphEditor = preload("res://src/ui/cell_graph_editor.gd")
 const WorldLayout = preload("res://src/project/world_layout.gd")
 var failures := 0
 func _initialize():
-	create_timer(30.0).timeout.connect(func():
+	create_timer(90.0).timeout.connect(func():
 		printerr("FLOW FAIL: workflow timed out")
 		quit(1))
 	run.call_deferred()
@@ -769,7 +769,7 @@ func run():
 	canvas._paint_pushed = false
 	canvas.active_layer = 0
 	canvas.stamp_asset = "door"
-	canvas._tool_ops_ctrl._stamp(canvas.grid.cell_center_px(Vector2i(4, 2)))
+	canvas._tool_ops_ctrl.place_object(canvas.stamp_asset, canvas.active_layer, canvas.grid.cell_center_px(Vector2i(4, 2)))
 	canvas.stamp_asset = "free-ramp"
 	canvas.place_kind = "object"
 	canvas.snap_to_grid = false
@@ -1181,7 +1181,7 @@ func run():
 	app.canvas._mark()
 	app.canvas.active_layer = 0
 	app.canvas.stamp_asset = "door"
-	app.canvas._tool_ops_ctrl._stamp(app.canvas.grid.cell_center_px(Vector2i(1, 1)))
+	app.canvas._tool_ops_ctrl.place_object(app.canvas.stamp_asset, app.canvas.active_layer, app.canvas.grid.cell_center_px(Vector2i(1, 1)))
 	app.canvas.selected_entity.props["label"] = "extra"
 	app.canvas._mark()
 	var object_save: Dictionary = await app._map_file_ctrl.commit_document("保存分块摆放物差量")
@@ -1784,12 +1784,12 @@ func _render_pick_frame(app) -> PopupPanel:
 		return null
 	return pop
 
-func _click_pick_frame(pop: PopupPanel, at: Vector2) -> Button:
+func _click_pick_frame(pop: PopupPanel, at: Vector2, button := MOUSE_BUTTON_LEFT) -> Button:
 	var frame: TextureRect = pop.find_child("MapGamePreviewFrame", true, false)
 	var extent := Vector2(720, 1280)
 	var fitted := extent * minf(frame.size.x / extent.x, frame.size.y / extent.y)
 	var mouse := InputEventMouseButton.new()
-	mouse.button_index = MOUSE_BUTTON_LEFT
+	mouse.button_index = button
 	mouse.pressed = true
 	mouse.position = (frame.size - fitted) * 0.5 + fitted * at
 	frame.gui_input.emit(mouse)
@@ -1828,6 +1828,37 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 		and is_equal_approx(float(doors[1].x), 2.786) and is_equal_approx(float(doors[1].y), 2.071)
 		and FileAccess.get_sha256(path) == original_hash,
 		"both frame regions map to stable layer-local anchors without writing the file")
+	cvs.stamp_asset = "free-ramp"
+	app._layout_ctrl._on_map_menu_id(14)
+	var shape_pop := await _render_pick_frame(app)
+	if shape_pop == null:
+		return
+	var frame: TextureRect = shape_pop.find_child("MapGamePreviewFrame", true, false)
+	var pixels := frame.texture.get_image()
+	var occluder := Vector2(0.74, 0.20)
+	var color := pixels.get_pixel(533, 256)
+	check(color.r > color.g * 1.5 and _click_pick_frame(shape_pop, occluder).disabled,
+		"visible foreground mesh blocks selecting the surface behind it")
+	_click_pick_frame(shape_pop, Vector2(0.65, 0.25))
+	_click_pick_frame(shape_pop, Vector2(0.75, 0.25))
+	check(_click_pick_frame(shape_pop, Vector2(0.15, 0.25)).disabled,
+		"a draft cannot combine two independently mapped layers")
+	var create := _click_pick_frame(shape_pop, Vector2(0.65, 0.35))
+	check(not create.disabled and cvs.ents_all().size() == 3, "three mapped points form an uncommitted polygon")
+	check(_click_pick_frame(shape_pop, Vector2.ZERO, MOUSE_BUTTON_RIGHT).disabled, "right click removes a draft vertex")
+	create = _click_pick_frame(shape_pop, Vector2(0.65, 0.35))
+	create.pressed.emit()
+	await process_frame
+	var outlines: Array = cvs.extract().objects.filter(func(row): return row.asset == "free-ramp")
+	if outlines.size() != 1:
+		check(false, "confirm creates a single polygon")
+		return
+	var outline: Dictionary = outlines[0]
+	check(outline.layer == upper and outline.props.points.size() == 3
+		and absf(float(outline.props.points[1][0]) - 6.10) < 0.03
+		and absf(float(outline.props.points[2][1]) - 9.14) < 0.03, "polygon stores perspective-correct local coordinates")
+	check(await cvs.undo() and cvs.ents_all().size() == 3, "one undo removes the entire polygon")
+	check(await cvs.redo() and cvs.ents_all().size() == 4, "one redo restores the polygon")
 	app._set_mode("content", "PICK")
 	var editor = app.project_shell.content_editor
 	press(editor.root, "实景选…")
@@ -1849,5 +1880,6 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 	check(report.get("status") == "ready" and picks.size() == 2 and picks[0].point == [24.0, 24.0]
 		and absf(float(picks[1].point[0]) - (48.0 + (48.0 + 32.0 / 7.0) * 1.5)) < 0.02
 		and absf(float(picks[1].point[1]) - (16.0 + (32.0 + 64.0 / 7.0) * 1.5)) < 0.02
-		and result.get("opened") == doors[1].code,
-		"game reloads both view positions and opens the selected upper-layer door: " + str(report))
+		and result.get("opened") == doors[1].code
+		and result.get("contours", []).size() == 1 and result.contours[0].props.points == outline.props.points,
+		"game reloads both view positions and the projected polygon, and opens the selected door: " + str(report))

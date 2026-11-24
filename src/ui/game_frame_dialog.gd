@@ -44,12 +44,15 @@ static func open(app, capability: String, options: Dictionary, snapshot: Callabl
 	render.name = options.prefix + "Render"
 	var mode := str(options.get("pick_mode", ""))
 	var choose: Callable = options.get("pick", Callable())
-	var confirm := Kit.button("确认选点", Callable(), "primary")
+	var draw_shape: Callable = options.get("draw_shape", Callable())
+	var drafting := draw_shape.is_valid()
+	var confirm := Kit.button("创建形状" if drafting else "确认选点", Callable(), "primary")
 	confirm.name = options.prefix + "ConfirmPick"
 	confirm.disabled = true
-	var picks := {"regions": [], "selected": {}, "apply": Callable(), "current": Callable()}
+	var picks := {"regions": [], "selected": {}, "draft": [], "apply": Callable(), "current": Callable()}
 	var clear_selection := func():
 		picks.selected = {}
+		picks.draft.clear()
 		picks.apply = Callable()
 		confirm.disabled = true
 		frame.queue_redraw()
@@ -100,7 +103,7 @@ static func open(app, capability: String, options: Dictionary, snapshot: Callabl
 			elif picks.regions.is_empty():
 				notice.text += " · 游戏未提供可拾取区域"
 			else:
-				notice.text += " · 点击画面后确认")
+				notice.text += (" · 左键描点，右键撤末点" if drafting else " · 点击画面后确认"))
 	picker.item_selected.connect(func(_i: int):
 		reset.call()
 		notice.text = "画幅已更改，请重新渲染。")
@@ -108,14 +111,28 @@ static func open(app, capability: String, options: Dictionary, snapshot: Callabl
 		frame.mouse_filter = Control.MOUSE_FILTER_STOP
 		var is_current := func() -> bool:
 			return keep.call() and (not picks.current.is_valid() or picks.current.call())
+		var set_draft_action := func():
+			var option: Dictionary = draw_shape.call(picks.draft)
+			notice.text = option.text
+			picks.apply = option.get("apply", Callable())
+			confirm.disabled = not picks.apply.is_valid()
+			frame.queue_redraw()
 		frame.gui_input.connect(func(event: InputEvent):
-			if not event is InputEventMouseButton or event.button_index != MOUSE_BUTTON_LEFT or not event.pressed \
-					or frame.texture == null or picks.regions.is_empty():
+			if not event is InputEventMouseButton or not event.pressed or frame.texture == null or picks.regions.is_empty():
 				return
-			clear_selection.call()
 			if not is_current.call():
+				clear_selection.call()
 				notice.text = "内容已变更，请重新渲染。"
 				return
+			if drafting and event.button_index == MOUSE_BUTTON_RIGHT:
+				if not picks.draft.is_empty():
+					picks.draft.pop_back()
+					set_draft_action.call()
+				return
+			if event.button_index != MOUSE_BUTTON_LEFT:
+				return
+			if not drafting:
+				clear_selection.call()
 			var rect := _image_rect(frame)
 			if not rect.has_point(event.position):
 				notice.text = "请点击画面内的区域。"
@@ -125,6 +142,17 @@ static func open(app, capability: String, options: Dictionary, snapshot: Callabl
 			if hit.is_empty():
 				notice.text = "这里没有此工具需要的目标。"
 				return
+			if drafting:
+				if not picks.draft.is_empty() and hit.value.layer != picks.draft[0].value.layer:
+					notice.text = "同一形状的顶点必须映射到同一图层。"
+					return
+				if picks.draft.size() >= int(options.max_points):
+					notice.text = "顶点已到上限，右键撤末点。"
+					return
+				hit["pixel"] = pixel
+				picks.draft.append(hit)
+				set_draft_action.call()
+				return
 			var option: Dictionary = choose.call(hit.value)
 			notice.text = option.get("text", "此目标不适用于当前字段或资产。")
 			if option.has("apply"):
@@ -133,11 +161,21 @@ static func open(app, capability: String, options: Dictionary, snapshot: Callabl
 				confirm.disabled = false
 			frame.queue_redraw())
 		frame.draw.connect(func():
-			if picks.selected.is_empty():
+			if picks.selected.is_empty() and picks.draft.is_empty():
 				return
 			var rect := _image_rect(frame)
 			var scale := rect.size / frame.texture.get_size()
 			var line := PackedVector2Array()
+			if drafting:
+				for hit in picks.draft:
+					var point: Vector2 = rect.position + hit.pixel * scale
+					line.append(point)
+					frame.draw_circle(point, 4.0, Color(1.0, 0.83, 0.35))
+				if options.get("closed", false) and line.size() > 2:
+					line.append(line[0])
+				if line.size() >= 2:
+					frame.draw_polyline(line, Color(1.0, 0.83, 0.35), 2.0, true)
+				return
 			for pixel: Vector2 in picks.selected.screen:
 				line.append(rect.position + pixel * scale)
 			line.append(line[0])

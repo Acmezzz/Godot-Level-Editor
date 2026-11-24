@@ -36,7 +36,7 @@ static func read(bytes: PackedByteArray, token: String, size: Vector2i) -> Dicti
 				layer = ""
 		regions.append({"screen": screen, "inverse": Transform2D(u, v, screen[0]).affine_inverse(),
 			"label": str(row.get("label", "")).left(120), "targets": targets if targets is Dictionary else {},
-			"layer": layer, "local": points, "reciprocal": reciprocal})
+			"layer": layer, "local": points, "reciprocal": reciprocal, "occludes": row.get("occludes") == true})
 	return {"regions": regions}
 
 static func at(regions: Array, pixel: Vector2, mode: String) -> Dictionary:
@@ -47,6 +47,8 @@ static func at(regions: Array, pixel: Vector2, mode: String) -> Dictionary:
 		var value = region.targets.get(mode)
 		if mode == "placement":
 			if region.layer == "":
+				if region.occludes:
+					break
 				continue
 			var local: PackedVector2Array = region.local
 			var bary := Vector3(maxf(1.0 - uv.x - uv.y, 0.0), maxf(uv.x, 0.0), maxf(uv.y, 0.0))
@@ -54,6 +56,8 @@ static func at(regions: Array, pixel: Vector2, mode: String) -> Dictionary:
 			var total := weight.x + weight.y + weight.z
 			value = {"layer": region.layer, "point": (local[0] * weight.x + local[1] * weight.y + local[2] * weight.z) / total}
 		elif value == null:
+			if region.occludes:
+				break
 			continue
 		return {"value": value, "screen": region.screen, "label": region.label}
 	return {}

@@ -62,7 +62,8 @@ func _ready() -> void:
 						var anchor := (Vector2(row.x, row.y) + Vector2(0.5, 0.5)) * 16.0
 						anchor = Vector2(offset[0], offset[1]) + anchor * float(map.meta.layers[i].get("scale", 1.0))
 						lanes.append({"lane": i, "point": [anchor.x, anchor.y], "door": row.code})
-			_report("ready", "", {"picks": lanes, "opened": _activate_switch(map, manifest)})
+			var contours: Array = map.objects.filter(func(row): return row.asset == "free-ramp")
+			_report("ready", "", {"picks": lanes, "opened": _activate_switch(map, manifest), "contours": contours})
 		elif map.get("meta", {}).get("name") == "rule_hex" and not map.meta.get("cellGraph", {}).is_empty():
 			var route := _check_floor_route(map)
 			if route.is_empty():
@@ -253,24 +254,39 @@ func _compose_screen_frame(surface: SubViewport, subject: Dictionary, size: Vect
 func _compose_pick_frame(surface: SubViewport, size: Vector2i, dir: String, request: Dictionary) -> void:
 	var map: Dictionary = request.subject.map
 	_frame_rect(surface, Rect2(Vector2.ZERO, Vector2(size) * Vector2(0.5, 1)), Color("#34476c"))
-	_frame_rect(surface, Rect2(Vector2(size.x * 0.5, 0), Vector2(size) * Vector2(0.5, 1)), Color("#512e52"))
-	var regions := []
+	surface.own_world_3d = true
+	var camera := Camera3D.new()
+	camera.fov = 90.0
+	surface.add_child(camera)
+	camera.make_current()
+	var aspect := float(size.x) / float(size.y)
+	var foreground := PackedVector3Array([Vector3(0.44 * aspect, 0.64, -1) * 0.5,
+		Vector3(0.62 * aspect, 0.64, -1) * 0.5, Vector3(0.44 * aspect, 0.5, -1) * 0.5])
+	_frame_triangle_3d(surface, foreground, Color("#f0483d"))
+	var regions := [{"label": "Foreground", "screen": _project_triangle(camera, foreground), "occludes": true}]
 	for i in 2:
 		var start := Vector2(size) * Vector2(0.05 + 0.5 * i, 0.15)
 		var right := start + Vector2(size.x * 0.4, 0.0)
 		var down := start + Vector2(0.0, size.y * 0.4)
-		var triangle := Polygon2D.new()
-		triangle.polygon = PackedVector2Array([start, right, down])
-		triangle.color = Color("#f29b41") if i == 0 else Color("#46c4ae")
-		surface.add_child(triangle)
 		var layer: String = map.meta.layers[i].id
 		var local := Vector2(16 + i * 32, 16 + i * 16)
 		var region := {"label": "View " + str(i + 1),
 			"screen": [[start.x, start.y], [right.x, right.y], [down.x, down.y]],
 			"placement": {"layer": layer, "local": [[local.x, local.y], [local.x + 32, local.y], [local.x, local.y + 32]]}}
-		if i == 1:
-			# Projection depth doubles along one edge, giving that vertex half the reciprocal W.
-			region.placement.reciprocalW = [1.0, 0.5, 1.0]
+		if i == 0:
+			var triangle := Polygon2D.new()
+			triangle.polygon = PackedVector2Array([start, right, down])
+			triangle.color = Color("#f29b41")
+			surface.add_child(triangle)
+		else:
+			var mesh := PackedVector3Array([Vector3(0.1 * aspect, 0.7, -1.0),
+				Vector3(1.8 * aspect, 1.4, -2.0), Vector3(0.1 * aspect, -0.1, -1.0)])
+			_frame_triangle_3d(surface, mesh, Color("#46c4ae"))
+			region.screen = _project_triangle(camera, mesh)
+			var weights := []
+			for vertex in mesh:
+				weights.append(-1.0 / vertex.z)
+			region.placement.reciprocalW = weights
 		for row in map.objects:
 			if row.get("asset") == "door" and row.get("layer") == layer:
 				region["targets"] = {"entity": row.code, "port": {"map": map.meta.code, "inst": row.code, "port": "open"}}
@@ -279,6 +295,27 @@ func _compose_pick_frame(surface: SubViewport, size: Vector2i, dir: String, requ
 	var picks := FileAccess.open(dir.path_join("picks.json"), FileAccess.WRITE)
 	picks.store_string(JSON.stringify({"version": 1, "token": request.token, "regions": regions}))
 	picks.close()
+
+func _frame_triangle_3d(surface: SubViewport, vertices: PackedVector3Array, color: Color) -> void:
+	var material := StandardMaterial3D.new()
+	material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	material.cull_mode = BaseMaterial3D.CULL_DISABLED
+	material.albedo_color = color
+	var builder := SurfaceTool.new()
+	builder.begin(Mesh.PRIMITIVE_TRIANGLES)
+	builder.set_material(material)
+	for point in vertices:
+		builder.add_vertex(point)
+	var model := MeshInstance3D.new()
+	model.mesh = builder.commit()
+	surface.add_child(model)
+
+func _project_triangle(camera: Camera3D, vertices: PackedVector3Array) -> Array:
+	var points := []
+	for vertex in vertices:
+		var p := camera.unproject_position(vertex)
+		points.append([p.x, p.y])
+	return points
 
 func _compose_map_frame(surface: SubViewport, subject: Dictionary, size: Vector2i) -> void:
 	var world := _frame_world(surface, subject, size)
