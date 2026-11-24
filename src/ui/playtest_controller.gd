@@ -168,6 +168,10 @@ func open_configuration() -> void:
 	if not app.map_loaded:
 		app._set_status("无地图：先新建或打开一张地图")
 		return
+	var prefs_key := _prefs_key()
+	if prefs_key.is_empty():
+		app._set_status("无法配置试玩：当前地图没有地图码")
+		return
 	var pt: Dictionary = app.manifest.get("playtest", {}) if app.manifest is Dictionary else {}
 	var flags: Array = pt.get("flags", []) if pt.get("flags", null) is Array else []
 	var params: Array = pt.get("params", []) if pt.get("params", null) is Array else []
@@ -201,7 +205,6 @@ func open_configuration() -> void:
 	var btn_row = app.UiKitScript.hbox(8)
 	btn_row.alignment = BoxContainer.ALIGNMENT_END
 	btn_row.add_child(app.UiKitScript.button("取消", func(): pop.hide(), "ghost"))
-	var prefs_key := _prefs_key()
 	var generation: int = files.document_generation()
 	var apply_cfg := func():
 		if app._playtest_ctrl != self or generation != files.document_generation() or prefs_key != _prefs_key():
@@ -247,43 +250,12 @@ func _play_args(spawn_tiles := Vector2i(-1, -1)) -> PackedStringArray:
 	return out
 
 
-## 试玩配置（v7）：prefs 由 {abilities:[],hp} 旧形态展平为 {flag_id: bool, param_id: int}。
-## 旧键 abilities[] 展开成对应 flag id 勾选、hp 落到 hp 键——与旧 CLI 参数一一对应。
-## 偏好键（A6）= <项目根>|<地图码>：两个项目有同名地图时配置不串，改名也不丢。
+## 本地试玩配置按项目目录和地图码保存；地图名只用于窗口标题。
 func _prefs_key() -> String:
-	var root := str(app.manifest.get("_dir", ""))
-	var code := ""
-	if app.canvas != null and app.canvas.map_data.get("meta", null) is Dictionary:
-		code = str((app.canvas.map_data["meta"] as Dictionary).get("code", ""))
-	if code == "":
-		code = str(app.cur_map_name)
-	return root.path_join("|") + code
+	var code: String = app.canvas.cur_map_code() if app.canvas != null else ""
+	return str(app.manifest.get("_dir", "")).path_join("|") + code if not code.is_empty() else ""
 
 func sync_map_preferences() -> void:
 	var key := _prefs_key()
-	var legacy_key := str(app.cur_map_name)
-	var raw = app._prefs.get(key, null)
-	var from_legacy := false
-	if not raw is Dictionary and legacy_key != "" and app._prefs.get(legacy_key) is Dictionary:
-		raw = app._prefs[legacy_key]
-		from_legacy = true
-	if not raw is Dictionary:
-		app.play_cfg = {}
-		return
-	var cfg: Dictionary = raw.duplicate(true)
-	var old_flags = cfg.get("abilities")
-	if old_flags is Array:
-		cfg.erase("abilities")
-		for flag in old_flags:
-			if flag is String and flag != "" and not cfg.has(flag):
-				cfg[flag] = true
-	if cfg.get("hp") is float:
-		cfg["hp"] = int(cfg.hp)
-	app.play_cfg = cfg
-	if from_legacy or cfg != raw:
-		var previous: Dictionary = app._prefs.duplicate(true)
-		app._prefs[key] = cfg
-		if from_legacy:
-			app._prefs.erase(legacy_key)
-		if not app._save_prefs():
-			app._prefs = previous
+	var saved = app._prefs.get(key, {})
+	app.play_cfg = saved.duplicate(true) if not key.is_empty() and saved is Dictionary else {}

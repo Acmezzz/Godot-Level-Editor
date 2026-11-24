@@ -795,7 +795,7 @@ src/
 | 试玩配置 | 弹窗由清单 `playtest.flags` / `playtest.params` 声明驱动渲染（flags → 勾选框启用时原样追加 arg；params → 数字参数，值 ≠ def 才追加）；值存 `user://playtest_prefs.json`，按地图独立，不写进地图 JSON；清单未声明 = 面板空态提示 |
 | 启动参数 | 追加声明里的 `arg`；带出生点参数时追加 `--spawnx/--spawny`（格坐标） |
 
-试玩配置在切换地图时自动跟随该图（`_sync_play_cfg_to_map`）。
+试玩配置按项目和地图码保存，切图时读取该地图的配置，改文件名不会改变配置键。
 
 ---
 
