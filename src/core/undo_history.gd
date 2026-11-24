@@ -513,11 +513,14 @@ func _apply_spawn_position(position: Vector2) -> void:
 func _restore_region_move(entry: Dictionary, forward: bool, uncoded_changed := false) -> void:
 	var field := "after" if forward else "before"
 	var objects: Dictionary = entry.objects
-	if not objects.is_empty():
+	var props: Dictionary = entry.get("props", {})
+	if not objects.is_empty() or not props.is_empty():
 		var index: Dictionary = cvs._ent_by_code_index()
 		for code in objects:
 			var node: EntityNode = index[code]
 			node.position = objects[code][field]
+		for code in props:
+			index[code].props = props[code][field].duplicate(true)
 	var graph_rows: Dictionary = entry.graph_rows
 	if not graph_rows.is_empty():
 		var rows: Array = cvs.cell_graph().cells
@@ -526,7 +529,7 @@ func _restore_region_move(entry: Dictionary, forward: bool, uncoded_changed := f
 	if entry.has("spawn"):
 		cvs.spawn.position = entry.spawn[field]
 	_restore_delta(entry, forward)
-	if not objects.is_empty() or uncoded_changed:
+	if not objects.is_empty() or not props.is_empty() or uncoded_changed:
 		cvs._mark_ents()
 	elif not graph_rows.is_empty() or entry.has("spawn"):
 		cvs._mark_map()

@@ -7,8 +7,8 @@ extends RefCounted
 ##                          切面板时 _set_mode 先 commit() 冲刷，别让用户输入凭空消失。
 ##   **已有文件的工作副本** —— 已落盘内容的字段改动直接写回该内容文件（_content_write，
 ##                          带磁盘摘要基线，外部改过就 conflict）。
-##   **新绑定的暂存** —— _staged[内容ID] = {fn_id, data, ent, doc}；
-##                          只改内存，flush_staged（正式提交时）才写盘；按内容 ID 寻址（不是功能码）。
+##   **新绑定的暂存** —— 以 (功能 ID, 内容 ID) 寻址，记录数据、实例和文档归属。
+##                          正式地图提交按冻结计划逐条调用 flush_one 写入仍有绑定的内容。
 ##
 ## 落盘责任划分：本模块只管「把值写进内容数据 / 暂存」；真正的地图写盘、历史轮转和提交日志
 ## 由 map_file.commit_document 与 MapStore/Recovery 负责——这里不直接写地图。
@@ -719,7 +719,7 @@ func _function_code_drift(data: Dictionary, fn_id: String) -> String:
 
 ## 保证该附加功能有 content id：已有绑定直接返回；没有就生成新 ID 但**不写盘**（A2 staged）——
 ## 新内容要等正式保存/试玩走 commit_document 才落地，避免「打开表单看一眼」就凭空生成文件。
-## 暂存信息记在 _staged[fn_code] 里，由 flush_staged() 在正式提交时写入。
+## 用功能 ID 与新内容 ID 登记暂存，正式地图提交再写入。
 ## 返回空串 = 生成失败（调用方给出可见反馈，不静默吞掉）。
 func _ensure_content(i: int) -> String:
 	var fns := _current_fns()
@@ -753,7 +753,7 @@ func _ensure_content(i: int) -> String:
 	return new_id
 
 ## 暂存内容：{"fn_id\u0001content_id": {fn_id, cid, data, ent, doc}}。
-## 正式提交时 flush_staged 写入。键必须含功能 ID——多个功能目录下可以存在同名 cid，
+## 键必须含功能 ID——多个功能目录下可以存在同名 cid，
 ## 只按裸 cid 索引会读到/覆盖另一份内容（V4 P0-6）。
 ## doc（R02 工作副本归属）= 项目根|地图码：冲刷只写当前文档（地图）的条目，
 ## 切图后旧图的暂存不跟新图落盘；绑定身份复核失败（撤销/删绑定）就地丢弃。

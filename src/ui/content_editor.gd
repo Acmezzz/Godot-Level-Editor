@@ -1020,9 +1020,6 @@ func restage_rows(rows: Array) -> int:
 func stage_clone(fn_id: String, cid: String, data: Dictionary, ent: String) -> void:
 	_form.stage_clone(fn_id, cid, data, ent)
 
-## 正式提交：把当前文档的暂存内容写盘（A2）。失败时返回 false 并保留剩余暂存。
-func flush_staged_content(on_written: Callable = Callable()) -> bool:
-	return _form.flush_staged(on_written)
 ## B1：单条暂存内容的冲刷（DocumentCommit.apply 逐目标调用）；payload = 计划冻结的 {fn_id, cid, data}。
 ## 返回 {status: ok|dropped|failed}。
 func flush_one_content(cid: String, payload := {}, on_written: Callable = Callable()) -> Dictionary:
@@ -1030,14 +1027,6 @@ func flush_one_content(cid: String, payload := {}, on_written: Callable = Callab
 ## B1：暂存表本体（与 DocumentSession 共享同一份工作副本，字典按引用传递）。
 func staged_table() -> Dictionary:
 	return _form.staged_table()
-
-## 暂存内容的目标文件绝对路径（提交日志登记用）：[{fn_id, cid, path}]。
-func pending_targets() -> Array:
-	var out: Array = []
-	for row in staged_rows_current_doc():
-		out.append({"fn_id": str(row.fn_id), "cid": str(row.cid),
-			"path": ContentStore.path_for(manifest, str(row.fn_id), str(row.cid))})
-	return out
 
 ## 暂存感知的内容读写（steps_panel 用）：刚 staged 的新内容还没落盘，
 ## 直接 ContentStore.read 会读到空，编辑步骤就会丢掉。

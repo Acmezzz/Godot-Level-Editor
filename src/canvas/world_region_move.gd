@@ -4,11 +4,13 @@ extends RefCounted
 const ClonePlan := preload("res://src/content/clone_plan.gd")
 const GraphClip := preload("res://src/map/cell_graph_clip.gd")
 const EdgeRef := preload("res://src/map/edge_ref.gd")
+const RefFields := preload("res://src/content/ref_fields.gd")
 
 var cvs
 var selection := Rect2()
 var move_graph := false
 var move_spawn := false
+var move_edges := false
 
 func _init(canvas) -> void:
 	cvs = canvas
@@ -40,6 +42,8 @@ func begin_move(pos: Vector2) -> void:
 	if snap.groups.is_empty() and snap.objects.is_empty() and snap.get("graph_cells", []).is_empty() and not snap.has("spawn"):
 		cvs._hint("框内没有符合搬动选项的内容。")
 		return
+	if move_edges:
+		snap.edge_area = selection
 	cvs._move_snap = snap
 	cvs._move_grab = pos
 	cvs.begin_gesture(cvs.Gesture.REGION_MOVE, MOUSE_BUTTON_LEFT)
@@ -309,6 +313,13 @@ func finish(snap: Dictionary) -> void:
 		return
 	var history = cvs._undo_history_ctrl
 	var entry := {"kind": "region_move", "cells": [], "objects": {}, "graph_rows": {}}
+	if snap.has("edge_area"):
+		var refs := _edge_changes(snap.edge_area, snap.delta)
+		if refs.has("error"):
+			cvs._hint(refs.error)
+			cvs.queue_redraw()
+			return
+		entry.props = refs.changes
 	for i: int in snap.groups.size():
 		var group: Dictionary = snap.groups[i]
 		var changes := {}
@@ -341,11 +352,45 @@ func finish(snap: Dictionary) -> void:
 		if to != cvs.spawn.position:
 			entry.spawn = {"before": cvs.spawn.position, "after": to}
 	if entry.cells.is_empty() and entry.objects.is_empty() and uncoded_positions.is_empty() \
-			and entry.graph_rows.is_empty() and not entry.has("spawn"):
+			and entry.graph_rows.is_empty() and entry.get("props", {}).is_empty() and not entry.has("spawn"):
 		return
 	history.commit_region_move(entry, uncoded_positions)
 	selection = Rect2()
 	cvs._hint("已跨层搬动选区（Ctrl+Z 撤销）。")
+
+func _edge_changes(area: Rect2, delta: Vector2) -> Dictionary:
+	var meta: Dictionary = cvs.map_data.meta
+	var size := Vector2i(meta.w, meta.h)
+	var frame: Transform2D = cvs.layer_xform(cvs.collision_index())
+	var mapper := EdgeRef.region_mapper(cvs.grid, size, frame, area, cvs.grid, size, frame, area.position + delta)
+	var changes := {}
+	for node: EntityNode in cvs.ents_all():
+		var fields: Array = node.decl.get("fields", [])
+		if node.code.is_empty() or fields.is_empty() or node.props.is_empty():
+			continue
+		var props := node.props.duplicate(true)
+		_retarget_edges(props, fields, mapper, str(meta.code), "id")
+		if props == node.props:
+			continue
+		if cvs.is_layer_locked(cvs._layer_index_of(node.layer_id)):
+			return {"error": "实例 %s 的格边引用需要更新，但所在图层已锁定。" % node.code}
+		changes[node.code] = {"before": node.props.duplicate(true), "after": props}
+	return {"changes": changes}
+
+func _retarget_edges(values: Dictionary, fields: Array, mapper: Callable, code: String, key_mode: String) -> void:
+	for field: Dictionary in fields:
+		var id: String = field.id
+		var key := str(field.get("code", "")) if key_mode == "code" else id
+		if key.is_empty():
+			key = id
+		var value = values.get(key)
+		if field.get("type") == "edge_ref" and value is Dictionary:
+			var paired := RefFields.paired_map_value(field, fields, values, key_mode)
+			if RefFields.map_key_local(RefFields.object_map_key(value, paired), cvs.cur_map_name, code):
+				var mapped: Dictionary = mapper.call(value, str(value.get("map", "")))
+				value.merge(mapped, true)
+		for scope in RefFields.nested_scopes(cvs.manifest, field, value):
+			_retarget_edges(scope.values, scope.decls, mapper, code, "code" if scope.path.size() == 2 else key_mode)
 
 func _placed_tile(row: Array, cell: Vector2i) -> Array:
 	var placed := row.duplicate()

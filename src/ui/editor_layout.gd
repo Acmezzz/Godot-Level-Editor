@@ -305,19 +305,18 @@ func _world_region_options(moving: bool) -> void:
 	spawn.text = "搬动框内出生点" if moving else "包括框内的出生点"
 	spawn.button_pressed = moving and tool.move_spawn
 	body.add_child(spawn)
-	var edges: CheckBox
-	if not moving:
-		edges = CheckBox.new()
-		edges.text = "副本引用跟随框内规则格边"
-		edges.tooltip_text = "两端根格的中心都在框内，并且粘贴后仍共边时，副本才引用新格边。"
-		body.add_child(edges)
+	var edges := CheckBox.new()
+	edges.text = "本图实例引用跟随框内规则格边" if moving else "副本引用跟随框内规则格边"
+	edges.button_pressed = moving and tool.move_edges
+	edges.tooltip_text = "两端根格的中心都在框内，并且落位后仍共边时，引用才改指新边。"
+	body.add_child(edges)
 	var pop: PopupPanel = shell.pop
 	body.add_child(app.UiKitScript.button("应用搬动选项" if moving else "复制选区", func():
 		if moving:
 			tool.move_graph = graph.button_pressed
 			tool.move_spawn = spawn.button_pressed
-			app._set_status("已更新跨层搬动选项：格图%s，出生点%s。" % [
-				"随框搬动" if tool.move_graph else "留在原位", "随框搬动" if tool.move_spawn else "留在原位"])
+			tool.move_edges = edges.button_pressed
+			app._set_status("已更新跨层搬动选项。")
 			pop.hide()
 		elif tool.copy(graph.button_pressed, spawn.button_pressed, edges.button_pressed):
 			pop.hide(), "primary"))

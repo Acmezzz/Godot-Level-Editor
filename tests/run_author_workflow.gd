@@ -436,7 +436,9 @@ func run():
 			{"id": "free-ramp", "kind": "entity", "code": "RAMP", "visual": {"type": "poly"}},
 			{"id": "door", "kind": "entity", "code": "DOOR", "ports": [{"id":"open","type":"door","x": 5,"y": 4}],
 				"fields": [{"id":"label", "type":"string"}, {"id":"route_cell", "kind":"choice", "source":"cell:"},
-					{"id":"route_edge", "type":"edge_ref"}, {"id":"boundary_edge", "type":"edge_ref"}]}],
+					{"id":"route_edge", "type":"edge_ref"}, {"id":"boundary_edge", "type":"edge_ref"},
+					{"id":"edge_routes", "kind":"input", "type":"array", "of":"record", "fields":[
+						{"id":"map", "kind":"choice", "source":"map"}, {"id":"edge", "type":"edge_ref", "mapField":"map"}]}]}],
 		"playtest": {"executable": OS.get_executable_path(), "report": true, "projectEntry": true,
 			"entryFunctions": ["second_sequence", "frame_sequence"],
 			"args": ["--headless", "--path", "%projectpath%", "--", "--map=%mapfile%", "--verify"]},
@@ -2349,15 +2351,29 @@ func author_world_region_move(app, manifest: Dictionary) -> void:
 	check(copy_save.get("status") == "ok", "save the cross-layer copy")
 	await app._load_map_file(path)
 	_check_world_move_restore(true, cvs.extract(), copied, "save and reopen copy")
+	var outside: Dictionary = initial.objects[0].duplicate(true)
+	outside.code = "EOUT"
+	outside.layer = copy
+	outside.x = 6
+	var implicit_edge := Edge.value_of("", Vector2i.ZERO, Vector2i.DOWN)
+	outside.props = {"edge_routes": [{"edge": implicit_edge}, {"map": "rule_iso", "edge": implicit_edge}],
+		"unrecognized": implicit_edge}
+	initial.objects.append(outside)
 	await cvs.load_data(initial.duplicate(true), "rule_hex", true)
+	initial = cvs.extract()
 	n = cvs.ents_all()[0]
 	app._layout_ctrl._on_map_menu_id(19)
 	for flag: CheckBox in collect(app, "CheckBox"):
-		if flag.text in ["搬动框内格图", "搬动框内出生点"]:
+		if flag.text in ["搬动框内格图", "搬动框内出生点", "本图实例引用跟随框内规则格边"]:
 			flag.button_pressed = true
 	press(app, "应用搬动选项")
 	input._on_left_press(min_corner, mouse)
 	input._on_left_release(max_corner)
+	cvs.set_layer_locked(2, true)
+	input._on_left_press(lower_px, mouse)
+	input._on_left_release(lower_px + step)
+	check(cvs.extract() == initial, "a locked incoming reference rejects the whole opted-in move")
+	cvs.set_layer_locked(2, false)
 	input._on_left_press(lower_px, mouse)
 	cvs._move_region_preview(lower_px + step)
 	var plan: Dictionary = cvs._move_snap.get("plan", {})
@@ -2369,8 +2385,9 @@ func author_world_region_move(app, manifest: Dictionary) -> void:
 	input._on_left_release(lower_px + step)
 	var move_entry: Variant = cvs._undo_history_ctrl.undo_stack.back()
 	check(cvs.undo_step_count() == steps + 1 and move_entry is Dictionary
-		and move_entry.get("kind") == "region_move" and move_entry.graph_rows.size() == 2,
-		"mixed region move records one patch with only the selected graph rows")
+		and move_entry.get("kind") == "region_move" and move_entry.graph_rows.size() == 2
+		and move_entry.get("props", {}).size() == 2,
+		"mixed region move records one patch with only changed graph rows and reference owners")
 	var moved: Dictionary = cvs.extract()
 	var upper_row: Array = moved.tiles[upper][0]
 	check(moved.tiles[ground].any(func(row): return row[0] == 1 and row[1] == 0)
@@ -2380,6 +2397,12 @@ func author_world_region_move(app, manifest: Dictionary) -> void:
 		and (n.get_parent().to_global(n.position - n.sort_anchor()) - entity_px).is_equal_approx(step)
 		and moved.spawn == [1, 0] and moved.objects[0].props.route_cell == "copy-a",
 		"move both tile grids and collision with their own cells and translate the same instance in pixels")
+	var outside_moved: Dictionary = moved.objects.filter(func(row): return row.code == "EOUT")[0]
+	check(moved.objects[0].props.route_edge.edge == "1,0|1,1"
+		and moved.objects[0].props.boundary_edge == initial.objects[0].props.boundary_edge
+		and outside_moved.x == outside.x and outside_moved.props.edge_routes[0].edge == Edge.value_of("", Vector2i(1, 0), Vector2i(1, 1))
+		and outside_moved.props.edge_routes[1].edge == implicit_edge and outside_moved.props.unrecognized == implicit_edge,
+		"local declared edges follow the region even outside the rectangle; boundary, remote and undeclared values stay")
 	var moved_graph: Dictionary = moved.meta.cellGraph
 	check(moved_graph.edges == initial.meta.cellGraph.edges and moved_graph.cells[2] == initial.meta.cellGraph.cells[2]
 		and moved_graph.cells[0].neighbors == ["copy-b", "outside"] and moved_graph.cells[1].id == "copy-b"
