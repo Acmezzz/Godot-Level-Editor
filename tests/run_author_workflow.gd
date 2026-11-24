@@ -390,6 +390,7 @@ func run():
 				{"id":"message", "code":"MESG", "kind":"input", "type":"string"},
 				{"id":"goal", "code":"GOAL", "kind":"choice", "source":"entity_inst:door"},
 				{"id":"goal_port", "code":"GPRT", "kind":"input", "type":"port_ref", "of":"door"},
+				{"id":"arrival_edge", "code":"ARED", "kind":"input", "type":"edge_ref"},
 				{"id":"goal_group", "code":"GGRP", "kind":"choice", "source":"entity_inst:door", "multiple":true},
 				{"id":"goal_route", "code":"GROT", "kind":"input", "type":"array", "of":"choice", "source":"entity_inst:door"},
 				{"id":"camera_path", "code":"CPTH", "kind":"input", "type":"array", "of":"vector2", "pickSpace":"map"},
@@ -2374,6 +2375,21 @@ func author_world_region_move(app, manifest: Dictionary) -> void:
 	input._on_left_release(lower_px + step)
 	check(cvs.extract() == initial, "a locked incoming reference rejects the whole opted-in move")
 	cvs.set_layer_locked(2, false)
+	var external_edge: Dictionary = initial.objects[0].props.route_edge
+	var external_content := {"function": "ENDS", "scope": "project", "fields": {"ARED": external_edge}}
+	check(Store.write(manifest, "ending", "project-region-edge", external_content), "publish a separate edge reference")
+	var external_path := Store.path_for(manifest, "ending", "project-region-edge")
+	var external_digest := Store.file_digest(external_path)
+	input._on_left_press(lower_px, mouse)
+	input._on_left_release(lower_px + step)
+	var retained_dialogs := collect(app, "ConfirmationDialog").filter(func(dialog): return dialog.visible)
+	check(retained_dialogs.size() == 1 and retained_dialogs[0].dialog_text.contains("ending/project-region-edge.arrival_edge")
+		and retained_dialogs[0].dialog_text.contains("0,0|0,1 → 1,0|1,1"), "the move lists the external field and both edge IDs")
+	if retained_dialogs.is_empty():
+		return
+	retained_dialogs[0].get_cancel_button().pressed.emit()
+	await process_frame
+	check(cvs.extract() == initial, "cancel leaves the region and its references unchanged")
 	input._on_left_press(lower_px, mouse)
 	cvs._move_region_preview(lower_px + step)
 	var plan: Dictionary = cvs._move_snap.get("plan", {})
@@ -2383,6 +2399,11 @@ func author_world_region_move(app, manifest: Dictionary) -> void:
 	var root: Node2D = cvs.map_root
 	var steps: int = cvs.undo_step_count()
 	input._on_left_release(lower_px + step)
+	retained_dialogs = collect(app, "ConfirmationDialog").filter(func(dialog): return dialog.visible)
+	retained_dialogs[0].get_ok_button().pressed.emit()
+	await process_frame
+	check(Store.file_digest(external_path) == external_digest,
+		"confirm keeps the external content file pointing at the old position")
 	var move_entry: Variant = cvs._undo_history_ctrl.undo_stack.back()
 	check(cvs.undo_step_count() == steps + 1 and move_entry is Dictionary
 		and move_entry.get("kind") == "region_move" and move_entry.graph_rows.size() == 2

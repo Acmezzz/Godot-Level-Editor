@@ -5,6 +5,7 @@ const ClonePlan := preload("res://src/content/clone_plan.gd")
 const GraphClip := preload("res://src/map/cell_graph_clip.gd")
 const EdgeRef := preload("res://src/map/edge_ref.gd")
 const RefFields := preload("res://src/content/ref_fields.gd")
+const Audit := preload("res://src/project/project_audit.gd")
 
 var cvs
 var selection := Rect2()
@@ -313,8 +314,10 @@ func finish(snap: Dictionary) -> void:
 		return
 	var history = cvs._undo_history_ctrl
 	var entry := {"kind": "region_move", "cells": [], "objects": {}, "graph_rows": {}}
+	var mapper := Callable()
 	if snap.has("edge_area"):
-		var refs := _edge_changes(snap.edge_area, snap.delta)
+		mapper = _edge_mapper(snap.edge_area, snap.delta)
+		var refs := _edge_changes(mapper)
 		if refs.has("error"):
 			cvs._hint(refs.error)
 			cvs.queue_redraw()
@@ -354,15 +357,38 @@ func finish(snap: Dictionary) -> void:
 	if entry.cells.is_empty() and entry.objects.is_empty() and uncoded_positions.is_empty() \
 			and entry.graph_rows.is_empty() and entry.get("props", {}).is_empty() and not entry.has("spawn"):
 		return
+	if mapper.is_valid() and not await _confirm_retained_edges(mapper):
+		return
 	history.commit_region_move(entry, uncoded_positions)
 	selection = Rect2()
 	cvs._hint("已跨层搬动选区（Ctrl+Z 撤销）。")
 
-func _edge_changes(area: Rect2, delta: Vector2) -> Dictionary:
+func _edge_mapper(area: Rect2, delta: Vector2) -> Callable:
 	var meta: Dictionary = cvs.map_data.meta
 	var size := Vector2i(meta.w, meta.h)
 	var frame: Transform2D = cvs.layer_xform(cvs.collision_index())
-	var mapper := EdgeRef.region_mapper(cvs.grid, size, frame, area, cvs.grid, size, frame, area.position + delta)
+	return EdgeRef.region_mapper(cvs.grid, size, frame, area, cvs.grid, size, frame, area.position + delta)
+
+func _confirm_retained_edges(mapper: Callable) -> bool:
+	var app = cvs.app_host
+	var staged: Array = app.project_shell.content_editor.staged_rows_current_doc()
+	var incoming := Audit.retained_region_edge_refs(cvs.manifest, cvs.cur_map_name, cvs.extract(), mapper, staged)
+	var retained: Array = incoming.retained
+	if retained.is_empty():
+		return true
+	var msg := "%d 处引用仍指向原位置：\n%s" % [retained.size(), "\n".join(retained.slice(0, 8))]
+	if not incoming.unreadable.is_empty():
+		msg += "\n另有 %d 个文件无法检查。" % incoming.unreadable.size()
+	msg += "\n\n仅更新当前地图的实例引用；清单中的路径和新格边可用于随后修订。"
+	var revision: int = cvs.map_rev
+	var data: Dictionary = cvs.map_data
+	cvs.doc_busy = true
+	var accepted: bool = await app._confirm_action("跨层搬动：保留的格边引用", msg, "仍然搬动")
+	cvs.doc_busy = false
+	return accepted and is_same(cvs.map_data, data) and cvs.map_rev == revision
+
+func _edge_changes(mapper: Callable) -> Dictionary:
+	var meta: Dictionary = cvs.map_data.meta
 	var changes := {}
 	for node: EntityNode in cvs.ents_all():
 		var fields: Array = node.decl.get("fields", [])

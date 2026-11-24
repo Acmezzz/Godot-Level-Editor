@@ -10,6 +10,7 @@ const ContentId := preload("res://src/content/content_id.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
 const MapResize := preload("res://src/ui/map_resize.gd")
 const Edge := preload("res://src/map/edge_ref.gd")
+const ViewData := preload("res://src/map/map_view_data.gd")
 
 const TMP := "user://test_audit_c3_tmp"
 
@@ -119,6 +120,24 @@ func test_map_change_checks_steps_staging_and_recovery_contexts() -> void:
 		and paths.contains("route/future.steps[0].routes#0.edge") and not paths.contains("UNKNOWN"),
 		"references use coded fields, local binding contexts and explicit cross-map parents")
 	eq(result.unreadable, [], "all input files readable")
+	m.assets[0].fields = [{"id": "boundary", "type": "edge_ref"}]
+	var cross_edge := Edge.value_of(live.meta.code, Vector2i(7, 3), Vector2i(8, 3))
+	other.objects = [{"code": "PEER", "asset": "door", "x": 0, "y": 0,
+		"layer": other.meta.layers[0].id, "props": {"boundary": cross_edge}}]
+	ok(MapStore.write(m, "other", other), "save a map with an incoming rule edge")
+	live.objects[0].props = {"boundary": cross_edge}
+	var grid := ViewData.effective_grid(live, m)
+	var area := Rect2(118, 48, 20, 16)
+	var size := Vector2i(12, 10)
+	var mapper := Edge.region_mapper(grid, size, Transform2D.IDENTITY, area,
+		grid, size, Transform2D.IDENTITY, area.position - Vector2(16, 0))
+	var retained := ProjectAudit.retained_region_edge_refs(m, "resize", live, mapper, staged)
+	var edges := "\n".join(retained.retained)
+	eq(retained.retained.size(), 5, "five external sources keep the original edge: " + edges)
+	ok(edges.contains("other · door(PEER).boundary") and edges.contains("route/local.steps[0].routes#0.edge")
+		and edges.contains("route/project.steps[0].routes#0.edge") and edges.contains("当前暂存 · route/staged")
+		and edges.contains("route/future.steps[0].routes#0.edge") and not edges.contains("door(DROP)"),
+		"the changed map's live props are excluded while maps, steps, staging and recovery have concrete paths")
 	_wipe()
 
 # ──────────── 挂载去重与补齐（C09） ────────────
