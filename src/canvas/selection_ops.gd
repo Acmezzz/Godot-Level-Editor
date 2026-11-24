@@ -7,6 +7,7 @@ extends RefCounted
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
 const ClonePlan := preload("res://src/content/clone_plan.gd")
 const Geometry := preload("res://src/map/object_geometry.gd")
+const RefFields := preload("res://src/content/ref_fields.gd")
 
 var cvs   # 宿主引用
 
@@ -353,10 +354,18 @@ func _link_handles() -> Array:
 	var stub: Vector2 = Vector2(maxf(cvs.grid.cell_max() * 0.56, 10.0), -maxf(cvs.grid.cell_max() * 0.56, 10.0))
 	for r in cvs._ref_ops_ctrl.local_refs(n as EntityNode):
 		var rd: Dictionary = r
-		var tgt = rd.get("target", null)
-		var at: Vector2 = cvs._w_for(tgt as EntityNode) if tgt != null else src + stub
-		out.append({"fd": rd.get("fd", {}), "value": str(rd.get("value", "")),
-			"from": src, "at": at, "has_target": tgt != null})
+		var tgt := rd.get("target") as EntityNode
+		var is_port: bool = rd.fd.get("type") == "port_ref"
+		var from: Vector2 = cvs.port_position(n, rd.source_port) if is_port and not rd.source_port.is_empty() else src
+		var has_target := is_instance_valid(tgt) and (not is_port or tgt.is_visible_in_tree())
+		var handle: Vector2 = from + stub
+		if is_port:
+			handle.y -= float(out.size()) * cvs.grid.cell_max() * 0.75
+		elif has_target:
+			handle = cvs._w_for(tgt)
+		var at: Vector2 = cvs.port_position(tgt, rd.target_port) if is_port and has_target else handle
+		out.append({"fd": rd.fd, "from": from, "at": at, "handle": handle,
+			"has_target": has_target, "bound": rd.get("bound", has_target)})
 	return out
 
 ## 把手命中：返回 {fd, ...} 或空字典。半径与顶点把手一致（0.45 格）。
@@ -367,7 +376,7 @@ func _link_handle_hit(pos: Vector2) -> Dictionary:
 	var best_d := r
 	for h in _link_handles():
 		var hd: Dictionary = h
-		var d: float = (hd.at as Vector2).distance_to(pos)
+		var d: float = (hd.handle as Vector2).distance_to(pos)
 		# 有目标的把手画在目标上：远处实例不可见时点不到，先让相机跟过去（focus）。无目标落在源上。
 		if d <= best_d:
 			best = hd
@@ -377,49 +386,53 @@ func _link_handle_hit(pos: Vector2) -> Dictionary:
 ## 起手：只记身份，不改数据（松手才写）。
 ## 从「有落点的目标把手」拖到空白 = 断开引用（RefOps 清空，复用 C1 规则）；
 ## 从空引用把手拖到空白 = 取消（本来就是空的）。
-func _begin_link_drag(h: Dictionary, pos: Vector2) -> void:
+func _begin_link_drag(h: Dictionary) -> void:
 	var n = cvs.selected_entity
 	if n == null or not is_instance_valid(n):
 		return
-	if cvs.is_layer_locked(cvs._layer_index_of((n as EntityNode).layer_id)):
+	if _selection_touches_locked([n]):
 		cvs._hint("实例所在图层已锁定：解锁后再改引用")
 		return
 	cvs._link_node = n
 	cvs._link_fd = (h.get("fd", {}) as Dictionary).duplicate(true)
-	cvs._link_grab = pos
+	cvs._link_origin = h.from
+	cvs._link_handle = h.handle
+	cvs._link_fd_types = RefFields.describe(cvs._link_fd).filter.get("types", [])
 	cvs._link_hover = ""
-	cvs._link_can_clear = bool(h.get("has_target", false))
+	cvs._link_can_clear = bool(h.bound)
 	cvs.begin_gesture(cvs.Gesture.LINK_DRAG, MOUSE_BUTTON_LEFT)
-	cvs._hint("拖动「%s」到目标实例松手%s" % [str(cvs._link_fd.get("name", "")),
+	cvs._hint("拖动「%s」到目标%s松手%s" % [str(h.fd.get("name", h.fd.id)),
+		"端口" if h.fd.type == "port_ref" else "实例",
 		"；松在空白 = 断开引用" if cvs._link_can_clear else "；松在空白 = 取消"])
 
 ## 拖动预览：只记光标下的候选（绘制层画高亮），不写数据。
 ## 候选必须满足声明的 of 白名单——不满足时高亮为空并当场说明（不让人拖到无效目标上）。
 func _move_link_preview(pos: Vector2) -> void:
-	var code: String = str(cvs.pick_candidate_at(pos))
-	var n = cvs._ent_by_code_index().get(code, null)
-	if code != "" and n != null and not cvs._ref_ops_ctrl.accepts(cvs._link_fd, n as EntityNode):
-		code = ""
-		cvs._hint("目标类型不在「%s」的允许范围内，换个实例" % str(cvs._link_fd.get("name", "")))
-	if code == str(cvs._link_hover):
-		return
-	cvs._link_hover = code
+	cvs._link_hover = _link_candidate(pos, cvs._link_fd)
 	cvs.queue_redraw()
+
+func _link_candidate(pos: Vector2, fd: Dictionary) -> String:
+	if fd.type == "port_ref":
+		return cvs.port_candidate_at(pos, cvs._link_fd_types)
+	var node: EntityNode = cvs._entity_at(pos)
+	if is_instance_valid(node) and node.is_entity() and cvs._ref_ops_ctrl.accepts(fd, node):
+		return node.code
+	return ""
 
 ## 松手：候选有效且不是源实例自己才写；空白/自连按起手来源决定「断开」还是「取消」。
 ## 写入走 RefOps——与内容表单下拉、画布选点同一规则（含配对地图改动的确认与清空）。
-func _finish_link_drag() -> void:
+func _finish_link_drag(pos: Vector2) -> void:
 	var n = cvs._link_node
 	var fd: Dictionary = cvs._link_fd
-	var code: String = str(cvs._link_hover)
 	var can_clear: bool = cvs._link_can_clear
-	cvs._link_node = null
-	cvs._link_fd = {}
-	cvs._link_hover = ""
-	cvs._link_grab = Vector2.ZERO
-	cvs._link_can_clear = false
-	if n == null or not is_instance_valid(n) or fd.is_empty():
-		cvs.queue_redraw()
+	var is_port: bool = fd.get("type") == "port_ref"
+	var released_on_handle: bool = is_port and (cvs._link_handle as Vector2).distance_to(pos) <= cvs.grid.cell_max() * 0.45
+	var code := "" if fd.is_empty() else _link_candidate(pos, fd)
+	cvs.clear_link_drag()
+	if not is_instance_valid(n) or fd.is_empty() or released_on_handle or _selection_touches_locked([n]):
+		return
+	if is_port and code.is_empty() and (cvs.port_candidate_at(pos, []) != "" or cvs._entity_at(pos) != null):
+		cvs._hint("此处没有兼容的端口，原引用未变更")
 		return
 	if code == "":
 		if can_clear:
@@ -434,7 +447,8 @@ func _finish_link_drag() -> void:
 		cvs._hint("已取消：实例不能引用自己")
 		cvs.queue_redraw()
 		return
-	var res: Dictionary = await cvs._ref_ops_ctrl.set_entity_ref(n as EntityNode, fd, code)
+	var value = JSON.parse_string(code) if is_port else code
+	var res: Dictionary = await cvs._ref_ops_ctrl.set_entity_ref(n as EntityNode, fd, value)
 	if str(res.get("status", "")) != "ok":
 		cvs._hint("连线未生效：%s" % ("取消了配对地图改动" if str(res.get("status", "")) == "cancelled" else "写入失败"))
 	cvs.queue_redraw()

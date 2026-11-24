@@ -239,7 +239,7 @@ func _on_object_layer_press(pos: Vector2, b: InputEventMouseButton) -> void:
 	# 端点一般落在别的实例上，两个把手通常不重叠；重叠时几何编辑优先。
 	var lh: Dictionary = cvs._link_handle_hit(pos)
 	if not lh.is_empty():
-		cvs._begin_link_drag(lh, pos)
+		cvs._begin_link_drag(lh)
 		return
 	var hit = cvs._entity_at(pos)
 	if cvs.select_mode:
@@ -342,11 +342,9 @@ func _on_right_press(pos: Vector2, shift := false, alt := false) -> void:
 			cvs.Gesture.REGION_MOVE:
 				cvs._finish_region_move()
 			cvs.Gesture.LINK_DRAG:
-				# 右键打断连线 = 取消（没有数据改动可收尾，只清暂存）
-				cvs._link_node = null
-				cvs._link_fd = {}
-				cvs._link_hover = ""
-				cvs._link_can_clear = false
+				cvs.clear_link_drag()
+				cvs.end_gesture()
+				return
 			cvs.Gesture.SPAWN_DRAG:
 				cvs.finish_spawn_drag()
 		cvs.end_gesture()
@@ -396,7 +394,7 @@ func _on_left_release(pos: Vector2) -> void:
 		cvs.Gesture.LINK_DRAG:
 			# 先收暂存再清手势？_finish_link_drag 自己清暂存，手势由这里收
 			cvs.end_gesture()
-			cvs._finish_link_drag()
+			cvs._finish_link_drag(pos)
 		cvs.Gesture.ENTITY_VERTEX:
 			cvs._finish_vertex_drag()
 			cvs.end_gesture()

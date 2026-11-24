@@ -415,8 +415,9 @@ func run():
 				{"id":"destination", "code":"DEST", "name":"Branch target", "kind":"choice", "source":"content:ending",
 					"contentMapContext":"paired", "mapField":"destination_map"}
 			]}]}}, "assets":[
-			{"id": "switch", "kind": "entity", "code": "SWCH", "functions":["reaction"], "fields": [
-				{"id":"target","type":"port_ref","of":"door"}, {"id":"backup_map","type":"map_ref"},
+			{"id": "switch", "kind": "entity", "code": "SWCH", "functions":["reaction"],
+				"ports":[{"id":"output","type":"signal","x":-5,"y":3}], "fields": [
+				{"id":"target","type":"port_ref","of":"door","sourcePort":"output"}, {"id":"backup_map","type":"map_ref"},
 				{"id":"backup","type":"port_ref","of":"door","mapField":"backup_map"}]},
 			{"id": "button-art", "kind": "scene", "shape": "image", "texture": "button.png"},
 			{"id": "terrain", "kind": "scene", "shape": "tile", "atlas": "terrain.png", "cell": 16},
@@ -901,7 +902,7 @@ func run():
 	app._set_mode("content", "SW01")
 	press(ce.root, "画布选…")
 	check(app.canvas.pick_mode_accept == "port" and app.canvas.pick_mode_active, "opened port picking from instance form")
-	var markers: Array = app.canvas.port_markers()
+	var markers: Array = app.canvas.port_markers(["door"])
 	check(markers.size() == 1, "only the declared matching port is available")
 	if not markers.is_empty():
 		app.canvas.pick_mode_code = app.canvas.pick_candidate_at(markers[0].pos)
@@ -2700,6 +2701,40 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 	check(await cvs.undo() and cvs.extract().spawn == before_spawn and cvs.map_root == root, "undo restores the root spawn in place")
 	check(await cvs.redo() and cvs.extract().spawn == [5, 3] and cvs.map_root == root, "redo reapplies the root spawn in place")
 	var source_switch: EntityNode = cvs._ent_by_code_index()["PICK"]
+	cvs.commit_selection(source_switch)
+	cvs.place_kind = "object"
+	app._on_layer(0)
+	var handle: Dictionary = cvs._link_handles()[0]
+	var source_port := {"x": -5, "y": 3}
+	check(handle.from == cvs.port_position(source_switch, source_port) and cvs._link_handles().size() == 1,
+		"the local link starts on its declared source port and the paired remote link is not shown")
+	var input = cvs._canvas_input_ctrl
+	var upper_door: EntityNode = cvs._ent_by_code_index()[doors[1].code]
+	var lower_door: EntityNode = cvs._ent_by_code_index()[doors[0].code]
+	var lower_port: Vector2 = cvs.port_position(lower_door, {"x": 5, "y": 4})
+	var upper_port: Vector2 = cvs.port_position(upper_door, {"x": 5, "y": 4})
+	var previous: Dictionary = source_switch.props.target.duplicate()
+	input._on_object_layer_press(handle.handle, mouse)
+	cvs._move_link_preview(lower_port)
+	check(cvs.gesture == cvs.Gesture.LINK_DRAG and source_switch.props.target == previous, "wire stays a draft during drag")
+	input._on_right_press(handle.from)
+	check(cvs.gesture == cvs.Gesture.NONE and source_switch.props.target == previous and cvs.ents_all().has(source_switch),
+		"right click cancels a wire drag without erasing its source")
+	input._on_object_layer_press(handle.handle, mouse)
+	input._on_left_release(handle.from)
+	check(source_switch.props.target == previous, "an incompatible port does not clear the original wire")
+	input._on_object_layer_press(handle.handle, mouse)
+	input._on_left_release(lower_port)
+	check(source_switch.props.target.inst == doors[0].code, "drag replaces the target with a compatible port")
+	check(await cvs.undo() and source_switch.props.target == previous and cvs.map_root == root, "one undo restores the wire in place")
+	check(await cvs.redo() and source_switch.props.target.inst == doors[0].code, "redo restores the changed wire")
+	cvs.commit_selection(source_switch)
+	input._on_object_layer_press(handle.handle, mouse)
+	input._on_left_release(Vector2(650, 650))
+	check(not source_switch.props.has("target"), "dragging the bound wire to empty space disconnects it")
+	input._on_object_layer_press(handle.handle, mouse)
+	input._on_left_release(upper_port)
+	check(source_switch.props.target == previous, "the wire reconnects to the transformed port on the upper layer")
 	var source_id := "%s-SWCH-PICK-reaction-preview" % cvs.cur_map_code()
 	source_switch.functions = [{"fn": "REAC", "tr": "TUCH", "content": source_id}]
 	editor.stage_clone("reaction", source_id, {"id": source_id, "function": "REAC",

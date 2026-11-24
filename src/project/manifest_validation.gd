@@ -552,6 +552,7 @@ static func _validate_assets(data: Dictionary, project_dir: String, issues: Arra
 			_add(issues, "error", path + ".kind", "must be \"scene\" or \"entity\"")
 			continue
 		_validate_ports(ad, path, issues)
+		_validate_port_sources(ad, path, issues)
 		if kind == "scene":
 			_validate_scene_asset(ad, path, project_dir, issues)
 		else:
@@ -791,11 +792,25 @@ static func _validate_ports(ad: Dictionary, path: String, issues: Array[Dictiona
 		seen[pid] = true
 		for k in ["x", "y"]:
 			var v = (e as Dictionary).get(k, null)
-			if v != null and not (v is int or v is float):
+			if not (v is int or v is float):
 				_add(issues, "error", p + "." + k, "must be a number (anchor local px)")
 		var pt = (e as Dictionary).get("type", null)
 		if pt != null and not (pt is String):
 			_add(issues, "error", p + ".type", "must be a string")
+
+static func _validate_port_sources(asset: Dictionary, path: String, issues: Array[Dictionary]) -> void:
+	var ports = asset.get("ports", [])
+	var fields = asset.get("fields", [])
+	if not fields is Array:
+		return
+	for field in fields:
+		if not field is Dictionary or not field.has("sourcePort"):
+			continue
+		var id = field.sourcePort
+		if field.get("type") != "port_ref" or not id is String or id.is_empty() or not ports is Array or not ports.any(
+				func(port): return port is Dictionary and port.get("id") == id):
+			_add(issues, "error", "%s.fields.%s.sourcePort" % [path, field.get("id", "?")],
+				"must name a declared port on this asset and belong to a port_ref field")
 
 ## C5（§7.4）：具名参考画幅 viewports（[{id, w, h}]）：id 非空唯一、w/h 必填正数。
 static func _validate_viewports(data: Dictionary, issues: Array[Dictionary]) -> void:

@@ -492,73 +492,45 @@ func _draw_visual_rects(nodes: Array) -> void:
 		cvs.draw_rect(rect, Color(col, alpha), true)
 		cvs.draw_rect(rect, Color(col, minf(1.0, alpha + 0.5)), false, 1.5)
 
-func _draw_port_links() -> void:
-	var source := cvs.selected_entity as EntityNode
-	if source == null or not is_instance_valid(source):
-		return
-	var fields: Array = source.decl.get("fields", [])
-	for fd in fields:
-		if not fd is Dictionary or fd.get("type") != "port_ref":
-			continue
-		var ref = source.props.get(str(fd.get("id", "")))
-		if not ref is Dictionary or not cvs.is_local_port_map(str(ref.get("map", ""))):
-			continue
-		var target := cvs._ent_by_code_index().get(str(ref.get("inst", ""))) as EntityNode
-		if target == null or not is_instance_valid(target) or not target.is_visible_in_tree():
-			continue
-		for port in target.decl.get("ports", []):
-			if not port is Dictionary or port.get("id") != ref.get("port"):
-				continue
-			var at: Vector2 = cvs.port_position(target, port)
-			var origin: Vector2 = source.get_parent().to_global(source.position - source.sort_anchor())
-			cvs.draw_line(origin, at, Color.GOLD, 1.5, true)
-			cvs.draw_circle(at, 4.0 / maxf(cvs.zoom, 0.01), Color.GOLD)
-			break
-
-## E2 连线把手：每条本图引用一条线（源锚点 → 落点），源端与落点各一个方块把手。
-## 拖动中：线跟手、光标下的候选实例高亮。把手画在世界空间（层变换已作用）。
 func _draw_link_handles() -> void:
-	_draw_port_links()
-	var handles: Array = cvs._link_handles()
-	var pos: Vector2 = cvs.get_global_mouse_position()
 	if cvs.gesture == cvs.Gesture.LINK_DRAG:
-		# 拖动中：从源锚点画到光标；候选实例青框预览落点
-		var src: Vector2 = Vector2.ZERO
-		for h in handles:
-			var hd: Dictionary = h
-			if hd.get("fd", {}) == cvs._link_fd:
-				src = hd.get("from", Vector2.ZERO)
-				break
-		cvs.draw_line(src, pos, Color(0.2, 1.0, 0.9, 0.85), 2.0, true)
-		var hov = cvs._ent_by_code_index().get(str(cvs._link_hover), null)
-		if hov != null and is_instance_valid(hov):
-			cvs.draw_rect(_wr(hov as EntityNode).grow(3.0), Color(0.2, 1.0, 0.9, 0.9), false, 2.0)
-		var hs := maxf(cvs.grid.cell_max() * 0.32, 6.0)
-		cvs.draw_rect(Rect2(pos - Vector2.ONE * hs * 0.5, Vector2.ONE * hs), Color(0.2, 1.0, 0.9, 0.95), true)
-		return
-	if handles.is_empty():
-		return
-	var side := maxf(cvs.grid.cell_max() * 0.28, 5.0)
-	var stub: Vector2 = Vector2(maxf(cvs.grid.cell_max() * 0.56, 10.0), -maxf(cvs.grid.cell_max() * 0.56, 10.0))
-	for h in handles:
-		var hd2: Dictionary = h
-		var from: Vector2 = hd2.get("from", Vector2.ZERO)
-		var at: Vector2 = hd2.get("at", from)
-		var has_t: bool = bool(hd2.get("has_target", false))
-		# 有落点 = 实线青；空引用 = 一条斜向短线（把手在线段末端，不压锚点）
-		var col := Color(0.2, 1.0, 0.9, 0.9) if has_t else Color(0.2, 1.0, 0.9, 0.55)
-		if has_t:
-			cvs.draw_line(from, at, col, 1.5, true)
+		var pos: Vector2 = cvs.get_global_mouse_position()
+		var hot: String = cvs._link_hover
+		cvs.draw_line(cvs._link_origin, pos, Color.AQUAMARINE, 2.0, true)
+		if cvs._link_fd.get("type") == "port_ref":
+			_draw_port_markers(cvs._link_fd_types, hot)
 		else:
-			cvs.draw_line(from, from + stub, col, 1.2, true)
-		# 端点把手：方形（区别于顶点的实心方块略小）
-		cvs.draw_rect(Rect2(at - Vector2.ONE * side * 0.5, Vector2.ONE * side), Color(0.2, 1.0, 0.9, 0.95), true)
-		# 名字角标：字段名（多个引用字段时才需要区分）
-		if handles.size() > 1:
-			var fname := str((hd2.get("fd", {}) as Dictionary).get("name", ""))
-			if fname != "":
-				cvs.draw_string(ThemeDB.fallback_font, at + Vector2(side, -side),
-					fname, HORIZONTAL_ALIGNMENT_LEFT, -1, 10, col)
+			var node := cvs._ent_by_code_index().get(hot) as EntityNode
+			if is_instance_valid(node):
+				cvs.draw_rect(_wr(node).grow(3.0), Color.AQUAMARINE, false, 2.0)
+		return
+	var handles: Array = cvs._link_handles()
+	var side := maxf(cvs.grid.cell_max() * 0.28, 5.0)
+	for h in handles:
+		var fd: Dictionary = h.fd
+		var is_port: bool = fd.get("type") == "port_ref"
+		var col := Color.GOLD if is_port else Color.AQUAMARINE
+		if h.has_target:
+			cvs.draw_line(h.from, h.at, col, 1.5, true)
+			if is_port:
+				cvs.draw_circle(h.at, 4.0 / maxf(cvs.zoom, 0.01), col)
+		if is_port or not h.has_target:
+			cvs.draw_line(h.from, h.handle, Color(col, 0.55), 1.2, true)
+		cvs.draw_rect(Rect2(h.handle - Vector2.ONE * side * 0.5, Vector2.ONE * side), col)
+		if is_port or handles.size() > 1:
+			cvs.draw_string(ThemeDB.fallback_font, h.handle + Vector2(side, -side),
+				str(fd.get("name", fd.id)), HORIZONTAL_ALIGNMENT_LEFT, -1, 10, col)
+
+func _draw_port_markers(types: Array, hover: String, selected := "") -> void:
+	var radius: float = 5.0 / maxf(cvs.zoom, 0.01)
+	for marker in cvs.port_markers(types):
+		var chosen: bool = marker.value == selected
+		var hot: bool = marker.value == hover
+		var col := Color.AQUAMARINE if chosen or hot else Color(0.85, 0.75, 0.3, 0.8)
+		cvs.draw_circle(marker.pos, radius * (1.6 if chosen or hot else 1.0), col)
+		if chosen or hot:
+			cvs.draw_string(ThemeDB.fallback_font, marker.pos + Vector2(radius * 2, 0),
+				marker.label, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, col)
 
 ## E1 临时选点覆盖层：候选实例高亮 + 顶部提示条（提示条用屏幕坐标，画在最上层）。
 ## 已点中的候选实线粗框，悬停预览虚线细框——两者可同时存在（悬停下一个看效果）。
@@ -572,15 +544,7 @@ func _draw_pick_mode() -> void:
 	elif cvs.pick_mode_accept == "edge":
 		_draw_pick_edges(hover)
 	elif cvs.pick_mode_accept == "port":
-		var radius: float = 5.0 / maxf(cvs.zoom, 0.01)
-		for marker in cvs.port_markers():
-			var selected: bool = marker.value == cvs.pick_mode_code
-			var hot: bool = marker.value == hover
-			var col := Color.AQUAMARINE if selected or hot else Color(0.85, 0.75, 0.3, 0.8)
-			cvs.draw_circle(marker.pos, radius * (1.6 if selected else 1.0), col)
-			if selected or hot:
-				cvs.draw_string(ThemeDB.fallback_font, marker.pos + Vector2(radius * 2, 0),
-					marker.label, HORIZONTAL_ALIGNMENT_LEFT, -1, 12, col)
+		_draw_port_markers(cvs.pick_mode_types, hover, cvs.pick_mode_code)
 	elif hover != "" and hover != str(cvs.pick_mode_code):
 		var hn = cvs._ent_by_code_index().get(hover, null)
 		if hn != null and is_instance_valid(hn):

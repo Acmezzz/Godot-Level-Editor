@@ -899,7 +899,11 @@ var _link_fd := {}
 @warning_ignore("unused_private_class_variable")
 var _link_hover := ""
 @warning_ignore("unused_private_class_variable")
-var _link_grab := Vector2.ZERO
+var _link_origin := Vector2.ZERO
+@warning_ignore("unused_private_class_variable")
+var _link_handle := Vector2.ZERO
+@warning_ignore("unused_private_class_variable")
+var _link_fd_types: Array = []
 @warning_ignore("unused_private_class_variable")
 var _link_can_clear := false
 var _last_copy_region := false   # 最近一次复制是区域还是实体（Ctrl+V 分发）
@@ -939,9 +943,8 @@ func end_pick_mode() -> void:
 	pick_mode_types = []
 	queue_redraw()
 
-## 选点模式下光标处的候选实例码（"" = 不可选）。命中口径与普通选择一致；
-## accept=entity 时跳过场景实例（它们没有实例码，不能进引用字段）。
-func port_markers() -> Array:
+## Visible ports in world space; both field picking and link gestures use this list.
+func port_markers(want_types: Array = []) -> Array:
 	var out: Array = []
 	var map_key := cur_map_code()
 	if map_key == "":
@@ -956,7 +959,7 @@ func port_markers() -> Array:
 		for port in declarations[ent.asset]:
 			if not port is Dictionary or str(port.get("id", "")) == "":
 				continue
-			if not pick_mode_types.is_empty() and not pick_mode_types.has(str(port.get("type", ""))):
+			if not want_types.is_empty() and not want_types.has(str(port.get("type", ""))):
 				continue
 			var point := port_position(ent, port)
 			out.append({"pos": point, "label": str(port.id),
@@ -969,16 +972,29 @@ func is_local_port_map(key: String) -> bool:
 func port_position(ent: EntityNode, port: Dictionary) -> Vector2:
 	return ent.geometry_point_to_world(Vector2(port.x, port.y))
 
+func port_candidate_at(pos: Vector2, want_types: Array) -> String:
+	var distance := pow(11.0 / maxf(zoom, 0.01), 2.0)
+	var nearest := ""
+	for marker in port_markers(want_types):
+		var d := pos.distance_squared_to(marker.pos)
+		if d <= distance:
+			distance = d
+			nearest = str(marker.value)
+	return nearest
+
+func clear_link_drag() -> void:
+	_link_node = null
+	_link_fd = {}
+	_link_hover = ""
+	_link_origin = Vector2.ZERO
+	_link_handle = Vector2.ZERO
+	_link_fd_types = []
+	_link_can_clear = false
+	queue_redraw()
+
 func pick_candidate_at(pos: Vector2) -> String:
 	if pick_mode_accept == "port":
-		var distance := pow(11.0 / maxf(zoom, 0.01), 2.0)
-		var nearest := ""
-		for marker in port_markers():
-			var d := pos.distance_squared_to(marker.pos)
-			if d <= distance:
-				distance = d
-				nearest = str(marker.value)
-		return nearest
+		return port_candidate_at(pos, pick_mode_types)
 	if pick_mode_accept == "cell":
 		return pick_cell_id_at(pos, pick_mode_types[0] if not pick_mode_types.is_empty() else null)
 	if pick_mode_accept == "edge":
@@ -1463,11 +1479,7 @@ func cancel_preview_gesture() -> bool:
 			_move_cell_delta = Vector2i.ZERO
 		Gesture.LINK_DRAG:
 			# E2：连线拖动只在松手时写数据，取消只需清暂存（画布未被改动）
-			_link_node = null
-			_link_fd = {}
-			_link_hover = ""
-			_link_grab = Vector2.ZERO
-			_link_can_clear = false
+			clear_link_drag()
 		_:
 			return false
 	end_gesture()
@@ -1638,12 +1650,12 @@ func _link_handles() -> Array:
 	return _selection_ops_ctrl._link_handles()
 func _link_handle_hit(pos: Vector2) -> Dictionary:
 	return _selection_ops_ctrl._link_handle_hit(pos)
-func _begin_link_drag(h: Dictionary, pos: Vector2) -> void:
-	_selection_ops_ctrl._begin_link_drag(h, pos)
+func _begin_link_drag(h: Dictionary) -> void:
+	_selection_ops_ctrl._begin_link_drag(h)
 func _move_link_preview(pos: Vector2) -> void:
 	_selection_ops_ctrl._move_link_preview(pos)
-func _finish_link_drag() -> void:
-	await _selection_ops_ctrl._finish_link_drag()
+func _finish_link_drag(pos: Vector2) -> void:
+	await _selection_ops_ctrl._finish_link_drag(pos)
 
 func copy_region() -> void:
 	_region_ops_ctrl.copy_region()

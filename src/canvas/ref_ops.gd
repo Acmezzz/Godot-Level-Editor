@@ -87,7 +87,7 @@ func accepts(fd: Dictionary, n: EntityNode) -> bool:
 		return false
 	return RefFields.field_accepts(fd, n.asset)
 
-## 本图可连的 entity_ref 字段（配对地图为空或指向本图）。
+## 本图可连的实例和端口字段。跨图引用保留在表单中编辑。
 ## 返回 [{fd, value, target: EntityNode 或 null}]——target 是 C1 解析后的落点。
 func local_refs(n: EntityNode) -> Array:
 	var out: Array = []
@@ -104,5 +104,26 @@ func local_refs(n: EntityNode) -> Array:
 		var tgt = by_code.get(val, null) if val != "" else null
 		if tgt != null and not is_instance_valid(tgt):
 			tgt = null
-		out.append({"fd": rd.get("fd", {}), "value": val, "target": tgt})
+		out.append({"fd": rd.get("fd", {}), "target": tgt})
+	var fields: Array = edef.get("fields", [])
+	for fd in fields:
+		if not fd is Dictionary or fd.get("type") != "port_ref":
+			continue
+		var pair := RefFields.paired_map_value(fd, fields, n.props)
+		var value = n.props.get(fd.id)
+		if not cvs.is_local_port_map(pair) or (value is Dictionary and not cvs.is_local_port_map(str(value.get("map", "")))):
+			continue
+		var target := by_code.get(value.get("inst", "")) as EntityNode if value is Dictionary else null
+		var port := _port_of(target, str(value.get("port", ""))) if value is Dictionary else {}
+		var source := _port_of(n, str(fd.get("sourcePort", "")))
+		out.append({"fd": fd, "target": target if not port.is_empty() else null,
+			"source_port": source, "target_port": port, "bound": value is Dictionary and not value.is_empty()})
 	return out
+
+func _port_of(node: EntityNode, id: String) -> Dictionary:
+	if not is_instance_valid(node) or id.is_empty():
+		return {}
+	for port in RefFields.ports_of(node.decl):
+		if port is Dictionary and port.get("id") == id:
+			return port
+	return {}
