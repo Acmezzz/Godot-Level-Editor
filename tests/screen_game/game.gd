@@ -1,0 +1,145 @@
+extends Control
+## Signal Room owns its UI, styling, state transitions and loading. No editor scripts are imported.
+
+var manifest: Dictionary
+var manifest_bytes: PackedByteArray
+var report := {}
+var visited: Array[String] = []
+var screens: Array[String] = []
+var opened_buttons: Array[String] = []
+var verify := false
+
+func _ready() -> void:
+	var args := {}
+	for arg in OS.get_cmdline_user_args():
+		var split := arg.split("=", true, 1)
+		args[split[0]] = split[1] if split.size() == 2 else ""
+	if args.has("--editor-preview"):
+		await _preview(args["--editor-preview"])
+		return
+	var manifest_path := "res://editor/editor_manifest.json"
+	manifest_bytes = FileAccess.get_file_as_bytes(manifest_path)
+	manifest = JSON.parse_string(manifest_bytes.get_string_from_utf8())
+	verify = args.has("--verify")
+	if args.has("--editor-playtest"):
+		report = _decode(args["--editor-playtest"])
+	var entry := _decode(args["--editor-entry"]) if args.has("--editor-entry") else {"function": "signal", "content": "project-default"}
+	_show_content(entry)
+
+func _decode(encoded: String) -> Dictionary:
+	return JSON.parse_string(Marshalls.base64_to_utf8(encoded))
+
+func _show_content(target: Dictionary) -> void:
+	var kind: String = target.function
+	var cid: String = target.content
+	var data = JSON.parse_string(FileAccess.get_file_as_string("res://content/%s/%s.json" % [kind, cid]))
+	if not data is Dictionary or data.get("function") != manifest.functions[kind].code:
+		_finish("Missing signal content: " + cid)
+		return
+	visited.append(cid)
+	for child in get_children():
+		remove_child(child)
+		child.queue_free()
+	var fields: Dictionary = data.get("fields", {})
+	var view_id: String = fields.get("PANE", "")
+	if view_id.is_empty():
+		var label := Label.new()
+		label.text = str(fields.get("TEXT", ""))
+		add_child(label)
+		if verify:
+			_finish("", label.text)
+		return
+	for view in manifest.get("views", []):
+		if view.view_id != view_id:
+			continue
+		screens.append(view_id)
+		var buttons := _draw_screen(self, view.layout, size, "")
+		if verify:
+			if buttons.is_empty() or visited.size() > 8:
+				_finish("The authored route did not reach a conclusion.")
+				return
+			var button: Button = buttons[0]
+			await get_tree().process_frame
+			var click := InputEventAction.new()
+			click.action = &"ui_accept"
+			button.grab_focus()
+			for pressed in [true, false]:
+				click.pressed = pressed
+				Input.parse_input_event(click)
+				await get_tree().process_frame
+		return
+	_finish("Missing signal screen: " + view_id)
+
+func _draw_screen(parent: Node, layout: Dictionary, extent: Vector2, locale: String) -> Array[Button]:
+	var background := ColorRect.new()
+	background.color = Color("#10232b")
+	background.size = extent
+	parent.add_child(background)
+	var buttons: Array[Button] = []
+	for row in layout.elements:
+		var anchors: Array = row.anchors
+		var offsets: Array = row.get("offsets", [0, 0, 0, 0])
+		var start := Vector2(anchors[0], anchors[1]) * extent + Vector2(offsets[0], offsets[1])
+		var finish := Vector2(anchors[2], anchors[3]) * extent + Vector2(offsets[2], offsets[3])
+		var caption := str(row.get("textLocales", {}).get(locale, row.get("text", "")))
+		var item: Control
+		match row.kind:
+			"button":
+				var button := Button.new()
+				button.text = caption
+				var style := StyleBoxFlat.new()
+				style.bg_color = Color("#cc711e") if row.get("style") == "signal/relay" else Color("#286968")
+				button.add_theme_stylebox_override("normal", style)
+				if row.has("target"):
+					var target: Dictionary = row.target
+					button.pressed.connect(func():
+						opened_buttons.append(button.text)
+						_show_content.call_deferred(target))
+					buttons.append(button)
+				item = button
+			"text":
+				var label := Label.new()
+				label.text = caption
+				item = label
+			_:
+				var panel := ColorRect.new()
+				panel.color = Color("#286968")
+				item = panel
+		item.position = start
+		item.size = finish - start
+		parent.add_child(item)
+	return buttons
+
+func _preview(path: String) -> void:
+	var request: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(path))
+	var extent := Vector2i(request.viewport.w, request.viewport.h)
+	var surface := SubViewport.new()
+	surface.size = extent
+	surface.render_target_update_mode = SubViewport.UPDATE_ONCE
+	add_child(surface)
+	_draw_screen(surface, request.subject.layout, Vector2(extent), request.locale)
+	await RenderingServer.frame_post_draw
+	var dir := path.get_base_dir()
+	var ok := surface.get_texture().get_image().save_png(dir.path_join("frame.png")) == OK
+	_write_json(dir.path_join("result.json"), {"version": 1, "token": request.token,
+		"status": "ready" if ok else "error"})
+	get_tree().quit(0 if ok else 1)
+
+func _finish(error: String, text := "") -> void:
+	if not report.is_empty():
+		var digest := HashingContext.new()
+		digest.start(HashingContext.HASH_SHA256)
+		digest.update(manifest_bytes)
+		var path: String = report.path
+		var result := {"version": 1, "token": report.token, "status": "ready" if error.is_empty() else "error",
+			"message": error, "mapDigest": "", "manifestDigest": digest.finish().hex_encode(),
+			"result": {"visited": visited, "screens": screens, "buttons": opened_buttons, "text": text}}
+		_write_json(path + ".tmp", result)
+		DirAccess.rename_absolute(path + ".tmp", path)
+	if verify or not error.is_empty():
+		get_tree().quit(0 if error.is_empty() else 1)
+
+func _write_json(path: String, value: Dictionary) -> void:
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	file.store_string(JSON.stringify(value))
+	file.close()

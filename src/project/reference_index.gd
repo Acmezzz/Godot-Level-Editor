@@ -71,6 +71,15 @@ static func is_view_content_target(value: Variant) -> bool:
 	return value is Dictionary and value.size() == 2 and value.get("function") is String \
 		and value.get("content") is String
 
+static func view_ids(manifest: Dictionary) -> Array[String]:
+	var ids: Array[String] = []
+	var rows = manifest.get("views", [])
+	if rows is Array:
+		for row in rows:
+			if row is Dictionary and row.get("view_id") is String and row.view_id != "":
+				ids.append(row.view_id)
+	return ids
+
 static func view_content_refs(manifest: Dictionary) -> Array:
 	var out := []
 	var views = manifest.get("views")

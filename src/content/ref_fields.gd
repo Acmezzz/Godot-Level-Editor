@@ -4,7 +4,7 @@ extends RefCounted
 ## 审计与画布连线都走 describe()，不各自解析 source 字符串。
 ##
 ## 返回值 {kind, scope, filter, many, map_field, is_ref, allow_empty}：
-##   kind  "entity_inst" / "entity_type" / "map" / "content" / "asset" / "audio" / "layer" /
+##   kind  "entity_inst" / "entity_type" / "map" / "content" / "asset" / "audio" / "view" / "layer" /
 ##         "port"（C3 端口引用）/ "value"
 ##   scope "same_map"（枚举本图实例）/ "map_ref"（由配对地图字段决定目标图）/
 ##         "pool"（全项目池）/ "static"（固定 options）
@@ -22,7 +22,7 @@ extends RefCounted
 ##   - 同一图同格多实例不是歧义：候选按实例码区分（显示「类型 码 · (x,y)」）。
 ##
 ## 声明规则沿用现有 source 字符串，避免第二套词汇：
-##   content:<功能id> / entity:<id,id> / entity_inst:<id,id> / map / audio: / layer: /
+##   content:<功能id> / entity:<id,id> / entity_inst:<id,id> / map / audio: / view: / layer: /
 ##   asset:<kind>:<id,id>（kind 可为空——`asset::ID` 必须解析成「不限 kind + 过滤 ID」，
 ##   旧实现用 split(":", false) 会吃掉空段，把 ID 当成 kind）。
 
@@ -129,6 +129,11 @@ static func describe(decl: Dictionary) -> Dictionary:
 		out.kind = "map"
 		out.scope = "pool"
 		out.is_ref = true
+	elif src == "view:":
+		out.kind = "view"
+		out.scope = "pool"
+		out.is_ref = true
+		out.allow_empty = true
 	elif src == "audio:":
 		out.kind = "audio"
 		out.scope = "pool"

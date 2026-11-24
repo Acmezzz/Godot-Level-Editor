@@ -902,7 +902,13 @@ static func _collect_content_links(manifest: Dictionary, decls: Array, values, s
 				subpath += "fields."
 			_collect_content_links(manifest, scope.decls, scope.values, source_fn, subpath, out, findings, depth + 1)
 		var desc := RefFields.describe(fd)
-		if desc.get("kind") != "content":
+		if desc.kind == "view":
+			var views := ReferenceIndex.view_ids(manifest)
+			for entry in _as_list(value):
+				if not _empty_reference_value(entry) and not views.has(entry):
+					findings.append({"path": path, "message": "引用的参考视图不存在：" + str(entry)})
+			continue
+		if desc.kind != "content":
 			continue
 		var want_fn := str(desc.get("filter", {}).get("fn", ""))
 		if want_fn == "":

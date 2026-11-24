@@ -424,6 +424,8 @@ func _resolve_options(decl: Dictionary, project_scope := false) -> Array:
 		return ConditionDecls.allowed_rows(manifest, decl)
 
 	var src := str(decl.get("source", ""))
+	if src == "view:":
+		return ReferenceIndex.view_ids(manifest).map(func(id: String): return {"v": id, "t": id})
 	if src.begins_with("content:"):
 		var kind := src.substr(8)
 		var out: Array = []

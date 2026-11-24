@@ -1569,6 +1569,7 @@ func run():
 	await author_frame_picks(app, manifest)
 	await author_transformed_terrain(app, manifest)
 	await author_collision_batch(app, manifest)
+	await author_signal_room(app, project + "-signal")
 	print("WORKFLOW-DONE failures=", failures)
 	quit(1 if failures else 0)
 
@@ -3043,3 +3044,136 @@ func _drag_pick_frame(pop: PopupPanel, a: Vector2, b: Vector2) -> Button:
 	release.position = drag.position
 	frame.gui_input.emit(release)
 	return confirm
+
+func author_signal_room(app, project: String) -> void:
+	DirAccess.make_dir_recursive_absolute(project.path_join("editor"))
+	for filename in ["project.godot", "main.tscn", "game.gd"]:
+		check(DirAccess.copy_absolute(ProjectSettings.globalize_path("res://tests/screen_game/" + filename),
+			project.path_join(filename)) == OK, "install the separate screen game " + filename)
+	var launch := ["--path", "%projectpath%", "--audio-driver", "Dummy", "--"]
+	var manifest := {"_dir": project, "_maps_dir": project.path_join("maps"), "projectName": "Signal Room",
+		"viewports": [{"id": "handheld", "w": 480, "h": 720}],
+		"functions": {"signal": {"code": "SIGN", "name": "Signal", "fields": [
+			{"id": "screen", "code": "PANE", "kind": "choice", "source": "view:"},
+			{"id": "text", "code": "TEXT", "kind": "input", "type": "string"}]}},
+		"preview": {"version": 1, "executable": OS.get_executable_path(), "args": launch,
+			"capabilities": ["screenLayout"]},
+		"playtest": {"executable": OS.get_executable_path(), "args": launch + ["--verify"],
+			"report": true, "projectEntry": true, "entryFunctions": ["signal"]}}
+	var path := project.path_join("editor/editor_manifest.json")
+	check(Maps.write_json(path, manifest), "write only the second game's module and viewport declarations")
+	var import_log := PackedStringArray()
+	if OS.execute(OS.get_executable_path(), ["--headless", "--path", project, "--editor", "--import"], import_log, true) != 0:
+		check(false, "import the screen game: " + "\n".join(import_log))
+		return
+	manifest["_manifest_digest"] = Store.file_digest(path)
+	app._clear_project_session()
+	app.manifest = manifest
+	app._build_editor_ui()
+	app._set_mode("content")
+	var library = app.project_shell.content_editor._library
+	await _author_signal_content(app, library, "clear", "Signal verified")
+	await _author_signal_screen(app, "relay-tuning", "Confirm the signal", "project-clear")
+	await _author_signal_content(app, library, "tune", "", "relay-tuning")
+	await _author_signal_screen(app, "watch-deck", "Tune the relay", "project-tune", path)
+	await _author_signal_content(app, library, "watch", "", "watch-deck")
+	check(not app.map_loaded and Store.read(manifest, "signal", "project-watch").get("fields", {}).get("PANE") == "watch-deck",
+		"the start content stores a chosen screen without creating a map")
+	var changed := manifest.duplicate(true)
+	changed.views = manifest.get("views", []).filter(func(view): return view.view_id != "watch-deck")
+	check(Audit.audit(changed).any(func(issue): return issue.path == "signal/project-watch.screen" and issue.message.contains("watch-deck")),
+		"a missing referenced screen is reported against its content field")
+	library.open()
+	var pop: PopupPanel = _visible_popup(app)
+	var entries: ItemList = collect(pop, "ItemList").front()
+	for i in entries.item_count:
+		if entries.get_item_metadata(i) == "project-watch":
+			entries.select(i)
+			entries.item_selected.emit(i)
+			break
+	press(pop, "试玩所选内容")
+	var deadline := Time.get_ticks_msec() + 5000
+	while app._map_file_ctrl._play_report_request.is_empty() and Time.get_ticks_msec() < deadline:
+		await process_frame
+	var report := await wait_for_playtest(app._map_file_ctrl)
+	var result: Dictionary = report.get("result", {})
+	check(report.get("status") == "ready" and report.get("mapDigest") == ""
+		and result.get("visited") == ["project-watch", "project-tune", "project-clear"]
+		and result.get("screens") == ["watch-deck", "relay-tuning"]
+		and result.get("buttons") == ["Tune the relay", "Confirm the signal"]
+		and result.get("text") == "Signal verified",
+		"the second game follows both authored buttons from the selected start content: " + str(report))
+
+func _visible_popup(app) -> PopupPanel:
+	return collect(app, "PopupPanel").filter(func(p): return p.visible).back()
+
+func _author_signal_content(app, library, id: String, message: String, view := "") -> void:
+	library.open()
+	press(_visible_popup(app), "新建…")
+	await process_frame
+	var pop := _visible_popup(app)
+	var inputs := collect(pop, "LineEdit")
+	inputs[0].text = id.capitalize()
+	inputs[1].text = id
+	inputs[2].text = message
+	if view != "":
+		select_metadata(collect(pop, "OptionButton").front(), view)
+	press(pop, "保存")
+	pop.hide()
+	await process_frame
+
+func _author_signal_screen(app, id: String, caption: String, content: String, manifest_path := "") -> void:
+	ReferenceViews.open(app)
+	var pop := _visible_popup(app)
+	var list: OptionButton = collect(pop, "OptionButton").front()
+	list.select(list.item_count - 1)
+	list.item_selected.emit(list.selected)
+	collect(pop, "LineEdit").front().text = id
+	pop.find_child("ViewLayoutMode", true, false).button_pressed = true
+	var design: OptionButton = pop.find_child("LayoutDesignViewport", true, false)
+	design.select(1)
+	design.item_selected.emit(1)
+	await process_frame
+	var preview: ReferenceViews.Preview
+	for node in collect(pop, "Control"):
+		if node is ReferenceViews.Preview:
+			preview = node
+			break
+	var frame := preview.frame()
+	var pointer := InputEventMouseButton.new()
+	pointer.button_index = MOUSE_BUTTON_LEFT
+	pointer.pressed = true
+	pointer.position = frame.position + frame.size * Vector2(0.25, 0.65)
+	preview._gui_input(pointer)
+	pointer.pressed = false
+	pointer.position = frame.position + frame.size * Vector2(0.75, 0.8)
+	preview._gui_input(pointer)
+	var field: LineEdit = pop.find_child("LayoutElement_text", true, false)
+	field.text = caption
+	field.text_changed.emit(caption)
+	field = pop.find_child("LayoutElement_style", true, false)
+	field.text = "signal/relay"
+	field.text_changed.emit(field.text)
+	var target: OptionButton = pop.find_child("LayoutElementTarget", true, false)
+	for i in target.item_count:
+		if target.get_item_metadata(i) == {"function": "signal", "content": content}:
+			target.select(i)
+			target.item_selected.emit(i)
+			break
+	if manifest_path != "":
+		var before := Store.file_digest(manifest_path)
+		var render: Button = pop.find_child("GameRenderPreview", true, false)
+		render.pressed.emit()
+		var deadline := Time.get_ticks_msec() + 13500
+		while render.disabled and Time.get_ticks_msec() < deadline:
+			await create_timer(0.08).timeout
+		var picture: TextureRect = pop.find_child("GameRenderedFrame", true, false)
+		check(picture.texture != null and picture.texture.get_size() == Vector2(480, 720)
+			and picture.texture.get_image().get_pixel(130, 480).to_html(false) == "cc711e"
+			and Store.file_digest(manifest_path) == before,
+			"the second game renders its styling and the unsaved screen at the declared portrait size")
+	press(pop, "保存参考视图")
+	var deadline := Time.get_ticks_msec() + 5000
+	while is_instance_valid(pop) and pop.visible and Time.get_ticks_msec() < deadline:
+		await process_frame
+	check(not is_instance_valid(pop) or not pop.visible, "save the authored signal screen " + id)
