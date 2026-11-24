@@ -47,8 +47,25 @@ func _ready() -> void:
 func _follow_target(target: Dictionary) -> void:
 	if target.has("view"):
 		_show_view(target.view)
+	elif target.has("map"):
+		_show_map_target(target.map)
 	else:
 		_show_content(target)
+
+func _show_map_target(code: String) -> void:
+	for filename in DirAccess.get_files_at("res://maps"):
+		if not filename.ends_with(".json"):
+			continue
+		var map = JSON.parse_string(FileAccess.get_file_as_string("res://maps/" + filename))
+		if not map is Dictionary or map.get("meta", {}).get("code") != code:
+			continue
+		cancel_target = {}
+		_clear_screen()
+		var pawns := _draw_relay(self, map, _relay_camera(size))
+		if verify:
+			_finish("", "Board entered", {"board": code, "placed": pawns.keys()})
+		return
+	_finish("Missing target map: " + code)
 
 func _decode(encoded: String) -> Dictionary:
 	return JSON.parse_string(Marshalls.base64_to_utf8(encoded))

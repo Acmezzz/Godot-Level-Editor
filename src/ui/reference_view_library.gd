@@ -10,6 +10,7 @@ const Preview := preload("res://src/ui/screen_layout_canvas.gd")
 const LayoutForm := preload("res://src/ui/screen_layout_form.gd")
 const GamePreview := preload("res://src/project/game_preview.gd")
 const FrameDialog := preload("res://src/ui/game_frame_dialog.gd")
+const References := preload("res://src/project/reference_index.gd")
 const Audit := preload("res://src/project/project_audit.gd")
 
 static func open(app, view_id := "", jump := {}) -> void:
@@ -23,7 +24,7 @@ static func open(app, view_id := "", jump := {}) -> void:
 	baseline = baseline.duplicate(true)
 	var rows: Array = baseline.duplicate(true)
 	var shell: Dictionary = app._popup_body("项目参考视图",
-		"拖动绘制热点，点击选中。热点可指向内容或项目支持的屏幕；游戏决定如何显示参考图和响应点击。")
+		"拖动绘制热点，点击选中。热点可指向内容或项目支持的屏幕和地图；游戏决定如何显示参考图和响应点击。")
 	var pop: PopupPanel = shell.pop
 	var window: WeakRef = weakref(pop)
 	var body: VBoxContainer = shell.body
@@ -33,6 +34,7 @@ static func open(app, view_id := "", jump := {}) -> void:
 	image_path.placeholder_text = "项目内图片路径，例如 art/controls.png"
 	var preview := Preview.new()
 	preview.direct_views = source.get("directViewTargets") == true
+	preview.direct_maps = source.get("directMapTargets") == true
 	FrameDialog.keep_on_focus_loss(pop, preview.cancel_placement)
 	preview.custom_minimum_size = Vector2(500, 295)
 	preview.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -236,6 +238,9 @@ static func open(app, view_id := "", jump := {}) -> void:
 	if source.get("directViewTargets") == true:
 		for row in baseline:
 			state.targets.append({"label": "屏幕 · " + row.view_id, "value": {"view": row.view_id}})
+	if preview.direct_maps:
+		for row in References.map_target_options(source):
+			state.targets.append({"label": "地图 · %s [%s]" % [row.name, row.code], "value": {"map": row.code}})
 	for row in rows:
 		list.add_item(str(row.view_id))
 	list.add_item("添加视图…")
@@ -370,7 +375,7 @@ static func open(app, view_id := "", jump := {}) -> void:
 		var row: Dictionary = rows[state.row] if state.row >= 0 else state.draft
 		var snapshot := row.duplicate(true)
 		var errors: Array[Dictionary] = []
-		Layout.validate(snapshot.layout, state.viewport_sizes, "layout", errors, state.modules, source.get("directViewTargets") == true)
+		Layout.validate(snapshot.layout, state.viewport_sizes, "layout", errors, state.modules, preview.direct_views, preview.direct_maps)
 		if not errors.is_empty():
 			notice.text = "%s：%s" % [errors[0].path, errors[0].message]
 			return

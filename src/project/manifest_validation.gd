@@ -96,8 +96,9 @@ static func _validate_top_level(data: Dictionary, issues: Array[Dictionary]) -> 
 		var cd := str(data["contentDir"])
 		if cd != "" and (cd.begins_with("/") or cd.begins_with("\\") or cd.contains("..")):
 			_add(issues, "error", "contentDir", "must be a relative path without '..'")
-	if data.has("directViewTargets") and not data.directViewTargets is bool:
-		_add(issues, "error", "directViewTargets", "must be a boolean")
+	for capability in ["directViewTargets", "directMapTargets"]:
+		if data.has(capability) and not data[capability] is bool:
+			_add(issues, "error", capability, "must be a boolean")
 	_validate_viewports(data, issues)
 	_validate_views(data, issues)
 	_validate_screen_modules(data, issues)
@@ -972,7 +973,7 @@ static func _validate_views(data: Dictionary, issues: Array[Dictionary]) -> void
 			_add(issues, "error", p + ".view_id", "must be non-empty and unique (seen: %s)" % vid)
 		seen[vid] = true
 		if e.has("layout"):
-			ScreenLayout.validate(e.layout, viewports, p + ".layout", issues, ScreenLayout.modules(data), data.get("directViewTargets") == true)
+			ScreenLayout.validate(e.layout, viewports, p + ".layout", issues, ScreenLayout.modules(data), data.get("directViewTargets") == true, data.get("directMapTargets") == true)
 		var img = (e as Dictionary).get("image", null)
 		if img != null and not (img is String):
 			_add(issues, "error", p + ".image", "must be a string")

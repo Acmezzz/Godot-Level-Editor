@@ -16,6 +16,7 @@ const RefFields := preload("res://src/content/ref_fields.gd")
 const References := preload("res://src/project/reference_index.gd")
 const ScreenLayout := preload("res://src/project/screen_layout.gd")
 const VIEW_KIND := "@view"
+const MAP_KIND := "@map"
 
 ## 建图。scope_fn = 当前功能 id（只画这个功能的内容条目与其出边）。
 ## extra = 尚未落盘的内容 {cid: data}（A2 staged），并入本功能目录参与建图。
@@ -69,6 +70,11 @@ static func _build(manifest: Dictionary, kinds: Array, extra: Dictionary, scope:
 		catalog[VIEW_KIND] = {}
 		for id in References.view_ids(manifest):
 			catalog[VIEW_KIND][id] = true
+		if manifest.get("directMapTargets") == true:
+			catalog[MAP_KIND] = {}
+			for map in References.map_target_options(manifest):
+				catalog[MAP_KIND][map.code] = true
+				graph.nodes.append({"key": _key(MAP_KIND, map.code), "cid": map.code, "fn_id": MAP_KIND, "name": map.name})
 	for kind in kinds:
 		var items := ContentStore.read_all(manifest, str(kind), graph.bad)
 		var staged: Dictionary = extra.get(kind, {})
@@ -142,10 +148,11 @@ static func _collect_views(manifest: Dictionary, graph: Dictionary, catalog: Dic
 				for output in labels:
 					var current = ScreenLayout.target_at(row, output)
 					var direct: bool = manifest.get("directViewTargets") == true and ScreenLayout.view_target(current)
-					if current != null and not direct and not ScreenLayout.content_target(current):
+					var to_map: bool = catalog.has(MAP_KIND) and ScreenLayout.map_target(current)
+					if current != null and not direct and not to_map and not ScreenLayout.content_target(current):
 						continue
-					var fn: String = VIEW_KIND if direct else (current.function if current != null else "")
-					var value: String = current.view if direct else (current.content if current != null else "")
+					var fn: String = MAP_KIND if to_map else (VIEW_KIND if direct else (current.function if current != null else ""))
+					var value: String = current.map if to_map else (current.view if direct else (current.content if current != null else ""))
 					var edge := {"from": key, "fn_id": VIEW_KIND, "cid": id, "fn": fn,
 						"value": value, "label": label if output == "" else label + " · " + labels[output],
 						"multi": false, "group": group, "index": i, "shown_rows": rows, "output": output}

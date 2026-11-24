@@ -35,6 +35,9 @@ static func content_target(value: Variant) -> bool:
 static func view_target(value: Variant) -> bool:
 	return value is Dictionary and value.size() == 1 and value.get("view") is String and not value.view.is_empty()
 
+static func map_target(value: Variant) -> bool:
+	return value is Dictionary and value.size() == 1 and value.get("map") is String and not value.map.is_empty()
+
 static func target_at(row: Dictionary, output: String) -> Variant:
 	return row.get("target") if output.is_empty() else row.get("outputs", {}).get(output)
 
@@ -296,7 +299,7 @@ static func reparent(elements: Array, moving: Array, parent: String, design: Vec
 			row["parent"] = parent
 
 static func validate(layout: Variant, viewports: Dictionary, path: String, issues: Array[Dictionary],
-		declarations := {}, direct_views := false) -> void:
+		declarations := {}, direct_views := false, direct_maps := false) -> void:
 	if not layout is Dictionary:
 		_error(issues, path, "must be an object")
 		return
@@ -347,8 +350,9 @@ static func validate(layout: Variant, viewports: Dictionary, path: String, issue
 			else:
 				for output in outputs:
 					var target = outputs[output]
-					if not output is String or output.strip_edges().is_empty() or not (content_target(target) or (direct_views and view_target(target))):
-						_error(issues, p + ".outputs." + str(output), "must bind a named output to {function, content} or an enabled {view}")
+					var supported := content_target(target) or (direct_views and view_target(target)) or (direct_maps and map_target(target))
+					if not output is String or output.strip_edges().is_empty() or not supported:
+						_error(issues, p + ".outputs." + str(output), "must bind a named output to {function, content} or an enabled {view} / {map}")
 		elif not KINDS.has(row.get("kind")):
 			_error(issues, p + ".kind", "must be panel, text, button or module")
 		if _validate_geometry(row, p, issues, true) and used.get(id) == i:

@@ -67,7 +67,7 @@ static func declared_kinds(m: Dictionary) -> Array:
 			if is_valid_kind(k):
 				kinds[k] = true
 	var root := root_dir(m)
-	if root != "":
+	if root != "" and DirAccess.dir_exists_absolute(root):
 		for dirname in DirAccess.get_directories_at(root):
 			if is_valid_kind(str(dirname)):
 				kinds[str(dirname)] = true

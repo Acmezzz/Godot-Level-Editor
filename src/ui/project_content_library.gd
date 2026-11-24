@@ -212,11 +212,14 @@ func _open_flow() -> void:
 			var is_current: bool = item.cid == edge.value and item.fn_id == edge.fn
 			if not is_current and not matches.call(item.key, words):
 				continue
-			var label: String = "屏幕 · " + item.cid if item.fn_id == RelGraph.VIEW_KIND else "%s · %s" % [item.name, item.cid]
+			var label := _flow_node_label(item, true)
 			target.add_item(label)
 			var choice = item.cid
 			if from_view:
-				choice = {"view": item.cid} if item.fn_id == RelGraph.VIEW_KIND else {"function": item.fn_id, "content": item.cid}
+				match item.fn_id:
+					RelGraph.VIEW_KIND: choice = {"view": item.cid}
+					RelGraph.MAP_KIND: choice = {"map": item.cid}
+					_: choice = {"function": item.fn_id, "content": item.cid}
 			target.set_item_metadata(target.item_count - 1, choice)
 			if is_current:
 				match_idx = target.item_count - 1
@@ -250,8 +253,9 @@ func _open_flow() -> void:
 		for edge in state.slots:
 			var suffix := "（添加目标）" if edge.multi and edge.index == -1 else (
 				" #%d" % (int(edge.index) + 1) if edge.multi else "")
-			var domain := "内容" if edge.fn_id == RelGraph.VIEW_KIND else (
-				"屏幕" if edge.fn == RelGraph.VIEW_KIND else str(edge.fn))
+			var domain: String = edge.fn
+			if edge.fn_id == RelGraph.VIEW_KIND:
+				domain = {RelGraph.VIEW_KIND: "屏幕", RelGraph.MAP_KIND: "地图"}.get(edge.fn, "内容")
 			slot.add_item(str(edge.label) + suffix + " → " + domain)
 		if slot.item_count > 0:
 			slot.select(0)
@@ -264,7 +268,7 @@ func _open_flow() -> void:
 		for item in state.graph.nodes:
 			if item.key != key and not matches.call(item.key, words):
 				continue
-			node.add_item("屏幕 · " + item.cid if item.fn_id == RelGraph.VIEW_KIND else "%s · %s · %s" % [item.fn_id, item.name, item.cid])
+			node.add_item(_flow_node_label(item))
 			node.set_item_metadata(node.item_count - 1, item.key)
 			state.source_positions[item.key] = node.item_count - 1
 		if state.source_positions.has(key):
@@ -276,7 +280,7 @@ func _open_flow() -> void:
 		state.search_terms.clear()
 		var kinds := Functions.functions(source)
 		for item in state.graph.nodes:
-			var kind: String = "屏幕" if item.fn_id == RelGraph.VIEW_KIND else str(kinds[item.fn_id].get("name", ""))
+			var kind: String = {"@view": "屏幕", "@map": "地图"}.get(item.fn_id, kinds.get(item.fn_id, {}).get("name", ""))
 			state.search_terms[item.key] = ("%s %s %s %s" % [kind, item.fn_id, item.name, item.cid]).to_lower()
 		if view.data.is_empty():
 			neighbors_only.set_pressed_no_signal(state.graph.nodes.size() > 250)
@@ -341,8 +345,13 @@ func _open_flow() -> void:
 		if edge.fn_id == RelGraph.VIEW_KIND:
 			var chosen = target.get_selected_metadata()
 			var next: Dictionary = chosen if chosen is Dictionary else {}
-			var resolved: bool = next.is_empty() or (References.view_ids(source).has(next.view) if next.has("view")
-				else Store.read_ex(source, next.function, next.content).status == "ok")
+			var resolved := true
+			if next.has("map"):
+				resolved = References.resolve_graph_map(app.MapStore.code_index(source), next.map).status == "ok"
+			elif next.has("view"):
+				resolved = References.view_ids(source).has(next.view)
+			elif not next.is_empty():
+				resolved = Store.read_ex(source, next.function, next.content).status == "ok"
 			if not resolved:
 				refresh.call(edge.from)
 				notice.text = "目标已变更；请选择有效目标后重试。"
@@ -392,6 +401,13 @@ func _open_flow() -> void:
 		pop.hide()
 		if item.fn_id == RelGraph.VIEW_KIND:
 			ReferenceViews.open.call_deferred(app, item.cid)
+		elif item.fn_id == RelGraph.MAP_KIND:
+			var map := References.resolve_graph_map(app.MapStore.code_index(source), item.cid)
+			if map.status == "ok":
+				if app.cur_map_name != map.key or not app.map_loaded:
+					await app._open_map_by_name(map.key)
+				if app.map_loaded and app.cur_map_name == map.key:
+					app._set_mode("map")
 		else:
 			_open_item.call_deferred(item.fn_id, item.cid)))
 	actions.add_child(Kit.button("重新扫描", func():
@@ -402,6 +418,12 @@ func _open_flow() -> void:
 		open.call_deferred(), "ghost"))
 	refresh.call("")
 	app._open_popup(pop, Vector2i(750, mini(680, int(app.get_viewport_rect().size.y) - 40)))
+
+static func _flow_node_label(item: Dictionary, short := false) -> String:
+	match item.fn_id:
+		RelGraph.VIEW_KIND: return "屏幕 · " + item.cid
+		RelGraph.MAP_KIND: return "地图 · %s [%s]" % [item.name, item.cid]
+	return "%s · %s" % [item.name, item.cid] if short else "%s · %s · %s" % [item.fn_id, item.name, item.cid]
 
 func open_issue(jump: Dictionary) -> void:
 	var fn: String = jump.fn

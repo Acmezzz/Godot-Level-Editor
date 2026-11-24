@@ -10,11 +10,8 @@ static func options(manifest: Dictionary) -> Array[Dictionary]:
 	var startup: Dictionary = manifest.startup
 	var result: Array[Dictionary] = []
 	if startup.get("maps", false):
-		var index := Maps.code_index(manifest)
-		for name in index.by_name:
-			var code: String = index.by_name[name]
-			if Refs.resolve_graph_map(index, code).status == "ok":
-				result.append({"name": "地图 · %s [%s]" % [name, code], "target": {"map": code}})
+		for row in Refs.map_target_options(manifest):
+			result.append({"name": "地图 · %s [%s]" % [row.name, row.code], "target": {"map": row.code}})
 	if startup.get("screens", false):
 		for id in Refs.view_ids(manifest):
 			result.append({"name": "屏幕 · " + id, "target": {"view": id}})

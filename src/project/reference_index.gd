@@ -89,6 +89,21 @@ static func view_transition_refs(manifest: Dictionary) -> Array:
 		return []
 	return _view_connections(manifest).filter(func(ref): return ScreenLayout.view_target(ref.target))
 
+static func view_map_refs(manifest: Dictionary) -> Array:
+	if manifest.get("directMapTargets") != true:
+		return []
+	return _view_connections(manifest).filter(func(ref): return ScreenLayout.map_target(ref.target))
+
+## Map transitions exclusively use stable codes, with the same uniqueness checks as graph edges.
+static func map_target_options(manifest: Dictionary) -> Array[Dictionary]:
+	var index := MapStore.code_index(manifest)
+	var out: Array[Dictionary] = []
+	for name in index.by_name:
+		var code: String = index.by_name[name]
+		if resolve_graph_map(index, code).status == "ok":
+			out.append({"name": name, "code": code})
+	return out
+
 static func _view_connections(manifest: Dictionary) -> Array:
 	var out := []
 	var views = manifest.get("views")

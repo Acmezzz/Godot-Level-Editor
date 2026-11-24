@@ -23,7 +23,8 @@ func run() -> void:
 	for file in ["project.godot", "main.tscn", "game.gd"]:
 		check(DirAccess.copy_absolute(ProjectSettings.globalize_path("res://tests/screen_game/" + file),
 			project.path_join(file)) == OK, "install the standalone game " + file)
-	var declaration := {"projectName": "Screen Navigation", "directViewTargets": true,
+	var declaration := {"projectName": "Screen Navigation", "directViewTargets": true, "directMapTargets": true,
+		"assets": [{"id": "relay", "kind": "entity", "code": "RLY1", "visual": {"mode": "rect", "color": "#62cabb"}}],
 		"startup": {"screens": true}, "viewports": [{"id": "handheld", "w": 480, "h": 720}],
 		"screenModules": {"signal-latch": {"name": "Latch", "outputs": {"accepted": "Continue"}, "fields": [
 			{"id": "presses", "kind": "input", "type": "int", "min": 1, "default": 1}]}},
@@ -42,23 +43,33 @@ func run() -> void:
 	app.manifest = manifest
 	app._build_editor_ui()
 	app._set_mode("content")
-	var library = app.project_shell.content_editor._library
-	library.open()
-	press(popup(), "新建…")
-	await process_frame
-	var form := popup()
-	var inputs := collect(form, "LineEdit")
-	inputs[0].text = "Finished"
-	inputs[1].text = "finished"
-	inputs[2].text = "Screen sequence complete"
-	press(form, "保存")
-	form.hide()
-	await add_screen("instructions", "Finish tutorial", {}, {"function": "signal", "content": "project-finished"})
+	app._set_mode("map")
+	app._on_new()
+	var create := popup()
+	create.find_child("NewMapName", true, false).text = "course"
+	press(create, "确定")
+	for i in 12:
+		await process_frame
+		if app.map_loaded and app.cur_map_name == "course":
+			break
+	if not check(app.map_loaded and app.cur_map_name == "course", "author a destination map"):
+		quit(1)
+		return
+	var canvas: EditorCanvas = app.canvas
+	var pawn: EntityNode = canvas._tool_ops_ctrl.place_object("relay", 0, Vector2(48, 48), true)
+	var pawn_code := pawn.code
+	var map_code := canvas.cur_map_code()
+	var published: Dictionary = await app._map_file_ctrl.commit_document("保存教学关卡")
+	check(published.get("status") == "ok", "publish the destination map")
+	app._set_mode("content")
+	await add_screen("instructions", "Enter course", {}, {"map": map_code})
 	await add_screen("welcome", "Start tutorial", {"module": "signal-latch"}, {"view": "instructions"})
 	var graph := Flow.build_project(manifest)
 	var edge_exists: bool = graph.edges.any(func(edge):
 		return edge.from == "@view\u0001welcome" and edge.to == "@view\u0001instructions" and edge.get("output") == "accepted")
 	check(edge_exists, "the project graph exposes the direct module transition")
+	check(graph.edges.any(func(edge): return edge.cid == "instructions" and edge.fn == Flow.MAP_KIND and edge.value == map_code),
+		"the project graph links the teaching button to the authored map")
 	var inbound := Audit.view_inbound_refs(manifest, "instructions", [])
 	check(not inbound.refs.is_empty() and "welcome" in inbound.refs[0], "the destination screen has the expected inbound reference")
 	var broken := manifest.duplicate(true)
@@ -83,8 +94,8 @@ func run() -> void:
 	var report: Dictionary = controller._play_report_result
 	var result: Dictionary = report.get("result", {})
 	check(report.get("status") == "ready" and result.get("screens") == ["welcome", "instructions"]
-		and result.get("visited") == ["project-finished"] and result.get("text") == "Screen sequence complete",
-		"the game follows a screen-to-screen transition without intermediary content: %s" % [report])
+		and result.get("visited") == [] and result.get("board") == map_code and result.get("placed") == [pawn_code],
+		"the game follows the two direct transitions and loads the authored map object: %s" % [report])
 	print("SCREEN-NAV-DONE failures=", failures)
 	quit(0 if failures == 0 else 1)
 
