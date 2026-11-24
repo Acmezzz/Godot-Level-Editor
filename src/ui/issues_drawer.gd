@@ -1,5 +1,5 @@
 extends RefCounted
-## IssuesDrawer：问题抽屉 + 全项目自检（从 editor_layout.gd 拆出，宿主 = editor_layout）
+## 显示项目自检结果，并按报告清理悬空引用。
 
 const ProjectAudit := preload("res://src/project/project_audit.gd")
 const EntityNodeScript := preload("res://src/canvas/entity_node.gd")
@@ -9,39 +9,19 @@ const MapFlowDialog := preload("res://src/ui/map_flow_dialog.gd")
 const ProjectSlotsDialog := preload("res://src/ui/project_content_slots_dialog.gd")
 const StartupDialog := preload("res://src/ui/startup_dialog.gd")
 
-var host   # editor_layout 宿主
-var app    # 根应用（= host.app）
-var _audit_incomplete := false   # 上次自检有图读不出来 → 清除必须禁用
-var _clear_btn: Button = null
+var app
+var _audit_incomplete := false
+var _clear_btn: Button
+var _issues_btn: Button
+var _issues_drawer: PanelContainer
+var _issues_list: VBoxContainer
+var _issues_scroll: ScrollContainer
+var _issues_items: Array = []
 
-func _init(h) -> void:
-	host = h
-	app = h.app
+func _init(editor_app) -> void:
+	app = editor_app
 
-## 同名转发属性（读写穿透到宿主，搬动文本零改动）
-var _issues_btn:
-	get: return host._issues_btn
-	set(v): host._issues_btn = v
-var _issues_drawer:
-	get: return host._issues_drawer
-	set(v): host._issues_drawer = v
-var _issues_list:
-	get: return host._issues_list
-	set(v): host._issues_list = v
-var _issues_scroll:
-	get: return host._issues_scroll
-	set(v): host._issues_scroll = v
-var _issues_items:
-	get: return host._issues_items
-	set(v): host._issues_items = v
-
-## 同名包装方法（真实实现经 host 转发）
-func _set_status(msg: String) -> void:
-	host._set_status(msg)
-
-## —— 问题抽屉（REFACTOR_PLAN 4.6-3）：project_audit 的呈现层 ——
-
-func _build_issues_drawer() -> PanelContainer:
+func build() -> PanelContainer:
 	var box := PanelContainer.new()
 	var sb = app.UiThemeScript.box(app.UiThemeScript.BG_PANEL, app.UiThemeScript.BORDER, 0, 10, 6)
 	sb.set_border_width_all(0)
@@ -54,7 +34,7 @@ func _build_issues_drawer() -> PanelContainer:
 	_issues_btn = head_btn
 	head.add_child(head_btn)
 	head.add_child(app.UiKitScript.spacer())
-	var rerun: Button = app.UiKitScript.button("重扫", func(): _run_audit(false), "ghost")
+	var rerun: Button = app.UiKitScript.button("重扫", func(): run_audit(false), "ghost")
 	rerun.tooltip_text = "重新扫描全项目"  # 读回校验锚
 	head.add_child(rerun)
 	var clear_btn: Button = app.UiKitScript.button("清除悬空", func(): _clear_dangling(), "ghost")
@@ -74,51 +54,31 @@ func _build_issues_drawer() -> PanelContainer:
 	col.add_child(scroll)
 	scroll.add_child(body)
 	box.add_child(col)
-	body.visible = false
-	scroll.visible = false   # E3：折叠态连滚动容器一起收（只藏 body 外层仍占最小高度）
+	scroll.visible = false
 	box.visible = false
 	return box
 
 ## —— 全项目自检（REFACTOR_PLAN 4.6-3）：project_audit 的呈现层 ——
 
-## 展开/收起条目列表。展开时先重扫再显示——条目永远新鲜（C-20 配套）。
-## E3：折叠要把 ScrollContainer 一起收起——只藏内层 body 时外层仍按
-## custom_minimum_size 占着最高 160px 的空白（U05）。
 func _toggle_issues_drawer() -> void:
-	if not _issues_list:
-		return
-	var expanding: bool = not _issues_list.visible
-	if expanding:
-		_run_audit(false)
-	_set_issues_open(expanding)
-
-## 展开态 = 列表与滚动容器同时可见（两处状态只在这一处写）。
-func _set_issues_open(open: bool) -> void:
-	if _issues_list != null:
-		_issues_list.visible = open
-	if _issues_scroll != null:
-		_issues_scroll.visible = open
+	_issues_scroll.visible = not _issues_scroll.visible
 
 ## 跑全项目审计并刷新抽屉。open_after=自检菜单入口（跑完自动展开列表）。
 ## 有图读不出来时检查范围不完整 → 禁用「清除悬空」（D07：范围不明只提示不动手）。
-func _run_audit(open_after := true) -> void:
+func run_audit(open_after := true) -> void:
 	var audit_meta := {}
 	var items: Array = ProjectAudit.audit(app.manifest, audit_meta)
 	_issues_items = items
 	_audit_incomplete = bool(audit_meta.get("incomplete", false))
-	if _clear_btn:
-		_clear_btn.disabled = _audit_incomplete
-		_clear_btn.tooltip_text = "有地图读不出来，检查范围不完整：先修好地图文件再清除" \
-			if _audit_incomplete else "把悬空引用字段的值清掉（字段留空=未填），写回前的快照在 editor/history/maps/<地图码>/"
-	if _issues_btn:
-		_issues_btn.text = "问题 %d" % items.size()
+	_clear_btn.disabled = _audit_incomplete
+	_clear_btn.tooltip_text = "有地图读不出来，检查范围不完整：先修好地图文件再清除" \
+		if _audit_incomplete else "把悬空引用字段的值清掉（字段留空=未填），写回前的快照在 editor/history/maps/<地图码>/"
+	_issues_btn.text = "问题 %d" % items.size()
 	_populate_issues()
-	if _issues_scroll:
-		_issues_scroll.custom_minimum_size.y = minf(items.size() * 26.0 + 6.0, 160.0)
+	_issues_scroll.custom_minimum_size.y = minf(items.size() * 26.0 + 6.0, 160.0)
 	if open_after:
-		_set_issues_open(true)
-	if _issues_drawer:
-		_issues_drawer.visible = true
+		_issues_scroll.show()
+	_issues_drawer.show()
 	if items.is_empty():
 		app._set_status("自检通过：未发现问题")
 	else:
@@ -264,10 +224,9 @@ func _clear_dangling() -> void:
 			return
 	MapStore.invalidate_read_cache()
 	MapStore.invalidate_code_map()
-	var fresh_meta := {}
-	ProjectAudit.audit(app.manifest, fresh_meta)
-	if bool(fresh_meta.get("incomplete", false)):
-		app._set_status(" 清除中止：最新扫描范围不完整")
+	var maps_dir := str(app.manifest.get("_maps_dir", ""))
+	if (maps_dir != "" and DirAccess.open(maps_dir) == null) or not MapStore.code_index(app.manifest).unreadable.is_empty():
+		app._set_status(" 清除中止：有地图无法读取")
 		return
 	var total := 0
 	var skipped := 0
@@ -285,7 +244,7 @@ func _clear_dangling() -> void:
 			app._set_status(" 清除中止：%s 无法读取，请重扫" % str(mn))
 			return
 		var d: Dictionary = r.get("data", {}) as Dictionary
-		# 新鲜报告 = 目标作用域的唯一判据：字段现在仍声明为悬空引用才动
+		# 用当前地图和引用目标复核旧报告。
 		var res2: Dictionary = ProjectAudit.apply_ref_fixes(app.manifest, str(mn), fix_list, d)
 		skipped += int(res2.get("skipped", 0))
 		if not bool(res2.get("changed", false)):
@@ -326,7 +285,7 @@ func _clear_dangling() -> void:
 			per_map.push_front("当前图已写盘，但重载失败，请重新打开")
 	if commit_error != "":
 		per_map.push_front(commit_error)
-	_run_audit(false)
+	run_audit(false)
 	if total == 0:
 		app._set_status(" 没有清掉任何悬空引用（%d 项已不成立，%d 张图写入失败）%s" % [
 			skipped, failed, ("：" + "；".join(per_map)) if not per_map.is_empty() else ""])

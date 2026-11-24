@@ -43,22 +43,9 @@ var _sel_bar: PanelContainer
 var _sel_name: Label
 var _sel_state: Label
 var _sel_eye: Button
-## 问题抽屉（REFACTOR_PLAN 4.6-3）：审计条目缓存 + 折叠面板 + 状态栏徽标
-# 问题抽屉控件：issues_drawer 经 host._issues_* 系列读写
-@warning_ignore("unused_private_class_variable")
-var _issues_btn: Button
-@warning_ignore("unused_private_class_variable")
-var _issues_drawer: PanelContainer
-@warning_ignore("unused_private_class_variable")
-var _issues_list: VBoxContainer
-@warning_ignore("unused_private_class_variable")
-var _issues_scroll: ScrollContainer
-@warning_ignore("unused_private_class_variable")
-var _issues_items: Array = []
-
 func _init(host) -> void:
 	app = host
-	_issues_ctrl = IssuesDrawer.new(self)
+	_issues_ctrl = IssuesDrawer.new(app)
 	_layer_ctrl = LayerPanel.new(self)
 	_popups_ctrl = Popups.new(self)
 func _build_editor_ui() -> void:
@@ -136,7 +123,7 @@ func _build_editor_ui() -> void:
 	app._canvas_dock_slot.add_theme_stylebox_override("panel", app.UiThemeScript.flat(app.UiThemeScript.BG_BASE, 0))
 	mid_col.add_child(app._canvas_dock_slot)
 
-	root.add_child(_build_issues_drawer())
+	root.add_child(_issues_ctrl.build())
 	root.add_child(_build_status_bar())
 
 	app.canvas.cursor_info.connect(_on_cursor)
@@ -285,7 +272,7 @@ func _on_map_menu_id(id: int) -> void:
 		21:
 			app._playtest_ctrl.open_play_report()
 		30:
-			_run_audit(true)
+			_issues_ctrl.run_audit()
 
 func _world_region_options(moving: bool) -> void:
 	var cvs: EditorCanvas = app.canvas
@@ -807,12 +794,8 @@ func _build_project_view() -> void:
 	app.asset_panel = app.project_shell.asset_panel
 
 
-## —— 拆到 src/ui/issues_drawer.gd / layer_panel.gd / popups.gd（调用点保持不变） ——
+## —— 图层面板与弹窗 ——
 
-func _build_issues_drawer() -> PanelContainer:
-	return _issues_ctrl._build_issues_drawer()
-func _run_audit(open_after := true) -> void:
-	_issues_ctrl._run_audit(open_after)
 func _toggle_layer_menu() -> void:
 	_layer_ctrl._toggle_layer_menu()
 func _open_layer_manager() -> void:

@@ -184,7 +184,7 @@ static func build(decl: Dictionary, value, on_set: Callable,
 		return _build_record(decl, value, on_set, option_resolver, key_mode, frame_pick)
 	var why := "声明缺 kind（应写 \"input\" 或 \"choice\"）" if kind == "" \
 		else "未声明的字段种类「%s」" % kind
-	return _readonly(decl, value, why, "补全声明后重新加载清单即可恢复编辑")
+	return _readonly(value, why, "补全声明后重新加载清单即可恢复编辑")
 
 ## input：string（可 multiline）/ int / float / bool / color / vector2 / range / asset_ref。
 ## 连续控件（SpinBox、HScale、多行 TextEdit）拖动/输入期间只记内存，失焦或 commit() 才写盘。
@@ -196,7 +196,7 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 			# 布尔必须是布尔（C06）："false" 这类字符串不能被 bool() 静默当真——
 			# 旧值非法时只读展示，用户显式修正（勾选控件以外的路径都不可写）
 			if not _is_unset(value) and not (value is bool):
-				return _readonly(decl, value, "值类型不符：声明 bool，实际是 %s" % type_name(value),
+				return _readonly(value, "值类型不符：声明 bool，实际是 %s" % type_name(value),
 					"编辑器不会改写它，请游戏侧或手工修正")
 			var cb := CheckBox.new()
 			cb.button_pressed = bool(value)
@@ -205,7 +205,7 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 			return {"ctl": cb, "commit": push}
 		"int", "float":
 			if not (value is int or value is float) and str(value) != "":
-				return _readonly(decl, value, "值类型不符：声明 %s，实际是 %s" % [typ, type_name(value)],
+				return _readonly(value, "值类型不符：声明 %s，实际是 %s" % [typ, type_name(value)],
 					"编辑器不会改写它，请游戏侧或手工修正")
 			var sp := SpinBox.new()
 			var increment = decl.get("step", 0.1)
@@ -234,7 +234,7 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 			return {"ctl": sp, "commit": push}
 		"string":
 			if not (value is String) and value != null:
-				return _readonly(decl, value, "值类型不符：声明 string，实际是 %s" % type_name(value),
+				return _readonly(value, "值类型不符：声明 string，实际是 %s" % type_name(value),
 					"编辑器不会改写它，请游戏侧或手工修正")
 			if bool(decl.get("multiline", false)):
 				var te := TextEdit.new()
@@ -265,7 +265,7 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 			# 否则一提交就会静默丢维度或把第三位吞掉。
 			var dims := RefFields.vector_dims(decl)
 			if not _is_unset(value) and (not (value is Array) or (value as Array).size() != dims):
-				return _readonly(decl, value, "值类型不符：声明 vector2/%d 维，实际是 %s" % [dims, type_name(value)],
+				return _readonly(value, "值类型不符：声明 vector2/%d 维，实际是 %s" % [dims, type_name(value)],
 					"编辑器不会改写它，请游戏侧或手工修正")
 			if not (value is Array):
 				value = default_for(decl)   # 未填：按声明 default（[min, min]）起步，与 int/float 的空串口径一致
@@ -294,7 +294,7 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 			# 数字之外的值（空串占位除外）只读展示——commit() 不能把它悄悄写成 min
 			if not (value is int or value is float):
 				if not _is_unset(value):
-					return _readonly(decl, value, "值类型不符：声明 range，实际是 %s" % type_name(value),
+					return _readonly(value, "值类型不符：声明 range，实际是 %s" % type_name(value),
 						"编辑器不会改写它，请游戏侧或手工修正")
 				value = float(decl.get("min", 0.0))   # 未填：从 min 起步，落盘走声明 default 同一形态
 			var lo := float(decl.get("min", 0.0))
@@ -335,10 +335,10 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 			var of := str(decl.get("of", ""))
 			var ok_of: Array = ["string", "int", "float", "bool", "color", "vector2", "range", "asset_ref", "choice", "record", "condition", "port_ref", "edge_ref", "flow_target"]
 			if not ok_of.has(of):
-				return _readonly(decl, value, "array.of 未声明（应写基础类型或 choice）",
+				return _readonly(value, "array.of 未声明（应写基础类型或 choice）",
 					"补全声明后重新加载清单即可恢复编辑")
 			if not _is_unset(value) and not (value is Array):
-				return _readonly(decl, value, "值类型不符：声明 array，实际是 %s" % type_name(value),
+				return _readonly(value, "值类型不符：声明 array，实际是 %s" % type_name(value),
 					"编辑器不会改写它，请游戏侧或手工修正")
 			var items: Array = value if value is Array else []
 			return _build_array(decl, items, on_set, option_resolver, key_mode, frame_pick)
@@ -346,7 +346,7 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 			if _is_unset(value):
 				value = []
 			if not Keyframes.valid(value):
-				return _readonly(decl, value, "关键帧请使用不重复的递增时间、数值和支持的插值方式。", "")
+				return _readonly(value, "关键帧请使用不重复的递增时间、数值和支持的插值方式。", "")
 			var editor := CurveField.new(value, func(read: Callable, initial: Variant):
 				return _value_commit(read, initial, on_set))
 			return {"ctl": editor, "commit": editor.commit}
@@ -375,7 +375,7 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 		_:
 			var why := "声明缺 type（应写 string / int / float / bool / color / vector2 / range / asset_ref / array）" if typ == "" \
 				else "未声明的输入类型「%s」" % typ
-			return _readonly(decl, value, why, "补全声明后重新加载清单即可恢复编辑")
+			return _readonly(value, why, "补全声明后重新加载清单即可恢复编辑")
 
 static func _build_object_reference(decl: Dictionary, value: Variant, source: String,
 		on_set: Callable, resolve: Callable) -> Dictionary:
@@ -616,7 +616,7 @@ static func _row_dup(ctx: Dictionary, r: Dictionary, done: Callable) -> void:
 static func _build_condition_row(decl: Dictionary, value: Variant, on_set: Callable,
 		resolve: Callable, frame_pick := Callable()) -> Dictionary:
 	if not value is Dictionary:
-		return _readonly(decl, value, "条件行不是对象", "保留原值；可删除该行后重新添加")
+		return _readonly(value, "条件行不是对象", "保留原值；可删除该行后重新添加")
 	var box := Kit.vbox(4)
 	box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var picker := OptionButton.new()
@@ -702,7 +702,7 @@ static func _build_condition_row(decl: Dictionary, value: Variant, on_set: Calla
 static func _build_record(decl: Dictionary, value, on_set: Callable,
 		option_resolver: Callable, key_mode := "id", frame_pick := Callable()) -> Dictionary:
 	if not (value is Dictionary):
-		return _readonly(decl, value, "记录值不是字典（实际 %s）" % type_name(value),
+		return _readonly(value, "记录值不是字典（实际 %s）" % type_name(value),
 			"已有值原样保留，不提供可写控件")
 	var panel := PanelContainer.new()
 	panel.add_theme_stylebox_override("panel", Th.box(Color(1, 1, 1, 0.04), Color(1, 1, 1, 0.16), Th.R_INNER, 6, 4))
@@ -802,7 +802,7 @@ static func _build_choice_multi(decl: Dictionary, value, on_set: Callable,
 	# 多选必须是数组（C06）：标量旧值不能被包成单元素数组——那是形状改写，
 	# 一勾一取消就把原来的字符串写成了列表。非法旧值只读 + 显式替换。
 	if not _is_unset(value) and not (value is Array):
-		return _readonly(decl, value, "值类型不符：声明多选（数组），实际是 %s" % type_name(value),
+		return _readonly(value, "值类型不符：声明多选（数组），实际是 %s" % type_name(value),
 			"勾选组不会自动改写它：确认要清空后再写一次")
 	if value is Array:
 		for x in value:
@@ -851,7 +851,7 @@ static func _norm_option(o) -> Dictionary:
 	return {"v": str(o), "t": str(o)}
 
 ## 只读展示：结构可见（JSON 一行），不可写；下面一行黄字说明为什么。
-static func _readonly(_decl: Dictionary, value, why: String, hint: String) -> Dictionary:
+static func _readonly(value, why: String, hint: String) -> Dictionary:
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 2)
 	var le := LineEdit.new()
@@ -888,7 +888,7 @@ static func type_name(v) -> String:
 static func _build_viewport_ref(decl: Dictionary, value, on_set: Callable, option_resolver: Callable) -> Dictionary:
 	var is_rect := bool(decl.get("rect", false))
 	if not (value is Dictionary) and not _is_unset(value):
-		return _readonly(decl, value, "值类型不符：声明 viewport_ref，实际是 %s" % type_name(value), "编辑器不会改写它")
+		return _readonly(value, "值类型不符：声明 viewport_ref，实际是 %s" % type_name(value), "编辑器不会改写它")
 	if not (value is Dictionary):
 		value = {}
 	var cur: Dictionary = (value as Dictionary).duplicate(true)
@@ -911,7 +911,7 @@ static func _build_viewport_ref(decl: Dictionary, value, on_set: Callable, optio
 	# 归一化坐标 0..1：point 两轴 / rect 四轴（SpinBox 即改即写，幂等由下游保证）
 	if not arr is Array or arr.size() != dims or not arr.all(func(v): return (v is int or v is float) and is_finite(float(v)) and float(v) >= 0.0 and float(v) <= 1.0):
 		wrap.free()
-		return _readonly(decl, value, "画幅坐标格式无效", "保留原值，修正源数据后重读")
+		return _readonly(value, "画幅坐标格式无效", "保留原值，修正源数据后重读")
 	var row := Kit.hbox(4)
 	for d in dims:
 		var sp := SpinBox.new()

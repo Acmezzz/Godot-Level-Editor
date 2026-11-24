@@ -256,7 +256,7 @@ func _run() -> void:
 		var plan := Merge.plan(_origin.base, live, map, {}, _source)
 		var conflicts: Array = plan.conflicts
 		if not conflicts.is_empty():
-			_merge_input = {"candidate": candidate, "live": live, "count": conflicts.size()}
+			_merge_input = {"candidate": candidate, "count": conflicts.size()}
 			_show_conflicts(conflicts)
 			return
 		map = plan.map
@@ -327,7 +327,7 @@ func _choose(index: int, path: String) -> void:
 	if session.stale(candidate.generation) or session.revision != candidate.revision:
 		_status.text = "地图已变动，请重新生成。"
 		return
-	var plan := Merge.plan(_origin.base, _merge_input.live, candidate.generated, _choices, _source)
+	var plan := Merge.plan(_origin.base, candidate.live, candidate.generated, _choices, _source)
 	if plan.conflicts.is_empty():
 		_prepare_candidate(candidate, plan.map)
 	else:
@@ -336,10 +336,11 @@ func _choose(index: int, path: String) -> void:
 		_show_conflicts(next)
 
 func _prepare_candidate(candidate: Dictionary, map: Dictionary) -> void:
-	var error := Maps.write_error(_source, map)
-	if error != "":
-		_status.text = "合并后的地图无效： " + error
-		return
+	if not candidate.live.is_empty():
+		var error := Maps.write_error(_source, map)
+		if error != "":
+			_status.text = "合并后的地图无效： " + error
+			return
 	Merge.attach(map, candidate.generated, candidate.generator, candidate.parameters)
 	_result = {"map": map, "name": candidate.name, "manifest": candidate.manifest,
 		"generation": candidate.generation, "revision": candidate.revision}

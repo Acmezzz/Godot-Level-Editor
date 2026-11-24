@@ -233,7 +233,7 @@ func _on_object_layer_press(pos: Vector2, b: InputEventMouseButton) -> void:
 		return
 	# 尺寸把手（R-04）：选中 sizeFields 实例的右下角把手优先于移动/框选/放置
 	if cvs._resize_handle_hit(pos):
-		cvs._begin_entity_resize(cvs.selected_entity, pos)
+		cvs._begin_entity_resize(cvs.selected_entity)
 		return
 	# E2 连线把手：选中实例的引用端点。优先于移动/框选，低于顶点/尺寸把手——
 	# 端点一般落在别的实例上，两个把手通常不重叠；重叠时几何编辑优先。

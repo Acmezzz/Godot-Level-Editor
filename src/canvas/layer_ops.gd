@@ -241,52 +241,15 @@ static func without_layer(snapshot: Dictionary, i: int) -> Dictionary:
 	return snap
 
 func layer_rename(i: int, name: String) -> void:
-	if map_root == null or not is_instance_valid(map_root):
-		return
-	var L := layers_decl()
-	if i < 0 or i >= L.size() or str(name) == "":
-		return
-	# 快照先行（契约 1）：只改 name 也走同一纪律，防止照抄成改 id/顺序时串层
-	cvs.push_undo()
-	var snap := extract()
-	if snap.is_empty():
-		return
-	var meta: Dictionary = snap.get("meta", {})
-	var SL: Array = (meta.get("layers", []) as Array).duplicate(true)
-	if i < 0 or i >= SL.size():
-		return
-	(SL[i] as Dictionary)["name"] = str(name)
-	meta["layers"] = SL
-	snap["meta"] = meta
-	await _load_snap_layers(snap, layer_id(active_layer))
+	if not name.is_empty():
+		await _set_layer_field(i, "name", name)
 
-## 层混合模式（v7）：mix 缺省省略（erase），add/mul 写盘。快照先行，与 layer_rename 同纪律。
-## 值未变直接返回（幂等）——控件回填不产生幽灵撤销步。
 func layer_set_blend(i: int, blend: String) -> void:
-	if map_root == null or not is_instance_valid(map_root):
-		return
-	if blend != "mix" and blend != "add" and blend != "mul":
-		return
-	var L := layers_decl()
-	if i < 0 or i >= L.size():
-		return
-	if str(blend) == str((L[i] as Dictionary).get("blend", "mix")):
-		return
-	cvs.push_undo()
-	var snap := extract()
-	if snap.is_empty():
-		return
-	var meta: Dictionary = snap.get("meta", {})
-	var SL: Array = (meta.get("layers", []) as Array).duplicate(true)
-	if i < 0 or i >= SL.size():
-		return
-	if blend == "mix":
-		(SL[i] as Dictionary).erase("blend")
-	else:
-		(SL[i] as Dictionary)["blend"] = blend
-	meta["layers"] = SL
-	snap["meta"] = meta
-	await _load_snap_layers(snap, layer_id(active_layer))
+	match blend:
+		"mix":
+			await _set_layer_field(i, "blend", null)
+		"add", "mul":
+			await _set_layer_field(i, "blend", blend)
 
 func layer_move(i: int, dir: int) -> void:
 	if map_root == null or not is_instance_valid(map_root):
@@ -311,24 +274,7 @@ func layer_move(i: int, dir: int) -> void:
 
 ## 运行时初始可见（差分视图用）；编辑视图显隐走 set_layer_hidden，两回事。
 func layer_set_visible(i: int, v: bool) -> void:
-	if map_root == null or not is_instance_valid(map_root):
-		return
-	var L := layers_decl()
-	if i < 0 or i >= L.size():
-		return
-	# 快照先行（同 layer_rename：只改 visible 也走同一纪律）
-	cvs.push_undo()
-	var snap := extract()
-	if snap.is_empty():
-		return
-	var meta: Dictionary = snap.get("meta", {})
-	var SL: Array = (meta.get("layers", []) as Array).duplicate(true)
-	if i < 0 or i >= SL.size():
-		return
-	(SL[i] as Dictionary)["visible"] = v
-	meta["layers"] = SL
-	snap["meta"] = meta
-	await _load_snap_layers(snap, layer_id(active_layer))
+	await _set_layer_field(i, "visible", v)
 
 func layer_set_tile_grid(i: int, spec: Dictionary) -> String:
 	if i < 0 or i >= layer_count() or not cvs.is_map_ready() or cvs.doc_busy:
@@ -397,54 +343,38 @@ func apply_tile_layer_copy(plan: Dictionary) -> bool:
 	await _load_snap_layers(plan.snapshot, plan.id)
 	return true
 
-## 层参数写回（R-04 控件批）：快照先行 → 改 meta.layers[i] 单键（缺省整键省略）→ 整图重建。
-## ySort 改层容器结构（y-sorted 父），parallax/offset/scale 只改容器变换——统一走重建最省心。
 func layer_set_param(i: int, key: String, v) -> void:
-	if map_root == null or not is_instance_valid(map_root):
+	var value: Variant
+	match key:
+		"ySort":
+			value = true if bool(v) else null
+		"parallax", "scale":
+			var factor := float(v)
+			if key == "scale" and factor <= 0.0:
+				return
+			value = null if is_equal_approx(factor, 1.0) else factor
+		"offset":
+			var offset: Vector2 = v
+			value = null if offset.is_zero_approx() else [offset.x, offset.y]
+		_:
+			return
+	await _set_layer_field(i, key, value)
+
+func _set_layer_field(i: int, key: String, value: Variant) -> void:
+	if i < 0 or i >= layer_count():
 		return
-	var L := layers_decl()
-	if i < 0 or i >= L.size():
+	var current: Dictionary = layers_decl()[i]
+	if current.get(key) == value:
 		return
-	# 快照先行（同 layer_set_visible：改层参数走同一纪律）
-	cvs.push_undo()
 	var snap := extract()
 	if snap.is_empty():
 		return
-	var meta: Dictionary = snap.get("meta", {})
-	var SL: Array = (meta.get("layers", []) as Array).duplicate(true)
-	if i < 0 or i >= SL.size():
-		return
-	match key:
-		"ySort":
-			if bool(v):
-				(SL[i] as Dictionary)["ySort"] = true
-			else:
-				(SL[i] as Dictionary).erase("ySort")   # 关 ySort = 回到层内既定顺序（E11）
-		"parallax":
-			var pv := float(v)
-			if is_zero_approx(pv - 1.0):
-				(SL[i] as Dictionary).erase("parallax")
-			else:
-				(SL[i] as Dictionary)["parallax"] = pv
-		"offset":
-			var ov := v as Vector2
-			if is_zero_approx(ov.x) and is_zero_approx(ov.y):
-				(SL[i] as Dictionary).erase("offset")
-			else:
-				(SL[i] as Dictionary)["offset"] = [ov.x, ov.y]
-		"scale":
-			var sv := float(v)
-			# 非正缩放 = 层塌成点/镜像翻转：坐标逆变换退化（除零），与校验页同口径拒绝
-			if sv <= 0.0:
-				return
-			if is_zero_approx(sv - 1.0):
-				(SL[i] as Dictionary).erase("scale")
-			else:
-				(SL[i] as Dictionary)["scale"] = sv
-		_:
-			return
-	meta["layers"] = SL
-	snap["meta"] = meta
+	cvs.push_undo()
+	var layer: Dictionary = snap.meta.layers[i]
+	if value == null:
+		layer.erase(key)
+	else:
+		layer[key] = value
 	await _load_snap_layers(snap, layer_id(active_layer))
 
 ## 层操作收尾：按新快照重建，激活层跟随身份（同码层下标，层没了落最底层）。

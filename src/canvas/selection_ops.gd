@@ -230,10 +230,7 @@ func _finish_entity_drag() -> void:
 		var n := targets[i] as EntityNode
 		if not is_instance_valid(n):
 			continue
-		# 吸附在成员自己的层局部空间（E02）：跨层组里不同层的局部口径可以不同
-		var li: int = cvs._layer_index_of(n.layer_id)
-		n.position = cvs.snap_point(preview[i], n) if li < 0 \
-			else cvs.snap_point_local(li, preview[i], n)
+		n.position = cvs.snap_point(preview[i], n)
 	if via_delta:
 		cvs._undo_history_ctrl.inst_commit(pre.get("rows", {}))
 	cvs._mark_ents()
@@ -261,7 +258,7 @@ func _resize_handle_hit(pos: Vector2) -> bool:
 	return Rect2(r.end - Vector2.ONE * side * 0.5, Vector2.ONE * side).has_point(pos)
 
 ## 起手：记录目标与原始 w/h（键名从 decl.sizeFields 取）
-func _begin_entity_resize(n: EntityNode, pos: Vector2) -> void:
+func _begin_entity_resize(n: EntityNode) -> void:
 	var sf: Array = (n.decl as Dictionary).get("sizeFields", [])
 	if sf.size() < 2:
 		return

@@ -797,18 +797,8 @@ var _staged := {}
 func _staged_key(fn_id: String, cid: String) -> String:
 	return str(fn_id) + "\u0001" + str(cid)
 
-## 读暂存条目（兼容旧格式：外部旧代码/旧草稿可能仍以裸 cid 为键，且 fn_id 需校验）。
 func _staged_get(fn_id: String, cid: String) -> Variant:
-	if cid == "":
-		return null
-	var st = _staged.get(_staged_key(fn_id, cid), null)
-	if st is Dictionary:
-		return st
-	# 旧键兜底：裸 cid 只在该条目功能一致（或旧条目缺 fn_id）时才认
-	var legacy = _staged.get(cid, null)
-	if legacy is Dictionary and (fn_id == "" or str((legacy as Dictionary).get("fn_id", "")) == fn_id):
-		return legacy
-	return null
+	return _staged.get(_staged_key(fn_id, cid))
 
 ## 写暂存条目（自动补 cid 键，避免调用点各自拼键）。
 func _staged_put(fn_id: String, cid: String, st: Dictionary) -> void:
@@ -818,12 +808,8 @@ func _staged_put(fn_id: String, cid: String, st: Dictionary) -> void:
 	s["expect_absent"] = bool(s.get("expect_absent", true))
 	_staged[_staged_key(fn_id, cid)] = s
 
-## 删除暂存条目（同时清掉可能存在的旧裸键）。
 func _staged_erase(fn_id: String, cid: String) -> void:
 	_staged.erase(_staged_key(fn_id, cid))
-	var legacy = _staged.get(cid, null)
-	if legacy is Dictionary and (fn_id == "" or str((legacy as Dictionary).get("fn_id", "")) == fn_id):
-		_staged.erase(cid)
 
 ## 当前文档键（R02）：项目根 + 地图码（无码退回图名）。
 func _doc_key() -> String:
@@ -1003,7 +989,7 @@ func restage_rows(rows: Array) -> int:
 					break
 		if ent == "" and _map_ready():
 			continue   # 绑定不在恢复后的画布上：这条不收（写盘只会造孤儿文件）
-		_staged_put(fn_id, cid, {"fn_id": fn_id, "data": (dat as Dictionary).duplicate(true),
+		_staged_put(fn_id, cid, {"fn_id": fn_id, "data": dat,
 			"ent": ent, "doc": doc})
 		n += 1
 	return n
@@ -1014,7 +1000,7 @@ func restage_rows(rows: Array) -> int:
 func stage_clone(fn_id: String, cid: String, data: Dictionary, ent: String) -> void:
 	if fn_id == "" or cid == "" or _staged_get(fn_id, cid) != null:
 		return
-	_staged_put(fn_id, cid, {"fn_id": fn_id, "data": data.duplicate(true),
+	_staged_put(fn_id, cid, {"fn_id": fn_id, "data": data,
 		"ent": ent, "doc": _doc_key()})
 
 ## 写盘失败：状态栏 + 徽章双重提示（红色徽章在右栏顶部，不依赖状态栏可见性）

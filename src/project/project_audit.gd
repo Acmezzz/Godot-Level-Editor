@@ -45,10 +45,13 @@ static func audit(manifest: Dictionary, meta_out: Dictionary = {}) -> Array:
 	meta_out["unreadable_maps"] = []
 	# 1. 清单校验
 	var startup_valid := true
+	var world_valid := true
 	for e in ManifestValidation.validate(manifest, str(manifest.get("_dir", ""))):
 		out.append(_wrap("manifest", e))
 		if str(e.path).begins_with("startup"):
 			startup_valid = false
+		elif str(e.path).begins_with("worldLayout"):
+			world_valid = false
 	if startup_valid:
 		var startup_target: Dictionary = manifest.get("startup", {}).get("target", {})
 		if not StartupTargets.available(manifest, startup_target):
@@ -76,8 +79,7 @@ static func audit(manifest: Dictionary, meta_out: Dictionary = {}) -> Array:
 	var graph_index: Array = []
 	var world_codes := {}
 	var delta_problems := {}
-	var world_chunks: Dictionary = manifest.worldLayout.chunks if manifest.has("worldLayout") \
-		and WorldLayout.issues(manifest).is_empty() else {}
+	var world_chunks: Dictionary = manifest.worldLayout.chunks if world_valid and manifest.has("worldLayout") else {}
 	if maps_dir != "" and DirAccess.open(maps_dir) == null:
 		meta_out["incomplete"] = true
 		out.append(_wrap("map", {"path": maps_dir, "message": "无法扫描地图目录", "severity": "error"}))
@@ -120,7 +122,7 @@ static func audit(manifest: Dictionary, meta_out: Dictionary = {}) -> Array:
 	# 4. 资产停用/改名待确认（A4）：已有引用仍按原 ID 解析，但要让人看见问题所在
 	var scan: Dictionary = manifest.get("_scan_report", {}) if manifest.get("_scan_report", {}) is Dictionary else {}
 	for aid in (scan.get("retired", []) as Array):
-		var ent := _asset_by_id(manifest, str(aid))
+		var ent := AssetDecl.live_by_id(manifest, str(aid))
 		out.append({
 			"kind": "asset", "severity": "warning",
 			"path": "assets/" + str(aid),
@@ -329,12 +331,6 @@ static func _graph_target_checks(data: Dictionary, manifest: Dictionary, name: S
 		if message != "":
 			out.append(_wrap_map_issue("ref", {"severity": "warning", "path": path, "message": message}, name))
 	return out
-
-static func _asset_by_id(manifest: Dictionary, aid: String) -> Dictionary:
-	for a in (manifest.get("assets", []) as Array):
-		if a is Dictionary and str((a as Dictionary).get("id", "")) == aid:
-			return a
-	return {}
 
 ## 收集全项目被实例绑定引用的内容（C12：按 `(功能 id, 内容 ID)` 索引，裸 ID 会跨功能误判）。
 ## 绑定里的 fn 是执行码，先解析成功能 id；解析不到 = 数据漂移，按 `?\u0001<cid>` 记。

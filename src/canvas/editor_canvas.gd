@@ -388,7 +388,8 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	coll_view.name = "CollisionView"
 	coll_view.z_index = 2
 	map_root.add_child(coll_view)
-	coll_view.setup(collision, tile_w, grid)
+	coll_view.layer = collision
+	coll_view.grid_ref = grid
 	coll_view.canvas_ref = self   # 读 _collision_meta 做类型化分色分形
 	coll_view.manifest = manifest   # 碰撞类型颜色按清单 collisionTypes 声明
 	# 涂瓦片：tiles = {层id: [[x,y,资产id,ax,ay,alt]...]}（6 元，第 3 位是资产 id 字符串）
@@ -707,11 +708,6 @@ func is_layer_code_locked(lid: String) -> bool:
 ## 六边形（B1）：格坐标 = 连续反算（不取最近中心），锚点偏移按包围盒内单位算，
 ## 不再把正交的 +0.5 格偏量塞进六边中心坐标。
 func snap_point(p: Vector2, n: EntityNode = null) -> Vector2:
-	var unit: Vector2 = n.anchor_unit() if n != null else Vector2(0.5, 0.5)
-	return snap_anchor_px(unit, p)
-
-## 指定层的层局部吸附（实例拖拽收尾/粘贴共用）：入参已是该层局部像素。
-func snap_point_local(li: int, p: Vector2, n: EntityNode = null) -> Vector2:
 	var unit: Vector2 = n.anchor_unit() if n != null else Vector2(0.5, 0.5)
 	return snap_anchor_px(unit, p)
 
@@ -1599,8 +1595,8 @@ func scale_selected(d: float) -> bool:
 	return _selection_ops_ctrl.scale_selected(d)
 func _resize_handle_hit(pos: Vector2) -> bool:
 	return _selection_ops_ctrl._resize_handle_hit(pos)
-func _begin_entity_resize(n: EntityNode, pos: Vector2) -> void:
-	_selection_ops_ctrl._begin_entity_resize(n, pos)
+func _begin_entity_resize(n: EntityNode) -> void:
+	_selection_ops_ctrl._begin_entity_resize(n)
 func _move_resize_preview(pos: Vector2) -> void:
 	_selection_ops_ctrl._move_resize_preview(pos)
 func _finish_entity_resize() -> void:

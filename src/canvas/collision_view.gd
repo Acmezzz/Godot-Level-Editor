@@ -30,12 +30,6 @@ static func _colors_of(d: Dictionary) -> Array:
 		base = Color.from_hsv(h * 0.28, 0.55, 0.9)   # 限制在暖红~黄区间的柔和色
 	return [Color(base, 0.28), Color(base.lightened(0.2), 0.55)]
 
-## 兼容转发（tile_px 参数退役：格尺寸随 grid_ref.tile，兜底 16×16）
-func setup(p_layer: TileMapLayer, p_tile_px: int, p_grid: GridSpace = null) -> Node2D:
-	layer = p_layer
-	grid_ref = p_grid
-	return self
-
 ## 数据变了就重画（碰撞格增删、撤销、区域粘贴都走这里）
 func refresh() -> void:
 	_cell_count = -1

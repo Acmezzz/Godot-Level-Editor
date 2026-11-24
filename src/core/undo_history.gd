@@ -43,17 +43,11 @@ func push_undo() -> void:
 	var snap := _snapshot()
 	if snap == "{}":
 		return   # 重建窗口哨兵（extract 返回 {}）：恢复它=清空整图，拒绝入栈
-	_push_entry_str(snap)
+	_push_entry(snap)
 
 ## 差量条目入栈（H01/§7.5 阶段二共用）：新操作一律清空 redo。
-func _push_entry(entry: Dictionary) -> void:
+func _push_entry(entry: Variant) -> void:
 	undo_stack.append(entry)
-	if undo_stack.size() > UNDO_MAX:
-		undo_stack.pop_front()
-	redo_stack.clear()
-
-func _push_entry_str(snap: String) -> void:
-	undo_stack.append(snap)
 	if undo_stack.size() > UNDO_MAX:
 		undo_stack.pop_front()
 	redo_stack.clear()

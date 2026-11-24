@@ -356,9 +356,7 @@ func _discard_previous_staging(doc: String) -> void:
 		app.project_shell.content_editor.drop_staged_for_doc(doc)
 
 func _ask_discard(action: String) -> bool:
-	var dlg := ConfirmationDialog.new()
-	dlg.title = "未保存的修改"
-	dlg.dialog_text = "地图 %s 有未保存修改。\n继续%s将丢失这些修改。" % [app.cur_map_name, action]
+	var message := "地图 %s 有未保存修改。\n继续%s将丢失这些修改。" % [app.cur_map_name, action]
 	# A2 staged：盘点随地图一起消失的待写项（含暂存内容与待写清单），
 	# 让「放弃」的代价可见——用户至少知道丢的是哪几类，而不是只看到地图脏。
 	var extra: Array = []
@@ -368,7 +366,7 @@ func _ask_discard(action: String) -> bool:
 		elif p == "manifest":
 			extra.append("清单里新补发的身份码")
 	if not extra.is_empty():
-		dlg.dialog_text += "\n\n此外还有未落盘：%s。" % "、".join(PackedStringArray(extra))
+		message += "\n\n此外还有未落盘：%s。" % "、".join(PackedStringArray(extra))
 	# 自动保存草稿存得进、捞不出——放弃修改时至少把草稿路径说出来，
 	# 否则用户以为这份保险不存在。草稿从「地图 ▾ → 恢复草稿…」也能载入（见 top_bar_nav）。
 	# A3 草稿已迁到 editor/drafts/<地图码>.json；旧 maps/<名>.autosave.json 只作兼容来源。
@@ -376,23 +374,11 @@ func _ask_discard(action: String) -> bool:
 		if app.canvas != null and app.canvas.map_data.get("meta", null) is Dictionary else ""
 	var draft_path := Recovery.draft_path(app.manifest, code, app.cur_map_name)
 	if draft_path != "" and FileAccess.file_exists(draft_path):
-		dlg.dialog_text += "\n\n最近一次自动保存的草稿在：\n%s\n放弃后仍可从「地图 ▾ → 恢复草稿…」载入它找回内容。" % draft_path
-	dlg.ok_button_text = "放弃修改并继续"
-	dlg.cancel_button_text = "取消"
-	# 中文正文需要足够宽度，否则 ConfirmationDialog 的 Label 会被压成一条看不见的窄条
-	dlg.min_size = Vector2i(460, 0)
-	app.add_child(dlg)
-	var answer := [false]
-	dlg.confirmed.connect(func(): answer[0] = true)
-	dlg.popup_centered()
-	# 等对话框真正关闭：确认 → true，取消/关闭 → false
-	while dlg.visible:
-		await app.get_tree().process_frame
-	dlg.queue_free()
-	return answer[0]
+		message += "\n\n最近一次自动保存的草稿在：\n%s\n放弃后仍可从「地图 ▾ → 恢复草稿…」载入它找回内容。" % draft_path
+	return await confirm_action("未保存的修改", message, "放弃修改并继续")
 
 ## 通用确认框：删除/不可撤销动作统一走这里（文本与确定钮文案可定制）
-func confirm_action(title: String, text: String, ok_text := "确定", _danger := false) -> bool:
+func confirm_action(title: String, text: String, ok_text := "确定") -> bool:
 	var dlg := ConfirmationDialog.new()
 	dlg.title = title
 	dlg.dialog_text = text
@@ -663,8 +649,9 @@ func rename_map_now(old_name: String, new_name: String, allow_write_unsaved := f
 		if data.is_empty():   # 重建窗口哨兵：此刻写盘会把空图落成新文件
 			return " 地图重建中，请稍后再试"
 		data.meta.name = nn
-		if not MapStore.validate_for_write(data, app.manifest):
-			return "地图校验失败：" + MapStore.write_error(app.manifest, data)
+		var map_error := MapStore.write_error(app.manifest, data)
+		if map_error != "":
+			return "地图校验失败：" + map_error
 		var frozen: Array = []
 		if ce != null:
 			sess.contents = ce.staged_table()

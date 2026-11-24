@@ -122,7 +122,7 @@ func tri_center_px(i: int, row: int) -> Vector2:
 	return (poly[0] + poly[1] + poly[2]) / 3.0
 
 ## 三角格纹理落位：按三角形的轴对齐包围盒（图集切片拉伸到该包围盒，再按三角裁）
-func tri_tex_rect(i: int, row: int, cs: Vector2i) -> Rect2:
+func tri_tex_rect(i: int, row: int) -> Rect2:
 	var poly := tri_polygon(i, row)
 	var mn := poly[0]
 	var mx := poly[0]
@@ -497,7 +497,7 @@ func grid_polygon(a: Vector2i, b: Vector2i) -> PackedVector2Array:
 ## 与正交的 g·tile 口径一致（正交 basis = [tile,0],[0,tile] 时逐位相同）。
 func cell_tex_rect(c: Vector2i, cs: Vector2i) -> Rect2:
 	if is_tri():
-		return tri_tex_rect(c.x, c.y, cs)   # B3：三角形包围盒
+		return tri_tex_rect(c.x, c.y)   # B3：三角形包围盒
 	if has_basis:
 		return Rect2(to_px(Vector2(c)), Vector2(cs))
 	if is_iso() or is_hex_geom():
