@@ -1354,7 +1354,7 @@ var vis_rev := 0
 var tile_rev := 0
 
 ## —— 阶段三：按层计数缓存 ——
-## 「这层有没有瓦片」在混放提示里每次放置都问一次，之前是全层 used_cells 重扫。
+## 图层面板据此判断该层能否直接换格系，还是需要另存转换副本。
 ## 键 = 层下标；瓦片写入后由 _mark_tiles/_mark_tiles_layer 失效对应键。
 var _layer_has_tiles := {}
 

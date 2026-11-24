@@ -350,7 +350,7 @@ src/
 **遮挡模型**：每层建 below / YSort(含瓦片与 auto 实体) / above 三段容器，
 实例按 `zPolicy` 入段（缺省 auto）；排序点 = 资产 `anchor` + 实例 `sortAnchor` 覆盖，
 瓦片排序点 = palette 条目 `ySortOrigin`（缺省切片底部）。
-层未开 `ySort` 时 YSort 段退化为摆放先后；同层混放但没开 ySort 会给状态栏提示。
+层未开 `ySort` 时，YSort 段按摆放先后绘制。
 混合模式在层管理弹窗每层「混合」下拉可改（mix/add/mul）；parallax/ySort/offset/scale 手改地图 JSON。
 
 左栏顶部「层：…」下拉列**栈层 + 碰撞元层**（碰撞不在层栈里，排最后），
