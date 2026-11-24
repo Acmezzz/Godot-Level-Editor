@@ -98,6 +98,7 @@ static func _validate_top_level(data: Dictionary, issues: Array[Dictionary]) -> 
 			_add(issues, "error", "contentDir", "must be a relative path without '..'")
 	_validate_viewports(data, issues)
 	_validate_views(data, issues)
+	_validate_screen_modules(data, issues)
 	if data.has("screenSize"):
 		var ss = data["screenSize"]
 		if not (ss is Array) or (ss as Array).size() != 2 \
@@ -849,6 +850,37 @@ static func _validate_viewports(data: Dictionary, issues: Array[Dictionary]) -> 
 				_add(issues, "error", p + "." + k, "must be a positive number")
 			elif v <= 0:
 				_add(issues, "error", p + "." + k, "must be a positive number")
+static func _validate_screen_modules(data: Dictionary, issues: Array[Dictionary]) -> void:
+	var raw = data.get("screenModules", {})
+	if not raw is Dictionary:
+		_add(issues, "error", "screenModules", "must be an object keyed by module ID")
+		return
+	for id in raw:
+		var path := "screenModules." + str(id)
+		var decl = raw[id]
+		if not id is String or id.strip_edges().is_empty() or not decl is Dictionary:
+			_add(issues, "error", path, "must have a non-empty ID and an object declaration")
+			continue
+		var fields = decl.get("fields", [])
+		if not fields is Array:
+			_add(issues, "error", path + ".fields", "must be an array")
+			continue
+		var seen := {}
+		for i in fields.size():
+			var field = fields[i]
+			var place := "%s.fields[%d]" % [path, i]
+			if not field is Dictionary or not field.get("id") is String or field.id.strip_edges().is_empty() or seen.has(field.id):
+				_add(issues, "error", place, "must declare a unique non-empty field ID")
+				continue
+			seen[field.id] = true
+			if field.get("kind") == "input":
+				if field.get("type") == "array":
+					_validate_array_field(place, field, issues)
+				elif not INPUT_TYPES.has(field.get("type")):
+					_add(issues, "error", place + ".type", "must name a supported input type")
+			elif field.get("kind") != "choice":
+				_add(issues, "error", place + ".kind", "must be input or choice")
+
 ## C5：项目参考 views（[{view_id, image, pixel_size, hotspots}]）：view_id 非空唯一、
 ## image/pixel_size/hotspots 可选但类型必对（image 字符串、pixel_size 正数、hotspots 数组）。
 ## hotspot = {rect: [nx, ny, nw, nh] 全部 0..1, target: 对象（目标身份，编辑器不解释）}。
@@ -872,7 +904,7 @@ static func _validate_views(data: Dictionary, issues: Array[Dictionary]) -> void
 			_add(issues, "error", p + ".view_id", "must be non-empty and unique (seen: %s)" % vid)
 		seen[vid] = true
 		if e.has("layout"):
-			ScreenLayout.validate(e.layout, viewports, p + ".layout", issues)
+			ScreenLayout.validate(e.layout, viewports, p + ".layout", issues, ScreenLayout.modules(data))
 		var img = (e as Dictionary).get("image", null)
 		if img != null and not (img is String):
 			_add(issues, "error", p + ".image", "must be a string")

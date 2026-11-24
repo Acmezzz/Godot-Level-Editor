@@ -134,7 +134,7 @@ static func _collect_views(manifest: Dictionary, graph: Dictionary, catalog: Dic
 				var current = row.get("target")
 				if row.has("target") and not References.is_view_content_target(current):
 					continue
-				if group == "elements" and row.get("kind") != "button" and current == null:
+				if group == "elements" and row.get("kind") not in ["button", "module"] and current == null:
 					continue
 				var label := str(row.get("text", "")).strip_edges()
 				if label.is_empty():

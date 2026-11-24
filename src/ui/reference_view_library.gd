@@ -11,6 +11,7 @@ const Id := preload("res://src/content/content_id.gd")
 const GamePreview := preload("res://src/project/game_preview.gd")
 const FrameDialog := preload("res://src/ui/game_frame_dialog.gd")
 const Audit := preload("res://src/project/project_audit.gd")
+const Widgets := preload("res://src/ui/field_widgets.gd")
 
 class Preview extends Control:
 	const FOCUS_ACTIONS := {"ui_left": "left", "ui_right": "right", "ui_up": "up", "ui_down": "down",
@@ -255,7 +256,8 @@ static func open(app, view_id := "") -> void:
 	var state := {"row": -1, "saving": false, "targets": [], "draft": {}, "layout": {},
 		"preview_size": "", "locale": "", "has_layout": false, "viewport_sizes": Layout.sizes(source),
 		"image_assets": Layout.image_assets(source), "project_dir": str(source.get("_dir", "")),
-		"render_revision": 0}
+		"render_revision": 0, "modules": Layout.modules(source), "module_commits": [],
+		"resolve_options": app.project_shell.content_editor._form._resolve_options.bind(true)}
 	var game_render := Kit.button("游戏渲染预览", Callable(), "ghost")
 	game_render.name = "GameRenderPreview"
 	game_render.disabled = not GamePreview.supports(source, "screenLayout")
@@ -338,6 +340,7 @@ static func open(app, view_id := "") -> void:
 		preview.queue_redraw()
 		return notice.text == ""
 	var stash := func():
+		_commit_module_fields(state)
 		var row: Dictionary
 		if state.row >= 0:
 			row = rows[state.row]
@@ -510,7 +513,7 @@ static func open(app, view_id := "") -> void:
 		var row: Dictionary = rows[state.row] if state.row >= 0 else state.draft
 		var snapshot := row.duplicate(true)
 		var errors: Array[Dictionary] = []
-		Layout.validate(snapshot.layout, state.viewport_sizes, "layout", errors)
+		Layout.validate(snapshot.layout, state.viewport_sizes, "layout", errors, state.modules)
 		if not errors.is_empty():
 			notice.text = "%s：%s" % [errors[0].path, errors[0].message]
 			return
@@ -593,6 +596,8 @@ static func open(app, view_id := "") -> void:
 	app._open_popup(pop, Vector2i(660, 620))
 
 static func _render_layout(form: VBoxContainer, preview: Preview, state: Dictionary) -> void:
+	_commit_module_fields(state)
+	state.module_commits.clear()
 	for child in form.get_children():
 		form.remove_child(child)
 		child.queue_free()
@@ -626,7 +631,7 @@ static func _render_layout(form: VBoxContainer, preview: Preview, state: Diction
 		refresh.call())
 	form.add_child(Kit.field_row("预览画幅", compare, 70))
 	_add_locale_picker(form, state, refresh)
-	var focus_start := _focus_options(preview.elements, str(state.layout.get("focusStart", "")), "首个可聚焦按钮")
+	var focus_start := _focus_options(preview.elements, str(state.layout.get("focusStart", "")), "首个可聚焦元素")
 	focus_start.name = "LayoutFocusStart"
 	focus_start.item_selected.connect(func(i: int):
 		var id: String = focus_start.get_item_metadata(i)
@@ -641,7 +646,7 @@ static func _render_layout(form: VBoxContainer, preview: Preview, state: Diction
 	var list := OptionButton.new()
 	list.name = "LayoutElementList"
 	for row in preview.elements:
-		list.add_item("%s · %s" % [row.kind, row.id])
+		list.add_item("%s · %s" % [row.get("module", row.kind), row.id])
 	list.select(preview.active_element)
 	list.item_selected.connect(func(i: int):
 		preview.active_element = i
@@ -655,14 +660,29 @@ static func _render_layout(form: VBoxContainer, preview: Preview, state: Diction
 	kind.name = "LayoutElementKind"
 	for type in Layout.KINDS:
 		kind.add_item({"panel": "面板", "text": "文字", "button": "按钮"}[type])
-	kind.select(Layout.KINDS.find(item.kind))
+		kind.set_item_metadata(kind.item_count - 1, {"kind": type})
+	var selected_kind: int = Layout.KINDS.find(item.kind)
+	for module in state.modules:
+		var descriptor: Dictionary = state.modules[module]
+		kind.add_item("模块 · " + str(descriptor.get("name", module)))
+		kind.set_item_metadata(kind.item_count - 1, {"kind": "module", "module": module})
+		if item.kind == "module" and item.module == module:
+			selected_kind = kind.item_count - 1
+	kind.select(selected_kind)
 	kind.item_selected.connect(func(i: int):
-		item["kind"] = Layout.KINDS[i]
-		if item.kind != "button":
-			item.erase("focusable")
-			Layout.clear_focus_links(state.layout, preview.elements, item.id)
+		var next: Dictionary = kind.get_item_metadata(i)
+		if item.kind == next.kind and item.get("module") == next.get("module"):
+			return
+		_commit_module_fields(state)
+		item.erase("module")
+		item.erase("props")
+		item.erase("focusable")
+		Layout.clear_focus_links(state.layout, preview.elements, item.id)
+		item.merge(next, true)
 		refresh.call())
 	form.add_child(Kit.field_row("类型", kind, 70))
+	if item.kind == "module":
+		_add_module_fields(form, state, item)
 	var overflow := Kit.hint_label("", 200)
 	var refresh_text := func():
 		overflow.text = "此画幅下文字超出元素范围。" if preview.text_overflows(item) else ""
@@ -772,7 +792,7 @@ static func _render_layout(form: VBoxContainer, preview: Preview, state: Diction
 		elif target.get_item_metadata(i) is Dictionary:
 			item["target"] = target.get_item_metadata(i))
 	form.add_child(Kit.field_row("跳转内容", target, 70))
-	if item.kind == "button":
+	if item.kind in ["button", "module"]:
 		_add_focus_fields(form, preview, state, item, refresh)
 	var actions := Kit.hbox(4)
 	for delta in [-1, 1]:
@@ -785,6 +805,7 @@ static func _render_layout(form: VBoxContainer, preview: Preview, state: Diction
 		b.disabled = to < 0 or to >= preview.elements.size()
 		actions.add_child(b)
 	actions.add_child(Kit.button("复制元素", func():
+		_commit_module_fields(state)
 		var copy := item.duplicate(true)
 		copy["id"] = _element_id(preview.elements)
 		preview.elements.insert(at + 1, copy)
@@ -796,6 +817,25 @@ static func _render_layout(form: VBoxContainer, preview: Preview, state: Diction
 		preview.active_element = mini(at, preview.elements.size() - 1)
 		refresh.call(), "ghost"))
 	form.add_child(actions)
+
+static func _add_module_fields(form: VBoxContainer, state: Dictionary, item: Dictionary) -> void:
+	var fields: Array = state.modules[item.module].get("fields", [])
+	for field: Dictionary in fields:
+		var id: String = field.id
+		var value = item.get("props", {}).get(id, field.get("default"))
+		var built := Widgets.build(field, value, func(next):
+			if not item.has("props"):
+				item["props"] = {}
+			item.props[id] = next, state.resolve_options)
+		var ctl: Control = built.ctl
+		ctl.name = "LayoutModuleField_" + id
+		form.add_child(Kit.field_row(str(field.get("name", id)), ctl, 70))
+		state.module_commits.append(built.get("commit", Callable()))
+
+static func _commit_module_fields(state: Dictionary) -> void:
+	for commit: Callable in state.module_commits:
+		if commit.is_valid():
+			commit.call()
 
 static func _element_id(elements: Array) -> String:
 	var id := Id.new_inst_code()
@@ -921,10 +961,11 @@ static func _add_focus_fields(form: VBoxContainer, preview: Preview, state: Dict
 	button.name = "LayoutElementFocusable"
 	button.button_pressed = Layout.focusable(item)
 	button.toggled.connect(func(enabled: bool):
-		if enabled:
+		if enabled and item.kind == "button":
 			item.erase("focusable")
 		else:
-			item["focusable"] = false
+			item["focusable"] = enabled
+		if not enabled:
 			Layout.clear_focus_links(state.layout, preview.elements, item.id)
 		refresh.call())
 	form.add_child(button)

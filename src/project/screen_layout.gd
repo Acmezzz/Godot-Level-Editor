@@ -7,6 +7,10 @@ const DIRECTIONS := {"left": Vector2.LEFT, "right": Vector2.RIGHT, "up": Vector2
 const DEFAULT_FONT_SIZE := 24
 const IMAGE_FITS := ["contain", "cover", "stretch"]
 
+static func modules(manifest: Dictionary) -> Dictionary:
+	var declarations = manifest.get("screenModules", {})
+	return declarations if declarations is Dictionary else {}
+
 static func image_assets(manifest: Dictionary) -> Dictionary:
 	var out := {}
 	var rows = manifest.get("assets", [])
@@ -67,7 +71,10 @@ static func display_text(element: Dictionary, locale: String) -> String:
 	return str(element.get("text", ""))
 
 static func focusable(element: Variant) -> bool:
-	return element is Dictionary and element.get("kind") == "button" and element.get("focusable", true) == true
+	if not element is Dictionary:
+		return false
+	var kind = element.get("kind")
+	return kind in ["button", "module"] and element.get("focusable", kind == "button") == true
 
 static func visible_focus(elements: Array, viewport: Vector2) -> Array:
 	var bounds := Rect2(Vector2.ZERO, viewport)
@@ -151,7 +158,8 @@ static func rect(element: Dictionary, viewport: Vector2) -> Rect2:
 	var end := Vector2(a[2], a[3]) * viewport + Vector2(o[2], o[3])
 	return Rect2(start, end - start)
 
-static func validate(layout: Variant, viewports: Dictionary, path: String, issues: Array[Dictionary]) -> void:
+static func validate(layout: Variant, viewports: Dictionary, path: String, issues: Array[Dictionary],
+		declarations := {}) -> void:
 	if not layout is Dictionary:
 		_error(issues, path, "must be an object")
 		return
@@ -188,8 +196,13 @@ static func validate(layout: Variant, viewports: Dictionary, path: String, issue
 			used[id] = true
 			if focusable(row):
 				focus_ids[id] = true
-		if not KINDS.has(row.get("kind")):
-			_error(issues, p + ".kind", "must be panel, text or button")
+		if row.get("kind") == "module":
+			if not row.get("module") is String or not declarations.has(row.module):
+				_error(issues, p + ".module", "must name a declared screen module")
+			if row.has("props") and not row.props is Dictionary:
+				_error(issues, p + ".props", "must be an object keyed by field ID")
+		elif not KINDS.has(row.get("kind")):
+			_error(issues, p + ".kind", "must be panel, text, button or module")
 		var a = row.get("anchors")
 		var o = row.get("offsets", [0, 0, 0, 0])
 		var valid: bool = _four(a) and a.all(func(v): return v >= 0.0 and v <= 1.0) and a[0] <= a[2] and a[1] <= a[3]
@@ -220,22 +233,22 @@ static func validate(layout: Variant, viewports: Dictionary, path: String, issue
 					_error(issues, p + ".textLocales." + str(tag), "must be non-empty text under a declared layout locale")
 		if row.has("target") and not row.target is Dictionary:
 			_error(issues, p + ".target", "must be an object")
-		if row.has("focusable") and (row.get("kind") != "button" or not row.focusable is bool):
-			_error(issues, p + ".focusable", "must be a boolean on a button")
+		if row.has("focusable") and (row.get("kind") not in ["button", "module"] or not row.focusable is bool):
+			_error(issues, p + ".focusable", "must be a boolean on a button or screen module")
 	if layout.has("focusStart") and (not layout.focusStart is String or not focus_ids.has(layout.focusStart)):
-		_error(issues, path + ".focusStart", "must name a focusable button")
+		_error(issues, path + ".focusStart", "must name a focusable element")
 	for i in elements.size():
 		var row = elements[i]
 		if not row is Dictionary or not row.has("focus"):
 			continue
 		var p := "%s.elements[%d].focus" % [path, i]
 		if not focusable(row) or not row.focus is Dictionary:
-			_error(issues, p, "must be an object on a focusable button")
+			_error(issues, p, "must be an object on a focusable element")
 			continue
 		for direction in row.focus:
 			var target = row.focus[direction]
 			if not DIRECTIONS.has(direction) or not target is String or not focus_ids.has(target):
-				_error(issues, p + "." + str(direction), "must be a direction (left/right/up/down) naming a focusable button")
+				_error(issues, p + "." + str(direction), "must be a direction (left/right/up/down) naming a focusable element")
 
 static func _four(value: Variant) -> bool:
 	return value is Array and value.size() == 4 and value.all(_number)

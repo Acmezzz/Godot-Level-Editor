@@ -8,6 +8,7 @@ var report := {}
 var visited: Array[String] = []
 var screens: Array[String] = []
 var opened_buttons: Array[String] = []
+var latch_inputs: Array[int] = []
 var verify := false
 
 func _ready() -> void:
@@ -68,10 +69,13 @@ func _show_content(target: Dictionary) -> void:
 			var click := InputEventAction.new()
 			click.action = &"ui_accept"
 			button.grab_focus()
-			for pressed in [true, false]:
-				click.pressed = pressed
-				Input.parse_input_event(click)
-				await get_tree().process_frame
+			for i in 4:
+				if not is_instance_valid(button) or not button.is_inside_tree():
+					break
+				for pressed in [true, false]:
+					click.pressed = pressed
+					Input.parse_input_event(click)
+					await get_tree().process_frame
 		return
 	_finish("Missing signal screen: " + view_id)
 
@@ -89,15 +93,23 @@ func _draw_screen(parent: Node, layout: Dictionary, extent: Vector2, locale: Str
 		var caption := str(row.get("textLocales", {}).get(locale, row.get("text", "")))
 		var item: Control
 		match row.kind:
-			"button":
+			"button", "module":
 				var button := Button.new()
 				button.text = caption
+				var latch: bool = row.get("module") == "signal-latch"
+				var remaining := [int(row.get("props", {}).get("presses", 3)) if latch else 1]
+				var authored_count: int = remaining[0]
 				var style := StyleBoxFlat.new()
 				style.bg_color = Color("#cc711e") if row.get("style") == "signal/relay" else Color("#286968")
 				button.add_theme_stylebox_override("normal", style)
 				if row.has("target"):
 					var target: Dictionary = row.target
 					button.pressed.connect(func():
+						remaining[0] -= 1
+						if remaining[0] != 0:
+							return
+						if latch:
+							latch_inputs.append(authored_count)
 						opened_buttons.append(button.text)
 						_show_content.call_deferred(target))
 					buttons.append(button)
@@ -211,7 +223,8 @@ func _finish(error: String, text := "", extra := {}) -> void:
 		var path: String = report.path
 		var result := {"version": 1, "token": report.token, "status": "ready" if error.is_empty() else "error",
 			"message": error, "mapDigest": _map_digest(), "manifestDigest": digest.finish().hex_encode(),
-			"result": {"visited": visited, "screens": screens, "buttons": opened_buttons, "text": text}.merged(extra)}
+			"result": {"visited": visited, "screens": screens, "buttons": opened_buttons,
+				"latchInputs": latch_inputs, "text": text}.merged(extra)}
 		_write_json(path + ".tmp", result)
 		DirAccess.rename_absolute(path + ".tmp", path)
 	if verify or not error.is_empty():

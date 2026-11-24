@@ -3366,6 +3366,8 @@ func author_signal_room(app, project: String) -> void:
 	var launch := ["--path", "%projectpath%", "--audio-driver", "Dummy", "--"]
 	var manifest := {"_dir": project, "_maps_dir": project.path_join("maps"), "projectName": "Signal Room",
 		"viewports": [{"id": "handheld", "w": 480, "h": 720}],
+		"screenModules": {"signal-latch": {"name": "Signal latch", "fields": [
+			{"id": "presses", "name": "Confirmations", "kind": "input", "type": "int", "min": 1, "max": 4, "default": 3}]}},
 		"assets": [
 			{"id": "relay", "kind": "entity", "code": "RLY1", "fields": [
 				{"id": "route_layer", "kind": "choice", "source": "layer:"},
@@ -3536,6 +3538,7 @@ func author_signal_room(app, project: String) -> void:
 		and result.get("visited") == ["project-alternate-watch", "project-tune", "project-clear"]
 		and result.get("screens") == ["watch-deck", "relay-tuning"]
 		and result.get("buttons") == ["Tune the relay", "Confirm the signal"]
+		and result.get("latchInputs") == [2.0]
 		and result.get("text") == "Signal verified",
 		"the second game follows both authored buttons from the selected start content: " + str(report))
 	await _author_relay_map(app, manifest)
@@ -3668,6 +3671,19 @@ func _author_signal_screen(app, id: String, caption: String, content: String, ma
 	pointer.position = frame.position + frame.size * Vector2(0.75, 0.8)
 	preview._gui_input(pointer)
 	var field: LineEdit = pop.find_child("LayoutElement_text", true, false)
+	if id == "watch-deck":
+		var type: OptionButton = pop.find_child("LayoutElementKind", true, false)
+		for i in type.item_count:
+			if type.get_item_metadata(i).get("module") == "signal-latch":
+				type.select(i)
+				type.item_selected.emit(i)
+				break
+		var presses: SpinBox = pop.find_child("LayoutModuleField_presses", true, false)
+		check(presses != null and presses.value == 3, "game module provides the field and its default")
+		presses.value = 2
+		var focusable: CheckBox = pop.find_child("LayoutElementFocusable", true, false)
+		focusable.button_pressed = true
+		field = pop.find_child("LayoutElement_text", true, false)
 	field.text = caption
 	field.text_changed.emit(caption)
 	field = pop.find_child("LayoutElement_style", true, false)
@@ -3696,3 +3712,9 @@ func _author_signal_screen(app, id: String, caption: String, content: String, ma
 	while is_instance_valid(pop) and pop.visible and Time.get_ticks_msec() < deadline:
 		await process_frame
 	check(not is_instance_valid(pop) or not pop.visible, "save the authored signal screen " + id)
+	if id == "watch-deck":
+		var row: Dictionary = app.manifest.views.filter(func(view): return view.view_id == id)[0]
+		check(row.layout.elements[0].get("module") == "signal-latch"
+			and row.layout.elements[0].get("focusable") == true
+			and row.layout.elements[0].get("props", {}).get("presses") == 2,
+			"the layout stores the module identity and the authored override")

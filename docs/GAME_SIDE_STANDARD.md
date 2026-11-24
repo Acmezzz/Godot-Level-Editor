@@ -90,6 +90,7 @@
 | `preview` | object | 可选。声明独立进程渲染预览，可请求 `screenLayout`、`mapFrame`、`worldFrame` 和 `timelineFrame`。与试玩配置分开。 |
 | `mapGenerators` | object | 可选。按生成器 ID 声明从游戏生成可编辑地图的参数。需同时声明 `preview.capabilities` 包含 `generateMap`。 |
 | `viewports` | array | 可选（C5）。具名参考画幅 `[{id, w, h}]`：宽屏/竖屏/分屏的坐标域身份，id 非空唯一、w/h 必填正数；`viewport_ref` 字段的下拉候选来自这里 |
+| `screenModules` | object | 可选。按模块 ID 提供作者可加入布局的成品控件，以及编辑器可配置的字段声明。游戏负责创建控件及执行行为。 |
 | `views` | array | 可选（C5）。参考视图 `[{view_id, image, pixel_size, hotspots}]`：`view_id` 必填，`image`/`pixel_size`/`hotspots` 可省；hotspot = `{rect: [nx,ny,nw,nh] 全 0..1, target: 对象}`。编辑器可编辑参考图、绘制热点和选择内容目标；游戏定义点击行为 |
 
 清单校验把 `assets` 非 Array、`tileSize` 非正数、资产 id 空或重复、
@@ -149,6 +150,18 @@
 
 对 `screenLayout`，`subject` 是当前参考视图的完整快照，包含未保存的布局、热点和参考图路径。
 请用请求中的视图以及游戏的控件、字体和样式完成渲染。
+
+游戏可通过 `screenModules` 声明自定义控件，例如：
+
+```json
+{"screenModules":{"confirm-latch":{"name":"多次确认","fields":[{"id":"presses","kind":"input","type":"int","min":1,"default":3}]}}}
+```
+
+作者在布局中选择模块后，元素写为 `kind: "module"`、`module: "confirm-latch"`，
+沿用 `id`、`anchors`、`offsets`、文字及样式。`props` 以声明字段 ID 为键，只保存作者的覆盖值；
+游戏应在缺键时应用模块缺省值。若需要键盘或手柄焦点，作者可启用 `focusable: true`（模块默认关闭）。
+`target: {function, content}` 是可选的内容出口，游戏决定何时触发，例如满足确认次数后再跳转。
+正式试玩和 `screenLayout` 预览应按同一个模块 ID 构造控件；编辑器不加载模块代码。
 
 对 `mapFrame`，`subject` 结构如下：
 
