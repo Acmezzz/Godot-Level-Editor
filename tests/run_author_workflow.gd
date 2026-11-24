@@ -418,7 +418,9 @@ func run():
 			{"id": "switch", "kind": "entity", "code": "SWCH", "functions":["reaction"],
 				"ports":[{"id":"output","type":"signal","x":-5,"y":3}], "fields": [
 				{"id":"target","type":"port_ref","of":"door","sourcePort":"output"}, {"id":"backup_map","type":"map_ref"},
-				{"id":"backup","type":"port_ref","of":"door","mapField":"backup_map"}]},
+				{"id":"backup","type":"port_ref","of":"door","mapField":"backup_map"},
+				{"id":"activation_count","kind":"input","type":"int","default":1,"min":0,"max":4},
+				{"id":"caption","kind":"input","type":"string","default":"Switch"}]},
 			{"id": "button-art", "kind": "scene", "shape": "image", "texture": "button.png"},
 			{"id": "terrain", "kind": "scene", "shape": "tile", "atlas": "terrain.png", "cell": 16},
 			{"id": "terrain-alt", "kind": "scene", "shape": "tile", "atlas": "terrain-alt.png", "cell": 16},
@@ -3016,10 +3018,28 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 	check(switch.props.get("backup") == {"map": destination_code, "inst": "DIST", "port": "open"}
 		and switch.props.backup_map == destination_code and cvs.cur_map_code() == map.meta.code,
 		"the port is written on the source instance without switching the active map")
+	var count: SpinBox = editor.root.find_child("InstanceValue_activation_count", true, false)
+	var caption: LineEdit = editor.root.find_child("InstanceValue_caption", true, false)
+	check(count != null and caption != null, "the instance form exposes declared input widgets")
+	if count == null or caption == null:
+		return
+	check(count.value == 1 and caption.text == "Switch" and not switch.props.has("activation_count"),
+		"declared defaults appear without writing an override")
+	count.value = 0
+	count.get_line_edit().text_submitted.emit("0")
+	check(switch.props.get("activation_count") == 0 and await cvs.undo() and not switch.props.has("activation_count"),
+		"undo removes a committed instance override")
+	check(await cvs.redo() and switch.props.get("activation_count") == 0, "redo restores the explicit zero")
+	caption = editor.root.find_child("InstanceValue_caption", true, false)
+	caption.text = ""
+	# The mode transition flushes the pending text together with the map.
 	app._set_mode("map")
 	var saved: Dictionary = await app._map_file_ctrl.commit_document("保存实景落点及连接")
 	check(saved.get("status") == "ok", "publish positions and port selected from the game frame")
 	await app._load_map_file(path)
+	var reopened: EntityNode = cvs._ent_by_code_index()["PICK"]
+	check(reopened.props.get("activation_count") == 0 and reopened.props.get("caption") == "",
+		"zero and empty string remain explicit overrides after reopening")
 	check(cvs.extract().tiles == final_tiles and cvs.extract().spawn == [5, 3], "mapped tile edits and spawn survive save and reopen")
 	check(cvs.cell_graph().edges[0].id == edge_id and cvs.cell_graph().edges[0].props.cost == 2
 		and cvs.cell_graph().edges[0].toMap == destination_code and cvs.cell_graph().edges[0].to == "remote",
@@ -3042,7 +3062,8 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 	check(report.get("status") == "ready" and picks.size() == 2 and picks[0].point == [32.0, 24.0]
 		and absf(float(picks[1].point[0]) - (48.0 + (48.0 + 32.0 / 7.0) * 1.5)) < 0.02
 		and absf(float(picks[1].point[1]) - (16.0 + (32.0 + 64.0 / 7.0) * 1.5)) < 0.02
-		and result.get("opened") == doors[1].code
+		and result.get("opened") == ""
+		and result.get("openedByCopy") == doors[1].code
 		and result.get("openedBackup") == "DIST"
 		and absf(float(picks[0].transform.rotation) - PI / 2.0) < 0.001 and picks[0].transform.flip_h == true
 		and result.get("playerStart") == [88.0, 56.0]

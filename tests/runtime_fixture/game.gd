@@ -93,9 +93,10 @@ func _ready() -> void:
 				for point in path_fields.get("LPTH", []):
 					var anchor := _vector(layer.offset) + _vector(point) * float(layer.scale)
 					layer_path.append([anchor.x, anchor.y])
-			_report("ready", "", {"picks": lanes, "opened": _activate_switch(map, manifest), "contours": contours,
+			_report("ready", "", {"picks": lanes, "opened": _activate_switch(map, manifest, "target", "PICK"), "contours": contours,
 				"layerPath": layer_path,
-				"openedBackup": _activate_switch(map, manifest, "backup"),
+				"openedBackup": _activate_switch(map, manifest, "backup", "PICK"),
+				"openedByCopy": _activate_switch(map, manifest, "target", copies[0].code) if not copies.is_empty() else "",
 				"playerStart": [player.position.x, player.position.y], "switchCopies": copies, "authoredRoute": route,
 				"authoredEdge": _traversed_edge, "arrivalMap": _board_code, "arrivalVertex": [arrival.x, arrival.y]})
 		elif map.get("meta", {}).get("name") == "rule_hex" and not map.meta.get("cellGraph", {}).is_empty():
@@ -785,10 +786,12 @@ func _check_floor_route(map: Dictionary) -> Dictionary:
 			"upperPoint": [point.x, point.y], "tileTopology": tile_grid.topology}
 	return {}
 
-func _activate_switch(map: Dictionary, manifest: Dictionary, field := "target") -> String:
+func _activate_switch(map: Dictionary, manifest: Dictionary, field := "target", code := "") -> String:
 	var target: Dictionary = {}
 	for obj in map.get("objects", []):
-		if obj.asset == "switch":
+		if obj.asset == "switch" and (code == "" or obj.get("code") == code):
+			if field == "target" and int(obj.get("props", {}).get("activation_count", 1)) == 0:
+				return ""
 			target = obj.get("props", {}).get(field, {})
 			break
 	if target.get("port") != "open":

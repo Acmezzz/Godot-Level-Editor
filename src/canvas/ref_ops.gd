@@ -49,11 +49,6 @@ func set_entity_ref(n: EntityNode, fd: Dictionary, value) -> Dictionary:
 				or AssetDecl.by_id(source, asset_id) != asset_decl:
 			app._set_status("确认期间实例或引用已变更，请重试")
 			return {"status": "failed", "cleared": []}
-	# §7.5 阶段二：引用值改的是这一条实例的 props → InstanceKey 差量。
-	var pre: Dictionary = cvs._undo_history_ctrl.inst_rows([n])
-	var via_delta := bool(pre.get("ok", false))
-	if not via_delta:
-		cvs.push_undo()
 	var empty: bool = (value is String and value.is_empty()) or (value is Dictionary and value.is_empty())
 	if empty:
 		props.erase(fid)
@@ -64,10 +59,7 @@ func set_entity_ref(n: EntityNode, fd: Dictionary, value) -> Dictionary:
 		var oid := str((other2 as Dictionary).get("id", ""))
 		props.erase(oid)
 		cleared.append(oid)
-	n.props = props
-	if via_delta:
-		cvs._undo_history_ctrl.inst_commit(pre.get("rows", {}))
-	cvs._mark_ents()   # 阶段三：只改实例 props，瓦片/碰撞镜像不动
+	_commit_props(n, props)
 	# 指向预览：仅本图 entity_ref 高亮（跨图/地图引用在本图没有可亮对象）
 	var target := str(value) if value is String and app.canvas.is_entity_code_local(value) else ""
 	cvs.ref_highlight = target
@@ -80,6 +72,22 @@ func set_entity_ref(n: EntityNode, fd: Dictionary, value) -> Dictionary:
 	else:
 		app._set_status("引用「%s」→ %s（Ctrl+Z 撤销）" % [str(fd.get("name", fid)), str(value)])
 	return {"status": "ok", "cleared": cleared}
+
+func set_instance_value(n: EntityNode, id: String, value: Variant) -> void:
+	var props := n.props.duplicate(true)
+	props[id] = value
+	_commit_props(n, props)
+
+func _commit_props(n: EntityNode, props: Dictionary) -> void:
+	var pre: Dictionary = cvs._undo_history_ctrl.inst_rows([n])
+	if not pre.ok:
+		cvs.push_undo()
+	n.props = props
+	n.refresh_visual()
+	if pre.ok:
+		cvs._undo_history_ctrl.inst_commit(pre.rows)
+	cvs._mark_ents()
+	cvs.queue_redraw()
 
 ## 目标实例是否满足字段的 of 白名单（空 = 不限）。拖连线/画布选点共用。
 func accepts(fd: Dictionary, n: EntityNode) -> bool:

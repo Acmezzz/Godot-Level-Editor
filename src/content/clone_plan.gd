@@ -510,8 +510,9 @@ static func _remap_entity_ref_fields(vals: Dictionary, fdecls: Array, owner: Str
 			continue
 		var f: Dictionary = fd
 		var fid := str(f.get("id", ""))
-		var cell: bool = not cell_ids.is_empty() and RefFields.describe(f).get("kind") == "cell"
-		if str(f.get("type", "")) != "entity_ref" and not cell:
+		var kind: String = RefFields.describe(f).kind
+		var cell := not cell_ids.is_empty() and kind == "cell"
+		if kind != "entity_inst" and not cell:
 			continue
 		var vv = vals.get(fid, null)
 		if _is_empty_value(vv):
@@ -519,26 +520,19 @@ static func _remap_entity_ref_fields(vals: Dictionary, fdecls: Array, owner: Str
 		var pair := str(f.get("mapField", ""))
 		# R10：先看配对地图字段的现值——目标不是源图的引用原样保留（跨图身份 (图码, 实例码)）。
 		if pair != "" and (source_key != "" or source_name != ""):
-			var pk := _key_of(fdecls, pair)
-			var pv := str(vals.get(pk, "")) if pk != "" and vals.has(pk) else ""
+			var pv := str(vals.get(pair, ""))
 			if pv != "" and pv != source_key and pv != source_name:
 				continue
-		var vs := str(vv)
 		var id_map: Dictionary = cell_ids if cell else instance_map
-		if cell and cross_code != "" and _touches(vv, id_map) and not _all_in(vv, id_map):
-			if conflicts is Array:
-				conflicts.append(_split_cell_ref(owner, fid))
-			continue
-		if (_touches(vv, id_map) if cell else id_map.has(vs)):
+		if _touches(vv, id_map):
+			if cross_code != "" and not _all_in(vv, id_map):
+				if conflicts is Array:
+					conflicts.append(_split_cell_ref(owner, fid) if cell else {"kind": "ref_pair_partial", "id": owner,
+						"message": "实例 %s 的字段 %s 同时引用复制范围内外的目标：跨图时请拆分选择" % [owner, fid]})
+				continue
 			vals[fid] = _swap(vv, id_map)
 			# 组内：配对地图字段指向副本所在的图（同图复制也是本图当前码）。
-			# 数组值部分命中时不能整组改判（同一字段表达不了两个归属），报冲突。
 			if pair != "":
-				if (not cell or cross_code != "") and not _all_in(vv, id_map):
-					if conflicts is Array:
-						(conflicts as Array).append({"kind": "ref_pair_partial", "id": owner,
-							"message": "实例 %s 的字段 %s 是混合引用（部分在本图/部分指向别的图），配对地图字段 %s 无法同时表示：请拆分或取消" % [owner, fid, pair]})
-					continue
 				var tk := _target_key(target_data, target_map)
 				if pairs_to_fill.has(pair) and str(pairs_to_fill[pair]) != tk:
 					if conflicts is Array:
@@ -548,7 +542,7 @@ static func _remap_entity_ref_fields(vals: Dictionary, fdecls: Array, owner: Str
 			continue
 		if cross_code == "":
 			continue
-		if not cell and not source_codes.is_empty() and not source_codes.has(vs):
+		if not cell and not source_codes.is_empty() and not _touches(vv, source_codes):
 			continue   # 本来就指向第三张图：引用与地图字段都原样保留
 		# 组外且指向源图：跨图时只能靠配对地图字段把目标钉在源图
 		if pair != "":

@@ -167,7 +167,7 @@ static func _validate_functions(data: Dictionary, issues: Array[Dictionary]) -> 
 					_add(issues, "error", "functions.%s.fields.%s" % [str(fid), field_id],
 						"input type must be one of: " + ", ".join(INPUT_TYPES))
 				elif typ == "array":
-					_validate_array_field(str(fid), field_id, fd, issues)
+					_validate_array_field("functions.%s.fields.%s" % [fid, field_id], fd, issues)
 		# 功能引用的条件：同清单内按 id 引用（同挂载模型），引用未声明的条件 = 错误
 		var conds = d.get("conditions", [])
 		if not (conds is Array):
@@ -653,6 +653,13 @@ static func _validate_entity_asset(data: Dictionary, ad: Dictionary, path: Strin
 		if fid2 == "" or fields.has(fid2):
 			_add(issues, "error", path + ".fields", "field ids must be non-empty and unique")
 		fields[fid2] = true
+		if field.get("kind") == "input" and not field.get("type", "") in ["entity_ref", "map_ref"]:
+			var typ := str(field.get("type", ""))
+			var field_path := "%s.fields.%s" % [path, fid2]
+			if not INPUT_TYPES.has(typ):
+				_add(issues, "error", field_path, "input type must be one of: " + ", ".join(INPUT_TYPES))
+			elif typ == "array":
+				_validate_array_field(field_path, field, issues)
 
 ## 正整数像素尺寸（B1）：int 直接判，float 必须有限且恰为整数（JSON 20.0 合法、20.5 拒绝）。
 static func _is_positive_integer(v) -> bool:
@@ -734,10 +741,10 @@ static func _check_condition_fields(fields: Variant, path: String, conditions: D
 ## C1（§7.4）：array 字段声明校验。of: record 要求 fields 数组：子字段对象、id 非空唯一、
 ## kind=input/choice、type 合法（input 的 type 走 INPUT_TYPES 白名单）；嵌套 record 递归（限深 4）。
 ## 已有标量数组（of 缺省或标量/choice）不受影响——只新增 record 形的报错，不改旧声明语义。
-static func _validate_array_field(fid: String, field_id: String, fd: Dictionary,
+static func _validate_array_field(path: String, fd: Dictionary,
 		issues: Array[Dictionary], depth := 0) -> void:
 	if depth > 4:
-		_add(issues, "error", "functions.%s.fields.%s" % [fid, field_id],
+		_add(issues, "error", path,
 			"record nesting too deep (max 4)")
 		return
 	var of := str(fd.get("of", ""))
@@ -745,30 +752,30 @@ static func _validate_array_field(fid: String, field_id: String, fd: Dictionary,
 		return
 	var fl = fd.get("fields", null)
 	if not (fl is Array) or (fl as Array).is_empty():
-		_add(issues, "error", "functions.%s.fields.%s" % [fid, field_id],
+		_add(issues, "error", path,
 			"of: record requires a non-empty fields array")
 		return
 	var seen := {}
 	for sub in (fl as Array):
 		if not (sub is Dictionary):
-			_add(issues, "error", "functions.%s.fields.%s" % [fid, field_id],
+			_add(issues, "error", path,
 				"record fields entries must be objects")
 			continue
 		var sid := str((sub as Dictionary).get("id", ""))
 		if sid == "" or seen.has(sid):
-			_add(issues, "error", "functions.%s.fields.%s" % [fid, field_id],
+			_add(issues, "error", path,
 				"record sub-field ids must be non-empty and unique (seen: %s)" % sid)
 		seen[sid] = true
 		var skind := str((sub as Dictionary).get("kind", ""))
 		if skind != "input" and skind != "choice":
-			_add(issues, "error", "functions.%s.fields.%s" % [fid, field_id],
+			_add(issues, "error", path,
 				"record sub-field kind must be input or choice (seen: %s)" % skind)
 		elif skind == "input":
 			var styp := str((sub as Dictionary).get("type", ""))
 			if styp == "array":
-				_validate_array_field(fid, field_id, sub as Dictionary, issues, depth + 1)
+				_validate_array_field(path + ".fields." + sid, sub as Dictionary, issues, depth + 1)
 			elif not INPUT_TYPES.has(styp):
-				_add(issues, "error", "functions.%s.fields.%s" % [fid, field_id],
+				_add(issues, "error", path,
 					"record sub-field type must be one of: " + ", ".join(INPUT_TYPES))
 ## C3（§7.4）：assets[].ports 校验。端口 = {id, x, y, type?}：id 非空唯一、x/y 为数字
 ## （锚点局部像素）、type 可选字符串。不校验其它未知键（游戏侧自定义原样保留）。
