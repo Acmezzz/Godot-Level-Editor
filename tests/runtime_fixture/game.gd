@@ -211,8 +211,10 @@ func _render_preview(path: String) -> void:
 	if capability == "screenLayout":
 		_compose_screen_frame(surface, subject, size, str(request.get("locale", "")))
 	elif capability == "mapFrame":
-		if subject.get("map", {}).get("meta", {}).get("name") in ["frame_pick", "frame_pick_destination"]:
+		if subject.get("map", {}).get("meta", {}).get("name") == "frame_pick":
 			_compose_pick_frame(surface, size, path.get_base_dir(), request)
+		elif subject.get("map", {}).get("meta", {}).get("name") == "frame_pick_destination":
+			_compose_destination_frame(surface, size, path.get_base_dir(), request)
 		else:
 			_compose_map_frame(surface, subject, size)
 	elif capability == "worldFrame":
@@ -387,8 +389,34 @@ func _compose_pick_frame(surface: SubViewport, size: Vector2i, dir: String, requ
 					regions.append({"screen": [[center.x - 7, center.y - 7], [center.x + 10, center.y - 7], [center.x - 7, center.y + 10]],
 						"targets": {"vertex": {"inst": row.code, "ring": ring, "index": k}}})
 		regions.append(region)
+	_write_frame_picks(dir, request.token, regions)
+
+func _compose_destination_frame(surface: SubViewport, size: Vector2i, dir: String, request: Dictionary) -> void:
+	var world := _frame_world(surface, request.subject, size)
+	var map: Dictionary = request.subject.map
+	_draw_map_doors(world, map, request.subject.manifest)
+	var cell: Dictionary = map.meta.cellGraph.cells[0]
+	var polygon := Polygon2D.new()
+	polygon.polygon = PackedVector2Array(cell.polygon.map(func(point): return _vector(point)))
+	polygon.color = Color("#46c4ae")
+	world.add_child(polygon)
+	var screen := func(point: Vector2) -> Array:
+		var pixel := world.to_global(point)
+		return [pixel.x, pixel.y]
+	var door: Dictionary = map.objects[0]
+	var center := (Vector2(door.x, door.y) + Vector2(0.5, 0.5)) * 16.0
+	var lo := center - Vector2(6, 8)
+	var hi := center + Vector2(6, 8)
+	var port := {"port": {"map": map.meta.code, "inst": door.code, "port": "open"}}
+	_write_frame_picks(dir, request.token, [
+		{"screen": Array(polygon.polygon).map(screen), "targets": {"cell": cell.id}},
+		{"screen": [screen.call(lo), screen.call(Vector2(hi.x, lo.y)), screen.call(hi)], "targets": port},
+		{"screen": [screen.call(lo), screen.call(hi), screen.call(Vector2(lo.x, hi.y))], "targets": port}
+	])
+
+func _write_frame_picks(dir: String, token: String, regions: Array) -> void:
 	var picks := FileAccess.open(dir.path_join("picks.json"), FileAccess.WRITE)
-	picks.store_string(JSON.stringify({"version": 1, "token": request.token, "regions": regions}))
+	picks.store_string(JSON.stringify({"version": 1, "token": token, "regions": regions}))
 	picks.close()
 
 func _frame_triangle_3d(surface: SubViewport, vertices: PackedVector3Array, color: Color) -> void:

@@ -2255,6 +2255,13 @@ func _click_pick_frame(pop: PopupPanel, at: Vector2, button := MOUSE_BUTTON_LEFT
 	frame.gui_input.emit(mouse)
 	return pop.find_child("MapGamePreviewConfirmPick", true, false)
 
+func _frame_pick_at_world(pop: PopupPanel, point: Vector2) -> Vector2:
+	var values := []
+	for key in ["X", "Y", "Zoom"]:
+		var field: LineEdit = pop.find_child("MapGamePreviewCamera" + key, true, false)
+		values.append(float(field.placeholder_text if field.text.is_empty() else field.text))
+	return Vector2(0.5, 0.5) + (point - Vector2(values[0], values[1])) * values[2] / Vector2(720, 1280)
+
 func author_frame_picks(app, manifest: Dictionary) -> void:
 	var map := Maps.new_map("frame_pick", 10, 10, "orthogonal")
 	var destination := Maps.new_map("frame_pick_destination", 10, 10, "orthogonal")
@@ -2782,9 +2789,28 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 	if target_pop == null or target_pop == edge_pop:
 		check(false, "open a separate target frame while preserving the source")
 		return
-	var confirm_target := _click_pick_frame(target_pop, Vector2(0.15, 0.24))
+	var target_point := Vector2(24, 24)
+	var default_pick := _frame_pick_at_world(target_pop, target_point)
+	var confirm_target := _click_pick_frame(target_pop, default_pick)
 	check(not confirm_target.disabled and cvs.cell_graph() == graph_before_delete,
 		"picking in the second map does not modify the open map")
+	var before_camera: Array = [cvs.cam_pos, cvs.zoom]
+	for entry in [["X", "60"], ["Y", "70"], ["Zoom", "6"]]:
+		var field: LineEdit = target_pop.find_child("MapGamePreviewCamera" + entry[0], true, false)
+		field.text = entry[1]
+		field.text_changed.emit(field.text)
+	var target_frame: TextureRect = target_pop.find_child("MapGamePreviewFrame", true, false)
+	check(confirm_target.disabled and target_frame.texture == null, "changing the target camera clears old pixels and the pending pick")
+	target_pop.find_child("MapGamePreviewRender", true, false).pressed.emit()
+	if await _wait_for_pick_frame(target_pop) == null:
+		return
+	check(_click_pick_frame(target_pop, default_pick).disabled, "the previous screen position no longer picks the cell")
+	var zoomed_pick := Vector2(0.5, 0.5) + (target_point - Vector2(60, 70)) * 6.0 / Vector2(720, 1280)
+	var pixel := Vector2i(zoomed_pick * target_frame.texture.get_size())
+	check(target_frame.texture.get_image().get_pixelv(pixel).g > 0.6
+		and not _click_pick_frame(target_pop, zoomed_pick).disabled
+		and [cvs.cam_pos, cvs.zoom] == before_camera,
+		"the game draws and maps the cell at the requested center and scale without moving the editor canvas")
 	confirm_target.pressed.emit()
 	await process_frame
 	apply = edge_pop.find_child("MapGamePreviewConfirmPick", true, false)
@@ -2808,7 +2834,7 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 	if target_pop == null or target_pop == edge_pop:
 		check(false, "reopen the destination picker for an existing edge")
 		return
-	_click_pick_frame(target_pop, Vector2(0.15, 0.24)).pressed.emit()
+	_click_pick_frame(target_pop, _frame_pick_at_world(target_pop, target_point)).pressed.emit()
 	await process_frame
 	check(cvs.cell_graph() == graph_before_delete, "remote retargeting preserves the original until source confirmation")
 	apply.pressed.emit()
@@ -2826,7 +2852,7 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 	target_pop = await _render_pick_frame(app)
 	if target_pop == null:
 		return
-	var confirm_remote := _click_pick_frame(target_pop, Vector2(0.15, 0.25))
+	var confirm_remote := _click_pick_frame(target_pop, _frame_pick_at_world(target_pop, target_point))
 	var switch: EntityNode = cvs._ent_by_code_index()["PICK"]
 	check(not confirm_remote.disabled and not switch.props.has("backup"),
 		"the remote port is selectable and remains unwritten until confirmation")

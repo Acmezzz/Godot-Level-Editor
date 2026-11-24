@@ -159,6 +159,7 @@
 | `viewportId` | 选中的清单画幅 ID；空串表示当前编辑器画布大小 |
 
 渲染地图时从快照加载当前地图和清单；跨图、其他已保存内容和素材可以继续走游戏自己的读取路径。
+作者可以在 `mapFrame` 窗口调整 `camera.center` 和 `camera.zoom`。跨图默认使用目标图范围，本图默认使用编辑画布相机。`picks.json` 必须对应本次取景后的实际画面；自由镜头仍可按自身投影解释这些参数。
 
 对 `worldFrame`，`subject.manifest.worldLayout` 是布局窗口的完整草稿。相机 `subject.camera`
 沿用同一结构，但中心与缩放作用于**项目世界坐标**。空的 `viewportId` 表示取世界布局画布尺寸。

@@ -121,7 +121,7 @@ static func _open_cell_destination(app, editor, parent: Window, source_current: 
 	FrameDialog.open(app, CAPABILITY, {"title": "跨地图选择终点 · " + code, "button": "渲染目标地图",
 		"hint": "目标地图使用已保存版本。确认选点后，回到起点地图应用连接。",
 		"prefix": "MapGamePreview", "default_label": "当前画布大小", "pick_mode": "cell", "pick": choose,
-		"parent": parent}, _saved_snapshot.bind(app, manifest, code, true, prepare), valid)
+		"camera": true, "parent": parent}, _saved_snapshot.bind(app, manifest, code, true, prepare), valid)
 
 static func _saved_snapshot(preset: String, app, manifest: Dictionary, key: String,
 		stable_code: bool, prepare: Callable) -> Dictionary:
@@ -183,7 +183,7 @@ static func open_reference(app, decl: Dictionary, resolve: Callable, commit: Cal
 		var valid := func() -> bool: return not session.stale(generation)
 		var options := {"title": "实景选引用 · " + key, "button": "渲染目标地图",
 			"hint": "使用引用字段指定地图的已保存版本。确认后只写入当前字段。",
-			"prefix": "MapGamePreview", "default_label": "当前窗口大小", "pick_mode": mode, "pick": choose}
+			"prefix": "MapGamePreview", "default_label": "当前窗口大小", "pick_mode": mode, "pick": choose, "camera": true}
 		FrameDialog.open(app, CAPABILITY, options.merged(parent),
 			_saved_snapshot.bind(app, app.manifest, key, false, Callable()), valid)
 
@@ -200,18 +200,15 @@ static func _open(app, mode: String, choose: Callable, extra := {}) -> void:
 		var subject := map_context(app)
 		if subject.is_empty():
 			return {"error": "地图正在重建，请稍后重试。"}
-		var camera := canvas.cam_pos
-		var zoom := canvas.zoom
 		subject["manifest"] = app._manifest_write_payload(app.manifest)
 		subject["viewportId"] = preset
 		var revision: int = session.revision
 		return {"subject": subject, "default_size": canvas.get_viewport_rect().size,
-			"summary": " · 中心 (%.1f, %.1f) · 缩放 ×%.2f" % [camera.x, camera.y, zoom],
 			"current": func(): return session.revision == revision and context_matches(app, subject)}
 	FrameDialog.open(app, CAPABILITY, {"title": "关卡游戏画面预览", "button": "渲染关卡",
 		"hint": "用游戏渲染当前关卡和画布取景。未保存的地图与暂存内容会随请求传入。",
 		"prefix": "MapGamePreview", "default_label": "当前画布大小", "pick_mode": mode, "pick": choose,
-		"initial": "可切换画幅，取景中心和缩放仍使用画布当前相机。"}.merged(extra), capture, valid)
+		"camera": true, "initial": "中心与缩放留空时使用当前画布相机。"}.merged(extra), capture, valid)
 
 static func map_context(app) -> Dictionary:
 	var canvas: EditorCanvas = app.canvas

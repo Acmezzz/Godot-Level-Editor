@@ -37,6 +37,24 @@ static func open(app, capability: String, options: Dictionary, snapshot: Callabl
 		sample.name = options.prefix + "Time"
 		sample.text = str(options.sample.value)
 		body.add_child(Kit.field_row("取样 · " + str(options.sample.unit), sample, 82))
+	var camera_fields: Array[LineEdit] = []
+	var camera_reset: Button
+	if options.get("camera", false):
+		var camera_row := Kit.hbox(8)
+		for label in ["X", "Y", "Zoom"]:
+			var field := LineEdit.new()
+			field.name = options.prefix + "Camera" + label
+			field.placeholder_text = "沿用默认"
+			field.tooltip_text = "每个世界像素对应的输出像素；留空用默认缩放" if label == "Zoom" \
+				else "地图根空间中心的 %s 像素坐标；留空用默认中心" % label
+			camera_fields.append(field)
+			camera_row.add_child(Kit.field_row("缩放" if label == "Zoom" else label, field, 32))
+		for child in camera_row.get_children():
+			child.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		camera_reset = Kit.button("默认取景", Callable(), "ghost")
+		camera_reset.name = options.prefix + "CameraReset"
+		camera_row.add_child(camera_reset)
+		body.add_child(Kit.field_row("取景中心", camera_row, 82))
 	var frame := TextureRect.new()
 	frame.name = options.prefix + "Frame"
 	frame.custom_minimum_size.y = 260
@@ -107,12 +125,24 @@ static func open(app, capability: String, options: Dictionary, snapshot: Callabl
 		if not built.has("subject"):
 			notice.text = str(built.get("error", "无法读取当前工作副本。"))
 			return
+		if not camera_fields.is_empty():
+			var camera := _sample_camera(built.subject.camera, camera_fields)
+			if camera.is_empty():
+				notice.text = "取景中心须为有限数字，缩放须大于零；也可留空使用默认值。"
+				return
+			# Snapshot validity still compares the original map context and canvas camera.
+			built.subject = built.subject.merged({"camera": camera}, true)
+			built.summary = " · 中心 (%s, %s) · 缩放 ×%s" % [camera.center[0], camera.center[1], camera.zoom]
 		var viewport := Vector2i((sizes.get(preset, built.default_size) as Vector2).round())
 		var current: Callable = built.get("current", Callable())
 		render.disabled = true
 		picker.disabled = true
 		if sample != null:
 			sample.editable = false
+		for field in camera_fields:
+			field.editable = false
+		if camera_reset != null:
+			camera_reset.disabled = true
 		notice.text = "游戏正在渲染当前快照…"
 		var result := await GamePreview.render(app.get_tree(), manifest, capability, built.subject, viewport, "", keep)
 		if not keep.call():
@@ -123,6 +153,10 @@ static func open(app, capability: String, options: Dictionary, snapshot: Callabl
 		picker.disabled = false
 		if sample != null:
 			sample.editable = true
+		for field in camera_fields:
+			field.editable = true
+		if camera_reset != null:
+			camera_reset.disabled = false
 		if not result.has("image"):
 			notice.text = result.error
 			return
@@ -146,6 +180,18 @@ static func open(app, capability: String, options: Dictionary, snapshot: Callabl
 			else:
 				notice.text += (" · 左键描点，右键撤末点" if drafting else " · 点击画面后确认")
 	render.pressed.connect(render_frame)
+	if camera_reset != null:
+		var camera_changed := func():
+			reset.call()
+			notice.text = "取景已更改，请重新渲染。"
+		for field in camera_fields:
+			field.text_changed.connect(func(_value: String): camera_changed.call())
+			field.text_submitted.connect(func(_value: String): render_frame.call())
+		camera_reset.pressed.connect(func():
+			for field in camera_fields:
+				field.clear()
+			camera_changed.call()
+			render_frame.call())
 	if sample != null:
 		sample.text_changed.connect(func(_value: String):
 			reset.call()
@@ -276,6 +322,22 @@ static func open(app, capability: String, options: Dictionary, snapshot: Callabl
 	actions.add_child(confirm)
 	body.add_child(actions)
 	app._open_popup(pop, Vector2i(740, 600), options.get("parent"))
+
+static func _sample_camera(defaults: Dictionary, fields: Array[LineEdit]) -> Dictionary:
+	var values := [defaults.center[0], defaults.center[1], defaults.zoom]
+	for i in fields.size():
+		var field := fields[i]
+		field.placeholder_text = str(values[i])
+		var text := field.text.strip_edges()
+		if text.is_empty():
+			continue
+		if not text.is_valid_float():
+			return {}
+		var value := float(text)
+		if not is_finite(value) or (i == 2 and value <= 0.0):
+			return {}
+		values[i] = value
+	return {"center": values.slice(0, 2), "zoom": values[2]}
 
 static func _image_rect(frame: TextureRect) -> Rect2:
 	var image_size := frame.texture.get_size()
