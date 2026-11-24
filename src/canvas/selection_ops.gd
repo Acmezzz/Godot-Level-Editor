@@ -741,9 +741,8 @@ func paste_at(pos: Vector2) -> void:
 		})
 	var source: Dictionary = cvs._clipboard_source
 	var plan: Dictionary = ClonePlan.build(
-		{"data": {"objects": rows, "meta": source.get("meta", {})}, "manifest": cvs.manifest,
-			"map": str(source.get("map", ""))},
-		{"data": cvs.map_data, "manifest": cvs.manifest, "map": cvs.cur_map_name},
+		{"data": {"objects": rows, "meta": source.get("meta", {})}, "manifest": cvs.manifest},
+		{"data": cvs.map_data, "manifest": cvs.manifest},
 		PackedStringArray(), false, source.get("staged", {}))
 	if str(plan.get("status", "")) != "ok":
 		cvs._hint("粘贴已取消：" + ClonePlan.conflicts_text(plan.get("conflicts", [])))

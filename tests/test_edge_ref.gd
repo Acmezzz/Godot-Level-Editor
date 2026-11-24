@@ -141,9 +141,8 @@ func test_nested_paired_port_and_edge_keep_their_resolved_map() -> void:
 			"edge": EdgeRef.value_of("", Vector2i(1, 1), Vector2i(2, 1))},
 		{"target_map": "", "instance": "SELF", "port": {"map": "", "inst": "SELF", "port": "in"},
 			"edge": EdgeRef.value_of("", Vector2i(1, 1), Vector2i(2, 1))}]}}
-	var dst := {"meta": {"code": "MAP2"}}
 	var copy := ClonePlan.remap_row(row, {"SELF": "NEW1"}, {}, m, "MAP1", {"SELF": true},
-		[], dst, "target", "MAP1", "source")
+		[], "MAP2", "MAP1")
 	var foreign: Dictionary = copy.props.links[0]
 	var local: Dictionary = copy.props.links[1]
 	eq([foreign.port.map, foreign.port.inst, foreign.edge.map], ["MAP9", "SELF", "MAP9"],

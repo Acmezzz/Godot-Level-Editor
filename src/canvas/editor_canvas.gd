@@ -1193,8 +1193,8 @@ func duplicate_instances(placements: Array) -> bool:
 		taken.append({"code": code})
 	var data := {"meta": source.meta, "objects": taken}
 	var plan := ClonePlan.build(
-		{"data": {"meta": source.meta, "objects": rows}, "manifest": manifest, "map": cur_map_name},
-		{"data": data, "manifest": manifest, "map": cur_map_name},
+		{"data": {"meta": source.meta, "objects": rows}, "manifest": manifest},
+		{"data": data, "manifest": manifest},
 		PackedStringArray(), false, source.staged)
 	if plan.status != "ok":
 		_hint("复制已取消：" + ClonePlan.conflicts_text(plan.conflicts))
@@ -1572,7 +1572,7 @@ func copy_content_source() -> Dictionary:
 		if not ce.commit_fields():
 			return {}
 		staged = ce.staged_data_by_key()
-	return {"map": cur_map_name, "meta": (map_data.get("meta", {}) as Dictionary).duplicate(true),
+	return {"meta": (map_data.get("meta", {}) as Dictionary).duplicate(true),
 		"staged": staged}
 
 func copy_selection() -> void:

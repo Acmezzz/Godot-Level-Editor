@@ -39,7 +39,7 @@ static func translated_rows(graph: Dictionary, chosen: Array, delta: Vector2) ->
 	return result
 
 static func capture(graph: Dictionary, world: Transform2D, frames: Dictionary, layers: Dictionary,
-		area: Rect2, map_name: String, map_code: String) -> Dictionary:
+		area: Rect2, map_code: String) -> Dictionary:
 	var cells := []
 	var selected := {}
 	var spaces := {}
@@ -59,7 +59,7 @@ static func capture(graph: Dictionary, world: Transform2D, frames: Dictionary, l
 	var edges := []
 	for row in graph.get("edges", []):
 		var dest: String = row.get("toMap", "")
-		if not selected.has(row.from) or not selected.has(row.to) or dest not in ["", map_name, map_code]:
+		if not selected.has(row.from) or not selected.has(row.to) or dest not in ["", map_code]:
 			continue
 		var copy: Dictionary = row.duplicate(true)
 		copy.erase("toMap")

@@ -133,7 +133,7 @@ func copy(include_graph := false, include_spawn := false, follow_edges := false)
 		var graph: Dictionary = cvs.cell_graph()
 		var visible := _visible_layers()
 		var captured := GraphClip.capture(graph, cvs.map_root.get_global_transform(), cvs._cell_layer_frames(graph),
-			visible, selection, source.map, str(source.meta.get("code", "")))
+			visible, selection, str(source.meta.get("code", "")))
 		if not captured.cells.is_empty():
 			clip.graph = captured
 			for space in captured.spaces.values():
@@ -172,7 +172,7 @@ func _plan_spawn(plan: Dictionary, world: Vector2, action: String) -> void:
 		plan.error = "目标出生点超出地图，未%s。" % action
 
 func _paste_plan(origin: Vector2, clip: Dictionary, preview_only := false) -> Dictionary:
-	var same_map: bool = clip.source.map == cvs.cur_map_name and clip.source.meta.get("code") == cvs.map_data.meta.get("code")
+	var same_map: bool = clip.source.meta.get("code") == cvs.cur_map_code()
 	var layers := {}
 	for lid in clip.layer_names:
 		if lid == "":
@@ -234,9 +234,9 @@ func paste_at(pos: Vector2) -> void:
 			edge.area, cvs.grid, Vector2i(cvs.map_data.meta.w, cvs.map_data.meta.h),
 			cvs.layer_xform(cvs.collision_index()), origin)
 	var clone := ClonePlan.build(
-		{"data": {"meta": source.meta, "objects": clip.objects}, "manifest": cvs.manifest, "map": source.map,
+		{"data": {"meta": source.meta, "objects": clip.objects}, "manifest": cvs.manifest,
 			"cell_ids": target.get("cell_ids", {}), "map_edge": map_edge},
-		{"data": cvs.extract(), "manifest": cvs.manifest, "map": cvs.cur_map_name},
+		{"data": cvs.extract(), "manifest": cvs.manifest},
 		PackedStringArray(), false, source.staged)
 	if clone.status != "ok":
 		cvs._hint("跨层粘贴已取消：" + ClonePlan.conflicts_text(clone.conflicts))

@@ -359,7 +359,7 @@ func copy_region() -> bool:
 	# 层栈剪贴板：tiles = {层id: [[dx,dy,资产id,ax,ay,alt]...]}，碰撞/实体照旧（实体带 layer）
 	# 源图身份随剪贴板带走（C2）：跨图粘贴时配对地图字段据此补源图键。
 	cvs._region_clip = {"tiles": {}, "collision": [], "size": cvs._region_sel.size,
-		"map": source.map, "map_code": str(source.meta.get("code", "")), "staged": source.staged,
+		"map_code": str(source.meta.get("code", "")), "staged": source.staged,
 		"tri": cvs.grid.is_tri(), "hex": cvs.grid.is_hex_geom(), "parity": posmod(cvs._region_sel.position.x, 2)}
 	# 层名凭据：粘贴时同图按 id 直配，跨图按层名重映射（谁的名字谁带走）
 	var lnames := {}
@@ -553,8 +553,8 @@ func _paste_region(origin: Vector2i) -> void:
 	var staged: Dictionary = cvs._region_clip.get("staged", {})
 	var plan: Dictionary = ClonePlan.build(
 		{"data": {"meta": {"code": str(cvs._region_clip.get("map_code", ""))}, "objects": rows},
-			"manifest": cvs.manifest, "map": str(cvs._region_clip.get("map", ""))},
-		{"data": cvs.map_data, "manifest": cvs.manifest, "map": cvs.cur_map_name},
+			"manifest": cvs.manifest},
+		{"data": cvs.map_data, "manifest": cvs.manifest},
 		PackedStringArray(), false, staged)
 	if str(plan.get("status", "")) != "ok":
 		cvs._hint("区域粘贴已取消：" + ClonePlan.conflicts_text(plan.get("conflicts", [])))
@@ -569,8 +569,7 @@ func _paste_region(origin: Vector2i) -> void:
 	# 粘贴按 层id 维度重建（tiles = {层id: [[dx,dy,资产id,ax,ay]...]}）
 	# 层重映射：同图按 id 直配，跨图按层名，都不匹配则落最底层（末尾黄字提示）
 	var lnames: Dictionary = cvs._region_clip.get("layer_names", {})
-	var clip_map := str(cvs._region_clip.get("map", ""))
-	var same_map: bool = clip_map == "" or clip_map == cvs.cur_map_name
+	var same_map: bool = str(cvs._region_clip.get("map_code", "")) == cvs.cur_map_code()
 	var missed: Array = []
 	for lid in (cvs._region_clip.get("tiles", {}) as Dictionary):
 		var li: int = _paste_layer_index(str(lid), lnames, missed, same_map)

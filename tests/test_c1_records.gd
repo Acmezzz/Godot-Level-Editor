@@ -231,7 +231,7 @@ func test_clone_remaps_record_rows() -> void:
 	var row := {"code": "AAAA", "asset": "box", "x": 0, "y": 0,
 		"props": {"ROWS": [{"SUB": "BBBB", "PMAP": ""}, {"SUB": "CCCC"}]}}
 	var out := ClonePlan.remap_row(row, {"AAAA": "N1", "BBBB": "N2", "CCCC": "N3"}, {}, m,
-		"", {}, null, {"meta": {"code": "M9"}}, "m1")
+		"", {}, null, "M9")
 	var rows: Array = (out["props"] as Dictionary)["ROWS"]
 	eq(str(((rows[0] as Dictionary)["SUB"])), "N2", "record ref remapped in group")
 	eq(str(((rows[0] as Dictionary)["PMAP"])), "M9", "pair scope is the row")
@@ -271,7 +271,7 @@ func test_port_ref_describe_candidates_remap() -> void:
 	ok(got is Dictionary and str((got as Dictionary).get("inst", "")) == "AAAA" and str((got as Dictionary).get("port", "")) == "A", "candidate is {map, inst, port}: " + str(got))
 	# 复制重映射：组内 → map/inst 分量都换，port 不动
 	var row := {"code": "AAAA", "asset": "gate", "x": 0, "y": 0, "props": {"WIRE": {"map": "", "inst": "AAAA", "port": "A"}}}
-	var out := ClonePlan.remap_row(row, {"AAAA": "N1"}, {}, m, "", {}, null, {"meta": {"code": "M9"}}, "m1")
+	var out := ClonePlan.remap_row(row, {"AAAA": "N1"}, {}, m, "", {}, null, "M9")
 	var wire: Dictionary = (out["props"] as Dictionary)["WIRE"]
 	eq(str(wire.get("map", "")), "M9", "map component -> target map")
 	eq(str(wire.get("inst", "")), "N1", "inst component -> new code")
