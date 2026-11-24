@@ -244,7 +244,24 @@ func run() -> void:
 	choose(field_control(sequence, "board"), map_code)
 	sequence.hide()
 	var timeline_target := {"function": "sequence", "content": "project-epilogue"}
-	await add_screen("instructions", "Enter course", {}, {"map": map_code})
+	app._set_mode("map")
+	app._map_file_ctrl.on_duplicate()
+	var copy_popup := popup()
+	collect(copy_popup, "LineEdit")[0].text = "course_variant"
+	press(copy_popup, "复制")
+	var copy := Maps.read(manifest, "course_variant")
+	if not check(not copy.is_empty(), "copy the authored map and scoped content from the editor"):
+		quit(1)
+		return
+	var copy_code: String = copy.meta.code
+	var copy_host: String = copy.objects[0].code
+	var copy_rules: Dictionary = copy.meta.contentSlots.round
+	check(copy_rules.content != round_target.content and copy_host != pawn_code
+		and Store.read(manifest, copy_rules.function, copy_rules.content).fields.HOST == copy_host
+		and Store.read(manifest, round_target.function, round_target.content).fields.HOST == pawn_code,
+		"the copy owns its remapped rules without changing the original")
+	app._set_mode("content")
+	await add_screen("instructions", "Enter course", {}, {"map": copy_code})
 	await add_screen("welcome", "Start tutorial", {"module": "signal-latch"}, {"view": "instructions"})
 	await add_screen("debrief", "Read results", {}, timeline_target)
 	app.project_shell.content_editor._library.open()
@@ -295,7 +312,7 @@ func run() -> void:
 	var edge_exists: bool = graph.edges.any(func(edge):
 		return edge.from == "@view\u0001welcome" and edge.to == "@view\u0001instructions" and edge.get("output") == "accepted")
 	check(edge_exists, "the project graph exposes the direct module transition")
-	check(graph.edges.any(func(edge): return edge.cid == "instructions" and edge.fn == Flow.MAP_KIND and edge.value == map_code),
+	check(graph.edges.any(func(edge): return edge.cid == "instructions" and edge.fn == Flow.MAP_KIND and edge.value == copy_code),
 		"the project graph links the teaching button to the authored map")
 	var inbound := Audit.view_inbound_refs(manifest, "instructions", [])
 	check(not inbound.refs.is_empty() and "welcome" in inbound.refs[0], "the destination screen has the expected inbound reference")
@@ -324,10 +341,10 @@ func run() -> void:
 	check(report.get("status") == "ready" and result.get("screens") == ["welcome", "instructions", "results", "debrief"]
 		and result.get("visited") == ["project-course-rules", "project-epilogue", "project-finished"]
 		and result.get("endingActor") == pawn_code and result.get("endingBoard") == map_code
-		and result.get("runtimeCourse", []).map(func(x): return int(x)) == [3, 5] and result.get("board") == map_code
-		and result.get("roundRules") == round_target.content and result.get("roundInputs") == 3
-		and result.get("roundHost") == pawn_code
-		and result.get("placed") == [pawn_code, "R001"] and result.get("text") == "Screen sequence complete",
+		and result.get("runtimeCourse", []).map(func(x): return int(x)) == [3, 5] and result.get("board") == copy_code
+		and result.get("roundRules") == copy_rules.content and result.get("roundInputs") == 3
+		and result.get("roundHost") == copy_host
+		and result.get("placed") == copy.objects.map(func(row): return row.code) and result.get("text") == "Screen sequence complete",
 		"the game reads the map-level completion outlet and reaches the conclusion: %s" % [report])
 	print("SCREEN-NAV-DONE failures=", failures)
 	quit(0 if failures == 0 else 1)

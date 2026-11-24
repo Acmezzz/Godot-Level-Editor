@@ -205,6 +205,8 @@
 `"contentMapContext":"inherit"`。游戏把绑定所在的地图传给内容，自检也对每张绑定地图分别解析本图引用。
 作者可用「应用并编辑内容…」打开内容表单，并自动选中绑定所在的地图作为引用上下文。
 缺省或 `"independent"` 不传地图；共享内容若使用本图引用，该引用需在每张绑定地图中成立。
+整图复制时，如果这类槽或出口直接指向的内容需要改写本图引用，编辑器会为副本另存该内容并更新绑定。
+没有需要改写的引用时仍共用原内容。
 如需从关卡回到屏幕，可在资产实例声明 `{"id":"exit_view","kind":"choice","source":"view:"}`。
 作者为每个实例选择目标；游戏在自身的通关或交互逻辑中读取 `props.exit_view` 并按该 ID 切屏。
 同一个出口需要兼容不同类型时，可声明 `{"id":"exit_target","kind":"input","type":"flow_target","maps":true,"screens":true,"contentTypes":["story"]}`。

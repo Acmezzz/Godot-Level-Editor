@@ -308,7 +308,7 @@ func duplicate_current_from_dialog(old_name: String, name_edit: LineEdit, err_la
 	if not await _write_map_copy(old_name, nn, data, source.staged, guard, err_label):
 		return
 	pop.hide()
-	app._set_status("已创建副本：%s → %s（项目级内容保持共享）" % [old_name, nn])
+	app._set_status("已创建地图副本：%s → %s" % [old_name, nn])
 
 func _write_map_copy(old_name: String, new_name: String, data: Dictionary, staged: Dictionary,
 		guard: Callable, error_label: Label) -> bool:
