@@ -30,16 +30,18 @@ func run() -> void:
 			"fields": [{"id": "exit_target", "kind": "input", "type": "flow_target",
 				"maps": true, "screens": true, "contentTypes": ["signal"]}]}],
 		"startup": {"screens": true}, "viewports": [{"id": "handheld", "w": 480, "h": 720}],
-		"mapGenerators": {"course": {"fields": [
-			{"id": "projection", "kind": "choice", "options": ["orthogonal", "isometric"]},
-			{"id": "placements", "kind": "input", "type": "array", "of": "record", "fields": [
-				{"id": "asset", "kind": "input", "type": "asset_ref", "assetKind": "entity"},
-				{"id": "column", "kind": "input", "type": "int", "min": 1, "max": 10}]}]}},
+		"mapGenerators": {"course": {"contentType": "course_rules"}},
 		"preview": {"version": 1, "executable": OS.get_executable_path(), "capabilities": ["generateMap"],
 			"args": ["--headless", "--path", "%projectpath%", "--"]},
 		"screenModules": {"signal-latch": {"name": "Latch", "outputs": {"accepted": "Continue"}, "fields": [
 			{"id": "presses", "kind": "input", "type": "int", "min": 1, "default": 1}]}},
-		"functions": {"signal": {"code": "SIGN", "name": "Signal", "fields": [
+		"functions": {"course_rules": {"code": "CRUL", "name": "Course rules", "fields": [
+			{"id": "projection", "code": "PROJ", "kind": "choice", "options": ["orthogonal", "isometric"]},
+			{"id": "placements", "code": "PLAC", "kind": "input", "type": "array", "of": "record", "fields": [
+				{"id": "asset", "code": "ASST", "kind": "input", "type": "asset_ref", "assetKind": "entity"},
+				{"id": "column", "code": "COLM", "kind": "input", "type": "int", "min": 1, "max": 10}]},
+			{"id": "next", "code": "CNXT", "kind": "choice", "source": "content:signal"}]},
+			"signal": {"code": "SIGN", "name": "Signal", "fields": [
 			{"id": "text", "code": "TEXT", "kind": "input", "type": "string"},
 			{"id": "next", "code": "NEXT", "kind": "input", "type": "flow_target",
 				"maps": true, "screens": true, "contentTypes": ["signal"]}]}},
@@ -57,6 +59,7 @@ func run() -> void:
 	app._build_editor_ui()
 	app._set_mode("content")
 	app.project_shell.content_editor._library.open()
+	choose(collect(popup(), "OptionButton")[0], "signal")
 	press(popup(), "新建…")
 	await process_frame
 	var form := popup()
@@ -75,20 +78,37 @@ func run() -> void:
 	inputs[1].text = "results-router"
 	press(form, "保存")
 	form.hide()
-	await add_screen("results", "See result", {}, {"function": "signal", "content": "project-results-router"})
+	app.project_shell.content_editor._library.open()
+	choose(collect(popup(), "OptionButton")[0], "course_rules")
+	press(popup(), "新建…")
+	await process_frame
+	form = popup()
+	inputs = collect(form, "LineEdit")
+	inputs[0].text = "Course Rules"
+	inputs[1].text = "course-rules"
+	var choices := collect(form, "OptionButton")
+	choose(choices[0], "orthogonal")
+	choose(choices[1], "project-results-router")
+	press(form, "+ 添加")
+	press(form, "+ 添加")
+	var assets := collect(form, "OptionButton")
+	var columns := collect(form, "SpinBox")
+	for i in 2:
+		choose(assets[i + 1], "relay")
+		columns[i].value = 3 + 2 * i
+	press(form, "保存")
+	form.hide()
+	var rules := {"function": "course_rules", "content": "project-course-rules"}
+	await add_screen("results", "Play a procedural course", {}, rules)
 	app._set_mode("map")
 	Generator.open(app)
 	var create := popup()
 	create.find_child("GeneratedMapName", true, false).text = "course"
-	choose(create.find_child("GeneratorField_projection", true, false), "orthogonal")
-	var placements: Control = create.find_child("GeneratorField_placements", true, false)
-	press(placements, "+ 添加")
-	press(placements, "+ 添加")
-	var assets := collect(placements, "OptionButton")
-	var columns := collect(placements, "SpinBox")
-	for i in 2:
-		choose(assets[i], "relay")
-		columns[i].value = 3 + 2 * i
+	var presets: OptionButton = create.find_child("MapGeneratorPreset", true, false)
+	check(presets.item_count == 2 and "project-course-rules" in presets.get_item_text(1),
+		"generation offers the saved project content")
+	presets.select(1)
+	presets.item_selected.emit(1)
 	var generate: Button = create.find_child("RunMapGenerator", true, false)
 	generate.pressed.emit()
 	while generate.disabled:
@@ -185,7 +205,8 @@ func run() -> void:
 	var report: Dictionary = controller._play_report_result
 	var result: Dictionary = report.get("result", {})
 	check(report.get("status") == "ready" and result.get("screens") == ["welcome", "instructions", "results"]
-		and result.get("visited") == ["project-results-router", "project-finished"] and result.get("board") == map_code
+		and result.get("visited") == ["project-course-rules", "project-results-router", "project-finished"]
+		and result.get("runtimeCourse", []).map(func(x): return int(x)) == [3, 5] and result.get("board") == map_code
 		and result.get("placed") == [pawn_code, "R001"] and result.get("text") == "Screen sequence complete",
 		"the game loads the authored map object, follows its screen reference and reaches the conclusion: %s" % [report])
 	print("SCREEN-NAV-DONE failures=", failures)

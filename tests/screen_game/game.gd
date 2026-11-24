@@ -18,6 +18,7 @@ var outlets: Array[String] = []
 var screen_frames: Array[Dictionary] = []
 var cancel_target := {}
 var entered_board := {}
+var runtime_course := {}
 var verify := false
 
 func _ready() -> void:
@@ -119,6 +120,22 @@ func _show_content(target: Dictionary) -> void:
 	visited.append(cid)
 	_clear_screen()
 	var fields: Dictionary = data.get("fields", {})
+	if kind == "course_rules":
+		var placements: Array = fields.get("PLAC", []).map(func(row):
+			return {"asset": row.ASST, "column": row.COLM})
+		var map := _course_map({"projection": fields.PROJ, "placements": placements},
+			{"version": 1, "name": "Runtime Course", "code": "RUNTIME"})
+		_draw_relay(self, map, _relay_camera(size))
+		runtime_course["runtimeCourse"] = map.objects.map(func(row): return int(row.x))
+		var next_button := Button.new()
+		next_button.text = "Finish procedural course"
+		next_button.position = Vector2(16, 16)
+		add_child(next_button)
+		next_button.pressed.connect(func():
+			_follow_target.call_deferred({"function": "signal", "content": fields.CNXT}))
+		if verify:
+			await _verify_button(next_button)
+		return
 	var next: Dictionary = fields.get("NEXT", {})
 	if not next.is_empty():
 		_follow_target.call_deferred(next)
@@ -296,17 +313,19 @@ func _preview(path: String) -> void:
 
 func _generate_course(dir: String, request: Dictionary) -> void:
 	var subject: Dictionary = request.subject
-	var target: Dictionary = subject.target
+	_write_json(dir.path_join("map.json"), _course_map(subject.parameters, subject.target))
+	_write_json(dir.path_join("result.json"), {"version": 1, "token": request.token, "status": "ready"})
+
+func _course_map(parameters: Dictionary, target: Dictionary) -> Dictionary:
 	var objects := []
-	for row in subject.parameters.placements:
+	for row in parameters.placements:
 		objects.append({"asset": row.asset, "code": "R%03d" % objects.size(),
 			"layer": "base", "x": row.column, "y": 2})
-	_write_json(dir.path_join("map.json"), {"version": target.version,
+	return {"version": target.version,
 		"meta": {"code": target.code, "name": target.name, "w": 12, "h": 8,
-			"gridProjection": subject.parameters.projection,
+			"gridProjection": parameters.projection,
 			"layers": [{"id": "base", "name": "Course", "visible": true}]},
-		"spawn": [1, 2], "tiles": {}, "collision": [], "objects": objects})
-	_write_json(dir.path_join("result.json"), {"version": 1, "token": request.token, "status": "ready"})
+		"spawn": [1, 2], "tiles": {}, "collision": [], "objects": objects}
 
 func _relay_camera(extent: Vector2) -> Transform2D:
 	return Transform2D(Vector2(3, 0), Vector2(0, 3), Vector2(extent.x * 0.5, extent.y / 9.0))
@@ -397,7 +416,7 @@ func _finish(error: String, text := "", extra := {}) -> void:
 			"message": error, "mapDigest": _map_digest(), "manifestDigest": digest.finish().hex_encode(),
 			"result": {"visited": visited, "screens": screens, "buttons": opened_buttons,
 				"latchInputs": latch_inputs, "outlets": outlets, "text": text, "screenFrames": screen_frames}
-				.merged(entered_board).merged(extra)}
+				.merged(entered_board).merged(runtime_course).merged(extra)}
 		if draft_digest != "":
 			result["viewDigest"] = draft_digest
 		_write_json(path + ".tmp", result)

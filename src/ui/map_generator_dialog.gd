@@ -13,6 +13,8 @@ var _app
 var _source: Dictionary
 var _pop: PopupPanel
 var _picker: OptionButton
+var _preset: OptionButton
+var _preset_row: Control
 var _name_input: LineEdit
 var _params: VBoxContainer
 var _generate: Button
@@ -76,6 +78,10 @@ func _build() -> void:
 		_picker.add_item(str(_source.mapGenerators[id].get("name", id)))
 		_picker.set_item_metadata(_picker.item_count - 1, id)
 	add_child(Kit.field_row("生成器", _picker))
+	_preset = OptionButton.new()
+	_preset.name = "MapGeneratorPreset"
+	_preset_row = Kit.field_row("已保存配置", _preset)
+	add_child(_preset_row)
 	_name_input = LineEdit.new()
 	_name_input.name = "GeneratedMapName"
 	if not _origin.is_empty():
@@ -119,12 +125,25 @@ func _build() -> void:
 	_accept = Kit.button("打开为可编辑地图" if _origin.is_empty() else "应用重生成", _open_result, "primary")
 	actions.add_child(_accept)
 	add_child(actions)
-	_picker.item_selected.connect(func(_i): _build_params())
+	_picker.item_selected.connect(func(_i): _select_generator())
+	_preset.item_selected.connect(func(_i): _build_params(_preset.get_selected_metadata()))
 	_name_input.text_changed.connect(func(_value): _invalidate())
 	_picker.select(0)
-	_build_params()
+	_select_generator()
 
-func _build_params() -> void:
+func _select_generator() -> void:
+	var id: String = _picker.get_selected_metadata()
+	_preset.clear()
+	_preset.add_item("临时参数" if _origin.is_empty() else "上次生成的参数")
+	_preset.set_item_metadata(0, _origin.get("parameters", {}))
+	for row in Generators.presets(_source, id):
+		_preset.add_item("%s [%s]" % [row.name, row.id])
+		_preset.set_item_metadata(_preset.item_count - 1, row.parameters)
+	_preset_row.visible = _source.mapGenerators[id].has("contentType")
+	_preset.select(0)
+	_build_params(_preset.get_selected_metadata())
+
+func _build_params(parameters: Dictionary) -> void:
 	for child in _params.get_children():
 		_params.remove_child(child)
 		child.queue_free()
@@ -132,9 +151,9 @@ func _build_params() -> void:
 	_values = {}
 	var id: String = _picker.get_selected_metadata()
 	var resolve: Callable = _app.project_shell.content_editor._form.project_reference_options.bind("")
-	for field in _source.mapGenerators[id].get("fields", []):
+	for field in Generators.fields_for(_source, id):
 		var key: String = field.id
-		var saved = _origin.get("parameters", {}).get(key, Generators.default_value(field))
+		var saved = parameters.get(key, Generators.default_value(field))
 		_values[key] = saved if Generators.valid_value(field, saved) else Generators.default_value(field)
 		var built := Fields.build(field, _values[key], _set_param.bind(key), resolve)
 		built.ctl.name = "GeneratorField_" + key.validate_node_name()
@@ -169,7 +188,8 @@ func _run() -> void:
 	if _running or _opening or not _keep():
 		return
 	for commit in _commits:
-		commit.call()
+		if not commit.call():
+			return
 	_invalidate()
 	var name_ := _name_input.text.strip_edges()
 	var target := Maps.path_for(_source, name_)
@@ -179,6 +199,10 @@ func _run() -> void:
 		return
 	var id: String = _picker.get_selected_metadata()
 	var params := _values.duplicate(true)
+	for field in Generators.fields_for(_source, id):
+		if not Generators.valid_value(field, params[field.id]):
+			_status.text = "参数值无效：" + str(field.get("name", field.id))
+			return
 	var public: Dictionary = _app._manifest_write_payload(_source)
 	var controller = _app._map_file_ctrl
 	var session = controller.sess

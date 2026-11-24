@@ -295,6 +295,13 @@
 ]}}}
 ```
 
+需要把配置同时用于编辑器和正式游戏时，可用 `{"mapGenerators":{"room":{"contentType":"room_rules"}}}`。
+`contentType` 指向 `functions` 中的功能 ID，代替内联 `fields`；该功能的字段须符合上述生成参数契约。
+作者在项目内容库保存该类型的内容后，生成窗口可选用。编辑器按功能字段声明将内容的存储键转换为
+参数 ID（记录子字段有执行码时也转换，无执行码时沿用 ID）。缺省顶层字段使用声明默认值，
+未存储的记录子字段由游戏生成器处理。正式游戏按原内容契约读取同一文件并自行调用算法。
+在生成窗口加载后修改参数只影响本次生成；重生成默认使用地图记录的上次参数快照，也可重新选用已保存配置。
+
 编辑器沿用独立进程请求传输，`capability` 为 `generateMap`、`viewport` 为 `{w:0,h:0}`。
 `subject` 为 `{generator, parameters, manifest, target}`，参数以字段 ID 取键，
 `manifest` 是公开清单，`target` 提供 `{name,code,version}`。生成程序按当前地图格式写
