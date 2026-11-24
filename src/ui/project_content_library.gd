@@ -10,6 +10,7 @@ const Widgets := preload("res://src/ui/field_widgets.gd")
 const RelGraph := preload("res://src/content/rel_graph.gd")
 const RelGraphView := preload("res://src/ui/rel_graph_view.gd")
 const ReferenceViews := preload("res://src/ui/reference_view_library.gd")
+const MapFlowDialog := preload("res://src/ui/map_flow_dialog.gd")
 const References := preload("res://src/project/reference_index.gd")
 const FlowTarget := preload("res://src/content/flow_target.gd")
 const StartupTargets := preload("res://src/project/startup_targets.gd")
@@ -421,6 +422,7 @@ func _open_flow() -> void:
 					await app._open_map_by_name(map.key)
 				if app.map_loaded and app.cur_map_name == map.key:
 					app._set_mode("map")
+					MapFlowDialog.open(app)
 		else:
 			_open_item.call_deferred(item.fn_id, item.cid)))
 	actions.add_child(Kit.button("重新扫描", func():

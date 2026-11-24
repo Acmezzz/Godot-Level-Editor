@@ -9,6 +9,7 @@ const Flow := preload("res://src/content/rel_graph.gd")
 const Store := preload("res://src/content/content_store.gd")
 const ScreenCanvas := preload("res://src/ui/screen_layout_canvas.gd")
 const Generator := preload("res://src/ui/map_generator_dialog.gd")
+const MapFlowDialog := preload("res://src/ui/map_flow_dialog.gd")
 const Editor := preload("res://src/editor.tscn")
 var app
 var failures := 0
@@ -30,6 +31,8 @@ func run() -> void:
 			"fields": [{"id": "exit_target", "kind": "input", "type": "flow_target",
 				"maps": true, "screens": true, "contentTypes": ["signal"]}]}],
 		"startup": {"screens": true}, "viewports": [{"id": "handheld", "w": 480, "h": 720}],
+		"mapOutputs": {"completed": {"name": "Course completed",
+			"maps": true, "screens": true, "contentTypes": ["signal"]}},
 		"mapGenerators": {"course": {"contentType": "course_rules",
 			"parameterFields": ["projection", "placements"]}},
 		"preview": {"version": 1, "executable": OS.get_executable_path(), "capabilities": ["generateMap"],
@@ -162,6 +165,28 @@ func run() -> void:
 	check(Audit._ref_checks(canvas.extract(), orphan_manifest, "course").any(func(issue):
 		return issue.jump.code == pawn_code and issue.jump.prop == "exit_target"),
 		"map audit pinpoints the instance if the destination is externally removed")
+	app._set_mode("content", pawn_code)
+	exit_picker = app.project_shell.content_editor.root.find_child("InstanceValue_exit_target", true, false)
+	choose(exit_picker, "")
+	app.project_shell.content_editor.commit_fields()
+	app._set_mode("map")
+	MapFlowDialog.open(app)
+	var map_flow := popup()
+	var completed: OptionButton = map_flow.find_child("MapFlow_completed", true, false)
+	choose(completed, JSON.stringify({"function": "signal", "content": "project-finished"}))
+	press(map_flow, "应用")
+	delete_reason = app.project_shell.content_editor._form._delete_blocked_reason("signal", "project-finished")
+	check("地图出口" in delete_reason, "an unsaved map outlet protects its destination content")
+	MapFlowDialog.open(app)
+	map_flow = popup()
+	completed = map_flow.find_child("MapFlow_completed", true, false)
+	choose(completed, JSON.stringify({"view": "results"}))
+	press(map_flow, "应用")
+	check(Audit._ref_checks(canvas.extract(), orphan_manifest, "course").any(func(issue):
+		return issue.jump.type == "map_flow" and issue.jump.field == "completed"),
+		"map audit pinpoints the missing map-level destination")
+	published = await app._map_file_ctrl.commit_document("保存地图级出口")
+	check(published.get("status") == "ok", "publish the map-level completion outlet")
 	app._set_mode("content")
 	await add_screen("instructions", "Enter course", {}, {"map": map_code})
 	await add_screen("welcome", "Start tutorial", {"module": "signal-latch"}, {"view": "instructions"})
@@ -188,6 +213,9 @@ func run() -> void:
 		check(router.get("fields", {}).get("NEXT") == destination, "graph writes the typed destination %s" % destination)
 	flow.hide()
 	var graph := Flow.build_project(manifest)
+	check(graph.edges.any(func(edge):
+		return edge.from == "@map\u0001" + map_code and edge.to == "@view\u0001results" and edge.field == "completed"),
+		"the project graph reads the saved outlet from the map itself")
 	check(graph.edges.any(func(edge): return edge.from == rules_key and edge.to == "@view\u0001debrief"),
 		"the project flow graph reloads the procedural course outlet")
 	check(graph.edges.any(func(edge): return edge.from == router_key and edge.to == "signal\u0001project-finished"),
@@ -225,7 +253,7 @@ func run() -> void:
 		and result.get("visited") == ["project-course-rules", "project-results-router", "project-finished"]
 		and result.get("runtimeCourse", []).map(func(x): return int(x)) == [3, 5] and result.get("board") == map_code
 		and result.get("placed") == [pawn_code, "R001"] and result.get("text") == "Screen sequence complete",
-		"the game loads the authored map object, follows its screen reference and reaches the conclusion: %s" % [report])
+		"the game reads the map-level completion outlet and reaches the conclusion: %s" % [report])
 	print("SCREEN-NAV-DONE failures=", failures)
 	quit(0 if failures == 0 else 1)
 

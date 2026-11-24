@@ -65,10 +65,13 @@ func _show_map_target(code: String) -> void:
 		_clear_screen()
 		var pawns := _draw_relay(self, map, _relay_camera(size))
 		entered_board = {"board": code, "placed": pawns.keys()}
-		for row in map.objects:
-			var exit_target: Dictionary = row.get("props", {}).get("exit_target", {})
-			if exit_target.is_empty():
-				continue
+		var exit_target: Dictionary = map.meta.get("flowOutputs", {}).get("completed", {})
+		if exit_target.is_empty():
+			for row in map.objects:
+				exit_target = row.get("props", {}).get("exit_target", {})
+				if not exit_target.is_empty():
+					break
+		if not exit_target.is_empty():
 			var leave := Button.new()
 			leave.text = "Finish course"
 			leave.position = Vector2(16, 16)

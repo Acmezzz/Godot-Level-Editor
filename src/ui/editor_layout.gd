@@ -8,6 +8,7 @@ const LayerPanel := preload("res://src/ui/layer_panel.gd")
 const Popups := preload("res://src/ui/popups.gd")
 const MapGamePreview := preload("res://src/ui/map_game_preview.gd")
 const MapGeneratorDialog := preload("res://src/ui/map_generator_dialog.gd")
+const MapFlowDialog := preload("res://src/ui/map_flow_dialog.gd")
 
 var app   # 宿主引用
 ## 拆分出的子控制器
@@ -192,6 +193,7 @@ func _build_global_bar() -> PanelContainer:
 	map_menu.add_item("地图历史…", 12)
 	map_menu.add_item("导出当前地图", 4)
 	map_menu.add_item("调整地图尺寸", 5)
+	map_menu.add_item("地图流程出口…", 24)
 	map_menu.add_item("批量替换瓦片…", 6)
 	map_menu.add_item("关卡游戏画面预览…", 14)
 	map_menu.add_item("实景调整实例和轮廓…", 17)
@@ -212,6 +214,7 @@ func _build_global_bar() -> PanelContainer:
 		map_menu.set_item_disabled(map_menu.get_item_index(23), no_preview)
 		map_menu.set_item_disabled(map_menu.get_item_index(15), not MapGeneratorDialog.available(app))
 		map_menu.set_item_disabled(map_menu.get_item_index(16), not MapGeneratorDialog.can_regenerate(app))
+		map_menu.set_item_disabled(map_menu.get_item_index(24), not MapFlowDialog.available(app))
 		_popup_below(map_menu, app._map_btn))
 	bar.add_child(map_menu)
 
@@ -267,6 +270,8 @@ func _on_map_menu_id(id: int) -> void:
 			MapGamePreview.open_spawn(app)
 		23:
 			MapGamePreview.open_cell_graph(app)
+		24:
+			MapFlowDialog.open(app)
 		18:
 			_world_region_options(false)
 		19:

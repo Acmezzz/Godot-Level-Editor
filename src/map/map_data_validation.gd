@@ -5,6 +5,7 @@ const MapFormat := preload("res://src/map/map_format.gd")
 const CellGraph := preload("res://src/map/cell_graph.gd")
 const ViewData := preload("res://src/map/map_view_data.gd")
 const GridSpaceScript := preload("res://src/canvas/grid_space.gd")
+const MapFlow := preload("res://src/map/map_flow.gd")
 
 ## 原始文档前置检查（D11）：必须在 upgrade() 抬版本号之前跑。
 ## 版本缺失/超前、退役顶层键都在这里拒收；低于当前格式只给警告（结构问题由 validate 各项报出）。
@@ -64,6 +65,8 @@ static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 			var tp: Dictionary = GridSpaceScript.parse_topology(meta, eff_proj)
 			if not bool(tp.get("ok", false)):
 				_add(issues, "error", "meta.gridTopology", str(tp.get("why", "invalid")))
+		if not meta.get(MapFlow.KEY, {}) is Dictionary:
+			_add(issues, "error", "meta." + MapFlow.KEY, "must be an object keyed by outlet ID")
 		layer_ids = _validate_layers(meta, issues, manifest)
 	var tiles = data.get("tiles", null)
 	if tiles != null and not (tiles is Dictionary):

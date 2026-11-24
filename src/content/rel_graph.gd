@@ -17,6 +17,8 @@ const References := preload("res://src/project/reference_index.gd")
 const ScreenLayout := preload("res://src/project/screen_layout.gd")
 const FlowTarget := preload("res://src/content/flow_target.gd")
 const StartupTargets := preload("res://src/project/startup_targets.gd")
+const MapStore := preload("res://src/map/map_store.gd")
+const MapFlow := preload("res://src/map/map_flow.gd")
 const VIEW_KIND := "@view"
 const MAP_KIND := "@map"
 
@@ -123,9 +125,23 @@ static func _build(manifest: Dictionary, kinds: Array, extra: Dictionary, scope:
 					_collect(manifest, key, base, sdecls, fields, i, graph, catalog, "步骤%d" % (i + 1))
 	if scope.is_empty():
 		_collect_views(manifest, graph, catalog)
+		_collect_maps(manifest, graph, catalog)
 	else:
 		_add_target_nodes(manifest, scope, graph.nodes, graph.edges)
 	return graph
+
+static func _collect_maps(manifest: Dictionary, graph: Dictionary, catalog: Dictionary) -> void:
+	if MapFlow.declarations(manifest).is_empty():
+		return
+	for node in graph.nodes:
+		if node.fn_id != MAP_KIND:
+			continue
+		for ref in MapFlow.references(manifest, MapStore.read(manifest, node.name)):
+			var address := _flow_address(ref.value)
+			if FlowTarget.allows(ref.decl, ref.value) and catalog.get(address[0], {}).get(address[1], false):
+				graph.edges.append({"from": node.key, "to": _key(address[0], address[1]),
+					"fn_id": MAP_KIND, "cid": node.cid, "fn": address[0], "value": address[1],
+					"label": ref.decl.get("name", ref.field), "field": ref.field})
 
 static func _collect_views(manifest: Dictionary, graph: Dictionary, catalog: Dictionary) -> void:
 	var views = manifest.get("views", [])

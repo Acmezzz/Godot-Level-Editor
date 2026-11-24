@@ -18,6 +18,7 @@ const StartupTargets := preload("res://src/project/startup_targets.gd")
 const FlowTarget := preload("res://src/content/flow_target.gd")
 const ManifestValidation := preload("res://src/project/manifest_validation.gd")
 const MapStore := preload("res://src/map/map_store.gd")
+const MapFlow := preload("res://src/map/map_flow.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
 const AudioDecls := preload("res://src/content/audio_decl.gd")
 const ContentStore := preload("res://src/content/content_store.gd")
@@ -311,6 +312,9 @@ static func _asset_by_id(manifest: Dictionary, aid: String) -> Dictionary:
 ## binding_missing 收「绑定指向的内容文件不存在」条目（后续统一进审计）。
 static func _collect_used_content(data: Dictionary, manifest: Dictionary, used: Dictionary,
 		binding_missing: Array, map_name: String) -> void:
+	for ref in MapFlow.references(manifest, data):
+		if FlowTarget.kind(ref.value) == "content":
+			used[_content_key(ref.value.function, ref.value.content)] = true
 	for o in (data.get("objects", []) as Array):
 		if not (o is Dictionary):
 			continue
@@ -1326,7 +1330,7 @@ static func _points_to_view(ref: Dictionary, id: String) -> bool:
 		ref.kind == "flow_target" and ref.value is Dictionary and ref.value == {"view": id})
 
 static func _map_property_refs(manifest: Dictionary, data: Dictionary, kinds: Array) -> Array:
-	var result := []
+	var result := MapFlow.references(manifest, data) if "flow_target" in kinds else []
 	var declarations := {}
 	for row in data.get("objects", []):
 		if not row is Dictionary or not row.get("props", {}) is Dictionary:
@@ -1382,9 +1386,10 @@ static func _ref_checks(data: Dictionary, manifest: Dictionary, map_name: String
 			elif ref.kind == "flow_target" and not StartupTargets.destination_available(manifest, ref.decl, ref.value):
 				message = _flow_target_message(ref.value)
 			if message != "":
+				var jump := {"type": "map_flow", "map": map_name, "field": ref.field} if ref.get("map_outlet", false) \
+					else {"type": "entity", "map": map_name, "code": ref.code, "prop": ref.field}
 				out.append({"kind": "ref", "severity": "warning", "path": "%s · %s" % [map_name, ref.path],
-					"message": message, "map": map_name,
-					"jump": {"type": "entity", "map": map_name, "code": ref.code, "prop": ref.field}})
+					"message": message, "map": map_name, "jump": jump})
 	var declarations := {}
 	var objects = data.get("objects", [])
 	if not objects is Array:

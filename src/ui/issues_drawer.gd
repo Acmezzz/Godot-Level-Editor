@@ -5,6 +5,7 @@ const ProjectAudit := preload("res://src/project/project_audit.gd")
 const EntityNodeScript := preload("res://src/canvas/entity_node.gd")
 const MapStore := preload("res://src/map/map_store.gd")
 const ReferenceViews := preload("res://src/ui/reference_view_library.gd")
+const MapFlowDialog := preload("res://src/ui/map_flow_dialog.gd")
 
 var host   # editor_layout 宿主
 var app    # 根应用（= host.app）
@@ -180,6 +181,12 @@ func _jump_to(it: Dictionary) -> void:
 		app._set_mode("content", code)
 		if app.project_shell != null and app.project_shell.content_editor != null:
 			app.project_shell.content_editor.highlight_field(str(j.get("prop", "")))
+	elif typ == "map_flow":
+		if map != app.cur_map_name or not app.map_loaded:
+			await app._open_map_by_name(map)
+		if app.map_loaded and map == app.cur_map_name:
+			app._set_mode("map")
+			MapFlowDialog.open(app, str(j.field))
 	elif map != "" and (map != app.cur_map_name or not app.map_loaded):
 		app._open_map_by_name(map)
 
