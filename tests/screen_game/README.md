@@ -10,3 +10,7 @@
 - 作者从内容库发起无地图试玩。验收模式通过按钮的正常输入路径触发切换，并报告实际打开的内容、屏幕和结尾文字。
 
 在编辑器根目录运行 `tests/run_author_workflow.gd` 可重跑本例。
+
+
+可单独运行 `godot --path . --script res://tests/run_screen_navigation_authoring.gd`，
+验证作者设置正式开场屏幕、模块出口直连教学屏幕，再在独立游戏中完成流程。

@@ -228,7 +228,7 @@ static func render(form: VBoxContainer, preview: Preview, state: Dictionary) -> 
 	form.add_child(fixed_bottom)
 	var outlets := Layout.output_labels(state.modules, item) if item.kind == "module" else {}
 	if outlets.is_empty() or item.has("target"):
-		_add_element_target(form, state.targets, item, "", "跳转内容")
+		_add_element_target(form, state.targets, item, "", "跳转目标")
 	for output in outlets:
 		_add_element_target(form, state.targets, item, output, outlets[output])
 	if item.kind in ["button", "module"]:

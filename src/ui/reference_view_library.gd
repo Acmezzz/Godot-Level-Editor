@@ -23,7 +23,7 @@ static func open(app, view_id := "", jump := {}) -> void:
 	baseline = baseline.duplicate(true)
 	var rows: Array = baseline.duplicate(true)
 	var shell: Dictionary = app._popup_body("项目参考视图",
-		"拖动绘制热点，点击选中。热点可指向内容；游戏决定如何显示参考图和响应点击。")
+		"拖动绘制热点，点击选中。热点可指向内容或项目支持的屏幕；游戏决定如何显示参考图和响应点击。")
 	var pop: PopupPanel = shell.pop
 	var window: WeakRef = weakref(pop)
 	var body: VBoxContainer = shell.body
@@ -32,6 +32,7 @@ static func open(app, view_id := "", jump := {}) -> void:
 	var image_path := LineEdit.new()
 	image_path.placeholder_text = "项目内图片路径，例如 art/controls.png"
 	var preview := Preview.new()
+	preview.direct_views = source.get("directViewTargets") == true
 	FrameDialog.keep_on_focus_loss(pop, preview.cancel_placement)
 	preview.custom_minimum_size = Vector2(500, 295)
 	preview.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -77,7 +78,7 @@ static func open(app, view_id := "", jump := {}) -> void:
 	layout_form.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	layout_scroll.add_child(layout_form)
 	var hotspot_row := Kit.field_row("热点", hotspot, 82)
-	var hotspot_target_row := Kit.field_row("跳转内容", target, 82)
+	var hotspot_target_row := Kit.field_row("跳转目标", target, 82)
 	body.add_child(hotspot_row)
 	body.add_child(hotspot_target_row)
 	body.add_child(notice)
@@ -232,6 +233,9 @@ static func open(app, view_id := "", jump := {}) -> void:
 			if rd.status == "ok":
 				state.targets.append({"label": "%s · %s · %s" % [kind, rd.data.get("name", ""), cid],
 					"value": {"function": kind, "content": cid}})
+	if source.get("directViewTargets") == true:
+		for row in baseline:
+			state.targets.append({"label": "屏幕 · " + row.view_id, "value": {"view": row.view_id}})
 	for row in rows:
 		list.add_item(str(row.view_id))
 	list.add_item("添加视图…")
@@ -366,7 +370,7 @@ static func open(app, view_id := "", jump := {}) -> void:
 		var row: Dictionary = rows[state.row] if state.row >= 0 else state.draft
 		var snapshot := row.duplicate(true)
 		var errors: Array[Dictionary] = []
-		Layout.validate(snapshot.layout, state.viewport_sizes, "layout", errors, state.modules)
+		Layout.validate(snapshot.layout, state.viewport_sizes, "layout", errors, state.modules, source.get("directViewTargets") == true)
 		if not errors.is_empty():
 			notice.text = "%s：%s" % [errors[0].path, errors[0].message]
 			return

@@ -2,7 +2,7 @@ extends Control
 ## Draws reference hotspots and screen layouts and handles canvas gestures.
 
 const Layout := preload("res://src/project/screen_layout.gd")
-const References := preload("res://src/project/reference_index.gd")
+var direct_views := false
 
 const FOCUS_ACTIONS := {"ui_left": "left", "ui_right": "right", "ui_up": "up", "ui_down": "down",
 	"ui_focus_next": "next", "ui_focus_prev": "previous", "ui_accept": "activate"}
@@ -281,7 +281,9 @@ func _focus_result(activate: bool) -> void:
 		if activate:
 			var target = row.get("target")
 			message = "确认：%s → %s/%s" % [title, target.function, target.content] \
-				if References.is_view_content_target(target) else "确认：" + title
+				if Layout.content_target(target) else "确认：" + title
+			if direct_views and Layout.view_target(target):
+				message = "确认：%s → 屏幕 %s" % [title, target.view]
 		focus_message.emit(message)
 		queue_redraw()
 		return

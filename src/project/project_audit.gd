@@ -155,6 +155,9 @@ static func view_reference_issues(manifest: Dictionary, view_id := "", used_cont
 		if (view_id == "" or ref.view == view_id) and not images.has(ref.asset):
 			out.append(_view_issue(ref, "图片资产无法解析：%s" % ref.asset))
 	var views := ReferenceIndex.view_ids(manifest)
+	for ref in ReferenceIndex.view_transition_refs(manifest):
+		if (view_id == "" or ref.view == view_id) and not views.has(ref.target.view):
+			out.append(_view_issue(ref, "屏幕目标不存在：" + ref.target.view))
 	var assets := AssetDecl.all(manifest)
 	var map_index := {}
 	var map_targets := {}
@@ -1232,6 +1235,9 @@ static func view_inbound_refs(manifest: Dictionary, id: String, staged: Array) -
 	var refs: Array[String] = []
 	if manifest.get("startup", {}).get("target", {}) == {"view": id}:
 		refs.append("正式启动入口")
+	for ref in ReferenceIndex.view_transition_refs(manifest):
+		if ref.target.view == id and ref.view != id:
+			refs.append("%s · %s" % [ref.view, ref.path])
 	var bad: Array = []
 	for ref in ReferenceIndex.view_module_refs(manifest):
 		if ref.kind == "view" and ref.value == id and ref.view != id:

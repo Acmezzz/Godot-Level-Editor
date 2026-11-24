@@ -29,6 +29,12 @@ static func output_labels(declarations: Dictionary, element: Dictionary) -> Dict
 			labels[id] = id
 	return labels
 
+static func content_target(value: Variant) -> bool:
+	return value is Dictionary and value.size() == 2 and value.get("function") is String and value.get("content") is String
+
+static func view_target(value: Variant) -> bool:
+	return value is Dictionary and value.size() == 1 and value.get("view") is String and not value.view.is_empty()
+
 static func target_at(row: Dictionary, output: String) -> Variant:
 	return row.get("target") if output.is_empty() else row.get("outputs", {}).get(output)
 
@@ -290,7 +296,7 @@ static func reparent(elements: Array, moving: Array, parent: String, design: Vec
 			row["parent"] = parent
 
 static func validate(layout: Variant, viewports: Dictionary, path: String, issues: Array[Dictionary],
-		declarations := {}) -> void:
+		declarations := {}, direct_views := false) -> void:
 	if not layout is Dictionary:
 		_error(issues, path, "must be an object")
 		return
@@ -341,9 +347,8 @@ static func validate(layout: Variant, viewports: Dictionary, path: String, issue
 			else:
 				for output in outputs:
 					var target = outputs[output]
-					if not output is String or output.strip_edges().is_empty() or not target is Dictionary \
-							or target.size() != 2 or not target.get("function") is String or not target.get("content") is String:
-						_error(issues, p + ".outputs." + str(output), "must bind a named output to {function, content}")
+					if not output is String or output.strip_edges().is_empty() or not (content_target(target) or (direct_views and view_target(target))):
+						_error(issues, p + ".outputs." + str(output), "must bind a named output to {function, content} or an enabled {view}")
 		elif not KINDS.has(row.get("kind")):
 			_error(issues, p + ".kind", "must be panel, text, button or module")
 		if _validate_geometry(row, p, issues, true) and used.get(id) == i:

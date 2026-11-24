@@ -206,14 +206,18 @@ func _open_flow() -> void:
 		var from_view: bool = edge.fn_id == RelGraph.VIEW_KIND
 		var words: PackedStringArray = tokenize.call(target_search.text)
 		for item in state.graph.nodes:
-			if (from_view and item.fn_id == RelGraph.VIEW_KIND) or (not from_view and item.fn_id != edge.fn):
+			if (from_view and item.fn_id == RelGraph.VIEW_KIND and source.get("directViewTargets") != true) \
+					or (not from_view and item.fn_id != edge.fn):
 				continue
 			var is_current: bool = item.cid == edge.value and item.fn_id == edge.fn
 			if not is_current and not matches.call(item.key, words):
 				continue
-			target.add_item("%s · %s" % [item.name, item.cid])
-			target.set_item_metadata(target.item_count - 1,
-				{"function": item.fn_id, "content": item.cid} if from_view else item.cid)
+			var label: String = "屏幕 · " + item.cid if item.fn_id == RelGraph.VIEW_KIND else "%s · %s" % [item.name, item.cid]
+			target.add_item(label)
+			var choice = item.cid
+			if from_view:
+				choice = {"view": item.cid} if item.fn_id == RelGraph.VIEW_KIND else {"function": item.fn_id, "content": item.cid}
+			target.set_item_metadata(target.item_count - 1, choice)
 			if is_current:
 				match_idx = target.item_count - 1
 		if match_idx == 0 and edge.value != "":
@@ -337,9 +341,11 @@ func _open_flow() -> void:
 		if edge.fn_id == RelGraph.VIEW_KIND:
 			var chosen = target.get_selected_metadata()
 			var next: Dictionary = chosen if chosen is Dictionary else {}
-			if not next.is_empty() and Store.read_ex(source, next.function, next.content).status != "ok":
+			var resolved: bool = next.is_empty() or (References.view_ids(source).has(next.view) if next.has("view")
+				else Store.read_ex(source, next.function, next.content).status == "ok")
+			if not resolved:
 				refresh.call(edge.from)
-				notice.text = "目标内容已变更；请选择有效目标后重试。"
+				notice.text = "目标已变更；请选择有效目标后重试。"
 				return
 			var changed := RelGraph.change_view_target(source, edge, next)
 			if changed.status != "ok":

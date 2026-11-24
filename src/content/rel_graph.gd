@@ -141,16 +141,19 @@ static func _collect_views(manifest: Dictionary, graph: Dictionary, catalog: Dic
 					labels[""] = ""
 				for output in labels:
 					var current = ScreenLayout.target_at(row, output)
-					if current != null and not References.is_view_content_target(current):
+					var direct: bool = manifest.get("directViewTargets") == true and ScreenLayout.view_target(current)
+					if current != null and not direct and not ScreenLayout.content_target(current):
 						continue
-					var edge := {"from": key, "fn_id": VIEW_KIND, "cid": id, "fn": "" if current == null else current.function,
-						"value": "" if current == null else current.content, "label": label if output == "" else label + " · " + labels[output],
+					var fn: String = VIEW_KIND if direct else (current.function if current != null else "")
+					var value: String = current.view if direct else (current.content if current != null else "")
+					var edge := {"from": key, "fn_id": VIEW_KIND, "cid": id, "fn": fn,
+						"value": value, "label": label if output == "" else label + " · " + labels[output],
 						"multi": false, "group": group, "index": i, "shown_rows": rows, "output": output}
 					graph.slots[key].append(edge)
 					if current == null:
 						continue
-					if catalog.get(current.function, {}).has(current.content):
-						edge["to"] = _key(current.function, current.content)
+					if catalog.get(fn, {}).has(value):
+						edge["to"] = _key(fn, value)
 						graph.edges.append(edge)
 					else:
 						graph.external.append(edge)

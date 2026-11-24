@@ -37,14 +37,18 @@ func _ready() -> void:
 		map_bytes = FileAccess.get_file_as_bytes(args["--map"])
 		await _play_relay(JSON.parse_string(map_bytes.get_string_from_utf8()))
 		return
-	var entry := _decode(args["--editor-entry"]) if args.has("--editor-entry") else {"function": "signal", "content": "project-default"}
+	var entry: Dictionary = _decode(args["--editor-entry"]) if args.has("--editor-entry") else (
+		manifest.get("startup", {}).get("target", {"function": "signal", "content": "project-default"}))
 	if entry.has("viewDraft") and not _load_view_draft(entry):
 		_finish("Cannot load this screen draft.")
 		return
-	if entry.has("view"):
-		_show_view(entry.view)
+	_follow_target(entry)
+
+func _follow_target(target: Dictionary) -> void:
+	if target.has("view"):
+		_show_view(target.view)
 	else:
-		_show_content(entry)
+		_show_content(target)
 
 func _decode(encoded: String) -> Dictionary:
 	return JSON.parse_string(Marshalls.base64_to_utf8(encoded))
@@ -82,9 +86,7 @@ func _show_content(target: Dictionary) -> void:
 		_finish("Missing signal content: " + cid)
 		return
 	visited.append(cid)
-	for child in get_children():
-		remove_child(child)
-		child.queue_free()
+	_clear_screen()
 	var fields: Dictionary = data.get("fields", {})
 	var view_id: String = fields.get("PANE", "")
 	if view_id.is_empty():
@@ -96,10 +98,17 @@ func _show_content(target: Dictionary) -> void:
 		return
 	_show_view(view_id, cid == "project-watch")
 
+func _clear_screen() -> void:
+	for child in get_children():
+		remove_child(child)
+		child.queue_free()
+
 func _show_view(view_id: String, test_cancel := false) -> void:
 	for view in manifest.get("views", []):
 		if view.view_id != view_id:
 			continue
+		cancel_target = {}
+		_clear_screen()
 		screens.append(view_id)
 		var extent := draft_extent if view_id == draft_view else size
 		var profile := draft_profile if view_id == draft_view else _viewport_profile(extent)
@@ -133,7 +142,7 @@ func _unhandled_input(event: InputEvent) -> void:
 	if not cancel_target.is_empty() and event.is_action_pressed("ui_cancel"):
 		get_viewport().set_input_as_handled()
 		outlets.append("cancelled")
-		_show_content.call_deferred(cancel_target)
+		_follow_target.call_deferred(cancel_target)
 
 func _viewport_profile(extent: Vector2) -> String:
 	var wide := extent.x >= extent.y
@@ -180,7 +189,7 @@ func _draw_screen(parent: Node, layout: Dictionary, extent: Vector2, locale: Str
 							latch_inputs.append(authored_count)
 							outlets.append("accepted")
 						opened_buttons.append(button.text)
-						_show_content.call_deferred(target))
+						_follow_target.call_deferred(target))
 					buttons.append(button)
 				item = button
 			"text":

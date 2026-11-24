@@ -63,11 +63,6 @@ static func resolve_graph_map(index: Dictionary, code: String) -> Dictionary:
 		return {"status": "missing", "key": "", "candidates": []}
 	return resolved
 
-## 只识别编辑器创建的内容目标形态，游戏自己的热点目标由游戏解释。
-static func is_view_content_target(value: Variant) -> bool:
-	return value is Dictionary and value.size() == 2 and value.get("function") is String \
-		and value.get("content") is String
-
 static func view_ids(manifest: Dictionary) -> Array[String]:
 	var ids: Array[String] = []
 	var rows = manifest.get("views", [])
@@ -79,17 +74,9 @@ static func view_ids(manifest: Dictionary) -> Array[String]:
 
 static func view_content_refs(manifest: Dictionary) -> Array:
 	var out := []
-	var views = manifest.get("views")
-	if not views is Array:
-		return out
-	for i in views.size():
-		var view = views[i]
-		if not view is Dictionary:
-			continue
-		_collect_view_targets(view.get("hotspots"), view, "views[%d].hotspots" % i, out)
-		var layout = view.get("layout")
-		if layout is Dictionary:
-			_collect_view_targets(layout.get("elements"), view, "views[%d].layout.elements" % i, out)
+	for ref in _view_connections(manifest):
+		if ScreenLayout.content_target(ref.target):
+			out.append(ref.merged({"fn": ref.target.function, "cid": ref.target.content}))
 	for ref in view_module_refs(manifest):
 		if ref.kind == "content":
 			ref["fn"] = ref.filter.fn
@@ -97,25 +84,40 @@ static func view_content_refs(manifest: Dictionary) -> Array:
 			out.append(ref)
 	return out
 
-static func _collect_view_targets(rows: Variant, view: Dictionary, prefix: String, out: Array) -> void:
+static func view_transition_refs(manifest: Dictionary) -> Array:
+	if manifest.get("directViewTargets") != true:
+		return []
+	return _view_connections(manifest).filter(func(ref): return ScreenLayout.view_target(ref.target))
+
+static func _view_connections(manifest: Dictionary) -> Array:
+	var out := []
+	var views = manifest.get("views")
+	if not views is Array:
+		return out
+	for i in views.size():
+		var view = views[i]
+		if not view is Dictionary:
+			continue
+		_collect_view_targets(view.get("hotspots"), view, "views[%d].hotspots" % i, false, out)
+		var layout = view.get("layout")
+		if layout is Dictionary:
+			_collect_view_targets(layout.get("elements"), view, "views[%d].layout.elements" % i, true, out)
+	return out
+
+static func _collect_view_targets(rows: Variant, view: Dictionary, prefix: String, elements: bool, out: Array) -> void:
 	if not rows is Array:
 		return
 	for i in rows.size():
 		var row = rows[i]
 		if not row is Dictionary:
 			continue
-		if is_view_content_target(row.get("target")):
-			out.append({"fn": row.target.function, "cid": row.target.content,
-				"view": str(view.get("view_id", "")), "path": "%s[%d].target" % [prefix, i],
-				"element": str(row.get("id", "")) if prefix.ends_with(".elements") else "",
-				"hotspot": -1 if prefix.ends_with(".elements") else i})
+		var source := {"view": str(view.get("view_id", "")), "element": str(row.get("id", "")) if elements else "",
+			"hotspot": -1 if elements else i}
+		if row.get("target") is Dictionary:
+			out.append(source.merged({"target": row.target, "path": "%s[%d].target" % [prefix, i]}))
 		if row.get("kind") == "module" and row.get("outputs") is Dictionary:
 			for id in row.outputs:
-				var target = row.outputs[id]
-				if is_view_content_target(target):
-					out.append({"fn": target.function, "cid": target.content,
-						"view": str(view.get("view_id", "")), "path": "%s[%d].outputs.%s" % [prefix, i, id],
-						"element": str(row.get("id", ""))})
+				out.append(source.merged({"target": row.outputs[id], "path": "%s[%d].outputs.%s" % [prefix, i, id]}))
 
 ## Use the same ID keys and defaults as the layout form. Condition rows use their own field codes.
 static func view_module_refs(manifest: Dictionary) -> Array:
