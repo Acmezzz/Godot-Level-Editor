@@ -4,6 +4,38 @@ const Delta := preload("res://src/map/generated_chunk_delta.gd")
 const Generated := preload("res://src/map/generated_map_merge.gd")
 const Maps := preload("res://src/map/map_store.gd")
 
+func test_content_delta_applies_map_flow_by_slot() -> void:
+	var base := Maps.new_map("authored", 8, 8, "orthogonal")
+	base.meta.flowOutputs = {"exit": {"map": "HUB"}, "obsolete": {"view": "hint"}}
+	base.meta.contentSlots = {"round": {"function": "rules", "content": "standard"}}
+	var authored := base.duplicate(true)
+	authored.meta.flowOutputs = {"exit": {"view": "score"}, "bonus": {"map": "BONUS"}}
+	authored.meta.contentSlots.round.content = "ranked"
+	Generated.attach(authored, base, "demo", {})
+	var runtime := base.duplicate(true)
+	runtime.meta.code = "seed-7"
+	runtime.meta.flowOutputs.exit = {"map": "HUB", "inst": "DOOR7", "port": "entry"}
+	runtime.meta.flowOutputs.seed = {"view": "seed-hint"}
+	runtime.meta.contentSlots.seed = {"function": "rules", "content": "seed-7"}
+	var original := runtime.duplicate(true)
+	var result := Delta.apply(runtime, Delta.compile(authored, Delta.CONTENT))
+	eq(result.error, "", "flow edits apply on top of a generated seed")
+	if result.has("map"):
+		eq(result.map.meta.flowOutputs, {
+			"exit": {"view": "score"}, "bonus": {"map": "BONUS"}, "seed": {"view": "seed-hint"},
+		}, "replace each changed target as a whole, remove old links and keep seed-only links")
+		eq(result.map.meta.contentSlots, {
+			"round": {"function": "rules", "content": "ranked"},
+			"seed": {"function": "rules", "content": "seed-7"},
+		}, "use the authored rules alongside seed-only rules")
+		eq(result.map.meta.code, "seed-7", "the game retains its runtime identity")
+	eq(runtime, original, "the generated input remains unchanged")
+	var grid := Delta.apply(runtime, Delta.compile(authored, Delta.GRID))
+	eq(grid.error, "", "the grid-only mode still applies")
+	if grid.has("map"):
+		eq(grid.map.meta.flowOutputs, original.meta.flowOutputs, "the grid-only mode does not change flow")
+		eq(grid.map.meta.contentSlots, original.meta.contentSlots, "the grid-only mode does not change rules")
+
 func test_layer_frame_and_grid_changes_have_distinct_overlay_rules() -> void:
 	var base := Maps.new_map("seed", 8, 8, "orthogonal")
 	var layer: String = base.meta.layers[0].id

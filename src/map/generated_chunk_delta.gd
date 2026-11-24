@@ -5,6 +5,7 @@ const GRID := "gridDelta"
 const CONTENT := "contentDelta"
 const LAYER_FRAME := ["offset", "scale", "parallax", "tileGrid"]
 const LAYER_OVERRIDES := ["name", "visible", "ySort", "blend"] + LAYER_FRAME
+const FLOW_SECTIONS := ["flowOutputs", "contentSlots"]
 
 static func compatibility_problem(a: Dictionary, b: Dictionary, authored_stack := false) -> String:
 	for field in ["w", "h", "gridProjection", "gridTopology", "gridBasis"]:
@@ -112,6 +113,7 @@ static func compile(authored: Dictionary, mode: String) -> Dictionary:
 		if topology.has("error"):
 			return topology
 		result["cell_graph"] = topology
+		result["flow_slots"] = _compile_flow_slots(base.meta, meta)
 	return result
 
 ## Computes a new map. A conflict never mutates or partly patches the runtime map.
@@ -182,6 +184,7 @@ static func apply(runtime: Dictionary, plan: Dictionary) -> Dictionary:
 			out["spawn"] = plan.spawn.duplicate()
 		out["meta"] = meta.duplicate()
 		out.meta.layers = layers
+		_apply_flow_slots(out.meta, plan.get("flow_slots", {}))
 		var topology: Dictionary = plan.get("cell_graph", {})
 		if not topology.is_empty():
 			var patched_graph := _apply_graph(meta.get("cellGraph", {}), topology, layers)
@@ -220,6 +223,36 @@ static func apply(runtime: Dictionary, plan: Dictionary) -> Dictionary:
 		tiles[id] = patched
 	out["tiles"] = tiles
 	return {"error": "", "map": out}
+
+static func _compile_flow_slots(base: Dictionary, authored: Dictionary) -> Dictionary:
+	var result := {}
+	for section in FLOW_SECTIONS:
+		var before: Dictionary = base.get(section, {})
+		var after: Dictionary = authored.get(section, {})
+		var edits := {}
+		for id in before:
+			if not after.has(id):
+				edits[id] = null
+		for id in after:
+			if not _same(before.get(id), after[id]):
+				edits[id] = after[id]
+		if not edits.is_empty():
+			result[section] = edits
+	return result
+
+static func _apply_flow_slots(meta: Dictionary, changes: Dictionary) -> void:
+	for section in changes:
+		var slots: Dictionary = meta.get(section, {}).duplicate(true)
+		for id in changes[section]:
+			var target = changes[section][id]
+			if target == null:
+				slots.erase(id)
+			else:
+				slots[id] = target.duplicate(true)
+		if slots.is_empty():
+			meta.erase(section)
+		else:
+			meta[section] = slots
 
 static func _compile_graph(base: Variant, authored: Variant, layers: Array) -> Dictionary:
 	if _same(base, authored):
