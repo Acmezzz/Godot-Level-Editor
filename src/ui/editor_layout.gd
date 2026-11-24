@@ -173,7 +173,6 @@ func _build_global_bar() -> PanelContainer:
 	map_menu.add_item("重命名地图…", 10)
 	map_menu.add_item("复制整张地图…", 11)
 	map_menu.add_item("另存并转换格空间…", 13)
-	map_menu.add_item("地图历史…", 12)
 	map_menu.add_item("调整地图尺寸", 5)
 	map_menu.add_item("地图内容与出口…", 24)
 	map_menu.add_item("批量替换瓦片…", 6)
@@ -234,9 +233,6 @@ func _on_map_menu_id(id: int) -> void:
 		13:
 			# B1-2：另存副本并把实例/出生点换算到新投影（原图不动）
 			app._on_convert_projection()
-		12:
-			# 历史版本（A3）：列出正式保存前的快照，载入只改画布
-			app._on_map_history()
 		14:
 			MapGamePreview.open(app)
 		22:

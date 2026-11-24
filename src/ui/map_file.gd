@@ -1,9 +1,9 @@
 extends RefCounted
 ## 地图文件生命周期控制器（顶栏「设置 ▾ / 地图 ▾」的动作都在这里）：
 ## 新建、打开、保存（commit_document 统一提交）、改名（纯改名、不迁移引用）、复制整张图、
-## 另存并转换投影、尺寸调整、导出、草稿恢复、地图历史载入。
+## 另存并转换投影、尺寸调整和草稿恢复。
 ## 写盘统一走 MapStore（.tmp 原子替换）。**卸载/替换/改名/复制四条路径的保证不同**：
-##   替换与改名：单文件写，快照进 editor/history/maps/<地图码>/；
+##   普通地图保存使用单文件原子替换；
 ##   复制：多文件提交（内容先、地图后），日志留 editor/pending/ 供崩溃后判读；
 ##   草稿：写 editor/drafts/，不碰正式图。
 ## 各入口（本控制器 + 内容视图保存 + 清除悬空）一次会提交哪些文件、按什么顺序，
@@ -624,7 +624,7 @@ func rename_map_now(old_name: String, new_name: String, allow_write_unsaved := f
 			for row in ce.bound_staged_rows(data):
 				frozen.append({"kind": "content", "fn_id": row.fn_id, "id": row.cid,
 					"data": row.data, "expect_absent": row.expect_absent, "baseline": row.get("baseline", "")})
-		# 地图目标带「写前校验 + 历史快照」的语义：用 payload 声明它是地图文档，
+		# 地图目标带「写前校验」的语义：用 payload 声明它是地图文档，
 		# 执行器按 MapStore.write 的同一入口落盘（不是裸写字节）。
 		frozen.append({"kind": "map", "id": nn, "path": new_path, "expect_absent": true,
 			"map_data": data})
@@ -650,9 +650,6 @@ func rename_map_now(old_name: String, new_name: String, allow_write_unsaved := f
 		app.canvas.cur_map_name = nn
 		if app.canvas.map_data.has("meta"):
 			app.canvas.map_data["meta"]["name"] = nn
-		# 历史随地图码走（A3）：码不变则目录不变；无码兜底到图名的旧记录搬到新名下
-		var mcode := str((app.canvas.map_data.get("meta", {}) as Dictionary).get("code", ""))
-		Recovery.migrate_history(app.manifest, mcode, old_name, mcode, nn)
 		sess.rename_doc(nn, str(new_path), Recovery.digest(new_path),
 			FileAccess.get_modified_time(new_path))
 		# 刚才已把内容写进新文件：脏标记与自动保存计时归零，
@@ -777,86 +774,6 @@ func _format_issues(issues: Array) -> String:
 	for issue in issues:
 		lines.append("%s: %s" % [str(issue.get("path", "map")), str(issue.get("message", "invalid data"))])
 	return "; ".join(lines)
-
-## A3/E3：地图历史入口（editor/history/maps/<地图码>/，每次正式保存前的快照）。
-## 列出版本 → 载入某个版本到画布（磁盘正式文件不动，Ctrl+S 才写回）。
-func on_history() -> void:
-	if not app.map_loaded:
-		app._set_status("无地图：先新建或打开一张地图")
-		return
-	var name := _effective_map_name()
-	var code := str((app.canvas.map_data.get("meta", {}) as Dictionary).get("code", ""))
-	var snaps: Array = Recovery.list_history(app.manifest, code, name)
-	var shell: Dictionary = app._popup_body("地图历史 —— %s" % name,
-		"每次正式保存前自动留一份快照（最多 20 份，最新的在前）。恢复只改画布，Ctrl+S 才写回正式图。")
-	var pop: PopupPanel = shell.pop
-	var body: VBoxContainer = shell.body
-	if snaps.is_empty():
-		body.add_child(UiKitScript.hint_label(
-			"还没有历史快照：正式保存过一次之后才会出现。草稿在「地图 ▾ → 恢复草稿…」。", 460))
-		body.add_child(UiKitScript.button("关闭", func(): pop.hide(), "ghost"))
-		app._open_popup(pop)
-		return
-	var list := ItemList.new()
-	list.custom_minimum_size = Vector2(0, 220)
-	list.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	list.max_columns = 1
-	var hs_dir := str(app.manifest.get("_dir", "")).path_join("editor/history/maps").path_join(
-		Recovery.draft_key(code, name))
-	for f in snaps:
-		list.add_item(str(f))
-	body.add_child(list)
-	var hint := UiKitScript.hint_label("", 460)
-	body.add_child(hint)
-	var restore_btn := UiKitScript.button("恢复选中版本", Callable(), "primary")
-	restore_btn.disabled = true
-	list.item_selected.connect(func(idx: int):
-		restore_btn.disabled = false
-		hint.text = "将载入 %s（磁盘文件不动）" % str(list.get_item_text(idx)))
-	restore_btn.pressed.connect(func():
-		var sel := list.get_selected_items()
-		if sel.is_empty():
-			return
-		var fname := str(list.get_item_text(sel[0]))
-		pop.hide()
-		_restore_history_snapshot(name, hs_dir.path_join(fname)))
-	body.add_child(restore_btn)
-	body.add_child(UiKitScript.button("关闭", func(): pop.hide(), "ghost"))
-	app._open_popup(pop)
-
-## 历史快照载入画布：按草稿恢复同一条路径（keep_dirty=true，正式文件不动）。
-func _restore_history_snapshot(map_name: String, snapshot_path: String) -> void:
-	var decoded := MapStore.read_path(snapshot_path, app.manifest)
-	if not decoded.ok:
-		app._set_status(" 历史快照读取失败：" + snapshot_path.get_file())
-		return
-	var snap: Dictionary = decoded.data
-	var guard := _commit_is_current.bind(sess.generation, sess.revision, app.manifest)
-	var path := EditorManifest.map_path(app.manifest, map_name)
-	var baseline := Recovery.digest(path)
-	if not await app._confirm_action("恢复历史版本",
-		"把 %s 载入画布。\n\n正式文件不会被改动；Ctrl+S 才会写回（当前未保存的改动会先被替换）。" % snapshot_path.get_file(),
-		"载入") or not guard.call():
-		return
-	var previous_doc := _doc_key()
-	var gen := _begin_doc_op()
-	app.canvas.set_thumbs(app._entity_thumbs())
-	# 快照里记的是当时的 meta.name（改名前的旧名）：以当前图名为准，保存才不会写回旧名
-	if snap.get("meta", null) is Dictionary:
-		(snap["meta"] as Dictionary)["name"] = map_name
-	await app.canvas.load_data(snap, map_name, false, true)
-	if _doc_stale(gen):
-		return
-	_discard_previous_staging(previous_doc)
-	app.cur_map_name = map_name
-	app.cur_map_path = path
-	sess.set_identity(str(app.manifest.get("_dir", "")), app.canvas.cur_map_code(),
-		map_name, path, baseline, FileAccess.get_modified_time(path))
-	sess.revision = 0
-	app._playtest_ctrl.sync_map_preferences()
-	app._set_map_loaded(true)
-	app.canvas.modified_flag = true   # 历史内容与磁盘不同：必须显式保存
-	app._set_status(" 已载入历史版本 %s（Ctrl+S 写回 %s）" % [snapshot_path.get_file(), map_name])
 
 ## 当前地图名的兜底对齐：app.cur_map_name 与 canvas.cur_map_name 两处记录，以 canvas 为准
 func _effective_map_name() -> String:
@@ -1003,7 +920,7 @@ func _save_now(n: String, path: String, data: Dictionary, guard: Callable) -> bo
 		if ext_changed:
 			# C-20：保存前确认而不是覆盖后提示——外部改动是别人的工作，覆盖是破坏性动作
 			if not await app._confirm_action("外部改动",
-				"地图文件在编辑器打开后被外部修改过。\n覆盖保存将丢失外部改动（上一轮快照已存进 editor/history/maps/<地图码>/）。",
+				"地图文件在编辑器打开后被外部修改过。\n覆盖保存将丢失外部改动。",
 				"覆盖保存"):
 				app._set_status(" 已取消保存（保留磁盘上的外部改动）")
 				return false
@@ -1038,7 +955,7 @@ func _save_now(n: String, path: String, data: Dictionary, guard: Callable) -> bo
 	app._playtest_ctrl.sync_map_preferences()
 	app.canvas.modified_flag = false
 	_last_autosave_msec = Time.get_ticks_msec()
-	# 正式保存成功：草稿完成使命，删掉（A3）；历史快照此时才纳入（见 MapStore.write）
+	# 正式保存成功后清掉草稿。
 	_drop_draft_for(n)
 	return true
 

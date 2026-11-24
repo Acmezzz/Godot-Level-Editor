@@ -414,29 +414,6 @@ func test_legacy_draft_requires_marker() -> void:
 	ok(not names.has("a.autosave"), "带标记的旧草稿不列入地图：%s" % str(names))
 	_wipe()
 
-## A3：地图历史按码分目录；替换失败时快照不入历史（旧条目不减少）
-func test_map_history_by_code_and_write_failure() -> void:
-	_wipe()
-	var m := _fake_manifest()
-	var d := MapStore.new_map("h", 8, 8)
-	d.meta["code"] = "HHHH"
-	ok(MapStore.write(m, "h", d), "首次写入")
-	ok(MapStore.write(m, "h", d), "二次写入 → 产生一份历史")
-	eq(Recovery.list_history(m, "HHHH", "h").size(), 1, "历史按地图码分目录")
-	# 注入替换失败：写盘注入口（连续三次，旧历史条目不减少）
-	var path := str(m._maps_dir).path_join("h.json")
-	var before_hist := Recovery.list_history(m, "HHHH", "h").size()
-	MapStore.test_fail_prefix = path
-	for i in 3:
-		ok(not MapStore.write(m, "h", d), "替换失败被报告 #%d" % i)
-		eq(Recovery.list_history(m, "HHHH", "h").size(), before_hist, "失败不减少历史 #%d" % i)
-	MapStore.test_fail_prefix = ""
-	# 改名后按码查历史仍在（码不变 → 目录不变）
-	eq(MapStore.rename_map(m, "h", "h2"), "", "改名成功")
-	eq(Recovery.list_history(m, "HHHH", "h2").size(), before_hist, "改名后同码历史仍可查")
-	eq(str((MapStore.read(m, "h2").meta as Dictionary).get("name", "")), "h2", "文件内 meta.name 同步")
-	_wipe()
-
 ## A3：提交日志逐条判定——写后结果摘要 == 当前摘要 → 已写；仍等于基线 → 未写；
 ## 两边都不符（外部改过/写了一半）→ 转人工复核，不自动重放。
 func test_pending_log_partial_detection() -> void:

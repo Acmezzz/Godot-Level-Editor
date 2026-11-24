@@ -5,7 +5,6 @@ extends RefCounted
 ## 重映射组内引用、为目标图重发地图码，并按 A2 顺序先写内容后写地图。
 ## 以静态函数为主，带少量静态状态：_cache（读缓存）与 project_rev（写盘版本号，派生缓存据此重扫）。
 ## 写盘单入口 write_text/write_json：先写 .tmp 再原子替换。两种回滚保险别混：
-##   地图 —— write() 先把原文件暂存到 editor/history/maps/<地图码>/（替换成功才计入）；
 ##   内容 —— ContentStore 覆盖前 rotate_history 出 3 层 .history（与地图同权，误写可回滚）。
 ## 两者深度与各入口提交的文件集合由 docs/EDITOR_FEATURES.md §7.3 唯一规定，此处不复述数字。
 ## manifest 除取 _maps_dir 外，还随读取传入 map_data_validation 做结构校验（查实体类型/功能声明）。
@@ -245,9 +244,6 @@ static func read(m: Dictionary, name: String) -> Dictionary:
 	return data
 
 ## 写地图 JSON；名称非法、写入前校验失败或写盘失败均返回 false。
-## 历史（A3）：原文件快照先暂存到 <项目>/editor/history/maps/<地图码>/，
-## 新文件原子替换成功后才把快照纳入历史——替换失败时快照丢弃，旧历史条目不减少。
-## 无 git 环境的最后保险；草稿（editor/drafts）与内容文件自动写入不进历史（各有机制）。
 const Recovery := preload("res://src/map/recovery.gd")
 const HISTORY_DEPTH := 3
 
@@ -258,17 +254,10 @@ static func write(m: Dictionary, name: String, data: Dictionary, move_from := ""
 	# 写前校验序列化结果（D11）：坏图（层栈空/瓦片元组错/退役键）不落盘覆盖好文件。
 	if not validate_for_write(data, m) or identity_error(m, name, data, move_from) != "":
 		return false
-	var code := str((data.get("meta", {}) as Dictionary).get("code", ""))
-	# maps 目录可能还不存在（新项目/测试临时目录）：写入口负责建，不依赖历史目录副作用
 	DirAccess.make_dir_recursive_absolute(path.get_base_dir())
-	var staged := Recovery.stage_snapshot(m, code, name, path)
 	if not write_text(path, MapFormat.encode(data)):
-		Recovery.discard_snapshot(staged)   # 替换失败：不把快照计入历史（旧历史不减）
 		return false
 	invalidate_code_map()
-	if staged != "" and not Recovery.commit_snapshot(m, code, name, staged):
-		# 历史落盘失败单独报告，但不影响「保存成功」这个事实
-		push_warning("地图历史落盘失败: " + staged)
 	return true
 
 ## 校验待写文档；返回首个错误文本，"" = 通过。
@@ -415,13 +404,6 @@ static func rename_map(m: Dictionary, old_name: String, new_name: String, baseli
 	_cache.erase(src)
 	_cache.erase(dst)
 	invalidate_code_map()   # 改名换了文件：码表按图名做键，必须重算
-	# 旧位置历史（maps/.history/<旧名>.json.N）清掉不留孤儿；
-	# 新的按码历史（editor/history/maps/<码>/）不动——码不变，改名后可继续查
-	var hist_dir := str(m.get("_maps_dir", "")).path_join(".history")
-	for i in HISTORY_DEPTH:
-		var hp := hist_dir.path_join("%s.json.%d" % [old_name, i + 1])
-		if FileAccess.file_exists(hp):
-			DirAccess.remove_absolute(hp)
 	return ""
 
 ## 复制地图（C2）：整图走 ClonePlan——实例码与附属内容全部独立、组内引用重映射，

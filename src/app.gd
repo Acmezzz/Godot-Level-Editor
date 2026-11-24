@@ -157,10 +157,6 @@ func _on_duplicate_map() -> void:
 func _on_convert_projection() -> void:
 	_map_file_ctrl.on_convert_projection()
 
-## A3/E3：地图历史版本（正式保存前的快照）查看与载入
-func _on_map_history() -> void:
-	_map_file_ctrl.on_history()
-
 func _maybe_autosave() -> void:
 	_map_file_ctrl.maybe_autosave()
 

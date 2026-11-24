@@ -2,16 +2,13 @@ extends RefCounted
 ## A3 恢复层，三个互不相同的保险：
 ##   editor/drafts/<地图码>.json   —— 自动草稿：整图快照 + 目标路径 + 基线摘要 + 待提交内容/预留 ID。
 ##                                   不自动载入，进项目时报数由用户选 恢复/查看正式图/丢弃。
-##   editor/history/maps/<码>/    —— 正式保存前的原文件快照，字典序 = 时间序（深度 HISTORY_KEEP）。
 ##   editor/pending/pending-*.json —— 多文件提交日志：逐条记录「要写哪个文件 + 写前/写后摘要」，
 ##                                   下次启动据此判每一条 written/pending/manual。
 ## 本模块只做路径解析与 JSON/字节读写，不解释业务；不 preload map_store（避免反向依赖成环）。
 ## 各入口会提交哪些文件由 docs/EDITOR_FEATURES.md §7.3「各入口提交哪些文件」唯一规定。
 
 const DRAFT_DIR := "editor/drafts"
-const HISTORY_DIR := "editor/history/maps"
 const PENDING_DIR := "editor/pending"
-const HISTORY_KEEP := 20
 
 static func _root(m: Dictionary) -> String:
 	return str(m.get("_dir", ""))
@@ -179,92 +176,10 @@ static func list_drafts(m: Dictionary) -> Array:
 	out.sort()
 	return out
 
-# ──────────── 地图历史：editor/history/maps/<地图码>/ ────────────
-
-static func _hist_dir(m: Dictionary, map_code: String, map_name: String) -> String:
-	var base := _dir(m, HISTORY_DIR)
-	if base == "":
-		return ""
-	var key := draft_key(map_code, map_name)
-	return base.path_join(key) if key != "" else ""
-
-static func _hist_stamp() -> String:
+static func _log_stamp() -> String:
 	var d := Time.get_datetime_dict_from_system()
 	return "%04d%02d%02d-%02d%02d%02d-%03d" % [int(d.year), int(d.month), int(d.day),
 		int(d.hour), int(d.minute), int(d.second), Time.get_ticks_msec() % 1000]
-
-## 暂存原文件快照（写盘前调用）。返回快照路径，"" = 无原文件或暂存失败。
-static func stage_snapshot(m: Dictionary, map_code: String, map_name: String, src_path: String) -> String:
-	var dir := _hist_dir(m, map_code, map_name)
-	if dir == "" or src_path == "" or not FileAccess.file_exists(src_path):
-		return ""
-	var staging := dir.path_join(".staged-" + _hist_stamp() + ".json")
-	var text := read_text(src_path)
-	if not write_text(staging, text):
-		return ""
-	return staging
-
-## 新文件替换成功后，把暂存快照纳入历史并淘汰旧项。
-## 原名保留 20 份（文件名带时间戳，字典序 = 时间序）；失败单独返回 false，不阻断保存。
-static func commit_snapshot(m: Dictionary, map_code: String, map_name: String,
-		staged_path: String, label := "") -> bool:
-	if staged_path == "" or not FileAccess.file_exists(staged_path):
-		return false
-	var dir := staged_path.get_base_dir()
-	var tag := label.strip_edges()
-	if tag != "":
-		tag = "-" + tag
-	var final_path := dir.path_join(_hist_stamp() + tag + ".json")
-	if DirAccess.rename_absolute(staged_path, final_path) != OK:
-		return false
-	_prune(dir)
-	return true
-
-static func discard_snapshot(staged_path: String) -> void:
-	if staged_path != "" and FileAccess.file_exists(staged_path):
-		DirAccess.remove_absolute(staged_path)
-
-static func _prune(dir: String) -> void:
-	var files: Array = []
-	var d := DirAccess.open(dir)
-	if d == null:
-		return
-	for f in d.get_files():
-		var n := str(f)
-		if n.begins_with(".staged-"):
-			continue   # 暂存由各自提交路径负责，不进历史计数
-		if n.ends_with(".json"):
-			files.append(n)
-	files.sort()
-	while files.size() > HISTORY_KEEP:
-		DirAccess.remove_absolute(dir.path_join(str(files.pop_front())))
-
-static func list_history(m: Dictionary, map_code: String, map_name: String) -> Array:
-	var dir := _hist_dir(m, map_code, map_name)
-	var out: Array = []
-	if dir == "":
-		return out
-	var d := DirAccess.open(dir)
-	if d == null:
-		return out
-	for f in d.get_files():
-		var n := str(f)
-		if n.ends_with(".json") and not n.begins_with(".staged-"):
-			out.append(n)
-	out.sort()
-	out.reverse()   # 最新在前
-	return out
-
-## 改名后历史随地图码走：码不变则目录不变，此处只在「无码兜底到图名」时需要搬。
-static func migrate_history(m: Dictionary, old_code: String, old_name: String, new_code: String, new_name: String) -> void:
-	var from := _hist_dir(m, old_code, old_name)
-	var to := _hist_dir(m, new_code, new_name)
-	if from == "" or to == "" or from == to or not DirAccess.dir_exists_absolute(from):
-		return
-	DirAccess.make_dir_recursive_absolute(to)
-	for n in list_history(m, old_code, old_name):
-		DirAccess.rename_absolute(from.path_join(str(n)), to.path_join(str(n)))
-	DirAccess.remove_absolute(from)
 
 # ──────────── 多文件提交日志：editor/pending/<stamp>.json ────────────
 
@@ -273,7 +188,7 @@ static func begin_pending(m: Dictionary, reason: String, entries: Array) -> Stri
 	var dir := _dir(m, PENDING_DIR)
 	if dir == "":
 		return ""
-	var path := dir.path_join("pending-" + _hist_stamp() + ".json")
+	var path := dir.path_join("pending-" + _log_stamp() + ".json")
 	var payload := {
 		"kind": "pending",
 		"reason": reason,
