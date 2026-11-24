@@ -199,6 +199,7 @@ func _build_global_bar() -> PanelContainer:
 	map_menu.add_item("实景调整实例和轮廓…", 17)
 	map_menu.add_item("复制跨层选区选项…", 18)
 	map_menu.add_item("跨层搬动选项…", 19)
+	map_menu.add_item("最近试玩反馈…", 21)
 	map_menu.add_separator()
 	map_menu.add_item("检查项目完整性", 30)
 	map_menu.add_item("切换项目…", 20)
@@ -270,6 +271,8 @@ func _on_map_menu_id(id: int) -> void:
 			MapGeneratorDialog.open(app, true)
 		20:
 			app._switch_project()
+		21:
+			app._map_file_ctrl.open_play_report()
 		30:
 			_run_audit(true)
 

@@ -146,9 +146,9 @@ func _open_steps_editor(i: int) -> void:
 	_steps_map = _current_map_key()
 	_mount_target()
 
-func open_content(fn_id: String, cid: String, context := "") -> void:
+func open_content(fn_id: String, cid: String, context := "", step_index := -1) -> bool:
 	if not host.commit_fields() or not FunctionDecls.fn_has_steps(manifest, fn_id) or cid == "":
-		return
+		return false
 	_project_target = true
 	_project_scope = true
 	_reference_context = context
@@ -160,6 +160,9 @@ func open_content(fn_id: String, cid: String, context := "") -> void:
 	_steps_binding = {}
 	_steps_map = ""
 	_mount_target()
+	if step_index >= 0:
+		_steps_pick(step_index)
+	return true
 
 func _mount_target() -> void:
 	var fn_id := _steps_fn_id

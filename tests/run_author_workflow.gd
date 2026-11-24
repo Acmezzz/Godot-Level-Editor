@@ -548,6 +548,17 @@ func run():
 	check(Audit.audit(stale_view).any(func(issue): return issue.path == "views[0].layout.elements[0].imageAsset"),
 		"audit locates a stale layout image by its exact field")
 	var entry_report := await launch_and_read(app, true)
+	app._map_file_ctrl.open_play_report()
+	var observation: Dictionary = entry_report.get("observations", [{}])[0]
+	var report_popup: PopupPanel = collect(app, "PopupPanel").filter(func(p): return p.visible).back()
+	press(report_popup, "定位步骤 %d" % (int(observation.get("step", -1)) + 1))
+	check(ce._steps._steps_cid == "project-acceptance" and ce._steps._steps_sel == int(observation.get("step", -1))
+		and not report_popup.visible, "runtime feedback opens the authored cue step from the report")
+	if is_instance_valid(ce._steps._steps_pop):
+		ce._steps._steps_pop.hide()
+	var stale_observation := observation.duplicate()
+	stale_observation.contentDigest = "0".repeat(64)
+	check(not app._map_file_ctrl._open_report_step(stale_observation), "a mismatched content digest cannot jump to a stale step")
 	check(entry_report.get("status") == "ready" and entry_report.get("result", {}).get("step") == 1
 		and entry_report.get("result", {}).get("caption") == "Ready"
 		and entry_report.get("result", {}).get("ending") == "Reached the ending"

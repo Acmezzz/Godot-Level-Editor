@@ -132,8 +132,9 @@ func _ready() -> void:
 			_report("ready", "", outcome)
 	else:
 		var content_dir := str(manifest.get("contentDir", "content"))
-		_entry = _parse(FileAccess.get_file_as_string("res://".path_join(content_dir).path_join(
-			"campaign/project-acceptance.json")))
+		var entry_text := FileAccess.get_file_as_string("res://".path_join(content_dir).path_join(
+			"campaign/project-acceptance.json"))
+		_entry = _parse(entry_text)
 		if not _load_campaign(manifest):
 			_fail("Campaign, screen position, or first step is invalid")
 			return
@@ -141,7 +142,10 @@ func _ready() -> void:
 			"flowGoal": _flow_goal,
 			"pointPx": [_dialogue_position.x, _dialogue_position.y], "hotspot": _reference_target(Vector2(0.5, 0.5)),
 			"screenTargets": [_screen_target(Vector2(720, 1280)), _screen_target(Vector2(900, 900))],
-			"screenFocus": _screen_focus("right"), "screenArtwork": _screen_artwork()})
+			"screenFocus": _screen_focus("right"), "screenArtwork": _screen_artwork()}, [{
+				"message": "节奏判定：命中进入结局，延迟输入进入重试。", "function": "campaign",
+				"content": "project-acceptance", "contentDigest": entry_text.sha256_text(),
+				"step": _entry.steps.size() - 1, "stepCode": _entry.steps.back().step}])
 	queue_redraw()
 	if _headless:
 		get_tree().quit()
@@ -1189,7 +1193,7 @@ func _fail(message: String) -> void:
 	if _headless:
 		get_tree().quit(1)
 
-func _report(status: String, message: String, result: Dictionary) -> void:
+func _report(status: String, message: String, result: Dictionary, observations := []) -> void:
 	if _request.is_empty():
 		return
 	var path := str(_request.get("path", ""))
@@ -1198,6 +1202,8 @@ func _report(status: String, message: String, result: Dictionary) -> void:
 	var report := {"version": 1, "token": _request.get("token", ""), "status": status,
 		"mapDigest": _map_text.sha256_text() if _map_text != "" else "",
 		"manifestDigest": _manifest_text.sha256_text(), "message": message, "result": result}
+	if not observations.is_empty():
+		report.observations = observations
 	var tmp := path + ".tmp"
 	var file := FileAccess.open(tmp, FileAccess.WRITE)
 	if file == null:

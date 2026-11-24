@@ -55,6 +55,25 @@ static func read_report(request: Dictionary) -> Dictionary:
 			return {"status": "invalid", "message": "游戏加载的磁盘版本与本次试玩不一致"}
 	return report
 
+## Author locations are optional and do not affect successful load receipts.
+static func observations(report: Dictionary) -> Array:
+	if report.get("status") != "ready" or not report.get("observations") is Array:
+		return []
+	var out := []
+	for row in report.observations.slice(0, 100):
+		if not row is Dictionary or not row.get("message") is String or row.message.is_empty():
+			continue
+		var entry := {"message": row.message.left(500)}
+		var step = row.get("step")
+		var valid_step: bool = (step is int or step is float) and step >= 0 and step <= 2147483647 and int(step) == step
+		if valid_step and (row.get("function") is String and row.get("content") is String
+				and row.get("stepCode") is String and row.get("contentDigest") is String
+				and row.contentDigest.length() == 64):
+			entry.merge({"function": row.function, "content": row.content, "step": int(step),
+				"stepCode": row.stepCode, "contentDigest": row.contentDigest})
+		out.append(entry)
+	return out
+
 static func launch_tracked(m: Dictionary, map_path: String, extra_args: PackedStringArray = [], report := {}) -> Dictionary:
 	var pt: Dictionary = m.get("playtest", {}) if m.get("playtest", null) is Dictionary else {}
 	var project_dir := str(m.get("_dir", ""))
