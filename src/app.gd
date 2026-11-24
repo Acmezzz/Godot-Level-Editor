@@ -789,9 +789,6 @@ func _sync_panel_buttons(mode: String) -> void:
 		if nb != null and is_instance_valid(nb):
 			nb.set_mode(mode)
 
-func _save_manifest_file() -> void:
-	await _save_manifest_file_async()
-
 ## 清单落盘；返回是否成功（await 结果）。地图保存前需要知道成功与否（D06）。
 func _manifest_write_payload(source: Dictionary) -> Dictionary:
 	var out := source.duplicate(true)

@@ -28,7 +28,7 @@ src/
 │   ├── reference_usage.gd  按资产、内容、屏幕查询来向
 │   ├── screen_reference_validation.gd  保存屏幕时检查该屏幕的模块字段和出口
 │   ├── spatial_reference_check.gd  空间引用校验：实例、层、端口、格及格边
-│   ├── document_session.gd 当前地图的身份、操作令牌与磁盘基线
+│   ├── document_session.gd 当前地图的操作令牌与磁盘摘要
 │   ├── document_commit.gd  改名、整图复制等操作的冻结写入计划
 │   └── playtest.gd         试玩：按清单的 executable 和 args 启动游戏，跟踪进程
 ├── map/                    —— 地图数据域 ——

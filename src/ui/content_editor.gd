@@ -67,7 +67,6 @@ var _left_title: Label = null
 var _rows_box: VBoxContainer = null
 # 中列（只读预览控件，实现见 content_preview.gd）
 var _preview: Control = null
-var _preview_map := ""   # 预览缩放所属地图：切图时 reset_view
 # 右列
 var _r_name: Label = null
 var _r_id: Label = null
@@ -284,16 +283,13 @@ func refresh_list(focus := "") -> void:
 	if not _map_ready():
 		_clear_all_for_empty()
 		return
-	# 切图后上一张图的缩放/平移对这张图没有意义：zoom 归 1（整图塞进控件）
-	if _preview_map != str(app.cur_map_name):
-		_preview_map = str(app.cur_map_name)
-		_preview.reset_view()
 	var ents := _entities()
 	# 切图：旧图的选中/记忆实例对这张图没有意义，直接忘掉（否则会被误判成「已删除」）
-	var map_key := str(app.canvas.cur_map_name) if app.canvas != null else ""
+	var map_key: String = app._map_file_ctrl.document_key()
 	var map_changed := _selected_map != map_key
 	if map_changed:
 		_selected_map = map_key
+		_preview.reset_view()
 		_selected_ent = ""
 		_remembered_fn_ent = ""
 		_remembered_binding.clear()

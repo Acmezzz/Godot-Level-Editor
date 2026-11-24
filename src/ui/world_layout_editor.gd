@@ -114,7 +114,7 @@ func _refresh_list() -> void:
 		_options.add_item(("● " if _draft.chunks.has(code) else "") + title)
 		_options.set_item_metadata(_options.item_count - 1, code)
 	_surface.names = _names
-	var preferred := str(catalog.by_name.get(_app.cur_map_name, ""))
+	var preferred: String = _app.canvas.cur_map_code() if _app.map_loaded else ""
 	_select(_selected if keys.has(_selected) else (preferred if keys.has(preferred) else str(keys.front()) if not keys.is_empty() else ""))
 
 func _select(code: String) -> void:

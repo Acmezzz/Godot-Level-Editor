@@ -18,7 +18,6 @@ const TopBarNavScript := preload("res://src/ui/top_bar_nav.gd")
 
 var app   # 宿主 app
 var manifest := {}
-var save_manifest: Callable
 
 var asset_panel = null
 var content_editor = null
@@ -32,7 +31,6 @@ var _nav_bar   # 地图 ▾ + 三个模式按钮（与关卡视图顶栏共用�
 func _init(host) -> void:
 	app = host
 	manifest = host.manifest
-	save_manifest = Callable(host, "_save_manifest_file")
 
 func build() -> void:
 	add_theme_constant_override("separation", 0)
@@ -92,7 +90,6 @@ func _build_status_bar() -> PanelContainer:
 func _build_views() -> void:
 	asset_panel = AssetPanelScript.new()
 	asset_panel.manifest = manifest
-	asset_panel.save_manifest = save_manifest
 	asset_panel.host = app
 	_holder.add_child(asset_panel)
 	asset_panel.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)

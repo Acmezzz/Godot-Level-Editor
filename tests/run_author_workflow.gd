@@ -595,7 +595,7 @@ func run():
 	check(Store.read(manifest, "campaign", "project-acceptance") == saved,
 		"preview reads the staged timeline without publishing it")
 	sample_pop.hide()
-	ce.drop_staged_for_doc(ce._form._doc_key())
+	ce.drop_staged_for_doc(app._map_file_ctrl.document_key())
 	pop.hide()
 	await process_frame
 	await create_ending(app, ce._library, "arrive", "Reached the ending", str(flow_map.meta.code), "EXIT")
@@ -1226,7 +1226,7 @@ func run():
 	check(FileAccess.get_sha256(platform_path) == room_before and FileAccess.get_sha256(path) == manifest_before
 		and not FileAccess.file_exists(Store.path_for(manifest, "ending", "preview-only")),
 		"map preview leaves the formal map, manifest and pending content unwritten")
-	workbench.drop_staged_for_doc(app._map_file_ctrl.sess.doc_key)
+	workbench.drop_staged_for_doc(app._map_file_ctrl.document_key())
 	pop.hide()
 	await process_frame
 	app._map_file_ctrl.on_duplicate()
@@ -1314,7 +1314,7 @@ func run():
 		and copy_hash == FileAccess.get_sha256(Maps.path_for(manifest, "platform_reuse"))
 		and not FileAccess.file_exists(Store.path_for(manifest, "ending", "preview-only")),
 		"world rendering does not publish draft layout, maps or content")
-	workbench.drop_staged_for_doc(app._map_file_ctrl.sess.doc_key)
+	workbench.drop_staged_for_doc(app._map_file_ctrl.document_key())
 	world_preview.hide()
 	await process_frame
 	press(pop, "保存世界布局")

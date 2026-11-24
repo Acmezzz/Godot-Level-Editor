@@ -1,10 +1,6 @@
 extends VBoxContainer
 ## 资产目录（工作台 →「资产」）：左列图鉴（图集 / 场景图片 / 实体三类都在），右侧详情。
-## 两种职责，读的时候别混：
-##   **只读清点** —— 缩略图和尺寸，纯展示，不改任何数据。
-##   **写清单** —— 图鉴名称、自带功能挂载、删除资产；都通过 app.gd 注入的 save_manifest 回调走
-##                 清单保存路径（剥内部键 → 校验 → 写盘），本面板不自己写文件。
-## 写回动作由 app.gd 注入：manifest 字典、save_manifest 回调。视觉统一走 UiTheme / UiKit。
+## 资产声明的变更经应用写入项目清单。
 
 const ImageProbe := preload("res://src/assets/image_probe.gd")
 const Kit := preload("res://src/ui/ui_kit.gd")
@@ -15,7 +11,6 @@ const AssetDecl := preload("res://src/assets/asset_decl.gd")
 const ReferenceUsage := preload("res://src/project/reference_usage.gd")   # 使用统计（C3）
 
 var manifest := {}
-var save_manifest: Callable
 var host = null  # 宿主 app（确认框复用其链路）
 
 var asset_list: ItemList
@@ -142,7 +137,7 @@ func _commit_name() -> void:
 	if _edef.is_empty() or _loading:
 		return
 	var sid := str(_edef.get("id", ""))
-	if await _persist():
+	if await host._save_manifest_file_async():
 		refresh_list(sid)
 		return
 	# 写盘失败（状态栏已报原因）：内存里改过的名字不能留着，否则别处保存会把失败值带进清单
@@ -150,16 +145,6 @@ func _commit_name() -> void:
 	if name_now != _edef_name_before:
 		_edef["name"] = _edef_name_before
 		refresh_list(sid)
-
-## 写清单并返回是否成功（V4 P1：原来的 void 回调把写盘失败吞成静默成功）。
-## 直连宿主的异步保存方法：注入的 Callable 是协程，call() 拿不到返回值。
-func _persist() -> bool:
-	if host != null and host.has_method("_save_manifest_file_async"):
-		return bool(await host._save_manifest_file_async())
-	if save_manifest is Callable and (save_manifest as Callable).is_valid():
-		save_manifest.call()
-		return true
-	return true
 
 # —— 视图切换 ——
 func show_detail(sid: String) -> void:
@@ -503,7 +488,7 @@ func _add_mount_row(edef: Dictionary, mounted: Array) -> void:
 		mounts_box.remove_child(sel)
 		mounts_box.queue_redraw()
 		_mount_rows(edef)
-		await _persist())
+		await host._save_manifest_file_async())
 	sel.select(0)
 	mounts_box.add_child(sel)
 
@@ -515,7 +500,7 @@ func _unmount(edef: Dictionary, mid: String) -> void:
 	arr.erase(mid)
 	edef["functions"] = arr
 	_mount_rows(edef)
-	await _persist()
+	await host._save_manifest_file_async()
 
 
 ## 资产缩略图：裁掉透明留白后再用。

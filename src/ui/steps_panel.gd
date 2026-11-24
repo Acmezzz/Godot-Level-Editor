@@ -141,7 +141,7 @@ func _open_steps_editor(i: int) -> void:
 	_steps_ent = str(host._selected_ent)
 	_steps_cid = str(f.get("content", ""))
 	_steps_binding = f
-	_steps_map = _current_map_key()
+	_steps_map = app._map_file_ctrl.document_key()
 	_mount_target()
 
 func open_content(fn_id: String, cid: String, context := "", step_index := -1, field := "") -> bool:
@@ -669,7 +669,7 @@ func _steps_pick_tl(idx: int) -> void:
 func _steps_identity_ok() -> bool:
 	if _project_target:
 		return is_same(_project_manifest, app.manifest) and _steps_cid != ""
-	if _steps_map != "" and _steps_map != _current_map_key():
+	if _steps_map != "" and _steps_map != app._map_file_ctrl.document_key():
 		return false   # R23：切图后旧面板令牌失效（同码实例/同类空绑定也判失效）
 	if _steps_ent != "" and str(host._selected_ent) != _steps_ent:
 		return false
@@ -681,16 +681,6 @@ func _steps_identity_ok() -> bool:
 		return false
 	# 空绑定：会话内还没预留内容 ID，仍可写（首次实际改动才预留）
 	return is_same(f, _steps_binding) and str(f.get("content", "")) == _steps_cid
-
-## R23：当前文档身份键（地图码优先，无码退回图名）——与 content_form._doc_key 同口径。
-func _current_map_key() -> String:
-	var root := str(app.manifest.get("_dir", ""))
-	var code := ""
-	if host._map_ready() and host.app.canvas.map_data.get("meta", null) is Dictionary:
-		code = str((host.app.canvas.map_data["meta"] as Dictionary).get("code", ""))
-	if code == "":
-		code = str(app.cur_map_name)
-	return root.path_join(code)
 
 ## 工作副本读取：已绑定内容读磁盘/暂存；空绑定返回内存空壳（不落盘、不建 ID）。
 func _steps_data() -> Dictionary:

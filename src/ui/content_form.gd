@@ -143,7 +143,7 @@ func _build_form_block() -> Control:
 	_form_id_edit.add_theme_font_size_override("font_size", Th.FS_META)
 	box.add_child(Kit.field_row("ID", _form_id_edit, 40))
 
-	var target := {"entity": _current_spr(), "binding": f, "doc": _doc_key(), "scope": _content_scope_guard(),
+	var target := {"entity": _current_spr(), "binding": f, "doc": app._map_file_ctrl.document_key(), "scope": _content_scope_guard(),
 		"project_scope": project_scope}
 	var name_edit := LineEdit.new()
 	name_edit.text = cname if cname != "" else fn_id
@@ -314,7 +314,7 @@ func _build_field_row(i: int, fn_id: String, fd: Dictionary, cur: Dictionary, si
 	return row
 
 func _form_binding_matches(i: int, target: Dictionary) -> bool:
-	if not target.scope.call() or target.doc != _doc_key() or target.entity != _current_spr():
+	if not target.scope.call() or target.doc != app._map_file_ctrl.document_key() or target.entity != _current_spr():
 		return false
 	var rows := _current_fns()
 	return i >= 0 and i < rows.size() and is_same(rows[i], target.binding)
@@ -747,7 +747,7 @@ func _ensure_content(i: int) -> String:
 	var data := _blank_content(fn_id, new_id)
 	data["name"] = nm
 	# 暂存：只在内存登记，等正式提交再写（staged）
-	_staged_put(fn_id, new_id, {"fn_id": fn_id, "data": data, "ent": spr.code, "doc": _doc_key()})
+	_staged_put(fn_id, new_id, {"fn_id": fn_id, "data": data, "ent": spr.code, "doc": app._map_file_ctrl.document_key()})
 	app._set_status(" 新内容 %s 已暂存：Ctrl+S 或试玩时落盘" % new_id)
 	fns = fns.duplicate(true)
 	(fns[i] as Dictionary)["content"] = new_id
@@ -783,16 +783,6 @@ func _staged_put(fn_id: String, cid: String, st: Dictionary) -> void:
 func _staged_erase(fn_id: String, cid: String) -> void:
 	_staged.erase(_staged_key(fn_id, cid))
 
-## 当前文档键（R02）：项目根 + 地图码（无码退回图名）。
-func _doc_key() -> String:
-	var root := str(app.manifest.get("_dir", ""))
-	var code := ""
-	if app.map_loaded and app.canvas != null and app.canvas.map_data.get("meta", null) is Dictionary:
-		code = str((app.canvas.map_data["meta"] as Dictionary).get("code", ""))
-	if code == "":
-		code = str(app.cur_map_name)
-	return root.path_join(code)
-
 ## 暂存条目按功能执行码与内容 ID 匹配地图绑定；单个实例的解绑不影响共享内容。
 func bound_staged_rows(map_data: Dictionary) -> Array:
 	var bindings := {}
@@ -802,7 +792,7 @@ func bound_staged_rows(map_data: Dictionary) -> Array:
 		for binding in obj.get("functions", []):
 			if binding is Dictionary:
 				bindings[[str(binding.get("fn", "")), str(binding.get("content", ""))]] = true
-	var doc := _doc_key()
+	var doc: String = app._map_file_ctrl.document_key()
 	var rows: Array = []
 	for key in _staged.keys():
 		var row: Dictionary = _staged[key]
@@ -833,7 +823,7 @@ func save_staged_content(map_data: Dictionary) -> String:
 
 ## 消费冻结计划中已落盘的内容，失败目标继续留在工作副本里。
 func consume_written_staged(receipts: Array) -> void:
-	var doc := _doc_key()
+	var doc: String = app._map_file_ctrl.document_key()
 	for row in receipts:
 		if row.get("kind") != "content" or row.get("status") != "written":
 			continue
@@ -848,7 +838,7 @@ func has_staged() -> bool:
 
 ## 当前文档的暂存行 [{fn_id, cid, data}]（提交日志/草稿冻结目标用，R04）。
 func staged_rows_for_current_doc() -> Array:
-	var doc := _doc_key()
+	var doc: String = app._map_file_ctrl.document_key()
 	var out: Array = []
 	for key in _staged:
 		var st: Dictionary = _staged[key]
@@ -877,7 +867,7 @@ func staged_data_by_key() -> Dictionary:
 func has_staged_for_current_doc() -> bool:
 	if _staged.is_empty():
 		return false
-	var doc := _doc_key()
+	var doc: String = app._map_file_ctrl.document_key()
 	for key in _staged:
 		if str((_staged[key] as Dictionary).get("doc", "")) == doc:
 			return true
@@ -894,7 +884,7 @@ func drop_staged_for_doc(doc: String) -> int:
 
 ## 草稿恢复：把待提交内容载荷重新暂存（R03）。绑定还在的才收，返回收下的条数。
 func restage_rows(rows: Array) -> int:
-	var doc := _doc_key()
+	var doc: String = app._map_file_ctrl.document_key()
 	var n := 0
 	for row in rows:
 		if not (row is Dictionary):
@@ -932,7 +922,7 @@ func stage_clone(fn_id: String, cid: String, data: Dictionary, ent: String) -> v
 	if fn_id == "" or cid == "" or _staged_get(fn_id, cid) != null:
 		return
 	_staged_put(fn_id, cid, {"fn_id": fn_id, "data": data,
-		"ent": ent, "doc": _doc_key()})
+		"ent": ent, "doc": app._map_file_ctrl.document_key()})
 
 ## 写盘失败：状态栏 + 徽章双重提示（红色徽章在右栏顶部，不依赖状态栏可见性）
 ## 不再一律甩「目录权限」——真实失败原因多半是身份码没生成或 kind 不合法。
@@ -976,7 +966,7 @@ func _open_lib(i: int) -> void:
 	var fn_id := str(_resolve_fn(f).get("id", ""))
 	if fn_id == "":
 		return
-	var target := {"entity": _current_spr(), "binding": f, "doc": _doc_key(), "scope": _content_scope_guard()}
+	var target := {"entity": _current_spr(), "binding": f, "doc": app._map_file_ctrl.document_key(), "scope": _content_scope_guard()}
 	var fn_label := str(FunctionDecls.function_name(manifest, fn_id))
 	var shell: Dictionary = app._popup_body("选择已有%s内容" % fn_label,
 		"选中即复制进当前实例，生成新 ID。改显示名不改 ID；删除前先查引用。")
@@ -1212,7 +1202,7 @@ func _share_rebind(i: int, fn_id: String, cid: String) -> void:
 	var rows := _current_fns()
 	if i < 0 or i >= rows.size() or not rows[i] is Dictionary:
 		return
-	var target := {"entity": _current_spr(), "binding": rows[i], "doc": _doc_key(), "scope": _content_scope_guard()}
+	var target := {"entity": _current_spr(), "binding": rows[i], "doc": app._map_file_ctrl.document_key(), "scope": _content_scope_guard()}
 	var bulk := ReferenceUsage.content_edges_bulk(manifest, fn_id, [cid], app.canvas.cur_map_name, [])
 	var inst: Dictionary = ((bulk.get("refs", {}) as Dictionary).get(cid, {}) as Dictionary).get("instances", {})
 	var parts: Array[String] = []
@@ -1377,7 +1367,7 @@ func _duplicate_from_lib(fn_id: String, old_id: String, new_name: String, bind_i
 		return
 	if str(fns[bind_index].get("fn", "")) != FunctionDecls.fn_code(manifest, fn_id):
 		return
-	_staged_put(fn_id, new_id, {"fn_id": fn_id, "data": data, "ent": spr.code, "doc": _doc_key()})
+	_staged_put(fn_id, new_id, {"fn_id": fn_id, "data": data, "ent": spr.code, "doc": app._map_file_ctrl.document_key()})
 	fns[bind_index]["content"] = new_id
 	fns[bind_index]["name"] = nm
 	_selected_fn = bind_index
