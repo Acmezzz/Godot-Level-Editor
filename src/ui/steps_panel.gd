@@ -584,8 +584,9 @@ func _open_game_frame() -> void:
 			moment["seconds"] = seconds
 		var subject := {"function": _steps_fn_id, "content": _steps_cid, "data": data, "time": moment,
 			"manifest": app._manifest_write_payload(manifest), "viewportId": preset}
-		if not _project_target and app.map_loaded:
-			var context := MapGamePreview.map_context(app)
+		var context := {}
+		if not _project_target:
+			context = MapGamePreview.map_context(app) if app.map_loaded else {}
 			if context.is_empty():
 				return {"error": "地图正在重建，请稍后重试。"}
 			subject.merge(context)
@@ -595,6 +596,7 @@ func _open_game_frame() -> void:
 		var revision: int = session.revision
 		var matches := func() -> bool:
 			return session.revision == revision \
+				and (context.is_empty() or MapGamePreview.context_matches(app, context)) \
 				and (_steps_cid == "" or host.read_content_staged(_steps_fn_id, _steps_cid) == data)
 		return {"subject": subject, "default_size": Vector2(1280, 720), "current": matches,
 			"summary": " · %s %s" % [value, clock.timebase]}

@@ -423,10 +423,12 @@ func _compose_timeline_frame(surface: SubViewport, subject: Dictionary, size: Ve
 		elif time.seconds == null or not is_equal_approx(seconds, float(time.seconds)):
 			return false
 		var active := false
-		for interval in _step_ranges(data.steps, 1.0):
+		for interval in _step_ranges(data.get("steps", []), 1.0):
 			if (raw >= interval[0] and raw < interval[1]) or raw == interval[0]:
 				active = true
 				break
+		if subject.has("instance"):
+			return _compose_bound_timeline(surface, subject, size, active)
 		var x := roundf(seconds * 100.0) if seconds != null else raw
 		_frame_rect(surface, Rect2(x, size.y * 0.5, 16, 16),
 			Color("#d75283") if active else Color("#479bb1"))
@@ -455,6 +457,33 @@ func _compose_timeline_frame(surface: SubViewport, subject: Dictionary, size: Ve
 		(Color("#d75283") if cue_reached else Color("#479bb1"))
 		if data.get("fields", {}).get("CAPT") == "Staged frame" else Color.WHITE)
 	return true
+
+func _compose_bound_timeline(surface: SubViewport, subject: Dictionary, size: Vector2i, active: bool) -> bool:
+	for row in subject.map.objects:
+		if row.get("code") != subject.instance:
+			continue
+		var bindings: Array = row.get("functions", [])
+		var index := int(subject.bindingIndex)
+		if index < 0 or index >= bindings.size():
+			return false
+		var binding: Dictionary = bindings[index]
+		if binding.get("bindingId", "") != subject.bindingId or binding.get("content", "") != subject.content \
+				or binding.get("fn") != subject.data.get("function"):
+			return false
+		# The switch's leave reaction renders differently from its mounted touch reaction.
+		if binding.get("trigger") != "LEAV" or subject.data.get("fields", {}).get("RMES") != "exited":
+			return false
+		var world := _frame_world(surface, subject, size)
+		var point := (Vector2(row.x, row.y) + Vector2(0.5, 0.5)) * 16.0
+		_frame_rect(world, Rect2(point - Vector2(4, 4), Vector2(8, 8)),
+			Color("#d75283") if active else Color("#479bb1"))
+		for other in subject.stagedContent:
+			if other.function == subject.function and other.content != subject.content \
+					and other.data.get("fields", {}).get("RMES") == "entered" \
+					and bindings.any(func(item): return item.get("content") == other.content and item.get("trigger") == "TUCH"):
+				_frame_rect(surface, Rect2(0, 0, 12, 12), Color("#46c4ae"))
+		return true
+	return false
 
 func _reference_target(point: Vector2) -> String:
 	for view in _manifest.get("views", []):

@@ -275,7 +275,7 @@ func run():
 	var manifest := {"_dir": project, "_maps_dir": project.path_join("maps"), "projectName": "Workflow",
 		"cellGraphEdgeTypes": {"stairs": {"name": "Stairs", "fields": [
 			{"id": "cost", "kind": "input", "type": "int", "min": 1, "default": 9}]}},
-		"functions": {"reaction": {"name":"Reaction", "code":"REAC", "repeatable":true,
+		"functions": {"reaction": {"name":"Reaction", "code":"REAC", "repeatable":true, "steps":true,
 			"triggers":["touch", "leave"], "fields":[{"id":"message","code":"RMES","kind":"input","type":"string"}]},
 			"frame_sequence": {"name":"Frame Sequence", "code":"FSEQ", "steps":true, "timebase":"frames",
 				"timePreview":{"fpsField":"fps"}, "fields":[{"id":"fps","code":"FPS1","kind":"input","type":"int","min":1}]},
@@ -721,6 +721,44 @@ func run():
 		app._end_canvas_pick(true)
 	await process_frame
 	author_reactions(ce)
+	# The independent row has moved before the inherited row. Both contents are still staged.
+	var reaction_rows: Array = ce._current_fns()
+	var reaction_id: String = reaction_rows[0].content
+	var board_path := Maps.path_for(manifest, "board")
+	var board_digest := FileAccess.get_sha256(board_path)
+	ce._open_steps_editor(0)
+	var reaction_pop: PopupPanel = ce._steps._steps_pop
+	ce._steps._steps_add("MARK")
+	time_edit(reaction_pop, "duration", "0.5")
+	var previous_camera: Vector2 = app.canvas.cam_pos
+	var previous_zoom: float = app.canvas.zoom
+	app.canvas.cam_pos = Vector2(32, 32)
+	app.canvas.zoom = 2.0
+	press(reaction_pop, "游戏演出画面…")
+	var reaction_preview: PopupPanel = collect(app, "PopupPanel").filter(func(p): return p.visible).back()
+	select_metadata(reaction_preview.find_child("TimelineGamePreviewViewport", true, false), "portrait")
+	await render_timeline_sample(reaction_preview, "0.25", Vector2i(376, 656), "d75283")
+	var reaction_image: TextureRect = reaction_preview.find_child("TimelineGamePreviewFrame", true, false)
+	check(reaction_image.texture != null and reaction_image.texture.get_image().get_pixel(4, 4).to_html(false) == "46c4ae",
+		"instance scene also resolves the other binding's staged row")
+	var reaction_render: Button = reaction_preview.find_child("TimelineGamePreviewRender", true, false)
+	reaction_render.pressed.emit()
+	app.canvas.cam_pos = Vector2(40, 32)
+	var reaction_deadline := Time.get_ticks_msec() + 13500
+	while reaction_render.disabled and Time.get_ticks_msec() < reaction_deadline:
+		await create_timer(0.08).timeout
+	check(not reaction_render.disabled and reaction_image.texture == null,
+		"a frame rendered against the previous camera is discarded")
+	app.canvas.cam_pos = Vector2(32, 32)
+	await render_timeline_sample(reaction_preview, "0.75", Vector2i(376, 656), "479bb1")
+	check(FileAccess.get_sha256(board_path) == board_digest
+		and not FileAccess.file_exists(Store.path_for(manifest, "reaction", reaction_id)),
+		"instance timeline preview does not publish the binding, its content, or the map")
+	reaction_preview.hide()
+	reaction_pop.hide()
+	app.canvas.cam_pos = previous_camera
+	app.canvas.zoom = previous_zoom
+	await process_frame
 	GraphEditor.open(app)
 	pop = collect(app, "PopupPanel").filter(func(p): return p.visible).back()
 	var name_input = collect(pop, "LineEdit").front()

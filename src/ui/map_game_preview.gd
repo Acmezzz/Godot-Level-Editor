@@ -92,7 +92,7 @@ static func _open(app, mode: String, choose: Callable, extra := {}) -> void:
 		var revision: int = session.revision
 		return {"subject": subject, "default_size": canvas.get_viewport_rect().size,
 			"summary": " · 中心 (%.1f, %.1f) · 缩放 ×%.2f" % [camera.x, camera.y, zoom],
-			"current": func(): return session.revision == revision}
+			"current": func(): return session.revision == revision and context_matches(app, subject)}
 	FrameDialog.open(app, CAPABILITY, {"title": "关卡游戏画面预览", "button": "渲染关卡",
 		"hint": "用游戏渲染当前关卡和画布取景。未保存的地图与暂存内容会随请求传入。",
 		"prefix": "MapGamePreview", "default_label": "当前画布大小", "pick_mode": mode, "pick": choose,
@@ -103,9 +103,18 @@ static func map_context(app) -> Dictionary:
 	var map := canvas.extract()
 	if map.is_empty():
 		return {}
+	return {"map": map, "stagedContent": _staged_content(app), "camera": _camera(canvas)}
+
+static func context_matches(app, captured: Dictionary) -> bool:
+	return app.map_loaded and _camera(app.canvas) == captured.camera \
+		and _staged_content(app) == captured.stagedContent
+
+static func _staged_content(app) -> Array:
 	var stage: Array = []
 	if app.project_shell != null and app.project_shell.content_editor != null:
 		for row in app.project_shell.content_editor.staged_rows_current_doc():
 			stage.append({"function": row.fn_id, "content": row.cid, "data": row.data})
-	var center := canvas.cam_pos
-	return {"map": map, "stagedContent": stage, "camera": {"center": [center.x, center.y], "zoom": canvas.zoom}}
+	return stage
+
+static func _camera(canvas: EditorCanvas) -> Dictionary:
+	return {"center": [canvas.cam_pos.x, canvas.cam_pos.y], "zoom": canvas.zoom}
