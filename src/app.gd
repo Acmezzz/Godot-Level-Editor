@@ -854,7 +854,6 @@ func _save_manifest_file_async(guard := Callable(), snapshot := {}, publish_key 
 	# 新补发的执行码已经随清单落盘，标记清掉（D6：避免每次内容视图 Ctrl+S 都重写清单）
 	manifest.erase("_codes_issued")
 	manifest.erase("_codes_issued_now")
-	manifest["_manifest_mtime"] = FileAccess.get_modified_time(p)
 	manifest["_manifest_digest"] = txt.sha256_text()
 	# 人类名 ↔ 执行码对照表随清单一起刷新（游戏侧重建映射、人工 diff 均用）；
 	# 只在清单落盘成功后写，码表写失败不影响清单本身，状态栏单独报。

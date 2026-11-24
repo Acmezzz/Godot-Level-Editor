@@ -1001,30 +1001,30 @@ func write_draft_now() -> bool:
 	app._set_status(" 已自动保存草稿 → %s" % path.get_file())
 	return true
 
-## 恢复草稿：把快照载入画布并标记脏（正式文件未动，Ctrl+S 才写回）。
-## 参数是**草稿键**（文件名，A3）：带地图码的地图键是码、不带码才是图名，
-## 拿「空码 + 图名」重算路径会算出另一个键，读不到自己刚写的草稿。
-func _resolve_draft_target(draft: Dictionary, fallback: String) -> Dictionary:
-	var name_ := str(draft.get("mapName", ""))
-	if name_ == "":
-		name_ = fallback
+## 恢复先按地图码定位正式图。名称只为尚未落盘的草稿确定新文件路径。
+func _resolve_draft_target(draft: Dictionary, draft_key: String) -> Dictionary:
 	var code := str(draft.get("mapCode", ""))
+	var name_ := str(draft.get("mapName", draft_key))
 	MapStore.invalidate_read_cache()
 	MapStore.invalidate_code_map()
-	var index := MapStore.code_index(app.manifest)
-	var matches: Array = index.get("by_code", {}).get(code, [])
-	if matches.size() > 1:
+	var resolved := ReferenceIndex.resolve_map(app.manifest, code)
+	if resolved.status == "ambiguous":
 		return {"error": "草稿地图码重复，无法确定正式图"}
-	if matches.size() == 1:
-		name_ = str(matches[0])
+	if resolved.status == "ok":
+		name_ = resolved.key
 	var path := EditorManifest.map_path(app.manifest, name_)
-	if path == "":
+	if path.is_empty():
 		return {"error": "草稿地图名无效"}
 	var seen := Recovery.observe(path)
 	if seen.state == "unreadable":
 		return {"error": "正式图无法读取"}
-	if seen.state == "present" and code != "" and matches.is_empty():
-		return {"error": "同名正式图的地图码与草稿不一致"}
+	if seen.state == "present" and resolved.status != "ok":
+		# A draft from before code issuance can only reopen the exact file it was based on.
+		if not code.is_empty() or seen.digest != draft.get("baseline", ""):
+			return {"error": "无法确认同名正式图属于这份草稿"}
+		var existing := MapStore.read(app.manifest, name_)
+		if existing.is_empty() or existing.get("meta", {}).get("code", "") != "":
+			return {"error": "无法确认同名正式图属于这份草稿"}
 	return {"name": name_, "path": path, "observed": seen}
 
 func restore_draft_key(draft_key: String) -> bool:
@@ -1110,8 +1110,7 @@ func _drop_draft_for(name: String) -> void:
 	var code := str((app.canvas.map_data.get("meta", {}) as Dictionary).get("code", ""))
 	Recovery.remove_draft(app.manifest, code, name)
 
-## 「查看正式图」：草稿只记身份，不记磁盘外的东西——按草稿里的 targetPath 打开正式图。
-## targetPath 缺失/已删时退回按图名在项目里找（图被改名时可能找不到，状态栏说清楚）。
+## 查看草稿对应的正式图；未落盘的草稿没有正式图可打开。
 func open_draft_target(draft_key: String) -> void:
 	var draft := Recovery.read_draft_key(app.manifest, draft_key)
 	if draft.is_empty():
