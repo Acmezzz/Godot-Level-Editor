@@ -1032,6 +1032,7 @@ godot --headless --path "<编辑器工程>" --script res://tools/migrate_project
   （y排序开关 + 视差/偏移/缩放数字字段，回车提交，缺省整键省略）。
   碰撞自动生成不区分声明形状（按整格矩形推）。
 - 排序点（`sortAnchor`）实例选中时画排序点十字（锚点 + sortAnchor 像素偏移，紫十字 + 连线；无覆盖不画）。
+  排序点不移动轮廓、路径、顶点手柄或端口；这些都使用同一个实例数据锚点。
 - 资产零登记扫描制：文件放进约定目录（`assets/tiles|images|entities`，递归；图片 png/jpg/jpeg/webp/bmp/tga、
   实体 .tscn）即资产，打开项目扫描自动补条目 + 发 4 位资产码（id=码、name=文件名 stem）；
   改名按持久化指纹（`scanFingerprint`）一对一重链原条目（候选歧义进待确认，不猜）；消失标停用不删条目

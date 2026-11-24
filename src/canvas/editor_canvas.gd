@@ -959,11 +959,7 @@ func is_local_port_map(key: String) -> bool:
 	return RefFieldsScript.map_key_local(key, cur_map_name, cur_map_code())
 
 func port_position(ent: EntityNode, port: Dictionary) -> Vector2:
-	var basis := Transform2D(ent.data_rotation(), ent.data_scale(), 0.0, Vector2.ZERO)
-	var flip := Vector2(-1 if ent.flipped_h() else 1, -1 if ent.flipped_v() else 1)
-	var offset := Vector2(float(port.x), float(port.y)) * flip
-	var layer := ent.get_parent() as Node2D
-	return layer.to_global(ent.position - ent.sort_anchor() + basis.basis_xform(offset))
+	return ent.geometry_point_to_world(Vector2(port.x, port.y))
 
 func pick_candidate_at(pos: Vector2) -> String:
 	if pick_mode_accept == "port":

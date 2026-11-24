@@ -29,6 +29,24 @@ static func effective_grid(data: Dictionary, manifest: Dictionary) -> GridSpace:
 static func tile_grid_of(layer: Dictionary, manifest: Dictionary, root: GridSpace) -> GridSpace:
 	return GridSpaceScript.resolve_tile_layer(layer, manifest, root).grid
 
+static func anchor_unit(decl: Dictionary) -> Vector2:
+	match str(decl.get("anchor", "center")):
+		"top_left": return Vector2.ZERO
+		"bottom_center": return Vector2(0.5, 1.0)
+	return Vector2(0.5, 0.5)
+
+## Authored points and ports are measured from the data anchor, before scale,
+## flip and rotation. Texture fitting and sortAnchor do not change them.
+static func object_transform(anchor: Vector2, raw: Dictionary) -> Transform2D:
+	var factors = raw.get("scale")
+	var scale := Vector2(factors[0], factors[1]) if factors is Array and factors.size() >= 2 else Vector2.ONE
+	var signs := Vector2(-1.0 if raw.get("flip_h", false) else 1.0, -1.0 if raw.get("flip_v", false) else 1.0)
+	return Transform2D(float(raw.get("rotation", 0.0)), scale * signs, 0.0, anchor)
+
+static func object_transform_in_layer(grid: GridSpace, decl: Dictionary, row: Dictionary) -> Transform2D:
+	var anchor := grid.object_anchor_px(Vector2(row.x, row.y), anchor_unit(decl))
+	return object_transform(anchor, row.get("transform", {}))
+
 ## 层内变换（数据口径）：meta.layers[] 按层码取 {offset: [x,y], scale: number} → Transform2D。
 ## 与画布的节点变换（layer_xform(i)）同值——层容器 position/scale 由同一组参数建成
 ## （editor_canvas.gd 建层时同样按 offset 数组 + scale 标量，layer_ops.gd 写回也按标量）。

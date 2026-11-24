@@ -263,8 +263,12 @@ func run():
 			project.path_join(filename)) == OK, "copy independent runtime " + filename)
 	check(DirAccess.copy_absolute(ProjectSettings.globalize_path("res://src/map/generated_chunk_delta.gd"),
 		project.path_join("generated_chunk_delta.gd")) == OK, "install the same delta implementation in the independent game")
+	DirAccess.make_dir_recursive_absolute(project.path_join("src/canvas"))
 	check(DirAccess.copy_absolute(ProjectSettings.globalize_path("res://src/canvas/grid_space.gd"),
-		project.path_join("grid_space.gd")) == OK, "install the standalone grid contract in the independent game")
+		project.path_join("src/canvas/grid_space.gd")) == OK, "install the standalone grid contract in the independent game")
+	for filename in ["map_view_data.gd", "object_geometry.gd"]:
+		check(DirAccess.copy_absolute(ProjectSettings.globalize_path("res://src/map/" + filename),
+			project.path_join(filename)) == OK, "install standalone geometry " + filename)
 	check(write_fixture_audio(project), "write rhythm audio fixture")
 	var button_art := Image.create(96, 32, false, Image.FORMAT_RGB8)
 	button_art.fill(Color("#264dab"))
@@ -1439,8 +1443,40 @@ func run():
 	await author_tile_layer_conversion(app, manifest)
 	await author_world_region_move(app, manifest)
 	await author_frame_picks(app, manifest)
+	await author_transformed_terrain(app, manifest)
 	print("WORKFLOW-DONE failures=", failures)
 	quit(1 if failures else 0)
+
+func author_transformed_terrain(app, manifest: Dictionary) -> void:
+	await app._load_map_file(Maps.path_for(manifest, "platform"))
+	var canvas: EditorCanvas = app.canvas
+	await canvas.layer_set_param(0, "offset", Vector2(48, 24))
+	await canvas.layer_set_param(0, "scale", 1.5)
+	var row: Dictionary = canvas.extract().objects.filter(func(item): return item.asset == "free-ramp").front()
+	var terrain: EntityNode = canvas._ent_by_code_index()[row.code]
+	canvas.commit_selection(terrain)
+	terrain.toggle_flip_h()
+	terrain.rotate_90()
+	terrain.scale_step(0.25)
+	var anchor := terrain.geometry_point_to_world(Vector2.ZERO)
+	terrain.set_sort_anchor(Vector2(7, 11))
+	canvas._mark_ents()
+	var vertex := terrain.geometry_point_to_world(Vector2(40, -28))
+	# The previously saved map rounds data coordinates to three decimal places.
+	check(anchor.distance_to(Vector2(96.75, 126.0)) < 0.01 and terrain.geometry_point_to_world(Vector2.ZERO).is_equal_approx(anchor)
+		and vertex.distance_to(Vector2(149.25, 51.0)) < 0.01
+		and terrain.geometry_point_from_world(vertex).is_equal_approx(Vector2(40, -28)),
+		"layer offset and scale, rotation, reflection and instance scale preserve the authored anchor and vertex inverse")
+	check(canvas._entity_at(terrain.geometry_point_to_world(Vector2(37.5, -6))) == terrain
+		and canvas._entity_at(terrain.geometry_point_to_world(Vector2(28.5, -4))) != terrain,
+		"editor hit testing separates the transformed solid from its hole")
+	var report := await launch_and_read(app, false)
+	var result: Dictionary = report.get("result", {})
+	var motion: Dictionary = result.get("freeRampMotion", {})
+	var actual: Array = result.get("freeRampVertex", [])
+	check(report.get("status") == "ready" and actual.size() == 2 and Vector2(actual[0], actual[1]).is_equal_approx(vertex)
+		and motion.size() == 5 and not motion.values().has(false),
+		"independent physics uses the same transformed contour vertex and keeps both holes and the gap open: " + str(report))
 
 func author_resize(app, manifest: Dictionary) -> void:
 	manifest.assets.append({"id": "resize-refs", "kind": "entity", "fields": [

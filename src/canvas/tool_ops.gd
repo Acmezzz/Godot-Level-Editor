@@ -243,7 +243,7 @@ func place_object(asset: String, layer: int, pos: Vector2, exact := false, drawn
 	if not drawn.is_empty():
 		n.refresh_visual()
 		n.position = pos
-		var inverse := n.transform.affine_inverse()
+		var inverse := n.geometry_transform().affine_inverse()
 		n.points_write(drawn.map(func(p): return inverse * p))
 	elif n.visual_type() != "rect" and not (n.props.get("points", null) is Array):
 		var pts: Array = n.points_local()

@@ -1,7 +1,9 @@
 extends Node2D
 
 const ChunkDelta := preload("res://generated_chunk_delta.gd")
-const Grid := preload("res://grid_space.gd")
+const Grid := preload("res://src/canvas/grid_space.gd")
+const ViewData := preload("res://map_view_data.gd")
+const Geometry := preload("res://object_geometry.gd")
 ## Example game code. It reads saved contracts and shares the standalone format helpers.
 
 var _request: Dictionary
@@ -112,11 +114,14 @@ func _ready() -> void:
 				_fail("Platform route does not reach a gate from spawn")
 				return
 			if _headless and map.get("objects", []).any(func(row): return row.get("asset") == "free-ramp"):
-				var collision_checks := await _check_free_ramp_motion(map)
+				var collision_checks := await _check_free_ramp_motion(map, manifest)
 				if collision_checks.values().has(false) or collision_checks.is_empty():
 					_fail("Saved contour physics disagrees with the expected motion: " + str(collision_checks))
 					return
 				outcome["freeRampMotion"] = collision_checks
+				var ramp: Dictionary = map.objects.filter(func(row): return row.asset == "free-ramp").front()
+				var vertex := _ramp_transform(map, manifest, ramp) * Vector2(ramp.props.points[1][0], ramp.props.points[1][1])
+				outcome["freeRampVertex"] = [vertex.x, vertex.y]
 				if manifest.has("worldLayout"):
 					var samples: Array = []
 					for point in [Vector2(-32, 32), Vector2(32, 32), Vector2(160, 32)]:
@@ -973,19 +978,34 @@ func _has_free_ramp(map: Dictionary) -> bool:
 				and shape[0].distance_to(Vector2(32.5, 68)) <= 0.01
 	return false
 
-func _check_free_ramp_motion(map: Dictionary) -> Dictionary:
+func _ramp_transform(map: Dictionary, manifest: Dictionary, row: Dictionary) -> Transform2D:
+	var decl: Dictionary = manifest.assets.filter(func(asset): return asset.id == row.asset).front()
+	var grid = ViewData.effective_grid(map, manifest)
+	return ViewData.layer_transform(map, row.layer) * ViewData.object_transform_in_layer(grid, decl, row)
+
+func _check_free_ramp_motion(map: Dictionary, manifest: Dictionary) -> Dictionary:
 	var terrain := StaticBody2D.new()
+	var sweep := Transform2D.IDENTITY
 	for row in map.get("objects", []):
 		if row.get("asset") != "free-ramp":
 			continue
-		var anchor := (Vector2(row.x, row.y) + Vector2(0.5, 0.5)) * 16.0
+		var transform := _ramp_transform(map, manifest, row)
+		sweep = transform * Transform2D(0.0, Vector2(-32.5, -68.0))
 		var props: Dictionary = row.props
 		var parts: Array = [props]
 		parts.append_array(props.get("parts", []))
 		for part in parts:
 			var rings: Array = [part.points]
 			rings.append_array(part.get("holes", []))
-			_add_solid_pieces(terrain, anchor, rings)
+			var local_rings: Array[PackedVector2Array] = []
+			for ring in rings:
+				local_rings.append(PackedVector2Array(ring.map(func(p): return Vector2(p[0], p[1]))))
+			for piece in Geometry.fill_strips(local_rings):
+				var shape := ConvexPolygonShape2D.new()
+				shape.points = transform * piece
+				var child := CollisionShape2D.new()
+				child.shape = shape
+				terrain.add_child(child)
 	if terrain.get_child_count() == 0:
 		terrain.free()
 		return {}
@@ -1001,11 +1021,11 @@ func _check_free_ramp_motion(map: Dictionary) -> Dictionary:
 	await get_tree().physics_frame
 	await get_tree().physics_frame
 	var results := {
-		"primaryStops": _check_sweep(probe, terrain, Vector2(84, 62), Vector2(70, 62), true),
-		"extraStops": _check_sweep(probe, terrain, Vector2(90, 51), Vector2(102, 51), true),
-		"primaryHoleClears": _check_sweep(probe, terrain, Vector2(60, 63), Vector2(63, 66), false),
-		"extraHoleClears": _check_sweep(probe, terrain, Vector2(110, 56), Vector2(114, 61), false),
-		"gapClears": _check_sweep(probe, terrain, Vector2(84, 45), Vector2(84, 74), false),
+		"primaryStops": _check_sweep(probe, terrain, sweep * Vector2(84, 62), sweep * Vector2(70, 62), true),
+		"extraStops": _check_sweep(probe, terrain, sweep * Vector2(90, 51), sweep * Vector2(102, 51), true),
+		"primaryHoleClears": _check_sweep(probe, terrain, sweep * Vector2(60, 63), sweep * Vector2(63, 66), false),
+		"extraHoleClears": _check_sweep(probe, terrain, sweep * Vector2(110, 56), sweep * Vector2(114, 61), false),
+		"gapClears": _check_sweep(probe, terrain, sweep * Vector2(84, 45), sweep * Vector2(84, 74), false),
 	}
 	probe.queue_free()
 	terrain.queue_free()
@@ -1019,49 +1039,6 @@ func _check_sweep(probe: CharacterBody2D, terrain: StaticBody2D, start: Vector2,
 		var travel := (probe.position - start).dot(motion.normalized())
 		return hit != null and hit.get_collider() == terrain and travel > 0.5 and travel < motion.length() - 0.5
 	return hit == null and probe.position.distance_to(end) < 0.01
-
-## Sweep horizontal bands between vertices. Crossing pairs bound convex solid
-## pieces; the empty intervals between them include any holes in this part.
-func _add_solid_pieces(terrain: StaticBody2D, anchor: Vector2, rings: Array) -> void:
-	var heights := {}
-	var edges: Array[Vector4] = []
-	for ring in rings:
-		for i in ring.size():
-			var a := Vector2(ring[i][0], ring[i][1])
-			var next: Array = ring[(i + 1) % ring.size()]
-			var b := Vector2(next[0], next[1])
-			heights[a.y] = true
-			if a.y < b.y:
-				edges.append(Vector4(a.x, a.y, b.x, b.y))
-			elif b.y < a.y:
-				edges.append(Vector4(b.x, b.y, a.x, a.y))
-	var ys := heights.keys()
-	ys.sort()
-	for i in range(ys.size() - 1):
-		var low: float = ys[i]
-		var high: float = ys[i + 1]
-		var crossings: Array[Vector2] = []
-		for edge in edges:
-			if edge.y <= low and edge.w >= high:
-				var slope := (edge.z - edge.x) / (edge.w - edge.y)
-				crossings.append(Vector2(edge.x + (low - edge.y) * slope, edge.x + (high - edge.y) * slope))
-		crossings.sort_custom(func(a: Vector2, b: Vector2) -> bool: return a.x + a.y < b.x + b.y)
-		for j in range(0, crossings.size() - 1, 2):
-			var left := crossings[j]
-			var right := crossings[j + 1]
-			var points := PackedVector2Array([anchor + Vector2(left.x, low)])
-			if not is_equal_approx(left.x, right.x):
-				points.append(anchor + Vector2(right.x, low))
-			points.append(anchor + Vector2(right.y, high))
-			if not is_equal_approx(left.y, right.y):
-				points.append(anchor + Vector2(left.y, high))
-			if points.size() < 3:
-				continue
-			var shape := ConvexPolygonShape2D.new()
-			shape.points = points
-			var child := CollisionShape2D.new()
-			child.shape = shape
-			terrain.add_child(child)
 
 func _read_schedule(fn_id: String, content_dir: String, id := "project-timing") -> Array:
 	var decl: Dictionary = _manifest.functions[fn_id]

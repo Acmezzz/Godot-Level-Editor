@@ -18,6 +18,7 @@ extends Sprite2D
 
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
 const PolyViewScript := preload("res://src/canvas/entity_poly_view.gd")
+const MapViewData := preload("res://src/map/map_view_data.gd")
 
 ## 资产 id（旧的 scene 键已作废）
 var asset: String:
@@ -208,13 +209,7 @@ func anchor_unit() -> Vector2:
 	return anchor_unit_of(decl)
 
 static func anchor_unit_of(d: Dictionary) -> Vector2:
-	match str(d.get("anchor", "center")):
-		"top_left":
-			return Vector2.ZERO
-		"bottom_center":
-			return Vector2(0.5, 1.0)
-		_:
-			return Vector2(0.5, 0.5)
+	return MapViewData.anchor_unit(d)
 
 ## 锚点相对「视觉矩形左上角」的像素偏移（随显示尺寸变，只用于画框/命中/吸附视觉）
 func anchor_off() -> Vector2:
@@ -298,14 +293,12 @@ func contains_point(p: Vector2) -> bool:
 		return rect().has_point(p)
 	return Geometry2D.is_point_in_polygon(p, quad())
 
-## poly/path 的点集判定：p（层局部）→ 本节点局部（去 position/旋转/缩放，含 fit）
-## → 去翻转后与点集比。PolyView 子节点继承同一变换，所以用本节点 transform 的逆最省心。
+## poly/path 的点集判定：把层局部像素转回未变换的锚点局部，再与点集比较。
 func _contains_point_visual(p: Vector2) -> bool:
 	var pts := points_local()
 	if pts.is_empty():
 		return false
-	var lp: Vector2 = transform.affine_inverse() * p
-	lp = Vector2(-lp.x if flipped_h() else lp.x, -lp.y if flipped_v() else lp.y)
+	var lp := geometry_transform().affine_inverse() * p
 	var arr := PackedVector2Array()
 	for q: Vector2 in pts:
 		arr.append(q)
@@ -338,9 +331,10 @@ func aabb() -> Rect2:
 			for part in geometry_parts().slice(1):
 				points.append_array(part.points)
 		if not points.is_empty():
-			var bounds := Rect2(transform * _mirrored_point(points[0]), Vector2.ZERO)
+			var geometry := geometry_transform()
+			var bounds := Rect2(geometry * points[0], Vector2.ZERO)
 			for p in points:
-				bounds = bounds.expand(transform * _mirrored_point(p))
+				bounds = bounds.expand(geometry * p)
 			return bounds.grow(0.5)
 	if is_zero_approx(data_rotation()) and data_scale().is_equal_approx(Vector2.ONE):
 		return rect()
@@ -476,13 +470,17 @@ func _encode_points(points: Array) -> Array:
 	return out
 
 func geometry_point_from_world(world: Vector2) -> Vector2:
-	return _mirrored_point(to_local(world))
+	return _geometry_world_transform().affine_inverse() * world
 
 func geometry_point_to_world(p: Vector2) -> Vector2:
-	return to_global(_mirrored_point(p))
+	return _geometry_world_transform() * p
 
-func _mirrored_point(p: Vector2) -> Vector2:
-	return Vector2(-p.x if flipped_h() else p.x, -p.y if flipped_v() else p.y)
+func geometry_transform() -> Transform2D:
+	return MapViewData.object_transform(position - sort_anchor(), data_transform)
+
+func _geometry_world_transform() -> Transform2D:
+	var parent := get_parent() as Node2D
+	return parent.global_transform * geometry_transform() if parent != null else geometry_transform()
 
 func hole_at(local: Vector2, holes: Array) -> int:
 	for i in holes.size():
@@ -533,9 +531,11 @@ func _sync_poly_view() -> void:
 		pv2.name = "PolyView"
 		pv2.node = self
 		add_child(pv2)
+		pv = pv2
 	elif not want and pv != null:
 		pv.queue_free()
-	elif pv != null:
+	if want:
+		pv.transform = transform.affine_inverse() * geometry_transform()
 		pv.queue_redraw()
 
 ## 视觉就位：贴图按显示框等比塞入（放大取整数倍避免糊），数据 scale/rotation/flip 叠加。
