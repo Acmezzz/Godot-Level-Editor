@@ -186,15 +186,29 @@ func run() -> void:
 	var snapshot: Dictionary = canvas.extract().meta.generatorSource.parameters
 	check(snapshot.size() == 2 and snapshot.has_all(["projection", "placements"]),
 		"generation snapshots only selected fields")
-	var base: Dictionary = await app._map_file_ctrl.commit_document("发布地图供流程选用")
-	check(base.get("status") == "ok", "publish the map before it becomes a destination")
 	var pawn: EntityNode = canvas._ent_by_code_index()["R000"]
 	var pawn_code := pawn.code
 	var map_code := canvas.cur_map_code()
+	check(Maps.read(manifest, "course").is_empty(), "the new map is still unpublished")
+	MapFlowDialog.open(app)
+	var first_outlets := popup()
+	var self_target := JSON.stringify({"map": map_code})
+	var first_exit: OptionButton = first_outlets.find_child("MapFlow_completed", true, false)
+	check(range(first_exit.item_count).any(func(i):
+		return first_exit.get_item_metadata(i) == self_target and first_exit.get_item_text(i).begins_with("当前地图")),
+		"the unpublished map is an actual destination option")
+	choose(first_exit, "")
+	choose(first_exit, self_target)
+	press(first_outlets, "应用")
 	app._set_mode("content", pawn_code)
 	var exit_picker: OptionButton = app.project_shell.content_editor.root.find_child("InstanceValue_exit_target", true, false)
 	choose(exit_picker, JSON.stringify({"map": map_code}))
 	check(pawn.props.get("exit_target") == {"map": map_code}, "the same instance outlet accepts a stable map target")
+	app.project_shell.content_editor.commit_fields()
+	var base: Dictionary = await app._map_file_ctrl.commit_document("发布地图与本图接线")
+	var first_map := Maps.read(manifest, "course")
+	check(base.get("status") == "ok" and first_map.meta.flowOutputs.completed == {"map": map_code}
+		and first_map.objects[0].props.exit_target == {"map": map_code}, "publish the new map and both self-links together")
 	choose(exit_picker, JSON.stringify({"function": "signal", "content": "project-finished"}))
 	var delete_reason: String = app.project_shell.content_editor._form._delete_blocked_reason("signal", "project-finished")
 	check(pawn_code in delete_reason, "an unsaved content destination protects the referenced item")

@@ -15,8 +15,13 @@ static func options(manifest: Dictionary) -> Array[Dictionary]:
 static func destination_options(manifest: Dictionary, domains: Dictionary, working_map := {}) -> Array[Dictionary]:
 	var result: Array[Dictionary] = []
 	if domains.get("maps") == true:
+		var live: Dictionary = working_map.get("meta", {})
+		var live_code: String = live.get("code", "")
 		for row in Refs.map_target_options(manifest):
-			result.append({"name": "地图 · %s [%s]" % [row.name, row.code], "target": {"map": row.code}})
+			if row.code != live_code:
+				result.append({"name": "地图 · %s [%s]" % [row.name, row.code], "target": {"map": row.code}})
+		if not live_code.is_empty():
+			result.append({"name": "当前地图 · %s [%s]" % [live.name, live_code], "target": {"map": live_code}})
 	result.append_array(arrival_options(manifest, domains, "", working_map))
 	if domains.get("screens") == true:
 		for id in Refs.view_ids(manifest):

@@ -442,8 +442,12 @@ func _resolve_options(decl: Dictionary, project_scope := false, saved_only := fa
 			options.push_front({"v": "", "t": "当前地图（工作副本）"})
 		return options
 	if src == "editor:flow-target":
-		var working_map: Dictionary = app.canvas.arrival_snapshot() if not project_scope and not saved_only \
-			and app.map_loaded and not decl.domains.get("arrivalPorts", []).is_empty() else {}
+		var working_map := {}
+		if not project_scope and not saved_only and app.map_loaded:
+			if not decl.domains.get("arrivalPorts", []).is_empty():
+				working_map = app.canvas.arrival_snapshot()
+			elif decl.domains.get("maps") == true:
+				working_map = {"meta": app.canvas.map_data.meta}
 		return StartupTargets.destination_options(manifest, decl.domains, working_map).map(func(option):
 			return {"v": JSON.stringify(option.target), "t": option.name})
 	if src == "view:":
