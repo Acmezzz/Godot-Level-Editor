@@ -366,6 +366,9 @@ static func open(app, view_id := "", jump := {}) -> void:
 	var play_view := Kit.button("试玩已保存视图", Callable(), "ghost")
 	play_view.visible = Playtest.allows_view_entry(source)
 	play_view.tooltip_text = "从此屏幕启动独立游戏。只读取已保存版本，当前修改仍留在窗口。"
+	var play_draft := Kit.button("试玩当前草稿", Callable(), "ghost")
+	play_draft.visible = Playtest.allows_view_draft(source)
+	play_draft.tooltip_text = "游戏使用当前视图快照。其他视图、地图和内容仍使用已保存版本。"
 	var show_row := func(index: int):
 		restore_editing.call()
 		state.row = index
@@ -449,6 +452,7 @@ static func open(app, view_id := "", jump := {}) -> void:
 	buttons.add_child(duplicate_view)
 	buttons.add_child(delete_view)
 	buttons.add_child(play_view)
+	buttons.add_child(play_draft)
 	play_view.pressed.connect(func():
 		if state.saving or state.row < 0 or not current.call():
 			return
@@ -565,39 +569,57 @@ static func open(app, view_id := "", jump := {}) -> void:
 	buttons.add_child(remove_hotspot)
 	layout_mode.toggled.connect(func(enabled: bool): remove_hotspot.visible = not enabled)
 	body.add_child(buttons)
-	var save := func():
-		if state.saving:
-			return
+	var prepare := func(draft_only: bool) -> Dictionary:
 		if not load_picture.call():
-			return
+			return {}
 		var key := id.text.strip_edges()
-		var candidate := source.duplicate(true)
 		stash.call()
-		var updated := rows.duplicate(true)
+		var view: Dictionary = (rows[state.row] if state.row >= 0 else state.draft).duplicate(true)
+		var updated: Array = (baseline if draft_only else rows).duplicate(true)
 		if state.row < 0:
 			if key == "" or updated.any(func(row): return row.view_id == key):
 				notice.text = "视图 ID 必须非空且唯一。"
-				return
-			updated.append(state.draft.duplicate(true))
-		candidate["views"] = updated
+				return {}
+			updated.append(view)
+		else:
+			updated[state.row] = view
+		var candidate := source.merged({"views": updated}, true)
 		var errors: Array[Dictionary] = []
 		Validation._validate_views(candidate, errors)
 		if not errors.is_empty():
 			notice.text = "%s：%s" % [errors[0].path, errors[0].message]
-			return
+			return {}
 		var problems := Audit.view_reference_issues(candidate, key)
 		if not problems.is_empty():
 			notice.text = "%s：%s" % [problems[0].path, problems[0].message]
+			return {}
+		return {"manifest": candidate, "view": view}
+	play_draft.pressed.connect(func():
+		if state.saving or not current.call():
+			return
+		var prepared: Dictionary = prepare.call(true)
+		if prepared.is_empty():
+			return
+		var view: Dictionary = prepared.view
+		var size := Vector2i(preview.viewport_size.round())
+		var snapshot := {"view": view, "viewport": [size.x, size.y], "locale": preview.locale}
+		if app._map_file_ctrl.play_view(view.view_id, snapshot):
+			notice.text = "已启动当前草稿的试玩快照。当前编辑仍留在此窗口。")
+	var save := func():
+		if state.saving:
+			return
+		var prepared: Dictionary = prepare.call(false)
+		if prepared.is_empty():
 			return
 		state.saving = true
-		var ok: bool = await app._save_manifest_file_async(current, candidate, "views") if current.call() else false
+		var ok: bool = await app._save_manifest_file_async(current, prepared.manifest, "views") if current.call() else false
 		state.saving = false
 		if not is_instance_valid(pop) or not pop.visible:
 			return
 		if not ok:
 			notice.text = "视图未保存。请检查清单状态后重新打开。"
 			return
-		app._set_status("已保存参考视图：" + key)
+		app._set_status("已保存参考视图：" + str(prepared.view.view_id))
 		pop.hide()
 	body.add_child(Kit.popup_buttons(save, func(): pop.hide(), "保存参考视图"))
 	var element: String = jump.get("element", "")

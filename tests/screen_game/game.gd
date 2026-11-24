@@ -4,6 +4,8 @@ extends Control
 var manifest: Dictionary
 var manifest_bytes: PackedByteArray
 var map_bytes: PackedByteArray
+var draft_digest := ""
+var draft_locale := ""
 var report := {}
 var visited: Array[String] = []
 var screens: Array[String] = []
@@ -32,6 +34,9 @@ func _ready() -> void:
 		await _play_relay(JSON.parse_string(map_bytes.get_string_from_utf8()))
 		return
 	var entry := _decode(args["--editor-entry"]) if args.has("--editor-entry") else {"function": "signal", "content": "project-default"}
+	if entry.has("viewDraft") and not _load_view_draft(entry):
+		_finish("Cannot load this screen draft.")
+		return
 	if entry.has("view"):
 		_show_view(entry.view)
 	else:
@@ -39,6 +44,26 @@ func _ready() -> void:
 
 func _decode(encoded: String) -> Dictionary:
 	return JSON.parse_string(Marshalls.base64_to_utf8(encoded))
+
+func _load_view_draft(entry: Dictionary) -> bool:
+	var bytes := FileAccess.get_file_as_bytes(entry.viewDraft)
+	var snapshot = JSON.parse_string(bytes.get_string_from_utf8())
+	if not snapshot is Dictionary or snapshot.get("version") != 1 or snapshot.get("token") != report.get("token") \
+			or not snapshot.get("view") is Dictionary or snapshot.view.get("view_id") != entry.view:
+		return false
+	var hash := HashingContext.new()
+	hash.start(HashingContext.HASH_SHA256)
+	hash.update(bytes)
+	draft_digest = hash.finish().hex_encode()
+	draft_locale = snapshot.get("locale", "")
+	var views: Array = manifest.get("views", [])
+	var index := views.find_custom(func(row): return row.view_id == entry.view)
+	if index < 0:
+		views.append(snapshot.view)
+	else:
+		views[index] = snapshot.view
+	manifest["views"] = views
+	return true
 
 func _show_content(target: Dictionary) -> void:
 	cancel_target = {}
@@ -68,7 +93,7 @@ func _show_view(view_id: String, test_cancel := false) -> void:
 		if view.view_id != view_id:
 			continue
 		screens.append(view_id)
-		var buttons := _draw_screen(self, view.layout, size, "")
+		var buttons := _draw_screen(self, view.layout, size, draft_locale)
 		if verify:
 			if buttons.is_empty() or screens.size() > 8:
 				_finish("The authored route did not reach a conclusion.")
@@ -262,6 +287,8 @@ func _finish(error: String, text := "", extra := {}) -> void:
 			"message": error, "mapDigest": _map_digest(), "manifestDigest": digest.finish().hex_encode(),
 			"result": {"visited": visited, "screens": screens, "buttons": opened_buttons,
 				"latchInputs": latch_inputs, "outlets": outlets, "text": text}.merged(extra)}
+		if draft_digest != "":
+			result["viewDigest"] = draft_digest
 		_write_json(path + ".tmp", result)
 		DirAccess.rename_absolute(path + ".tmp", path)
 	if verify or not error.is_empty():

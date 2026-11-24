@@ -425,13 +425,15 @@ static func _validate_playtest(data: Dictionary, issues: Array[Dictionary]) -> v
 		_add(issues, "error", "playtest.executable", "must be a path string")
 	elif exe is String and (exe as String).strip_edges() == "" and pt2.has("executable"):
 		_add(issues, "warning", "playtest.executable", "empty executable: falls back to playCommand")
-	for feature in ["report", "projectEntry", "viewEntry"]:
+	for feature in ["report", "projectEntry", "viewEntry", "viewDraft"]:
 		if not pt2.has(feature):
 			continue
 		if not pt2[feature] is bool:
 			_add(issues, "error", "playtest." + feature, "must be a boolean")
 		elif pt2[feature] and (not exe is String or str(exe).strip_edges() == ""):
 			_add(issues, "error", "playtest." + feature, "requires a structured executable launch")
+	if pt2.get("viewDraft") == true and pt2.get("report") != true:
+		_add(issues, "error", "playtest.viewDraft", "requires report: true to verify the loaded draft")
 	if pt2.has("entryFunctions"):
 		var entries = pt2.entryFunctions
 		if pt2.get("projectEntry") != true:

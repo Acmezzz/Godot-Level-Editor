@@ -88,6 +88,7 @@
 | `playtest.args` | string[] | 可选（A6）。参数字符串数组，逐项替换 `%mapfile%`、`%projectpath%`（**不加引号**，空格路径由数组分段保证）。Godot 项目示例：`['--path', '%projectpath%', '--', '--map=%mapfile%']`。未配 `executable` 时退回 `playCommand` 模板，状态栏会标明跟踪的是包装进程 |
 | `playtest.entryFunctions` | string[] | 可选，须启用 `projectEntry: true`。填写允许作者从内容库启动的功能声明 ID；列表成员必须已声明且互不重复。 |
 | `playtest.viewEntry` | bool | 可选，须配置结构化启动。开启后，作者可以从参考视图启动该屏幕的已保存版本，不要求配置 `projectEntry`。 |
+| `playtest.viewDraft` | bool | 可选，须配置结构化启动并开启 `report: true`。开启后，作者可以试玩当前屏幕的未保存布局。 |
 | `preview` | object | 可选。声明独立进程渲染预览，可请求 `screenLayout`、`mapFrame`、`worldFrame` 和 `timelineFrame`。与试玩配置分开。 |
 | `mapGenerators` | object | 可选。按生成器 ID 声明从游戏生成可编辑地图的参数。需同时声明 `preview.capabilities` 包含 `generateMap`。 |
 | `viewports` | array | 可选（C5）。具名参考画幅 `[{id, w, h}]`：宽屏/竖屏/分屏的坐标域身份，id 非空唯一、w/h 必填正数；`viewport_ref` 字段的下拉候选来自这里 |
@@ -1306,6 +1307,14 @@ main.gd
 `{"version":1,"view":"所选 view_id"}`，此时没有 `function` 或 `content`，`%mapfile%` 为空。
 游戏应从正式清单里的指定屏幕开始，并沿自己实现的控件与流程继续运行。此入口不提交地图或屏幕草稿；
 启用回执时，`mapDigest` 为空，`manifestDigest` 使用实际读取的正式清单。
+
+`playtest.viewDraft: true` 时，试玩当前草稿发送
+`{"version":1,"view":"所选 view_id","viewDraft":"临时快照的绝对路径"}`。
+快照 JSON 为 `{version:1, token, view, viewport:[width,height], locale}`，其中 `view` 是该屏幕完整草稿，
+`token` 与本次加载回执相同。游戏应在内存里用它覆盖（或临时新增）同 ID 的屏幕，再从该屏幕进入；
+其他屏幕、地图和内容继续读正式文件。画幅和语言是编辑器当前预览设置，供游戏用于本次试玩。
+成功回执还须带 `viewDigest`，为实际读取的快照字节的 SHA-256，不能直接抄请求值。
+快照只用于当前进程，编辑器检测到退出后删除；游戏不要把它当成项目资产依赖。
 
 设 `playtest.report: true` 后，结构化 argv 末尾增加
 `--editor-playtest=<Base64 编码的 UTF-8 JSON>`，解码得到

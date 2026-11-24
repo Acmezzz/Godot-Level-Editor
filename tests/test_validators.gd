@@ -260,6 +260,9 @@ func test_screen_playtest_and_map_pairs() -> void:
 	m["playtest"] = {"viewEntry": true}
 	eq(_errs_of(m).size(), 1, "a direct screen entry needs the structured launch")
 	m.playtest["executable"] = "game.exe"
+	m.playtest["viewDraft"] = true
+	eq(_errs_of(m).size(), 1, "draft launch requires a load receipt")
+	m.playtest["report"] = true
 	var record := {"id": "targets", "kind": "input", "type": "array", "of": "record", "fields": [
 		{"id": "map", "kind": "choice", "source": "map"},
 		{"id": "floor", "kind": "choice", "source": "layer:", "mapField": "map"},

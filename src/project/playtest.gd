@@ -25,8 +25,22 @@ static func entry_arg(function_id: String, content_id: String) -> String:
 static func allows_view_entry(m: Dictionary) -> bool:
 	return m.get("playtest", {}).get("viewEntry", false) == true
 
-static func view_entry_arg(view_id: String) -> String:
-	return _encode_entry({"view": view_id})
+static func allows_view_draft(m: Dictionary) -> bool:
+	var config: Dictionary = m.get("playtest", {})
+	return config.get("viewDraft", false) == true and config.get("report", false) == true
+
+static func view_entry_arg(view_id: String, draft_path := "") -> String:
+	var entry := {"view": view_id}
+	if draft_path != "":
+		entry["viewDraft"] = ProjectSettings.globalize_path(draft_path)
+	return _encode_entry(entry)
+
+static func view_draft_path(request: Dictionary) -> String:
+	return str(request.path).get_basename() + ".view.json"
+
+static func clear_view_draft(request: Dictionary) -> void:
+	if request.has("viewDigest"):
+		DirAccess.remove_absolute(view_draft_path(request))
 
 static func _encode_entry(target: Dictionary) -> String:
 	var entry := target.merged({"version": PROTOCOL})
@@ -70,6 +84,8 @@ static func read_report(request: Dictionary) -> Dictionary:
 	for key in ["mapDigest", "manifestDigest"]:
 		if str(report.get(key, "")) != str(request[key]):
 			return {"status": "invalid", "message": "游戏加载的磁盘版本与本次试玩不一致"}
+	if request.has("viewDigest") and report.get("viewDigest") != request.viewDigest:
+		return {"status": "invalid", "message": "游戏没有加载本次屏幕草稿的快照"}
 	return report
 
 ## Author locations are optional and do not affect successful load receipts.

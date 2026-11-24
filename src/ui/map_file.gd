@@ -1418,8 +1418,7 @@ func offer_draft_recovery() -> void:
 	app._set_status(" 发现 %d 份未完成草稿：打开地图菜单可恢复（%s）" % [names.size(), ", ".join(PackedStringArray(names))])
 
 func on_play(spawn_tiles: Vector2i = Vector2i(-1, -1), project_entry := false, entry := {}) -> void:
-	if _play_pid > 0 and Playtest.is_alive(_play_pid):
-		app._set_status("已有试玩正在运行，请关闭该游戏后再启动")
+	if not _can_start_playtest():
 		return
 	if project_entry and not bool(app.manifest.get("playtest", {}).get("projectEntry", false)):
 		return
@@ -1465,15 +1464,14 @@ func on_play(spawn_tiles: Vector2i = Vector2i(-1, -1), project_entry := false, e
 		"项目入口 %s / %s" % [entry.function, entry.content] if not entry.is_empty() else "项目入口")
 	_start_playtest(play_path, digest, args, subject)
 
-## Screen entries use the published manifest. They never submit the open map or layout.
-func play_view(view_id: String) -> bool:
-	if _play_pid > 0 and Playtest.is_alive(_play_pid):
-		app._set_status("已有试玩正在运行，请关闭该游戏后再启动")
-		return false
-	if not Playtest.allows_view_entry(app.manifest):
+## Screen entries never submit the open map or layout.
+func play_view(view_id: String, draft := {}) -> bool:
+	var is_draft := not draft.is_empty()
+	var allowed := Playtest.allows_view_draft(app.manifest) if is_draft else Playtest.allows_view_entry(app.manifest)
+	if not allowed:
 		app._set_status("游戏未开放从屏幕启动试玩。")
 		return false
-	if not References.view_ids(app.manifest).has(view_id):
+	if not is_draft and not References.view_ids(app.manifest).has(view_id):
 		app._set_status("试玩中止：所选屏幕已经不存在。")
 		return false
 	var manifest_path := str(app.manifest._dir).path_join("editor/editor_manifest.json")
@@ -1481,15 +1479,35 @@ func play_view(view_id: String) -> bool:
 	if digest == "" or digest != app.manifest.get("_manifest_digest", ""):
 		app._set_status("试玩中止：磁盘清单已变化，请重新打开项目。")
 		return false
+	if is_draft:
+		return _start_playtest("", "", PackedStringArray(), "屏幕草稿 " + view_id, draft)
 	return _start_playtest("", "", PackedStringArray([Playtest.view_entry_arg(view_id)]), "屏幕 " + view_id)
 
-func _start_playtest(play_path: String, digest: String, args: PackedStringArray, subject: String) -> bool:
+func _can_start_playtest() -> bool:
+	if _play_pid > 0 and Playtest.is_alive(_play_pid):
+		app._set_status("已有试玩正在运行，请关闭该游戏后再启动")
+		return false
+	return true
+
+func _start_playtest(play_path: String, digest: String, args: PackedStringArray, subject: String, draft := {}) -> bool:
+	if not _can_start_playtest():
+		return false
+	Playtest.clear_view_draft(_play_report_request)
 	var request := Playtest.request_report(app.manifest, digest)
 	if bool(app.manifest.get("playtest", {}).get("report", false)) and request.is_empty():
 		app._set_status("试玩中止：无法创建加载回执目录")
 		return false
+	if not draft.is_empty():
+		var text := JSON.stringify(draft.merged({"version": Playtest.PROTOCOL, "token": request.token}))
+		var path := Playtest.view_draft_path(request)
+		if not Recovery.write_text(path, text):
+			app._set_status("试玩中止：无法写入屏幕草稿快照")
+			return false
+		request["viewDigest"] = text.sha256_text()
+		args.append(Playtest.view_entry_arg(draft.view.view_id, path))
 	var play_res := Playtest.launch_tracked(app.manifest, play_path, args, request)
 	if not play_res.get("ok", false):
+		Playtest.clear_view_draft(request)
 		app._set_status(" 试玩失败: " + str(play_res.get("error", "")))
 		return false
 	_play_pid = int(play_res.get("pid", 0))
@@ -1530,6 +1548,7 @@ func poll_playtest() -> void:
 	_play_pid = 0
 	if not _play_report_request.is_empty():
 		_play_report_result = Playtest.read_report(_play_report_request)
+	Playtest.clear_view_draft(_play_report_request)
 	# 试玩日志尾随——游戏侧写 editor/playtest.log，退出后取最后几行（无文件 = 原消息）
 	var tail := Playtest.log_tail(str(app.manifest.get("_dir", "")), 4)
 	var who := prog.get_file() if prog != "" else "进程"

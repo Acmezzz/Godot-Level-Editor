@@ -3400,7 +3400,7 @@ func author_signal_room(app, project: String) -> void:
 		"preview": {"version": 1, "executable": OS.get_executable_path(), "args": launch,
 			"capabilities": ["screenLayout", "mapFrame"]},
 		"playtest": {"executable": OS.get_executable_path(), "args": launch + ["--verify", "--map=%mapfile%"],
-			"report": true, "projectEntry": true, "entryFunctions": ["signal"], "viewEntry": true}}
+			"report": true, "projectEntry": true, "entryFunctions": ["signal"], "viewEntry": true, "viewDraft": true}}
 	var path := project.path_join("editor/editor_manifest.json")
 	check(Maps.write_json(path, manifest), "write only the second game's module and viewport declarations")
 	var import_log := PackedStringArray()
@@ -3602,6 +3602,22 @@ func _play_saved_signal_view(app, manifest_path: String) -> void:
 		"the independent game starts at the selected saved screen and follows its authored outlets")
 	check(popup.visible and text.text == "Draft relay caption" and digest == Store.file_digest(manifest_path),
 		"screen playtest neither publishes nor closes the unsaved layout")
+	press(popup, "试玩当前草稿")
+	var request: Dictionary = app._map_file_ctrl._play_report_request
+	var draft_path := Playtest.view_draft_path(request)
+	check(FileAccess.file_exists(draft_path) and request.has("viewDigest"), "draft launch creates a tracked snapshot")
+	text.text = "Edited after launch"
+	text.text_changed.emit(text.text)
+	var draft_report := await wait_for_playtest(app._map_file_ctrl)
+	var draft_result: Dictionary = draft_report.get("result", {})
+	check(draft_report.get("status") == "ready" and draft_report.get("viewDigest") == request.get("viewDigest")
+		and draft_result.get("screens") == ["watch-deck", "relay-tuning"]
+		and draft_result.get("buttons") == ["Draft relay caption", "Confirm the signal"]
+		and draft_result.get("text") == "Signal verified",
+		"the game runs the frozen draft and continues through the published second screen: " + str(draft_report))
+	check(popup.visible and text.text == "Edited after launch" and digest == Store.file_digest(manifest_path)
+		and not FileAccess.file_exists(draft_path),
+		"draft play keeps newer edits, leaves the manifest unchanged and removes the snapshot on exit")
 	popup.hide()
 
 func _author_relay_map(app, manifest: Dictionary) -> void:
