@@ -68,34 +68,3 @@ static func row_schema(m: Dictionary, field: Dictionary, row: Dictionary) -> Dic
 static func ensure_codes(m: Dictionary) -> bool:
 	var rows := PoolPrint.items(m.get("conditions"))
 	return PoolPrint.ensure_field_codes(m, rows)
-
-## 条件池的码表段（Markdown）；无条件声明时返回空串，由调用方拼在功能码表之后。
-static func codes_doc(m: Dictionary) -> String:
-	var conds := conditions(m)
-	if conds.is_empty():
-		return ""
-	var L: Array[String] = []
-	L.append("## 条件")
-	L.append("")
-	L.append("条件按 id 被功能声明引用（清单内人类名，条件本身无执行码）；")
-	L.append("条件字段与功能字段共用一个码空间。固定条件使用内容 fields，可配置条件组使用各行的 fields。")
-	L.append("")
-	for cid in conds:
-		var d: Dictionary = conds[cid]
-		L.append("### %s（%s）" % [str(cid), str(d.get("name", cid))])
-		L.append("")
-		var fields: Array = d.get("fields", [])
-		if fields.is_empty():
-			L.append("（无可调字段。）")
-			L.append("")
-			continue
-		L.append("| 码 | 人类 id | kind | type |")
-		L.append("|----|---------|------|------|")
-		for fd in fields:
-			if not (fd is Dictionary):
-				continue
-			L.append("| %s | %s | %s | %s |" % [
-				str((fd as Dictionary).get("code", "")), str((fd as Dictionary).get("id", "")),
-				str((fd as Dictionary).get("kind", "")), str((fd as Dictionary).get("type", ""))])
-		L.append("")
-	return "\n".join(L)

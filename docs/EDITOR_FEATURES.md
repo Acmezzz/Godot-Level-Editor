@@ -64,11 +64,11 @@ src/
 │   └── image_probe.gd      缩略图透明裁边
 ├── content/                —— 功能与内容的数据层 ——
 │   ├── declaration_pool.gd 声明池读取、缓存指纹、补发缺失执行码
-│   ├── function_decl.gd    功能声明域：声明池归一化、执行码补发/查重、码↔名互查、CODES.md
-│   ├── condition_decl.gd   条件声明域：条件池归一化、字段码补发（与功能字段同码空间）、条件码表段
-│   ├── audio_decl.gd       音频声明域：audio 池归一化、执行码补发、音频码表段
-│   ├── trigger_decl.gd     时机声明域：triggers 池归一化、执行码补发、时机码表段（无字段）
-│   ├── step_decl.gd        步骤声明域：steps 池归一化、条目/字段码补发（三池同码空间）、码表段
+│   ├── function_decl.gd    功能声明域：声明池归一化、执行码补发/查重、码↔名互查
+│   ├── condition_decl.gd   条件声明域：条件池归一化、字段码补发（与功能字段同码空间）
+│   ├── audio_decl.gd       音频声明域：audio 池归一化、执行码补发
+│   ├── trigger_decl.gd     时机声明域：triggers 池归一化、执行码补发
+│   ├── step_decl.gd        步骤声明域：steps 池归一化、条目/字段码补发（三池同码空间）
 │   ├── step_timeline.gd    步骤时间轴：at/duration/track/blocking 缺省计算、回写净化、重叠/负值警告
 │   ├── timeline_clock.gd   时间参考时钟（D2）：帧/拍↔秒换算、timePreview 声明解析
 │   ├── clone_plan.gd       复制计划（C2）：新身份映射、组内引用重映射、冲突列表
@@ -566,8 +566,7 @@ src/
   `{id, function: 执行码, name, fields:{字段码: 值}}`。
 - **复用有两种**：**复制成新 ID**（库按钮，独立一份文件，改一份不影响别人）与
   **共享改绑**（C2，本实例直接指向已有内容；确认框先列出还有谁在用同一条，改了会一起变）。
-- **码表**：保存清单时自动生成 `editor/CODES.md`（人类名 ↔ 执行码对照）；游戏侧启动读清单
-  重建同款映射，改名不破引用。
+- **执行码**：从清单读取稳定声明 ID 与执行码的对应关系，显示名可修改。
 - **引用类字段的取数域（C1）**：声明了 `mapField` 的 `entity_ref`/`port_ref`/`edge_ref`，候选来自**同一行/同一内容里
   那个地图字段的当前值**（不是「当前打开的地图」）；没配对字段就是本图。结构化行里作用域收窄到**本行**。
 
@@ -708,7 +707,7 @@ src/
 |---|---|---|---|
 | 内容视图 Ctrl+S、顶栏「保存」 | ① 清单（仅当有待补发码）② 暂存内容每条一文件 ③ 当前地图（仅当有改动或尚未落盘） | 无 | `project_shell.gd::save_current` → `map_file.gd::commit_document` |
 | 地图菜单「保存」/ Ctrl+S（内容视图同一条） | 同上；无待写改动时不写文件 | 同上 | `app.gd::_on_save` → `map_file.gd::save_all` |
-| 顶栏「保存」（资产视图） | 写 `editor/editor_manifest.json`，成功后尝试更新 `editor/CODES.md`；对照表写入失败不回滚清单 | 无 | `project_shell.gd::save_current` 的 `_` 分支 → `app.gd::_save_manifest_file_async` |
+| 顶栏「保存」（资产视图） | 写 `editor/editor_manifest.json` | 无 | `project_shell.gd::save_current` 的 `_` 分支 → `app.gd::_save_manifest_file_async` |
 | 试玩 | 同上；地图试玩要求已提交地图的路径和摘要与磁盘一致 | 同上 | `playtest_controller.gd::on_play` → `map_file.gd::prepare_playtest_document` |
 | 地图改名 | ① 新名文件写入 ② 旧名文件删除 | 两文件一条日志 | `map_store.gd::rename_map` |
 | 复制整图 / 转换后另存 | 若清单仍有待发布的补码，先由编辑器发布清单，再提交① 新内容 N 份 ② 新地图 1 份 | 新内容与新地图共用一条冻结计划日志 | `map_file.gd::_publish_map_copy` → `map_store.gd::apply_duplicate` |

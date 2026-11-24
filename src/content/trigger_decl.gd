@@ -44,22 +44,3 @@ static func trigger_id_of(m: Dictionary, code: String) -> String:
 ## 只补空的，不碰重复码——重复由校验报错。
 static func ensure_codes(m: Dictionary) -> bool:
 	return PoolPrint.ensure_entry_codes(PoolPrint.items(m.get("triggers")))
-
-## 时机的码表段（Markdown）；无声明时返回空串。
-static func codes_doc(m: Dictionary) -> String:
-	var all := triggers(m)
-	if all.is_empty():
-		return ""
-	var L: Array[String] = []
-	L.append("## 时机")
-	L.append("")
-	L.append("时机由游戏工程声明（判定归功能代码）；功能按 id 引用，绑定写时机码。")
-	L.append("")
-	L.append("| 码 | 人类 id | 名称 |")
-	L.append("|----|---------|------|")
-	for tid in all:
-		var d: Dictionary = all[tid]
-		L.append("| %s | %s | %s |" % [
-			str(d.get("code", "")), str(tid), str(d.get("name", tid))])
-	L.append("")
-	return "\n".join(L)

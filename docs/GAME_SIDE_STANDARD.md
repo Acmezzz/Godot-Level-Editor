@@ -26,8 +26,7 @@
 ├── content/<功能id>/<内容ID>.json   # 内容条目（根目录可被清单 contentDir 改）
 ├── editor/                          # 编辑器私有，游戏侧一律忽略
     ├── drafts/<地图码>.json          # 自动草稿（崩溃后恢复用）
-    ├── pending/pending-<时间戳>.json # 多文件提交日志（下次启动检查是否写全）
-    └── CODES.md                     # 人类名 ↔ 执行码对照表（每次保存清单重写）
+    └── pending/pending-<时间戳>.json # 多文件提交日志（下次启动检查是否写全）
 └── assets/                          # 资产发现目录（正式注册表是清单）
     ├── tiles/                       # 图片 → 瓦片图集资产（递归；png/jpg/jpeg/webp/bmp/tga）
     ├── images/                      # 图片 → 图片摆放资产（递归；同上扩展名）
@@ -662,8 +661,7 @@ UTF-8 `map.json`（最多 4 MiB），再按通用协议写 `result.json`；此�
 | 内容文件 `"function"` 键 | 功能执行码 |
 | 内容文件 `fields` 的键 | 字段执行码 |
 
-人类名 ↔ 码对照表在每次保存清单时自动写到 `editor/CODES.md`；游戏侧启动时读清单重建同样的
-映射（约 30 行代码），改名（id 或 name）不破任何磁盘引用。
+游戏侧启动时直接从清单建立稳定声明 ID 与执行码的映射。显示名可修改；稳定 ID 和执行码应保持不变。
 
 **字段声明 = kind（input/choice）+ type**。控件映射（`field_widgets.gd`）：
 
@@ -1265,7 +1263,7 @@ v5 的定长数组条目校验报错（跑 `tools/migrate_project.gd`）。
 | `id` | 与文件名同名；编辑器写盘时强制覆盖为文件名 |
 | `function` | 功能**执行码**，与所在目录名（功能人类 id）不同——目录名给人读，文件内写码 |
 | `name` | 显示名 |
-| `fields` | `{字段执行码: 值}`，码来自清单 `functions[].fields[].code`（CODES.md 可查） |
+| `fields` | `{字段执行码: 值}`，码来自清单 `functions[].fields[].code` |
 
 **路径**：`<工程根>/<contentDir>/<function>/<id>.json`，`contentDir` 缺省 `content`。
 目录名与文件名都**不能含 `.`**（目录）**或路径分隔符 / `..` / `:`**（文件名）。
@@ -1327,7 +1325,7 @@ TEST-FY9F-QK3T-DLOG-7M2XK9
 已经发布的内容 ID 保持原样。游戏按完整 ID 查找内容，不拆分旧 ID 来判断归属；
 执行功能取地图 `functions[].fn` 或内容文件 `"function"` 中的码。
 
-两端映射表：编辑器保存清单时生成 `editor/CODES.md`；游戏侧启动读清单重建同款映射
+游戏侧启动时直接从清单建立映射
 （`functions[].code` ↔ `id`，`fields[].code` ↔ `id`）。
 
 ## 6. 游戏侧读取契约
@@ -1732,7 +1730,7 @@ static func build(root: Node2D, data: Dictionary, manifest: Dictionary) -> Dicti
 ### 7.2 实现（游戏侧，读内容）
 
 ```gdscript
-# 启动时从清单构建 码↔名 映射（这就是 CODES.md 的运行时等价物）：
+# 启动时从清单建立执行码到稳定声明 ID 的映射：
 var fn_by_code := {}      # 功能码 -> 功能 id
 var field_by_code := {}   # 字段码 -> 字段 id
 ## 清单允许 dict 与 array 两种写法（§2.5），两边都要处理——只写 dict 会在数组写法下静默空表。

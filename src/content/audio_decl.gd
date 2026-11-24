@@ -52,23 +52,3 @@ static func by_code(m: Dictionary, code: String) -> Dictionary:
 ## 只补「空」的，不碰重复码——重复由校验报错（与 function_decl 同一纪律）。
 static func ensure_codes(m: Dictionary) -> bool:
 	return PoolPrint.ensure_entry_codes(PoolPrint.items(m.get("audio")))
-
-## 音频池的码表段（Markdown）；无音频声明时返回空串，由调用方拼在码表末尾。
-static func codes_doc(m: Dictionary) -> String:
-	var all := audio(m)
-	if all.is_empty():
-		return ""
-	var L: Array[String] = []
-	L.append("## 音频")
-	L.append("")
-	L.append("音频资产由游戏工程声明（path 解释权在游戏侧）；编辑器把 `audio:` 来源渲染成")
-	L.append("下拉，内容 fields 里存音频码，时间轴可试听项目内的参考音频。")
-	L.append("")
-	L.append("| 码 | 人类 id | 名称 | 路径 |")
-	L.append("|----|---------|------|------|")
-	for aid in all:
-		var d: Dictionary = all[aid]
-		L.append("| %s | %s | %s | %s |" % [
-			str(d.get("code", "")), str(aid), str(d.get("name", aid)), str(d.get("path", ""))])
-	L.append("")
-	return "\n".join(L)

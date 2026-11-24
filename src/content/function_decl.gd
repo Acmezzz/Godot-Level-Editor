@@ -1,7 +1,7 @@
 extends RefCounted
 class_name FunctionDecl
 ## 功能/字段声明域（从 manifest.gd 拆出）：functions 归一化视图、码补发、
-## 码↔名双向查找、CODES.md 生成。声明域只依赖 manifest 字典本身，全部静态函数。
+## 执行码与声明 ID 互查。声明域只依赖 manifest 字典本身，全部静态函数。
 
 ## 归一化结果缓存：content_editor 重建右栏时逐字段调用 function_fields 等，
 ## 全量重扫是纯浪费。指纹 = 项目目录 + functions 池的递归结构哈希（F1/P03：
@@ -191,46 +191,3 @@ static func fill_bindings(m: Dictionary, asset_id: String, fns: Array) -> Dictio
 		if out[k] is Dictionary:
 			(out[k] as Dictionary)["order"] = k + 1
 	return {"functions": out, "changed": true, "ambiguous": ambiguous}
-
-## 人类名 ↔ 执行码对照表（Markdown），保存清单时写到 editor/CODES.md。
-## 游戏侧启动时读清单即可重建同样的运行时映射；本表是给人看的快照 + git diff 友好。
-## 另一用途：游戏侧改码后 diff 这张表就能看清「改了名没改码」还是「换了码」。
-static func codes_doc(m: Dictionary) -> String:
-	var L: Array[String] = []
-	L.append("# 码表")
-	L.append("")
-	L.append("人类名 ↔ 执行码对照，编辑器在保存清单时自动生成（勿手改）。")
-	L.append("磁盘执行引用（地图 functions[].fn、内容 \"function\"、内容 fields 的键）写码；")
-	L.append("人类 id 只负责显示与内容目录名。游戏侧启动时读清单重建同样的映射。")
-	L.append("")
-	var all := functions(m)
-	if all.is_empty():
-		# 无功能声明：只留说明，避免空表让游戏侧误以为码表缺失
-		L.append("（清单未声明功能。）")
-		return "\n".join(L)
-	L.append("## 功能")
-	L.append("")
-	L.append("| 码 | 人类 id | 显示名 |")
-	L.append("|----|---------|--------|")
-	for fid in all:
-		var d: Dictionary = all[fid]
-		L.append("| %s | %s | %s |" % [str(d.get("code", "")), str(fid), str(d.get("name", fid))])
-	L.append("")
-	L.append("## 字段")
-	for fid in all:
-		var fields: Array = (all[fid] as Dictionary).get("fields", [])
-		if fields.is_empty():
-			continue
-		L.append("")
-		L.append("### %s" % str(fid))
-		L.append("")
-		L.append("| 码 | 人类 id | kind | type |")
-		L.append("|----|---------|------|------|")
-		for fd in fields:
-			if not (fd is Dictionary):
-				continue
-			var d2: Dictionary = fd
-			L.append("| %s | %s | %s | %s |" % [
-				str(d2.get("code", "")), str(d2.get("id", "")),
-				str(d2.get("kind", "")), str(d2.get("type", ""))])
-	return "\n".join(L)

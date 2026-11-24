@@ -11,11 +11,6 @@ const ImageProbe := preload("res://src/assets/image_probe.gd")
 const UiThemeScript := preload("res://src/ui/ui_theme.gd")
 const UiKitScript := preload("res://src/ui/ui_kit.gd")
 const MapStore := preload("res://src/map/map_store.gd")
-const FunctionDecls := preload("res://src/content/function_decl.gd")
-const ConditionDecls := preload("res://src/content/condition_decl.gd")
-const StepDecls := preload("res://src/content/step_decl.gd")
-const AudioDecls := preload("res://src/content/audio_decl.gd")
-const TriggerDecls := preload("res://src/content/trigger_decl.gd")
 const EdgeRef := preload("res://src/map/edge_ref.gd")   # §7.4：格边身份（选点确认后对准）
 
 var manifest := {}
@@ -855,24 +850,6 @@ func _save_manifest_file_async(guard := Callable(), snapshot := {}, publish_key 
 	manifest.erase("_codes_issued")
 	manifest.erase("_codes_issued_now")
 	manifest["_manifest_digest"] = txt.sha256_text()
-	# 人类名 ↔ 执行码对照表随清单一起刷新（游戏侧重建映射、人工 diff 均用）；
-	# 只在清单落盘成功后写，码表写失败不影响清单本身，状态栏单独报。
-	var cp: String = str(manifest.get("_dir", "")).path_join("editor/CODES.md")
-	var doc := FunctionDecls.codes_doc(manifest)
-	var cdoc := ConditionDecls.codes_doc(manifest)
-	if cdoc != "":
-		doc += "\n" + cdoc
-	var adoc := AudioDecls.codes_doc(manifest)
-	if adoc != "":
-		doc += "\n" + adoc
-	var sdoc := StepDecls.codes_doc(manifest)
-	if sdoc != "":
-		doc += "\n" + sdoc
-	var tdoc := TriggerDecls.codes_doc(manifest)
-	if tdoc != "":
-		doc += "\n" + tdoc
-	if not MapStore.write_text(cp, doc):
-		_set_status(" 清单已保存，但码表写入失败: " + cp)
 	return true
 ## —— 拆到 src/canvas/editor_state.gd 的委托（调用点保持不变） ——
 func _apply_state(tool := "", layer := -1) -> void:
