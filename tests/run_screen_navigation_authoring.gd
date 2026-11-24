@@ -44,8 +44,8 @@ func run() -> void:
 			"course": {"name": "Generated course rules", "contentTypes": ["course_rules"]}},
 		"mapGenerators": {"course": {"contentType": "course_rules",
 			"parameterFields": ["projection", "placements"]}},
-		"preview": {"version": 1, "executable": OS.get_executable_path(), "capabilities": ["generateMap"],
-			"args": ["--headless", "--path", "%projectpath%", "--"]},
+		"preview": {"version": 1, "executable": OS.get_executable_path(), "capabilities": ["generateMap", "mapFrame"],
+			"args": ["--rendering-method", "gl_compatibility", "--audio-driver", "Dummy", "--path", "%projectpath%", "--"]},
 		"screenModules": {"course-door": {"outputs": {"accepted": {"name": "Enter", "arrivalPorts": ["arrival"]}},
 			"fields": [{"id": "marker", "kind": "input", "type": "port_ref", "of": "signal"}]},
 			"signal-latch": {"name": "Latch", "outputs": {"accepted": {"name": "Continue", "screens": true}}, "fields": [
@@ -646,7 +646,47 @@ func add_screen(id: String, label: String, module: Dictionary, target: Dictionar
 		check(port.item_count > 1 and range(1, port.item_count).all(func(i):
 			return JSON.parse_string(port.get_item_metadata(i)).port == "wire"),
 			"unpaired module field offers the selected map's ports of the declared type")
-		choose(port, JSON.stringify({"map": target.map, "inst": target.inst, "port": "wire"}))
+		var picker: Button = pop.find_child("FrameFieldReference_marker", true, false)
+		if not check(picker != null, "unpaired module port offers the game frame picker"):
+			return
+		picker.pressed.emit()
+		var preview := popup()
+		var render: Button = preview.find_child("MapGamePreviewRender", true, false)
+		if not check(render != null and render.text == "渲染目标地图", "the picker targets the selected saved map"):
+			return
+		choose(preview.find_child("MapGamePreviewViewport", true, false), "handheld")
+		render.pressed.emit()
+		var until := Time.get_ticks_msec() + 8000
+		while render.disabled and Time.get_ticks_msec() < until:
+			await process_frame
+		var shot: TextureRect = preview.find_child("MapGamePreviewFrame", true, false)
+		if not check(shot.texture != null, "load the game-rendered map"):
+			preview.hide()
+			return
+		await process_frame
+		var image := shot.texture.get_image()
+		var pixel := Vector2(-1, -1)
+		for y in image.get_height():
+			for x in image.get_width():
+				if image.get_pixel(x, y).is_equal_approx(Color("#ffbe54")):
+					pixel = Vector2(x, y + 2)
+					break
+			if pixel.x >= 0:
+				break
+		var extent := Vector2(image.get_size())
+		var fit := minf(shot.size.x / extent.x, shot.size.y / extent.y)
+		var mouse := InputEventMouseButton.new()
+		mouse.button_index = MOUSE_BUTTON_LEFT
+		mouse.pressed = true
+		mouse.position = (shot.size - extent * fit) * 0.5 + pixel * fit
+		shot.gui_input.emit(mouse)
+		var confirm: Button = preview.find_child("MapGamePreviewConfirmPick", true, false)
+		if not check(not confirm.disabled, "the game image identifies a compatible relay port"):
+			preview.hide()
+			return
+		confirm.pressed.emit()
+		await process_frame
+		await process_frame
 	var control: OptionButton = pop.find_child("LayoutElementTarget" if module.is_empty() else "LayoutOutput_accepted", true, false)
 	choose(control, target)
 	press(pop, "保存参考视图")

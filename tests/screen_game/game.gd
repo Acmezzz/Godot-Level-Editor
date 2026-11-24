@@ -369,8 +369,12 @@ func _preview(path: String) -> void:
 		var map: Dictionary = request.subject.map
 		var camera := _relay_camera(Vector2(extent))
 		var pawns := _draw_relay(surface, map, camera)
+		var relay_port := "receive"
+		for asset in request.subject.manifest.get("assets", []):
+			if asset.id == "relay" and asset.get("ports", []).any(func(port): return port.id == "wire"):
+				relay_port = "wire"
 		_write_json(dir.path_join("picks.json"), {"version": 1, "token": request.token,
-			"regions": _relay_regions(map, pawns, Vector2(extent), camera)})
+			"regions": _relay_regions(map, pawns, Vector2(extent), camera, relay_port)})
 	else:
 		_draw_screen(surface, request.subject.layout, Vector2(extent), request.locale, request.viewport.get("id", ""))
 	await RenderingServer.frame_post_draw
@@ -415,7 +419,7 @@ func _relay_layer(layer: Dictionary) -> Transform2D:
 	var offset: Array = layer.get("offset", [0, 0])
 	return Transform2D(0.0, Vector2.ONE * float(layer.get("scale", 1)), 0.0, Vector2(offset[0], offset[1]))
 
-func _relay_regions(map: Dictionary, pawns: Dictionary, extent: Vector2, camera: Transform2D) -> Array:
+func _relay_regions(map: Dictionary, pawns: Dictionary, extent: Vector2, camera: Transform2D, relay_port: String) -> Array:
 	var layer: Dictionary = map.meta.layers[0]
 	var inverse := (_relay_view(camera, layer)).affine_inverse()
 	var regions := []
@@ -427,7 +431,7 @@ func _relay_regions(map: Dictionary, pawns: Dictionary, extent: Vector2, camera:
 			continue
 		var targets := {"entity": row.code}
 		if row.asset == "relay":
-			targets["port"] = {"map": map.meta.code, "inst": row.code, "port": "receive"}
+			targets["port"] = {"map": map.meta.code, "inst": row.code, "port": relay_port}
 		for points in [[0, 1, 2], [0, 2, 3]]:
 			var screen: Array = points.map(func(i: int): return [outline[i].x, outline[i].y])
 			regions.append({"screen": screen, "targets": targets})

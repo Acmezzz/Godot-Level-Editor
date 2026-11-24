@@ -859,19 +859,17 @@ func _build_ref_row(fd: Dictionary, props: Dictionary, fdecls: Array = []) -> Co
 		pick.tooltip_text = "临时切到画布点一个实例；确认才写入，取消不改当前值"
 		pick.add_theme_font_size_override("font_size", Th.FS_META)
 		row.add_child(pick)
-	if FieldWidgets.wants_frame_pick(fd) and FieldWidgets.frame_value_available(fd, built) \
-			and FrameReference.reference_available(app, expected_map):
-		var frame_pick := Kit.button("实景选…", func():
-			var save := func(value) -> bool:
-				if origin == null or not is_instance_valid(origin) or origin != _current_spr() \
-						or RefFields.paired_map_value(fd, fdecls, origin.props, "id") != expected_map:
-					return false
-				await _set_prop_ref(fd, value)
-				_rebuild_right()
-				return origin.props.get(fid) == value
-			FrameReference.open_reference(app, d, _resolve_options, save, row.get_window(), built.get("pick_values", Callable())), "ghost")
-		frame_pick.name = "FrameReference_" + fid
-		row.add_child(frame_pick)
+	if FieldWidgets.wants_frame_pick(fd) and FieldWidgets.frame_value_available(fd, built):
+		var pair := func() -> Array[String]: return RefFields.frame_scope(fd, fdecls, origin.props, "id")
+		var save := func(value) -> bool:
+			if not is_instance_valid(origin) or origin != _current_spr():
+				return false
+			await _set_prop_ref(fd, value)
+			return origin.props.get(fid) == value
+		var frame_pick := FrameReference.add_reference_button(app, row, d, pair, save,
+			_resolve_options, false, _rebuild_right, "", built.get("pick_values", Callable()))
+		if frame_pick != null:
+			frame_pick.name = "FrameReference_" + fid
 	# E1：问题抽屉跳「某字段悬空」——对应行加一次醒目标记（重建后即消失）
 	if fid == _field_focus:
 		Kit.highlight_field_row(row)

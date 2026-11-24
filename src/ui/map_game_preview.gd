@@ -259,13 +259,23 @@ static func reference_available(app, map_key: String) -> bool:
 
 static func add_reference_button(app, row: Control, decl: Dictionary, pair: Callable,
 		commit: Callable, resolve: Callable, project_scope: bool, refresh: Callable, context := "",
-		read := Callable(), saved_only := false) -> void:
+		read := Callable(), saved_only := false) -> Button:
 	if not GamePreview.supports(app.manifest, CAPABILITY):
-		return
-	if context == "" and (project_scope or not app.map_loaded) and not decl.has("mapField"):
-		return
-	var button := Kit.button("实景选…", func():
+		return null
+	var picker: OptionButton
+	for child in row.get_children():
+		picker = child.get_node_or_null("ReferenceTargetMap") as OptionButton
+		if picker != null:
+			break
+	if picker == null and context == "" and (project_scope or not app.map_loaded) and not decl.has("mapField"):
+		return null
+	var selected_scope := func() -> Array:
 		var scope: Array = pair.call()
+		if picker != null:
+			scope = [picker.get_selected_metadata(), scope[1]]
+		return scope
+	var button := Kit.button("实景选…", func():
+		var scope: Array = selected_scope.call()
 		var key: String = scope[0]
 		var effective := key if key != "" else context
 		if (project_scope and effective == "") or not reference_available(app, effective):
@@ -273,18 +283,19 @@ static func add_reference_button(app, row: Control, decl: Dictionary, pair: Call
 			return
 		var scoped := decl.merged({"_mapKey": effective, "_pickLayer": scope[1]}, true)
 		var save := func(value) -> bool:
-			if not is_instance_valid(row) or not row.is_inside_tree() or row.is_queued_for_deletion() or pair.call() != scope:
+			if not is_instance_valid(row) or not row.is_inside_tree() or row.is_queued_for_deletion() or selected_scope.call() != scope:
 				return false
 			# A temporary map resolves a local reference; it is not part of the authored value.
 			if key.is_empty() and not context.is_empty() and value is Dictionary:
 				value = value.merged({"map": ""}, true)
-			if not commit.call(value):
+			if not await commit.call(value):
 				return false
 			refresh.call_deferred()
 			return true
 		open_reference(app, scoped, resolve, save, row.get_window(), read, saved_only), "ghost")
 	button.name = "FrameFieldReference_" + str(decl.get("id", ""))
 	row.add_child(button)
+	return button
 
 static func open_reference(app, decl: Dictionary, resolve: Callable, commit: Callable, window: Window,
 		read := Callable(), saved_only := false) -> void:
