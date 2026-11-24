@@ -85,7 +85,8 @@ func _ready() -> void:
 			add_child(player)
 			var route := _current if _load_board(map, "entry") and _advance_board() else ""
 			_report("ready", "", {"picks": lanes, "opened": _activate_switch(map, manifest), "contours": contours,
-				"playerStart": [player.position.x, player.position.y], "switchCopies": copies, "authoredRoute": route})
+				"playerStart": [player.position.x, player.position.y], "switchCopies": copies, "authoredRoute": route,
+				"authoredEdge": _traversed_edge})
 		elif map.get("meta", {}).get("name") == "rule_hex" and not map.meta.get("cellGraph", {}).is_empty():
 			var route := _check_floor_route(map)
 			if route.is_empty():

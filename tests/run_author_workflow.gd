@@ -2637,6 +2637,35 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 		"only the selected outgoing direction is added")
 	check(await cvs.undo() and cvs.cell_graph().cells[0].neighbors.is_empty(), "undo removes the authored link")
 	check(await cvs.redo() and cvs.cell_graph().cells[0].neighbors == ["exit-floor"], "redo restores the same link")
+	app._layout_ctrl._on_map_menu_id(23)
+	var edge_pop := await _render_pick_frame(app)
+	if edge_pop == null:
+		return
+	var edge_tools: OptionButton = edge_pop.find_child("MapGamePreviewTool", true, false)
+	edge_tools.select(2)
+	edge_tools.item_selected.emit(2)
+	select_metadata(edge_pop.find_child("FrameGraphEdgeType", true, false), "stairs")
+	var edge_cost: SpinBox = edge_pop.find_child("FrameEdgeProperty_cost", true, false)
+	check(edge_cost.value == 9, "declared edge defaults appear in the game frame editor")
+	edge_cost.value = 3
+	_click_pick_frame(edge_pop, Vector2(0.15, 0.24))
+	apply = _click_pick_frame(edge_pop, Vector2(0.68, 0.28))
+	check(not apply.disabled and cvs.cell_graph().get("edges", []).is_empty(), "typed edge remains a draft until confirmation")
+	apply.pressed.emit()
+	if await _wait_for_pick_frame(edge_pop) == null:
+		return
+	edge_pop.hide()
+	var authored_edge: Dictionary = cvs.cell_graph().get("edges", [{}]).front()
+	check(authored_edge.get("from") == "entry" and authored_edge.get("to") == "exit-floor"
+		and authored_edge.get("type") == "stairs" and authored_edge.get("props", {}).get("cost") == 3
+		and cvs.cell_graph().cells[0].neighbors == ["exit-floor"], "typed edge preserves its own cost and the parallel simple link")
+	check(await cvs.undo() and cvs.cell_graph().get("edges", []).is_empty(), "one undo removes only the typed edge")
+	var edge_redo: bool = await cvs.redo()
+	var restored_edges: Array = cvs.cell_graph().get("edges", [])
+	check(edge_redo and restored_edges.size() == 1 and restored_edges[0].id == authored_edge.get("id")
+		and restored_edges[0].from == "entry" and restored_edges[0].to == "exit-floor"
+		and restored_edges[0].type == "stairs" and int(restored_edges[0].props.cost) == 3,
+		"redo restores the same typed edge identity and cost")
 	var saved: Dictionary = await app._map_file_ctrl.commit_document("保存实景落点及连接")
 	check(saved.get("status") == "ok", "publish positions and port selected from the game frame")
 	await app._load_map_file(path)
@@ -2654,6 +2683,7 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 		and result.switchCopies[0].layer == upper and result.switchCopies[0].target.inst == doors[1].code
 		and result.switchCopies[0].message == "Draft copied from the game frame"
 		and result.get("authoredRoute") == "exit-floor"
+		and result.get("authoredEdge") == authored_edge.get("id")
 		and result.get("contours", []).size() == 1 and result.contours[0].props == compound,
 		"game reloads both view positions and the projected polygon, and opens the selected door: " + str(report))
 

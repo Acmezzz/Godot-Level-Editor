@@ -1,18 +1,26 @@
 extends RefCounted
-## Author polygons and simple directed links using the game's pick mappings.
+## Author polygons and directed links using the game's pick mappings.
 
 const Graph := preload("res://src/map/cell_graph.gd")
 const Geometry := preload("res://src/map/object_geometry.gd")
 const Picks := preload("res://src/project/frame_picks.gd")
 const Kit := preload("res://src/ui/ui_kit.gd")
+const GraphEditor := preload("res://src/ui/cell_graph_editor.gd")
+const Id := preload("res://src/content/content_id.gd")
 const INK := Color("ffda67")
-const TOOLS := ["绘制新格", "切换有向邻接"]
+enum Tool {POLYGON, NEIGHBOR, EDGE}
+const TOOLS := ["绘制新格", "切换有向邻接", "新建独立连接"]
 signal controls_changed
 
 var canvas: EditorCanvas
 var tool := 0
 var id_field := LineEdit.new()
 var space_picker := OptionButton.new()
+var edge_controls := VBoxContainer.new()
+var edge_type := OptionButton.new()
+var edge_form := VBoxContainer.new()
+var edge_draft := {"props": {}}
+var edge_commits := []
 var points := []
 var screen := PackedVector2Array()
 var from := ""
@@ -24,6 +32,7 @@ func _init(cvs: EditorCanvas) -> void:
 	clear()
 
 func controls() -> Control:
+	var form := Kit.vbox(5)
 	var row := Kit.hbox(8)
 	id_field.name = "FrameGraphCellId"
 	id_field.placeholder_text = "新格 ID"
@@ -43,17 +52,52 @@ func controls() -> Control:
 			controls_changed.emit())
 	row.add_child(space_picker)
 	row.add_child(id_field)
-	return row
+	form.add_child(row)
+	edge_type.name = "FrameGraphEdgeType"
+	edge_type.add_item("通用连接")
+	edge_type.set_item_metadata(0, "")
+	var types := Graph.edge_types(canvas.manifest)
+	for id in types:
+		if types[id] is Dictionary:
+			edge_type.add_item(str(types[id].get("name", id)))
+			edge_type.set_item_metadata(edge_type.item_count - 1, id)
+	edge_type.item_selected.connect(func(_index: int): _build_edge_form())
+	edge_controls.add_child(Kit.field_row("连接类型", edge_type, 82))
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size.y = 92
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	edge_form.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(edge_form)
+	edge_controls.add_child(scroll)
+	form.add_child(edge_controls)
+	clear()
+	return form
+
+func _build_edge_form() -> void:
+	for child in edge_form.get_children():
+		edge_form.remove_child(child)
+		child.queue_free()
+	edge_commits.clear()
+	var kind: String = edge_type.get_selected_metadata()
+	var types := Graph.edge_types(canvas.manifest)
+	edge_draft = {"props": Graph.edge_defaults(types, kind)}
+	GraphEditor.add_edge_properties(edge_form, Graph.edge_fields(types, kind), edge_draft, "FrameEdgeProperty_", edge_commits)
 
 func clear() -> void:
 	points.clear()
 	screen.clear()
 	from = ""
 	pending.clear()
-	id_field.visible = tool == 0
-	space_picker.visible = tool == 0
-	status = "输入新格 ID，选择空间，再在实景上依次描点；右键撤末点。" if tool == 0 \
-		else "依次点击起点格和终点格，确认后切换起点的有向邻接。右键重选。"
+	id_field.visible = tool == Tool.POLYGON
+	space_picker.visible = tool == Tool.POLYGON
+	edge_controls.visible = tool == Tool.EDGE
+	match tool:
+		Tool.POLYGON:
+			status = "输入新格 ID，选择空间，再在实景上依次描点；右键撤末点。"
+		Tool.NEIGHBOR:
+			status = "依次点击起点格和终点格，确认后切换起点的有向邻接。右键重选。"
+		Tool.EDGE:
+			status = "选择连接类型和属性，再依次点击起点格和终点格。右键重选。"
 
 func ready() -> bool:
 	return not pending.is_empty()
@@ -129,18 +173,19 @@ func _pick_link(pixel: Vector2, regions: Array) -> void:
 	if from.is_empty():
 		from = hit.value
 		screen.append(pixel)
-		status = "起点 %s · 请选择另一个格。" % from
+		status = "起点 %s · 请选择终点格。" % from
 		return
 	pending.clear()
 	screen.resize(1)
-	if hit.value == from:
+	if hit.value == from and tool == Tool.NEIGHBOR:
 		status = "终点不能与起点相同。"
 		return
 	var to: String = hit.value
 	screen.append(pixel)
 	var linked := Graph.neighbors(canvas.cell_graph(), from).has(to)
 	pending = {"from": from, "to": to}
-	status = "%s邻接 %s → %s · 可应用。" % ["移除" if linked else "添加", from, to]
+	status = "新建连接 %s → %s · 可应用。" % [from, to] if tool == Tool.EDGE \
+		else "%s邻接 %s → %s · 可应用。" % ["移除" if linked else "添加", from, to]
 
 func apply() -> bool:
 	var graph := canvas.cell_graph().duplicate(true)
@@ -150,6 +195,18 @@ func apply() -> bool:
 			return false
 		var cells: Array = graph.get_or_add("cells", [])
 		cells.append(pending.duplicate(true))
+	elif tool == Tool.EDGE:
+		if not _layer_editable(Graph.layer_of_cell(graph, pending.from)):
+			return false
+		for commit: Callable in edge_commits:
+			if not commit.call():
+				return false
+		var edges: Array = graph.get_or_add("edges", [])
+		var id := Id.new_inst_code()
+		while edges.any(func(edge): return edge is Dictionary and edge.get("id") == id):
+			id = Id.new_inst_code()
+		edges.append({"id": id, "from": pending.from, "to": pending.to,
+			"type": edge_type.get_selected_metadata(), "props": edge_draft.props.duplicate(true)})
 	else:
 		if not _layer_editable(Graph.layer_of_cell(graph, pending.from)):
 			return false

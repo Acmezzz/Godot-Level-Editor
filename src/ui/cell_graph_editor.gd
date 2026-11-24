@@ -728,11 +728,7 @@ static func _build_edge_fields(form: VBoxContainer, cell: Dictionary, cells: Arr
 		var id := Id.new_inst_code()
 		while not _edge_by_id(edges, id).is_empty():
 			id = Id.new_inst_code()
-		var props := {}
-		var fields = types.get(kind, {}).get("fields", [])
-		for fd in fields if fields is Array else []:
-			if fd is Dictionary and fd.get("id") is String and fd.has("default"):
-				props[fd.id] = fd.default
+		var props := Graph.edge_defaults(types, kind)
 		edges.append({"id": id, "from": cell.id, "to": cell.id, "type": kind, "props": props})
 		state.edge = id
 		notice.text = "已新建连接。可用下拉或在预览中点选目标格。"
@@ -768,8 +764,19 @@ static func _build_edge_fields(form: VBoxContainer, cell: Dictionary, cells: Arr
 	var props = edge.get("props", {})
 	if not props is Dictionary:
 		form.add_child(Kit.hint_label("连接属性格式无效，原值已保留；可移除并重建此连接。", 300))
-	var fields = types.get(str(edge.get("type", "")), {}).get("fields", [])
-	for fd in fields if fields is Array and props is Dictionary else []:
+	else:
+		add_edge_properties(form, Graph.edge_fields(types, str(edge.get("type", ""))), edge, "EdgeProperty_", state.commits)
+	form.add_child(Kit.button("移除所选连接", func():
+		if not flush.call():
+			return
+		edges.erase(edge)
+		state.edge = ""
+		notice.text = ""
+		state.render.call(state.index), "ghost"))
+
+static func add_edge_properties(form: VBoxContainer, fields: Array, edge: Dictionary, prefix: String, commits: Array) -> void:
+	var props: Dictionary = edge.get("props", {})
+	for fd in fields:
 		if not fd is Dictionary or not fd.get("id") is String:
 			continue
 		var key: String = fd.id
@@ -782,16 +789,9 @@ static func _build_edge_fields(form: VBoxContainer, cell: Dictionary, cells: Arr
 			return true)
 		var commit: Callable = built.get("commit", Callable())
 		if commit.is_valid():
-			state.commits.append(commit)
-		built.ctl.name = "EdgeProperty_" + key.validate_node_name()
+			commits.append(commit)
+		built.ctl.name = prefix + key.validate_node_name()
 		form.add_child(Kit.field_row(str(fd.get("name", key)), built.ctl, 68))
-	form.add_child(Kit.button("移除所选连接", func():
-		if not flush.call():
-			return
-		edges.erase(edge)
-		state.edge = ""
-		notice.text = ""
-		state.render.call(state.index), "ghost"))
 
 static func _build_edge_destination(form: VBoxContainer, edge: Dictionary, cells: Array,
 		state: Dictionary, flush: Callable) -> void:

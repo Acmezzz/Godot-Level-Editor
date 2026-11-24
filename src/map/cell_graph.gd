@@ -185,6 +185,18 @@ static func edge_types(manifest: Dictionary) -> Dictionary:
 	var types = manifest.get(EDGE_TYPES_KEY)
 	return types if types is Dictionary else {}
 
+static func edge_fields(types: Dictionary, kind: String) -> Array:
+	var decl = types.get(kind)
+	var fields = decl.get("fields") if decl is Dictionary else null
+	return fields if fields is Array else []
+
+static func edge_defaults(types: Dictionary, kind: String) -> Dictionary:
+	var props := {}
+	for field in edge_fields(types, kind):
+		if field is Dictionary and field.get("id") is String and field.has("default"):
+			props[field.id] = field.default
+	return props
+
 static func validate_edge_types(manifest: Dictionary) -> Array[Dictionary]:
 	var issues: Array[Dictionary] = []
 	if manifest.has(EDGE_TYPES_KEY) and not manifest[EDGE_TYPES_KEY] is Dictionary:
