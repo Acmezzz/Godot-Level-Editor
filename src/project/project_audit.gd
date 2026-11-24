@@ -848,7 +848,25 @@ static func map_change_reference_impacts(manifest: Dictionary, name: String, bef
 		var problem := _module_target_problem(manifest, ref, assets, name, after)
 		if problem != "":
 			next.append(_view_issue(ref, problem))
+	var code: String = after.meta.get("code", "")
+	var changed := {code: after}
+	var original := {code: before}
+	var startup: Dictionary = manifest.get("startup", {})
+	var entry: Dictionary = startup.get("target", {})
+	if _lost_arrival(manifest, startup, entry, original, changed):
+		next.append(_wrap("manifest", {"path": "startup.target", "message": _flow_target_message(entry)}))
+	for ref in ReferenceIndex.view_map_refs(manifest):
+		if ref.has("domains") and _lost_arrival(manifest, ref.domains, ref.target, original, changed):
+			next.append(_view_issue(ref, _flow_target_message(ref.target)))
+	for ref in ReferenceIndex.view_module_refs(manifest):
+		if ref.kind == "flow_target" and _lost_arrival(manifest, ref.decl, ref.value, original, changed):
+			next.append(_view_issue(ref, _flow_target_message(ref.value)))
 	return {"added": _new_reference_messages(old, next), "unreadable": project.unreadable}
+
+static func _lost_arrival(manifest: Dictionary, decl: Dictionary, target: Variant, before: Dictionary, after: Dictionary) -> bool:
+	return FlowTarget.kind(target) == "map" and target.has("port") and after.has(target.map) \
+		and StartupTargets.destination_available(manifest, decl, target, before) \
+		and not StartupTargets.destination_available(manifest, decl, target, after)
 
 static func _resolved_map_aliases(index: Dictionary, name: String, data: Dictionary) -> Array:
 	var aliases := []
@@ -1412,7 +1430,7 @@ static func _ref_checks(data: Dictionary, manifest: Dictionary, map_name: String
 			var message := ""
 			if ref.kind == "view" and not views.has(ref.value):
 				message = "引用的参考视图不存在：" + ref.value
-			elif ref.kind == "flow_target" and not StartupTargets.destination_available(manifest, ref.decl, ref.value):
+			elif ref.kind == "flow_target" and not StartupTargets.destination_available(manifest, ref.decl, ref.value, overrides):
 				message = _flow_target_message(ref.value)
 			if message != "":
 				var jump := {"type": "map_flow", "map": map_name, "field": ref.field,
@@ -1465,7 +1483,10 @@ static func _spatial_fields(manifest: Dictionary, decls: Array, values: Variant,
 			key = id
 		var value = values.get(key)
 		if _empty_reference_value(value):
-			continue
+			value = field.get("default") if coded and not overrides.is_empty() and not values.has(key) \
+				and RefFields.describe(field).kind == "flow_target" else null
+			if _empty_reference_value(value):
+				continue
 		var path := prefix + id
 		var prop := id if root_prop == "" else root_prop
 		for scope in RefFields.nested_scopes(manifest, field, value):
@@ -1475,6 +1496,13 @@ static func _spatial_fields(manifest: Dictionary, decls: Array, values: Variant,
 			out.append_array(_spatial_fields(manifest, scope.decls, scope.values, source,
 				map_name, overrides, coded or scope.path.size() == 2, sub, depth + 1, prop, probe))
 		var desc := RefFields.describe(field)
+		if not probe.is_valid() and coded and desc.kind == "flow_target":
+			var target = values.get(key, field.get("default"))
+			if FlowTarget.kind(target) == "map" and target.has("port") and overrides.has(target.map) \
+					and not StartupTargets.destination_available(manifest, field, target, overrides):
+				out.append({"path": path, "prop": prop, "message": _flow_target_message(target),
+					"fixable": false, "top_level": depth == 0, "value": target})
+			continue
 		if desc.kind not in ["entity_inst", "port", "edge", "cell", "map", "layer"]:
 			continue
 		var paired := RefFields.paired_map_value(field, decls, values, "code" if coded else "id")

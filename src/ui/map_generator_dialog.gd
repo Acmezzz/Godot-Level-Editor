@@ -7,6 +7,7 @@ const Runner := preload("res://src/project/game_preview.gd")
 const FrameDialog := preload("res://src/ui/game_frame_dialog.gd")
 const Maps := preload("res://src/map/map_store.gd")
 const Merge := preload("res://src/map/generated_map_merge.gd")
+const Audit := preload("res://src/project/project_audit.gd")
 const CONFLICT_PAGE := 20
 
 var _app
@@ -250,7 +251,7 @@ func _run() -> void:
 	map.meta.code = code
 	map.meta.erase(Merge.KEY)
 	var candidate := {"name": name_, "manifest": public, "generation": generation, "revision": revision,
-		"generated": map, "generator": id, "parameters": params, "warnings": decoded.warnings}
+		"generated": map, "generator": id, "parameters": params, "warnings": decoded.warnings, "live": live}
 	if regenerate:
 		var plan := Merge.plan(_origin.base, live, map, {}, _source)
 		var conflicts: Array = plan.conflicts
@@ -351,6 +352,14 @@ func _prepare_candidate(candidate: Dictionary, map: Dictionary) -> void:
 	if not candidate.warnings.is_empty():
 		var issue: Dictionary = candidate.warnings[0]
 		_status.text += "\n%d 条警告，首条：%s · %s" % [candidate.warnings.size(), issue.path, issue.message]
+	if not candidate.live.is_empty():
+		var staged: Array = _app.project_shell.content_editor.staged_rows_current_doc()
+		var impact := Audit.map_change_reference_impacts(_source, candidate.name, candidate.live, map, staged)
+		if not impact.added.is_empty():
+			_status.text += "\n新增引用问题 %d 处（应用后需重新接线）：\n%s" % [
+				impact.added.size(), "\n".join(impact.added.slice(0, 5))]
+		if not impact.unreadable.is_empty():
+			_status.text += "\n另有 %d 个文件无法检查。" % impact.unreadable.size()
 
 func _open_result() -> void:
 	if _running or _opening or not _keep():

@@ -244,7 +244,8 @@ func run() -> void:
 	completed = map_flow.find_child("MapFlow_completed", true, false)
 	choose(completed, JSON.stringify({"view": "results"}))
 	var arrival := {"map": map_code, "inst": pawn_code, "port": "door"}
-	choose(map_flow.find_child("MapFlow_retry", true, false), JSON.stringify(arrival))
+	var retiring := {"map": map_code, "inst": "R001", "port": "door"}
+	choose(map_flow.find_child("MapFlow_retry", true, false), JSON.stringify(retiring))
 	press(map_flow, "应用")
 	check(Audit._ref_checks(canvas.extract(), orphan_manifest, "course").any(func(issue):
 		return issue.jump.type == "map_flow" and issue.jump.field == "completed"),
@@ -276,6 +277,9 @@ func run() -> void:
 		return
 	space_choice.select(2)
 	space_choice.item_selected.emit(2)
+	var merge_status: Label = regenerate.find_child("GeneratedMapStatus", true, false)
+	check("新增引用问题" in merge_status.text and "flowOutputs.retry" in merge_status.text and "R001" in merge_status.text,
+		"regeneration names the exact outlet and retired door before applying")
 	press(regenerate, "应用重生成")
 	await process_frame
 	var regenerated := canvas.extract()
@@ -285,6 +289,10 @@ func run() -> void:
 		and regenerated.objects[0].props.get("exit_target") == {"view": "results"}
 		and Array(regenerated.objects[0].props.get("landing", [])).map(func(n): return int(n)) == [16, 48],
 		"adopt generated geometry without erasing the map or instance outlets: %s" % [regenerated.objects[0]])
+	MapFlowDialog.open(app)
+	map_flow = popup()
+	choose(map_flow.find_child("MapFlow_retry", true, false), JSON.stringify(arrival))
+	press(map_flow, "应用")
 	published = await app._map_file_ctrl.commit_document("保存重生成的地图和实例出口")
 	check(published.get("status") == "ok" and Maps.read(manifest, "course").objects[0].props.exit_target == {"view": "results"},
 		"the kept instance outlet is published with the new projection")

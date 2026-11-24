@@ -7,6 +7,7 @@ const Store := preload("res://src/content/content_store.gd")
 const Functions := preload("res://src/content/function_decl.gd")
 const FlowTarget := preload("res://src/content/flow_target.gd")
 const RefFields := preload("res://src/content/ref_fields.gd")
+const AssetDecl := preload("res://src/assets/asset_decl.gd")
 
 static func options(manifest: Dictionary) -> Array[Dictionary]:
 	return destination_options(manifest, manifest.startup)
@@ -47,22 +48,35 @@ static func available(manifest: Dictionary, target: Dictionary) -> bool:
 		return true
 	return destination_available(manifest, manifest.startup, target)
 
-static func destination_available(manifest: Dictionary, domains: Dictionary, target: Variant) -> bool:
+static func destination_available(manifest: Dictionary, domains: Dictionary, target: Variant, maps := {}) -> bool:
 	if not FlowTarget.allows(domains, target):
 		return false
 	if target.has("view"):
 		return Refs.view_ids(manifest).has(target.view)
 	if target.has("map"):
+		if maps.has(target.map):
+			return _map_destination_available(manifest, domains, target, maps[target.map])
 		var resolved := Refs.resolve_graph_map(Maps.code_index(manifest), target.map)
 		if resolved.status != "ok":
 			return false
 		if not target.has("port"):
 			return true
-		var map := Maps.read(manifest, resolved.key)
-		return RefFields.port_options(manifest, target.map, map.get("objects", []), domains.arrivalPorts).any(
-			func(port): return JSON.parse_string(port.v) == target)
+		return _map_destination_available(manifest, domains, target, Maps.read(manifest, resolved.key))
 	var kind: String = target.function
 	return is_project_destination(Store.read(manifest, kind, target.content), Functions.fn_code(manifest, kind))
+
+static func _map_destination_available(manifest: Dictionary, domains: Dictionary, target: Dictionary, map: Dictionary) -> bool:
+	if map.get("meta", {}).get("code") != target.map:
+		return false
+	if not target.has("port"):
+		return true
+	for row in map.get("objects", []):
+		if row.get("code") != target.inst:
+			continue
+		var asset := AssetDecl.by_id(manifest, row.get("asset", ""))
+		return RefFields.ports_of(asset).any(func(port):
+			return port.get("id") == target.port and port.get("type", "") in domains.arrivalPorts)
+	return false
 
 static func is_project_destination(row: Dictionary, code: Variant) -> bool:
 	return row.get("scope") == "project" and row.get("function") == code and row.get("fields") is Dictionary
