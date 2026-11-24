@@ -197,6 +197,7 @@ func _build_global_bar() -> PanelContainer:
 	map_menu.add_item("批量替换瓦片…", 6)
 	map_menu.add_item("关卡游戏画面预览…", 14)
 	map_menu.add_item("实景调整实例和轮廓…", 17)
+	map_menu.add_item("复制跨层选区（含格图或出生点）…", 18)
 	map_menu.add_separator()
 	map_menu.add_item("检查项目完整性", 30)
 	map_menu.add_item("切换项目…", 20)
@@ -258,6 +259,8 @@ func _on_map_menu_id(id: int) -> void:
 			MapGamePreview.open(app)
 		17:
 			MapGamePreview.open_object_edit(app)
+		18:
+			_world_copy_options()
 		15:
 			MapGeneratorDialog.open(app)
 		16:
@@ -266,6 +269,27 @@ func _on_map_menu_id(id: int) -> void:
 			app._switch_project()
 		30:
 			_run_audit(true)
+
+func _world_copy_options() -> void:
+	var cvs: EditorCanvas = app.canvas
+	if not app.map_loaded or not cvs.world_region_mode or not cvs._world_region_move.selection.has_area():
+		app._set_status("先打开「跨层搬动」并框选区域。")
+		return
+	var shell: Dictionary = app._popup_body("复制跨层选区",
+		"格图只复制选中格之间的连接。带出生点粘贴会替换目标地图的出生点。")
+	var body: VBoxContainer = shell.body
+	var graph := CheckBox.new()
+	graph.text = "包括格图和内部连边"
+	graph.button_pressed = true
+	body.add_child(graph)
+	var spawn := CheckBox.new()
+	spawn.text = "包括框内的出生点"
+	body.add_child(spawn)
+	var pop: PopupPanel = shell.pop
+	body.add_child(app.UiKitScript.button("复制选区", func():
+		if cvs._world_region_move.copy(graph.button_pressed, spawn.button_pressed):
+			pop.hide(), "primary"))
+	app._open_popup(pop)
 
 ## 在锚点控件正下方弹菜单（宽高交给引擎按内容测算）
 func _popup_below(pm: PopupMenu, anchor: Control) -> void:

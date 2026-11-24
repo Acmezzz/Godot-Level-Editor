@@ -230,7 +230,7 @@ func run():
 			{"id": "terrain", "kind": "scene", "shape": "tile", "atlas": "terrain.png", "cell": 16},
 			{"id": "free-ramp", "kind": "entity", "code": "RAMP", "visual": {"type": "poly"}},
 			{"id": "door", "kind": "entity", "code": "DOOR", "ports": [{"id":"open","type":"door","x": 5,"y": 4}],
-				"fields": [{"id":"label", "type":"string"}]}],
+				"fields": [{"id":"label", "type":"string"}, {"id":"route_cell", "kind":"choice", "source":"cell:"}]}],
 		"playtest": {"executable": OS.get_executable_path(), "report": true, "projectEntry": true,
 			"args": ["--headless", "--path", "%projectpath%", "--", "--map=%mapfile%", "--verify"]},
 		"mapGenerators": {"slope_room": {"name": "Slope Room", "fields": [
@@ -1707,13 +1707,27 @@ func author_world_region_move(app, manifest: Dictionary) -> void:
 	baseline.tiles[ground] = [[0, 0, "terrain", 0, 0], [2, 0, "terrain", 0, 0]]
 	baseline.tiles[upper] = [[0, 0, "terrain", 0, 0]]
 	baseline.collision = [{"x": 0, "y": 0, "type": "solid", "material": "ice"}]
+	baseline.spawn = [0, 0]
 	baseline.objects[0].x = 0
 	baseline.objects[0].y = 0
+	baseline.objects[0].props = {"route_cell": "copy-a"}
 	await cvs.load_data(baseline, "rule_hex", true)
 	var initial: Dictionary = cvs.extract()
 	var lower_px: Vector2 = cvs.grid.cell_center_px(Vector2i.ZERO)
 	var step: Vector2 = cvs.grid.cell_center_px(Vector2i.RIGHT) - lower_px
 	var upper_px: Vector2 = cvs.to_layer_world(1, cvs.tile_grid_for_layer(1).cell_center_px(Vector2i.ZERO))
+	var root_local: Vector2 = cvs.to_layer_local(cvs.collision_index(), lower_px)
+	var upper_local: Vector2 = cvs.to_layer_local(1, upper_px)
+	cvs.map_data.meta.cellGraph = {
+		"spaces": {"copy-upper": {"layer": upper}},
+		"cells": [
+			{"id": "copy-a", "polygon": _copy_test_polygon(root_local), "neighbors": ["copy-b", "outside"]},
+			{"id": "copy-b", "space": "copy-upper", "polygon": _copy_test_polygon(upper_local), "neighbors": ["copy-a"]},
+			{"id": "outside", "polygon": _copy_test_polygon(root_local + step * 3), "neighbors": ["copy-a"]}],
+		"edges": [
+			{"id": "stairs", "from": "copy-a", "to": "copy-b", "props": {"cost": 7.0}},
+			{"id": "outside-route", "from": "copy-a", "to": "outside"}]}
+	initial = cvs.extract()
 	var n: EntityNode = cvs.ents_all()[0]
 	var entity_px: Vector2 = n.get_parent().to_global(n.position - n.sort_anchor())
 	var min_corner := lower_px.min(upper_px).min(entity_px) - Vector2(2, 2)
@@ -1735,10 +1749,17 @@ func author_world_region_move(app, manifest: Dictionary) -> void:
 	check(cvs.extract() == initial, "a blocked cross-layer move writes none of its members")
 	app._copy()
 	check(cvs._region_clip.get("world", false), "copy captures the entire world selection")
+	check(not cvs._region_clip.has("graph") and not cvs._region_clip.has("spawn"), "ordinary copy leaves graph and spawn opt-in")
 	app._paste()
 	check(cvs._paste_mode, "cross-layer paste starts a preview")
 	input._on_right_press(lower_px)
 	check(not cvs._paste_mode and cvs._world_region_move.selection.has_point(lower_px), "cancel paste preserves the source selection")
+	app._layout_ctrl._on_map_menu_id(18)
+	for flag: CheckBox in collect(app, "CheckBox"):
+		if flag.text == "包括框内的出生点":
+			flag.button_pressed = true
+	press(app, "复制选区")
+	check(cvs._region_clip.has("graph") and cvs._region_clip.has("spawn"), "the dialog includes both selected payloads")
 	var snap_offset: Vector2 = cvs._region_clip.snap_offset
 	var copy_origin := min_corner + snap_offset
 	app._paste()
@@ -1755,8 +1776,15 @@ func author_world_region_move(app, manifest: Dictionary) -> void:
 		and copied.tiles[upper].any(func(row): return Vector2i(row[0], row[1]) == dest_upper)
 		and copied.collision.size() == 2 and copied.collision[1].material == "ice"
 		and copied.objects.size() == initial.objects.size() + 1 and copied.objects[1].code != initial.objects[0].code
-		and copied.meta.cellGraph == initial.meta.cellGraph and copied.spawn == initial.spawn,
+		and copied.spawn == [1, 0] and copied.objects[1].props.route_cell == "copy-a-copy",
 		"paste adds both tile grids, collision metadata and a fresh instance without replacing the source")
+	var graph: Dictionary = copied.meta.cellGraph
+	check(graph.cells.size() == 5 and graph.edges.size() == 3
+		and graph.cells[0].neighbors == ["copy-b", "outside"]
+		and graph.cells[3].neighbors == ["copy-b-copy"] and graph.cells[4].space == "copy-upper"
+		and graph.edges[2].from == "copy-a-copy" and graph.edges[2].to == "copy-b-copy" and graph.edges[2].props.cost == 7
+		and cvs.cell_centroid_world("copy-b-copy").is_equal_approx(upper_px + step),
+		"paste translates the induced subgraph, preserves the bound space, and remaps only its internal connections")
 	var pasted: EntityNode = cvs._ent_by_code_index().get(str(copied.objects[1].code))
 	check(pasted != null and (pasted.get_parent().to_global(pasted.position - pasted.sort_anchor()) - entity_px).is_equal_approx(step),
 		"the copied instance retains the common pixel displacement")
@@ -1793,6 +1821,13 @@ func author_world_region_move(app, manifest: Dictionary) -> void:
 	check(saved.get("status") == "ok", "save the cross-layer move")
 	await app._load_map_file(path)
 	_check_world_move_restore(true, cvs.extract(), moved, "save and reopen")
+
+func _copy_test_polygon(center: Vector2) -> Array:
+	var result := []
+	for corner in [Vector2(-1, -1), Vector2(1, -1), Vector2(1, 1), Vector2(-1, 1)]:
+		var point: Vector2 = center + corner
+		result.append([point.x, point.y])
+	return result
 
 func _check_world_move_restore(ok: bool, actual: Dictionary, expected: Dictionary, op: String) -> void:
 	var diffs := []

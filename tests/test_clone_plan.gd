@@ -47,6 +47,26 @@ func _manifest() -> Dictionary:
 func _wipe() -> void:
 	_nuke(TMP)
 
+func test_region_cell_references_follow_the_copied_subgraph() -> void:
+	var m := _manifest()
+	m.assets[0].fields.append({"id": "CELLS", "kind": "choice", "source": "cell:", "multiple": true,
+		"mapField": "TMAP"})
+	m.functions[0].fields.append({"id": "CELL", "code": "CELL", "kind": "choice", "source": "cell:"})
+	var row := {"code": "AAAA", "asset": "door", "props": {"CELLS": ["a"], "NOTE": "a", "TMAP": "SRC1"},
+		"functions": [{"fn": "FN01", "content": "CID1"}]}
+	var src := {"data": {"meta": {"code": "SRC1"}, "objects": [row]}, "manifest": m, "map": "m1",
+		"cell_ids": {"a": "a-copy"}}
+	var dst := {"data": {"meta": {"code": "DST1"}}, "manifest": m, "map": "m2"}
+	var staged := {ClonePlan.content_key("dlg", "CID1"): {"fields": {"CELL": "a"}}}
+	var plan := ClonePlan.build(src, dst, PackedStringArray(), false, staged)
+	eq(plan.status, "ok", ClonePlan.conflicts_text(plan.conflicts))
+	eq(plan.map_patch.objects[0].props, {"CELLS": ["a-copy"], "NOTE": "a", "TMAP": "DST1"},
+		"only the declared cell reference and its paired map are changed")
+	eq(plan.pending_contents[0].data.fields.CELL, "a-copy", "the staged content follows the destination cell")
+	row.props.CELLS.append("outside")
+	plan = ClonePlan.build(src, dst, PackedStringArray(), false, staged)
+	eq(plan.status, "conflict", "mixed cell refs cannot span two maps after a cross-map paste")
+
 ## —— 组内 A→B、组外 A→C：只换组内引用，普通字符串不动 ——
 func test_remap_in_group_vs_out_group() -> void:
 	_wipe()
