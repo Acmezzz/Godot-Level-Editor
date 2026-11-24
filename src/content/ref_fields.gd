@@ -173,7 +173,7 @@ static func array_element_decl(decl: Dictionary) -> Dictionary:
 		return {"kind": "record", "type": "record",
 			"fields": (decl.get("fields", []) as Array).duplicate(true)}
 	var out := {"kind": "input", "type": of}
-	for k in ["min", "max", "step", "dims", "assetKind"]:
+	for k in ["min", "max", "step", "dims", "assetKind", "mapField", "_mapKey"]:
 		if decl.get(k, null) != null:
 			# 逐元素独立声明副本（C1）：数组/字典值不能与父声明共享引用
 			out[k] = decl.get(k).duplicate(true) if (decl.get(k) is Array or decl.get(k) is Dictionary) \
@@ -182,6 +182,8 @@ static func array_element_decl(decl: Dictionary) -> Dictionary:
 		var ids = decl.get("ids", null)
 		if ids is Array:
 			out["of"] = ",".join(PackedStringArray(ids))
+	elif of == "port_ref" and decl.get("portTypes") is String:
+		out["of"] = decl.portTypes
 	return out
 
 ## 一个数组字段中可继续按声明进入的作用域。value/fields 是原字典引用，
@@ -398,6 +400,24 @@ static func _sibling_decl(want: String, siblings: Array) -> Dictionary:
 ## （实例 props 的键是 id；内容/步骤的键是 code）。
 static func paired_map_value(decl: Dictionary, siblings: Array, values: Dictionary, key_mode := "code") -> String:
 	return _sibling_value(paired_map_decl(decl, siblings), values, key_mode)
+
+## Layout props apply declared defaults when an override is absent, including sibling maps.
+static func effective_map_value(decl: Dictionary, siblings: Array, values: Dictionary, key_mode: String) -> String:
+	var pair := paired_map_decl(decl, siblings)
+	if pair.is_empty():
+		return ""
+	var code := str(pair.get("code", ""))
+	var key := code if key_mode == "code" and code != "" else str(pair.id)
+	var value = values.get(key, pair.get("default"))
+	return value if value is String else ""
+
+static func with_map_scope(decl: Dictionary, siblings: Array, values: Dictionary, key_mode: String,
+		use_defaults := false) -> Dictionary:
+	if decl.get("mapField", "") == "":
+		return decl
+	var key := effective_map_value(decl, siblings, values, key_mode) if use_defaults \
+		else paired_map_value(decl, siblings, values, key_mode)
+	return decl.merged({"_mapKey": key}, true)
 
 ## Captured as one scope so either sibling changing invalidates a pending frame pick.
 static func frame_scope(decl: Dictionary, siblings: Array, values: Dictionary, key_mode := "code") -> Array[String]:

@@ -163,6 +163,10 @@
 引用参数沿用通用字段协议。例如 `source: "content:dialogue"` 存内容 ID，`source: "view:"` 存视图 ID，
 `type: "asset_ref"` 存资产 ID。编辑器也检查多选、记录和条件行中实际生效的声明缺省值；
 显式清空会覆盖缺省值，普通字符串不会被解释为引用。模块的内容参数是依赖，具名出口才是流程连线。
+模块没有所属地图。要配置实例、图层、有限格、端口或规则格边，在同一组字段或同一记录行里声明单选地图字段
+（`source: "map"`），并在目标字段填 `mapField` 指向它的 ID。候选来自已保存的地图。
+实例、图层和有限格存目标 ID；`port_ref` 与 `edge_ref` 的对象若有非空 `map`，以该地图为准。
+端口数组用 `of: "port_ref"`，可用 `portTypes` 指定逗号分隔的端口类型。
 声明的 `outputs` 是出口 ID 到显示名的映射。实例的 `outputs` 以相同 ID 保存 `{function, content}` 目标；
 未连接的出口不写键。游戏触发某个出口时读取同名目标，例如确认次数达标用 `accepted`、玩家取消用 `cancelled`。
 旧的单目标 `target: {function, content}` 继续可用，已有绑定不会自动转为某个具名出口。

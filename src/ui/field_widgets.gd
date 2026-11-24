@@ -348,7 +348,7 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 			pd2["source"] = "port:" + str(decl.get("of", ""))
 			var enc := JSON.stringify(value) if value is Dictionary else ""
 			return _build_choice(pd2, enc, func(v2):
-				var pd = JSON.parse_string(str(v2))
+				var pd = JSON.parse_string(str(v2)) if v2 != "" else {}
 				return on_set.call(pd if pd is Dictionary else {}), option_resolver)
 		"edge_ref":
 			# §7.4 格边引用 = 对象值 {map, cell, edge}；候选 = edge: 解析器（本图/配对图的共边）。
@@ -358,7 +358,7 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 			ed2["source"] = "edge:"
 			var eenc := JSON.stringify(value) if value is Dictionary else ""
 			return _build_choice(ed2, eenc, func(v3):
-				var ed = JSON.parse_string(str(v3))
+				var ed = JSON.parse_string(str(v3)) if v3 != "" else {}
 				return on_set.call(ed if ed is Dictionary else {}), option_resolver)
 		"asset_ref":
 			# 资产引用走 choice 的同一套控件，只是选项来源由 asset: 解析器提供。
@@ -621,13 +621,8 @@ static func _build_record(decl: Dictionary, value, on_set: Callable,
 			if c2 != "":
 				sub_key = c2
 		var sub_val = value.get(sub_key, sd.get("default", default_for(sd)))
-		var d2: Dictionary = sd
 		# 兄弟配对字段作用域 = 当前记录行：配对地图字段值从行内读
-		if str(sd.get("mapField", "")) != "":
-			var tk := RefFields.paired_map_value(sd, fields_arr, value, key_mode)
-			if tk != "":
-				d2 = sd.duplicate(true)
-				d2["_mapKey"] = tk
+		var d2 := RefFields.with_map_scope(sd, fields_arr, value, key_mode, true)
 		var set_value := func(v2):
 			value[sub_key] = v2
 			return commit.call()

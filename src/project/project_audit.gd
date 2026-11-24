@@ -149,6 +149,8 @@ static func view_reference_issues(manifest: Dictionary, view_id := "", used_cont
 			out.append(_view_issue(ref, "图片资产无法解析：%s" % ref.asset))
 	var views := ReferenceIndex.view_ids(manifest)
 	var assets := AssetDecl.all(manifest)
+	var map_index := {}
+	var map_targets := {}
 	for ref in ReferenceIndex.view_module_refs(manifest):
 		if view_id != "" and ref.view != view_id:
 			continue
@@ -169,10 +171,54 @@ static func view_reference_issues(manifest: Dictionary, view_id := "", used_cont
 				valid = not AudioDecls.from_value(manifest, ref.value).is_empty()
 			"map":
 				label = "地图"
-				valid = ReferenceIndex.resolve_map(manifest, ref.value).status == "ok"
+				if map_index.is_empty():
+					map_index = MapStore.code_index(manifest)
+				valid = ReferenceIndex.resolve_indexed_map(map_index, ref.value).status == "ok"
+			"entity_inst", "port", "edge", "cell", "layer":
+				if map_index.is_empty():
+					map_index = MapStore.code_index(manifest)
+				var message := _module_spatial_problem(manifest, ref, assets, map_index, map_targets)
+				if message != "":
+					out.append(_view_issue(ref, message))
 		if not valid:
 			out.append(_view_issue(ref, "%s引用无法解析：%s" % [label, ref.value]))
 	return out
+
+static func _module_spatial_problem(manifest: Dictionary, ref: Dictionary, assets: Dictionary,
+		map_index: Dictionary, targets: Dictionary) -> String:
+	var value = ref.value
+	var object_ref: bool = ref.kind in ["port", "edge"]
+	if object_ref and not value is Dictionary:
+		return "端口和格边引用必须是对象。"
+	if not object_ref and not value is String:
+		return "实例、格和图层引用必须是 ID 字符串。"
+	if object_ref and not value.get("map", "") is String:
+		return "空间引用的地图键必须是字符串。"
+	var key: String = RefFields.object_map_key(value, ref.paired) if object_ref else ref.paired
+	if key == "":
+		return "屏幕模块没有所属地图，请先选择配对地图。"
+	var resolved := ReferenceIndex.resolve_indexed_map(map_index, key)
+	if resolved.status != "ok":
+		return "无法定位空间引用的目标地图：%s（%s）" % [key, resolved.status]
+	var name: String = resolved.key
+	if not targets.has(name):
+		targets[name] = MapStore.read(manifest, name)
+	var target: Dictionary = targets[name]
+	if target.is_empty():
+		return "无法读取空间引用的目标地图：" + name
+	if ref.kind == "entity_inst":
+		for obj in target.get("objects", []):
+			if obj.get("code") != value:
+				continue
+			var asset_id: String = obj.get("asset", "")
+			if assets.get(asset_id, {}).get("kind") == "entity" \
+					and (ref.filter.ids.is_empty() or ref.filter.ids.has(asset_id)):
+				return ""
+		return "目标地图 %s 中没有符合声明的实例：%s" % [name, value]
+	if ref.kind == "cell" and CellGraphScript.cell_ids(target.get("meta", {}).get("cellGraph", {})).is_empty():
+		return "目标地图 %s 没有可引用的格。" % name
+	var problem := _spatial_problem(manifest, ref.kind, target, name, value, ref.decl, key, {})
+	return str(problem.get("message", ""))
 
 static func _view_issue(ref: Dictionary, message: String) -> Dictionary:
 	var out := _wrap("manifest", {"path": ref.path, "message": "参考视图 %s：%s" % [ref.view, message]})

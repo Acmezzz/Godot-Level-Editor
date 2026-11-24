@@ -12,6 +12,7 @@ const GamePreview := preload("res://src/project/game_preview.gd")
 const FrameDialog := preload("res://src/ui/game_frame_dialog.gd")
 const Audit := preload("res://src/project/project_audit.gd")
 const Widgets := preload("res://src/ui/field_widgets.gd")
+const RefFields := preload("res://src/content/ref_fields.gd")
 
 class Preview extends Control:
 	const FOCUS_ACTIONS := {"ui_left": "left", "ui_right": "right", "ui_up": "up", "ui_down": "down",
@@ -256,8 +257,8 @@ static func open(app, view_id := "", jump := {}) -> void:
 	var state := {"row": -1, "saving": false, "targets": [], "draft": {}, "layout": {},
 		"preview_size": "", "locale": "", "has_layout": false, "viewport_sizes": Layout.sizes(source),
 		"image_assets": Layout.image_assets(source), "project_dir": str(source.get("_dir", "")),
-		"render_revision": 0, "modules": Layout.modules(source), "module_commits": [],
-		"resolve_options": app.project_shell.content_editor._form._resolve_options.bind(true)}
+		"render_revision": 0, "modules": Layout.modules(source), "module_commits": [], "manifest": source,
+		"resolve_options": app.project_shell.content_editor._form._resolve_options.bind(true, true)}
 	var game_render := Kit.button("游戏渲染预览", Callable(), "ghost")
 	game_render.name = "GameRenderPreview"
 	game_render.disabled = not GamePreview.supports(source, "screenLayout")
@@ -691,7 +692,7 @@ static func _render_layout(form: VBoxContainer, preview: Preview, state: Diction
 		refresh.call())
 	form.add_child(Kit.field_row("类型", kind, 70))
 	if item.kind == "module":
-		_add_module_fields(form, state, item)
+		_add_module_fields(form, state, item, refresh)
 	var overflow := Kit.hint_label("", 200)
 	var refresh_text := func():
 		overflow.text = "此画幅下文字超出元素范围。" if preview.text_overflows(item) else ""
@@ -835,21 +836,34 @@ static func _add_element_target(form: VBoxContainer, options: Array, item: Dicti
 			Layout.set_target(item, output, value))
 	form.add_child(Kit.field_row(label, target, 70))
 
-static func _add_module_fields(form: VBoxContainer, state: Dictionary, item: Dictionary) -> void:
+static func _add_module_fields(form: VBoxContainer, state: Dictionary, item: Dictionary, refresh: Callable) -> void:
 	var fields: Array = state.modules[item.module].get("fields", [])
+	var session := {"queued": false}
+	var props: Dictionary = item.get("props", {})
 	for field: Dictionary in fields:
 		var id: String = field.id
-		var value = item.get("props", {}).get(id, field.get("default"))
-		var built := Widgets.build(field, value, func(next):
-			if not item.has("props"):
-				item["props"] = {}
-			item.props[id] = next, state.resolve_options)
+		var value = props.get(id, field.get("default"))
+		var scoped := RefFields.with_map_scope(field, fields, props, "id", true)
+		var built := Widgets.build(scoped, value, func(next):
+			var previous = props.get(id, field.get("default"))
+			item["props"] = props
+			props[id] = next
+			if not session.queued and _module_map_values(state.manifest, field, id, previous) \
+					!= _module_map_values(state.manifest, field, id, next):
+				session.queued = true
+				refresh.call_deferred(), state.resolve_options)
 		var ctl: Control = built.ctl
 		ctl.name = "LayoutModuleField_" + id
 		var row := Kit.field_row(str(field.get("name", id)), ctl, 70)
 		row.set_meta("module_field", id)
 		form.add_child(row)
 		state.module_commits.append(built.get("commit", Callable()))
+
+static func _module_map_values(manifest: Dictionary, decl: Dictionary, id: String, value: Variant) -> Array:
+	if decl.get("type") != "array" and RefFields.describe(decl).kind != "map":
+		return []
+	return References.module_field_refs(manifest, [decl], {id: value}) \
+		.filter(func(ref): return ref.kind == "map").map(func(ref): return [ref.path, ref.value])
 
 static func _commit_module_fields(state: Dictionary) -> void:
 	for commit: Callable in state.module_commits:

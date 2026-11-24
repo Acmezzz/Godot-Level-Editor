@@ -419,7 +419,7 @@ func project_reference_options(decl: Dictionary, context: String) -> Array:
 		return local
 	return options
 
-func _resolve_options(decl: Dictionary, project_scope := false) -> Array:
+func _resolve_options(decl: Dictionary, project_scope := false, saved_only := false) -> Array:
 	if str(decl.get("source", "")) == "editor:condition-schema":
 		return ConditionDecls.allowed_rows(manifest, decl)
 
@@ -450,7 +450,7 @@ func _resolve_options(decl: Dictionary, project_scope := false) -> Array:
 		var map_key := str(decl.get("_mapKey", ""))
 		if project_scope and map_key == "":
 			return []
-		if map_key != "" and not can_pick_on_canvas(map_key):
+		if map_key != "" and (saved_only or not can_pick_on_canvas(map_key)):
 			return RefFields.map_instances(manifest, map_key, Array(want))
 		var out4: Array = []
 		if _map_ready():
@@ -475,7 +475,7 @@ func _resolve_options(decl: Dictionary, project_scope := false) -> Array:
 		var pmap := str(decl.get("_mapKey", ""))
 		if project_scope and pmap == "":
 			return []
-		if can_pick_on_canvas(pmap):
+		if not saved_only and can_pick_on_canvas(pmap):
 			var rows: Array = []
 			for ent in app.canvas.ents_all():
 				if ent is EntityNode and ent.is_entity():
@@ -490,7 +490,7 @@ func _resolve_options(decl: Dictionary, project_scope := false) -> Array:
 		var snap := {}
 		if project_scope and map_key == "":
 			return []
-		if can_pick_on_canvas(map_key):
+		if not saved_only and can_pick_on_canvas(map_key):
 			snap = app.canvas.map_data
 		elif map_key != "":
 			var rm := ReferenceIndex.resolve_map(manifest, map_key)
@@ -504,7 +504,7 @@ func _resolve_options(decl: Dictionary, project_scope := false) -> Array:
 		var emap := str(decl.get("_mapKey", ""))
 		if project_scope and emap == "":
 			return []
-		if can_pick_on_canvas(emap):
+		if not saved_only and can_pick_on_canvas(emap):
 			return app.canvas._edge_candidates()
 		return RefFields.edge_candidates(manifest, emap) if emap != "" else []
 	if src.begins_with("viewport:"):
@@ -517,7 +517,7 @@ func _resolve_options(decl: Dictionary, project_scope := false) -> Array:
 	if src == "layer:":
 		var key := str(decl.get("_mapKey", ""))
 		var layers: Array = []
-		if (key != "" or not project_scope) and can_pick_on_canvas(key):
+		if not saved_only and (key != "" or not project_scope) and can_pick_on_canvas(key):
 			layers = app.canvas.layers_decl()
 		elif key != "":
 			var resolved := ReferenceIndex.resolve_map(manifest, key)

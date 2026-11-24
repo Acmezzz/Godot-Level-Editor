@@ -3367,9 +3367,13 @@ func author_signal_room(app, project: String) -> void:
 	var manifest := {"_dir": project, "_maps_dir": project.path_join("maps"), "projectName": "Signal Room",
 		"viewports": [{"id": "handheld", "w": 480, "h": 720}],
 		"screenModules": {"signal-latch": {"name": "Signal latch", "outputs": {"accepted": "Accepted", "cancelled": "Cancelled"}, "fields": [
-			{"id": "presses", "name": "Confirmations", "kind": "input", "type": "int", "min": 1, "max": 4, "default": 3}]}},
+			{"id": "presses", "name": "Confirmations", "kind": "input", "type": "int", "min": 1, "max": 4, "default": 3},
+			{"id": "relay_map", "kind": "choice", "source": "map"},
+			{"id": "relay_actor", "kind": "choice", "source": "entity_inst:relay", "mapField": "relay_map"},
+			{"id": "relay_port", "kind": "input", "type": "port_ref", "of": "signal", "mapField": "relay_map"}]}},
 		"assets": [
-			{"id": "relay", "kind": "entity", "code": "RLY1", "fields": [
+			{"id": "relay", "kind": "entity", "code": "RLY1",
+				"ports": [{"id": "receive", "type": "signal", "x": 0, "y": 0}], "fields": [
 				{"id": "route_layer", "kind": "choice", "source": "layer:"},
 				{"id": "route", "kind": "input", "type": "array", "of": "vector2",
 					"pickSpace": "layer", "layerField": "route_layer"}]},
@@ -3623,6 +3627,41 @@ func _author_relay_map(app, manifest: Dictionary) -> void:
 	check(report.get("status") == "ready" and result.get("exit") == gate_code
 		and _route_matches(result.get("route", []), [Vector2(12, 28), Vector2(36, 52), Vector2(60, 76)]),
 		"the second game moves through all authored world waypoints and reaches the placed exit: " + str(report))
+
+	await _author_screen_map_refs(app, manifest, relay_code)
+
+func _author_screen_map_refs(app, manifest: Dictionary, relay_code: String) -> void:
+	var relay_map: String = Maps.read(manifest, "relay_deck").meta.code
+	var other := Maps.new_map("empty_deck", 12, 12)
+	check(Maps.write(manifest, "empty_deck", other), "write a second saved map for scope changes")
+	ReferenceViews.open(app, "watch-deck", {"element": manifest.views[1].layout.elements[0].id})
+	var popup := _visible_popup(app)
+	var control := func(id: String) -> OptionButton:
+		return popup.find_child("LayoutModuleField_" + id, true, false)
+	select_metadata(control.call("relay_map"), relay_map)
+	await process_frame
+	select_metadata(control.call("relay_actor"), relay_code)
+	var port_value := JSON.stringify({"map": relay_map, "inst": relay_code, "port": "receive"})
+	select_metadata(control.call("relay_port"), port_value)
+	select_metadata(control.call("relay_map"), other.meta.code)
+	await process_frame
+	var actor: OptionButton = control.call("relay_actor")
+	check(actor.get_selected_metadata() == relay_code and actor.get_item_text(actor.selected).begins_with("(当前值)"),
+		"switching map refreshes candidates and retains the invalid old instance visibly")
+	press(popup, "保存参考视图")
+	check(popup.visible and not app.manifest.views[1].layout.elements[0].props.has("relay_actor"),
+		"save rejects the actor from a different map without writing the layout")
+	select_metadata(control.call("relay_map"), relay_map)
+	await process_frame
+	press(popup, "保存参考视图")
+	var deadline := Time.get_ticks_msec() + 5000
+	while is_instance_valid(popup) and popup.visible and Time.get_ticks_msec() < deadline:
+		await process_frame
+	var data: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(str(manifest._dir).path_join("editor/editor_manifest.json")))
+	var props: Dictionary = data.views[1].layout.elements[0].props
+	check(props.get("relay_map") == relay_map and props.get("relay_actor") == relay_code
+		and props.get("relay_port") == JSON.parse_string(port_value),
+		"the saved screen stores the selected map, filtered instance and typed port")
 
 func _route_matches(rows: Array, expected: Array) -> bool:
 	if rows.size() != expected.size():

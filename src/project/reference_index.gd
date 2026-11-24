@@ -128,7 +128,6 @@ static func view_module_refs(manifest: Dictionary) -> Array:
 	var views = manifest.get("views", [])
 	if modules.is_empty() or not views is Array:
 		return out
-	var fields = load("res://src/content/ref_fields.gd")
 	for i in views.size():
 		var view = views[i]
 		if not view is Dictionary or not view.get("layout") is Dictionary:
@@ -143,8 +142,16 @@ static func view_module_refs(manifest: Dictionary) -> Array:
 			if not module is Dictionary or not module.get("fields", []) is Array or not props is Dictionary:
 				continue
 			var source := {"view": str(view.get("view_id", "")), "element": str(row.get("id", ""))}
-			_collect_module_fields(fields, manifest, module.get("fields", []), props, source,
-				"views[%d].layout.elements[%d].props" % [i, j], "", "id", out)
+			out.append_array(module_field_refs(manifest, module.get("fields", []), props,
+				source, "views[%d].layout.elements[%d].props" % [i, j]))
+	return out
+
+static func module_field_refs(manifest: Dictionary, decls: Array, values: Dictionary,
+		source := {}, prefix := "") -> Array:
+	var out := []
+	# RefFields uses this index for map resolution.
+	_collect_module_fields(load("res://src/content/ref_fields.gd"), manifest, decls, values,
+		source, prefix, "", "id", out)
 	return out
 
 static func _collect_module_fields(fields: GDScript, manifest: Dictionary, decls: Array,
@@ -164,20 +171,25 @@ static func _collect_module_fields(fields: GDScript, manifest: Dictionary, decls
 			_collect_module_fields(fields, manifest, scope.decls, scope.values, source,
 				sub_path + (".fields" if condition else ""), field, "code" if condition else key_mode, out)
 		var ref_decl: Dictionary = fields.array_element_decl(decl) if decl.get("type") == "array" else decl
-		if ref_decl.get("kind") == "input" and ref_decl.get("type") not in ["asset_ref", "map_ref"]:
+		if ref_decl.get("kind") == "input" and ref_decl.get("type") not in ["asset_ref", "port_ref", "edge_ref"]:
 			continue
 		var desc: Dictionary = fields.describe(ref_decl)
-		if desc.kind not in ["content", "asset", "entity_type", "view", "audio", "map"]:
+		var spatial: bool = desc.kind in ["entity_inst", "port", "edge", "cell", "layer"]
+		if not spatial and desc.kind not in ["content", "asset", "entity_type", "view", "audio", "map"]:
 			continue
+		var paired: String = fields.effective_map_value(ref_decl, decls, values, key_mode) if spatial else ""
 		var pending: Array = [[value, path]]
 		while not pending.is_empty():
 			var part: Array = pending.pop_back()
 			if part[0] is Array:
 				for i in range(part[0].size() - 1, -1, -1):
 					pending.append([part[0][i], "%s[%d]" % [part[1], i]])
-			elif part[0] is String and part[0] != "":
+			elif (part[0] is String and part[0] != "") or (spatial and not _empty_spatial_value(part[0])):
 				out.append(source.merged({"kind": desc.kind, "filter": desc.filter, "value": part[0],
-					"path": part[1], "field": field}))
+					"path": part[1], "field": field, "decl": ref_decl, "paired": paired}))
+
+static func _empty_spatial_value(value: Variant) -> bool:
+	return value == null or (value is String and value.is_empty()) or (value is Dictionary and value.is_empty())
 
 static func view_asset_refs(manifest: Dictionary, asset_id: String) -> Array:
 	var out := view_image_refs(manifest).filter(func(ref): return ref.asset == asset_id)

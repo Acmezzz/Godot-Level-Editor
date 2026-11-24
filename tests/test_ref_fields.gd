@@ -161,6 +161,45 @@ func _nuke(p: String) -> void:
 		_nuke(p.path_join(str(d)))
 	DirAccess.remove_absolute(p)
 
+func test_screen_module_spatial_integrity() -> void:
+	_wipe()
+	var Maps := preload("res://src/map/map_store.gd")
+	var Audit := preload("res://src/project/project_audit.gd")
+	var map := Maps.new_map("Deck", 12, 12)
+	var code: String = map.meta.code
+	var layer: String = map.meta.layers[0].id
+	map.objects = [{"asset": "relay", "code": "RLY1", "layer": layer, "x": 1, "y": 1}]
+	map.meta.cellGraph = {"cells": [{"id": "dock", "polygon": [[0, 0], [10, 0], [0, 10]], "neighbors": []}]}
+	var row := {"actor": "RLY1", "floor": layer, "cell": "dock",
+		"edge": {"map": "", "cell": [1, 1], "edge": "1,1|2,1"},
+		"ports": [{"map": code, "inst": "RLY1", "port": "receive"}]}
+	var fields := [{"id": "rules", "kind": "input", "type": "array", "of": "record", "fields": [
+		{"id": "deck", "kind": "choice", "source": "map", "default": code},
+		{"id": "actor", "kind": "choice", "source": "entity_inst:relay", "mapField": "deck"},
+		{"id": "floor", "kind": "choice", "source": "layer:", "mapField": "deck"},
+		{"id": "cell", "kind": "choice", "source": "cell:", "mapField": "deck"},
+		{"id": "edge", "kind": "input", "type": "edge_ref", "mapField": "deck"},
+		{"id": "ports", "kind": "input", "type": "array", "of": "port_ref", "portTypes": "signal", "mapField": "deck"},
+	]}]
+	var m := {"_dir": TMP, "_maps_dir": TMP.path_join("maps"), "assets": [
+		{"id": "relay", "kind": "entity", "ports": [{"id": "receive", "type": "signal", "x": 0, "y": 0}]}],
+		"screenModules": {"relay": {"fields": fields}}, "views": [{"view_id": "screen",
+			"layout": {"elements": [{"id": "module", "kind": "module", "module": "relay", "props": {"rules": [row]}}]}}]}
+	ok(Maps.write(m, "Deck", map), "save the map consumed by the screen")
+	eq(Audit.view_reference_issues(m), [], "nested spatial references resolve against the declared default map")
+	row.cell = "missing"
+	row.edge.edge = "1,1|3,1"
+	row.ports[0].port = "missing"
+	var prefix := "views[0].layout.elements[0].props.rules[0]."
+	eq(Audit.view_reference_issues(m).map(func(issue): return issue.path),
+		[prefix + "cell", prefix + "edge", prefix + "ports[0]"], "invalid cells, geometry and ports report their exact locations")
+	row.deck = ""
+	row.ports[0].port = "receive"
+	eq(Audit.view_reference_issues(m).map(func(issue): return issue.path),
+		[prefix + "actor", prefix + "floor", prefix + "cell", prefix + "edge"],
+		"explicitly clearing the sibling does not fall back to an open map; an explicit port map still works")
+	_wipe()
+
 func test_same_cell_targets_distinguishable() -> void:
 	_wipe()
 	var MapStore := preload("res://src/map/map_store.gd")
