@@ -15,6 +15,7 @@ extends RefCounted
 ## 破坏性操作（如清空悬空）必须走 inbound_content / read_all_fresh，不吃旧缓存。
 
 const StartupTargets := preload("res://src/project/startup_targets.gd")
+const FlowTarget := preload("res://src/content/flow_target.gd")
 const ManifestValidation := preload("res://src/project/manifest_validation.gd")
 const MapStore := preload("res://src/map/map_store.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
@@ -174,6 +175,9 @@ static func view_reference_issues(manifest: Dictionary, view_id := "", used_cont
 		var valid := true
 		var label := ""
 		match ref.kind:
+			"flow_target":
+				if not StartupTargets.destination_available(manifest, ref.decl, ref.value):
+					out.append(_view_issue(ref, _flow_target_message(ref.value)))
 			"asset", "entity_type":
 				label = "资产"
 				var expected: String = "entity" if ref.kind == "entity_type" else ref.filter.kind
@@ -581,18 +585,26 @@ static func _fields_of(manifest: Dictionary, asset_id: String) -> Array:
 ## 内容使用统计：扫全项目实例绑定，找引用 (功能 id, 内容 ID) 的实例；
 ## 当前图的磁盘和活体引用取并集。
 static func content_usage(manifest: Dictionary, fn_id: String, cid: String,
-		current_map := "", current_codes: Array = []) -> Dictionary:
+		current_map := "", current_codes: Array = [], live_map := {}) -> Dictionary:
 	var by_map := {}
 	var bad: Array = []
 	# R29：删除前引用图驱动破坏性动作，读磁盘实际内容（不走浏览缓存）
 	var maps := MapStore.read_all_fresh(manifest, bad)
 	var want_code := FunctionDecls.fn_code(manifest, fn_id)
+	var target := {"function": fn_id, "content": cid}
+	var live_codes := current_codes.duplicate()
+	for ref in _map_property_refs(manifest, live_map, ["flow_target"]):
+		if ref.value is Dictionary and ref.value == target and not live_codes.has(ref.code):
+			live_codes.append(ref.code)
 	# V4 P0-4：当前图不能整张跳过。画布上的活体绑定可能已被解除，而磁盘正式文件里
 	# 仍有绑定——永久删除后放弃地图改动，正式图就会恢复成悬空引用。因此当前图的
 	# 磁盘命中与活体命中取并集。
 	for map_name in maps:
 		var is_current := current_map != "" and str(map_name) == current_map
 		var rows: Array = []
+		for ref in _map_property_refs(manifest, maps[map_name], ["flow_target"]):
+			if ref.value is Dictionary and ref.value == target and not rows.has(ref.code):
+				rows.append(ref.code)
 		for obj in ((maps[map_name] as Dictionary).get("objects", []) as Array):
 			if not (obj is Dictionary):
 				continue
@@ -604,11 +616,13 @@ static func content_usage(manifest: Dictionary, fn_id: String, cid: String,
 					continue
 				if want_code != "" and str((f as Dictionary).get("fn", "")) != want_code:
 					continue
-				rows.append(str((obj as Dictionary).get("code", "")))
+				var code := str(obj.get("code", ""))
+				if not rows.has(code):
+					rows.append(code)
 				break
 		if is_current:
 			# 活体绑定也并入（磁盘是旧的：未保存的新绑定同样必须在报告里）
-			for c in current_codes:
+			for c in live_codes:
 				if str(c) != "" and not rows.has(str(c)):
 					rows.append(str(c))
 		if not rows.is_empty():
@@ -616,7 +630,7 @@ static func content_usage(manifest: Dictionary, fn_id: String, cid: String,
 	# 新建未保存的图不在磁盘列表里：活体命中仍要计入（否则删除检查看不到它）
 	if current_map != "" and not by_map.has(current_map):
 		var lone: Array = []
-		for c in current_codes:
+		for c in live_codes:
 			if str(c) != "":
 				lone.append(str(c))
 		if not lone.is_empty():
@@ -1027,6 +1041,9 @@ static func draft_inbound_refs(manifest: Dictionary, cid: String, fn_id := "") -
 			out.append(key)
 			continue
 		var hit := false
+		if fn_id != "" and _map_property_refs(manifest, snap, ["flow_target"]).any(func(ref):
+			return ref.value is Dictionary and ref.value == {"function": fn_id, "content": cid}):
+			hit = true
 		for obj in objects:
 			if not obj is Dictionary or not obj.get("functions", []) is Array:
 				continue
@@ -1079,6 +1096,13 @@ static func _collect_content_links(manifest: Dictionary, decls: Array, values, s
 		var desc := RefFields.describe(fd)
 		var ordered := RefFields.is_ordered_choice(fd)
 		var entries := _as_list(value)
+		if desc.kind == "flow_target":
+			if not _empty_reference_value(value) and not StartupTargets.destination_available(manifest, fd, value):
+				findings.append({"path": path, "field": field, "step_index": step_index,
+					"message": _flow_target_message(value)})
+			if FlowTarget.kind(value) == "content":
+				out.append({"fn": value.function, "cid": value.content, "path": path, "field": field, "step_index": step_index})
+			continue
 		if desc.kind == "view":
 			var views := ReferenceIndex.view_ids(manifest)
 			for i in entries.size():
@@ -1234,6 +1258,9 @@ static func _fields_pointing(manifest: Dictionary, kind: String, target: String,
 			for sub in _fields_pointing(manifest, kind, target, scope.decls, scope.values, coded, depth + 1):
 				out.append(prefix + str(sub))
 		var desc := RefFields.describe(fd)
+		if desc.kind == "flow_target" and vals[key] is Dictionary and vals[key].get(kind) == target:
+			out.append(id)
+			continue
 		if desc.kind != kind:
 			continue
 		for v in _as_list(vals[key]):
@@ -1253,11 +1280,11 @@ static func view_inbound_refs(manifest: Dictionary, id: String, staged: Array,
 			refs.append("%s · %s" % [ref.view, ref.path])
 	var bad: Array = []
 	for ref in ReferenceIndex.view_module_refs(manifest):
-		if ref.kind == "view" and ref.value == id and ref.view != id:
+		if ref.view != id and _points_to_view(ref, id):
 			refs.append("%s · %s" % [ref.view, ref.path])
 	var scan_map := func(data: Dictionary, name: String):
-		for ref in _map_view_refs(manifest, data):
-			if ref.value == id:
+		for ref in _map_property_refs(manifest, data, ["view", "flow_target"]):
+			if _points_to_view(ref, id):
 				var label := "%s · %s" % [name, ref.path]
 				if not refs.has(label):
 					refs.append(label)
@@ -1294,7 +1321,11 @@ static func view_inbound_refs(manifest: Dictionary, id: String, staged: Array,
 			inspect.call(kind, "草稿 %s · %s" % [key, row.get("cid", row.get("id", kind))], row.data)
 	return {"refs": refs, "bad": bad}
 
-static func _map_view_refs(manifest: Dictionary, data: Dictionary) -> Array:
+static func _points_to_view(ref: Dictionary, id: String) -> bool:
+	return (ref.kind == "view" and ref.value == id) or (
+		ref.kind == "flow_target" and ref.value is Dictionary and ref.value == {"view": id})
+
+static func _map_property_refs(manifest: Dictionary, data: Dictionary, kinds: Array) -> Array:
 	var result := []
 	var declarations := {}
 	for row in data.get("objects", []):
@@ -1308,7 +1339,7 @@ static func _map_view_refs(manifest: Dictionary, data: Dictionary) -> Array:
 		var code: String = row.get("code", "")
 		var path := "%s(%s)" % [asset, code]
 		for ref in ReferenceIndex.property_refs(manifest, declarations[asset], row.get("props", {}), {"code": code}, path):
-			if ref.kind == "view":
+			if ref.kind in kinds:
 				result.append(ref)
 	return result
 
@@ -1344,10 +1375,15 @@ static func _ref_checks(data: Dictionary, manifest: Dictionary, map_name: String
 	var out: Array = []
 	if not probe.is_valid():
 		var views := ReferenceIndex.view_ids(manifest)
-		for ref in _map_view_refs(manifest, data):
-			if not views.has(ref.value):
+		for ref in _map_property_refs(manifest, data, ["view", "flow_target"]):
+			var message := ""
+			if ref.kind == "view" and not views.has(ref.value):
+				message = "引用的参考视图不存在：" + ref.value
+			elif ref.kind == "flow_target" and not StartupTargets.destination_available(manifest, ref.decl, ref.value):
+				message = _flow_target_message(ref.value)
+			if message != "":
 				out.append({"kind": "ref", "severity": "warning", "path": "%s · %s" % [map_name, ref.path],
-					"message": "引用的参考视图不存在：" + ref.value, "map": map_name,
+					"message": message, "map": map_name,
 					"jump": {"type": "entity", "map": map_name, "code": ref.code, "prop": ref.field}})
 	var declarations := {}
 	var objects = data.get("objects", [])
@@ -1371,6 +1407,9 @@ static func _ref_checks(data: Dictionary, manifest: Dictionary, map_name: String
 					"prop": finding.prop, "expect": _val_str(finding.value)}
 			out.append(issue)
 	return out
+
+static func _flow_target_message(value: Variant) -> String:
+	return "流程目标不可用：" + JSON.stringify(value)
 
 static func _empty_reference_value(value: Variant) -> bool:
 	return value == null or (value is String and value.is_empty()) \

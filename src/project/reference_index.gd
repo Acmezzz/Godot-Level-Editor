@@ -10,6 +10,7 @@ extends RefCounted
 const MapStore := preload("res://src/map/map_store.gd")
 const ManifestScript := preload("res://src/project/manifest.gd")
 const ScreenLayout := preload("res://src/project/screen_layout.gd")
+const FlowTarget := preload("res://src/content/flow_target.gd")
 
 ## 地图键（码或图名）解析 → {status, key(图名), candidates}。
 ## 一码多图（R09 拒绝猜测，候选 = 冲突图名列表）；键同时是图名又是另一张图的码 = ambiguous
@@ -82,6 +83,8 @@ static func view_content_refs(manifest: Dictionary) -> Array:
 			ref["fn"] = ref.filter.fn
 			ref["cid"] = ref.value
 			out.append(ref)
+		elif ref.kind == "flow_target" and FlowTarget.kind(ref.value) == "content":
+			out.append(ref.merged({"fn": ref.value.function, "cid": ref.value.content}))
 	return out
 
 static func view_transition_refs(manifest: Dictionary) -> Array:
@@ -184,9 +187,13 @@ static func _collect_module_fields(fields: GDScript, manifest: Dictionary, decls
 			_collect_module_fields(fields, manifest, scope.decls, scope.values, source,
 				sub_path + (".fields" if condition else ""), field, "code" if condition else key_mode, out)
 		var ref_decl: Dictionary = fields.array_element_decl(decl) if decl.get("type") == "array" else decl
-		if ref_decl.get("kind") == "input" and ref_decl.get("type") not in ["asset_ref", "port_ref", "edge_ref"]:
+		if ref_decl.get("kind") == "input" and ref_decl.get("type") not in ["asset_ref", "port_ref", "edge_ref", "flow_target"]:
 			continue
 		var desc: Dictionary = fields.describe(ref_decl)
+		if desc.kind == "flow_target":
+			if value != null and not (value is Dictionary and value.is_empty()):
+				out.append(source.merged({"kind": desc.kind, "value": value, "path": path, "field": field, "decl": ref_decl}))
+			continue
 		var spatial: bool = desc.kind in ["entity_inst", "port", "edge", "cell", "layer"]
 		if not spatial and desc.kind not in ["content", "asset", "entity_type", "view", "audio", "map"]:
 			continue
@@ -233,9 +240,9 @@ static func view_image_refs(manifest: Dictionary) -> Array:
 ## complete=false 时 unreadable_sources 列出读不全的源（删除/清理必须拦截，D07 口径）。
 ## 暂存（会话内未落盘）的入边由调用方自行并入（见 content_form._delete_blocked_reason）。
 static func inbound_content(manifest: Dictionary, fn_id: String, cid: String,
-		cur_map := "", live_codes: Array = []) -> Dictionary:
+		cur_map := "", live_codes: Array = [], live_map := {}) -> Dictionary:
 	var PA = load("res://src/project/project_audit.gd")   # 懒加载：project_audit 反向 preload 本模块，避免环
-	var usage: Dictionary = PA.content_usage(manifest, fn_id, cid, cur_map, live_codes)
+	var usage: Dictionary = PA.content_usage(manifest, fn_id, cid, cur_map, live_codes, live_map)
 	var unreadable: Array = []
 	for u in (usage.get("unreadable", []) as Array):
 		unreadable.append("地图 %s 读不出来" % str(u))

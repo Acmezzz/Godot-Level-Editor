@@ -19,7 +19,8 @@ const MapGenerators := preload("res://src/project/map_generators.gd")
 
 ## input 字段类型白名单（与 field_widgets 一一对应）：新增类型必须同时有控件分支。
 const Keyframes := preload("res://src/content/keyframe_curve.gd")
-const INPUT_TYPES := ["string", "int", "float", "bool", "color", "vector2", "range", "asset_ref", "array", "port_ref", "viewport_ref", "edge_ref", "curve"]
+const FlowTarget := preload("res://src/content/flow_target.gd")
+const INPUT_TYPES := ["string", "int", "float", "bool", "color", "vector2", "range", "asset_ref", "array", "port_ref", "viewport_ref", "edge_ref", "curve", "flow_target"]
 
 ## 资产 id 同时用作地图瓦片条目的第 3 位（磁盘引用）——必须存在且唯一。
 static func validate(data: Dictionary, project_dir := "") -> Array[Dictionary]:
@@ -740,6 +741,11 @@ static func _check_condition_fields(fields: Variant, path: String, conditions: D
 		if not fd is Dictionary:
 			continue
 		var child := path + "." + str(fd.get("id", "?"))
+		if fd.get("kind") == "input" and fd.get("type") == "flow_target":
+			if not FlowTarget.declaration_valid(fd):
+				_add(issues, "error", child, "flow_target requires maps, screens or a non-empty contentTypes array")
+			elif fd.has("default") and not (fd.default is Dictionary and fd.default.is_empty()) and not FlowTarget.allows(fd, fd.default):
+				_add(issues, "error", child + ".default", "flow target is not in the declared domains")
 		if fd.get("kind") == "input" and fd.get("type") == "curve" and fd.has("default") and not Keyframes.valid(fd.default):
 			_add(issues, "error", child + ".default", "curve keys require increasing nonnegative times, finite values and a supported mode")
 		if fd.has("pickSpace"):

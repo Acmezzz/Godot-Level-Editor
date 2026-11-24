@@ -65,14 +65,14 @@ func _show_map_target(code: String) -> void:
 		var pawns := _draw_relay(self, map, _relay_camera(size))
 		entered_board = {"board": code, "placed": pawns.keys()}
 		for row in map.objects:
-			var exit_view: String = row.get("props", {}).get("exit_view", "")
-			if exit_view.is_empty():
+			var exit_target: Dictionary = row.get("props", {}).get("exit_target", {})
+			if exit_target.is_empty():
 				continue
 			var leave := Button.new()
 			leave.text = "Finish course"
 			leave.position = Vector2(16, 16)
 			add_child(leave)
-			leave.pressed.connect(func(): _follow_target.call_deferred({"view": exit_view}))
+			leave.pressed.connect(func(): _follow_target.call_deferred(exit_target))
 			if verify:
 				await _verify_button(leave)
 			return

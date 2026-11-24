@@ -25,7 +25,8 @@ func run() -> void:
 			project.path_join(file)) == OK, "install the standalone game " + file)
 	var declaration := {"projectName": "Screen Navigation", "directViewTargets": true, "directMapTargets": true,
 		"assets": [{"id": "relay", "kind": "entity", "code": "RLY1", "visual": {"mode": "rect", "color": "#62cabb"},
-			"fields": [{"id": "exit_view", "kind": "choice", "source": "view:"}]}],
+			"fields": [{"id": "exit_target", "kind": "input", "type": "flow_target",
+				"maps": true, "screens": true, "contentTypes": ["signal"]}]}],
 		"startup": {"screens": true}, "viewports": [{"id": "handheld", "w": 480, "h": 720}],
 		"screenModules": {"signal-latch": {"name": "Latch", "outputs": {"accepted": "Continue"}, "fields": [
 			{"id": "presses", "kind": "input", "type": "int", "min": 1, "default": 1}]}},
@@ -68,26 +69,33 @@ func run() -> void:
 		quit(1)
 		return
 	var canvas: EditorCanvas = app.canvas
+	var base: Dictionary = await app._map_file_ctrl.commit_document("发布地图供流程选用")
+	check(base.get("status") == "ok", "publish the map before it becomes a destination")
 	var pawn: EntityNode = canvas._tool_ops_ctrl.place_object("relay", 0, Vector2(48, 48), true)
 	var pawn_code := pawn.code
 	var map_code := canvas.cur_map_code()
 	app._set_mode("content", pawn_code)
-	var exit_picker: OptionButton = app.project_shell.content_editor.root.find_child("InstanceValue_exit_view", true, false)
-	choose(exit_picker, "results")
+	var exit_picker: OptionButton = app.project_shell.content_editor.root.find_child("InstanceValue_exit_target", true, false)
+	choose(exit_picker, JSON.stringify({"map": map_code}))
+	check(pawn.props.get("exit_target") == {"map": map_code}, "the same instance outlet accepts a stable map target")
+	choose(exit_picker, JSON.stringify({"function": "signal", "content": "project-finished"}))
+	var delete_reason: String = app.project_shell.content_editor._form._delete_blocked_reason("signal", "project-finished")
+	check(pawn_code in delete_reason, "an unsaved content destination protects the referenced item")
+	choose(exit_picker, JSON.stringify({"view": "results"}))
 	app.project_shell.content_editor.commit_fields()
 	var live_uses := Audit.view_inbound_refs(manifest, "results", [], canvas.extract(), "course")
-	check(live_uses.refs.any(func(ref): return pawn_code in ref and "exit_view" in ref),
+	check(live_uses.refs.any(func(ref): return pawn_code in ref and "exit_target" in ref),
 		"a live map instance prevents deleting its destination")
 	app._set_mode("map")
 	var published: Dictionary = await app._map_file_ctrl.commit_document("保存教学关卡")
 	check(published.get("status") == "ok", "publish the destination map")
 	var saved_uses := Audit.view_inbound_refs(manifest, "results", [])
-	check(saved_uses.refs.any(func(ref): return pawn_code in ref and "exit_view" in ref),
+	check(saved_uses.refs.any(func(ref): return pawn_code in ref and "exit_target" in ref),
 		"the saved map instance protects the same destination")
 	var orphan_manifest := manifest.duplicate(true)
 	orphan_manifest.views = []
 	check(Audit._ref_checks(canvas.extract(), orphan_manifest, "course").any(func(issue):
-		return issue.jump.code == pawn_code and issue.jump.prop == "exit_view"),
+		return issue.jump.code == pawn_code and issue.jump.prop == "exit_target"),
 		"map audit pinpoints the instance if the destination is externally removed")
 	app._set_mode("content")
 	await add_screen("instructions", "Enter course", {}, {"map": map_code})

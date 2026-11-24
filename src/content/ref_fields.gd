@@ -69,6 +69,9 @@ static func is_ordered_choice(decl: Dictionary) -> bool:
 static func describe(decl: Dictionary) -> Dictionary:
 	var out := _base(decl)
 	var typ := str(decl.get("type", ""))
+	if typ == "flow_target" or decl.get("source") == "editor:flow-target":
+		out.merge({"kind": "flow_target", "scope": "pool", "is_ref": true, "allow_empty": true}, true)
+		return out
 	if is_ordered_choice(decl):
 		var item := describe(array_element_decl(decl))
 		item["many"] = true

@@ -116,7 +116,7 @@ static func default_for(decl: Dictionary) -> Variant:
 		"color": return "#ffffff"
 		"choice": return [] if bool(decl.get("multiple", false)) else ""
 		"array", "curve": return []
-		"record", "condition", "port_ref", "edge_ref": return {}
+		"record", "condition", "port_ref", "edge_ref", "flow_target": return {}
 		_: return ""
 
 ## 声明里能读到的说明性信息（E1）：字段 id / 执行码 / 类型与范围 / 缺省值。
@@ -352,6 +352,11 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 			return {"ctl": editor, "commit": editor.commit}
 		"viewport_ref":
 			return _build_viewport_ref(decl, value, on_set, option_resolver)
+		"flow_target":
+			var choice := {"kind": KIND_CHOICE, "source": "editor:flow-target", "domains": decl}
+			var encoded := JSON.stringify(value) if not _is_unset(value) and not (value is Dictionary and value.is_empty()) else ""
+			return _build_choice(choice, encoded, func(v):
+				return on_set.call(JSON.parse_string(v) if v != "" else {}), option_resolver)
 		"port_ref":
 			# C3：端口引用 = 对象值 {map, inst, port}；选项 = port: 解析器（配对图优先），写入值解码回对象。
 			# 值编码成 JSON 串走 choice 控件；值不在选项里时显示「(当前值)」，不静默改写。

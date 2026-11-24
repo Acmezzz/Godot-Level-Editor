@@ -2,6 +2,7 @@ extends RefCounted
 ## Flat draw order with edges anchored to a parent element or the viewport.
 
 const Id := preload("res://src/content/content_id.gd")
+const FlowTarget := preload("res://src/content/flow_target.gd")
 
 const KINDS := ["panel", "text", "button"]
 const FALLBACK_SIZE := Vector2(1280, 720)
@@ -33,10 +34,10 @@ static func content_target(value: Variant) -> bool:
 	return value is Dictionary and value.size() == 2 and value.get("function") is String and value.get("content") is String
 
 static func view_target(value: Variant) -> bool:
-	return value is Dictionary and value.size() == 1 and value.get("view") is String and not value.view.is_empty()
+	return FlowTarget.kind(value) == "view"
 
 static func map_target(value: Variant) -> bool:
-	return value is Dictionary and value.size() == 1 and value.get("map") is String and not value.map.is_empty()
+	return FlowTarget.kind(value) == "map"
 
 static func target_at(row: Dictionary, output: String) -> Variant:
 	return row.get("target") if output.is_empty() else row.get("outputs", {}).get(output)

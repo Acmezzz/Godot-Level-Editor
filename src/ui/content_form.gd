@@ -28,6 +28,7 @@ const FieldWidgets := preload("res://src/ui/field_widgets.gd")
 const FunctionDecls := preload("res://src/content/function_decl.gd")
 const RefFields := preload("res://src/content/ref_fields.gd")
 const ProjectAudit := preload("res://src/project/project_audit.gd")
+const StartupTargets := preload("res://src/project/startup_targets.gd")
 const CellGraph := preload("res://src/map/cell_graph.gd")
 const ReferenceIndex := preload("res://src/project/reference_index.gd")   # B2：删除入边全景统一入口
 const BatchOps := preload("res://src/content/batch_ops.gd")   # E2：同功能批量改值
@@ -424,6 +425,9 @@ func _resolve_options(decl: Dictionary, project_scope := false, saved_only := fa
 		return ConditionDecls.allowed_rows(manifest, decl)
 
 	var src := str(decl.get("source", ""))
+	if src == "editor:flow-target":
+		return StartupTargets.destination_options(manifest, decl.domains).map(func(option):
+			return {"v": JSON.stringify(option.target), "t": option.name})
 	if src == "view:":
 		return ReferenceIndex.view_ids(manifest).map(func(id: String): return {"v": id, "t": id})
 	if src.begins_with("content:"):
@@ -1663,7 +1667,8 @@ func _delete_blocked_reason(fn_id: String, cid: String) -> String:
 	var cur_map := str(app.cur_map_name) if app.map_loaded else ""
 	# B2（§7.2）：删除入边全景统一走 ReferenceIndex.inbound_content——
 	# 磁盘地图/内容/草稿三路入边 + 读不全源，审计与删除共用同一套解析结果。
-	var ref: Dictionary = ReferenceIndex.inbound_content(manifest, fn_id, cid, cur_map, live_codes)
+	var live_map: Dictionary = app.canvas.extract() if _map_ready() else {}
+	var ref: Dictionary = ReferenceIndex.inbound_content(manifest, fn_id, cid, cur_map, live_codes, live_map)
 	if not bool(ref.get("complete", false)):
 		return " 删除中止：检查范围不完整——%s。先修好这些文件再试" % \
 			"；".join(PackedStringArray((ref.get("unreadable_sources", []) as Array).map(
@@ -1678,7 +1683,7 @@ func _delete_blocked_reason(fn_id: String, cid: String) -> String:
 			total += codes.size()
 			lines.append("%s × %d（%s）" % [str(mn), codes.size(),
 				", ".join(PackedStringArray(codes.slice(0, 4)))])
-		return " 删除中止：%s 仍被 %d 个实例引用——%s。先改绑到别的内容或删掉那些绑定" % [
+		return " 删除中止：%s 仍被 %d 个实例引用——%s。请先改接或清除引用。" % [
 			cid, total, "；".join(lines)]
 	# ② 其它内容文件的引用型字段指向它（内容 → 内容的入边）：删了那些引用就悬空
 	var inbound: Array = edges.get("contents", [])
