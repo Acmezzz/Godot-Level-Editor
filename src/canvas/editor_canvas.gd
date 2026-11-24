@@ -877,7 +877,7 @@ var _selection_ops_ctrl   # SelectionOps：实体选区/剪贴板控制器
 var _region_ops_ctrl   # RegionOps：区域复制/剪切/粘贴/搬迁控制器
 var _layer_ops_ctrl   # LayerOps：层栈运行时与管理
 var _entity_factory_ctrl   # EntityFactory：实体工厂/实例码发号
-var _undo_history_ctrl   # UndoHistory：快照式撤销/重做控制器
+var _undo_history_ctrl   # 撤销/重做控制器
 var _canvas_draw_ctrl   # CanvasDraw：绘制控制器
 var _canvas_input_ctrl   # CanvasInput：鼠标输入路由控制器
 var _tool_ops_ctrl   # ToolOps：左键/右键语义执行控制器
@@ -1324,10 +1324,13 @@ func _mark(ents_changed := true) -> void:
 func apply_cell_graph(graph: Dictionary) -> void:
 	push_undo()
 	map_data.meta["cellGraph"] = graph.duplicate(true)
+	_mark_map()
+	queue_redraw()
+
+func _mark_map() -> void:
 	modified_flag = true
 	map_rev += 1
 	modified.emit()
-	queue_redraw()
 
 ## P01：只改瓦片（地形/装饰）——碰撞数据没动，红块不必重建。
 ## 方形瓦片由 TileMapLayer 自己在 set_cell/erase_cell 后重绘；

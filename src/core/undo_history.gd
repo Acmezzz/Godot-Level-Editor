@@ -12,7 +12,7 @@ func _init(host) -> void:
 	cvs = host
 
 ## —— 撤销/重做栈（§7.5 阶段一：栈归本控制器所有，画布不再持有可写字段）——
-## 条目三种形态见下方差量记录器与整图快照；上限 80 步。
+## 差量条目和整图快照共用 80 步上限。
 const UNDO_MAX := 80
 var undo_stack: Array = []
 var redo_stack: Array = []
@@ -36,7 +36,7 @@ func _restore(snapshot) -> void:
 		await cvs.load_data(d, cvs.cur_map_name, true, true)
 
 
-## 整图快照入栈：全局操作（区域/层/尺寸/转换）与
+## 整图快照入栈：全局操作（区域粘贴/层/尺寸/转换）与
 ## 无实例码的场景图片改动走这条。写入口在控制器上，画布只做转发不带状态。
 func push_undo() -> void:
 	if cvs.map_root == null or not is_instance_valid(cvs.map_root):
@@ -113,11 +113,11 @@ func redo() -> bool:
 func _is_patch(entry) -> bool:
 	if not (entry is Dictionary):
 		return false
-	return str((entry as Dictionary).get("kind", "")) in ["delta", "ents", "content"]
+	return str((entry as Dictionary).get("kind", "")) in ["delta", "ents", "content", "region_move"]
 
 
 ## 条目 → 状态（undo 用 forward=false，redo 用 true）。返回是否真的应用了。
-## 三种差量形态各只写受影响的数据：实例条目只重建涉及的节点，内容条目只写那一个内容文件。
+## 差量只写受影响的数据；整图快照恢复地图文档。
 func _apply_entry(entry, forward: bool) -> bool:
 	if _is_patch(entry):
 		var d: Dictionary = entry
@@ -128,6 +128,8 @@ func _apply_entry(entry, forward: bool) -> bool:
 				_restore_ents(d, forward)
 			"content":
 				return _restore_content(d, forward)
+			"region_move":
+				_restore_region_move(d, forward)
 		return true
 	await _restore(entry)
 	return true
@@ -445,13 +447,54 @@ func _restore_delta(entry: Dictionary, forward: bool) -> void:
 				cvs.set_collision_cell(c, true, str(vd.get("type", "solid")), str(vd.get("shape", "")), raw)
 	# 差量恢复不走 load_data 重建：P01 精细重画标记按改动种类逐项打（瓦片/碰撞）。
 	# 阶段三：按层失效——只重画真正被改到的那些层（一笔只画一层是常态），
-	# 也不再补一刀全量 _mark：窄入口各自已抬 map_rev / emit modified。
+	# 窄入口更新各自的版本和视图，最后再重画画布。
 	for li in touched_layers.values():
 		if li >= 0:
 			cvs._mark_tiles_layer(li)
 	if touched_coll:
 		cvs._mark_collision()
 	cvs.queue_redraw()
+
+func commit_region_move(entry: Dictionary, uncoded_positions: Dictionary) -> void:
+	if not uncoded_positions.is_empty():
+		push_undo()
+	for n in uncoded_positions:
+		n.position = uncoded_positions[n]
+	_restore_region_move(entry, true, not uncoded_positions.is_empty())
+	if uncoded_positions.is_empty():
+		_push_entry(entry)
+
+func _restore_region_move(entry: Dictionary, forward: bool, uncoded_changed := false) -> void:
+	var field := "after" if forward else "before"
+	var objects: Dictionary = entry.objects
+	if not objects.is_empty():
+		var index: Dictionary = cvs._ent_by_code_index()
+		for code in objects:
+			var node: EntityNode = index[code]
+			node.position = objects[code][field]
+	var graph_rows: Dictionary = entry.graph_rows
+	if not graph_rows.is_empty():
+		var rows: Array = cvs.cell_graph().cells
+		for i in graph_rows:
+			rows[i] = graph_rows[i][field].duplicate(true)
+	if entry.has("spawn"):
+		cvs.spawn.position = entry.spawn[field]
+	_restore_delta(entry, forward)
+	if not objects.is_empty() or uncoded_changed:
+		cvs._mark_ents()
+	elif not graph_rows.is_empty() or entry.has("spawn"):
+		cvs._mark_map()
+
+func region_cell_changes(lid: String, layer: TileMapLayer, changes: Dictionary) -> Array:
+	var cells := []
+	var collision: bool = layer == cvs.collision
+	for c: Vector2i in changes:
+		var before = _collision_state(c) if collision else _tile_state(lid, layer, c)
+		var after = changes[c]
+		if before != after:
+			cells.append({"kind": "collision" if collision else "tile", "layer": lid,
+				"cell": [c.x, c.y], "before": before, "after": after})
+	return cells
 
 ## Automatic generation and undo use the same cell writer. Compare complete
 ## states so replace can clear old shapes and metadata without recording no-ops.

@@ -240,7 +240,7 @@ func paste_at(pos: Vector2) -> void:
 	cvs.push_undo()
 	cvs._region_ops_ctrl.stage_cloned_contents(clone)
 	for i in target.groups.size():
-		_write_group(target.groups[i], target.positions[i], false)
+		_write_group(target.groups[i], target.positions[i])
 	for i in clip.objects.size():
 		var row: Dictionary = clone.map_patch.objects[i]
 		var li: int = target.layers[clip.objects[i].layer]
@@ -307,40 +307,53 @@ func finish(snap: Dictionary) -> void:
 		cvs._hint(plan.error)
 		cvs.queue_redraw()
 		return
-	var graph_cells: Array = snap.get("graph_cells", [])
-	var spawn_changed: bool = plan.has("spawn") and plan.spawn != cvs.root_cell(snap.spawn)
-	var changed: bool = not snap.objects.is_empty() or not graph_cells.is_empty() or spawn_changed
+	var history = cvs._undo_history_ctrl
+	var entry := {"kind": "region_move", "cells": [], "objects": {}, "graph_rows": {}}
 	for i: int in snap.groups.size():
 		var group: Dictionary = snap.groups[i]
+		var changes := {}
+		for row: Array in group.rows:
+			changes[Vector2i(row[0], row[1])] = null
 		for j: int in group.rows.size():
 			var row: Array = group.rows[j]
-			if plan.positions[i][j] != Vector2i(row[0], row[1]):
-				changed = true
-				break
-	if not changed:
-		return
-	cvs.push_undo()
-	for i: int in snap.groups.size():
-		_write_group(snap.groups[i], plan.positions[i], true)
+			var to: Vector2i = plan.positions[i][j]
+			if group.layer == cvs.collision:
+				var data: Dictionary = row[2]
+				changes[to] = {"type": data.get("type", "solid"), "shape": data.get("shape", ""),
+					"raw": data.get("raw", {})}
+			else:
+				changes[to] = _placed_tile(row, to)
+		entry.cells.append_array(history.region_cell_changes(group.lid, group.layer, changes))
+	var uncoded_positions := {}
 	for n: EntityNode in snap.objects:
-		n.position += cvs.world_delta_local(cvs._layer_index_of(n.layer_id), snap.delta)
+		var to: Vector2 = n.position + cvs.world_delta_local(cvs._layer_index_of(n.layer_id), snap.delta)
+		if to == n.position:
+			continue
+		if n.code.is_empty():
+			uncoded_positions[n] = to
+		else:
+			entry.objects[n.code] = {"before": n.position, "after": to}
+	var graph_cells: Array = snap.get("graph_cells", [])
 	if not graph_cells.is_empty():
-		cvs.map_data.meta["cellGraph"] = GraphClip.translated_graph(cvs.cell_graph(), graph_cells, snap.delta)
+		entry.graph_rows = GraphClip.translated_rows(cvs.cell_graph(), graph_cells, snap.delta)
 	if plan.has("spawn"):
-		cvs.spawn.position = cvs.grid.cell_center_px(plan.spawn)
+		var to: Vector2 = cvs.grid.cell_center_px(plan.spawn)
+		if to != cvs.spawn.position:
+			entry.spawn = {"before": cvs.spawn.position, "after": to}
+	if entry.cells.is_empty() and entry.objects.is_empty() and uncoded_positions.is_empty() \
+			and entry.graph_rows.is_empty() and not entry.has("spawn"):
+		return
+	history.commit_region_move(entry, uncoded_positions)
 	selection = Rect2()
-	cvs._mark()
-	cvs.queue_redraw()
 	cvs._hint("已跨层搬动选区（Ctrl+Z 撤销）。")
 
-func _write_group(group: Dictionary, positions: Array, moving: bool) -> void:
-	if moving:
-		for row in group.rows:
-			var from := Vector2i(row[0], row[1])
-			if group.layer == cvs.collision:
-				cvs.set_collision_cell(from, false)
-			else:
-				cvs.erase_tile(group.lid, group.layer, from)
+func _placed_tile(row: Array, cell: Vector2i) -> Array:
+	var placed := row.duplicate()
+	placed[0] = cell.x
+	placed[1] = cell.y
+	return placed
+
+func _write_group(group: Dictionary, positions: Array) -> void:
 	for j in group.rows.size():
 		var to: Vector2i = positions[j]
 		var row: Array = group.rows[j]
@@ -348,7 +361,7 @@ func _write_group(group: Dictionary, positions: Array, moving: bool) -> void:
 			var data: Dictionary = row[2]
 			cvs.set_collision_cell(to, true, data.get("type", "solid"), data.get("shape", ""), data.get("raw", {}))
 		else:
-			cvs._region_ops_ctrl._write_layer_tile(group.lid, group.layer, row, to)
+			cvs.write_tile_row(group.lid, group.layer, _placed_tile(row, to))
 
 func draw_paste(pos: Vector2) -> void:
 	var clip: Dictionary = cvs._region_clip

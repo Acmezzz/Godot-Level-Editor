@@ -22,19 +22,20 @@ static func select_cells(graph: Dictionary, world: Transform2D, frames: Dictiona
 			selected.append({"index": i, "polygon": poly, "transform": xf, "layer": lid})
 	return selected
 
-static func translated_graph(graph: Dictionary, chosen: Array, delta: Vector2) -> Dictionary:
-	var result := graph.duplicate()
-	var rows: Array = graph.cells.duplicate()
-	result.cells = rows
+static func translated_rows(graph: Dictionary, chosen: Array, delta: Vector2) -> Dictionary:
+	var result := {}
+	var rows: Array = graph.cells
 	for cell in chosen:
-		var row: Dictionary = rows[cell.index].duplicate()
+		var before: Dictionary = rows[cell.index]
+		var row := before.duplicate()
 		var xf: Transform2D = cell.transform
 		var local := xf.affine_inverse().basis_xform(delta)
 		row.polygon = row.polygon.map(func(p): return [float(p[0]) + local.x, float(p[1]) + local.y])
 		# The generated ID encodes the original tile coordinate. After a move,
 		# keep the stable ID but stop treating this row as a generated tile.
 		row.erase(Tiles.GENERATED_KEY)
-		rows[cell.index] = row
+		if before != row:
+			result[cell.index] = {"before": before.duplicate(true), "after": row.duplicate(true)}
 	return result
 
 static func capture(graph: Dictionary, world: Transform2D, frames: Dictionary, layers: Dictionary,

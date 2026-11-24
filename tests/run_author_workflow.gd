@@ -2151,7 +2151,13 @@ func author_world_region_move(app, manifest: Dictionary) -> void:
 	check(plan.get("positions", []).size() == 3, "cross-layer preview plans two tile grids and root collision")
 	check(plan.get("spawn") == Vector2i.RIGHT and cvs._move_snap.graph_cells.size() == 2,
 		"preview includes opted in spawn and both graph spaces")
+	var root: Node2D = cvs.map_root
+	var steps: int = cvs.undo_step_count()
 	input._on_left_release(lower_px + step)
+	var move_entry: Variant = cvs._undo_history_ctrl.undo_stack.back()
+	check(cvs.undo_step_count() == steps + 1 and move_entry is Dictionary
+		and move_entry.get("kind") == "region_move" and move_entry.graph_rows.size() == 2,
+		"mixed region move records one patch with only the selected graph rows")
 	var moved: Dictionary = cvs.extract()
 	var upper_row: Array = moved.tiles[upper][0]
 	check(moved.tiles[ground].any(func(row): return row[0] == 1 and row[1] == 0)
@@ -2170,13 +2176,31 @@ func author_world_region_move(app, manifest: Dictionary) -> void:
 		"moving cells keeps their IDs and all edges while translating each polygon in its own space")
 	var undo_ok: bool = await cvs.undo()
 	_check_world_move_restore(undo_ok, cvs.extract(), initial, "undo")
+	check(is_instance_valid(n) and cvs.map_root == root and cvs._ent_by_code_index().get(n.code) == n,
+		"move undo preserves the map root and coded instance")
 	var redo_ok: bool = await cvs.redo()
 	_check_world_move_restore(redo_ok, cvs.extract(), moved, "redo")
+	check(is_instance_valid(n) and cvs.map_root == root and cvs._ent_by_code_index().get(n.code) == n,
+		"move redo preserves the map root and coded instance")
 	press(app, "跨层搬动")
 	var saved: Dictionary = await app._map_file_ctrl.commit_document("保存跨层搬动")
 	check(saved.get("status") == "ok", "save the cross-layer move")
 	await app._load_map_file(path)
 	_check_world_move_restore(true, cvs.extract(), moved, "save and reopen")
+	var layer: TileMapLayer = cvs.layer_tiles[0]
+	var unresolved := [2, 0, "missing-region-tile", 0, 0, 3]
+	cvs.write_tile_row(ground, layer, unresolved)
+	var before_overlap: Dictionary = cvs.extract()
+	cvs._world_region_move.finish({"groups": [{"lid": ground, "layer": layer,
+		"rows": before_overlap.tiles[ground]}], "objects": [], "delta": step,
+		"plan": {"positions": [[Vector2i(2, 0), Vector2i(3, 0)]]}})
+	var after_overlap: Dictionary = cvs.extract()
+	check(after_overlap.tiles[ground].size() == 2 and layer.get_cell_source_id(Vector2i(1, 0)) == -1
+		and layer.get_cell_source_id(Vector2i(2, 0)) >= 0
+		and cvs.unresolved_tile(ground, Vector2i(3, 0)) == [3, 0, "missing-region-tile", 0, 0, 3],
+		"overlapping move replaces a selected destination and preserves the unresolved tile row")
+	_check_world_move_restore(await cvs.undo(), cvs.extract(), before_overlap, "undo overlapping move")
+	_check_world_move_restore(await cvs.redo(), cvs.extract(), after_overlap, "redo overlapping move")
 
 func _copy_test_polygon(center: Vector2) -> Array:
 	var result := []
