@@ -1,7 +1,7 @@
 extends RefCounted
 ## RelGraph：内容关系图（E2）。纯数据 + 单一写入口。
 ##
-## 项目图包含内容和参考视图；关系写回声明字段、布局元素或热点。
+## 项目图包含内容、参考视图和地图；关系写回声明字段、布局元素或热点。
 ## 图的真相仍是那些字段——本模块不缓存副本，只负责：
 ##   build()      读内容文件生成 {nodes, edges, external}（可并入尚未落盘的 staged 内容）；
 ##   set_edge()   把一条边的目标写回同一个字段（读/写回调由调用方给，复用表单的 staged 路径）。
@@ -15,8 +15,16 @@ const StepDecls := preload("res://src/content/step_decl.gd")
 const RefFields := preload("res://src/content/ref_fields.gd")
 const References := preload("res://src/project/reference_index.gd")
 const ScreenLayout := preload("res://src/project/screen_layout.gd")
+const FlowTarget := preload("res://src/content/flow_target.gd")
+const StartupTargets := preload("res://src/project/startup_targets.gd")
 const VIEW_KIND := "@view"
 const MAP_KIND := "@map"
+
+static func node_target(node: Dictionary) -> Dictionary:
+	match node.fn_id:
+		VIEW_KIND: return {"view": node.cid}
+		MAP_KIND: return {"map": node.cid}
+	return {"function": node.fn_id, "content": node.cid}
 
 ## 建图。scope_fn = 当前功能 id（只画这个功能的内容条目与其出边）。
 ## extra = 尚未落盘的内容 {cid: data}（A2 staged），并入本功能目录参与建图。
@@ -70,11 +78,10 @@ static func _build(manifest: Dictionary, kinds: Array, extra: Dictionary, scope:
 		catalog[VIEW_KIND] = {}
 		for id in References.view_ids(manifest):
 			catalog[VIEW_KIND][id] = true
-		if manifest.get("directMapTargets") == true:
-			catalog[MAP_KIND] = {}
-			for map in References.map_target_options(manifest):
-				catalog[MAP_KIND][map.code] = true
-				graph.nodes.append({"key": _key(MAP_KIND, map.code), "cid": map.code, "fn_id": MAP_KIND, "name": map.name})
+		catalog[MAP_KIND] = {}
+		for map in References.map_target_options(manifest):
+			catalog[MAP_KIND][map.code] = true
+			graph.nodes.append({"key": _key(MAP_KIND, map.code), "cid": map.code, "fn_id": MAP_KIND, "name": map.name})
 	for kind in kinds:
 		var items := ContentStore.read_all(manifest, str(kind), graph.bad)
 		var staged: Dictionary = extra.get(kind, {})
@@ -83,8 +90,9 @@ static func _build(manifest: Dictionary, kinds: Array, extra: Dictionary, scope:
 				items[str(cid)] = staged[cid]
 		contents[kind] = items
 		catalog[kind] = {}
+		var code := FunctionDecls.fn_code(manifest, kind)
 		for cid in items:
-			catalog[kind][cid] = true
+			catalog[kind][cid] = StartupTargets.is_project_destination(items[cid], code)
 	for kind in kinds:
 		var fn_id := str(kind)
 		var decls := _top_decls(manifest, fn_id)
@@ -94,7 +102,7 @@ static func _build(manifest: Dictionary, kinds: Array, extra: Dictionary, scope:
 			var values: Dictionary = data.fields if data.get("fields") is Dictionary else {}
 			var label := str(data.get("name", ""))
 			graph.nodes.append({"key": key, "cid": str(cid), "fn_id": fn_id,
-				"name": label if label != "" else str(cid), "fields": values.size()})
+				"name": label if label != "" else str(cid), "fields": values.size(), "project_content": catalog[kind][cid]})
 			graph.slots[key] = []
 			var base := {"cid": str(cid), "fn_id": fn_id}
 			_collect(manifest, key, base, decls, values, -1, graph, catalog)
@@ -148,7 +156,7 @@ static func _collect_views(manifest: Dictionary, graph: Dictionary, catalog: Dic
 				for output in labels:
 					var current = ScreenLayout.target_at(row, output)
 					var direct: bool = manifest.get("directViewTargets") == true and ScreenLayout.view_target(current)
-					var to_map: bool = catalog.has(MAP_KIND) and ScreenLayout.map_target(current)
+					var to_map: bool = manifest.get("directMapTargets") == true and ScreenLayout.map_target(current)
 					if current != null and not direct and not to_map and not ScreenLayout.content_target(current):
 						continue
 					var fn: String = MAP_KIND if to_map else (VIEW_KIND if direct else (current.function if current != null else ""))
@@ -262,6 +270,20 @@ static func _collect(manifest: Dictionary, from_key: String, base: Dictionary, d
 				_collect(manifest, from_key, nested, scope.decls, scope.values, step, graph, catalog,
 					"%s %s" % [label, scope.label])
 		var desc := RefFields.describe(fd)
+		if desc.kind == "flow_target" and catalog.has(MAP_KIND):
+			var target = values.get(field, fd.get("default", {}))
+			var address := _flow_address(target)
+			var edge := base.merged({"from": from_key, "field": field, "label": label, "step": step,
+				"decl": fd.duplicate(true), "shown_value": shown.duplicate(true) if shown is Dictionary or shown is Array else shown,
+				"shown_present": values.has(field),
+				"multi": false, "flow_target": true, "target": target, "fn": address[0], "value": address[1]})
+			graph.slots[from_key].append(edge)
+			if FlowTarget.allows(fd, target) and catalog.get(edge.fn, {}).get(edge.value, false):
+				edge["to"] = _key(edge.fn, edge.value)
+				graph.edges.append(edge)
+			elif target != null and not (target is Dictionary and target.is_empty()):
+				graph.external.append(edge)
+			continue
 		if desc.kind != "content" and not (desc.kind == "view" and catalog.has(VIEW_KIND)):
 			continue
 		var to_fn := VIEW_KIND if desc.kind == "view" else str(desc.get("filter", {}).get("fn", ""))
@@ -316,7 +338,7 @@ static func _add_target_nodes(manifest: Dictionary, fn_id: String, nodes: Array,
 ## multi 字段（值是数组）：old_cid 指出要替换/移除的元素，其余值原样保留。
 ## 返回 {status: ok/noop/missing/stale/failed}。
 static func set_edge(read_fn: Callable, write_fn: Callable, fn_id: String, cid: String,
-		step: int, field: String, to_cid: String, multi: bool, old_cid := "", shown: Dictionary = {}) -> Dictionary:
+		step: int, field: String, destination: Variant, multi: bool, old_cid := "", shown: Dictionary = {}) -> Dictionary:
 	if cid == "" or field == "":
 		return {"status": "failed"}
 	var data: Dictionary = read_fn.call(fn_id, cid)
@@ -353,7 +375,12 @@ static func set_edge(read_fn: Callable, write_fn: Callable, fn_id: String, cid: 
 	if not shown.is_empty() and (fields.has(field) != bool(shown.get("shown_present", true)) \
 			or not _same_value(fields.get(field), shown.get("shown_value"))):
 		return {"status": "stale"}
-	if multi:
+	if shown.get("flow_target", false):
+		if _same_value(fields.get(field, shown.decl.get("default", {})), destination):
+			return {"status": "noop"}
+		fields[field] = destination
+	elif multi:
+		var to_cid: String = destination
 		var arr: Array = fields.get(field, []) if fields.get(field, null) is Array else []
 		var at := int(shown.get("index", -1)) if not shown.is_empty() else arr.find(old_cid if old_cid != "" else to_cid)
 		if not shown.is_empty() and at == -1:
@@ -370,6 +397,7 @@ static func set_edge(read_fn: Callable, write_fn: Callable, fn_id: String, cid: 
 			arr[at] = to_cid
 		fields[field] = arr
 	else:
+		var to_cid: String = destination
 		var cur := str(fields.get(field, "")) if fields.get(field, null) != null else ""
 		if cur == to_cid and (to_cid != "" or not fields.has(field)):
 			return {"status": "noop"}
@@ -382,6 +410,13 @@ static func set_edge(read_fn: Callable, write_fn: Callable, fn_id: String, cid: 
 	if not _write_ok(write_fn.call(fn_id, cid, data)):
 		return {"status": "failed"}
 	return {"status": "ok"}
+
+static func _flow_address(target: Variant) -> Array[String]:
+	match FlowTarget.kind(target):
+		"view": return [VIEW_KIND, target.view]
+		"map": return [MAP_KIND, target.map]
+		"content": return [target.function, target.content]
+	return ["", ""]
 
 ## 写回结果归一：老回调返回 bool；表单 _content_write 返回 "ok"/"conflict"/"fail"。
 ## 字符串非空即真会漏判失败，必须显式认 "ok"（F1/P04）。

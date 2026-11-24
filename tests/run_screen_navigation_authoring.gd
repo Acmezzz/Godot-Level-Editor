@@ -6,6 +6,7 @@ const Maps := preload("res://src/map/map_store.gd")
 const Audit := preload("res://src/project/project_audit.gd")
 const Views := preload("res://src/ui/reference_view_library.gd")
 const Flow := preload("res://src/content/rel_graph.gd")
+const Store := preload("res://src/content/content_store.gd")
 const ScreenCanvas := preload("res://src/ui/screen_layout_canvas.gd")
 const Editor := preload("res://src/editor.tscn")
 var app
@@ -31,7 +32,9 @@ func run() -> void:
 		"screenModules": {"signal-latch": {"name": "Latch", "outputs": {"accepted": "Continue"}, "fields": [
 			{"id": "presses", "kind": "input", "type": "int", "min": 1, "default": 1}]}},
 		"functions": {"signal": {"code": "SIGN", "name": "Signal", "fields": [
-			{"id": "text", "code": "TEXT", "kind": "input", "type": "string"}]}},
+			{"id": "text", "code": "TEXT", "kind": "input", "type": "string"},
+			{"id": "next", "code": "NEXT", "kind": "input", "type": "flow_target",
+				"maps": true, "screens": true, "contentTypes": ["signal"]}]}},
 		"playtest": {"executable": OS.get_executable_path(), "report": true, "projectEntry": true,
 			"args": ["--path", "%projectpath%", "--audio-driver", "Dummy", "--", "--verify"]}}
 	check(Maps.write_json(project.path_join("editor/editor_manifest.json"), declaration), "install only game declarations")
@@ -55,7 +58,16 @@ func run() -> void:
 	inputs[2].text = "Screen sequence complete"
 	press(form, "保存")
 	form.hide()
-	await add_screen("results", "See result", {}, {"function": "signal", "content": "project-finished"})
+	app.project_shell.content_editor._library.open()
+	press(popup(), "新建…")
+	await process_frame
+	form = popup()
+	inputs = collect(form, "LineEdit")
+	inputs[0].text = "Results Router"
+	inputs[1].text = "results-router"
+	press(form, "保存")
+	form.hide()
+	await add_screen("results", "See result", {}, {"function": "signal", "content": "project-results-router"})
 	app._set_mode("map")
 	app._on_new()
 	var create := popup()
@@ -100,7 +112,22 @@ func run() -> void:
 	app._set_mode("content")
 	await add_screen("instructions", "Enter course", {}, {"map": map_code})
 	await add_screen("welcome", "Start tutorial", {"module": "signal-latch"}, {"view": "instructions"})
+	app.project_shell.content_editor._library.open()
+	press(popup(), "流程关系…")
+	await process_frame
+	var flow := popup()
+	var router_key := "signal\u0001project-results-router"
+	choose(flow.find_child("FlowSource", true, false), router_key)
+	var targets: OptionButton = flow.find_child("FlowTarget", true, false)
+	for destination in [{"map": map_code}, {"view": "instructions"}, {"function": "signal", "content": "project-finished"}]:
+		choose(targets, destination)
+		press(flow, "应用关系")
+		var router := Store.read(manifest, "signal", "project-results-router")
+		check(router.get("fields", {}).get("NEXT") == destination, "graph writes the typed destination %s" % destination)
+	flow.hide()
 	var graph := Flow.build_project(manifest)
+	check(graph.edges.any(func(edge): return edge.from == router_key and edge.to == "signal\u0001project-finished"),
+		"graph reloads the mixed destination as an edge to the published target")
 	var edge_exists: bool = graph.edges.any(func(edge):
 		return edge.from == "@view\u0001welcome" and edge.to == "@view\u0001instructions" and edge.get("output") == "accepted")
 	check(edge_exists, "the project graph exposes the direct module transition")
@@ -131,7 +158,7 @@ func run() -> void:
 	var report: Dictionary = controller._play_report_result
 	var result: Dictionary = report.get("result", {})
 	check(report.get("status") == "ready" and result.get("screens") == ["welcome", "instructions", "results"]
-		and result.get("visited") == ["project-finished"] and result.get("board") == map_code
+		and result.get("visited") == ["project-results-router", "project-finished"] and result.get("board") == map_code
 		and result.get("placed") == [pawn_code] and result.get("text") == "Screen sequence complete",
 		"the game loads the authored map object, follows its screen reference and reaches the conclusion: %s" % [report])
 	print("SCREEN-NAV-DONE failures=", failures)
@@ -181,7 +208,8 @@ func add_screen(id: String, label: String, module: Dictionary, target: Dictionar
 
 func choose(control: OptionButton, value: Variant) -> void:
 	for i in control.item_count:
-		if control.get_item_metadata(i) == value:
+		var candidate = control.get_item_metadata(i)
+		if typeof(candidate) == typeof(value) and candidate == value:
 			control.select(i)
 			control.item_selected.emit(i)
 			return

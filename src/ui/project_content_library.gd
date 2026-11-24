@@ -11,6 +11,8 @@ const RelGraph := preload("res://src/content/rel_graph.gd")
 const RelGraphView := preload("res://src/ui/rel_graph_view.gd")
 const ReferenceViews := preload("res://src/ui/reference_view_library.gd")
 const References := preload("res://src/project/reference_index.gd")
+const FlowTarget := preload("res://src/content/flow_target.gd")
+const StartupTargets := preload("res://src/project/startup_targets.gd")
 const Kit := preload("res://src/ui/ui_kit.gd")
 const FrameReference := preload("res://src/ui/map_game_preview.gd")
 const FrameDialog := preload("res://src/ui/game_frame_dialog.gd")
@@ -204,27 +206,31 @@ func _open_flow() -> void:
 		var edge: Dictionary = state.slots[slot.selected]
 		var match_idx := 0
 		var from_view: bool = edge.fn_id == RelGraph.VIEW_KIND
+		var mixed: bool = edge.get("flow_target", false)
 		var words: PackedStringArray = tokenize.call(target_search.text)
 		for item in state.graph.nodes:
+			var address := RelGraph.node_target(item)
 			if (from_view and item.fn_id == RelGraph.VIEW_KIND and source.get("directViewTargets") != true) \
-					or (not from_view and item.fn_id != edge.fn):
+					or (from_view and item.fn_id == RelGraph.MAP_KIND and source.get("directMapTargets") != true) \
+					or (not from_view and not mixed and item.fn_id != edge.fn):
+				continue
+			if mixed and (not FlowTarget.allows(edge.decl, address) \
+					or (address.has("content") and not item.get("project_content", false))):
 				continue
 			var is_current: bool = item.cid == edge.value and item.fn_id == edge.fn
 			if not is_current and not matches.call(item.key, words):
 				continue
 			var label := _flow_node_label(item, true)
 			target.add_item(label)
-			var choice = item.cid
-			if from_view:
-				match item.fn_id:
-					RelGraph.VIEW_KIND: choice = {"view": item.cid}
-					RelGraph.MAP_KIND: choice = {"map": item.cid}
-					_: choice = {"function": item.fn_id, "content": item.cid}
+			var choice = address if from_view or mixed else item.cid
 			target.set_item_metadata(target.item_count - 1, choice)
 			if is_current:
 				match_idx = target.item_count - 1
-		if match_idx == 0 and edge.value != "":
-			target.add_item("（失效引用）" + str(edge.value))
+		var missing = edge.get("target", {}) if mixed else edge.value
+		var has_missing: bool = missing != null and not (missing is Dictionary and missing.is_empty()) \
+			and not (missing is String and missing.is_empty())
+		if match_idx == 0 and has_missing:
+			target.add_item("（失效引用）" + str(missing))
 			match_idx = target.item_count - 1
 			target.set_item_metadata(match_idx, edge.value)
 			target.set_item_disabled(match_idx, true)
@@ -254,7 +260,9 @@ func _open_flow() -> void:
 			var suffix := "（添加目标）" if edge.multi and edge.index == -1 else (
 				" #%d" % (int(edge.index) + 1) if edge.multi else "")
 			var domain: String = edge.fn
-			if edge.fn_id == RelGraph.VIEW_KIND:
+			if edge.get("flow_target", false):
+				domain = "流程目标"
+			elif edge.fn_id == RelGraph.VIEW_KIND:
 				domain = {RelGraph.VIEW_KIND: "屏幕", RelGraph.MAP_KIND: "地图"}.get(edge.fn, "内容")
 			slot.add_item(str(edge.label) + suffix + " → " + domain)
 		if slot.item_count > 0:
@@ -373,9 +381,14 @@ func _open_flow() -> void:
 				refresh.call(edge.from)
 				notice.text = "关系已保存。" if published else "屏幕关系未保存，请重试。"
 			return
-		var want: String = selected.call(target)
-		var valid_target: bool = want.is_empty() or (References.view_ids(source).has(want) if edge.fn == RelGraph.VIEW_KIND
-			else Store.read_ex(source, edge.fn, want).status == "ok")
+		var want = target.get_selected_metadata()
+		var valid_target: bool
+		if edge.get("flow_target", false):
+			want = want if want is Dictionary else {}
+			valid_target = want.is_empty() or StartupTargets.destination_available(source, edge.decl, want)
+		else:
+			valid_target = want.is_empty() or (References.view_ids(source).has(want) if edge.fn == RelGraph.VIEW_KIND
+				else Store.read_ex(source, edge.fn, want).status == "ok")
 		if not RelGraph.declaration_matches(source, edge.fn_id, edge) or not valid_target:
 			refresh.call(edge.from)
 			notice.text = "声明或目标已变更；请选择有效目标后重试。"

@@ -119,6 +119,10 @@ func _show_content(target: Dictionary) -> void:
 	visited.append(cid)
 	_clear_screen()
 	var fields: Dictionary = data.get("fields", {})
+	var next: Dictionary = fields.get("NEXT", {})
+	if not next.is_empty():
+		_follow_target.call_deferred(next)
+		return
 	var view_id: String = fields.get("PANE", "")
 	if view_id.is_empty():
 		var label := Label.new()

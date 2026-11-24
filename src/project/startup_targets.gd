@@ -22,7 +22,7 @@ static func destination_options(manifest: Dictionary, domains: Dictionary) -> Ar
 		var declaration := Functions.function_decl(manifest, kind)
 		for cid in Store.list_ids(manifest, kind):
 			var row := Store.read(manifest, kind, cid)
-			if _matches(row, declaration):
+			if is_project_destination(row, declaration.get("code")):
 				result.append({"name": "%s · %s [%s]" % [declaration.get("name", kind), row.get("name", cid), cid],
 					"target": {"function": kind, "content": cid}})
 	return result
@@ -40,7 +40,7 @@ static func destination_available(manifest: Dictionary, domains: Dictionary, tar
 	if target.has("map"):
 		return Refs.resolve_graph_map(Maps.code_index(manifest), target.map).status == "ok"
 	var kind: String = target.function
-	return _matches(Store.read(manifest, kind, target.content), Functions.function_decl(manifest, kind))
+	return is_project_destination(Store.read(manifest, kind, target.content), Functions.fn_code(manifest, kind))
 
-static func _matches(row: Dictionary, declaration: Dictionary) -> bool:
-	return row.get("scope") == "project" and row.get("function") == declaration.get("code") and row.get("fields") is Dictionary
+static func is_project_destination(row: Dictionary, code: Variant) -> bool:
+	return row.get("scope") == "project" and row.get("function") == code and row.get("fields") is Dictionary
