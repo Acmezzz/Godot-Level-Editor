@@ -52,7 +52,7 @@ static func supports(manifest: Dictionary, capability: String) -> bool:
 	return capabilities is Array and capabilities.has(capability) and declaration_issues(manifest).is_empty()
 
 static func render(tree: SceneTree, manifest: Dictionary, capability: String, subject: Dictionary,
-		viewport: Vector2i, locale: String, keep: Callable) -> Dictionary:
+		viewport: Vector2i, locale: String, keep: Callable, layout_profile := "") -> Dictionary:
 	if not supports(manifest, capability) or OS.has_feature("web"):
 		return _failed("游戏工程未提供此预览能力。")
 	if capability != GENERATE_MAP and not valid_size(viewport):
@@ -73,6 +73,8 @@ static func render(tree: SceneTree, manifest: Dictionary, capability: String, su
 	var request := {"version": VERSION, "token": token, "capability": capability,
 		"projectPath": root, "viewport": {"w": viewport.x, "h": viewport.y}, "locale": locale,
 		"subject": subject}
+	if capability == "screenLayout":
+		request.viewport["id"] = layout_profile
 	var data := JSON.stringify(request).to_utf8_buffer()
 	if data.size() > MAX_REQUEST:
 		_cleanup(dir)

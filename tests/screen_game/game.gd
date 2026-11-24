@@ -6,12 +6,16 @@ var manifest_bytes: PackedByteArray
 var map_bytes: PackedByteArray
 var draft_digest := ""
 var draft_locale := ""
+var draft_view := ""
+var draft_profile := ""
+var draft_extent := Vector2.ZERO
 var report := {}
 var visited: Array[String] = []
 var screens: Array[String] = []
 var opened_buttons: Array[String] = []
 var latch_inputs: Array[int] = []
 var outlets: Array[String] = []
+var screen_frames: Array[Dictionary] = []
 var cancel_target := {}
 var verify := false
 
@@ -56,6 +60,10 @@ func _load_view_draft(entry: Dictionary) -> bool:
 	hash.update(bytes)
 	draft_digest = hash.finish().hex_encode()
 	draft_locale = snapshot.get("locale", "")
+	draft_view = entry.view
+	draft_profile = snapshot.get("viewportId", "")
+	draft_extent = Vector2(snapshot.viewport[0], snapshot.viewport[1])
+	get_window().size = Vector2i(draft_extent)
 	var views: Array = manifest.get("views", [])
 	var index := views.find_custom(func(row): return row.view_id == entry.view)
 	if index < 0:
@@ -93,7 +101,10 @@ func _show_view(view_id: String, test_cancel := false) -> void:
 		if view.view_id != view_id:
 			continue
 		screens.append(view_id)
-		var buttons := _draw_screen(self, view.layout, size, draft_locale)
+		var extent := draft_extent if view_id == draft_view else size
+		var profile := draft_profile if view_id == draft_view else _viewport_profile(extent)
+		var buttons := _draw_screen(self, view.layout, extent, draft_locale, profile)
+		screen_frames.append({"id": profile, "size": [extent.x, extent.y]})
 		if verify:
 			if buttons.is_empty() or screens.size() > 8:
 				_finish("The authored route did not reach a conclusion.")
@@ -124,14 +135,23 @@ func _unhandled_input(event: InputEvent) -> void:
 		outlets.append("cancelled")
 		_show_content.call_deferred(cancel_target)
 
-func _draw_screen(parent: Node, layout: Dictionary, extent: Vector2, locale: String) -> Array[Button]:
+func _viewport_profile(extent: Vector2) -> String:
+	var wide := extent.x >= extent.y
+	for profile in manifest.viewports:
+		if (profile.w >= profile.h) == wide:
+			return profile.id
+	return ""
+
+func _draw_screen(parent: Node, layout: Dictionary, extent: Vector2, locale: String, profile: String) -> Array[Button]:
 	var background := ColorRect.new()
 	background.color = Color("#10232b")
 	background.size = extent
 	parent.add_child(background)
 	var buttons: Array[Button] = []
-	var geometry := _screen_rectangles(layout.elements, extent)
+	var geometry := _screen_rectangles(layout.elements, extent, profile)
 	for row in layout.elements:
+		if not geometry.has(row.id):
+			continue
 		var bounds: Rect2 = geometry[row.id]
 		if not bounds.has_area():
 			continue
@@ -176,7 +196,7 @@ func _draw_screen(parent: Node, layout: Dictionary, extent: Vector2, locale: Str
 		parent.add_child(item)
 	return buttons
 
-func _screen_rectangles(elements: Array, extent: Vector2) -> Dictionary:
+func _screen_rectangles(elements: Array, extent: Vector2, profile: String) -> Dictionary:
 	var by_parent := {}
 	for row in elements:
 		var parent_id: String = row.get("parent", "")
@@ -189,8 +209,11 @@ func _screen_rectangles(elements: Array, extent: Vector2) -> Dictionary:
 		var parent_id: String = pending.pop_back()
 		var container: Rect2 = bounds[parent_id]
 		for row in by_parent.get(parent_id, []):
-			var a: Array = row.anchors
-			var o: Array = row.get("offsets", [0, 0, 0, 0])
+			var variant: Dictionary = row.get("variants", {}).get(profile, {})
+			if variant.get("hidden", row.get("hidden", false)):
+				continue
+			var a: Array = variant.get("anchors", row.anchors)
+			var o: Array = variant.get("offsets", row.get("offsets", [0, 0, 0, 0]))
 			var top_left := Vector2(a[0], a[1]) * container.size + Vector2(o[0], o[1])
 			var bottom_right := Vector2(a[2], a[3]) * container.size + Vector2(o[2], o[3])
 			bounds[row.id] = Rect2(container.position + top_left, bottom_right - top_left)
@@ -212,7 +235,7 @@ func _preview(path: String) -> void:
 		_write_json(dir.path_join("picks.json"), {"version": 1, "token": request.token,
 			"regions": _relay_regions(map, pawns, Vector2(extent), camera)})
 	else:
-		_draw_screen(surface, request.subject.layout, Vector2(extent), request.locale)
+		_draw_screen(surface, request.subject.layout, Vector2(extent), request.locale, request.viewport.get("id", ""))
 	await RenderingServer.frame_post_draw
 	var ok := surface.get_texture().get_image().save_png(dir.path_join("frame.png")) == OK
 	_write_json(dir.path_join("result.json"), {"version": 1, "token": request.token,
@@ -307,7 +330,7 @@ func _finish(error: String, text := "", extra := {}) -> void:
 		var result := {"version": 1, "token": report.token, "status": "ready" if error.is_empty() else "error",
 			"message": error, "mapDigest": _map_digest(), "manifestDigest": digest.finish().hex_encode(),
 			"result": {"visited": visited, "screens": screens, "buttons": opened_buttons,
-				"latchInputs": latch_inputs, "outlets": outlets, "text": text}.merged(extra)}
+				"latchInputs": latch_inputs, "outlets": outlets, "text": text, "screenFrames": screen_frames}.merged(extra)}
 		if draft_digest != "":
 			result["viewDigest"] = draft_digest
 		_write_json(path + ".tmp", result)

@@ -3381,7 +3381,7 @@ func author_signal_room(app, project: String) -> void:
 			project.path_join(filename)) == OK, "install the separate screen game " + filename)
 	var launch := ["--path", "%projectpath%", "--audio-driver", "Dummy", "--"]
 	var manifest := {"_dir": project, "_maps_dir": project.path_join("maps"), "projectName": "Signal Room",
-		"viewports": [{"id": "handheld", "w": 480, "h": 720}],
+		"viewports": [{"id": "handheld", "w": 480, "h": 720}, {"id": "wide", "w": 720, "h": 480}],
 		"screenModules": {"signal-latch": {"name": "Signal latch", "outputs": {"accepted": "Accepted", "cancelled": "Cancelled"}, "fields": [
 			{"id": "presses", "name": "Confirmations", "kind": "input", "type": "int", "min": 1, "max": 4, "default": 3},
 			{"id": "relay_map", "kind": "choice", "source": "map"},
@@ -3587,6 +3587,7 @@ func author_signal_room(app, project: String) -> void:
 func _play_saved_signal_view(app, manifest_path: String) -> void:
 	ReferenceViews.open(app, "watch-deck", {"element": app.manifest.views[1].layout.elements[0].id})
 	var popup := _visible_popup(app)
+	select_metadata(popup.find_child("LayoutPreviewViewport", true, false), "wide")
 	var text: LineEdit = popup.find_child("LayoutElement_text", true, false)
 	text.text = "Draft relay caption"
 	text.text_changed.emit(text.text)
@@ -3598,6 +3599,7 @@ func _play_saved_signal_view(app, manifest_path: String) -> void:
 		and result.get("screens") == ["watch-deck", "relay-tuning"]
 		and result.get("visited") == ["project-tune", "project-clear"]
 		and result.get("buttons") == ["Tune the relay", "Confirm the signal"]
+		and result.get("screenFrames", [{}])[0].get("id") == "handheld"
 		and result.get("text") == "Signal verified",
 		"the independent game starts at the selected saved screen and follows its authored outlets")
 	check(popup.visible and text.text == "Draft relay caption" and digest == Store.file_digest(manifest_path),
@@ -3613,6 +3615,7 @@ func _play_saved_signal_view(app, manifest_path: String) -> void:
 	check(draft_report.get("status") == "ready" and draft_report.get("viewDigest") == request.get("viewDigest")
 		and draft_result.get("screens") == ["watch-deck", "relay-tuning"]
 		and draft_result.get("buttons") == ["Draft relay caption", "Confirm the signal"]
+		and draft_result.get("screenFrames", [{}])[0] == {"id": "wide", "size": [720.0, 480.0]}
 		and draft_result.get("text") == "Signal verified",
 		"the game runs the frozen draft and continues through the published second screen: " + str(draft_report))
 	check(popup.visible and text.text == "Edited after launch" and digest == Store.file_digest(manifest_path)
@@ -3892,6 +3895,20 @@ func _author_signal_screen(app, id: String, caption: String, content: String, ma
 			"a bottom anchored module follows its panel in the editor")
 		# Put the parent after its child in the file to exercise order-independent placement.
 		press(pop, "上移一层")
+		list_elements = pop.find_child("LayoutElementList", true, false)
+		list_elements.select(0)
+		list_elements.item_selected.emit(0)
+		select_metadata(pop.find_child("LayoutPreviewViewport", true, false), "wide")
+		pop.find_child("LayoutElementVisible", true, false).button_pressed = false
+		check(ReferenceViews.Layout.focus_start(preview.focus_layout, preview.elements, preview.viewport_size, preview.profile) == "",
+			"hiding the module in this profile removes it from keyboard navigation")
+		press(pop, "恢复此画幅的继承")
+		check(ReferenceViews.Layout.focus_start(preview.focus_layout, preview.elements, preview.viewport_size, preview.profile) == module_id,
+			"resetting the profile restores inherited visibility")
+		pop.find_child("offsets_1", true, false).value -= 190
+		pop.find_child("offsets_3", true, false).value -= 190
+		check(ReferenceViews.Layout.rectangles(preview.elements, Vector2(480, 720))[module_id].is_equal_approx(module_bounds),
+			"landscape placement leaves the authored base rectangle alone")
 	if manifest_path != "":
 		var before := Store.file_digest(manifest_path)
 		var render: Button = pop.find_child("GameRenderPreview", true, false)
@@ -3900,11 +3917,11 @@ func _author_signal_screen(app, id: String, caption: String, content: String, ma
 		while render.disabled and Time.get_ticks_msec() < deadline:
 			await create_timer(0.08).timeout
 		var picture: TextureRect = pop.find_child("GameRenderedFrame", true, false)
-		check(picture.texture != null and picture.texture.get_size() == Vector2(480, 720)
-			and picture.texture.get_image().get_pixel(130, 520).to_html(false) == "cc711e"
-			and picture.texture.get_image().get_pixel(130, 480).to_html(false) == "10232b"
+		check(picture.texture != null and picture.texture.get_size() == Vector2(720, 480)
+			and picture.texture.get_image().get_pixel(200, 190).to_html(false) == "cc711e"
+			and picture.texture.get_image().get_pixel(200, 380).to_html(false) == "10232b"
 			and Store.file_digest(manifest_path) == before,
-			"the second game renders its styling and the unsaved screen at the declared portrait size")
+			"the second game renders the unsaved layout using the selected landscape profile")
 	press(pop, "保存参考视图")
 	var deadline := Time.get_ticks_msec() + 5000
 	while is_instance_valid(pop) and pop.visible and Time.get_ticks_msec() < deadline:
@@ -3914,6 +3931,7 @@ func _author_signal_screen(app, id: String, caption: String, content: String, ma
 		var row: Dictionary = app.manifest.views.filter(func(view): return view.view_id == id)[0]
 		check(row.layout.elements[0].get("module") == "signal-latch"
 			and row.layout.elements[0].get("parent") == row.layout.elements[1].id
+			and row.layout.elements[0].get("variants", {}).get("wide", {}).has("offsets")
 			and row.layout.elements[0].get("focusable") == true
 			and row.layout.elements[0].get("props", {}).get("presses") == 2,
 			"the layout stores the module identity and the authored override")

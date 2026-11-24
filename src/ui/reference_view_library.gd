@@ -27,6 +27,7 @@ class Preview extends Control:
 	var elements: Array = []
 	var active_element := -1
 	var viewport_size := Vector2(1280, 720)
+	var profile := ""
 	var focus_preview := false
 	var focus_layout: Dictionary = {}
 	var focused_id := ""
@@ -67,7 +68,7 @@ class Preview extends Control:
 		return Rect2(area.position + px.position / viewport_size * area.size, px.size / viewport_size * area.size)
 
 	func _draw_layout(area: Rect2) -> void:
-		var resolved := Layout.rectangles(elements, viewport_size)
+		var resolved := Layout.rectangles(elements, viewport_size, profile)
 		for i in elements.size():
 			var item: Dictionary = elements[i]
 			var px: Rect2 = resolved.get(item.id, Rect2())
@@ -111,7 +112,7 @@ class Preview extends Control:
 
 	func text_overflows(item: Dictionary) -> bool:
 		return _text_overflows(item, Layout.display_text(item, locale),
-			Layout.rectangles(elements, viewport_size).get(item.id, Rect2()))
+			Layout.rectangles(elements, viewport_size, profile, true)[item.id])
 
 	func _text_overflows(item: Dictionary, label: String, bounds: Rect2) -> bool:
 		if label.is_empty():
@@ -151,7 +152,7 @@ class Preview extends Control:
 				rectangle_drawn.emit(r)
 			else:
 				var count := elements.size() if editing_layout else hotspots.size()
-				var resolved := Layout.rectangles(elements, viewport_size) if editing_layout else {}
+				var resolved := Layout.rectangles(elements, viewport_size, profile) if editing_layout else {}
 				for i in range(count - 1, -1, -1):
 					var hit := _layout_rect(resolved.get(elements[i].id, Rect2()), area).intersection(area).has_point(event.position) if editing_layout else Rect2(
 						hotspots[i].rect[0], hotspots[i].rect[1], hotspots[i].rect[2], hotspots[i].rect[3]).has_point(point)
@@ -164,7 +165,7 @@ class Preview extends Control:
 	func _focus_input(event: InputEvent, area: Rect2) -> void:
 		if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
 			grab_focus()
-			var resolved := Layout.rectangles(elements, viewport_size)
+			var resolved := Layout.rectangles(elements, viewport_size, profile)
 			for i in range(elements.size() - 1, -1, -1):
 				var row: Dictionary = elements[i]
 				if Layout.focusable(row) and _layout_rect(resolved.get(row.id, Rect2()), area).intersection(area).has_point(event.position):
@@ -177,7 +178,7 @@ class Preview extends Control:
 			if not event.is_action_pressed(action, true, true):
 				continue
 			if action != "ui_accept":
-				focused_id = Layout.focus_step(focus_layout, elements, focused_id, FOCUS_ACTIONS[action], viewport_size)
+				focused_id = Layout.focus_step(focus_layout, elements, focused_id, FOCUS_ACTIONS[action], viewport_size, profile)
 			_focus_result(action == "ui_accept")
 			accept_event()
 			return
@@ -289,7 +290,7 @@ static func open(app, view_id := "", jump := {}) -> void:
 		preview.focus_mode = Control.FOCUS_ALL if enabled else Control.FOCUS_NONE
 		preview.start = Vector2(-1, -1)
 		if enabled:
-			preview.focused_id = Layout.focus_start(state.layout, preview.elements, preview.viewport_size)
+			preview.focused_id = Layout.focus_start(state.layout, preview.elements, preview.viewport_size, preview.profile)
 			preview.call_deferred("grab_focus")
 			preview._focus_result(false)
 		else:
@@ -540,13 +541,14 @@ static func open(app, view_id := "", jump := {}) -> void:
 			notice.text = "%s：%s" % [errors[0].path, errors[0].message]
 			return
 		var viewport := Vector2i(preview.viewport_size.round())
+		var profile := preview.profile
 		var locale := preview.locale
 		var revision: int = state.render_revision
 		var keep := FrameDialog.visible_request(window, func():
 			return is_same(app.manifest, source) and state.render_revision == revision)
 		game_render.disabled = true
 		notice.text = "游戏正在渲染当前布局…"
-		var result := await GamePreview.render(app.get_tree(), source, "screenLayout", snapshot, viewport, locale, keep)
+		var result := await GamePreview.render(app.get_tree(), source, "screenLayout", snapshot, viewport, locale, keep, profile)
 		var owner: Window = window.get_ref()
 		if owner == null or not owner.visible:
 			return
@@ -557,7 +559,7 @@ static func open(app, view_id := "", jump := {}) -> void:
 			notice.text = result.error
 			return
 		stash.call()
-		if row != snapshot or Vector2i(preview.viewport_size.round()) != viewport or preview.locale != locale:
+		if row != snapshot or Vector2i(preview.viewport_size.round()) != viewport or preview.locale != locale or preview.profile != profile:
 			notice.text = "渲染期间布局或预览设置已变更，请重新预览。"
 			return
 		focus_test.button_pressed = false
@@ -608,7 +610,7 @@ static func open(app, view_id := "", jump := {}) -> void:
 			return
 		var view: Dictionary = prepared.view
 		var size := Vector2i(preview.viewport_size.round())
-		var snapshot := {"view": view, "viewport": [size.x, size.y], "locale": preview.locale}
+		var snapshot := {"view": view, "viewport": [size.x, size.y], "viewportId": preview.profile, "locale": preview.locale}
 		if app._map_file_ctrl.play_view(view.view_id, snapshot):
 			notice.text = "已启动当前草稿的试玩快照。当前编辑仍留在此窗口。")
 	var save := func():
@@ -653,15 +655,16 @@ static func _render_layout(form: VBoxContainer, preview: Preview, state: Diction
 	var sizes: Dictionary = state.viewport_sizes
 	var base := str(state.layout.get("viewport", ""))
 	var fallback: Vector2 = sizes.get(base, Layout.FALLBACK_SIZE)
+	preview.profile = state.preview_size
 	preview.viewport_size = sizes.get(state.preview_size, fallback)
 	preview.locale = state.locale
 	preview.focus_layout = state.layout
 	for element in preview.elements:
 		_load_layout_image(preview, state, str(element.get("imageAsset", "")))
 	if preview.focus_preview:
-		var visible := Layout.visible_focus(preview.elements, preview.viewport_size)
+		var visible := Layout.visible_focus(preview.elements, preview.viewport_size, preview.profile)
 		if not visible.any(func(row): return row.id == preview.focused_id):
-			preview.focused_id = Layout.focus_start(state.layout, preview.elements, preview.viewport_size)
+			preview.focused_id = Layout.focus_start(state.layout, preview.elements, preview.viewport_size, preview.profile)
 	preview.queue_redraw()
 	if not preview.editing_layout:
 		return
@@ -672,12 +675,14 @@ static func _render_layout(form: VBoxContainer, preview: Preview, state: Diction
 		state.layout["viewport"] = design.get_item_metadata(i)
 		refresh.call())
 	form.add_child(Kit.field_row("设计画幅", design, 70))
-	var compare := _viewport_option(sizes, str(state.preview_size), "使用设计画幅")
+	var compare := _viewport_option(sizes, preview.profile, "基础布局（设计画幅）")
 	compare.name = "LayoutPreviewViewport"
 	compare.item_selected.connect(func(i: int):
 		state.preview_size = compare.get_item_metadata(i)
 		refresh.call())
-	form.add_child(Kit.field_row("预览画幅", compare, 70))
+	form.add_child(Kit.field_row("布局画幅", compare, 70))
+	if preview.profile != "":
+		form.add_child(Kit.hint_label("锚点、偏移和显隐只覆盖此画幅；父级、模块属性、文案和连线共用。", 260))
 	_add_locale_picker(form, state, refresh)
 	var focus_start := _focus_options(preview.elements, str(state.layout.get("focusStart", "")), "首个可聚焦元素")
 	focus_start.name = "LayoutFocusStart"
@@ -787,7 +792,7 @@ static func _render_layout(form: VBoxContainer, preview: Preview, state: Diction
 	form.add_child(Kit.field_row("字号", font_size, 70))
 	form.add_child(overflow)
 	refresh_text.call()
-	var root := Rect2(Vector2.ZERO, fallback)
+	var profile := preview.profile
 	var parent_picker := OptionButton.new()
 	parent_picker.name = "LayoutElementParent"
 	parent_picker.add_item("画幅")
@@ -803,14 +808,27 @@ static func _render_layout(form: VBoxContainer, preview: Preview, state: Diction
 		if row.id == item.get("parent", ""):
 			parent_picker.select(index)
 	parent_picker.item_selected.connect(func(i: int):
-		var resolved := Layout.rectangles(preview.elements, fallback)
 		var parent: String = parent_picker.get_item_metadata(i)
-		Layout.reparent(item, parent, resolved[item.id], resolved.get(parent, root))
+		Layout.reparent(preview.elements, [item], parent, fallback, sizes)
 		refresh.call())
 	form.add_child(Kit.field_row("布局父级", parent_picker, 70))
+	var shown := CheckBox.new()
+	shown.name = "LayoutElementVisible"
+	shown.button_pressed = not Layout.geometry_value(item, profile, "hidden", false)
+	shown.toggled.connect(func(value: bool):
+		Layout.set_geometry(item, profile, "hidden", not value)
+		refresh.call())
+	form.add_child(Kit.field_row("显示元素", shown, 70))
+	var reset: Button
+	if profile != "":
+		reset = Kit.button("恢复此画幅的继承", func():
+			Layout.clear_variant(item, profile)
+			refresh.call(), "ghost")
+		reset.disabled = not item.get("variants", {}).has(profile)
+		form.add_child(reset)
 	for axis in [["anchors", "锚点"], ["offsets", "像素偏移"]]:
 		var key: String = axis[0]
-		var values: Array = item.get(key, [0, 0, 0, 0]).duplicate()
+		var values: Array = Layout.geometry_value(item, profile, key, Layout.ZERO_OFFSETS).duplicate()
 		var controls := GridContainer.new()
 		controls.columns = 2
 		for i in 4:
@@ -825,22 +843,25 @@ static func _render_layout(form: VBoxContainer, preview: Preview, state: Diction
 			sp.value = values[i]
 			sp.value_changed.connect(func(value: float):
 				values[i] = value
-				item[key] = values
+				Layout.set_geometry(item, profile, key, values)
+				if profile != "":
+					reset.disabled = false
 				refresh_text.call())
 			controls.add_child(sp)
 		form.add_child(Kit.field_row(str(axis[1]), controls, 70))
 	var fixed_bottom := Kit.button("固定底边", func():
-		var resolved := Layout.rectangles(preview.elements, fallback)
+		var viewport := preview.viewport_size
+		var resolved := Layout.rectangles(preview.elements, viewport, profile, true)
 		var r: Rect2 = resolved[item.id]
-		var reference: Rect2 = resolved.get(item.get("parent", ""), root)
-		var a: Array = item.anchors.duplicate()
-		var o: Array = item.get("offsets", [0, 0, 0, 0]).duplicate()
+		var reference: Rect2 = resolved.get(item.get("parent", ""), Rect2(Vector2.ZERO, viewport))
+		var a: Array = Layout.geometry_value(item, profile, "anchors", []).duplicate()
+		var o: Array = Layout.geometry_value(item, profile, "offsets", Layout.ZERO_OFFSETS).duplicate()
 		a[1] = 1.0
 		a[3] = 1.0
 		o[1] = r.position.y - reference.end.y
 		o[3] = r.end.y - reference.end.y
-		item["anchors"] = a
-		item["offsets"] = o
+		Layout.set_geometry(item, profile, "anchors", a)
+		Layout.set_geometry(item, profile, "offsets", o)
 		refresh.call(), "ghost")
 	form.add_child(fixed_bottom)
 	var outlets := Layout.output_labels(state.modules, item) if item.kind == "module" else {}
@@ -868,12 +889,9 @@ static func _render_layout(form: VBoxContainer, preview: Preview, state: Diction
 		preview.active_element = at + 1
 		refresh.call(), "ghost"))
 	actions.add_child(Kit.button("删除元素", func():
-		var resolved := Layout.rectangles(preview.elements, fallback)
 		var parent: String = item.get("parent", "")
-		var reference: Rect2 = resolved.get(parent, root)
-		for row in preview.elements:
-			if row.get("parent") == item.id:
-				Layout.reparent(row, parent, resolved[row.id], reference)
+		var children := preview.elements.filter(func(row): return row.get("parent") == item.id)
+		Layout.reparent(preview.elements, children, parent, fallback, sizes)
 		Layout.clear_focus_links(state.layout, preview.elements, item.id)
 		preview.elements.remove_at(at)
 		preview.active_element = mini(at, preview.elements.size() - 1)

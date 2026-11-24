@@ -88,7 +88,7 @@ func test_layout_parent_geometry_and_validation() -> void:
 		"nested anchors respond to the viewport while pixel offsets stay fixed")
 	eq(ScreenLayout.visible_focus(elements, viewport), [button], "focus uses the resolved child position")
 	eq(ScreenLayout.subtree_ids(elements, "panel").size(), 3, "a parent picker excludes the selected subtree")
-	ScreenLayout.reparent(button, "", design.button, Rect2(Vector2.ZERO, viewport))
+	ScreenLayout.reparent(elements, [button], "", viewport, {})
 	eq(ScreenLayout.rectangles(elements, viewport).button, design.button, "reparent keeps the design rectangle")
 	button.parent = "group"
 	button.offsets = [0, 0, 0, 30]
@@ -106,6 +106,38 @@ func test_layout_parent_geometry_and_validation() -> void:
 		ScreenLayout.validate(layout, sizes, "layout", issues)
 		ok(issues.any(func(issue): return issue.path == "layout.elements[1].parent"),
 			"missing, self and cyclic parents are rejected")
+
+func test_layout_viewport_variants_share_identity_and_resolve_visibility() -> void:
+	var parent := {"id": "panel", "kind": "panel", "anchors": [0, 0, 0.5, 1],
+		"variants": {"narrow": {"anchors": [0.5, 0, 1, 1]}, "wide": {"hidden": true}}}
+	var button := {"id": "choice", "kind": "button", "parent": "panel", "anchors": [0, 0, 1, 1],
+		"target": {"function": "story", "content": "next"}}
+	var sibling := {"id": "fallback", "kind": "button", "anchors": [0.1, 0.1, 0.2, 0.2]}
+	var elements := [button, sibling, parent]
+	var sizes := {"narrow": Vector2(400, 800), "wide": Vector2(800, 400)}
+	var layout := {"elements": elements, "focusStart": "choice"}
+	var design := Vector2(800, 600)
+	ScreenLayout.set_geometry(button, "narrow", "offsets", [5, 10, -5, -10])
+	eq(ScreenLayout.rectangles(elements, sizes.narrow, "narrow").choice, Rect2(205, 10, 190, 780),
+		"parent and child use their own sparse overrides in the same viewport")
+	eq(ScreenLayout.focus_start(layout, elements, sizes.wide, "wide"), "fallback",
+		"a hidden parent removes its descendants from focus")
+	eq(ScreenLayout.rectangles(elements, design).choice, Rect2(0, 0, 400, 600),
+		"the alternate geometry does not change the base layout")
+	var issues: Array[Dictionary] = []
+	ScreenLayout.validate(layout, sizes, "layout", issues)
+	ok(issues.is_empty(), "declared viewport variants validate")
+	ScreenLayout.reparent(elements, [button], "", design, sizes)
+	eq(ScreenLayout.rectangles(elements, sizes.narrow, "narrow").choice, Rect2(205, 10, 190, 780),
+		"shared reparenting preserves the authored alternate rectangle too")
+	eq(button.target, {"function": "story", "content": "next"}, "geometry changes do not rewrite content links")
+	ScreenLayout.clear_variant(button, "narrow")
+	ok(not button.get("variants", {}).has("narrow"), "reset removes the override instead of copying base fields")
+	button["variants"] = {"missing": {"hidden": true}, "narrow": {"offsets": "bad"}, "wide": {"target": {}}}
+	ScreenLayout.validate(layout, sizes, "layout", issues)
+	eq(issues.map(func(issue): return issue.path),
+		["layout.elements[0].variants.missing", "layout.elements[0].variants.narrow.offsets",
+			"layout.elements[0].variants.wide"], "reject unknown profiles, invalid offsets and non-geometry overrides")
 
 func test_focus_skips_clipped_target_and_cleans_removed_links() -> void:
 	var layout := {"focusStart": "start", "elements": [

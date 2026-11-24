@@ -6,6 +6,8 @@ const FALLBACK_SIZE := Vector2(1280, 720)
 const DIRECTIONS := {"left": Vector2.LEFT, "right": Vector2.RIGHT, "up": Vector2.UP, "down": Vector2.DOWN}
 const DEFAULT_FONT_SIZE := 24
 const IMAGE_FITS := ["contain", "cover", "stretch"]
+const ZERO_OFFSETS := [0, 0, 0, 0]
+const GEOMETRY_KEYS := ["anchors", "offsets", "hidden"]
 
 static func modules(manifest: Dictionary) -> Dictionary:
 	var declarations = manifest.get("screenModules", {})
@@ -104,8 +106,8 @@ static func focusable(element: Variant) -> bool:
 	var kind = element.get("kind")
 	return kind in ["button", "module"] and element.get("focusable", kind == "button") == true
 
-static func visible_focus(elements: Array, viewport: Vector2) -> Array:
-	return _visible_focus(elements, viewport, rectangles(elements, viewport))
+static func visible_focus(elements: Array, viewport: Vector2, profile := "") -> Array:
+	return _visible_focus(elements, viewport, rectangles(elements, viewport, profile))
 
 static func _visible_focus(elements: Array, viewport: Vector2, resolved: Dictionary) -> Array:
 	var bounds := Rect2(Vector2.ZERO, viewport)
@@ -115,8 +117,8 @@ static func _visible_focus(elements: Array, viewport: Vector2, resolved: Diction
 		var r: Rect2 = resolved.get(row.id, Rect2())
 		return r.has_area() and r.intersection(bounds).has_area())
 
-static func focus_start(layout: Dictionary, elements: Array, viewport: Vector2) -> String:
-	return _initial_focus(layout, visible_focus(elements, viewport))
+static func focus_start(layout: Dictionary, elements: Array, viewport: Vector2, profile := "") -> String:
+	return _initial_focus(layout, visible_focus(elements, viewport, profile))
 
 static func _initial_focus(layout: Dictionary, options: Array) -> String:
 	var initial := str(layout.get("focusStart", ""))
@@ -125,8 +127,9 @@ static func _initial_focus(layout: Dictionary, options: Array) -> String:
 			return initial
 	return str(options[0].id) if not options.is_empty() else ""
 
-static func focus_step(layout: Dictionary, elements: Array, current: String, action: String, viewport: Vector2) -> String:
-	var resolved := rectangles(elements, viewport)
+static func focus_step(layout: Dictionary, elements: Array, current: String, action: String,
+		viewport: Vector2, profile := "") -> String:
+	var resolved := rectangles(elements, viewport, profile)
 	var options := _visible_focus(elements, viewport, resolved)
 	var selected := -1
 	for i in options.size():
@@ -185,23 +188,43 @@ static func sizes(manifest: Dictionary) -> Dictionary:
 			out[row.id] = Vector2(row.w, row.h)
 	return out
 
-static func _rect(element: Dictionary, reference: Rect2) -> Rect2:
-	var a: Array = element.anchors
-	var o: Array = element.get("offsets", [0, 0, 0, 0])
+static func geometry_value(element: Dictionary, profile: String, key: String, fallback: Variant) -> Variant:
+	var base = element.get(key, fallback)
+	return base if profile == "" else element.get("variants", {}).get(profile, {}).get(key, base)
+
+static func set_geometry(element: Dictionary, profile: String, key: String, value: Variant) -> void:
+	if profile == "":
+		element[key] = value
+		return
+	var variants: Dictionary = element.get_or_add("variants", {})
+	var entry: Dictionary = variants.get_or_add(profile, {})
+	entry[key] = value
+
+static func clear_variant(element: Dictionary, profile: String) -> void:
+	var variants: Dictionary = element.get("variants", {})
+	variants.erase(profile)
+	if variants.is_empty():
+		element.erase("variants")
+
+static func _rect(element: Dictionary, reference: Rect2, profile: String) -> Rect2:
+	var a: Array = geometry_value(element, profile, "anchors", [])
+	var o: Array = geometry_value(element, profile, "offsets", ZERO_OFFSETS)
 	var start := Vector2(a[0], a[1]) * reference.size + Vector2(o[0], o[1])
 	var end := Vector2(a[2], a[3]) * reference.size + Vector2(o[2], o[3])
 	return Rect2(reference.position + start, end - start)
 
 ## Resolve parent geometry in linear time, independently of draw order and without recursion.
-static func rectangles(elements: Array, viewport: Vector2) -> Dictionary:
+static func rectangles(elements: Array, viewport: Vector2, profile := "", include_hidden := false) -> Dictionary:
 	var root := Rect2(Vector2.ZERO, viewport)
 	var children := _children_by_parent(elements)
 	var resolved := {}
 	var pending: Array = children.get("", []).duplicate()
 	while not pending.is_empty():
 		var row: Dictionary = pending.pop_back()
+		if not include_hidden and geometry_value(row, profile, "hidden", false):
+			continue
 		var parent: String = row.get("parent", "")
-		resolved[row.id] = _rect(row, resolved.get(parent, root))
+		resolved[row.id] = _rect(row, resolved.get(parent, root), profile)
 		pending.append_array(children.get(row.id, []))
 	return resolved
 
@@ -225,16 +248,36 @@ static func subtree_ids(elements: Array, id: String) -> Dictionary:
 				pending.append(child.id)
 	return visited
 
-## Keep the design rectangle and existing anchors when changing coordinate space.
-static func reparent(element: Dictionary, parent: String, bounds: Rect2, reference: Rect2) -> void:
-	if parent == "":
-		element.erase("parent")
-	else:
-		element["parent"] = parent
-	var a: Array = element.anchors
+static func _offsets_for(a: Array, bounds: Rect2, reference: Rect2) -> Array:
 	var start := bounds.position - reference.position - Vector2(a[0], a[1]) * reference.size
 	var end := bounds.end - reference.position - Vector2(a[2], a[3]) * reference.size
-	element["offsets"] = [start.x, start.y, end.x, end.y]
+	return [start.x, start.y, end.x, end.y]
+
+## Keep the rectangle in the design viewport and every authored layout profile.
+static func reparent(elements: Array, moving: Array, parent: String, design: Vector2, sizes: Dictionary) -> void:
+	if moving.is_empty():
+		return
+	var profiles := {"": design}
+	for row in elements:
+		for profile in row.get("variants", {}):
+			profiles[profile] = sizes[profile]
+	var previous := {}
+	for profile in profiles:
+		previous[profile] = rectangles(elements, profiles[profile], profile, true)
+	for profile in profiles:
+		var viewport: Vector2 = profiles[profile]
+		var resolved: Dictionary = previous[profile]
+		var reference: Rect2 = resolved.get(parent, Rect2(Vector2.ZERO, viewport))
+		for row in moving:
+			var before: Rect2 = resolved[row.id]
+			if profile == "" or not _rect(row, reference, profile).is_equal_approx(before):
+				var anchors: Array = geometry_value(row, profile, "anchors", [])
+				set_geometry(row, profile, "offsets", _offsets_for(anchors, before, reference))
+	for row in moving:
+		if parent == "":
+			row.erase("parent")
+		else:
+			row["parent"] = parent
 
 static func validate(layout: Variant, viewports: Dictionary, path: String, issues: Array[Dictionary],
 		declarations := {}) -> void:
@@ -262,6 +305,8 @@ static func validate(layout: Variant, viewports: Dictionary, path: String, issue
 	var used := {}
 	var focus_ids := {}
 	var geometry := []
+	var profiles := {}
+	var valid_variant_maps := true
 	for i in elements.size():
 		var row = elements[i]
 		var p := "%s.elements[%d]" % [path, i]
@@ -291,15 +336,25 @@ static func validate(layout: Variant, viewports: Dictionary, path: String, issue
 						_error(issues, p + ".outputs." + str(output), "must bind a named output to {function, content}")
 		elif not KINDS.has(row.get("kind")):
 			_error(issues, p + ".kind", "must be panel, text, button or module")
-		var a = row.get("anchors")
-		var o = row.get("offsets", [0, 0, 0, 0])
-		var valid: bool = _four(a) and a.all(func(v): return v >= 0.0 and v <= 1.0) and a[0] <= a[2] and a[1] <= a[3]
-		if not valid:
-			_error(issues, p + ".anchors", "must be ordered [left, top, right, bottom] in 0..1")
-		if not _four(o):
-			_error(issues, p + ".offsets", "must be four finite pixel offsets")
-		elif valid and used.get(id) == i:
+		if _validate_geometry(row, p, issues, true) and used.get(id) == i:
 			geometry.append(row)
+		var variants = row.get("variants", {})
+		if not variants is Dictionary:
+			_error(issues, p + ".variants", "must be an object keyed by declared viewport ID")
+			valid_variant_maps = false
+		else:
+			for profile in variants:
+				var field := p + ".variants." + str(profile)
+				if not viewports.has(profile):
+					_error(issues, field, "must name a declared viewport")
+					continue
+				var entry = variants[profile]
+				if not entry is Dictionary or entry.is_empty() or entry.keys().any(func(key): return key not in GEOMETRY_KEYS):
+					_error(issues, field, "must override anchors, offsets or hidden")
+					profiles[profile] = false
+					continue
+				var valid := _validate_geometry(entry, field, issues, false)
+				profiles[profile] = valid and profiles.get(profile, true)
 		for key in ["text", "style"]:
 			if row.has(key) and not row[key] is String:
 				_error(issues, p + "." + key, "must be a string")
@@ -331,15 +386,27 @@ static func validate(layout: Variant, viewports: Dictionary, path: String, issue
 			_error(issues, "%s.elements[%d].parent" % [path, i], "must name another element in this layout")
 			valid_parents = false
 	if valid_parents and geometry.size() == used.size():
-		var resolved := rectangles(geometry, viewports.get(vp, FALLBACK_SIZE))
+		var resolved := rectangles(geometry, viewports.get(vp, FALLBACK_SIZE), "", true)
+		var acyclic := true
 		for id in used:
 			var p := "%s.elements[%d]" % [path, used[id]]
 			if not resolved.has(id):
 				_error(issues, p + ".parent", "must reach the viewport without a parent cycle")
+				acyclic = false
 			else:
 				var r: Rect2 = resolved[id]
 				if not r.has_area() or not r.is_finite():
 					_error(issues, p, "must have positive width and height in the design viewport")
+		if acyclic and valid_variant_maps:
+			for profile in profiles:
+				if not profiles[profile]:
+					continue
+				var variant_rects := rectangles(geometry, viewports[profile], profile, true)
+				for id in variant_rects:
+					var r: Rect2 = variant_rects[id]
+					if not r.has_area() or not r.is_finite():
+						_error(issues, "%s.elements[%d].variants.%s" % [path, used[id], profile],
+							"must have positive width and height in this viewport")
 	for i in elements.size():
 		var row = elements[i]
 		if not row is Dictionary or not row.has("focus"):
@@ -352,6 +419,18 @@ static func validate(layout: Variant, viewports: Dictionary, path: String, issue
 			var target = row.focus[direction]
 			if not DIRECTIONS.has(direction) or not target is String or not focus_ids.has(target):
 				_error(issues, p + "." + str(direction), "must be a direction (left/right/up/down) naming a focusable element")
+
+static func _validate_geometry(row: Dictionary, path: String, issues: Array[Dictionary], base: bool) -> bool:
+	var count := issues.size()
+	if base or row.has("anchors"):
+		var a = row.get("anchors")
+		if not _four(a) or not a.all(func(v): return v >= 0.0 and v <= 1.0) or a[0] > a[2] or a[1] > a[3]:
+			_error(issues, path + ".anchors", "must be ordered [left, top, right, bottom] in 0..1")
+	if row.has("offsets") and not _four(row.offsets):
+		_error(issues, path + ".offsets", "must be four finite pixel offsets")
+	if row.has("hidden") and not row.hidden is bool:
+		_error(issues, path + ".hidden", "must be a boolean")
+	return count == issues.size()
 
 static func _four(value: Variant) -> bool:
 	return value is Array and value.size() == 4 and value.all(_number)
