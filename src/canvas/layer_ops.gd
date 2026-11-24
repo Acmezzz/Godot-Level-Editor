@@ -126,16 +126,6 @@ func _place_in_layer(n: EntityNode, li: int) -> void:
 		n.reparent(box, false)
 	else:
 		box.add_child(n)
-	# 同层混放提示（作者提示 ⑤ 前半）：层没开 ySort 但该层已有瓦片又有实例 → 状态栏提示一次
-	if str(root.get_meta("yhint", "")) == "":
-		# 阶段三：「这层有没有瓦片」走缓存（瓦片写入时失效），不再每次放置全层重扫
-		var has_tiles: bool = cvs.layer_has_tiles(li)
-		var others: Array = _layer_entities_of(root)
-		var mixed: bool = has_tiles and others.size() > 1
-		if mixed:
-			root.set_meta("yhint", "1")
-			_hint("层「%s」没开 ySort，瓦片与实例按先后绘制；要交错遮挡请给层声明 ySort: true" \
-				% layer_name(li))
 
 ## 图层「看得到的那个节点」：碰撞层看 coll_view（红块），其余看数据节点本身。
 ## 可见性/隐藏一律作用在这个节点上，保证所有图层的显示逻辑走同一条路。
