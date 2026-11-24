@@ -51,7 +51,7 @@ static func open(app) -> void:
 static func open_object_edit(app) -> void:
 	if available(app):
 		_open(app, "objectEdit", Callable(), {"title": "实景调整实例和顶点",
-			"interaction": ObjectEdit.new(app.canvas), "confirm_label": "应用调整"})
+			"interaction": ObjectEdit.new(app.canvas), "confirm_label": "应用调整", "refresh_on_apply": true})
 
 static func open_reference(app, decl: Dictionary, resolve: Callable, commit: Callable) -> void:
 	var mode := FieldWidgets.pick_mode(decl)

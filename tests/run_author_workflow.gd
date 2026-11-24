@@ -1776,10 +1776,14 @@ func _render_pick_frame(app) -> PopupPanel:
 	select_metadata(pop.find_child("MapGamePreviewViewport", true, false), "portrait")
 	var render: Button = pop.find_child("MapGamePreviewRender", true, false)
 	render.pressed.emit()
+	return await _wait_for_pick_frame(pop)
+
+func _wait_for_pick_frame(pop: PopupPanel) -> PopupPanel:
+	var render: Button = pop.find_child("MapGamePreviewRender", true, false)
 	var until := Time.get_ticks_msec() + 13500
 	while is_instance_valid(render) and render.disabled and Time.get_ticks_msec() < until:
 		await create_timer(0.08).timeout
-	if not is_instance_valid(pop) or pop.find_child("MapGamePreviewFrame", true, false).texture == null:
+	if not is_instance_valid(pop) or not pop.visible or pop.find_child("MapGamePreviewFrame", true, false).texture == null:
 		check(false, "load the game frame picker")
 		return null
 	return pop
@@ -1870,6 +1874,7 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 	check(not connect_port.disabled, "the secondary view exposes a matching declared port")
 	connect_port.pressed.emit()
 	await process_frame
+	check(not is_instance_valid(ref_pop) or not ref_pop.visible, "the reference picker closes after writing its field")
 	var linked: Array = cvs.extract().objects.filter(func(row): return row.code == "PICK")
 	check(linked[0].get("props", {}).get("target", {}).get("inst") == doors[1].code, "confirm writes the instance port field")
 	app._set_mode("map")
@@ -1913,29 +1918,34 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 	check(not apply.disabled and cvs._ent_by_code_index()[doors[0].code].position.is_equal_approx(Vector2(24, 24)),
 		"the mapped move stays in the draft until confirmed")
 	apply.pressed.emit()
-	await process_frame
-	check(cvs._ent_by_code_index()[doors[0].code].position.is_equal_approx(Vector2(32, 24)), "apply moves the selected instance")
-	check(await cvs.undo() and cvs._ent_by_code_index()[doors[0].code].position.is_equal_approx(Vector2(24, 24)),
-		"undo restores the original anchor")
-	check(await cvs.redo() and cvs._ent_by_code_index()[doors[0].code].position.is_equal_approx(Vector2(32, 24)),
-		"redo moves the same stable instance")
-	app._layout_ctrl._on_map_menu_id(17)
-	var vertex_pop := await _render_pick_frame(app)
-	if vertex_pop == null:
+	var move_frame: TextureRect = move_pop.find_child("MapGamePreviewFrame", true, false)
+	check(move_pop.visible and apply.disabled and move_frame.texture == null, "applying drops the old draft and frame immediately")
+	apply.pressed.emit()
+	if await _wait_for_pick_frame(move_pop) == null:
 		return
-	_click_pick_frame(vertex_pop, Vector2(0.75, 0.25))
-	check(_click_pick_frame(vertex_pop, Vector2(0.65, 0.25)).disabled, "a collapsed edge cannot be confirmed")
-	apply = _click_pick_frame(vertex_pop, Vector2(0.73, 0.26))
+	check(apply.disabled and move_frame.texture.get_size() == Vector2(720, 1280), "the same picker refreshes at the selected size without a draft")
+	check(cvs._ent_by_code_index()[doors[0].code].position.is_equal_approx(Vector2(32, 24)), "apply moves the selected instance")
+	_click_pick_frame(move_pop, Vector2(0.75, 0.25))
+	check(_click_pick_frame(move_pop, Vector2(0.65, 0.25)).disabled, "a collapsed edge cannot be confirmed")
+	apply = _click_pick_frame(move_pop, Vector2(0.73, 0.26))
 	check(not apply.disabled, "a new valid outline vertex location is enabled")
 	apply.pressed.emit()
-	await process_frame
+	if await _wait_for_pick_frame(move_pop) == null:
+		return
+	move_pop.hide()
 	var edited: Array = cvs.extract().objects.filter(func(row): return row.code == outline.code)
 	var points: Array = edited[0].props.points
 	check(points != outline.props.points and points[0] == outline.props.points[0] and points[2] == outline.props.points[2],
 		"adjust only the specified vertex while preserving identity and other vertices")
 	check(await cvs.undo() and cvs.extract().objects.any(func(row): return row.get("code") == outline.code and row.props.points == outline.props.points),
 		"one undo restores the original outline")
-	check(await cvs.redo(), "redo reapplies the edited vertex")
+	check(cvs._ent_by_code_index()[doors[0].code].position.is_equal_approx(Vector2(32, 24)), "undoing the vertex leaves the instance move")
+	check(await cvs.undo() and cvs._ent_by_code_index()[doors[0].code].position.is_equal_approx(Vector2(24, 24)),
+		"the next undo restores the original anchor")
+	check(await cvs.redo() and cvs._ent_by_code_index()[doors[0].code].position.is_equal_approx(Vector2(32, 24)),
+		"redo moves the same stable instance")
+	check(await cvs.redo() and cvs.extract().objects.any(func(row): return row.get("code") == outline.code and row.props.points == points),
+		"the next redo reapplies the edited vertex")
 	var saved: Dictionary = await app._map_file_ctrl.commit_document("保存实景落点及连接")
 	check(saved.get("status") == "ok", "publish positions and port selected from the game frame")
 	await app._load_map_file(path)

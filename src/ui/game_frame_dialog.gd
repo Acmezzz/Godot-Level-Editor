@@ -61,16 +61,18 @@ static func open(app, capability: String, options: Dictionary, snapshot: Callabl
 		frame.queue_redraw()
 	var reset := func():
 		picks.regions = []
+		picks.current = Callable()
 		clear_selection.call()
 		frame.texture = null
 	var keep := func() -> bool:
 		return is_instance_valid(pop) and pop.visible and is_same(app.manifest, manifest) and valid.call()
-	render.pressed.connect(func():
+	var render_frame := func():
 		if render.disabled:
 			return
 		if not keep.call():
 			pop.hide()
 			return
+		reset.call()
 		var preset: String = picker.get_selected_metadata()
 		var built: Dictionary = snapshot.call(preset)
 		if not built.has("subject"):
@@ -80,7 +82,6 @@ static func open(app, capability: String, options: Dictionary, snapshot: Callabl
 		var current: Callable = built.get("current", Callable())
 		render.disabled = true
 		picker.disabled = true
-		reset.call()
 		notice.text = "游戏正在渲染当前快照…"
 		var result := await GamePreview.render(app.get_tree(), manifest, capability, built.subject, viewport, "", keep)
 		if not keep.call():
@@ -108,7 +109,8 @@ static func open(app, capability: String, options: Dictionary, snapshot: Callabl
 			elif interaction != null:
 				notice.text = interaction.message()
 			else:
-				notice.text += (" · 左键描点，右键撤末点" if drafting else " · 点击画面后确认"))
+				notice.text += (" · 左键描点，右键撤末点" if drafting else " · 点击画面后确认")
+	render.pressed.connect(render_frame)
 	picker.item_selected.connect(func(_i: int):
 		reset.call()
 		notice.text = "画幅已更改，请重新渲染。")
@@ -206,18 +208,21 @@ static func open(app, capability: String, options: Dictionary, snapshot: Callabl
 			line.append(line[0])
 			frame.draw_polyline(line, Color(1.0, 0.83, 0.35), 2.0, true))
 		confirm.pressed.connect(func():
+			if confirm.disabled or not picks.apply.is_valid():
+				return
 			if not is_current.call():
 				clear_selection.call()
 				notice.text = "内容已变更，请重新渲染。"
-				return
-			if confirm.disabled or not picks.apply.is_valid():
 				return
 			confirm.disabled = true
 			var applied: bool = await picks.apply.call()
 			if not is_instance_valid(pop) or not pop.visible:
 				return
 			if applied:
-				pop.hide()
+				if options.get("refresh_on_apply", false):
+					await render_frame.call()
+				else:
+					pop.hide()
 			else:
 				clear_selection.call()
 				notice.text = "选点未写入，请核对当前资产、图层或字段。")
