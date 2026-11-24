@@ -21,6 +21,7 @@ const GridSpaceScript := preload("res://src/canvas/grid_space.gd")
 const MapConvert := preload("res://src/map/map_convert.gd")
 const DocumentSession := preload("res://src/project/document_session.gd")
 const DocumentCommit := preload("res://src/project/document_commit.gd")
+const EventLayers := preload("res://src/project/event_layers.gd")
 
 var app   # 宿主引用
 
@@ -32,6 +33,49 @@ var _last_autosave_msec := 0
 ## 最近一次在新建/重命名弹窗里确认的名字（顶栏常驻名字框已移除，这里记住值供预填）
 var _name_memo := ""
 var sess := DocumentSession.new()
+var _event_preview_base := ""
+
+func create_event_drawing(label: String, id: String) -> String:
+	var base := label.strip_edges()
+	if not EditorManifest.is_valid_map_name(base):
+		base = "共享绘制层_" + id
+	var name := _unique_map_name(base)
+	if name == app.cur_map_name:
+		name = _unique_map_name(base + "_共享")
+	var code := MapStore.allocate_code(app.manifest, app.canvas.cur_map_code())
+	var meta: Dictionary = app.canvas.map_data.get("meta", {}) if app.map_loaded else {}
+	var data := MapStore.new_map(name, int(meta.get("w", K.DEFAULT_MAP_W)),
+		int(meta.get("h", K.DEFAULT_MAP_H)), str(meta.get("gridProjection", "")), str(meta.get("gridTopology", "")))
+	data.meta.code = code
+	if meta.has("gridBasis"):
+		data.meta.gridBasis = meta.gridBasis.duplicate()
+	return code if MapStore.write(app.manifest, name, data) else ""
+
+func open_event_drawing(code: String) -> void:
+	if await open_map_by_code(code):
+		app._set_mode("map")
+
+func refresh_event_drawings() -> void:
+	var code: String = app.canvas.cur_map_code()
+	var is_shared := code in EventLayers.drawing_codes(app.manifest)
+	if not is_shared:
+		_event_preview_base = code
+	if not app.canvas.show_event_context:
+		app.canvas.show_drawing_context([], false)
+	elif is_shared:
+		var bases: Array[Dictionary] = []
+		for drawing in EventLayers.drawings_for_map(app.manifest, _event_preview_base):
+			if drawing.map != code:
+				continue
+			var resolved := ReferenceIndex.resolve_map(app.manifest, _event_preview_base)
+			if resolved.status == "ok":
+				var data := MapStore.read(app.manifest, resolved.key)
+				if not data.is_empty():
+					bases.append({"map": _event_preview_base, "data": data})
+			break
+		app.canvas.show_drawing_context(bases, true)
+	else:
+		app.canvas.show_drawing_context(ReferenceIndex.event_drawings(app.manifest, code), false)
 
 ## 进入一次会影响当前文档的操作（新建/切图）：抬会话代数并返回本次代次。
 func _begin_doc_op() -> int:

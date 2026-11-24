@@ -1,9 +1,32 @@
 extends RefCounted
-## Shared event bindings; the game decides when the declared trigger fires.
+## Shared drawing documents and event bindings, keyed by stable layer IDs.
 
 const KEY := "eventLayers"
 const Triggers := preload("res://src/content/trigger_decl.gd")
 const FlowTarget := preload("res://src/content/flow_target.gd")
+
+static func drawing_codes(manifest: Dictionary) -> Array[String]:
+	var codes: Array[String] = []
+	for layer in manifest.get(KEY, {}).values():
+		var code: String = layer.get("drawingMap", "")
+		if code != "" and not codes.has(code):
+			codes.append(code)
+	return codes
+
+static func applies_to(layer: Dictionary, map_code: String) -> bool:
+	return map_code != "" and (not layer.has("maps") or map_code in layer.maps)
+
+static func drawings_for_map(manifest: Dictionary, map_code: String) -> Array[Dictionary]:
+	var rows: Array[Dictionary] = []
+	var layers: Dictionary = manifest.get(KEY, {})
+	if map_code == "" or map_code in drawing_codes(manifest):
+		return rows
+	for id in layers:
+		var layer: Dictionary = layers[id]
+		var code: String = layer.get("drawingMap", "")
+		if code != "" and applies_to(layer, map_code):
+			rows.append({"layer": id, "map": code})
+	return rows
 
 static func types(manifest: Dictionary) -> Dictionary:
 	var result := {}
@@ -23,6 +46,8 @@ static func issues(manifest: Dictionary) -> Array[Dictionary]:
 		if str(id).strip_edges() == "" or not row is Dictionary or not row.get("events", {}) is Dictionary:
 			out.append(_issue(path, "requires a stable layer ID and an events object"))
 			continue
+		if row.has("drawingMap") and (not row.drawingMap is String or row.drawingMap.is_empty()):
+			out.append(_issue(path + ".drawingMap", "must be a map code"))
 		var maps = row.get("maps", [])
 		var seen := {}
 		if not maps is Array or not maps.all(func(code):

@@ -9,6 +9,18 @@ const MapStore := preload("res://src/map/map_store.gd")
 const ScreenLayout := preload("res://src/project/screen_layout.gd")
 const FlowTarget := preload("res://src/content/flow_target.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
+const EventLayers := preload("res://src/project/event_layers.gd")
+
+static func event_drawings(manifest: Dictionary, map_code: String) -> Array[Dictionary]:
+	var result: Array[Dictionary] = []
+	for drawing in EventLayers.drawings_for_map(manifest, map_code):
+		var resolved := resolve_map(manifest, drawing.map)
+		if resolved.status != "ok":
+			continue
+		var data := MapStore.read(manifest, resolved.key)
+		if not data.is_empty():
+			result.append({"layer": drawing.layer, "map": drawing.map, "data": data})
+	return result
 
 ## 按稳定地图码解析，返回对应文件名。
 static func resolve_map(manifest: Dictionary, code: String) -> Dictionary:

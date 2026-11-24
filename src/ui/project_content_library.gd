@@ -136,6 +136,9 @@ func open() -> void:
 		pop.hide()
 		_open_flow.call_deferred())
 	controls.add_child(relations)
+	controls.add_child(Kit.button("图组事件…", func():
+		pop.hide()
+		EventLayerDialog.open.call_deferred(app)))
 	controls.add_child(play)
 	if keys.is_empty():
 		body.add_child(Kit.hint_label("游戏工程侧为项目声明功能后，这里才有可创建的内容类型。", 420))

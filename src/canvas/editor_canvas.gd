@@ -65,6 +65,9 @@ var map_data := {}
 var exit_map_names := {}
 var cur_map_name := ""
 var map_root: Node2D
+var show_event_context := true
+var drawing_context_only := false
+var _context_drawings: Array[EditorCanvas] = []
 # 层栈节点：下标 = meta.layers 栈序；每层 = 一个瓦片 TileMapLayer + 一个实体容器。
 # 树序 = 栈序（底→顶），碰撞网格与红叠加在栈外（永远画在最上）。
 var layer_tiles: Array = []
@@ -119,6 +122,11 @@ func _update_cam() -> void:
 		return  # 无视口（headless 测试）时跳过相机更新
 	var half := vp.get_visible_rect().size * 0.5
 	vp.canvas_transform = Transform2D(0.0, Vector2(zoom, zoom), 0.0, half - cam_pos * zoom)
+	_update_layer_parallax(cam_pos)
+	for drawing in _context_drawings:
+		drawing._update_layer_parallax(cam_pos)
+
+func _update_layer_parallax(camera: Vector2) -> void:
 	# 层参数预览：parallax ≠ 1 的层按相机位移反向平移（远景半速、0 = 固定）。
 	# offset/scale 在 load_data 时已作用到层容器；这里只补视差分量。
 	var meta: Dictionary = map_data.get("meta", {}) if map_data != null else {}
@@ -133,7 +141,24 @@ func _update_cam() -> void:
 		var off: Vector2 = root.get_meta("base_pos", root.position)
 		if not root.has_meta("base_pos"):
 			root.set_meta("base_pos", root.position)
-		root.position = off + (cam_pos - center) * (1.0 - par)
+		root.position = off + (camera - center) * (1.0 - par)
+
+func show_drawing_context(documents: Array[Dictionary], behind: bool) -> void:
+	for drawing in _context_drawings:
+		remove_child(drawing)
+		drawing.queue_free()
+	_context_drawings.clear()
+	for document in documents:
+		var drawing := get_script().new() as EditorCanvas
+		drawing.drawing_context_only = true
+		drawing.manifest = manifest
+		drawing.thumbs = thumbs
+		drawing.ent_sizes = ent_sizes
+		drawing.z_index = -2 if behind else 0
+		add_child(drawing)
+		drawing.load_data(document.data, document.map)
+		_context_drawings.append(drawing)
+		drawing._update_layer_parallax(cam_pos)
 
 
 # —— 运行时 TileSet：从清单 assets[] 的 shape=tile 资产构建（按资产缓存，见 tileset_cache.gd） ——
@@ -267,7 +292,7 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 		if gen != _rebuild_gen:
 			return
 	map_root = Node2D.new()
-	map_root.z_index = -1   # 地图内容整体沉到画布参照层之下（碰撞叠加/网格/幽灵画在 canvas 自绘层）
+	map_root.z_index = -1 if drawing_context_only else -2
 	map_root.name = "MapRoot"
 	add_child(map_root)
 	_build_tileset()
@@ -314,6 +339,14 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	field.z_index = -9
 	field.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	map_root.add_child(field)
+	if drawing_context_only:
+		bg.hide()
+		field.hide()
+	else:
+		bg.z_as_relative = false
+		field.z_as_relative = false
+		bg.z_index = -20
+		field.z_index = -19
 	# 层栈节点：按 meta.layers 栈序创建。遮挡模型（REFACTOR_PLAN 3.7）：层 = 三段容器，
 	# below / YSort（瓦片 + auto 实体同住一个 y-sorted 父）/ above；全程不写 z_index，跨层只认栈序。
 	layer_tiles.clear()
@@ -450,6 +483,8 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 		if aid == "":
 			continue
 		var n: EntityNode = _undo_history_ctrl._node_from_row(e)
+		if drawing_context_only:
+			continue
 		# C09：载图即补齐类型挂载（只在工作副本上，不碰选中事件）；缺的补一条 mounted 行并标脏
 		if n.is_entity():
 			if n.code.is_empty():
@@ -472,6 +507,9 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	coll_view.refresh()
 	for i in layer_count() + 1:
 		_layer_ops_ctrl._apply_layer_shown(i)
+	if drawing_context_only:
+		coll_view.hide()
+		return
 
 	# 相机：撤销时保持视角，否则对准出生点
 	if keep_cam:
@@ -507,12 +545,15 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 
 # —— 缩略图注入（app 启动时把实体缩略图交给画布） ——
 func _ready() -> void:
-	z_index = 5   # canvas 自绘（网格/幽灵/碰撞叠加/出生标记）盖在地图子树之上
-	_selection_ops_ctrl = preload("res://src/canvas/selection_ops.gd").new(self)
-	_region_ops_ctrl = preload("res://src/canvas/region_ops.gd").new(self)
 	_world_region_move = preload("res://src/canvas/world_region_move.gd").new(self)
 	_layer_ops_ctrl = preload("res://src/canvas/layer_ops.gd").new(self)
 	_undo_history_ctrl = preload("res://src/core/undo_history.gd").new(self)
+	if drawing_context_only:
+		set_process_unhandled_input(false)
+		return
+	z_index = 5   # canvas 自绘（网格/幽灵/碰撞叠加/出生标记）盖在地图子树之上
+	_selection_ops_ctrl = preload("res://src/canvas/selection_ops.gd").new(self)
+	_region_ops_ctrl = preload("res://src/canvas/region_ops.gd").new(self)
 	_canvas_draw_ctrl = preload("res://src/canvas/canvas_draw.gd").new(self)
 	_canvas_input_ctrl = preload("res://src/canvas/canvas_input.gd").new(self)
 	_tool_ops_ctrl = preload("res://src/canvas/tool_ops.gd").new(self)
@@ -1687,7 +1728,8 @@ func arrival_snapshot() -> Dictionary:
 	return {"meta": map_data.meta, "objects": objects}
 ## —— 拆到 src/canvas/canvas_draw.gd 的委托（调用点保持不变） ——
 func _draw() -> void:
-	_canvas_draw_ctrl._draw()
+	if not drawing_context_only:
+		_canvas_draw_ctrl._draw()
 
 ## —— 拆到 src/canvas/canvas_input.gd 的委托（调用点保持不变） ——
 func _unhandled_input(event: InputEvent) -> void:

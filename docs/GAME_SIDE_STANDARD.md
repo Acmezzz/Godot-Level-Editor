@@ -1370,17 +1370,20 @@ main.gd
 图组事件层与启动入口独立。游戏在某个时机条目声明允许的目标，例如：
 
 ```json
-{"triggers":{"round_finished":{"code":"FIN1","name":"关卡结算","eventTargets":{"screens":true}}}}
+{"triggers":{"round_finished":{"code":"FIN1","name":"关卡结算","eventTargets":{"contentTypes":["settlement"]}}}}
 ```
 
-作者可新建一个层，为 `FIN1` 选择结算屏。编辑器在项目清单写入：
+作者可新建一个层，为 `FIN1` 选择允许的目标，并在同一图组绘制层制作页面和实体。
+例如游戏声明该时机接受 `settlement` 内容时，编辑器可在项目清单写入：
 
 ```json
-{"eventLayers":{"LYR1":{"name":"共用结算","maps":["MAP1","MAP3"],"events":{"FIN1":{"view":"results"}}}}}
+{"eventLayers":{"LYR1":{"name":"共用结算","maps":["MAP1","MAP3"],"drawingMap":"DRW1","events":{"FIN1":{"function":"settlement","content":"project-results"}}}}}
 ```
 
 层的键、`maps` 中的地图码、`events` 中的时机码和目标 ID 才是身份；`name` 只用于展示。
 省略 `maps` 代表适用于全部地图，包括以后新增的地图；显式空数组不匹配任何地图。
+`drawingMap` 是可选的共享绘制地图码。游戏按基础地图码筛选适用层，再按 `drawingMap` 查找 `meta.code` 相同的普通地图文件，将其作为独立绘制层叠加；不要把绘制地图当作基础地图递归匹配。没有 `drawingMap` 的层仍可共享事件。
+共享层里的实例、图层和引用保留该绘制地图的身份；实例功能按 `drawingMap` 的地图码解析，基础地图触发的图组事件仍按基础地图码匹配。游戏自行控制共享层何时显示及如何叠放，可以在结算时才显示结算面板。编辑器实景 `mapFrame` 请求在 `subject.eventDrawings` 提供已解析的 `[{layer, map, data}]`，分别是事件层 ID、绘制地图码及地图文档。
 地图触发事件时，游戏按当前地图码选取匹配的层，并用时机码查 `events` 中的目标；
 各层可重叠，执行先后和冲突策略由游戏决定。没有地图的入口若要复用规则，也可由游戏读取未限定地图的层。
 `eventTargets` 与流程目标使用同一组域：`screens`、`maps`、`contentTypes`、`arrivalPorts`。

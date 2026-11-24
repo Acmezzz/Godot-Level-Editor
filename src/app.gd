@@ -633,6 +633,7 @@ func _set_map_loaded(loaded: bool) -> void:
 	else:
 		tile_list.modulate = Color(1, 1, 1, 1)
 		ent_list.modulate = Color(1, 1, 1, 1)
+		_map_file_ctrl.refresh_event_drawings()
 		_editor_state_ctrl.sync_ui()
 		# 地图载入后：清掉引导态，换成「未选中实体」的提示
 		selected_spr = null

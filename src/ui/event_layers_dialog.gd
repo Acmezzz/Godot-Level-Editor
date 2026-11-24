@@ -6,13 +6,14 @@ const Maps := preload("res://src/project/reference_index.gd")
 const SlotField := preload("res://src/ui/destination_slot_field.gd")
 const Kit := preload("res://src/ui/ui_kit.gd")
 
-static func open(app, layer_id := "") -> void:
+static func open(app, layer_id := "", drawing_only := false) -> void:
 	var source: Dictionary = app.manifest
 	var before: Dictionary = source.get(Layers.KEY, {})
 	var draft := before.duplicate(true)
 	var events := Layers.types(source)
 	var map_options := Maps.map_target_options(source)
-	var shell: Dictionary = app._popup_body("图组事件层", "同一层的事件只配置一次，可用于全部地图或任意地图组合。")
+	var drawing_codes := Layers.drawing_codes(source)
+	var shell: Dictionary = app._popup_body("图组事件层", "同一份绘制层和事件可用于全部地图或任意地图组合。")
 	var pop: PopupPanel = shell.pop
 	var body: VBoxContainer = shell.body
 	var toolbar := Kit.hbox(6)
@@ -45,6 +46,9 @@ static func open(app, layer_id := "") -> void:
 			row["name"] = value
 			select.set_item_text(select.selected, value if not value.is_empty() else id))
 		fields.add_child(Kit.field_row("层名称", name))
+		var drawing_code: String = row.get("drawingMap", "")
+		fields.add_child(Kit.field_row("绘制层地图码", Kit.hint_label(
+			"用「保存并编辑绘制层」创建" if drawing_code == "" else drawing_code, 300)))
 		var all_maps := CheckBox.new()
 		all_maps.text = "适用于全部地图"
 		all_maps.button_pressed = not row.has("maps")
@@ -61,7 +65,8 @@ static func open(app, layer_id := "") -> void:
 				row["maps"] = chosen)
 		var options := {}
 		for map in map_options:
-			options[map.code] = map.name
+			if map.code not in drawing_codes:
+				options[map.code] = map.name
 		for code in chosen:
 			if not options.has(code):
 				options[code] = "地图已缺失或重码"
@@ -76,6 +81,8 @@ static func open(app, layer_id := "") -> void:
 					chosen.erase(code)
 				row["maps"] = chosen)
 			maps.add_child(box)
+		if drawing_only:
+			return
 		fields.add_child(Kit.section_header("事件"))
 		var values: Dictionary = row.get_or_add("events", {})
 		var codes := events.keys()
@@ -116,12 +123,32 @@ static func open(app, layer_id := "") -> void:
 
 	var current := func() -> bool:
 		return pop.visible and is_same(app.manifest, source) and source.get(Layers.KEY, {}) == before
-	body.add_child(Kit.popup_buttons(func():
-		if draft == before:
-			pop.hide()
+	var publish := func(edit_drawing: bool):
+		if not current.call():
 			return
-		var candidate := source.duplicate()
-		candidate[Layers.KEY] = draft
-		if current.call() and await app._save_manifest_file_async(current, candidate, Layers.KEY):
-			pop.hide(), pop.hide, "保存事件层"))
+		var code := ""
+		if edit_drawing:
+			var id: String = selected.call()
+			if id == "":
+				return
+			var layer: Dictionary = draft[id]
+			code = layer.get("drawingMap", "")
+			if code == "":
+				code = app._map_file_ctrl.create_event_drawing(str(layer.get("name", id)), id)
+				if code == "":
+					app._set_status("无法创建图组绘制层。")
+					return
+				layer["drawingMap"] = code
+		if draft != before:
+			var candidate := source.duplicate()
+			candidate[Layers.KEY] = draft
+			if not await app._save_manifest_file_async(current, candidate, Layers.KEY):
+				return
+			if app.map_loaded:
+				app._map_file_ctrl.refresh_event_drawings()
+		pop.hide()
+		if edit_drawing:
+			app._map_file_ctrl.open_event_drawing.call_deferred(code)
+	body.add_child(Kit.button("保存并编辑绘制层", func(): publish.call(true)))
+	body.add_child(Kit.popup_buttons(func(): publish.call(false), pop.hide, "保存事件层"))
 	app._open_popup(pop, Vector2i(650, 460))

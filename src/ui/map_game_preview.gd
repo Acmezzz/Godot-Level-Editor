@@ -188,7 +188,8 @@ static func _saved_snapshot(preset: String, app, manifest: Dictionary, key: Stri
 	var bounds := ViewData.scene_bounds(map, manifest)
 	var center := bounds.get_center()
 	var zoom := minf(size.x / bounds.size.x, size.y / bounds.size.y) * 0.9
-	return {"subject": {"map": map, "manifest": app._manifest_write_payload(manifest), "viewportId": preset,
+	return {"subject": {"map": map, "eventDrawings": RefIndex.event_drawings(manifest, key),
+		"manifest": app._manifest_write_payload(manifest), "viewportId": preset,
 		"camera": {"center": [center.x, center.y], "zoom": zoom}, "stagedContent": []},
 		"default_size": default_size, "current": current}
 
@@ -340,7 +341,8 @@ static func map_context(app) -> Dictionary:
 	var map := canvas.extract()
 	if map.is_empty():
 		return {}
-	return {"map": map, "stagedContent": _staged_content(app), "camera": _camera(canvas)}
+	return {"map": map, "eventDrawings": RefIndex.event_drawings(app.manifest, canvas.cur_map_code()),
+		"stagedContent": _staged_content(app), "camera": _camera(canvas)}
 
 static func context_matches(app, captured: Dictionary) -> bool:
 	return app.map_loaded and _camera(app.canvas) == captured.camera \
