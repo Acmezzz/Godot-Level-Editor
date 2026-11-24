@@ -890,18 +890,7 @@ func _effective_map_name() -> String:
 	return n
 
 ## 统一提交入口（A2）：先结束编辑手势，再按「清单 → 内容 → 地图」顺序落盘。
-## 返回 {status, written, error, pending}；status = ok / staged / cancelled / failed。
-## - ok：全部待写项已落盘（含本来就没有待写项的「无改动」）。
-## - staged：dry_run=true 且存在待写项（新内容/补码/脏地图），未写任何文件。
-##   给「先问一句要不要正式保存」的界面用；正式路径（试玩、Ctrl+S、清除悬停引用）不传 dry_run。
-## 任何一步失败即停，已写文件保留，调用方按 written 显示脏状态。
-func commit_document(reason := "", dry_run := false) -> Dictionary:
-	# R28：纯盘点无副作用——盘点不结束手势，也不冻结撤销（拖动/改尺寸的预览原样保留）。
-	if dry_run:
-		var pending := _pending_targets()
-		if pending.is_empty():
-			return {"status": "ok", "written": [], "error": "", "pending": [], "targets": []}
-		return {"status": "staged", "written": [], "error": "", "pending": pending, "targets": []}
+func commit_document(reason := "") -> Dictionary:
 	if app.canvas != null and app.canvas.doc_busy:
 		return {"status": "failed", "error": "另一次文档操作正在进行"}
 	# 正式提交（R28）：先归位未松手的预览型手势，再清手势类型，随后冻结撤销/重做。
@@ -930,9 +919,8 @@ func commit_document(reason := "", dry_run := false) -> Dictionary:
 	sess.project_root = str(app.manifest.get("_dir", ""))
 	sess.doc_key = _doc_key()
 	var op := {
-		"reason": reason, "manifest": app.manifest,
+		"manifest": app.manifest,
 		"map_name": app.cur_map_name, "map_path": app.cur_map_path,
-		"map_digest": sess.opened_digest,
 		# 从未落过盘的新图（含恢复草稿后正式文件不存在）：即使画布还没标脏也必须建文件，
 		# 否则首次保存报「无待写改动」而地图目录里什么都没有。
 		"map_dirty": bool(app.map_loaded and app.canvas != null and app.canvas.modified_flag)
@@ -948,8 +936,6 @@ func commit_document(reason := "", dry_run := false) -> Dictionary:
 			map_snapshot.meta.name = str(op.map_name)
 			MapStore.ensure_code(app.manifest, map_snapshot)
 		op["map_snapshot"] = map_snapshot
-	if sess.codes_pending:
-		op["manifest_expected"] = JSON.stringify(app._manifest_write_payload(app.manifest), "\t").sha256_text()
 	var prep: Dictionary = _doc_commit.prepare(op, snap)
 	if str(prep.get("status", "")) == "empty":
 		_release_busy()
@@ -961,8 +947,7 @@ func commit_document(reason := "", dry_run := false) -> Dictionary:
 		var error := str(prep.get("error", "无法准备提交计划"))
 		app._set_status(" 提交中止：" + error)
 		return {"status": "failed", "written": [], "error": error, "pending": _pending_targets()}
-	# B1：apply 按依赖序执行 Plan（清单 → 内容 → 地图），逐文件记录进度；
-	# 失败/取消/冲突路径的提交日志保留（scan_pending 三态判定不变）。
+	# 按依赖顺序写入；写入失败时保留已成功写入的文件。
 	var source: Dictionary = app.manifest
 	var manifest_snapshot := source.duplicate(true)
 	var guard := _commit_is_current.bind(sess.generation, sess.revision, source)
@@ -1020,7 +1005,7 @@ func _hook_flush_one(cid: String, payload := {}) -> Dictionary:
 	return ce.flush_one_content(cid, payload)
 
 ## 待写项盘点（A2 staged）：清单补码 / 暂存内容 / 脏地图。
-## 只读：不冲刷控件、不写盘、不登记日志——给 dry_run 与状态提示共用同一口径。
+## 供放弃确认和保存失败提示使用。
 func _pending_targets() -> Array:
 	var out: Array = []
 	if bool(app.manifest.get("_codes_issued", false)):
@@ -1032,39 +1017,13 @@ func _pending_targets() -> Array:
 		out.append("map")
 	return out
 
-## Ctrl+S / 地图菜单「保存」入口（A2）：清单 → 内容 → 地图，按依赖顺序一次写完。
-## 只调 on_save() 会在有暂存内容时把地图先写出去：地图里已经带着新内容 ID，
-## 而内容文件还没落盘，游戏侧读到悬空引用。没地图时退回原来的「无地图」提示。
-## A2 staged：有暂存内容/未写补码时先 dry_run 盘点，向用户说清「这次保存会一并写哪些」，
-## 确认后才正式提交——这是 commit_document 的 staged 状态唯一的生产级消费方。
+## Ctrl+S / 地图菜单：按清单、内容、地图的顺序保存。
 func save_all() -> bool:
-	if not app.map_loaded and not _has_staged_or_codes():
+	if not app.map_loaded and _pending_targets().is_empty():
 		app._set_status(" 无地图：先新建或打开一张地图")
-		return false
-	var guard := _commit_is_current.bind(sess.generation, sess.revision, app.manifest)
-	var probe: Dictionary = await commit_document("保存", true)
-	if str(probe.get("status", "")) == "staged":
-		var what: Array[String] = []
-		for p in (probe.get("pending", []) as Array):
-			match str(p):
-				"manifest":
-					what.append("清单里补发的身份码")
-				"content":
-					what.append("内容页暂存的新内容/新绑定")
-				"map":
-					what.append("当前地图改动")
-		var text := "这次保存会一并写入：%s。\n\n继续？" % "、".join(what)
-		if not await confirm_action("保存", text, "写入"):
-			app._set_status(" 保存已取消：待写项仍在，未写任何文件")
-			return false
-	if not guard.call():
-		app._set_status(" 保存中止：确认期间文档已变化，请重新提交")
 		return false
 	var res: Dictionary = await commit_document("保存")
 	return str(res.get("status", "")) == "ok"
-
-func _has_staged_or_codes() -> bool:
-	return not _pending_targets().is_empty()
 
 ## 写入提交时冻结的地图。前置内容和清单由提交计划处理。
 func _save_now(data: Dictionary, guard: Callable) -> bool:
