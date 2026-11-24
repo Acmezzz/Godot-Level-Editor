@@ -123,7 +123,6 @@ func open() -> void:
 	var relations := Kit.button("流程关系…", func():
 		pop.hide()
 		_open_flow.call_deferred())
-	relations.disabled = keys.is_empty()
 	controls.add_child(relations)
 	controls.add_child(play)
 	if keys.is_empty():
@@ -138,7 +137,7 @@ func open() -> void:
 func _open_flow() -> void:
 	var source := manifest
 	var shell: Dictionary = app._popup_body("项目流程关系",
-		"选择内容、屏幕以及它们的出口。接线写回内容字段、按钮或热点；游戏决定何时跳转。")
+		"查看地图、实例、内容和屏幕的出口。实例出口可跳到地图中的字段修改；游戏决定何时跳转。")
 	var pop: PopupPanel = shell.pop
 	var body: VBoxContainer = shell.body
 	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -330,6 +329,19 @@ func _open_flow() -> void:
 	view.on_pick = pick
 	var pick_edge := func(edge: Dictionary):
 		pick.call(edge.from)
+		if edge.has("map_instance"):
+			var map_name: String = state.index.nodes[edge.from].name
+			pop.hide()
+			if not app.map_loaded or app.cur_map_name != map_name:
+				await app._open_map_by_name(map_name)
+			if app.map_loaded and app.cur_map_name == map_name:
+				var code: String = edge.map_instance
+				if app.canvas.focus_entity_code(code):
+					app._set_mode("content", code)
+					host.highlight_field(edge.field)
+				else:
+					app._set_status("该实例已移除，请保存地图后刷新流程关系。")
+			return
 		var i: int = state.slots.find(edge)
 		if i >= 0:
 			slot.select(i)
@@ -339,8 +351,9 @@ func _open_flow() -> void:
 		pick.call(links.get_item_metadata(i).other))
 	broken.item_selected.connect(func(i: int):
 		if i > 0:
-			pick_edge.call(state.graph.external[i - 1])
-			broken.select(0))
+			var edge: Dictionary = state.graph.external[i - 1]
+			broken.select(0)
+			pick_edge.call(edge))
 	var actions := Kit.hbox(6)
 	body.add_child(actions)
 	actions.add_child(Kit.button("定位引用字段", func():

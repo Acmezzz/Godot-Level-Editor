@@ -19,6 +19,7 @@ const FlowTarget := preload("res://src/content/flow_target.gd")
 const StartupTargets := preload("res://src/project/startup_targets.gd")
 const MapStore := preload("res://src/map/map_store.gd")
 const MapFlow := preload("res://src/map/map_flow.gd")
+const AssetDecl := preload("res://src/assets/asset_decl.gd")
 const VIEW_KIND := "@view"
 const MAP_KIND := "@map"
 
@@ -131,12 +132,12 @@ static func _build(manifest: Dictionary, kinds: Array, extra: Dictionary, scope:
 	return graph
 
 static func _collect_maps(manifest: Dictionary, graph: Dictionary, catalog: Dictionary) -> void:
-	if MapFlow.declarations(manifest, MapFlow.OUTPUTS).is_empty() and MapFlow.declarations(manifest, MapFlow.CONTENT).is_empty():
-		return
+	var declarations := {}
 	for node in graph.nodes:
 		if node.fn_id != MAP_KIND:
 			continue
-		for ref in MapFlow.references(manifest, MapStore.read(manifest, node.name)):
+		var data := MapStore.read(manifest, node.name)
+		for ref in MapFlow.references(manifest, data):
 			var address := _flow_address(ref.value)
 			if FlowTarget.allows(ref.decl, ref.value) and catalog.get(address[0], {}).get(address[1], false):
 				var label: String = ref.decl.get("name", ref.field)
@@ -144,6 +145,25 @@ static func _collect_maps(manifest: Dictionary, graph: Dictionary, catalog: Dict
 					"fn_id": MAP_KIND, "cid": node.cid, "fn": address[0], "value": address[1],
 					"label": "使用内容 · " + label if ref.map_section == MapFlow.CONTENT else label,
 					"field": ref.field, "map_section": ref.map_section})
+		for row in data.get("objects", []):
+			var code: String = row.get("code", "")
+			if code == "":
+				continue
+			var asset: String = row.get("asset", "")
+			if not declarations.has(asset):
+				declarations[asset] = AssetDecl.by_id(manifest, asset).get("fields", [])
+			for ref in References.property_refs(manifest, declarations[asset], row.get("props", {})):
+				if ref.kind != "flow_target":
+					continue
+				var address := _flow_address(ref.value)
+				var edge := {"from": node.key, "to": _key(address[0], address[1]),
+					"fn_id": MAP_KIND, "cid": node.cid, "fn": address[0], "value": address[1],
+					"label": "%s · %s" % [code, ref.path.trim_prefix(".")], "field": ref.field,
+					"map_instance": code, "target": ref.value}
+				if FlowTarget.allows(ref.decl, ref.value) and catalog.get(address[0], {}).get(address[1], false):
+					graph.edges.append(edge)
+				else:
+					graph.external.append(edge)
 
 static func _collect_views(manifest: Dictionary, graph: Dictionary, catalog: Dictionary) -> void:
 	var views = manifest.get("views", [])

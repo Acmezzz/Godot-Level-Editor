@@ -365,6 +365,38 @@ func run() -> void:
 	check(edge_exists, "the project graph exposes the direct module transition")
 	check(graph.edges.any(func(edge): return edge.cid == "instructions" and edge.fn == Flow.MAP_KIND and edge.value == copy_code),
 		"the project graph links the teaching button to the authored map")
+	editor._library.open()
+	press(popup(), "流程关系…")
+	await process_frame
+	flow = popup()
+	choose(flow.find_child("FlowSource", true, false), "@map\u0001" + copy_code)
+	var direct: ItemList = flow.find_child("FlowDirectLinks", true, false)
+	var outlet_index := -1
+	for i in direct.item_count:
+		var outlet: Dictionary = direct.get_item_metadata(i).edge
+		if outlet.get("map_instance") == copy_host and outlet.field == "exit_target":
+			outlet_index = i
+			break
+	if not check(outlet_index >= 0, "the project graph exposes the copied instance outlet"):
+		quit(1)
+		return
+	direct.select(outlet_index)
+	press(flow, "定位引用字段")
+	for i in 15:
+		await process_frame
+		if app.cur_map_name == "course_variant" and app.project_shell._view == "content":
+			break
+	exit_picker = editor.root.find_child("InstanceValue_exit_target", true, false)
+	if not check(app.cur_map_name == "course_variant" and exit_picker != null
+			and exit_picker.get_selected_metadata() == JSON.stringify({"map": copy_code}),
+			"the graph opens the correct map, instance and field"):
+		quit(1)
+		return
+	choose(exit_picker, JSON.stringify({"view": "results"}))
+	editor.commit_fields()
+	published = await app._map_file_ctrl.commit_document("保存从流程图定位的实例出口")
+	check(published.get("status") == "ok" and Maps.read(manifest, "course_variant").objects[0].props.exit_target == {"view": "results"},
+		"the outlet can be redirected and published from the opened instance form")
 	var inbound := Audit.view_inbound_refs(manifest, "instructions", [])
 	check(not inbound.refs.is_empty() and "welcome" in inbound.refs[0], "the destination screen has the expected inbound reference")
 	var broken := manifest.duplicate(true)
