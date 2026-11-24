@@ -367,18 +367,18 @@ static func _sibling_decl(want: String, siblings: Array) -> Dictionary:
 
 ## 读配对地图字段的当前值：值键优先用配对声明的 code，缺省退回它的 id
 ## （实例 props 的键是 id；内容/步骤的键是 code）。
-static func paired_map_value(decl: Dictionary, siblings: Array, values: Dictionary) -> String:
-	return _sibling_value(paired_map_decl(decl, siblings), values)
+static func paired_map_value(decl: Dictionary, siblings: Array, values: Dictionary, key_mode := "code") -> String:
+	return _sibling_value(paired_map_decl(decl, siblings), values, key_mode)
 
 ## Captured as one scope so either sibling changing invalidates a pending frame pick.
-static func frame_scope(decl: Dictionary, siblings: Array, values: Dictionary) -> Array[String]:
+static func frame_scope(decl: Dictionary, siblings: Array, values: Dictionary, key_mode := "code") -> Array[String]:
 	var layer := _sibling_decl(str(decl.get("layerField", "")), siblings) if decl.get("pickSpace") == "layer" else {}
-	return [paired_map_value(decl, siblings, values), _sibling_value(layer, values)]
+	return [paired_map_value(decl, siblings, values, key_mode), _sibling_value(layer, values, key_mode)]
 
-static func _sibling_value(pm: Dictionary, values: Dictionary) -> String:
+static func _sibling_value(pm: Dictionary, values: Dictionary, key_mode: String) -> String:
 	if pm.is_empty():
 		return ""
-	var key := str(pm.get("code", ""))
+	var key := str(pm.get("code", "")) if key_mode == "code" else ""
 	if key == "" or not values.has(key):
 		key = str(pm.get("id", ""))
 	return str(values.get(key, "") if values.get(key, null) != null else "")

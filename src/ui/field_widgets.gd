@@ -655,7 +655,7 @@ static func _build_record(decl: Dictionary, value, on_set: Callable,
 		var d2: Dictionary = sd
 		# 兄弟配对字段作用域 = 当前记录行：配对地图字段值从行内读
 		if str(sd.get("mapField", "")) != "":
-			var tk := RefFields.paired_map_value(sd, fields_arr, value)
+			var tk := RefFields.paired_map_value(sd, fields_arr, value, key_mode)
 			if tk != "":
 				d2 = sd.duplicate(true)
 				d2["_mapKey"] = tk
@@ -666,7 +666,7 @@ static func _build_record(decl: Dictionary, value, on_set: Callable,
 		var row := Kit.field_row(str(sd.get("name", sub_key)), built.ctl, 96)
 		box.add_child(row)
 		if frame_pick.is_valid() and wants_frame_pick(sd) and frame_value_available(sd, built):
-			var pair := func() -> Array[String]: return RefFields.frame_scope(sd, fields_arr, value)
+			var pair := func() -> Array[String]: return RefFields.frame_scope(sd, fields_arr, value, key_mode)
 			frame_pick.call(row, sd, pair, set_value, built.get("pick_values", Callable()))
 		commits.append(built.commit)
 	return {"ctl": panel, "commit": func() -> bool:

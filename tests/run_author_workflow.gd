@@ -420,7 +420,10 @@ func run():
 				{"id":"target","type":"port_ref","of":"door","sourcePort":"output"}, {"id":"backup_map","type":"map_ref"},
 				{"id":"backup","type":"port_ref","of":"door","mapField":"backup_map"},
 				{"id":"activation_count","kind":"input","type":"int","default":1,"min":0,"max":4},
-				{"id":"caption","kind":"input","type":"string","default":"Switch"}]},
+				{"id":"caption","kind":"input","type":"string","default":"Switch"},
+				{"id":"motion_layer","kind":"choice","source":"layer:"},
+				{"id":"motion_path","kind":"input","type":"array","of":"vector2",
+					"pickSpace":"layer","layerField":"motion_layer"}]},
 			{"id": "button-art", "kind": "scene", "shape": "image", "texture": "button.png"},
 			{"id": "terrain", "kind": "scene", "shape": "tile", "atlas": "terrain.png", "cell": 16},
 			{"id": "terrain-alt", "kind": "scene", "shape": "tile", "atlas": "terrain-alt.png", "cell": 16},
@@ -2344,10 +2347,10 @@ func _check_world_move_restore(ok: bool, actual: Dictionary, expected: Dictionar
 			diffs.append("%s: %s vs %s" % [key, a, b])
 	check(ok and actual.size() == expected.size() and diffs.is_empty(),
 		"one %s restores the entire cross-layer move: %s" % [op, "; ".join(diffs)])
-func _render_pick_frame(app) -> PopupPanel:
+func _render_pick_frame(app, label := "") -> PopupPanel:
 	var popups := collect(app, "PopupPanel").filter(func(p): return p.visible and p.find_child("MapGamePreviewRender", true, false) != null)
 	if popups.is_empty():
-		check(false, "open the game frame picker")
+		check(false, "open the game frame picker " + label)
 		return null
 	var pop: PopupPanel = popups.back()
 	select_metadata(pop.find_child("MapGamePreviewViewport", true, false), "portrait")
@@ -2459,7 +2462,11 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 	check(await cvs.redo() and cvs.ents_all().size() == 4, "one redo restores the polygon")
 	app._set_mode("content", "PICK")
 	var editor = app.project_shell.content_editor
-	press(editor.root, "实景选…")
+	var port_picker: Button = editor.root.find_child("FrameReference_target", true, false)
+	check(port_picker != null, "the instance port exposes its own frame picker")
+	if port_picker == null:
+		return
+	port_picker.pressed.emit()
 	var ref_pop := await _render_pick_frame(app)
 	if ref_pop == null:
 		return
@@ -3030,6 +3037,29 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 	check(switch.props.get("activation_count") == 0 and await cvs.undo() and not switch.props.has("activation_count"),
 		"undo removes a committed instance override")
 	check(await cvs.redo() and switch.props.get("activation_count") == 0, "redo restores the explicit zero")
+	var motion_layer: OptionButton = editor.root.find_child("InstanceValue_motion_layer", true, false)
+	select_metadata(motion_layer, upper)
+	check(switch.props.get("motion_layer") == upper, "the instance layer field stores the selected layer ID")
+	var motion_picker: Button = editor.root.find_child("FrameFieldReference_motion_path", true, false)
+	check(motion_picker != null, "the instance can pick a motion path in its chosen layer")
+	if motion_picker == null:
+		return
+	motion_picker.pressed.emit()
+	var motion_frame := await _render_pick_frame(app, "instance motion path: " + app.status.text)
+	if motion_frame == null:
+		return
+	check(_click_pick_frame(motion_frame, Vector2(0.15, 0.25)).disabled, "instance path ignores a different layer")
+	var confirm_motion := _click_pick_frame(motion_frame, Vector2(0.65, 0.25))
+	_click_pick_frame(motion_frame, Vector2(0.75, 0.25))
+	check(not confirm_motion.disabled and not switch.props.has("motion_path"),
+		"both motion points remain a draft before applying")
+	confirm_motion.pressed.emit()
+	await process_frame
+	await process_frame
+	var motion: Array = switch.props.get("motion_path", [])
+	check(motion.size() == 2 and await cvs.undo() and not switch.props.has("motion_path")
+		and switch.props.motion_layer == upper, "one undo removes the whole chosen path and leaves its layer")
+	check(await cvs.redo() and switch.props.get("motion_path") == motion, "redo restores the ordered path")
 	caption = editor.root.find_child("InstanceValue_caption", true, false)
 	caption.text = ""
 	# The mode transition flushes the pending text together with the map.
@@ -3040,6 +3070,11 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 	var reopened: EntityNode = cvs._ent_by_code_index()["PICK"]
 	check(reopened.props.get("activation_count") == 0 and reopened.props.get("caption") == "",
 		"zero and empty string remain explicit overrides after reopening")
+	var reopened_motion: Array = reopened.props.get("motion_path", [])
+	check(reopened.props.get("motion_layer") == upper and reopened_motion.size() == 2 and motion.size() == 2
+		and Vector2(reopened_motion[0][0], reopened_motion[0][1]).is_equal_approx(Vector2(motion[0][0], motion[0][1]))
+		and Vector2(reopened_motion[1][0], reopened_motion[1][1]).is_equal_approx(Vector2(motion[1][0], motion[1][1])),
+		"instance motion path and layer survive reopening")
 	check(cvs.extract().tiles == final_tiles and cvs.extract().spawn == [5, 3], "mapped tile edits and spawn survive save and reopen")
 	check(cvs.cell_graph().edges[0].id == edge_id and cvs.cell_graph().edges[0].props.cost == 2
 		and cvs.cell_graph().edges[0].toMap == destination_code and cvs.cell_graph().edges[0].to == "remote",
@@ -3054,6 +3089,11 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 	var report := await launch_and_read(app, false)
 	var result: Dictionary = report.get("result", {})
 	var played_path: Array = result.get("layerPath", [])
+	var instance_motion: Array = result.get("instanceMotion", [])
+	check(instance_motion.size() == 2 and played_path.size() == 2
+		and Vector2(instance_motion[0][0], instance_motion[0][1]).distance_to(Vector2(played_path[0][0], played_path[0][1])) < 0.02
+		and Vector2(instance_motion[1][0], instance_motion[1][1]).distance_to(Vector2(played_path[1][0], played_path[1][1])) < 0.02,
+		"the independent game moves the instance through the same two authored world points")
 	check(played_path.size() == 2
 		and Vector2(played_path[0][0], played_path[0][1]).distance_to(Vector2(48, 16) + Vector2(48.0 + 32.0 / 7.0, 32.0 + 64.0 / 7.0) * 1.5) < 0.02
 		and Vector2(played_path[1][0], played_path[1][1]).distance_to(Vector2(136, 80)) < 0.02,

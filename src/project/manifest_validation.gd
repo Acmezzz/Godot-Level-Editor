@@ -676,6 +676,11 @@ static func _add(issues: Array[Dictionary], severity: String, path: String, mess
 ## 可配置条件使用已声明的叶条件池；不允许条件声明递归引用自己。
 static func _validate_content_field_shapes(data: Dictionary, issues: Array[Dictionary]) -> void:
 	var conditions := ConditionDecls.conditions(data)
+	var assets = data.get("assets", [])
+	for i in (assets as Array).size() if assets is Array else 0:
+		var asset = assets[i]
+		if asset is Dictionary and asset.get("kind") == "entity":
+			_check_condition_fields(asset.get("fields"), "assets[%d].fields" % i, conditions, true, issues)
 	for section in ["functions", "steps", "conditions"]:
 		var pool: Dictionary
 		match section:

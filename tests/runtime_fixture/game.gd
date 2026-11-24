@@ -87,14 +87,22 @@ func _ready() -> void:
 			var arrival := Vector2.ZERO if route.is_empty() else Vector2(_cells[route].polygon[0])
 			var path_fields: Dictionary = _parse(FileAccess.get_file_as_string("res://content/ending/project-layer-path.json")).get("fields", {})
 			var layer_path := []
+			var instance_motion := []
+			var source: Dictionary = map.objects.filter(func(row): return row.code == "PICK")[0]
+			var mover := Node2D.new()
+			add_child(mover)
 			for layer in map.meta.layers:
+				if layer.id == source.props.get("motion_layer"):
+					for point in source.props.get("motion_path", []):
+						mover.position = _vector(layer.offset) + _vector(point) * float(layer.scale)
+						instance_motion.append([mover.position.x, mover.position.y])
 				if layer.id != path_fields.get("PLID"):
 					continue
 				for point in path_fields.get("LPTH", []):
 					var anchor := _vector(layer.offset) + _vector(point) * float(layer.scale)
 					layer_path.append([anchor.x, anchor.y])
 			_report("ready", "", {"picks": lanes, "opened": _activate_switch(map, manifest, "target", "PICK"), "contours": contours,
-				"layerPath": layer_path,
+				"layerPath": layer_path, "instanceMotion": instance_motion,
 				"openedBackup": _activate_switch(map, manifest, "backup", "PICK"),
 				"openedByCopy": _activate_switch(map, manifest, "target", copies[0].code) if not copies.is_empty() else "",
 				"playerStart": [player.position.x, player.position.y], "switchCopies": copies, "authoredRoute": route,

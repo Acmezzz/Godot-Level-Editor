@@ -726,24 +726,33 @@ func _build_instance_values(spr: EntityNode) -> Control:
 		var fid: String = fd.id
 		var value = spr.props.get(fid, fd.get("default", FieldWidgets.default_for(fd)))
 		var written := {"value": spr.props.get(fid)}
-		var apply := func(v) -> void:
+		var apply := func(v) -> bool:
 			# 实例差量先恢复节点，再通知选中。旧控件失焦时不能盖掉刚恢复的值。
-			if box.get_parent() == _r_body and is_instance_valid(spr) and spr == _current_spr() \
-					and spr.props.get(fid) == written.value:
-				app.canvas._ref_ops_ctrl.set_instance_value(spr, fid, v)
-				written.value = v
-				_form_sig = ""
-				if _preview != null:
-					_preview.refresh()
+			if box.get_parent() != _r_body or not is_instance_valid(spr) or spr != _current_spr() \
+					or spr.props.get(fid) != written.value:
+				return false
+			app.canvas._ref_ops_ctrl.set_instance_value(spr, fid, v)
+			written.value = v
+			_form_sig = ""
+			_preview.refresh()
+			return true
 		var decl: Dictionary = fd.duplicate()
-		var paired := RefFields.paired_map_value(fd, fields, spr.props)
+		var pair := func() -> Array[String]: return RefFields.frame_scope(fd, fields, spr.props, "id")
+		var paired := RefFields.paired_map_value(fd, fields, spr.props, "id")
 		if paired != "":
 			decl["_mapKey"] = paired
-		var built := FieldWidgets.build(decl, value, apply, _resolve_options)
+		var frame_pick := func(row: Control, nested: Dictionary, nested_pair: Callable, save: Callable, read: Callable):
+			FrameReference.add_reference_button(app, row, nested, nested_pair, save, _resolve_options, false,
+				_rebuild_right, "", read)
+		# 普通控件在撤销通知时可能还有待提交值；过期值应丢弃。
+		# 实景确认则必须让弹窗知道是否真的写入。
+		var built := FieldWidgets.build(decl, value, func(v): apply.call(v), _resolve_options, "id", frame_pick)
 		var control: Control = built.ctl
 		control.name = "InstanceValue_" + fid
 		var row := Kit.field_row(str(fd.get("name", fid)), control, 96)
 		row.tooltip_text = FieldWidgets.decl_tooltip(fd)
+		if FieldWidgets.wants_frame_pick(fd) and FieldWidgets.frame_value_available(fd, built):
+			frame_pick.call(row, fd, pair, apply, built.get("pick_values", Callable()))
 		if fid == _field_focus:
 			row.add_theme_stylebox_override("panel", Th.box(Color(Th.WARN, 0.14), Th.WARN, Th.R_INNER, 6, 3))
 		box.add_child(row)
