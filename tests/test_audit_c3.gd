@@ -124,41 +124,14 @@ func test_fill_bindings() -> void:
 # ──────────── 引用索引与绑定检查（C12） ────────────
 
 ## 两个功能共用同一内容 ID 尾码：引用只算在命中的那个功能名下
-func test_used_content_index_is_per_function() -> void:
-	_wipe()
-	var m := _fake_manifest()
-	m["functions"] = {
-		"f1": {"name": "F1", "code": "F111", "fields": []},
-		"f2": {"name": "F2", "code": "F222", "fields": []},
-	}
-	ok(ContentStore.write(m, "f1", "AAA1", {"name": "a", "function": "F111", "fields": {}}), "f1 内容写入")
-	ok(ContentStore.write(m, "f2", "AAA1", {"name": "b", "function": "F222", "fields": {}}), "f2 同尾码内容写入")
-	var used := {}
-	var missing: Array = []
-	ProjectAudit._collect_used_content({"objects": [
-		{"code": "E1", "asset": "door", "functions": [{"fn": "F111", "content": "AAA1"}]},
-	]}, m, used, missing, "m1")
-	eq(missing.size(), 0, "绑定文件存在 → 无缺失条目")
-	ok(used.has(ProjectAudit._content_key("f1", "AAA1")), "命中的功能名被索引")
-	ok(not used.has(ProjectAudit._content_key("f2", "AAA1")), "同尾码的另一个功能不被算作已引用")
-	# f2/AAA1 因此应报孤立内容
-	var orphan_f2 := 0
-	for e in ProjectAudit._content_checks(m, used):
-		if str(e.get("path", "")) == "f2/AAA1" and str(e.get("message", "")).contains("孤立"):
-			orphan_f2 += 1
-	eq(orphan_f2, 1, "同尾码在另一功能名下仍报孤立")
-	_wipe()
-
 ## 绑定指向的内容文件不存在 → 审计显形
 func test_binding_missing_reported() -> void:
 	_wipe()
 	var m := _fake_manifest()
 	m["functions"] = {"f1": {"name": "F1", "code": "F111", "fields": []}}
-	var used := {}
-	var missing: Array = []
-	ProjectAudit._collect_used_content({"objects": [
+	var missing := ProjectAudit._missing_binding_targets({"objects": [
 		{"code": "E1", "asset": "door", "functions": [{"fn": "F111", "content": "NOPE"}]},
-	]}, m, used, missing, "m1")
+	]}, m, "m1")
 	eq(missing.size(), 1, "绑定目标文件缺失报一条")
 	if missing.size() == 1:
 		ok(str((missing[0] as Dictionary).get("message", "")).contains("NOPE"), "消息带内容 ID")
@@ -253,104 +226,9 @@ func _dangling_map(m: Dictionary) -> Dictionary:
 	return d
 
 ## 过期报告：一个字段已被修好（目标补上了对象）→ 清理跳过它，只清仍悬空的那条
-func test_stale_report_skips_repaired_field() -> void:
-	_wipe()
-	var m := _fake_manifest()
-	_dangling_map(m)
-	var d := MapStore.read(m, "m1")
-	var fixes: Array = []
-	for e in ProjectAudit._ref_checks(d, m, "m1"):
-		fixes.append((e as Dictionary).get("fix"))
-	eq(fixes.size(), 2, "初始两条悬空")
-	# 期间修好 B1：补一个 HHHH 实例
-	(d.objects as Array).append({"asset": "door", "code": "HHHH", "layer": str(d.meta.layers[0].id), "x": 5, "y": 5})
-	var res := ProjectAudit.apply_ref_fixes(m, "m1", fixes, d)
-	eq(int(res.get("erased", 0)), 1, "只清掉仍悬空的 A1.TGT")
-	eq(int(res.get("skipped", 0)), 1, "已修好的 B1.TGT 跳过")
-	for o in (d.objects as Array):
-		if str((o as Dictionary).get("code", "")) == "A1":
-			ok(not ((o as Dictionary).get("props", {}) as Dictionary).has("TGT"), "A1 字段被清")
-		if str((o as Dictionary).get("code", "")) == "B1":
-			eq(str(((o as Dictionary).get("props", {}) as Dictionary).get("TGT", "")), "HHHH", "B1 已修值不变")
-	_wipe()
-
 ## 字段已被改成别的值（也仍悬空）→ 报告过期，不按旧值清
-func test_stale_report_skips_changed_value() -> void:
-	_wipe()
-	var m := _fake_manifest()
-	var d := _dangling_map(m)
-	var fixes: Array = []
-	for e in ProjectAudit._ref_checks(d, m, "m1"):
-		if str(((e as Dictionary).get("fix", {}) as Dictionary).get("code", "")) == "A1":
-			fixes.append((e as Dictionary).get("fix"))
-	eq(fixes.size(), 1, "拿到 A1 的修复项")
-	# 期间作者把 A1 指向改成了另一个仍悬空的码
-	for o in (d.objects as Array):
-		if str((o as Dictionary).get("code", "")) == "A1":
-			((o as Dictionary).get("props", {}) as Dictionary)["TGT"] = "ZZZZ"
-	var res := ProjectAudit.apply_ref_fixes(m, "m1", fixes, d)
-	eq(int(res.get("erased", 0)), 0, "值变过 → 不清")
-	eq(int(res.get("skipped", 0)), 1, "记一次跳过")
-	_wipe()
-
 ## §7.2：清除悬空引用时配对地图字段不能无脑删——还有别的引用字段用它就保留。
-func test_clear_dangling_keeps_still_used_pair_map() -> void:
-	_wipe()
-	var m := _fake_manifest()
-	# door 有两个引用字段共用同一个配对地图字段 TGTMAP
-	m["assets"] = [{"id": "door", "kind": "entity", "fields": [
-		{"id": "TGT", "type": "entity_ref", "mapField": "TGTMAP"},
-		{"id": "TGT2", "type": "entity_ref", "mapField": "TGTMAP"},
-		{"id": "TGTMAP", "type": "map_ref"},
-	]}]
-	var d := MapStore.new_map("m1", 8, 8)
-	var lid := str(d.meta.layers[0].id)
-	# A1：TGT 悬空、TGT2 有效（指向本图 KEEP）→ TGTMAP 必须保留
-	(d.objects as Array).append({"asset": "door", "code": "A1", "layer": lid, "x": 0, "y": 0,
-		"props": {"TGT": "GONE", "TGT2": "KEEP", "TGTMAP": "m1"}})
-	# B1：两个引用都悬空 → 清掉两条后 TGTMAP 无人使用，可以删
-	(d.objects as Array).append({"asset": "door", "code": "B1", "layer": lid, "x": 1, "y": 0,
-		"props": {"TGT": "GONE2", "TGT2": "GONE3", "TGTMAP": "m1"}})
-	(d.objects as Array).append({"asset": "door", "code": "KEEP", "layer": lid, "x": 2, "y": 0})
-	MapStore.write(m, "m1", d)   # 配对图目标要能从磁盘解析出来（KEEP 才算有效引用）
-	var fixes: Array = []
-	for e in ProjectAudit._ref_checks(d, m, "m1"):
-		fixes.append((e as Dictionary).get("fix"))
-	ok(fixes.size() >= 3, "拿到全部悬空修复项（实得 %d）" % fixes.size())
-	var res := ProjectAudit.apply_ref_fixes(m, "m1", fixes, d)
-	ok(int(res.get("erased", 0)) >= 3, "至少清掉 3 个引用字段")
-	for o in (d.objects as Array):
-		var od: Dictionary = o
-		var props: Dictionary = od.get("props", {})
-		if str(od.get("code", "")) == "A1":
-			eq(str(props.get("TGTMAP", "")), "m1", "TGT2 还在用配对地图 → TGTMAP 保留")
-			eq(str(props.get("TGT2", "")), "KEEP", "有效引用不动")
-		if str(od.get("code", "")) == "B1":
-			ok(not props.has("TGT"), "B1.TGT 已清")
-			ok(not props.has("TGTMAP"), "两个引用都没了 → 配对地图字段一并清理")
-	_wipe()
-
 ## 写失败不计数：清除项落地在内存里，但 MapStore.write 失败时成功数不增加
-func test_clear_write_failure_not_counted() -> void:
-	_wipe()
-	var m := _fake_manifest()
-	var d := _dangling_map(m)
-	var fixes: Array = []
-	for e in ProjectAudit._ref_checks(d, m, "m1"):
-		fixes.append((e as Dictionary).get("fix"))
-	# 注入写失败：写盘注入口命中该图（唯一临时名之后无法再靠占用 .tmp 路径）
-	MapStore.test_fail_prefix = str(m._maps_dir).path_join("m1.json")
-	var res := ProjectAudit.apply_ref_fixes(m, "m1", fixes, d)
-	eq(int(res.get("erased", 0)), 2, "内存里两条都清")
-	ok(not MapStore.write(m, "m1", d), "写盘被注入失败")
-	MapStore.test_fail_prefix = ""
-	var disk := MapStore.read(m, "m1")
-	for o in (disk.objects as Array):
-		if str((o as Dictionary).get("code", "")) == "A1":
-			eq(str(((o as Dictionary).get("props", {}) as Dictionary).get("TGT", "")), "GGGG",
-				"磁盘字段未变（失败不算成功）")
-	_wipe()
-
 ## 检查范围不完整：有地图读不出来 → meta 标 incomplete（UI 据此禁用清除）
 func test_audit_marks_incomplete_on_unreadable_map() -> void:
 	_wipe()
@@ -465,25 +343,3 @@ func test_asset_usage_reports_unreadable() -> void:
 	_wipe()
 
 ## 解绑后内容文件仍在库里；绑定重新加回 → 引用索引恢复（同一批数据源）
-func test_unbind_keeps_content_and_rebinds() -> void:
-	_wipe()
-	var m := _fake_manifest()
-	m["functions"] = {"f1": {"name": "F1", "code": "F111", "fields": []}}
-	ok(ContentStore.write(m, "f1", "KEEP1", {"name": "k", "function": "F111", "fields": {}}), "内容写入")
-	var used := {}
-	var missing: Array = []
-	ProjectAudit._collect_used_content({"objects": [{"code": "E1", "asset": "door",
-		"functions": [{"fn": "F111", "content": "KEEP1"}]}]}, m, used, missing, "m1")
-	ok(used.has(ProjectAudit._content_key("f1", "KEEP1")), "绑定存在 → 有入边")
-	# 解绑
-	used = {}
-	ProjectAudit._collect_used_content({"objects": [{"code": "E1", "asset": "door", "functions": []}]},
-		m, used, missing, "m1")
-	ok(not used.has(ProjectAudit._content_key("f1", "KEEP1")), "解绑 → 零入边")
-	ok(ContentStore.read(m, "f1", "KEEP1").size() > 0, "内容文件仍在库里")
-	# 撤销 = 绑定恢复 → 入边恢复
-	used = {}
-	ProjectAudit._collect_used_content({"objects": [{"code": "E1", "asset": "door",
-		"functions": [{"fn": "F111", "content": "KEEP1"}]}]}, m, used, missing, "m1")
-	ok(used.has(ProjectAudit._content_key("f1", "KEEP1")), "撤销后入边恢复")
-	_wipe()

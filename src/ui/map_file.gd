@@ -1386,3 +1386,16 @@ func prepare_playtest_document(project_entry: bool) -> Dictionary:
 	if not project_entry and (maps_root == "" or play_path.get_base_dir() != maps_root):
 		return {"error": " 试玩中止：地图不在当前项目 maps 目录内，拒绝启动"}
 	return {"path": play_path, "digest": digest}
+
+
+func open_map_by_name(map_name: String) -> void:
+	if map_name == app.cur_map_name:
+		return
+	# 先确认目标存在，再问「要不要丢改动」：目标不存在还先丢改动 = 白白损失工作
+	var p := EditorManifest.map_path(app.manifest, map_name)
+	if p == "" or not FileAccess.file_exists(p):
+		app._set_status(" 地图不存在: " + map_name)
+		return
+	if not await app._confirm_discard("打开地图 " + map_name):
+		return
+	await app._load_map_file(p)

@@ -2,7 +2,6 @@ extends "res://tests/_suite_base.gd"
 ## 资产表 assets[]：归一化、palette 展平、cell 尺寸、编辑期原件入口。
 
 const AD := preload("res://src/assets/asset_decl.gd")
-const ImageProbe := preload("res://src/assets/image_probe.gd")
 
 func _m() -> Dictionary:
 	return {
@@ -94,52 +93,3 @@ func _wipe_dir(p: String) -> void:
 	for d in DirAccess.get_directories_at(p):
 		_wipe_dir(p.path_join(str(d)))
 	DirAccess.remove_absolute(p)
-
-func test_prefab_probe_skips_unmounted_shape() -> void:
-	DirAccess.make_dir_recursive_absolute(TMP)
-	_mk("assets/entities/two.tscn", """[gd_scene load_steps=3 format=3]
-
-[sub_resource type="RectangleShape2D" id="Shape_big"]
-size = Vector2(64, 64)
-
-[sub_resource type="RectangleShape2D" id="Shape_ok"]
-size = Vector2(24, 12)
-
-[node name="Root" type="Node2D"]
-
-[node name="Ghost" type="Node2D" parent="MissingParent"]
-
-[node name="GhostShape" type="CollisionShape2D" parent="MissingParent"]
-shape = SubResource("Shape_big")
-
-[node name="Body" type="Area2D" parent="."]
-
-[node name="BodyShape" type="CollisionShape2D" parent="Body"]
-shape = SubResource("Shape_ok")
-""")
-	eq(ImageProbe.prefab_collision_size(TMP, "assets/entities/two.tscn"), Vector2(24, 12),
-		"取已挂载节点的形状，不取未挂载的首个 CollisionShape2D")
-	# 嵌套 parent 写的是完整路径（"Body/Arm"）：必须按路径求可达
-	_mk("assets/entities/nested.tscn", """[gd_scene load_steps=3 format=3]
-
-[sub_resource type="RectangleShape2D" id="Shape_arm"]
-size = Vector2(8, 10)
-
-[sub_resource type="RectangleShape2D" id="Shape_body"]
-size = Vector2(40, 40)
-
-[node name="Root" type="Node2D"]
-
-[node name="Body" type="Area2D" parent="."]
-
-[node name="Arm" type="Node2D" parent="Body"]
-
-[node name="ArmShape" type="CollisionShape2D" parent="Body/Arm"]
-shape = SubResource("Shape_arm")
-
-[node name="BodyShape" type="CollisionShape2D" parent="Body"]
-shape = SubResource("Shape_body")
-""")
-	eq(ImageProbe.prefab_collision_size(TMP, "assets/entities/nested.tscn"), Vector2(8, 10),
-		"嵌套路径 parent 也判定为已挂载（按文件顺序取首个挂载形状）")
-	_wipe()

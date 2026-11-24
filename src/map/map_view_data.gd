@@ -105,7 +105,7 @@ static func anchor_px(data: Dictionary, manifest: Dictionary, layer_id: String, 
 
 ## 名义范围（§4.3-1）：根空间地图边界 ∪ 每层经自身 offset/scale 变换后的边界。
 ## 层位移/放大后内容可能跑出根边界，不扩边界就会把内容裁掉——导出取景、预览 _fit、
-## Home 取景同一份口径（原先这段合并只写在 map_export 里，别处各算一遍）。
+## 画布和预览共用取景范围。
 ## include_layers=false = 只要根边界（数据坐标下的俯视概览用）。
 static func scene_bounds(data: Dictionary, manifest: Dictionary, include_layers := true) -> Rect2:
 	var meta: Dictionary = data.get("meta", {}) if data.get("meta", {}) is Dictionary else {}

@@ -38,7 +38,7 @@ const WorldLayout := preload("res://src/project/world_layout.gd")
 ## 返回 [{kind, severity, path, message, map, jump}]；
 ## jump = {type: "map"/"asset", id: <地图名/资产 id>}（可跳转的条目带上）。
 ## meta_out（可选）：诊断信息 {incomplete: bool, unreadable_maps: [图名]}
-## —— 有地图读不出来时「检查范围不完整」，清除悬空引用必须禁用（D07）。
+## 有地图无法读取时，标记报告不完整。
 static func audit(manifest: Dictionary, meta_out: Dictionary = {}) -> Array:
 	var out: Array = []
 	meta_out["incomplete"] = false
@@ -64,11 +64,8 @@ static func audit(manifest: Dictionary, meta_out: Dictionary = {}) -> Array:
 				"message": "正式内容入口需要一张可读取的配对地图。"
 			}).merged({"jump": {"type": "startup"}}, true))
 	# 2. 地图校验（读盘全图）+ 顺带收集被实例引用的内容（孤立内容判定用）
-	var used_content := {}
 	for ref in ProjectSlots.references(manifest):
-		if StartupTargets.destination_available(manifest, ref.domains, ref.target):
-			used_content[_content_key(ref.target.function, ref.target.content)] = true
-		else:
+		if not StartupTargets.destination_available(manifest, ref.domains, ref.target):
 			out.append({"kind": "ref", "severity": "warning", "path": ref.path,
 				"message": "项目规则引用不可用：" + JSON.stringify(ref.target),
 				"jump": {"type": "project_slot", "id": ref.id}})
@@ -101,7 +98,7 @@ static func audit(manifest: Dictionary, meta_out: Dictionary = {}) -> Array:
 				out.append_array(_ref_checks(d, manifest, str(name)))
 				out.append_array(_graph_target_checks(d, manifest, str(name), graph_index, graph_targets))
 				out.append_array(_binding_checks(d, manifest, str(name)))
-				_collect_used_content(d, manifest, used_content, binding_missing, str(name))
+				binding_missing.append_array(_missing_binding_targets(d, manifest, str(name)))
 				_collect_spatial_contexts(manifest, d, str(name), content_contexts)
 			else:
 				meta_out["incomplete"] = true
@@ -116,9 +113,9 @@ static func audit(manifest: Dictionary, meta_out: Dictionary = {}) -> Array:
 		elif delta_problems.get(code, "") != "":
 			out.append(_wrap("manifest", {"severity": "warning", "path": "worldLayout.chunks." + str(code),
 				"message": delta_problems[code]}))
-	out.append_array(view_reference_issues(manifest, "", used_content))
-	# 3. 内容文件：损坏 JSON / function 码漂移 / 孤立内容
-	out.append_array(_content_checks(manifest, used_content, content_contexts))
+	out.append_array(view_reference_issues(manifest))
+	# 3. 内容文件：损坏 JSON / function 码漂移
+	out.append_array(_content_checks(manifest, content_contexts))
 	# 4. 资产停用/改名待确认（A4）：已有引用仍按原 ID 解析，但要让人看见问题所在
 	var scan: Dictionary = manifest.get("_scan_report", {}) if manifest.get("_scan_report", {}) is Dictionary else {}
 	for aid in (scan.get("retired", []) as Array):
@@ -154,8 +151,8 @@ static func audit(manifest: Dictionary, meta_out: Dictionary = {}) -> Array:
 		})
 	return out
 
-## The view editor and project audit share these checks; only the audit asks for usage.
-static func view_reference_issues(manifest: Dictionary, view_id := "", used_content := {}) -> Array:
+## The view editor and project audit share these checks.
+static func view_reference_issues(manifest: Dictionary, view_id := "") -> Array:
 	var out := []
 	var contents := {}
 	var map_index := {}
@@ -165,7 +162,6 @@ static func view_reference_issues(manifest: Dictionary, view_id := "", used_cont
 		var key := _content_key(ref.fn, ref.cid)
 		if ref.has("domains"):
 			if StartupTargets.destination_available(manifest, ref.domains, ref.target):
-				used_content[key] = true
 				if ref.has("context_map"):
 					if map_index.is_empty():
 						map_index = MapStore.code_index(manifest)
@@ -176,9 +172,7 @@ static func view_reference_issues(manifest: Dictionary, view_id := "", used_cont
 			continue
 		if not contents.has(key):
 			contents[key] = ContentStore.read_ex(manifest, ref.fn, ref.cid).status
-		if contents[key] == "ok":
-			used_content[key] = true
-		else:
+		if contents[key] != "ok":
 			out.append(_view_issue(ref, "内容目标无法读取：%s/%s" % [ref.fn, ref.cid]))
 	var images := ScreenLayout.image_assets(manifest)
 	for ref in ReferenceIndex.view_image_refs(manifest):
@@ -332,14 +326,8 @@ static func _graph_target_checks(data: Dictionary, manifest: Dictionary, name: S
 			out.append(_wrap_map_issue("ref", {"severity": "warning", "path": path, "message": message}, name))
 	return out
 
-## 收集全项目被实例绑定引用的内容（C12：按 `(功能 id, 内容 ID)` 索引，裸 ID 会跨功能误判）。
-## 绑定里的 fn 是执行码，先解析成功能 id；解析不到 = 数据漂移，按 `?\u0001<cid>` 记。
-## binding_missing 收「绑定指向的内容文件不存在」条目（后续统一进审计）。
-static func _collect_used_content(data: Dictionary, manifest: Dictionary, used: Dictionary,
-		binding_missing: Array, map_name: String) -> void:
-	for ref in MapFlow.references(manifest, data):
-		if FlowTarget.kind(ref.value) == "content":
-			used[_content_key(ref.value.function, ref.value.content)] = true
+static func _missing_binding_targets(data: Dictionary, manifest: Dictionary, map_name: String) -> Array:
+	var missing: Array = []
 	for o in (data.get("objects", []) as Array):
 		if not (o is Dictionary):
 			continue
@@ -351,25 +339,25 @@ static func _collect_used_content(data: Dictionary, manifest: Dictionary, used: 
 				continue
 			var fn_code := str((f as Dictionary).get("fn", ""))
 			var fn_id := FunctionDecls.fn_id_of(manifest, fn_code)
-			used[_content_key(fn_id, cid)] = true
 			if fn_id == "":
 				continue
 			var path := ContentStore.path_for(manifest, fn_id, cid)
 			if path == "" or not FileAccess.file_exists(path):
-				binding_missing.append({
+				missing.append({
 					"kind": "content", "severity": "warning",
 					"path": "%s/%s" % [fn_id, cid],
 					"message": "绑定目标内容文件不存在：%s → %s/%s（实例 %s）" % [
 						map_name, fn_id, cid, str((o as Dictionary).get("code", "?"))],
 					"map": map_name, "jump": {},
 				})
+	return missing
 
 static func _content_key(fn_id: String, cid: String) -> String:
 	return (fn_id if fn_id != "" else "?") + "\u0001" + cid
 
 ## 内容文件检查（全部警告级）：损坏 JSON；function 码漂移（清单改码后旧文件仍带旧码，
-## 写盘时按当前码重写自愈）；孤立内容（无任何实例引用，可能是复用库，只提醒）。
-static func _content_checks(manifest: Dictionary, used: Dictionary, contexts := {}) -> Array:
+## 写盘时按当前码重写自愈）。
+static func _content_checks(manifest: Dictionary, contexts := {}) -> Array:
 	var out: Array = []
 	var root := ContentStore.root_dir(manifest)
 	if root == "" or not DirAccess.dir_exists_absolute(root):
@@ -403,12 +391,8 @@ static func _content_checks(manifest: Dictionary, used: Dictionary, contexts := 
 	var graph := _content_context_graph(manifest, contexts, rows)
 	for key in rows:
 		var row: Dictionary = rows[key]
-		if str(row.data.get("scope", "")) != "project" and not used.has(key) and not graph.inbound.has(key):
-			out.append({"kind": "content", "severity": "warning", "path": "%s/%s" % [row.fn_id, row.cid],
-				"message": "孤立内容：没有实例绑定或内容入边（可能是复用库，确认后可删）",
-				"map": "", "jump": {}})
 		out.append_array(_contextual_content_checks(manifest, row.fn_id, row.cid, row.data,
-			graph.contexts.get(key, {})))
+			graph.get(key, {})))
 	return out
 
 ## 内容文件的引用自检（C12）：只查**声明驱动**的引用，不做字符串猜测。
@@ -533,81 +517,6 @@ static func _binding_checks(data: Dictionary, manifest: Dictionary, map_name: St
 				})
 	return out
 
-## D07：把过期报告里的清除项安全落地到一张已读出的地图数据上（就地修改 d）。
-## 双重复验：① 现在重跑引用检查，该实例该字段仍是同一条悬空引用（目标域可能已补好）；
-## ② 字段当前值仍等于报告里的预期旧值（期间可能已改指向）。
-## 两项都过才擦键。返回 {changed, erased, skipped}，由调用方决定是否写盘与计数。
-##
-## §7.2 配对地图字段：擦掉一个引用字段后，如果它是某个 `mapField` 的消费方，
-## **只在没有别的引用字段还在用它时**才把配对地图字段一起擦掉；还有用途就保留
-## （否则会把仍然有效的图目标一起删掉，其它引用随之失义）。
-static func apply_ref_fixes(manifest: Dictionary, map_name: String, fix_list: Array,
-		d: Dictionary) -> Dictionary:
-	var fresh := {}
-	for e2 in _ref_checks(d, manifest, map_name):
-		var f2 = (e2 as Dictionary).get("fix", null)
-		if f2 is Dictionary:
-			fresh["%s\u0001%s\u0001%s" % [str((f2 as Dictionary).get("code", "")),
-				str((f2 as Dictionary).get("prop", "")), str((f2 as Dictionary).get("expect", ""))]] = true
-	var changed := false
-	var erased := 0
-	var skipped := 0
-	for fx in fix_list:
-		if not (fx is Dictionary):
-			continue
-		var f: Dictionary = fx
-		var code := str(f.get("code", ""))
-		var prop := str(f.get("prop", ""))
-		var expect := str(f.get("expect", ""))
-		if code == "" or prop == "" or expect == "" \
-				or not fresh.has("%s\u0001%s\u0001%s" % [code, prop, expect]):
-			skipped += 1
-			continue
-		for o in (d.get("objects", []) as Array):
-			if not (o is Dictionary):
-				continue
-			var od: Dictionary = o
-			if str(od.get("code", "")) != code:
-				continue
-			var props: Dictionary = od.get("props", {}) if od.get("props", {}) is Dictionary else {}
-			if _val_str(props.get(prop, "")) != expect:
-				skipped += 1
-				continue
-			props.erase(prop)
-			# 配对地图字段只在没人再用时才清（保留仍有用途的图目标）
-			var pair := _pair_field_of(manifest, str(od.get("asset", "")), prop)
-			if pair != "" and not _pair_still_used(manifest, str(od.get("asset", "")), pair, props):
-				props.erase(pair)
-			od["props"] = props
-			changed = true
-			erased += 1
-	return {"changed": changed, "erased": erased, "skipped": skipped}
-
-## 某资产里字段 `prop` 声明的 `mapField`（人类字段 id）；无声明/无配对返回 ""。
-static func _pair_field_of(manifest: Dictionary, asset_id: String, prop: String) -> String:
-	for fd in (_fields_of(manifest, asset_id) as Array):
-		if fd is Dictionary and str((fd as Dictionary).get("id", "")) == prop:
-			return str((fd as Dictionary).get("mapField", ""))
-	return ""
-
-## 配对地图字段 `pair` 是否还有别的引用字段在用：该资产下除 `skip_prop` 外
-## 任一声明 mapField == pair 的引用字段仍有非空值 = 有用途。
-static func _pair_still_used(manifest: Dictionary, asset_id: String, pair: String,
-		props: Dictionary, skip_prop := "") -> bool:
-	for fd in (_fields_of(manifest, asset_id) as Array):
-		if not (fd is Dictionary):
-			continue
-		var d2: Dictionary = fd
-		if str(d2.get("mapField", "")) != pair:
-			continue
-		var k := str(d2.get("id", ""))
-		if k == skip_prop:
-			continue
-		if str(props.get(k, "")) != "":
-			return true
-	return false
-
-## 资产声明里的字段表（停用条目也读——清理旧图仍要按它的声明判断配对）。
 static func _fields_of(manifest: Dictionary, asset_id: String) -> Array:
 	var a: Dictionary = AssetDecl.by_id(manifest, asset_id)
 	return (a.get("fields", []) as Array) if (a.get("fields", null) is Array) else []
@@ -825,7 +734,6 @@ static func _append_screen_context_link(links: Dictionary, view: String, fn: Str
 static func _content_context_graph(manifest: Dictionary, seeds: Dictionary, rows: Dictionary) -> Dictionary:
 	var contexts := {}
 	var links := _screen_context_links(manifest)
-	var inbound := {}
 	var queue: Array = []
 	for key in seeds:
 		for label in seeds[key]:
@@ -841,8 +749,6 @@ static func _content_context_graph(manifest: Dictionary, seeds: Dictionary, rows
 		if not links.has(key):
 			var row: Dictionary = rows.get(key, {})
 			links[key] = _content_links(manifest, row.fn_id, row.data, [], true) if not row.is_empty() else []
-			for link in links[key]:
-				inbound[_content_key(link.fn, link.cid)] = true
 		for link in links[key]:
 			var context: Dictionary = visit.context
 			var origin := str(context.get("origin", visit.label))
@@ -869,7 +775,7 @@ static func _content_context_graph(manifest: Dictionary, seeds: Dictionary, rows
 				_:
 					continue
 			_enqueue_content_context(queue, contexts, _content_key(link.fn, link.cid), label, context)
-	return {"contexts": contexts, "inbound": inbound}
+	return contexts
 
 static func _enqueue_content_context(queue: Array, contexts: Dictionary, key: String,
 		label: String, context: Dictionary) -> void:
@@ -1280,9 +1186,6 @@ static func _ref_checks(data: Dictionary, manifest: Dictionary, map_name: String
 			var issue := {"kind": "ref", "severity": "warning", "path": label + str(finding.path),
 				"message": finding.message, "map": map_name,
 				"jump": {"type": "entity", "map": map_name, "code": code, "prop": finding.prop}}
-			if finding.fixable and finding.top_level and code != "":
-				issue["fix"] = {"op": "clear_prop", "map": map_name, "code": code,
-					"prop": finding.prop, "expect": _val_str(finding.value)}
 			out.append(issue)
 	return out
 
@@ -1330,16 +1233,10 @@ static func _spatial_fields(manifest: Dictionary, decls: Array, values: Variant,
 			var problem := SpatialCheck.problem(manifest, desc.kind, source, map_name, entry, ref_decl, paired, targets)
 			if not problem.is_empty() and str(problem.get("message", "")) != "":
 				out.append({"path": path + ("#%d" % i if value is Array else ""),
-					"prop": prop, "message": problem.message, "fixable": bool(problem.get("fixable", false)),
-					"top_level": depth == 0 and not value is Array, "value": value})
+					"prop": prop, "message": problem.message})
 	return out
 
 ## 清空比对用的值串：字典（edge_ref）走 JSON，保持键序稳定；其余走 str()。
-static func _val_str(v) -> String:
-	if v is Dictionary or v is Array:
-		return JSON.stringify(v)
-	return str(v)
-
 ## 清单校验条目包装（带 kind 标记；清单级问题不可跳转）。
 static func _wrap(kind: String, e: Dictionary) -> Dictionary:
 	return {

@@ -233,5 +233,4 @@ func test_audit_edge_ref() -> void:
 	eq(out.size(), 3, "坏三条各报一次：%s" % str(out))
 	for e in out:
 		eq(str((e as Dictionary).get("severity")), "warning", "warning 级")
-		var fx: Dictionary = (e as Dictionary).get("fix", {})
-		eq(str(fx.get("op", "")), "clear_prop", "带清空修复")
+		ok(not e.has("fix"), "悬空引用只报告，不修改地图")

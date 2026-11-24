@@ -539,7 +539,7 @@ UTF-8 `map.json`（最多 4 MiB），再按通用协议写 `result.json`；此�
 | `visual` | 二者之一 | 无 prefab 时的编辑器呈现：`{type: "rect"/"poly"/"path", mode: "rect", color, alpha, ...}`。两个键各管一件事：`type` 决定几何种类（缺省 `rect`，校验只查这个键；`poly`/`path` 另可声明 `closed`/`width`/`points`，见 §3.1）；`mode: "rect"` 决定**无贴图时画布是否画半透明矩形占位**（内置事件就靠它，见 §2.7）。没有 `sprite`/`none` 两种模式的实现（写了不生效）。`prefab` 与 `visual` 都没有 = 校验报错 |
 | `thumb` | 否 | 缩略图 PNG 路径；缺失时编辑器按 `visual` 声明画占位 |
 | `frames` | 否 | 帧动画贴图路径数组（按播放顺序）；编辑器画布按 8fps 循环**预览**（只确认帧序），游戏侧自定播放节奏。预览优先级：thumb > texture（image 资产）> frames 首帧 |
-| `editorSize` | 否 | `[w,h]` **像素**，画布占位尺寸。缺省读 prefab 的第一个碰撞形状；再缺用 1 格（tileSize 尺寸） |
+| `editorSize` | 否 | `[w,h]` **像素**，画布占位尺寸。缺省用 1 格（tileSize 尺寸） |
 | `sizeFields` | 否 | `["w","h"]`：尺寸写在实例 `props` 的这两个键里（格数），取代「按 id 硬编码矩形」 |
 | `role` | 否 | 连接语义：`portal` / `exit` / `landing` / `trigger`；见 2.6 |
 | `code` | 否 | 4 位实体身份码。缺省由编辑器补发并随清单写回；**不要手工改动** |
@@ -1865,7 +1865,7 @@ func _apply_door(inst: Node, fn: Dictionary) -> void:
 | `id` | 全局唯一，且**用英文小写下划线**——它就是地图 `objects[].asset` 值，也是游戏侧查表的键 |
 | `prefab` | 相对工程根的 `.tscn`。**根节点必须是 `Node2D` 系**，否则 `position` 注入无效 |
 | `thumb` | 96×96 左右的 PNG 到 `editor/previews/`。没有它画布上是空白方块，但仍可放置 |
-| `editorSize` | 像素。省略则编辑器读 prefab 第一个碰撞形状；再省略按 1 格（tileSize 尺寸）画 |
+| `editorSize` | 像素。省略则按 1 格（tileSize 尺寸）绘制 |
 | `functions` | 只挂已在顶层 `functions` 声明过的功能 id；资产目录「自带功能」UI 可点选挂载，也可手写清单 |
 | 缩略图烘焙 | 自己写一个截图脚本把 prefab 渲染成 PNG（需窗口，不能 headless）；编辑器只读 `thumb` 路径 |
 

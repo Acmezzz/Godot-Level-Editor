@@ -35,13 +35,11 @@ src/
 │   ├── map_format.gd       地图格式版本常量 + alt 变换位↔Godot alternative 位互转
 │   ├── map_store.gd        地图 JSON 读写：原子写、3 层历史备份、缓存、单文件替换
 │   ├── map_data_validation.gd  地图 JSON 校验：打开地图时的读入防线（含实例功能绑定结构）
-│   ├── map_export.gd       导出：PNG 俯视预览图 + 文本统计
-│   ├── map_view_data.gd    只读视图数据（B3）：生效格空间、层变换、格多边形、锚点像素，预览/导出共用
+│   ├── map_view_data.gd    只读视图数据（B3）：生效格空间、层变换、格多边形、锚点像素，画布与预览共用
 │   ├── cell_graph.gd       C4 有限格图：meta.cellGraph 校验、cell_id 枚举、多边形命中
 │   ├── edge_ref.gd         §7.4 格边身份：规范代表边（无向去重）、解析、字段值、共边判定
 │   ├── map_convert.gd      另存并转换投影（B1-2）：实例按锚点换算、出生点按格拾取，瓦片/碰撞保留原格号
-│   ├── recovery.gd         恢复层：草稿（editor/drafts）、地图历史、多文件提交日志（editor/pending）
-│   └── side_actions.gd     按名开图 + 资产显示名（改名/复制在 map_file）
+│   └── recovery.gd         恢复层：草稿（editor/drafts）、地图历史、多文件提交日志（editor/pending）
 ├── canvas/                 —— 画布（关卡编辑器主体） ——
 │   ├── editor_canvas.gd    画布宿主：装载地图、三段遮挡容器层栈（meta.layers 逐图声明）、相机、序列化
 │   ├── grid_space.gd       格↔像素转换层：正交/等距/六边形 + 三角格拓扑 + 双基斜平面（meta.gridBasis）
@@ -64,7 +62,7 @@ src/
 │   ├── asset_decl.gd       资产归一化：kind/shape 分派、palette 展平、cell 尺寸、编辑期原件入口
 │   ├── builtin_kinds.gd    内置资产种类（trigger_zone）：加载清单时注入、保存时剥离
 │   ├── collision_types.gd  碰撞类型池：collisionTypes 归一化 + 内置缺省池（声明即整体覆盖）
-│   └── image_probe.gd      图像/场景探针：预览图透明裁边 + prefab 碰撞尺寸探测（manifest 拆出）
+│   └── image_probe.gd      缩略图透明裁边
 ├── content/                —— 功能与内容的数据层 ——
 │   ├── function_decl.gd    功能声明域：声明池归一化、执行码补发/查重、码↔名互查、CODES.md
 │   ├── condition_decl.gd   条件声明域：条件池归一化、字段码补发（与功能字段同码空间）、条件码表段
@@ -95,7 +93,7 @@ src/
 	├── reference_view_library.gd  参考视图窗口：选择、加载、草稿与保存
 	├── screen_layout_canvas.gd  屏幕布局画布：绘制、命中和布局手势
 	├── screen_layout_form.gd  屏幕布局表单：元素属性、模块字段和引用
-	├── map_dialogs.gd      地图尺寸 / 导出弹窗（map_file 拆出）
+	├── map_dialogs.gd      地图尺寸弹窗（map_file 拆出）
 	├── map_resize.gd       改尺寸的裁剪预览与实际裁剪（E3/D17，map_dialogs 拆出）
 	├── map_menu_identity.gd  地图菜单身份解析：按码/名/当前图判定，失效项不重复入列（E3）
 	├── tile_replace_dialog.gd  E2 批量替换瓦片弹窗：源/目标资产与切片、冲突预览、一笔撤销
@@ -154,7 +152,7 @@ src/
 
 **三个平级一级入口**：`关卡`（画布）/ `内容`（给实例挂功能、填内容）/ `资产`（图鉴、实例分布），
 `Esc` 从后两者回关卡编辑器。**演出不是一级入口**——它是「某个实例上某个功能的步骤」，从内容编辑器的
-绑定行「编辑演出」打开（子面板，非独立页）。顶栏「地图 ▾」管切换，「设置 ▾」管新建/保存/尺寸/导出等
+绑定行「编辑演出」打开（子面板，非独立页）。顶栏「地图 ▾」管切换，「设置 ▾」管新建/保存/尺寸等
 地图级动作；内容与资产页共用同一套顶栏片段，`Ctrl+S` 按当前视图分派保存目标。
 
 ---
@@ -270,8 +268,7 @@ Shift + 左键选已有顶点，再点同层位置，可在所选顶点之后插
 
 > 游戏工程该怎样声明清单/读地图/实现功能，见 **[GAME_SIDE_STANDARD.md](GAME_SIDE_STANDARD.md)**（数据契约唯一权威）。
 
-**实体占位尺寸**：`editorSize: [w,h]` 优先；否则读 `prefab` 的第一个碰撞形状
-（Rectangle 用 `size`，Circle 用 `radius*2`，Capsule 用 `radius*2 × height`）；都没有 = 用 1 格（tileSize 尺寸）。
+**实体占位尺寸**：使用游戏清单的 `editorSize: [w,h]`；未声明时使用一格。
 
 **角色声明**：`assets[].role` = `portal` / `exit` / `landing` / `trigger`（连接语义标签）。
 **只认清单显式声明**——未声明的实体就是普通实体，画布不猜、不画连接标记（零兼容）。
@@ -298,7 +295,6 @@ Shift + 左键选已有顶点，再点同层位置，可在所选顶点之后插
 | 地图历史 | 列 `editor/history/maps/<地图码>/` 下正式保存前的快照（深度见 §7.3「历史深度」，最新在前；无码兜底用图名）→ 选中载入画布（磁盘文件不动，`Ctrl+S` 才写回） |
 | 恢复草稿 | 进入项目时若有未完成草稿，状态栏报数量，「地图 ▾」末尾出「恢复草稿…」：每份给 恢复 / 查看正式图 / 丢弃 三个出口（恢复只改画布） |
 | 批量替换瓦片 | 需先框选区域，见 §6.3；按选区里出现过的源资产过滤 |
-| 导出 | PNG 预览（1–16 px/格）+ 统计文本 → `<项目>/editor/exports`；可一键批量出全部地图（批量精度上限 4 px/格） |
 | **未保存拦截** | 新建 / 打开 / 切图 / 关窗口时有未保存修改 → 确认框；取消则中止 |
 | **自动草稿** | 有未保存修改且距上次保存超过 2 分钟 → 写 `editor/drafts/<地图码>.json`：地图快照 + 目标路径 + 正式图基线摘要 + 待提交内容文件/预留 ID。进入项目时状态栏报「N 份草稿」，地图 ▾ 末尾出「恢复草稿…」（每份给 恢复 / 查看正式图 / 丢弃）；旧位置 `<名>.autosave.json` 仍可作为来源读取并归位 |
 | **外部改动检测** | 文件偏离打开时的摘要基线：覆盖前确认，发布前复验；提交中途失败时已写文件保留，见 §7.3 |
@@ -355,7 +351,7 @@ Shift + 左键选已有顶点，再点同层位置，可在所选顶点之后插
 |---|---|---|
 | `gridProjection` | `orthogonal` / `isometric` / `hexagonal` | 逐图投影（B1）；缺键沿用项目解析（任一瓦片资产声明非正交即整项目按它）。有内容的图切换需显式转换 |
 | `gridTopology` | `quads`（缺省）/ `triangles` | 三角格：每列平行四边形切成两个半格。格号 `(i, row)` 的 `i` 是**三角列**（`c = floor(i/2)`，奇偶选半格）；偶半格顶点 `(0,0),(1,0),(0,1)`，奇半格 `(1,1),(0,1),(1,0)`。拾取按对角线 `x+y=1` 分半格，邻接 = 三边各一邻格；瓦片数据仍是同一份六元组，由自绘层按三角形轮廓贴图集切片。六边形投影没有平行四边形列，组合被校验拒绝 |
-| `gridBasis` | `[[ux,uy],[vx,vy]]` | 双基向量斜平面：`to_px = g.x·u + g.y·v`，逆矩阵反算。拒绝非有限数与不可逆基（共线/零向量）；画布、导出、校验共用同一份解析 |
+| `gridBasis` | `[[ux,uy],[vx,vy]]` | 双基向量斜平面：`to_px = g.x·u + g.y·v`，逆矩阵反算。拒绝非有限数与不可逆基（共线/零向量）；画布、预览、校验共用同一份解析 |
 
 桌面作者流程已覆盖等距、六边、自定义斜基三角和自定义斜基四边格：在新建弹窗选格空间，在画布刷路线和碰撞、设置出生点和摆放终点门，保存重开后由独立游戏进程读取并走到终点。验收检查拾取与共边规则，未对比图集像素或遮挡效果。
 
@@ -747,7 +743,6 @@ Shift + 左键选已有顶点，再点同层位置，可在所选顶点之后插
 | 地图菜单「保存」/ Ctrl+S（内容视图同一条） | 同上；无补码、无暂存、图不脏时退化为「无待写改动」 | 同上 | `app.gd::_on_save` → `map_file.gd::save_all` |
 | 顶栏「保存」（资产视图） | 写 `editor/editor_manifest.json`，成功后尝试更新 `editor/CODES.md`；对照表写入失败不回滚清单 | 无 | `project_shell.gd::save_current` 的 `_` 分支 → `app.gd::_save_manifest_file_async` |
 | 试玩 | 同上；地图试玩要求已提交地图的路径和摘要与磁盘一致 | 同上 | `playtest_controller.gd::on_play` → `map_file.gd::prepare_playtest_document` |
-| 清除悬空引用 | ① 当前图脏则先走整条提交 ② 逐张改动过的地图各写一次 | 第①步同提交日志；第②步每图写前轮转 | `issues_drawer.gd` → `project_audit.gd::apply_ref_fixes` |
 | 地图改名 | ① 新名文件写入 ② 旧名文件删除 | 两文件一条日志 | `map_store.gd::rename_map` |
 | 复制整图 / 转换后另存 | 若清单仍有待发布的补码，先由编辑器发布清单，再提交① 新内容 N 份 ② 新地图 1 份 | 新内容与新地图共用一条冻结计划日志 | `map_file.gd::_publish_map_copy` → `map_store.gd::apply_duplicate` |
 | 内容字段失焦 / 回车 / `commit()` | 单个内容文件（覆盖前轮转） | `.history` 3 轮 | `content_store.gd::write_ex` |
@@ -992,13 +987,13 @@ Shift + 左键选已有顶点，再点同层位置，可在所选顶点之后插
 
 有错误时清单整体作废，进项目错误页；只有警告时正常进入，警告挂在清单 `_warnings`。
 
-### 10.2 地图数据校验（`map_data_validation.gd`，打开/保存/导出时执行）
+### 10.2 地图数据校验（`map_data_validation.gd`，打开/保存时执行）
 
 | 检查项 | 级别 |
 |---|---|
 | `meta.layers` 缺失/空 / 层 id 空或重复 / name 空 / visible 非布尔 | 错误 |
 | `meta.gridProjection` 不在 `orthogonal`/`isometric`/`hexagonal` | 错误 |
-| `meta.gridBasis` 非有限或不可逆（共线/零向量，与画布/导出同一份 `GridSpace.parse_basis`） | 错误 |
+| `meta.gridBasis` 非有限或不可逆（共线/零向量，与画布和预览同一份 `GridSpace.parse_basis`） | 错误 |
 | `meta.gridTopology` 不在 `quads`/`triangles`，或三角形 + 六边形投影 | 错误 |
 | `meta.cellGraph.cells` 非数组 / 条目非对象 / `id` 空或重复 / `polygon` 少于 3 个 `[x,y]` 数字点 / `neighbors` 非数组或指向未声明的格 id | 错误 |
 | `tiles` 键不在层集 / 瓦片条目不是 6 元（x, y, 资产id, atlas_x, atlas_y, alt 0-7） | 错误 |
@@ -1021,15 +1016,12 @@ Shift + 左键选已有顶点，再点同层位置，可在所选顶点之后插
 - **入口**：「设置 ▾ → 检查项目完整性」（跑完自动展开列表）；抽屉标题「问题 N」常驻状态栏上方，
   点标题折叠 / 展开，「重扫」随时再跑。
 - **收集范围**：清单和地图校验（10.1–10.2）；摆放物、内容与步骤的声明引用（地图、实例、端口、格边、有限格图单元）；
-  内容文件损坏、功能码漂移和孤立内容。普通项目检查使用已保存数据，缩图预检另外比较草稿和当前暂存。
+  内容文件损坏和功能码漂移。项目检查使用已保存数据。
 - **条目**：`{kind, severity, path, message, map, jump}`——地图问题点击**开图**；实例问题
   开图后**选中该实例**；内容引用问题可直达内容表单或对应的演出步骤，并标出字段。
   嵌套参数会标出外层字段，条目保留具体行路径；可在没有打开地图时修复独立内容。
   来自地图上下文的条目会带入该图作为临时候选。清单问题只列出。
-- **清除悬空**：抽屉头部按钮只清除确认已悬空、可安全擦除的摆放物顶层属性。内容字段和嵌套字段由作者修复；
-  写回前的快照在 `editor/history/maps/<地图码>/`；
-  上次自检有图读不出来时按钮禁用（检查范围不完整，不动手）。
-- **重扫时机**：展开抽屉即自动重扫（条目永远新鲜）；编辑器改动后要刷新请点「重扫」或重新展开。
+- **重扫时机**：通过菜单或「重扫」手动触发；展开抽屉只显示上次结果。自检不写盘。
 
 ---
 
@@ -1056,13 +1048,11 @@ godot --headless --path "<编辑器工程>" --script res://tests/run_tests.gd
 | `test_entity_node.gd` | `EntityNode` 锚点↔格坐标换算（center/top_left/bottom_center 正反算）、浮点坐标与所在格、`sizeFields` 尺寸覆盖、`transform` 缺省判定（1/0/false 算缺省、翻转 toggle 后键被删掉） |
 | `test_stores.gd` | MapStore v7 写读回环 + 复制图重发码、`code_map` 写后缓存失效、ContentStore 写读回环、写前摘要基线冲突检出（同秒同长度外部改写）、草稿按码写/按键读（空码+图名读不到带码草稿、冲突备份不列入）、历史按码分目录与失败不入历史（user:// 临时目录，跑完自清） |
 | `test_asset_scan.gd` | 资产零登记扫描制：新文件补条目发码 / 改名 md5 重链 / 消失标缺失 / 约定外条目不碰 |
-| `test_audit_c3.gd` | 挂载去重与补齐、按 `(功能 id, 内容 ID)` 索引的引用自检、过期报告的安全清理 |
+| `test_audit_c3.gd` | 挂载去重与补齐、按 `(功能 id, 内容 ID)` 索引的引用自检 |
 | `test_batch_e2.gd` | 批量改值计划、瓦片替换计划（源过滤/切片边界/冲突不写） |
 | `test_clone_plan.gd` | C2 统一复制语义（组内 A→B、组外 A→C、功能执行码与普通字符串区分、内容独立文件、整图复制） |
 | `test_geometry.gd` | 几何段：`visual_type` / `points_local` / `points_write` 与 PolyView 装配（不进树） |
-| `test_map_export_a5.gd` | 导出几何/像素预算/碰撞对象口径/统计文本（PNG 概览的纯数据部分） |
 | `test_grid_space.gd` 的 `test_map_view_*` | MapViewData 层变换（offset 数组 + scale 标量、scale≤0 视为缺省）与格多边形/锚点合成 |
-| `test_map_export_a5.gd` 的 `test_layer_*_expands_bounds` | 层 offset/scale 把内容推出根边界时导出边界跟着扩（不裁内容） |
 | `test_map_convert.gd` | B1-2 投影转换：实例按锚点换算到新格系（像素锚点不变）、往返回到原坐标、出生点按格中心拾取、瓦片/碰撞保留原格号并计入待核对、gridBasis 与非法组合拒绝、缺 `gridProjection` 沿用项目解析、转换经 `duplicate_map` 另存后原图不动且副本重发码 |
 | `test_ref_fields.gd` | 引用字段描述、类型严格性、配对地图字段与地图目录校验（C06/C07/C10）、同格多目标按地图/实例码区分（B3-3） |
 | `test_rel_graph.gd` | E2-3 关系图纯数据层：节点/边生成、写回同一字段、断开删键、staged 并入、循环保留、写回状态串（`"ok"`/`"conflict"`/`"fail"`）判成功 |
@@ -1126,7 +1116,6 @@ godot --headless --path "<编辑器工程>" --script res://tools/migrate_project
   斜坡碰撞可视化按菱形包围盒近似。内容编辑器中列预览（R19）**地形**已走同一套格多边形+切片 UV（含 `alt`），
   网格线与实体落点也按生效格空间算；层的 `offset`/`scale` 在预览里同样作用于地形与实例（同一 `MapViewData.layer_transform`，
   两处不再各算一套）；仍简化的是：预览不分层配色的细节、层混合模式在预览里不挂材质。
-  PNG 导出同样按 `offset`/`scale` 扩边界与落位（`parallax`/`ySort` 不参与——它们只影响运行时相机与遮挡顺序）。
 - 六边形（`gridProjection: hexagonal`）画布同样全对齐（odd-r 错行 + 尖顶，与 Godot 默认
   HEXAGON/STACKED/HORIZONTAL 逐位一致，探针实测）：命中 = 最近中心 Voronoi，格线 = 行界折线 + 行内竖边；
   区域/笔刷/地图边界外框按四角 cell 包围盒近似。
@@ -1150,8 +1139,6 @@ godot --headless --path "<编辑器工程>" --script res://tools/migrate_project
   画布按声明画填充多边形/折线，顶点拖拽/双击加点/右键删点写 `props.points`
   （[[x,y],…] 像素相对锚点，翻转后存取仍走未翻转局部系）；游戏侧读 `objects[].props.points` 透传。
   离格自由摆放本就支持（吸附关 = 浮点像素位置）。
-- 问题抽屉：展开即自动重扫（条目永远新鲜）；悬空引用条目带「清除悬空」一键擦掉悬空字段值
-  （字段留空=未填；当前图有未保存修改时跳过该图；写回前的快照在 editor/history/maps/<地图码>/）。
 - 保存前外部改动预警（C-20）：地图与清单在编辑器打开后被外部改过时，保存先弹确认框
   （覆盖保存 / 取消保留外部改动）；自动草稿不受影响（写的是另一个文件）。
 - **端口和参考视图**（C3/C5）：本图端口可在实例、功能或步骤的引用字段中用「画布选…」点选；

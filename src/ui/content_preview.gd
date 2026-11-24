@@ -5,7 +5,6 @@ extends Control
 
 const Th := preload("res://src/ui/ui_theme.gd")
 const K := preload("res://src/core/constants.gd")
-const MapExport := preload("res://src/map/map_export.gd")
 const MapViewData := preload("res://src/map/map_view_data.gd")
 const CollisionTypes := preload("res://src/assets/collision_types.gd")
 const MapFormat := preload("res://src/map/map_format.gd")
@@ -110,12 +109,12 @@ func _map_bounds_px() -> Rect2:
 	var meta: Dictionary = host.app.canvas.map_data.get("meta", {})
 	var mw := int(meta.get("w", K.DEFAULT_MAP_W))
 	var mh := int(meta.get("h", K.DEFAULT_MAP_H))
-	# §4.3-1：取景范围与导出一份口径——层 offset/scale 之后内容可能出根边界，
+	# 取景范围与主画布共用——层 offset/scale 之后内容可能出根边界，
 	# 只按根边界 fit 会把移出去的层裁在画面外。
 	_bounds_cache = MapViewData.scene_bounds(host.app.canvas.map_data, host.app.manifest, true)
 	if not _bounds_cache.has_area():
 		# 退化范围（空图/坏 meta）：退回格空间名义边界，保证 fit 有正尺寸
-		var gs: GridSpace = MapExport.grid_of(host.app.canvas.map_data, host.app.manifest)
+		var gs: GridSpace = MapViewData.effective_grid(host.app.canvas.map_data, host.app.manifest)
 		_bounds_cache = gs.map_bounds(Rect2i(0, 0, mw, mh))
 	_bounds_rev = rev
 	return _bounds_cache
@@ -208,7 +207,7 @@ func _draw_map() -> void:
 	# 只有正交（无斜基）才铺规则方格——其余投影的格线走 GridSpace，不在这里硬画。
 	var step_x := tile_w * s
 	var step_y := tile_h * s
-	var gs_lines: GridSpace = MapExport.grid_of(host.app.canvas.map_data, host.app.manifest)
+	var gs_lines: GridSpace = MapViewData.effective_grid(host.app.canvas.map_data, host.app.manifest)
 	var plain_ortho := not (gs_lines.has_basis or gs_lines.is_iso() or gs_lines.is_hex() or gs_lines.is_tri())
 	if plain_ortho and minf(step_x, step_y) >= 6.0:
 		var grid_col := Color(1, 1, 1, 0.05)

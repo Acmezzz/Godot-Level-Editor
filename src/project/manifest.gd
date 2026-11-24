@@ -15,7 +15,6 @@ const StepDecls := preload("res://src/content/step_decl.gd")
 const AudioDecls := preload("res://src/content/audio_decl.gd")
 const TriggerDecls := preload("res://src/content/trigger_decl.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
-const ImageProbe := preload("res://src/assets/image_probe.gd")
 
 ## 变量替换：%mapfile% 当前地图文件；%projectpath% 游戏项目根目录
 ## 路径含空格且模板未自行加引号时自动补引号，避免经 cmd /c 后被拆成多个参数。
@@ -344,12 +343,9 @@ static func has_role(m: Dictionary, sid: String, role: String) -> bool:
 	return AssetDecl.has_role(m, sid, role)
 
 ## 某个资产在编辑器画布上的占位尺寸（像素）。
-## 优先级：清单 editorSize → prefab 碰撞形状 → 0（消费方按 1 格兜底）
-static func entity_editor_size(m: Dictionary, edef: Dictionary) -> Vector2:
+## 优先级：清单 editorSize → 0（消费方按 1 格兜底）
+static func entity_editor_size(_m: Dictionary, edef: Dictionary) -> Vector2:
 	var es = edef.get("editorSize", null)
 	if es is Array and (es as Array).size() >= 2:
 		return Vector2(float(es[0]), float(es[1]))
-	var prefab := str(edef.get("prefab", ""))
-	if prefab == "":
-		return Vector2.ZERO
-	return ImageProbe.prefab_collision_size(m.get("_dir", ""), prefab)
+	return Vector2.ZERO

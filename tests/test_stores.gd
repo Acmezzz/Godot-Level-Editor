@@ -73,18 +73,14 @@ func test_content_drift_audit() -> void:
 	m["functions"] = [{"id": "f1", "name": "F", "code": "CURCOD", "fields": []}]
 	ok(ContentStore.write(m, "f1", "A1B2", {"name": "ok", "function": "CURCOD", "fields": {}}), "一致内容写入")
 	ok(ContentStore.write(m, "f1", "C3D4", {"name": "drift", "function": "OLDCODE", "fields": {}}), "漂移内容写入")
-	var all := ProjectAudit._content_checks(m, {ProjectAudit._content_key("f1", "A1B2"): true})
+	var all := ProjectAudit._content_checks(m)
 	var drift := 0
-	var orphan := 0
 	for e in all:
 		var msg := str(e.get("message", ""))
 		if str(e.get("path", "")) == "f1/C3D4" and msg.contains("码漂移"):
 			drift += 1
-		if str(e.get("path", "")) == "f1/C3D4" and msg.contains("孤立"):
-			orphan += 1
 	eq(drift, 1, "码漂移警告")
-	eq(orphan, 1, "孤立内容警告")
-	eq(all.size(), 2, "一致且被引用的 A1B2 零警告（全部警告只来自 C3D4）")
+	eq(all.size(), 1, "只报告功能码漂移")
 	_wipe()
 
 func test_content_write_read_roundtrip() -> void:
@@ -298,13 +294,6 @@ func test_resolve_map_states() -> void:
 	var tgt := MapStore.new_map("tgt", 8, 8)
 	tgt.meta["code"] = "TGTT"
 	ok(MapStore.write(m, "tgt", tgt), "目标图写入")
-	var audit := ProjectAudit.audit(m)
-	var cleared := 0
-	for e in audit:
-		var fx = (e as Dictionary).get("fix", null)
-		if fx is Dictionary and str((fx as Dictionary).get("map", "")) == "broken":
-			cleared += 1
-	eq(cleared, 0, "读不出的目标图不产出清空项")
 	DirAccess.remove_absolute(bad_path)
 	_wipe()
 

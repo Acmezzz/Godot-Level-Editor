@@ -161,10 +161,10 @@ func _build_global_bar() -> PanelContainer:
 		app.UiThemeScript.TEXT, app.UiThemeScript.FS_MD))
 	bar.add_child(app.UiKitScript.vdivider())
 
-	# —— 地图设置：新建 / 打开 / 保存 / 重命名 / 导出 / 尺寸 ——
+	# —— 地图设置：新建 / 打开 / 保存 / 重命名 / 尺寸 ——
 	# 放在顶栏左侧。地图**切换**是另一件事，见右侧「地图 ▾」下拉。
 	app._map_btn = app.UiKitScript.button("设置 ▾", Callable(), "plain")
-	app._map_btn.tooltip_text = "地图设置：新建 / 打开 / 保存 · 重命名 / 复制 / 导出 / 尺寸"
+	app._map_btn.tooltip_text = "地图设置：新建 / 打开 / 保存 · 重命名 / 复制 / 尺寸"
 	app._map_btn.custom_minimum_size = Vector2(92, 0)
 	bar.add_child(app._map_btn)
 	var map_menu := PopupMenu.new()
@@ -178,7 +178,6 @@ func _build_global_bar() -> PanelContainer:
 	map_menu.add_item("复制整张地图…", 11)
 	map_menu.add_item("另存并转换格空间…", 13)
 	map_menu.add_item("地图历史…", 12)
-	map_menu.add_item("导出当前地图", 4)
 	map_menu.add_item("调整地图尺寸", 5)
 	map_menu.add_item("地图内容与出口…", 24)
 	map_menu.add_item("批量替换瓦片…", 6)
@@ -221,7 +220,7 @@ func _build_global_bar() -> PanelContainer:
 	bar.add_child(play)
 	return panel_wrap
 
-## 地图菜单：新建 / 打开 / 保存 / 重命名 / 导出 / 尺寸。
+## 地图菜单：新建 / 打开 / 保存 / 重命名 / 尺寸。
 func _on_map_menu_id(id: int) -> void:
 	match id:
 		1:
@@ -230,8 +229,6 @@ func _on_map_menu_id(id: int) -> void:
 			app._on_open()
 		3:
 			app._on_save()
-		4:
-			app._open_export_dialog()
 		5:
 			app._open_size_dialog()
 		6:
