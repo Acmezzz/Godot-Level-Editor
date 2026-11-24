@@ -2,6 +2,9 @@ extends RefCounted
 ## Three-way merge of generator snapshots with the current author document.
 
 const KEY := "generatorSource"
+const GRID_KEYS := ["gridProjection", "gridTopology", "gridBasis"]
+const SPACE_META := ["gridProjection", "gridTopology", "gridBasis", "w", "h", "layers", "cellGraph"]
+const SPACE_ROWS := ["tiles", "collision", "objects", "spawn"]
 
 static func origin(map: Dictionary) -> Dictionary:
 	var meta: Dictionary = map.get("meta", {})
@@ -24,24 +27,45 @@ static func plan(previous: Dictionary, authored: Dictionary, generated: Dictiona
 	var current := _normalized(authored, authored.meta.name)
 	var incoming := _normalized(generated, authored.meta.name)
 	var state := {"conflicts": [], "choices": choices}
-	var grid_keys := ["gridProjection", "gridTopology", "gridBasis"]
-	for key in grid_keys:
-		var before = baseline.meta.get(key)
-		var live = current.meta.get(key)
-		var next = incoming.meta.get(key)
-		if (not _same(before, live) and _spatial_changed(baseline, incoming)) \
-				or (not _same(before, next) and _spatial_changed(baseline, current)):
-			state.conflicts.append({"path": "meta." + key + "（网格变化与空间内容改动重叠）", "blocked": true})
-	if not state.conflicts.is_empty():
-		return {"map": current, "conflicts": state.conflicts}
+	if _grid_differs(current, incoming) and (
+			(_grid_differs(baseline, current) and _spatial_changed(baseline, incoming))
+			or (_grid_differs(baseline, incoming) and _spatial_changed(baseline, current))):
+		# The selected coordinate system and its data must travel together. Merge the rest normally.
+		var space: Dictionary = _resolve("格空间与摆放（投影、图层、瓦片、碰撞、实例、出生点和格图）",
+			{"keep": true, "value": _space_summary(current), "side": current},
+			{"keep": true, "value": _space_summary(incoming), "side": incoming}, state).side
+		if not state.conflicts.is_empty():
+			return {"map": current, "conflicts": state.conflicts}
+		for map in [baseline, current, incoming]:
+			_use_space(map, space)
 	var result: Dictionary = _merge(baseline, current, incoming, "", state)
 	return {"map": result, "conflicts": state.conflicts}
 
 static func _spatial_changed(before: Dictionary, other: Dictionary) -> bool:
-	for key in ["tiles", "collision", "objects", "spawn"]:
+	for key in SPACE_ROWS:
 		if not _same(before.get(key), other.get(key)):
 			return true
-	return not _same(before.meta.get("cellGraph"), other.meta.get("cellGraph"))
+	for key in SPACE_META:
+		if not _same(before.meta.get(key), other.meta.get(key)):
+			return true
+	return false
+
+static func _grid_differs(before: Dictionary, other: Dictionary) -> bool:
+	return GRID_KEYS.any(func(key): return not _same(before.meta.get(key), other.meta.get(key)))
+
+static func _space_summary(map: Dictionary) -> Dictionary:
+	return {"投影": map.meta.get("gridProjection", "项目默认"), "拓扑": map.meta.get("gridTopology", "quads"),
+		"图层": map.meta.layers.size(), "瓦片": map.tiles.values().reduce(func(n, rows): return n + rows.size(), 0),
+		"碰撞格": map.collision.size(), "实例": map.objects.size(), "出生点": map.spawn}
+
+static func _use_space(map: Dictionary, from: Dictionary) -> void:
+	for key in SPACE_META:
+		if from.meta.has(key):
+			map.meta[key] = from.meta[key]
+		else:
+			map.meta.erase(key)
+	for key in SPACE_ROWS:
+		map[key] = from[key]
 
 static func _normalized(map: Dictionary, name_: String) -> Dictionary:
 	var out := map.duplicate(true)

@@ -250,6 +250,26 @@ func run() -> void:
 		"map audit pinpoints the missing map-level destination")
 	published = await app._map_file_ctrl.commit_document("保存地图级出口")
 	check(published.get("status") == "ok", "publish the map-level completion outlet")
+	check(canvas.set_spawn_cell(Vector2i(4, 4)), "author a competing spawn move")
+	Generator.open(app, true)
+	var regenerate := popup()
+	choose(regenerate.find_child("GeneratorField_projection", true, false), "isometric")
+	var rerun: Button = regenerate.find_child("RunMapGenerator", true, false)
+	rerun.pressed.emit()
+	while rerun.disabled:
+		await process_frame
+	var space_choice: OptionButton = regenerate.find_child("GenerationConflict0", true, false)
+	if not check(space_choice != null, "projection and spatial edits offer a resolvable conflict"):
+		quit(1)
+		return
+	space_choice.select(2)
+	space_choice.item_selected.emit(2)
+	press(regenerate, "应用重生成")
+	await process_frame
+	var regenerated := canvas.extract()
+	check(regenerated.meta.gridProjection == "isometric" and regenerated.spawn == [1, 2]
+		and regenerated.meta.flowOutputs.completed == {"view": "results"}
+		and regenerated.meta.contentSlots.round == round_target, "adopt generated geometry without erasing authored flow")
 	app._set_mode("content")
 	var editor = app.project_shell.content_editor
 	editor._library._open_item("signal", "project-finished")

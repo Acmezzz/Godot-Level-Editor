@@ -262,9 +262,6 @@ func _run() -> void:
 	_prepare_candidate(candidate, map)
 
 func _show_conflicts(conflicts: Array) -> void:
-	if conflicts[0].get("blocked", false):
-		_status.text = "未应用：发现 %d 处冲突。\n%s" % [conflicts.size(), conflicts[0].path]
-		return
 	_merge_input["conflicts"] = conflicts
 	_draw_conflict_page(0)
 	_status.text = "未应用：发现 %d 处冲突。请逐项选择。" % conflicts.size()
@@ -332,6 +329,10 @@ func _choose(index: int, path: String) -> void:
 	var plan := Merge.plan(_origin.base, _merge_input.live, candidate.generated, _choices)
 	if plan.conflicts.is_empty():
 		_prepare_candidate(candidate, plan.map)
+	else:
+		var next: Array = plan.conflicts
+		_merge_input.count = _choices.size() + next.size()
+		_show_conflicts(next)
 
 func _prepare_candidate(candidate: Dictionary, map: Dictionary) -> void:
 	var error := Maps.write_error(_source, map)
