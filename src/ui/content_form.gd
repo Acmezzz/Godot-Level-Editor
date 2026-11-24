@@ -32,8 +32,6 @@ const StartupTargets := preload("res://src/project/startup_targets.gd")
 const CellGraph := preload("res://src/map/cell_graph.gd")
 const ReferenceIndex := preload("res://src/project/reference_index.gd")   # B2：删除入边全景统一入口
 const BatchOps := preload("res://src/content/batch_ops.gd")   # E2：同功能批量改值
-const RelGraph := preload("res://src/content/rel_graph.gd")   # E2：关系图（纯数据 + 写回）
-const RelGraphView := preload("res://src/ui/rel_graph_view.gd")
 const RIGHT_W := 360
 
 var host   # content_editor 宿主
@@ -123,14 +121,6 @@ func _build_form_block() -> Control:
 		bbtn.tooltip_text = "同一功能的多条内容一次改同一字段（先预览命中/跳过/冲突）"
 		bbtn.add_theme_font_size_override("font_size", Th.FS_META)
 		head.add_child(bbtn)
-	# E2：关系图入口——本功能内容条数超过普通搜索可维护的规模时，图比下拉更快。
-	# 只在有多条同功能内容时出现（单条没有边可看）。
-	var rel_n: int = ContentStore.list_ids(manifest, fn_id).size()
-	if rel_n + _staged_count(fn_id) > 1:
-		var rbtn := Kit.button("关系…", func(): _open_rel_graph(fn_id), "ghost")
-		rbtn.tooltip_text = "按 (功能, 内容) 看引用关系；点边改接/断开，写回同一字段"
-		rbtn.add_theme_font_size_override("font_size", Th.FS_META)
-		head.add_child(rbtn)
 	var reload_btn := Kit.button("重读内容", host.reload_content_form, "ghost")
 	reload_btn.tooltip_text = "放弃此表单尚未写入的值，重读当前内容"
 	head.add_child(reload_btn)
@@ -1386,173 +1376,6 @@ func _open_batch(fn_id: String) -> void:
 	rebuild.call()
 	app._open_popup(pop)
 
-## E2：本功能里尚未落盘的内容条数（关系图入口的出现条件用）。
-func _staged_count(fn_id: String) -> int:
-	var n := 0
-	for key in _staged:
-		if str((_staged[key] as Dictionary).get("fn_id", "")) == fn_id:
-			n += 1
-	return n
-
-## E2 关系图：节点 = (功能, 内容)，边 = 声明的内容引用字段/步骤字段。
-## 点节点 = 在列表里定位那条内容；点边 = 改接（选目标）或断开（复用 C1 清空语义）。
-## 写回走 _content_read/_content_write，与表单同一条路径（staged 感知）——两边改完一致。
-func _open_rel_graph(fn_id: String) -> void:
-	if not commit():
-		return
-	var guard := _content_scope_guard()
-	var fn_code := FunctionDecls.fn_code(manifest, fn_id)
-	# 状态放字典里（lambda 按值捕获局部变量，重新赋值传不出去）
-	var cur := {"g": RelGraph.build(manifest, fn_id, _staged_for(fn_id))}
-	if (cur.g.get("nodes", []) as Array).is_empty():
-		app._set_status(" 这个功能还没有内容条目，关系图无从画起")
-		return
-	var shell: Dictionary = app._popup_body("关系图 · %s" % FunctionDecls.function_name(manifest, fn_id),
-		"点节点跳到该内容；点连线改接或断开。节点按 (功能, 内容 ID) 区分，循环引用合法。")
-	var pop: PopupPanel = shell.pop
-	var body: VBoxContainer = shell.body
-	var view = RelGraphView.new()   # 动态类型：on_pick/on_edge 是本控件脚本上的属性
-	view.custom_minimum_size = Vector2(720, 420)
-	var locate := func(key: String) -> void:
-		var parts := key.split("\u0001")
-		var tf := str(parts[0]) if parts.size() > 0 else ""
-		var tc := str(parts[1]) if parts.size() > 1 else ""
-		if tf != fn_id:
-			app._set_status(" 这条内容属于功能 %s（%s），请到那个功能下编辑" % [
-				FunctionDecls.function_name(manifest, tf), tc])
-			return
-		pop.hide()
-		_locate_content(fn_id, tc)
-	var info: Label = Kit.hint_label("", 700)
-	var refresh := func() -> void:
-		cur.g = RelGraph.build(manifest, fn_id, _staged_for(fn_id))
-		view.set_data(cur.g)
-		info.text = _rel_graph_hint(cur.g)
-	var on_edge := func(e: Dictionary) -> void:
-		_open_rel_edge(fn_id, e, refresh, func() -> bool:
-			return guard.call() and FunctionDecls.fn_code(manifest, fn_id) == fn_code)
-	view.on_pick = locate
-	view.on_edge = on_edge
-	view.set_data(cur.g)
-	body.add_child(view)
-	info.text = _rel_graph_hint(cur.g)
-	body.add_child(info)
-	body.add_child(Kit.hint_label("● 节点 = 内容（下方小字是内容 ID 尾段）　→ 边 = 声明字段；点边改接/断开", 700))
-	var close := func(): pop.hide()
-	body.add_child(Kit.popup_buttons(close, close, "关闭", "关闭"))
-	app._open_popup(pop, Vector2i(760, 580))
-
-## 本功能尚未落盘的内容 {cid: data}（关系图建图时覆盖同名盘上条目）。
-func _staged_for(fn_id: String) -> Dictionary:
-	var out := {}
-	for key in _staged:
-		var st: Dictionary = _staged[key] if _staged[key] is Dictionary else {}
-		if str(st.get("fn_id", "")) == fn_id and st.get("data", null) is Dictionary:
-			out[str(st.get("cid", key))] = st.get("data", {})
-	return out
-
-func _rel_graph_hint(g: Dictionary) -> String:
-	var parts: Array[String] = []
-	parts.append("内容 %d 条 · 关系 %d 条" % [(g.get("nodes", []) as Array).size(), (g.get("edges", []) as Array).size()])
-	var ext: Array = g.get("external", [])
-	if not ext.is_empty():
-		parts.append("⚠ %d 条引用指向不存在的内容（在表单里修正）" % ext.size())
-	var bad: Array = g.get("bad", [])
-	if not bad.is_empty():
-		parts.append("⚠ %d 个内容文件读不出" % bad.size())
-	return "　".join(parts)
-
-func _rel_targets(fn_id: String, decl: Dictionary) -> Array:
-	var desc := RefFields.describe(decl)
-	var target_fn := str((desc.get("filter", {}) as Dictionary).get("fn", ""))
-	if target_fn == "":
-		target_fn = fn_id
-	var targets := ContentStore.read_all(manifest, target_fn)
-	targets.merge(_staged_for(target_fn), true)
-	var opts := []
-	for cid in targets:
-		var name := str((targets[cid] as Dictionary).get("name", ""))
-		opts.append({"v": str(cid), "t": str(cid) if name == "" else "%s  %s" % [cid, name]})
-	return opts
-
-## 点边 → 小弹窗：改接到某条内容 / 断开（清空字段）。
-func _open_rel_edge(fn_id: String, ed: Dictionary, after: Callable, guard: Callable) -> void:
-	if not guard.call():
-		return
-	var label := str(ed.get("label", ed.get("field", "")))
-	var multi := bool(ed.get("multi", false))
-	var shell: Dictionary = app._popup_body("改关系 · %s" % label,
-		"字段 %s（%s）。改接写回同一字段；断开 = 清空（与表单「未设置」一致）。" % [
-			str(ed.get("field", "")), "多选：只改这一条目标" if multi else "单选"])
-	var pop: PopupPanel = shell.pop
-	var body: VBoxContainer = shell.body
-	var decl: Dictionary = ed.get("decl", {}) if ed.get("decl", null) is Dictionary else {}
-	var opts := _rel_targets(fn_id, decl)
-	var opt := OptionButton.new()
-	opt.add_item("（未设置 / 断开）")
-	opt.set_item_metadata(0, "")
-	var cur_to := str(ed.get("to", "")).substr(str(ed.get("to", "")).find("\u0001") + 1)
-	var sel_i := 0
-	for o in opts:
-		var ov := str((o as Dictionary).get("v", ""))
-		opt.add_item(str((o as Dictionary).get("t", ov)))
-		opt.set_item_metadata(opt.item_count - 1, ov)
-		if ov == cur_to:
-			sel_i = opt.item_count - 1
-	opt.select(sel_i)
-	body.add_child(Kit.field_row("目标", opt, 48))
-	var do_it := func() -> void:
-		if not guard.call() or not commit():
-			return
-		var want := str(opt.get_item_metadata(opt.selected)) if opt.selected >= 0 else ""
-		if not RelGraph.declaration_matches(manifest, fn_id, ed) \
-				or (want != "" and not _rel_targets(fn_id, decl).any(func(o): return str(o.get("v", "")) == want)):
-			app._set_status("关系声明或目标已变更，请重新选择")
-			pop.hide()
-			after.call()
-			return
-		var cid := str(ed.get("cid", ""))
-		var rd := _content_read_ex(fn_id, cid)
-		var res := RelGraph.set_edge(func(_fn: String, _cid: String) -> Dictionary: return rd.data,
-			_content_write.bind(str(rd.digest)), fn_id, cid,
-			int(ed.get("step", -1)), str(ed.get("field", "")), want, multi, cur_to, ed)
-		pop.hide()
-		var st := str(res.get("status", ""))
-		if st == "ok":
-			app._set_status("关系已%s：%s" % ["断开" if want == "" else "改接", label])
-		elif st == "noop":
-			app._set_status("关系未变（%s）" % label)
-		elif st == "stale" or st == "missing":
-			app._set_status("关系或步骤已变更，已刷新关系图，请重新选择")
-		else:
-			app._set_status(" 改关系失败：内容文件写入被拒绝（损坏或被占用？）")
-		after.call()
-	body.add_child(Kit.popup_buttons(do_it, func(): pop.hide(), "应用", "取消"))
-	app._open_popup(pop)
-
-## 关系图点节点 → 在左列选中那条内容（同一实例已绑定时直接展开）。
-## 内容 ID 可能属于别的实例：从实例快照里反查绑定，选中后展开对应功能。
-func _locate_content(fn_id: String, cid: String) -> void:
-	if cid == "":
-		return
-	var fcode := FunctionDecls.fn_code(manifest, fn_id)
-	for row in _entities():
-		var r: Dictionary = row
-		var fns: Array = r.get("fns", [])
-		for i in fns.size():
-			var f: Dictionary = fns[i] if fns[i] is Dictionary else {}
-			if str(f.get("content", "")) != cid:
-				continue
-			if fcode != "" and str(f.get("fn", "")) != fcode:
-				continue
-			var code := str(r.get("code", ""))
-			if code != _selected_ent:
-				host.select_inst(code)
-			_selected_fn = i
-			_rebuild_right()
-			app._set_status("已定位内容 %s（实例 %s）" % [cid, code])
-			return
-	app._set_status(" 内容 %s 还没有绑定到本图任何实例；绑上后才能编辑" % cid)
 ## 返回是否真的改了（调用方据此刷新列表快照）。
 func _rename_library_item(fn_id: String, cid: String, new_name: String) -> bool:
 	var nm := new_name.strip_edges()

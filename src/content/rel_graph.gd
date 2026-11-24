@@ -32,20 +32,11 @@ static func node_target(node: Dictionary) -> Dictionary:
 	return {"function": node.fn_id, "content": node.cid}
 
 ## 建图。scope_fn = 当前功能 id（只画这个功能的内容条目与其出边）。
-## extra = 尚未落盘的内容 {cid: data}（A2 staged），并入本功能目录参与建图。
-## 返回 {nodes: [{key, cid, fn_id, name, fields}], slots: {node_key: [可编辑引用槽]},
-##       edges: [{from, to, field, label, cid, fn_id, step, decl, multi}],
-##       external: [带原始目标 ID 的可编辑槽]（引用了不存在的内容）,
-##       bad: 读不出的内容文件}
-## 节点 key = fn_id + "\u0001" + cid（与 ProjectAudit 的内容键同口径）。
-static func build(manifest: Dictionary, fn_id: String, extra: Dictionary = {}) -> Dictionary:
-	return _build(manifest, [fn_id] if fn_id != "" else [], {fn_id: extra}, fn_id)
-
 ## 项目图包含所有已声明功能的已保存内容，可从 slots 编辑尚未设置的引用。
 static func build_project(manifest: Dictionary) -> Dictionary:
 	var kinds := FunctionDecls.functions(manifest).keys()
 	kinds.sort()
-	return _build(manifest, kinds, {}, "")
+	return _build(manifest, kinds)
 
 ## Index saved relations once for navigation. Unset and broken references stay in the full graph.
 static func navigation(graph: Dictionary) -> Dictionary:
@@ -74,25 +65,20 @@ static func neighborhood(index: Dictionary, key: String) -> Dictionary:
 			edges.append(edge)
 	return {"nodes": local.values(), "edges": edges}
 
-static func _build(manifest: Dictionary, kinds: Array, extra: Dictionary, scope: String) -> Dictionary:
+static func _build(manifest: Dictionary, kinds: Array) -> Dictionary:
 	var graph := {"nodes": [], "edges": [], "external": [], "bad": [], "slots": {}}
 	var catalog := {}
 	var contents := {}
 	var steps_by_code := {}
-	if scope.is_empty():
-		catalog[VIEW_KIND] = {}
-		for id in References.view_ids(manifest):
-			catalog[VIEW_KIND][id] = true
-		catalog[MAP_KIND] = {}
-		for map in References.map_target_options(manifest):
-			catalog[MAP_KIND][map.code] = true
-			graph.nodes.append({"key": _key(MAP_KIND, map.code), "cid": map.code, "fn_id": MAP_KIND, "name": map.name})
+	catalog[VIEW_KIND] = {}
+	for id in References.view_ids(manifest):
+		catalog[VIEW_KIND][id] = true
+	catalog[MAP_KIND] = {}
+	for map in References.map_target_options(manifest):
+		catalog[MAP_KIND][map.code] = true
+		graph.nodes.append({"key": _key(MAP_KIND, map.code), "cid": map.code, "fn_id": MAP_KIND, "name": map.name})
 	for kind in kinds:
 		var items := ContentStore.read_all(manifest, str(kind), graph.bad)
-		var staged: Dictionary = extra.get(kind, {})
-		for cid in staged:
-			if staged[cid] is Dictionary:
-				items[str(cid)] = staged[cid]
 		contents[kind] = items
 		catalog[kind] = {}
 		var code := FunctionDecls.fn_code(manifest, kind)
@@ -126,12 +112,9 @@ static func _build(manifest: Dictionary, kinds: Array, extra: Dictionary, scope:
 				var sdecls = steps_by_code[code].get("fields", [])
 				if sdecls is Array:
 					_collect(manifest, key, base, sdecls, fields, i, graph, catalog, "步骤%d" % (i + 1))
-	if scope.is_empty():
-		_collect_views(manifest, graph, catalog)
-		_collect_maps(manifest, graph, catalog)
-		_collect_project(manifest, graph, catalog)
-	else:
-		_add_target_nodes(manifest, scope, graph.nodes, graph.edges)
+	_collect_views(manifest, graph, catalog)
+	_collect_maps(manifest, graph, catalog)
+	_collect_project(manifest, graph, catalog)
 	return graph
 
 static func _collect_project(manifest: Dictionary, graph: Dictionary, catalog: Dictionary) -> void:
@@ -357,7 +340,7 @@ static func _collect(manifest: Dictionary, from_key: String, base: Dictionary, d
 				_collect(manifest, from_key, nested, scope.decls, scope.values, step, graph, catalog,
 					"%s %s" % [label, scope.label])
 		var desc := RefFields.describe(fd)
-		if desc.kind == "flow_target" and catalog.has(MAP_KIND):
+		if desc.kind == "flow_target":
 			var multi: bool = desc.many
 			var current = values.get(field, fd.get("default", [] if multi else {}))
 			var targets: Array = current.duplicate() if multi and current is Array else ([] if multi else [current])
@@ -378,7 +361,7 @@ static func _collect(manifest: Dictionary, from_key: String, base: Dictionary, d
 				elif target != null and not (target is Dictionary and target.is_empty()):
 					graph.external.append(edge)
 			continue
-		if desc.kind != "content" and not (desc.kind == "view" and catalog.has(VIEW_KIND)):
+		if desc.kind not in ["content", "view"]:
 			continue
 		var to_fn := VIEW_KIND if desc.kind == "view" else str(desc.get("filter", {}).get("fn", ""))
 		if to_fn == "":
@@ -408,23 +391,6 @@ static func _collect(manifest: Dictionary, from_key: String, base: Dictionary, d
 			var slot := row.duplicate()
 			slot.merge({"index": -1, "value": ""})
 			graph.slots[from_key].append(slot)
-
-## 跨功能目标补占位节点：节点身份是 (功能 ID, 内容 ID)，别的功能的条目也要能看见。
-static func _add_target_nodes(manifest: Dictionary, fn_id: String, nodes: Array, edges: Array) -> void:
-	var seen := {}
-	for n in nodes:
-		seen[str((n as Dictionary).get("key", ""))] = true
-	for e in edges:
-		var tk := str((e as Dictionary).get("to", ""))
-		if seen.has(tk):
-			continue
-		seen[tk] = true
-		var tf := _fn_of_key(tk)
-		var tc := str(tk.substr(tf.length() + 1))
-		var td := ContentStore.read(manifest, tf, tc)
-		nodes.append({"key": tk, "cid": tc, "fn_id": tf,
-			"name": str(td.get("name", "")) if str(td.get("name", "")) != "" else tc,
-			"fields": 0, "other_fn": tf != fn_id})
 
 ## 写一条边：把 from 内容的 field（step < 0 = 顶层 fields；否则 steps[step].fields）设成 to_cid。
 ## read_fn(fn_id, cid) → 内容字典；write_fn(fn_id, cid, data) → bool 或 "ok"/"conflict"/"fail"
@@ -552,7 +518,3 @@ static func _as_list(v) -> Array:
 
 static func _key(fn_id: String, cid: String) -> String:
 	return fn_id + "\u0001" + cid
-
-static func _fn_of_key(key: String) -> String:
-	var parts := key.split("\u0001")
-	return str(parts[0]) if parts.size() > 0 else ""

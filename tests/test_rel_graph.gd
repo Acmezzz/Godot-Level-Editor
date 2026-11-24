@@ -1,5 +1,5 @@
 extends "res://tests/_suite_base.gd"
-## E2-3：关系图（纯数据层）——节点/边生成、写回同一字段、断开删键、staged 并入、循环保留。
+## E2-3：关系图（纯数据层）——节点/边生成、写回同一字段、断开删键、循环保留。
 
 const RelGraph := preload("res://src/content/rel_graph.gd")
 const ContentStore := preload("res://src/content/content_store.gd")
@@ -38,7 +38,7 @@ func _cleanup() -> void:
 func _write(m: Dictionary, fn_id: String, cid: String, fields: Dictionary, name := "") -> void:
 	ContentStore.write(m, fn_id, cid, {"id": cid, "name": name if name != "" else cid, "fields": fields})
 
-## 建图：边读声明字段（含步骤字段），跨功能目标补占位节点，不存在目标进 external
+## 建图：边读声明字段（含步骤字段），不存在目标进 external
 func test_build_edges() -> void:
 	_cleanup()
 	var m := _manifest()
@@ -46,21 +46,15 @@ func test_build_edges() -> void:
 	_write(m, "dialog", "b", {"N100": "a"})   # 循环（游戏允许，必须保留）
 	_write(m, "dialog", "c", {"N100": "gone"})
 	_write(m, "quest", "q1", {"N300": "a"})
-	var g := RelGraph.build(m, "dialog")
+	var g := RelGraph.build_project(m)
 	var keys := []
 	for n in g.nodes:
 		keys.append(str((n as Dictionary).get("key", "")))
 	ok(keys.has("dialog\u0001a") and keys.has("dialog\u0001b"), "两端节点都在")
 	ok(keys.has("dialog\u0001c"), "孤立节点也画（可从这里接线）")
-	eq((g.get("edges", []) as Array).size(), 2, "a→b 与 b→a 两条边（循环保留）")
+	eq((g.get("edges", []) as Array).size(), 3, "同功能循环和跨功能引用都保留")
 	eq((g.get("external", []) as Array).size(), 1, "指向不存在内容的引用进 external")
 	eq(str((g.external[0] as Dictionary).get("value", "")), "gone", "external 带原值")
-	# 跨功能：任务→对话 a 从 quest 侧建图时补出 dialog 占位节点
-	var g2 := RelGraph.build(m, "quest")
-	var keys2 := []
-	for n in g2.nodes:
-		keys2.append(str((n as Dictionary).get("key", "")))
-	ok(keys2.has("dialog\u0001a"), "跨功能目标补占位节点（身份含功能 ID）")
 	_cleanup()
 
 ## 步骤字段里的内容引用也要成边（step 下标随边带出，写回定位用）
@@ -71,27 +65,11 @@ func test_build_step_edges() -> void:
 	_write(m, "dialog", "b", {})
 	ContentStore.write(m, "dialog", "a", {"id": "a", "name": "a", "fields": {},
 		"steps": [{"step": "S100", "fields": {"N500": "b"}}]})
-	var g := RelGraph.build(m, "dialog")
+	var g := RelGraph.build_project(m)
 	eq((g.get("edges", []) as Array).size(), 1, "步骤字段引用生成一条边")
 	var e: Dictionary = g.edges[0]
 	eq(int(e.get("step", -2)), 0, "边带步骤下标")
 	eq(str(e.get("field", "")), "N500", "边带字段码")
-	_cleanup()
-
-## staged 内容并入建图（A2 未落盘的新内容在图上立刻可见）
-func test_build_merges_staged() -> void:
-	_cleanup()
-	var m := _manifest()
-	_write(m, "dialog", "a", {"N100": "new1"})
-	var g0 := RelGraph.build(m, "dialog")
-	eq((g0.get("external", []) as Array).size(), 1, "新内容未落盘前，引用算悬空")
-	var staged := {"new1": {"id": "new1", "name": "新一句", "fields": {}}}
-	var g1 := RelGraph.build(m, "dialog", staged)
-	eq((g1.get("edges", []) as Array).size(), 1, "并入 staged 后边成立")
-	var keys := []
-	for n in g1.nodes:
-		keys.append(str((n as Dictionary).get("key", "")))
-	ok(keys.has("dialog\u0001new1"), "staged 节点在图上")
 	_cleanup()
 
 ## 写回同一字段：改接、断开（删键）、幂等、多选原位替换
@@ -118,7 +96,7 @@ func test_set_edge_roundtrip() -> void:
 		"断开删键而不是留空串")
 	# 图与表单一致：重读图的边
 	_write(m, "dialog", "a", {"N100": "b"})
-	var g := RelGraph.build(m, "dialog")
+	var g := RelGraph.build_project(m)
 	eq(str((g.edges[0] as Dictionary).get("to", "")), "dialog\u0001b", "重开后边指向同一目标")
 	_cleanup()
 

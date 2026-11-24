@@ -99,7 +99,7 @@ src/
 	├── collision_dialog.gd 从地形生成碰撞
 	├── content_editor.gd   内容编辑器骨架：实例列表（含筛选）/画布预览/选中与挂载补齐
 	├── fn_bind.gd          功能绑定行：添加/↑↓排序/并行/时机/启用/删除（content_editor 拆出）
-	├── content_form.gd     内容表单 + 批量改值 + 关系图弹窗（content_editor 拆出）
+	├── content_form.gd     内容表单 + 批量改值（content_editor 拆出）
 	├── rel_graph_view.gd   E2 关系图画布：分层布局、节点/边命中、点击与改接回调
 	├── steps_panel.gd      演出子面板：列表/时间轴双视图 + 步骤表单（content_editor 拆出）
 	├── timeline_view.gd    演出时间轴视图：横轴时间纵轴轨道，拖块改 at/duration/轨道，重叠描红
@@ -682,10 +682,6 @@ Shift + 左键选已有顶点，再点同层位置，可在所选顶点之后插
 **批量改值（E2）**：本图有多条同功能内容时，表单标题旁出「批量…」——选一个字段（只列
 `input`/`choice` 可写字段）、填目标值（复用原字段控件）、先「预览」列出命中/跳过/冲突，
 确认后逐条写入。只改已有内容文件，不新建内容、不碰实例绑定；类型不符的文件进冲突，原值保留。
-**关系图（E2）**：本功能内容多于一条时出「关系…」——节点按 `(功能 ID, 内容 ID)` 排布，
-边读取功能/条件/步骤里声明为 `content:` 的内容引用字段；点节点跳到该条内容，
-点边可改接（选目标）或断开（删键，与「未设置」一致），写回走表单同一条内容写路径。
-跨功能目标补占位节点，循环引用原样保留；指向不存在内容的引用在提示行计数。
 **条件区**：功能声明引用了条件库条目（`conditions: [id, ...]`）时，逐条渲染条件名小节 +
 可调字段——与功能字段共用同一份内容 `fields`，同一条件在不同实例上参数各填各的。
 游戏还可为功能或步骤声明 `array of condition`：作者按白名单添加可重复条件，
@@ -1040,7 +1036,7 @@ godot --headless --path "<编辑器工程>" --script res://tests/run_tests.gd
 | `test_grid_space.gd` 的 `test_map_view_*` | MapViewData 层变换（offset 数组 + scale 标量、scale≤0 视为缺省）与格多边形/锚点合成 |
 | `test_map_convert.gd` | B1-2 投影转换：实例按锚点换算到新格系（像素锚点不变）、往返回到原坐标、出生点按格中心拾取、瓦片/碰撞保留原格号并计入待核对、gridBasis 与非法组合拒绝、缺 `gridProjection` 沿用项目解析、转换经 `duplicate_map` 另存后原图不动且副本重发码 |
 | `test_ref_fields.gd` | 引用字段描述、类型严格性、配对地图字段与地图目录校验（C06/C07/C10）、同格多目标按地图/实例码区分（B3-3） |
-| `test_rel_graph.gd` | E2-3 关系图纯数据层：节点/边生成、写回同一字段、断开删键、staged 并入、循环保留、写回状态串（`"ok"`/`"conflict"`/`"fail"`）判成功 |
+| `test_rel_graph.gd` | E2-3 关系图纯数据层：节点/边生成、写回同一字段、断开删键、循环保留、写回状态串（`"ok"`/`"conflict"`/`"fail"`）判成功 |
 | `test_session_context_e1.gd` | E1 视图切换的身份校验与会话记忆（纯逻辑，无 UI） |
 | `test_e1_e3_units.gd` | E1 字段行悬浮说明（只拼已声明键，不发明说明/单位）；改尺寸裁剪预览与实际裁剪同判据 |
 | `test_step_timeline_d1.gd` | D1 步骤时间轴单一数据源：补丁合并、净化、生效区间、结构版本与警告、全重叠告警截断（`MAX_WARNINGS` + 「另有 M 条」） |
