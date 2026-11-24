@@ -8,6 +8,7 @@ var _request: Dictionary
 var _manifest_text := ""
 var _map_text := ""
 var _entry: Dictionary
+var _entry_digest := ""
 var _cells := {}
 var _board_edges: Array = []
 var _traversed_edge := ""
@@ -20,6 +21,10 @@ var _ending := ""
 var _miss_ending := ""
 var _flow_goal := {}
 var _cue_seconds := 0.0
+var _rhythm_player: AudioStreamPlayer
+var _attempt_started := 0
+var _attempts: Array = []
+var _awaiting_input := false
 var _manifest: Dictionary
 var _dialogue_position := Vector2.ZERO
 var _next_step := 0
@@ -135,19 +140,13 @@ func _ready() -> void:
 		var entry_text := FileAccess.get_file_as_string("res://".path_join(content_dir).path_join(
 			"campaign/project-acceptance.json"))
 		_entry = _parse(entry_text)
+		_entry_digest = entry_text.sha256_text()
 		if not _load_campaign(manifest):
 			_fail("Campaign, screen position, or first step is invalid")
 			return
-		_report("ready", "", {"caption": _caption, "step": _next_step, "ending": _ending, "missEnding": _miss_ending, "cueSec": _cue_seconds,
-			"flowGoal": _flow_goal, "schedules": {
-				"frame_sequence": _read_schedule("frame_sequence", content_dir),
-				"second_sequence": _read_schedule("second_sequence", content_dir)},
-			"pointPx": [_dialogue_position.x, _dialogue_position.y], "hotspot": _reference_target(Vector2(0.5, 0.5)),
-			"screenTargets": [_screen_target(Vector2(720, 1280)), _screen_target(Vector2(900, 900))],
-			"screenFocus": _screen_focus("right"), "screenArtwork": _screen_artwork()}, [{
-				"message": "节奏判定：命中进入结局，延迟输入进入重试。", "function": "campaign",
-				"content": "project-acceptance", "contentDigest": entry_text.sha256_text(),
-				"step": _entry.steps.size() - 1, "stepCode": _entry.steps.back().step}])
+		_report("ready", "", {})
+		_start_attempt()
+		return
 	queue_redraw()
 	if _headless:
 		get_tree().quit()
@@ -870,7 +869,7 @@ func _load_campaign(manifest: Dictionary) -> bool:
 		if vp.id == screen.get("viewport"):
 			_dialogue_position = Vector2(float(point[0]) * float(vp.w), float(point[1]) * float(vp.h))
 			_caption = str(fields.get("CAPT", ""))
-			return _advance_campaign(manifest.get("steps", {}).get("advance", {}).get("code", ""))
+			return _prepare_campaign(manifest.get("steps", {}).get("advance", {}).get("code", ""))
 	return false
 
 func _has_free_ramp(map: Dictionary) -> bool:
@@ -1021,9 +1020,9 @@ func _read_schedule(fn_id: String, content_dir: String) -> Array:
 			cursors[track] = maxf(cursor, end)
 	return schedule
 
-func _advance_campaign(code: String) -> bool:
+func _prepare_campaign(code: String) -> bool:
 	var sequence: Array = _entry.get("steps", [])
-	if _next_step > 0 or sequence.size() < 2 or code == "" or sequence.back().get("step") != code:
+	if sequence.size() < 2 or code == "" or sequence.back().get("step") != code:
 		return false
 	var chart_fields: Dictionary = _entry.get("fields", {})
 	var audio := str(chart_fields.get("MUSC", ""))
@@ -1031,7 +1030,8 @@ func _advance_campaign(code: String) -> bool:
 	for row in _manifest.get("audio", {}).values():
 		if row.get("code") == audio:
 			audio_path = str(row.get("path", ""))
-	if audio_path == "" or AudioStreamWAV.load_from_file("res://".path_join(audio_path)) == null:
+	var stream := AudioStreamWAV.load_from_file("res://".path_join(audio_path)) if audio_path != "" else null
+	if stream == null:
 		return false
 	var cue: Dictionary = sequence.back()
 	var cue_beat := float(cue.get("at", 0.0))
@@ -1052,15 +1052,66 @@ func _advance_campaign(code: String) -> bool:
 		bpm = next_bpm
 		last_beat = at
 	_cue_seconds += (cue_beat - last_beat) * 60.0 / bpm
-	_ending = _resolve_branch(cue, _cue_seconds, 2)
-	_miss_ending = _resolve_branch(cue, _cue_seconds + 0.3, 2)
-	if _ending == "" or _miss_ending == "" or _resolve_branch(cue, _cue_seconds, 1) != "":
-		return false
-	_next_step += 1
+	_rhythm_player = AudioStreamPlayer.new()
+	_rhythm_player.stream = stream
+	add_child(_rhythm_player)
 	return true
 
+func _start_attempt() -> void:
+	_rhythm_player.play()
+	_attempt_started = Time.get_ticks_usec()
+	_awaiting_input = true
+	queue_redraw()
+
+func _attempt_time() -> float:
+	return (Time.get_ticks_usec() - _attempt_started) / 1000000.0
+
+func _process(_dt: float) -> void:
+	if not _awaiting_input:
+		return
+	queue_redraw()
+	# Verification generates keys through the same running input handler as the interactive game.
+	if _headless and _attempt_time() >= _cue_seconds + (0.3 if _attempts.is_empty() else 0.0):
+		var key := InputEventKey.new()
+		key.keycode = KEY_SPACE
+		key.pressed = true
+		Input.parse_input_event(key)
+		key = key.duplicate()
+		key.pressed = false
+		Input.parse_input_event(key)
+
+func _judge_attempt() -> void:
+	var elapsed := _attempt_time()
+	var result := _resolve_branch(_entry.steps.back(), elapsed, 2)
+	if result.is_empty():
+		return
+	_next_step += 1
+	_attempts.append({"inputSec": elapsed, "retry": result.retry})
+	if result.retry == _entry.id:
+		_miss_ending = result.message
+		_publish_attempt("输入未命中，按作者配置重试。")
+		_start_attempt()
+		return
+	_ending = result.message
+	_awaiting_input = false
+	_publish_attempt("进入结局：" + _ending)
+	if _headless:
+		get_tree().quit()
+
+func _publish_attempt(message: String) -> void:
+	var content_dir := str(_manifest.get("contentDir", "content"))
+	_report("ready", "", {"caption": _caption, "step": _next_step, "ending": _ending, "missEnding": _miss_ending,
+		"cueSec": _cue_seconds, "attempts": _attempts, "flowGoal": _flow_goal, "schedules": {
+			"frame_sequence": _read_schedule("frame_sequence", content_dir),
+			"second_sequence": _read_schedule("second_sequence", content_dir)},
+		"pointPx": [_dialogue_position.x, _dialogue_position.y], "hotspot": _reference_target(Vector2(0.5, 0.5)),
+		"screenTargets": [_screen_target(Vector2(720, 1280)), _screen_target(Vector2(900, 900))],
+		"screenFocus": _screen_focus("right"), "screenArtwork": _screen_artwork()}, [{
+			"message": message, "function": "campaign", "content": _entry.id, "contentDigest": _entry_digest,
+			"step": _entry.steps.size() - 1, "stepCode": _entry.steps.back().step}])
+
 ## The game defines group evaluation, predicate code and how a chosen target is loaded.
-func _resolve_branch(cue: Dictionary, input_seconds: float, lane: int) -> String:
+func _resolve_branch(cue: Dictionary, input_seconds: float, lane: int) -> Dictionary:
 	var destination := ""
 	var map_code := ""
 	for route in cue.get("fields", {}).get("BRCH", []):
@@ -1075,7 +1126,7 @@ func _resolve_branch(cue: Dictionary, input_seconds: float, lane: int) -> String
 				"on_lane":
 					pass_condition = lane == int(fields.get("LANE", 0))
 				_:
-					return ""
+					return {}
 			if row.get("negate", false):
 				pass_condition = not pass_condition
 			matches = (matches and pass_condition) if require_all else (matches or pass_condition)
@@ -1086,7 +1137,7 @@ func _resolve_branch(cue: Dictionary, input_seconds: float, lane: int) -> String
 	return _resolve_ending(destination, _map_with_code(map_code) if map_code != "" else {})
 
 ## The branch chooses a map. Its continuation keeps that map and resolves its own local instance.
-func _resolve_ending(destination: String, current_map: Dictionary) -> String:
+func _resolve_ending(destination: String, current_map: Dictionary) -> Dictionary:
 	var content_dir := str(_manifest.get("contentDir", "content"))
 	var seen := {}
 	while destination.is_valid_filename() and not seen.has(destination):
@@ -1094,17 +1145,17 @@ func _resolve_ending(destination: String, current_map: Dictionary) -> String:
 		var ending := _parse(FileAccess.get_file_as_string("res://".path_join(content_dir)
 			.path_join("ending").path_join(destination + ".json")))
 		if ending.is_empty() or ending.get("function") != _manifest.get("functions", {}).get("ending", {}).get("code"):
-			return ""
+			return {}
 		var fields: Dictionary = ending.get("fields", {})
 		var instance := str(fields.get("GOAL", ""))
 		if instance != "":
 			if not current_map.get("objects", []).any(func(obj): return obj.get("code") == instance):
-				return ""
+				return {}
 			_flow_goal = {"map": current_map.meta.code, "inst": instance}
 		destination = str(fields.get("HOP1", ""))
 		if destination == "":
-			return str(fields.get("MESG", ""))
-	return ""
+			return {"message": str(fields.get("MESG", "")), "retry": str(fields.get("AGAN", ""))}
+	return {}
 
 func _load_rule_grid(map: Dictionary, manifest: Dictionary) -> Dictionary:
 	var resolved := Grid.resolve(map.meta, manifest)
@@ -1177,14 +1228,14 @@ func _unhandled_input(event: InputEvent) -> void:
 			queue_redraw()
 
 func _unhandled_key_input(event: InputEvent) -> void:
-	if not event.is_action_pressed("ui_accept"):
+	if not event.is_action_pressed("ui_accept") or event.is_echo():
 		return
 	if _rule_grid != null:
 		return
 	if _current != "":
 		_advance_board()
-	else:
-		_advance_campaign("NEXT")
+	elif _awaiting_input:
+		_judge_attempt()
 	queue_redraw()
 
 func _draw() -> void:
@@ -1210,7 +1261,10 @@ func _draw() -> void:
 		draw_string(font, Vector2(32, 36), "Cell: " + _current + "  |  Space: follow directed link")
 	else:
 		draw_string(font, Vector2(32, 36) + _dialogue_position * 0.25, _caption)
-		draw_string(font, Vector2(32, 86), "Step " + str(_next_step) + " · " + _ending)
+		var hint := _ending
+		if _awaiting_input:
+			hint = "%s  Space at cue · %+.2fs" % [_miss_ending, _attempt_time() - _cue_seconds]
+		draw_string(font, Vector2(32, 86), hint)
 
 func _fail(message: String) -> void:
 	printerr(message)

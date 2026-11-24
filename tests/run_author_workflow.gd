@@ -259,7 +259,9 @@ func run():
 				{"id":"message", "code":"MESG", "kind":"input", "type":"string"},
 				{"id":"goal", "code":"GOAL", "kind":"choice", "source":"entity_inst:door"},
 				{"id":"next", "code":"HOP1", "kind":"choice", "source":"content:ending",
-					"contentMapContext":"inherit"}]}},
+					"contentMapContext":"inherit"},
+				{"id":"retry_chart", "code":"AGAN", "name":"Retry chart", "kind":"choice",
+					"source":"content:campaign", "contentMapContext":"inherit"}]}},
 		"triggers": {"touch":{"name":"Touch","code":"TUCH"},"leave":{"name":"Leave","code":"LEAV"}},
 		"conditions": {"hit_window":{"name":"Hit Window","fields":[
 			{"id":"milliseconds","code":"WIND","kind":"input","type":"int","min":1}]},
@@ -455,6 +457,17 @@ func run():
 	graph_options[1].item_selected.emit(1)
 	select_metadata(graph_options[2], "project-retry")
 	press(pop, "应用关系")
+	select_metadata(graph_options[0], "ending\u0001project-retry")
+	var retry_slot: OptionButton = graph_options[1]
+	for i in retry_slot.item_count:
+		if retry_slot.get_item_text(i).ends_with(" → campaign"):
+			retry_slot.select(i)
+			retry_slot.item_selected.emit(i)
+			break
+	select_metadata(graph_options[2], "project-acceptance")
+	press(pop, "应用关系")
+	check(Store.read(manifest, "ending", "project-retry").get("fields", {}).get("AGAN") == "project-acceptance",
+		"author closes the cross-function retry cycle through the project relationship graph")
 	pop.hide()
 	await process_frame
 	var art := Image.create(160, 90, false, Image.FORMAT_RGB8)
@@ -621,13 +634,18 @@ func run():
 	var stale_observation := observation.duplicate()
 	stale_observation.contentDigest = "0".repeat(64)
 	check(not app._map_file_ctrl._open_report_step(stale_observation), "a mismatched content digest cannot jump to a stale step")
-	check(entry_report.get("status") == "ready" and entry_report.get("result", {}).get("step") == 1
+	check(entry_report.get("status") == "ready" and entry_report.get("result", {}).get("step") == 2
 		and entry_report.get("result", {}).get("caption") == "Ready"
 		and entry_report.get("result", {}).get("ending") == "Reached the ending"
 		and entry_report.get("result", {}).get("missEnding") == "Try again"
 		and is_equal_approx(float(entry_report.get("result", {}).get("cueSec", -1.0)), 2.237)
 		and entry_report.get("result", {}).get("hotspot") == "project-finish",
 		"separate game process follows editor-wired campaign to ending: " + str(entry_report))
+	var attempts: Array = entry_report.get("result", {}).get("attempts", [])
+	check(attempts.size() == 2 and attempts[0].get("retry") == "project-acceptance"
+		and float(attempts[0].get("inputSec", 0.0)) > 2.347 and attempts[1].get("retry") == ""
+		and absf(float(attempts[1].get("inputSec", -1.0)) - 2.237) <= 0.11,
+		"live key events miss, follow the authored retry link, restart the clock and then hit")
 	check(entry_report.get("result", {}).get("screenTargets") == ["project-finish", "project-finish"],
 		"independent runtime hits the authored bottom-anchored button in two viewport sizes")
 	check(entry_report.get("result", {}).get("flowGoal") == {"map": flow_map.meta.code, "inst": "EXIT"},

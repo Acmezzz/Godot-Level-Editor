@@ -1512,6 +1512,11 @@ func _play_report_summary() -> String:
 	return "游戏没有返回本次加载回执"
 
 func open_play_report() -> void:
+	# 游戏运行中可以原子替换加载回执，打开时读本次试玩的最新版本。
+	if _play_pid > 0 and not _play_report_request.is_empty():
+		var latest := Playtest.read_report(_play_report_request)
+		if not latest.is_empty():
+			_play_report_result = latest
 	var shell: Dictionary = app._popup_body("试玩反馈", _play_report_summary())
 	var pop: PopupPanel = shell.pop
 	var body: VBoxContainer = shell.body
