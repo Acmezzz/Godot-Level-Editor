@@ -163,9 +163,9 @@ func finish() -> void:
 		var ring := local.map(func(p): return entity.geometry_point_from_world(cvs.to_layer_world(index, p)))
 		var parts := entity.geometry_parts()
 		var hint := "已添加附加轮廓" if adding_part else "已添加孔洞"
-		var issue := Geometry.add_ring(parts, ring, adding_part)
-		if issue != "":
-			cvs._hint(issue)
+		var ring_issue := Geometry.add_ring(parts, ring, adding_part)
+		if ring_issue != "":
+			cvs._hint(ring_issue)
 			return
 		_clear()
 		commit_parts(entity, parts, hint)

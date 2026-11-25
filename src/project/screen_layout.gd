@@ -237,12 +237,12 @@ static func clear_variant(element: Dictionary, profile: String) -> void:
 	if variants.is_empty():
 		element.erase("variants")
 
-static func _rect(element: Dictionary, reference: Rect2, profile: String) -> Rect2:
+static func _rect(element: Dictionary, parent_rect: Rect2, profile: String) -> Rect2:
 	var a: Array = geometry_value(element, profile, "anchors", [])
 	var o: Array = geometry_value(element, profile, "offsets", ZERO_OFFSETS)
-	var start := Vector2(a[0], a[1]) * reference.size + Vector2(o[0], o[1])
-	var end := Vector2(a[2], a[3]) * reference.size + Vector2(o[2], o[3])
-	return Rect2(reference.position + start, end - start)
+	var start := Vector2(a[0], a[1]) * parent_rect.size + Vector2(o[0], o[1])
+	var end := Vector2(a[2], a[3]) * parent_rect.size + Vector2(o[2], o[3])
+	return Rect2(parent_rect.position + start, end - start)
 
 ## Resolve parent geometry in linear time, independently of draw order and without recursion.
 static func rectangles(elements: Array, viewport: Vector2, profile := "", include_hidden := false,
@@ -281,31 +281,31 @@ static func subtree_ids(elements: Array, id: String) -> Dictionary:
 	return visited
 
 ## Change the rectangle in one profile without changing its anchors or parent.
-static func place(element: Dictionary, profile: String, bounds: Rect2, reference: Rect2) -> void:
+static func place(element: Dictionary, profile: String, bounds: Rect2, parent_rect: Rect2) -> void:
 	var a: Array = geometry_value(element, profile, "anchors", [])
-	var start := bounds.position - reference.position - Vector2(a[0], a[1]) * reference.size
-	var end := bounds.end - reference.position - Vector2(a[2], a[3]) * reference.size
+	var start := bounds.position - parent_rect.position - Vector2(a[0], a[1]) * parent_rect.size
+	var end := bounds.end - parent_rect.position - Vector2(a[2], a[3]) * parent_rect.size
 	set_geometry(element, profile, "offsets", [start.x, start.y, end.x, end.y])
 
 ## Keep the rectangle in the design viewport and every authored layout profile.
-static func reparent(elements: Array, moving: Array, parent: String, design: Vector2, sizes: Dictionary) -> void:
+static func reparent(elements: Array, moving: Array, parent: String, design: Vector2, viewport_sizes: Dictionary) -> void:
 	if moving.is_empty():
 		return
 	var profiles := {"": design}
 	for row in elements:
 		for profile in row.get("variants", {}):
-			profiles[profile] = sizes[profile]
+			profiles[profile] = viewport_sizes[profile]
 	var previous := {}
 	for profile in profiles:
 		previous[profile] = rectangles(elements, profiles[profile], profile, true)
 	for profile in profiles:
 		var viewport: Vector2 = profiles[profile]
 		var resolved: Dictionary = previous[profile]
-		var reference: Rect2 = resolved.get(parent, Rect2(Vector2.ZERO, viewport))
+		var parent_rect: Rect2 = resolved.get(parent, Rect2(Vector2.ZERO, viewport))
 		for row in moving:
 			var before: Rect2 = resolved[row.id]
-			if profile == "" or not _rect(row, reference, profile).is_equal_approx(before):
-				place(row, profile, before, reference)
+			if profile == "" or not _rect(row, parent_rect, profile).is_equal_approx(before):
+				place(row, profile, before, parent_rect)
 	for row in moving:
 		if parent == "":
 			row.erase("parent")

@@ -169,12 +169,12 @@ static func quantize_frames(steps: Array) -> Array:
 static func from_decl(manifest: Dictionary, fn_id: String, content: Dictionary) -> Dictionary:
 	var FunctionDecls := preload("res://src/content/function_decl.gd")
 	var decl: Dictionary = FunctionDecls.function_decl(manifest, fn_id)
-	var timebase := str(decl.get("timebase", "seconds"))
-	if timebase not in ["frames", "beats"]:
-		timebase = "seconds"
+	var base_unit := str(decl.get("timebase", "seconds"))
+	if base_unit not in ["frames", "beats"]:
+		base_unit = "seconds"
 	var tp = decl.get("timePreview", null)
 	var cfg := {"subdivisions": DEFAULT_SUBDIVISIONS}
-	var missing: Array = []
+	var missing_steps: Array = []
 	var refs := {}
 	if tp is Dictionary:
 		var tpd: Dictionary = tp
@@ -191,7 +191,7 @@ static func from_decl(manifest: Dictionary, fn_id: String, content: Dictionary) 
 			refs["fpsField"] = code
 			var v = fields.get(code, null)
 			if v == null or not (v is int or v is float) or float(v) <= 0.0:
-				missing.append("fpsField「%s」在内容里没有有限正数" % fps_key)
+				missing_steps.append("fpsField「%s」在内容里没有有限正数" % fps_key)
 			else:
 				cfg["fps"] = float(v)
 		# 参考素材（D2）：只把 ID 解析成码，取用归界面（帧序列预览 / 音频定位）
@@ -222,15 +222,15 @@ static func from_decl(manifest: Dictionary, fn_id: String, content: Dictionary) 
 			refs["bpmField"] = bpm_code
 			var segs := _tempo_segments(content.get("steps", []), step_code, bpm_code)
 			if segs.is_empty():
-				missing.append("变速段「%s」在内容步骤里没有有效 BPM 段" % tempo_step)
+				missing_steps.append("变速段「%s」在内容步骤里没有有效 BPM 段" % tempo_step)
 			else:
 				cfg["tempo"] = segs
 	# 缺 fps/offset 不算致命以外的项：时钟自检会再统一给出可用性
-	var clock := new(timebase, cfg)
+	var clock := new(base_unit, cfg)
 	for m in clock.missing:
-		if not missing.has(m):
-			missing.append(m)
-	return {"timebase": timebase, "cfg": cfg, "missing": missing, "refs": refs}
+		if not missing_steps.has(m):
+			missing_steps.append(m)
+	return {"timebase": base_unit, "cfg": cfg, "missing": missing_steps, "refs": refs}
 
 ## 字段 ID → 字段码。
 static func _field_code_map(fields: Array) -> Dictionary:

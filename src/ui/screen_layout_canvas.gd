@@ -78,9 +78,9 @@ func _draw_layout(area: Rect2) -> void:
 			draw_rect(visible_rect, Color(color, 0.23 if item.kind == "panel" else 0.45))
 		var image: Texture2D = asset_textures.get(item.get("imageAsset", ""))
 		if image != null:
-			var placement := Layout.image_placement(bounds, area, image.get_size(), item.get("imageFit", "contain"))
-			if not placement.is_empty():
-				draw_texture_rect_region(image, placement.dest, placement.source)
+			var image_rect := Layout.image_placement(bounds, area, image.get_size(), item.get("imageFit", "contain"))
+			if not image_rect.is_empty():
+				draw_texture_rect_region(image, image_rect.dest, image_rect.source)
 		draw_rect(visible_rect, color, false, 1.5)
 		var label := Layout.display_text(item, locale)
 		if label.is_empty():
@@ -204,10 +204,10 @@ func _adjust_input(event: InputEvent, area: Rect2) -> void:
 		var index := active_element
 		var handle := Vector2(-1, -1)
 		if index >= 0:
-			var selected := _layout_rect(resolved.get(elements[index].id, Rect2()), area)
-			if selected.has_area():
+			var element_rect := _layout_rect(resolved.get(elements[index].id, Rect2()), area)
+			if element_rect.has_area():
 				for corner in CORNERS:
-					var point: Vector2 = selected.position + corner * selected.size
+					var point: Vector2 = element_rect.position + corner * element_rect.size
 					if area.grow(0.01).has_point(point) and point.distance_to(event.position) <= HANDLE_RADIUS * 1.5:
 						handle = corner
 						break

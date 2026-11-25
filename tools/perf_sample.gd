@@ -43,7 +43,7 @@ func _run() -> void:
 
 func _build_map(m: Dictionary, name: String, tile_count: int) -> void:
 	var w := 256
-	var h: int = maxi(256, (tile_count / w) + 64)
+	var h: int = maxi(256, floori(float(tile_count) / w) + 64)
 	var d := MapStore.new_map(name, w, h)
 	d["tiles"] = _tiles(d, tile_count, 40)
 	d["collision"] = []
@@ -63,7 +63,7 @@ func _tiles(d: Dictionary, count: int, skip_rows: int) -> Dictionary:
 	var start := skip_rows * w
 	for i in count:
 		var idx := start + i
-		out.append([idx % w, idx / w, "A%04d" % (i % 20), 0, 0, 0])
+		out.append([idx % w, floori(float(idx) / w), "A%04d" % (i % 20), 0, 0, 0])
 	return {lid: out}
 
 ## 冷开 = 清缓存后读盘并校验；热开 = MapStore.read 命中 mtime 缓存（画布切图走这条）
@@ -127,7 +127,7 @@ func _report() -> void:
 		var arr: Array = _samples[k]
 		arr.sort()
 		var n := arr.size()
-		var med := float(arr[n / 2]) / 1000.0
+		var med := float(arr[n >> 1]) / 1000.0
 		var p95 := float(arr[max(0, int(ceil(n * 0.95)) - 1)]) / 1000.0
 		var mx := float(arr[n - 1]) / 1000.0
 		print("PERF_SAMPLE %s n=%d median=%.2fms p95=%.2fms max=%.2fms"

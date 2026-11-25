@@ -171,7 +171,9 @@ static func default_value(field: Dictionary) -> Variant:
 	if field.has("default"):
 		return field.default
 	if field.get("kind") == "choice":
-		return [] if field.get("multiple") == true else ""
+		if field.get("multiple") == true:
+			return []
+		return ""
 	match field.get("type"):
 		"bool": return false
 		"string", "asset_ref": return ""

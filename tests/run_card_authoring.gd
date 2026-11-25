@@ -20,7 +20,8 @@ func run() -> void:
 	var project := ProjectSettings.globalize_path("user://card-authoring-%s" % Time.get_ticks_usec())
 	DirAccess.make_dir_recursive_absolute(project.path_join("editor"))
 	for file in ["project.godot", "game.gd"]:
-		var from := ProjectSettings.globalize_path("res://tests/card_game/" + file)
+		var source_file: String = file + ".template" if file == "project.godot" else file
+		var from := ProjectSettings.globalize_path("res://tests/card_game/" + source_file)
 		check(DirAccess.copy_absolute(from, project.path_join(file)) == OK, "install game-side " + file)
 	var declarations := {
 		"projectName": "Market Hand",

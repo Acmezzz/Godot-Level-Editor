@@ -54,9 +54,9 @@ static func blocked_removals(manifest: Dictionary, before: Dictionary, after: Di
 	for name in sources:
 		var data: Dictionary = sources[name]
 		var refs := map_links(manifest, data)
-		var error := _broken_link(manifest, data, refs, before, after)
-		if error != "":
-			return "%s · %s" % [name, error]
+		var link_issue := _broken_link(manifest, data, refs, before, after)
+		if link_issue != "":
+			return "%s · %s" % [name, link_issue]
 		for obj in data.get("objects", []):
 			for binding in obj.get("functions", []):
 				var fn := FunctionDecls.fn_id_of(manifest, binding.get("fn", ""))

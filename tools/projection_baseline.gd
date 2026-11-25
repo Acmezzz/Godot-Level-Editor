@@ -12,7 +12,6 @@ extends SceneTree
 ## 只读：不调用 MapStore.write / 不改任何文件（--out 未给时只打印摘要）。
 
 const MapStore := preload("res://src/map/map_store.gd")
-const GridSpace := preload("res://src/canvas/grid_space.gd")
 
 func _initialize() -> void:
 	var args := OS.get_cmdline_user_args()
@@ -22,13 +21,13 @@ func _initialize() -> void:
 		return
 	var dir := ""
 	var out_path := ""
-	var convert := ""
+	var target_projection := ""
 	for raw in args:
 		var a := str(raw)
 		if a.begins_with("--out="):
 			out_path = a.substr(6).strip_edges()
 		elif a.begins_with("--convert="):
-			convert = a.substr(10).strip_edges()
+			target_projection = a.substr(10).strip_edges()
 		elif dir == "":
 			dir = a.strip_edges()
 	if dir == "" or not DirAccess.dir_exists_absolute(dir):
@@ -41,15 +40,15 @@ func _initialize() -> void:
 		quit(2)
 		return
 	var names := MapStore.list_maps(m)
-	var report := {"project": dir, "mode": "convert" if convert != "" else "record",
-		"convertTo": convert, "maps": []}
+	var report := {"project": dir, "mode": "convert" if target_projection != "" else "record",
+		"convertTo": target_projection, "maps": []}
 	var total_objects := 0
 	for nm in names:
 		var data := MapStore.read(m, str(nm))
 		if data.is_empty():
 			print("跳过读不出的地图: " + str(nm))
 			continue
-		var row := _record_map(m, str(nm), data, convert)
+		var row := _record_map(m, str(nm), data, target_projection)
 		total_objects += (row.get("objects", []) as Array).size()
 		(report["maps"] as Array).append(row)
 	var text := JSON.stringify(report, "  ", true)
@@ -84,7 +83,7 @@ static func _manifest(dir: String) -> Dictionary:
 	m["_maps_dir"] = dir.path_join("maps")
 	return m
 
-static func _record_map(m: Dictionary, name: String, data: Dictionary, convert: String) -> Dictionary:
+static func _record_map(m: Dictionary, name: String, data: Dictionary, target_projection: String) -> Dictionary:
 	var meta: Dictionary = data.get("meta", {}) if data.get("meta", null) is Dictionary else {}
 	var ts := GridSpace.tile_size_of(m)
 	# 生效投影：地图自己的键优先，缺键沿用项目解析——与 editor_canvas._map_projection 同口径
@@ -102,8 +101,8 @@ static func _record_map(m: Dictionary, name: String, data: Dictionary, convert: 
 		"gridBasis": basis, "tileSize": [ts.x, ts.y],
 		"objects": [], "spawn": {}}
 	var convert_g: GridSpace = null
-	if convert != "":
-		convert_g = GridSpace.new(ts, convert, basis)
+	if target_projection != "":
+		convert_g = GridSpace.new(ts, target_projection, basis)
 	for o in (data.get("objects", []) as Array):
 		if not (o is Dictionary):
 			continue
@@ -119,7 +118,7 @@ static func _record_map(m: Dictionary, name: String, data: Dictionary, convert: 
 			# 显式换算：原坐标原锚点 → 像素锚点 → 新格系反算同锚点 → 新坐标。
 			# 只输出结果，调用方据此在副本上验证；本工具永不写原图。
 			var c := _reproject(g, convert_g, anchor, x, y)
-			vec["converted"] = {"projection": convert, "x": c.x, "y": c.y,
+			vec["converted"] = {"projection": target_projection, "x": c.x, "y": c.y,
 				"pxAfter": _anchor_px(convert_g, anchor, c.x, c.y)}
 		(row["objects"] as Array).append(vec)
 	var sp = data.get("spawn", null)

@@ -121,9 +121,9 @@ func fit_width() -> float:
 ## R-10：按声明时间基设刻度/吸附/像素密度（数据形态 at/duration 不变，游戏侧按声明解释单位）
 func set_timebase(tb: String) -> void:
 	timebase = tb if SNAP.has(tb) else "seconds"
-	var scale := float({"seconds": 64.0, "frames": 12.0, "beats": 48.0}[timebase])
-	if scale != _pps:
-		_pps = scale
+	var unit_width := float({"seconds": 64.0, "frames": 12.0, "beats": 48.0}[timebase])
+	if unit_width != _pps:
+		_pps = unit_width
 		_tl_cache_key = ""
 	queue_redraw()
 
@@ -343,13 +343,13 @@ func _visible_rect() -> Rect2:
 	return Rect2(Vector2(scroll.scroll_horizontal, scroll.scroll_vertical), scroll.size)
 
 func _visible_blocks(view: Rect2, first_track: int, last_track: int) -> Array[int]:
-	var visible: Array[int] = []
+	var visible_rows: Array[int] = []
 	for track in range(first_track, last_track + 1):
-		_intervals.query(track, view.position.x, view.end.x, visible)
-	if _drag_idx >= 0 and not visible.has(_drag_idx):
-		visible.append(_drag_idx)
-	visible.sort()
-	return visible
+		_intervals.query(track, view.position.x, view.end.x, visible_rows)
+	if _drag_idx >= 0 and not visible_rows.has(_drag_idx):
+		visible_rows.append(_drag_idx)
+	visible_rows.sort()
+	return visible_rows
 
 func _draw() -> void:
 	var fnt: Font = ThemeDB.fallback_font

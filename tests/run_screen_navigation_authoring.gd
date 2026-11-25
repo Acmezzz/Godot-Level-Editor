@@ -25,7 +25,8 @@ func run() -> void:
 	var project := ProjectSettings.globalize_path("user://screen-navigation-%s" % Time.get_ticks_usec())
 	DirAccess.make_dir_recursive_absolute(project.path_join("editor"))
 	for file in ["project.godot", "main.tscn", "game.gd"]:
-		check(DirAccess.copy_absolute(ProjectSettings.globalize_path("res://tests/screen_game/" + file),
+		var source_file: String = file + ".template" if file == "project.godot" else file
+		check(DirAccess.copy_absolute(ProjectSettings.globalize_path("res://tests/screen_game/" + source_file),
 			project.path_join(file)) == OK, "install the standalone game " + file)
 	var declaration := {"projectName": "Screen Navigation", "directMapTargets": true,
 		"assets": [{"id": "relay", "kind": "entity", "code": "RLY1", "visual": {"mode": "rect", "color": "#62cabb"},

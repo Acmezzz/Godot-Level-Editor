@@ -190,9 +190,9 @@ static func apply(runtime: Dictionary, plan: Dictionary) -> Dictionary:
 				else:
 					layer[key] = value
 			layers.append(layer)
-		var removed: Dictionary = plan.get("removed_layers", {})
+		var removed_layers: Dictionary = plan.get("removed_layers", {})
 		for row: Dictionary in objects:
-			if removed.has(row.get("layer")):
+			if removed_layers.has(row.get("layer")):
 				return {"error": "移除的图层 %s 仍有当前种子的摆放物。" % row.layer}
 		out["objects"] = objects.duplicate(true)
 		if plan.has("spawn"):
@@ -206,7 +206,7 @@ static func apply(runtime: Dictionary, plan: Dictionary) -> Dictionary:
 			if patched_graph.has("error"):
 				return patched_graph
 			out.meta["cellGraph"] = patched_graph.graph
-		elif not removed.is_empty():
+		elif not removed_layers.is_empty():
 			var index := _graph_index(meta.get("cellGraph", {}))
 			if index.is_empty():
 				return {"error": "当前种子的有限格图无效。"}
@@ -389,8 +389,8 @@ static func _graph_links_problem(graph: Dictionary, layers: Array) -> String:
 			return "格图空间 %s 找不到图层 %s。" % [id, layer]
 		var x := _graph_point(row.get("axisX", [1, 0]))
 		var y := _graph_point(row.get("axisY", [0, 1]))
-		var origin := _graph_point(row.get("origin", [0, 0]))
-		var frame := Transform2D(x, y, origin)
+		var space_origin := _graph_point(row.get("origin", [0, 0]))
+		var frame := Transform2D(x, y, space_origin)
 		if (not frame.is_finite() or absf(x.normalized().cross(y.normalized())) < 0.000001
 				or not frame.affine_inverse().is_finite()):
 			return "格图空间 %s 的合并坐标轴不可逆。" % id

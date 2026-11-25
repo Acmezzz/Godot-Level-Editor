@@ -32,7 +32,7 @@ func _run() -> void:
 	# 10000 瓦片的抽取口径（纯数组构造 + JSON 序列化，代理 extract 的序列化成本）
 	var tiles: Array = []
 	for i in 10000:
-		tiles.append([i % 128, i / 128, "A0001", 0, 0, 0])
+		tiles.append([i % 128, floori(i / 128.0), "A0001", 0, 0, 0])
 
 	var t0 := Time.get_ticks_usec()
 	for i in 5000:
@@ -79,7 +79,7 @@ func _run() -> void:
 	var sel := Rect2i(0, 0, 256, 256)
 	var used := {}
 	for i in 10000:
-		used[Vector2i(i % 256, i / 256)] = true
+		used[Vector2i(i % 256, floori(i / 256.0))] = true
 	t0 = Time.get_ticks_usec()
 	var hits_old := 0
 	for li in 3:

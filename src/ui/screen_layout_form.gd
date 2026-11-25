@@ -202,8 +202,8 @@ static func render(form: VBoxContainer, preview: Preview, state: Dictionary) -> 
 			var sp := SpinBox.new()
 			sp.name = "%s_%d" % [key, i]
 			sp.prefix = ["左 ", "上 ", "右 ", "下 "][i]
-			sp.min_value = 0.0 if key == "anchors" else -100000
-			sp.max_value = 1.0 if key == "anchors" else 100000
+			sp.min_value = 0.0 if key == "anchors" else -100000.0
+			sp.max_value = 1.0 if key == "anchors" else 100000.0
 			sp.allow_lesser = key == "offsets"
 			sp.allow_greater = key == "offsets"
 			sp.step = 0.0001 if key == "anchors" else 0.01
@@ -220,12 +220,12 @@ static func render(form: VBoxContainer, preview: Preview, state: Dictionary) -> 
 		var viewport := preview.viewport_size
 		var resolved := Layout.rectangles(preview.elements, viewport, profile, true)
 		var r: Rect2 = resolved[item.id]
-		var reference: Rect2 = resolved.get(item.get("parent", ""), Rect2(Vector2.ZERO, viewport))
+		var parent_rect: Rect2 = resolved.get(item.get("parent", ""), Rect2(Vector2.ZERO, viewport))
 		var a: Array = Layout.geometry_value(item, profile, "anchors", []).duplicate()
 		a[1] = 1.0
 		a[3] = 1.0
 		Layout.set_geometry(item, profile, "anchors", a)
-		Layout.place(item, profile, r, reference)
+		Layout.place(item, profile, r, parent_rect)
 		refresh.call(), "ghost")
 	form.add_child(fixed_bottom)
 	var outlets := Layout.output_labels(state.modules, item) if item.kind == "module" else {}

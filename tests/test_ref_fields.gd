@@ -112,6 +112,8 @@ func test_widget_type_strictness() -> void:
 	ok(mm.ctl is VBoxContainer, "多选标量旧值 → 只读容器")
 	var mm2 := FieldWidgets.build({"kind": "choice", "multiple": true, "options": ["a", "b"]}, ["a"], func(_v): pass)
 	ok(mm2.ctl is VBoxContainer, "多选数组 → 勾选组")
+	for widget in [b, b3, bb, bb2, mm, mm2]:
+		widget.ctl.free()
 
 ## —— C10：数组元素继承范围/选项 ——
 func test_array_elem_inherits_decl() -> void:

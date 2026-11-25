@@ -6,7 +6,6 @@ const EdgeRef := preload("res://src/map/edge_ref.gd")
 const RefFields := preload("res://src/content/ref_fields.gd")
 const ManifestValidation := preload("res://src/project/manifest_validation.gd")
 const ClonePlan := preload("res://src/content/clone_plan.gd")
-const GridSpace := preload("res://src/canvas/grid_space.gd")
 
 ## 无向边：两端点顺序无关，同一格对只得到一条 ID
 func test_canonical_edge_is_undirected() -> void:

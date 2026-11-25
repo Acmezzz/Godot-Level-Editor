@@ -108,13 +108,25 @@
 **未测量项**：编辑帧 P95、拖动/涂刷实时帧、缩略图重建、导出大图耗时——都需要带视口的 GUI 采样，
 本轮按约定不做 GUI 验收，明确留空。
 
-## 接入自检（每次发布前跑）
+## 源码发布验收
+
+在仓库根目录运行（需要 Python 3.8+、Godot 编辑器和可用的图形桌面）：
+
+```powershell
+python tools/release_check.py --godot "C:\path\to\Godot.exe" --logs tools/shots/release-check
+```
+
+入口在干净副本中检查导入、语言服务器诊断、源码编译、数据单测、刷怪试点和四套图形工作流。每套用例必须正常退出并给出通过摘要；Godot 日志中的运行时错误或警告也判失败。日志保存在 `--logs` 指定的目录。导出 EXE 后，在目标机器上验证启动及打开工程属于单独的发行包验收。
+
+2026-11-25，Windows / Godot 4.7.2：干净导入通过，155 份脚本诊断为零，113 份源码编译通过，258 项单测与刷怪试点的 24 项断言通过。综合作者流程、卡牌、运输网络和屏幕导航四套图形验收均为零失败，验收入口以退出码 0 完成。
+
+按需运行的局部检查与性能采样：
 
 ```
-godot --headless --path . --script res://tools/f2_pilot.gd        # §3 刷怪片段端到端，24 项断言，跑完自清
+godot --headless --path . --script res://tools/f2_pilot.gd        # §3 刷怪片段端到端
 godot --headless --path . --script res://tools/projection_baseline.gd -- <项目目录> [--out=<文件>]
-godot --headless --path . --script res://tests/run_tests.gd       # 全套件 262 用例
-godot --headless --path . --script res://tools/warn_scan.gd       # 全量加载 + 警告扫描
+godot --headless --path . --script res://tests/run_tests.gd       # 数据层回归
+godot --headless --path . --script res://tools/warn_scan.gd       # 源码加载和编译
 godot --headless --path . --script res://tools/perf_sample.gd     # §7.5 性能采样（数字见上）
 ```
 

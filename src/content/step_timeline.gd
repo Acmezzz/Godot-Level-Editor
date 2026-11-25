@@ -101,10 +101,10 @@ static func _tracks_by_start(tl: Array) -> Dictionary:
 		var e: Dictionary = tl[i]
 		if float(e.get("duration", 0.0)) <= 0.0:
 			continue
-		var tr := int(e.get("track", 0))
-		if not by_track.has(tr):
-			by_track[tr] = []
-		(by_track[tr] as Array).append(i)
+		var track_index := int(e.get("track", 0))
+		if not by_track.has(track_index):
+			by_track[track_index] = []
+		(by_track[track_index] as Array).append(i)
 	for idxs: Array in by_track.values():
 		idxs.sort_custom(func(a, b): return float(tl[a].at) < float(tl[b].at))
 	return by_track

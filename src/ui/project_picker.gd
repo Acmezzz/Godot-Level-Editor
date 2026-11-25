@@ -25,9 +25,6 @@ var cur_project_dir:
 var manifest:
 	get: return host.manifest
 	set(v): host.manifest = v
-var _ent_thumbs_cache:
-	get: return host._ent_thumbs_cache
-	set(v): host._ent_thumbs_cache = v
 
 ## 同名包装方法（真实实现经 host 转发）
 func show_picker(err := "") -> void:

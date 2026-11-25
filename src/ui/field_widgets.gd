@@ -114,7 +114,10 @@ static func default_for(decl: Dictionary) -> Variant:
 			var lo := float(decl.get("min", 0.0))
 			return [lo, lo, lo] if dims == 3 else [lo, lo]
 		"color": return "#ffffff"
-		"choice": return [] if bool(decl.get("multiple", false)) else ""
+		"choice":
+			if bool(decl.get("multiple", false)):
+				return []
+			return ""
 		"array", "curve": return []
 		"record", "condition", "port_ref", "edge_ref", "flow_target": return {}
 		_: return ""
@@ -411,7 +414,8 @@ static func _build_object_reference(decl: Dictionary, value: Variant, source: St
 		box.add_child(map)
 	var value_box := Kit.vbox(3)
 	box.add_child(value_box)
-	var state := {"target": current, "commit": Callable()}
+	var state := {"target": current}
+	var target_commit: Array[Callable] = [Callable()]
 	var render := func():
 		for old in value_box.get_children():
 			value_box.remove_child(old)
@@ -428,7 +432,7 @@ static func _build_object_reference(decl: Dictionary, value: Variant, source: St
 			func(raw: String): return apply.call(decode.call(raw)), resolve)
 		field.ctl.name = "ReferenceTargetValue"
 		value_box.add_child(field.ctl)
-		state.commit = field.commit
+		target_commit[0] = field.commit
 		if edge:
 			_add_edge_coordinates(value_box, scoped, state.target, resolve, func(next: Dictionary):
 				var opt: OptionButton = field.ctl
@@ -444,7 +448,7 @@ static func _build_object_reference(decl: Dictionary, value: Variant, source: St
 	render.call()
 	if map != null:
 		map.item_selected.connect(func(_i: int): render.call())
-	return {"ctl": box, "commit": func(): return state.commit.call()}
+	return {"ctl": box, "commit": func(): return target_commit[0].call()}
 
 static func _add_edge_coordinates(box: VBoxContainer, decl: Dictionary, value: Dictionary,
 		resolve: Callable, apply: Callable) -> void:
@@ -485,16 +489,13 @@ static func _build_array(decl: Dictionary, items: Array, on_set: Callable,
 	var elem := RefFields.array_element_decl(decl)
 	var rec := str(elem.get("type", "")) in ["record", "condition"]
 	var ordered := ordered_frame_pick(decl)
-	var wrap := VBoxContainer.new()
-	wrap.set_meta("array_field", str(decl.get("id", "")))
-	wrap.add_theme_constant_override("separation", 4)
+	var panel := VBoxContainer.new()
+	panel.set_meta("array_field", str(decl.get("id", "")))
+	panel.add_theme_constant_override("separation", 4)
 	var rows_box := VBoxContainer.new()
 	rows_box.add_theme_constant_override("separation", 4)
-	wrap.add_child(rows_box)
+	panel.add_child(rows_box)
 	var rows: Array = []
-	# 行工具共享可变状态（字典按引用捕获）；必须在这里**填好**再建行——
-	# 以前是空字典，↑/↓/复制 拿到空 rows/box，全部静默无效（V4 P1）。
-	var ctx := {}
 	var collect := func() -> Array:
 		var out: Array = []
 		for r in rows:
@@ -512,25 +513,29 @@ static func _build_array(decl: Dictionary, items: Array, on_set: Callable,
 		return save.call()
 	var done := func(): commit.call()
 	var add_row := func(v, at := -1) -> void:
-		var r := {"state": {"v": v}, "commit": Callable(), "line": null}
-		var line: BoxContainer = VBoxContainer.new() if rec else HBoxContainer.new()
-		line.add_theme_constant_override("separation", 4)
+		var state := {"v": v}
+		var r := {"state": state, "commit": Callable(), "line": null}
+		var line: BoxContainer
+		if rec:
+			line = Kit.vbox(4)
+		else:
+			line = Kit.hbox(4)
 		var nested_frame_pick := Callable()
 		if frame_pick.is_valid():
 			nested_frame_pick = func(row: Control, fd: Dictionary, pair: Callable, set_value: Callable, read: Callable):
 				frame_pick.call(row, fd, pair, func(v2):
 					return bool(set_value.call(v2)) and save.call(), read)
-		var built := build(elem, v, func(v2): (r.state as Dictionary)["v"] = v2, option_resolver, key_mode, nested_frame_pick)
-		r["commit"] = built.commit
+		var row_field := build(elem, v, func(v2): state["v"] = v2, option_resolver, key_mode, nested_frame_pick)
+		r["commit"] = row_field.commit
 		var tools: BoxContainer = line
 		if rec:
 			tools = Kit.hbox(4)
 			tools.alignment = BoxContainer.ALIGNMENT_END
-			tools.add_child(_row_tools(ctx, r))
+			tools.add_child(_row_tools(rows, rows_box, r, done))
 			line.add_child(tools)
-		line.add_child(built.ctl)
+		line.add_child(row_field.ctl)
 		if ordered or RefFields.is_ordered_choice(decl) or elem.get("type") == "flow_target":
-			tools.add_child(_row_tools(ctx, r))
+			tools.add_child(_row_tools(rows, rows_box, r, done))
 		var del := Button.new()
 		del.text = "×"
 		del.focus_mode = Control.FOCUS_NONE
@@ -551,10 +556,8 @@ static func _build_array(decl: Dictionary, items: Array, on_set: Callable,
 			rows_box.add_child(line)
 			rows_box.move_child(line, at)
 		r["line"] = line
-	ctx["rows"] = rows
-	ctx["box"] = rows_box
-	ctx["done"] = done
-	ctx["add"] = add_row
+	# The rows node owns the insertion callback, so its closure can't retain itself.
+	rows_box.set_meta("add_row", add_row)
 	for v in items:
 		add_row.call(v)
 	var add := Button.new()
@@ -563,23 +566,19 @@ static func _build_array(decl: Dictionary, items: Array, on_set: Callable,
 	add.pressed.connect(func():
 		add_row.call(default_for(elem))
 		done.call())
-	wrap.add_child(add)
-	var built := {"ctl": wrap, "commit": commit}
+	panel.add_child(add)
+	var built := {"ctl": panel, "commit": commit}
 	if ordered:
 		built["pick_values"] = collect
 	return built
 
-## C1：记录行工具组（复制/上移/下移）。ctx = {"rows", "box", "add", "done"}。
-## GDScript lambda 按值捕获局部变量，行操作需要共享可变状态，统一走 ctx 字典（字典按引用捕获）。
-static func _row_tools(ctx: Dictionary, r: Dictionary) -> Control:
+## C1：记录行工具组（复制/上移/下移）。
+static func _row_tools(rows: Array, box: Control, r: Dictionary, done: Callable) -> Control:
 	var tools := HBoxContainer.new()
 	tools.add_theme_constant_override("separation", 2)
-	var rows: Array = ctx.get("rows", [])
-	var box: Control = ctx.get("box", null)
-	var done: Callable = ctx.get("done", Callable())
 	var up := Kit.button("↑", func(): _row_move(rows, box, r, -1, done))
 	var down := Kit.button("↓", func(): _row_move(rows, box, r, 1, done))
-	var cp := Kit.button("复制", func(): _row_dup(ctx, r, done))
+	var cp := Kit.button("复制", func(): _row_dup(rows, box, r, done))
 	tools.add_child(up)
 	tools.add_child(down)
 	tools.add_child(cp)
@@ -599,8 +598,7 @@ static func _row_move(rows: Array, box: Control, r: Dictionary, dir: int, done: 
 	done.call()
 
 ## 复制行：先 commit 该行连续控件，深拷贝当前值插到下一行（记录行字典深拷贝，脱离引用）。
-static func _row_dup(ctx: Dictionary, r: Dictionary, done: Callable) -> void:
-	var rows: Array = ctx.get("rows", [])
+static func _row_dup(rows: Array, box: Control, r: Dictionary, done: Callable) -> void:
 	var i: int = rows.find(r)
 	if i < 0:
 		return
@@ -609,7 +607,7 @@ static func _row_dup(ctx: Dictionary, r: Dictionary, done: Callable) -> void:
 		c.call()
 	var v = (r as Dictionary).get("state", {}).get("v")
 	var copy = v.duplicate(true) if (v is Dictionary or v is Array) else v
-	(ctx.get("add", Callable()) as Callable).call(copy, i + 1)
+	(box.get_meta("add_row") as Callable).call(copy, i + 1)
 	done.call()
 
 ## 条件参数存入各行自己的 fields；未选择或过期的条件不会自动替换。
@@ -633,7 +631,8 @@ static func _build_condition_row(decl: Dictionary, value: Variant, on_set: Calla
 			choices[id] = option
 			picker.add_item(str(option.name))
 			picker.set_item_metadata(picker.item_count - 1, id)
-	var state := {"row": value.duplicate(true), "params": Callable()}
+	var state := {"row": value.duplicate(true)}
+	var param_commit: Array[Callable] = [Callable()]
 	var push := _value_commit(func(): return state.row.duplicate(true), value.duplicate(true), on_set)
 	var initial := str(value.get("condition", ""))
 	var selected := 0
@@ -647,7 +646,7 @@ static func _build_condition_row(decl: Dictionary, value: Variant, on_set: Calla
 		picker.set_item_disabled(selected, true)
 	picker.select(selected)
 	var render := func():
-		state.params = Callable()
+		param_commit[0] = Callable()
 		for child in params.get_children():
 			params.remove_child(child)
 			child.queue_free()
@@ -673,7 +672,7 @@ static func _build_condition_row(decl: Dictionary, value: Variant, on_set: Calla
 				state.row["fields"] = fields
 				return push.call(), resolve, "code", frame_pick)
 			params.add_child(built.ctl)
-			state.params = built.commit
+			param_commit[0] = built.commit
 	render.call()
 	picker.item_selected.connect(func(i: int):
 		var id := str(picker.get_item_metadata(i))
@@ -691,7 +690,7 @@ static func _build_condition_row(decl: Dictionary, value: Variant, on_set: Calla
 			return
 		render.call())
 	return {"ctl": box, "commit": func() -> bool:
-		var commit: Callable = state.params
+		var commit: Callable = param_commit[0]
 		if commit.is_valid() and not bool(commit.call()):
 			return false
 		return bool(push.call())}
@@ -745,7 +744,7 @@ static func _build_record(decl: Dictionary, value, on_set: Callable,
 ## choice：options[] 声明（或 source 动态解析）→ 单选 OptionButton / multiple 勾选组。
 ## 值不在选项里时保留原值并额外插一条「(当前值)」——绝不静默改成第一项。
 static func _build_choice(decl: Dictionary, value, on_set: Callable,
-		option_resolver: Callable, key_mode := "id") -> Dictionary:
+		option_resolver: Callable, _key_mode := "id") -> Dictionary:
 	if bool(decl.get("multiple", false)):
 		return _build_choice_multi(decl, value, on_set, option_resolver)
 	var opts: Array = []
@@ -893,7 +892,7 @@ static func _build_viewport_ref(decl: Dictionary, value, on_set: Callable, optio
 		value = {}
 	var cur: Dictionary = (value as Dictionary).duplicate(true)
 	var commit := _value_commit(func(): return cur.duplicate(true), cur.duplicate(true), on_set)
-	var wrap := Kit.vbox(4)
+	var panel := Kit.vbox(4)
 	var d2: Dictionary = decl.duplicate(true)
 	d2["kind"] = KIND_CHOICE
 	d2["source"] = "viewport:"
@@ -907,10 +906,10 @@ static func _build_viewport_ref(decl: Dictionary, value, on_set: Callable, optio
 		if not cur.has(key):
 			cur[key] = fallback.duplicate()
 		return commit.call(), option_resolver)
-	wrap.add_child(vpb.ctl)
+	panel.add_child(vpb.ctl)
 	# 归一化坐标 0..1：point 两轴 / rect 四轴（SpinBox 即改即写，幂等由下游保证）
 	if not arr is Array or arr.size() != dims or not arr.all(func(v): return (v is int or v is float) and is_finite(float(v)) and float(v) >= 0.0 and float(v) <= 1.0):
-		wrap.free()
+		panel.free()
 		return _readonly(value, "画幅坐标格式无效", "保留原值，修正源数据后重读")
 	var row := Kit.hbox(4)
 	for d in dims:
@@ -927,5 +926,5 @@ static func _build_viewport_ref(decl: Dictionary, value, on_set: Callable, optio
 			cur[key] = a2
 			commit.call())
 		row.add_child(sp)
-	wrap.add_child(row)
-	return {"ctl": wrap, "commit": commit}
+	panel.add_child(row)
+	return {"ctl": panel, "commit": commit}

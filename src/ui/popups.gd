@@ -2,11 +2,14 @@ extends RefCounted
 ## Popups：统一弹窗外壳与快捷键速查（从 editor_layout.gd 拆出，宿主 = editor_layout）
 
 
-var host   # editor_layout 宿主
+# editor_layout 持有该子控制器；反向只保留弱引用，切换项目时可释放。
+var _host_ref: WeakRef
+var host:
+	get: return _host_ref.get_ref()
 var app    # 根应用（= host.app）
 
 func _init(h) -> void:
-	host = h
+	_host_ref = weakref(h)
 	app = h.app
 
 ## 统一的弹窗挂载：挂到窗口根（不再挂进资产栏，避免被布局裁切与节点泄漏），
@@ -46,7 +49,7 @@ func _open_popup(pop: PopupPanel, size := Vector2i.ZERO, parent: Window = null) 
 		if pop.visible and not pop.is_queued_for_deletion():
 			var wanted: Vector2i = measure.call()
 			if wanted.x > pop.size.x or wanted.y > pop.size.y:
-				var centered := pop.position + (pop.size - wanted) / 2
+				var centered := pop.position + Vector2i(Vector2(pop.size - wanted) * 0.5)
 				pop.size = wanted
 				var limit := Vector2i(app.get_viewport_rect().size) - wanted - Vector2i(8, 8)
 				pop.position = centered.clamp(Vector2i(8, 8), limit.max(Vector2i(8, 8)))

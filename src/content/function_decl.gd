@@ -121,13 +121,13 @@ static func new_binding_id(rows: Array) -> String:
 	return id
 
 ## -1 = absent, -2 = ambiguous. A single legacy unmarked row is the inherited binding.
-static func mounted_index(rows: Array, fn_code: String) -> int:
+static func mounted_index(rows: Array, execution_code: String) -> int:
 	var matched := -1
 	var marked := -1
 	var count := 0
 	for i in rows.size():
 		var row = rows[i]
-		if not row is Dictionary or str(row.get("fn", "")) != fn_code:
+		if not row is Dictionary or str(row.get("fn", "")) != execution_code:
 			continue
 		matched = i
 		count += 1

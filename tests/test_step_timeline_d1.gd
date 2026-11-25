@@ -126,7 +126,7 @@ func test_warnings_cap_quadratic_overlap() -> void:
 	eq(w.size(), StepTimeline.MAX_WARNINGS + 1, "截断到上限 + 1 条汇总行")
 	ok(str(w[w.size() - 1]).contains("另有"), "末行说明剩余数量：%s" % str(w[w.size() - 1]))
 	var all := StepTimeline.warnings(steps, 0)
-	eq(all.size(), 40 * 39 / 2, "limit=0 时不截断（40 步全重叠 = 780 对）")
+	eq(all.size(), 780, "limit=0 时不截断（40 步全重叠 = 780 对）")
 	eq(StepTimeline.warnings([{"step": "A", "duration": 1}]).size(), 0, "单步无警告")
 
 ## 净化：from_timeline 剥缺省键，未知键与 fields 不动

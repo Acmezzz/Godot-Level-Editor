@@ -9,13 +9,16 @@ const TriggerDecls := preload("res://src/content/trigger_decl.gd")
 const ORD := ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨"]
 const RIGHT_W := 360
 
-var host   # content_editor 宿主
+# content_editor 持有该子控制器；反向只保留弱引用，切换项目时可释放。
+var _host_ref: WeakRef
+var host:
+	get: return _host_ref.get_ref()
 var app    # 根应用（= host.app）
 var _render_generation := 0
 var _menu_guard := {}
 
 func _init(h) -> void:
-	host = h
+	_host_ref = weakref(h)
 	app = h.app
 
 ## 同名转发属性（读写穿透到宿主，保住搬动文本零改动）
@@ -326,10 +329,16 @@ func _set_parallel(tok: Dictionary, v: bool) -> void:
 	_patch_setting(tok, "parallel", v)
 
 func _set_trigger(tok: Dictionary, code: String) -> void:
-	_patch_setting(tok, "trigger", null if code == "" else code)
+	var trigger: Variant = code
+	if code.is_empty():
+		trigger = null
+	_patch_setting(tok, "trigger", trigger)
 
 func _set_enabled(tok: Dictionary, v: bool) -> void:
-	_patch_setting(tok, "enabled", null if v else false)
+	var setting: Variant = null
+	if not v:
+		setting = false
+	_patch_setting(tok, "enabled", setting)
 
 func _delete_fn(i: int) -> void:
 	var spr := _current_spr()

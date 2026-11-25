@@ -890,8 +890,11 @@ func _w_for(n: EntityNode) -> Vector2:
 	return lp if li < 0 else to_layer_world(li, lp)
 ## E1 临时选点：非空 = 画布处于「为引用字段挑目标」模式，只高亮不写数据。
 ## 目标码只在宿主点「确认」时才提交；取消/Esc 什么都不改（选中也不动）。
+# 选点信号由 canvas_input.gd 触发，画布只声明信号。
+@warning_ignore("unused_signal")
 signal pick_mode_picked(code: String)
 ## E1：右键在选点模式里 = 取消（单独一条信号：空码是合法提交值，不能和取消混用）
+@warning_ignore("unused_signal")
 signal pick_mode_cancelled
 var pick_mode_active := false
 var pick_mode_code := ""       # 已点中的候选实例码（"" = 还没点；确认提交的就是它）
@@ -906,6 +909,7 @@ var _clipboard: Array = []       # 实例复制模板 [{asset, code, dx, dy, tra
 var _clipboard_source := {}      # 源图身份和复制时的内容工作副本
 var _region_sel := Rect2i(-1, 0, 0, 0)  # 区域框选结果（瓦片层 Ctrl+C 用）
 var _region_layer := ""  # 非空表示选区格号属于该瓦片层，而不是地图根空间。
+@warning_ignore("unused_private_class_variable")
 var _region_clip := {}           # 区域快照 {tiles:{层id:[...]}, collision[], entities[], size}
 var _paste_mode := false         # 区域粘贴预览态（幽灵跟随鼠标）
 # 区域拖动搬迁（框选后按住区内拖动）：按下只快照，松手才擦源写目标
@@ -940,6 +944,7 @@ var _link_handle := Vector2.ZERO
 var _link_fd_types: Array = []
 @warning_ignore("unused_private_class_variable")
 var _link_can_clear := false
+@warning_ignore("unused_private_class_variable")
 var _last_copy_region := false   # 最近一次复制是区域还是实体（Ctrl+V 分发）
 
 # —— 选择提交入口（E09）——
@@ -957,9 +962,9 @@ func commit_selection(n: EntityNode, multi: Array = []) -> void:
 ## want_types（E2）：声明的 of 白名单；非空时候选只认这些资产类型——与连线把手同一判据，
 ## 不让「画布选…」点到一个字段收不下的目标。
 ## accept == "cell"（C4）：候选不是实例而是有限格图的 cell_id（多边形命中）。
-func begin_pick_mode(owner: String, accept: String, hint: String, want_types: Array = []) -> void:
+func begin_pick_mode(pick_owner: String, accept: String, hint: String, want_types: Array = []) -> void:
 	pick_mode_active = true
-	pick_mode_owner = owner
+	pick_mode_owner = pick_owner
 	pick_mode_accept = accept if accept in ["any", "cell", "edge", "port"] else "entity"
 	pick_mode_code = ""
 	pick_mode_hover = ""
@@ -1534,16 +1539,23 @@ var _drag_grab := Vector2.ZERO
 var _drag_moved := false
 var _resize_node: EntityNode = null   # R-04 尺寸把手拖拽的目标实例（带 sizeFields）
 var _resize_orig: Dictionary = {}     # 起手时的 {wf, hf, w, h}
+@warning_ignore("unused_private_class_variable")
 var _resize_origin := Vector2.ZERO    # 起手时 rect 左上角快照（center 锚点下 rect 原点随尺寸漂移，必须冻结）
 var _resize_moved := false
+@warning_ignore("unused_private_class_variable")
 var _vertex_node: EntityNode = null   # R-02 顶点把手拖拽的目标实例（poly/path）
+@warning_ignore("unused_private_class_variable")
 var _vertex_key := Vector2i(-1, -1)    # (环, 点)
+@warning_ignore("unused_private_class_variable")
 var _vertex_orig: Dictionary = {}     # 取消时恢复原始属性，包括未显式写入的缺省点集
+@warning_ignore("unused_private_class_variable")
 var _vertex_rings: Array = []         # 起手的解析点集
 ## 出生点拖动起手位置（E05：起手中断要能归位，不能留在半途格）
 var _spawn_origin := Vector2.ZERO
 ## 笔画上一格（E13）：快速涂/擦时鼠标事件会跳格，逐帧按格路径补涂中间格
+@warning_ignore("unused_private_class_variable")
 var _stroke_last_cell := Vector2i.ZERO
+@warning_ignore("unused_private_class_variable")
 var _stroke_has_last := false
 ## 涂刷笔画的撤销快照推迟到首个真实改动前才压（点击不动 = 零副作用，与出生点拖动同模式）
 ## 笔画撤销覆盖标记：true = 本手势已有撤销覆盖（差量记录开启或已压快照）

@@ -339,18 +339,21 @@ func apply_tile_layer_copy(plan: Dictionary) -> bool:
 	return true
 
 func layer_set_param(i: int, key: String, v) -> void:
-	var value: Variant
+	var value: Variant = null
 	match key:
 		"ySort":
-			value = true if bool(v) else null
+			if bool(v):
+				value = true
 		"parallax", "scale":
 			var factor := float(v)
 			if key == "scale" and factor <= 0.0:
 				return
-			value = null if is_equal_approx(factor, 1.0) else factor
+			if not is_equal_approx(factor, 1.0):
+				value = factor
 		"offset":
 			var offset: Vector2 = v
-			value = null if offset.is_zero_approx() else [offset.x, offset.y]
+			if not offset.is_zero_approx():
+				value = [offset.x, offset.y]
 		_:
 			return
 	await _set_layer_field(i, key, value)

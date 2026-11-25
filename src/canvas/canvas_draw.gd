@@ -104,9 +104,9 @@ func _draw() -> void:
 		else:
 			# 瓦片 / 碰撞层：笔刷范围轮廓 + 中心格瓦片幽灵（碰撞层不画瓦片图，只画范围）
 			var bcell := Vector2i(c.x - cvs.brush_size / 2, c.y - cvs.brush_size / 2)
-			var bpoly: PackedVector2Array = layer_frame * paint_grid.grid_polygon(bcell, bcell + Vector2i(cvs.brush_size, cvs.brush_size))
+			var brush_poly: PackedVector2Array = layer_frame * paint_grid.grid_polygon(bcell, bcell + Vector2i(cvs.brush_size, cvs.brush_size))
 			var tint := Color(1.0, 0.45, 0.45, 0.55) if cvs._is_grid_layer(cvs.active_layer) else Color(1, 1, 1, 0.5)
-			cvs.draw_polyline(bpoly + PackedVector2Array([bpoly[0]]), tint, 1.0, true)
+			cvs.draw_polyline(brush_poly + PackedVector2Array([brush_poly[0]]), tint, 1.0, true)
 			# 无图集（headless 测试/清单缺图）时不画幽灵，避免 draw_texture_rect_region 空纹理警告
 			if not cvs._is_grid_layer(cvs.active_layer):
 				# 笔刷幽灵跟 paint_asset 走（多图集项目不再画成 0 号图集的错图）
@@ -153,7 +153,6 @@ func _draw() -> void:
 		var n := e as EntityNode
 		if n == null or n.asset == "":
 			continue
-		var sid := n.asset
 		var props: Dictionary = n.props
 		var wp := _w(n)
 		# 同图引用连线

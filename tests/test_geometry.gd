@@ -26,6 +26,9 @@ func test_visual_type_and_points() -> void:
 	var rn: EntityNode = _node("rect_e")
 	eq(rn.visual_type(), "rect", "缺省 rect")
 	eq(rn.points_local().size(), 0, "rect 资产无点集")
+	pn.free()
+	ptn.free()
+	rn.free()
 
 func test_points_write_roundtrip() -> void:
 	var pn: EntityNode = _node("poly_e")
@@ -36,6 +39,7 @@ func test_points_write_roundtrip() -> void:
 	eq(pn.points_local()[1], Vector2(-3.0, 0.0), "读回 Vector2")
 	pn.props["points"] = [[0, 0], ["bad", 1], [8, 8], [1, 2, 3]]
 	eq(pn.points_local().size(), 3, "畸形点过滤：非数值对剔除、三元素宽容取前两")
+	pn.free()
 
 func test_poly_view_attach() -> void:
 	var pn: EntityNode = _node("poly_e")
@@ -44,6 +48,9 @@ func test_poly_view_attach() -> void:
 	ok(rn.get_node_or_null("PolyView") == null, "rect 资产不挂")
 	var ptn: EntityNode = _node("path_e")
 	ok(ptn.get_node_or_null("PolyView") != null, "path 资产自动挂 PolyView")
+	pn.free()
+	rn.free()
+	ptn.free()
 
 ## B2：实例几何（含旋转/缩放）——contains_point/aabb 与视觉一致（E10）
 func test_entity_geometry_rotated() -> void:
@@ -73,6 +80,7 @@ func test_entity_geometry_rotated() -> void:
 	rn.data_transform.erase("rotation")
 	rn.refresh_visual()
 	ok(rn.transform_is_default(), "清空后回到缺省变换")
+	rn.free()
 
 ## B2/E11：排序点偏移——position 含 sortAnchor，视觉矩形反向扣回（贴图不漂移）
 func test_sort_anchor() -> void:
@@ -87,6 +95,7 @@ func test_sort_anchor() -> void:
 	ok(absf(g.x - 2.0) < 0.001 and absf(g.y - 3.0) < 0.001, "数据格坐标不含排序点偏移：%s" % str(g))
 	rn.set_sort_anchor(Vector2.ZERO)
 	ok(not rn.raw.has("sortAnchor"), "归零删键（零冗余）")
+	rn.free()
 
 ## B2/E06：编辑器可见性 setter 同步旗标（未进树时不碰节点）
 func test_visible_flag_roundtrip() -> void:
@@ -95,3 +104,4 @@ func test_visible_flag_roundtrip() -> void:
 	rn.visible_flag = false
 	eq(rn.visible_flag, false, "写入可见性")
 	ok(rn.get_meta("visible") == false, "落盘读取口径（meta）同步")
+	rn.free()

@@ -578,7 +578,10 @@ static func _remap_scoped_link(field: Dictionary, key: String, values: Dictionar
 		else:
 			var id: String = scope.scoped_ids.get(content_key(address.function, address.content), "")
 			if id != "":
-				entries[i] = {"function": address.function, "content": id} if mixed else id
+				if mixed:
+					entries[i] = {"function": address.function, "content": id}
+				else:
+					entries[i] = id
 				changed = true
 	if changed:
 		values[key] = entries if value is Array else entries[0]
@@ -657,9 +660,9 @@ static func _copied_map_target(value: Variant, codes: Dictionary, instances: Dic
 
 static func _remap_flow_map(field: Dictionary, key: String, values: Dictionary, scope: Dictionary, instances: Dictionary) -> void:
 	var value = values.get(key, field.get("default"))
-	var remap := func(target: Variant):
+	var remap_target := func(target: Variant):
 		return _copied_map_target(target, scope.get("map_copy", {}), instances, scope.get("whole_map", false))
-	var mapped = value.map(remap) if value is Array else remap.call(value)
+	var mapped = value.map(remap_target) if value is Array else remap_target.call(value)
 	if mapped != value:
 		values[key] = mapped
 

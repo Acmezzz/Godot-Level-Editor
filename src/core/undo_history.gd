@@ -45,11 +45,16 @@ func push_undo(clone_contents := []) -> void:
 	var snap := _snapshot()
 	if snap == "{}":
 		return   # 重建窗口哨兵（extract 返回 {}）：恢复它=清空整图，拒绝入栈
-	_push_entry(snap if clone_contents.is_empty() else {"snapshot": snap, "clone_contents": clone_contents})
+	if clone_contents.is_empty():
+		_push_entry(snap)
+	else:
+		_push_entry({"snapshot": snap, "clone_contents": clone_contents})
 
 func _mirror_snapshot(entry: Variant) -> Variant:
 	var snap := _snapshot()
-	return {"snapshot": snap, "clone_contents": entry.clone_contents} if entry is Dictionary else snap
+	if entry is Dictionary:
+		return {"snapshot": snap, "clone_contents": entry.clone_contents}
+	return snap
 
 ## 差量条目入栈（H01/§7.5 阶段二共用）：新操作一律清空 redo。
 func _push_entry(entry: Variant) -> void:
@@ -229,7 +234,9 @@ func inst_commit(before: Dictionary, merge := false, nudge := false) -> bool:
 		var k := str(k0)
 		var b = before[k]
 		var cur = idx.get(k, null)
-		var ar = null if cur == null or not is_instance_valid(cur) else _object_row(cur as EntityNode)
+		var ar: Variant = null
+		if is_instance_valid(cur):
+			ar = _object_row(cur as EntityNode)
 		if _rows_equal(b, ar):
 			continue
 		ops.append({"op": "del" if ar == null else "upd", "key": k, "before": b, "after": ar})
@@ -566,7 +573,9 @@ func _tile_layer(lid: String) -> TileMapLayer:
 func _tile_state(lid: String, tn: TileMapLayer, c: Vector2i):
 	if tn == null or tn.get_cell_source_id(c) == -1:
 		var row: Array = cvs.unresolved_tile(lid, c)
-		return null if row.is_empty() else row.duplicate(true)
+		if row.is_empty():
+			return null
+		return row.duplicate(true)
 	var ac: Vector2i = tn.get_cell_atlas_coords(c)
 	return [c.x, c.y, cvs.asset_of_source(tn.get_cell_source_id(c)), ac.x, ac.y,
 		MapFormat.alt_of_godot(tn.get_cell_alternative_tile(c))]

@@ -86,21 +86,21 @@ static func apply(plan: Dictionary) -> Dictionary:
 static func recover_log(plan: Dictionary) -> void:
 	var logs := Recovery.scan_pending(plan.manifest)
 	logs.reverse()
-	for log in logs:
-		if log.data.get("entries", []) == plan.entries:
-			plan["log_path"] = log.path
+	for receipt in logs:
+		if receipt.data.get("entries", []) == plan.entries:
+			plan["log_path"] = receipt.path
 			return
 		if plan.path == "" or plan.old_path != "":
 			continue
 		# A revised map can resume its content writes, but only against proven receipts.
 		var current_map: Dictionary = plan.entries.back()
-		if not log.entries.any(func(entry):
+		if not receipt.entries.any(func(entry):
 			return entry.path == plan.path and entry.get("op", "write") == "write" \
 				and entry.baseline == current_map.baseline):
 			continue
 		var received := {}
 		var resumed := false
-		for entry in log.entries:
+		for entry in receipt.entries:
 			if entry.path != plan.path and (entry.state == "written" \
 					or (entry.state == "pending" and entry.has("original_baseline"))):
 				received[entry.path] = entry
@@ -118,7 +118,7 @@ static func recover_log(plan: Dictionary) -> void:
 			row["baseline"] = digest
 			row["expect_absent"] = false
 		if resumed:
-			plan["prior_log"] = log.path
+			plan["prior_log"] = receipt.path
 			return
 
 static func preflight(plan: Dictionary) -> Dictionary:

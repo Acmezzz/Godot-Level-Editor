@@ -92,6 +92,7 @@ static func open(app, view_id := "", jump := {}) -> void:
 		"image_assets": Layout.image_assets(source), "project_dir": str(source.get("_dir", "")),
 		"render_revision": 0, "modules": Layout.modules(source), "module_commits": [], "manifest": source, "app": app,
 		"resolve_options": app.project_shell.content_editor._form._resolve_options.bind(true, true)}
+	pop.tree_exited.connect(func(): state.module_commits.clear())
 	var game_render := Kit.button("游戏渲染预览", Callable(), "ghost")
 	game_render.name = "GameRenderPreview"
 	game_render.disabled = not GamePreview.supports(source, "screenLayout")
@@ -143,18 +144,18 @@ static func open(app, view_id := "", jump := {}) -> void:
 			return
 		target.disabled = false
 		var raw_target = preview.hotspots[preview.selected].get("target")
-		var current: Dictionary = raw_target if raw_target is Dictionary else {}
-		var selected := 0
+		var active_target: Dictionary = raw_target if raw_target is Dictionary else {}
+		var selected_option := 0
 		for option in state.targets:
 			target.add_item(option.label)
 			target.set_item_metadata(target.item_count - 1, option.value)
-			if current == option.value:
-				selected = target.item_count - 1
-		if selected == 0 and not current.is_empty():
+			if active_target == option.value:
+				selected_option = target.item_count - 1
+		if selected_option == 0 and not active_target.is_empty():
 			target.add_item("（保留原有游戏目标）")
-			selected = target.item_count - 1
-			target.set_item_disabled(selected, true)
-		target.select(selected)
+			selected_option = target.item_count - 1
+			target.set_item_disabled(selected_option, true)
+		target.select(selected_option)
 	var refill_hotspots := func(index: int):
 		preview.selected = index
 		hotspot.clear()

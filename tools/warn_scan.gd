@@ -1,5 +1,6 @@
 extends SceneTree
-## 工具：headless 全量加载 src/ 下所有 .gd，让分析器警告打到 stdout。
+## 工具：headless 全量加载 src/ 下所有 .gd，检查入口和依赖是否能编译。
+## 编辑器级 GDScript 警告由 release_check.py 通过 Godot 语言服务器单独读取。
 ## 用法：godot --headless --path . --script res://tools/warn_scan.gd
 
 func _init() -> void:
@@ -19,8 +20,8 @@ func _init() -> void:
 	var fails := 0
 	for f in files:
 		var s = load(f)
-		if s == null:
+		if not s is GDScript or not s.can_instantiate():
 			print("LOAD-FAIL ", f)
 			fails += 1
 	print("SCAN-DONE files=%d fails=%d" % [files.size(), fails])
-	quit(0)
+	quit(0 if not files.is_empty() and fails == 0 else 1)

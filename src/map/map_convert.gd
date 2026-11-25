@@ -5,7 +5,6 @@ extends RefCounted
 ## 因此原样保留并逐项报数，由制作者在副本里核对或清空。
 ## 本模块不写盘、不改入参：新图名、新地图码与副本的实例/内容身份由 C2 管线（duplicate_map）发行。
 
-const GridSpace := preload("res://src/canvas/grid_space.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
 
 const PRESETS := ["orthogonal", "isometric", "hexagonal"]

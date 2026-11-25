@@ -18,7 +18,8 @@ func run() -> void:
 	var project := ProjectSettings.globalize_path("user://network-authoring-%s" % Time.get_ticks_usec())
 	DirAccess.make_dir_recursive_absolute(project.path_join("editor"))
 	for file in ["project.godot", "game.gd"]:
-		check(DirAccess.copy_absolute(ProjectSettings.globalize_path("res://tests/network_game/" + file),
+		var source_file: String = file + ".template" if file == "project.godot" else file
+		check(DirAccess.copy_absolute(ProjectSettings.globalize_path("res://tests/network_game/" + source_file),
 			project.path_join(file)) == OK, "install " + file)
 	var resource := {"id": "resource", "kind": "choice", "options": ["copper", "iron"]}
 	var declarations := {"projectName": "Freight Yard", "startup": {"maps": true},

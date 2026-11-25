@@ -41,22 +41,23 @@ src/
 ├── canvas/                画布宿主与控制器（绘制 / 输入 / 左右键语义执行 / 选区）
 ├── content/               功能/条件/步骤/音频/时机声明池、五段身份数、内容文件读写
 └── ui/                    设计系统、布局骨架、三面板、各种弹窗
-tests/                     数据层回归测试（12 套件 83 用例，run_tests.gd 一条命令跑完）
-tools/                     开发期脚本：截图 / 迁移(migrate_project.gd) / 警告扫描(warn_scan.gd)
+tests/                     数据层回归、图形编辑工作流及独立游戏样例
+tools/                     发布验收(release_check.py)、截图、迁移与性能采样
 mcp/                       bird-editor MCP server（AI 协作验证链，见 mcp/README.md）
 docs/                      EDITOR_FEATURES + GAME_SIDE_STANDARD
 ```
 
 ## 验证
 
-`src/` 下每个 GDScript 都应能单独解析通过：
+完整的源码发布验收（Python 3.8+、Godot 编辑器和可用的图形桌面）：
 
-```
-godot --headless --path . --check-only --script res://src/app.gd
+```powershell
+python tools/release_check.py --godot "C:\path\to\Godot.exe" --logs tools/shots/release-check
 ```
 
-完整清单与测试说明见 `docs/EDITOR_FEATURES.md` §11。覆盖数据层纯逻辑（12 套件 83 用例，
-崩溃即判失败——断言计数守卫），一条命令跑完：
+验收在临时副本中执行，包含干净导入、Godot 脚本诊断、源码编译、单测、刷怪试点及四套图形流程。命令以非零退出码报告失败，分阶段日志保存在 `--logs` 指定的目录。此命令不导出 EXE。
+
+已有导入缓存时，可以单独跑数据层回归：
 
 ```
 godot --headless --path . --script res://tests/run_tests.gd

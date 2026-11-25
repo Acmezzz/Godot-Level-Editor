@@ -27,11 +27,14 @@ const FrameDialog := preload("res://src/ui/game_frame_dialog.gd")
 const MapGamePreview := preload("res://src/ui/map_game_preview.gd")
 const TIMELINE_FRAME := "timelineFrame"
 
-var host   # content_editor 宿主
+# content_editor 持有该子控制器；反向只保留弱引用，切换项目时可释放。
+var _host_ref: WeakRef
+var host:
+	get: return _host_ref.get_ref()
 var app    # 根应用（= host.app）
 
 func _init(h) -> void:
-	host = h
+	_host_ref = weakref(h)
 	app = h.app
 
 ## 同名转发属性（读写穿透到宿主，保住搬动文本零改动）
@@ -40,6 +43,9 @@ var manifest: Dictionary:
 ## 本面板自己的待提交控件（步骤字段）。不能转发到宿主数组：换步骤/重建表单时清空
 ## 本面板的待提交项，会把主表单还没冲刷的连续控件值一起丢掉（V4 P1）。
 var _pending_commits: Array = []
+
+func clear_view_callbacks() -> void:
+	_pending_commits.clear()
 
 ## 冲刷本面板待提交值（换步骤/切时间轴点选前调用；控件闭包绑定的是当时的下标）。
 func _flush_pending() -> bool:
@@ -868,11 +874,11 @@ func _paste_segment() -> void:
 	body.add_child(Kit.hint_label("将 %d 个步骤追加到列表，保留段落内的相对时间。" % _copied_segment.size(), 340))
 	body.add_child(Kit.field_row("起点 / " + _steps_timebase(), start, 126))
 	_segment_dialog("粘贴演出段落", "粘贴段落", body, func():
-		var value := start.text.strip_edges()
-		if not value.is_valid_float() or not is_finite(value.to_float()) or value.to_float() < 0.0:
+		var value := _read_time(start.text.strip_edges())
+		if not is_finite(value) or value < 0.0:
 			app._set_status("段落起点必须是非负时间数值")
 			return
-		_run_row_command(revision, arr, _append_segment.bind(value.to_float())))
+		_run_row_command(revision, arr, _append_segment.bind(value)))
 
 func _append_segment(origin: float) -> void:
 	var data := _steps_data()
@@ -1176,17 +1182,17 @@ func _step_field_row(fd: Dictionary, sfd: Dictionary, siblings: Array, shown: Di
 			return false
 		return true
 	var apply := func(v) -> bool: return _set_step_field(shown, key, v, rev, check_pair)
-	var frame_pick := func(row: Control, nested: Dictionary, pair: Callable, save: Callable, read: Callable):
-		FrameReference.add_reference_button(app, row, nested, pair, save, _resolve_options, _project_scope,
+	var frame_pick := func(nested_row: Control, nested: Dictionary, pair: Callable, save: Callable, read: Callable):
+		FrameReference.add_reference_button(app, nested_row, nested, pair, save, _resolve_options, _project_scope,
 			_rebuild_steps_form_from_data, _reference_context, read)
 	var built := FieldWidgets.build(d, val, apply, _resolve_options, "code", frame_pick)
 	if built.get("commit") is Callable and (built.commit as Callable).is_valid():
 		_pending_commits.append(built.commit)
-	var row := Kit.field_row(label, built.ctl, 96)
-	row.set_meta("field_id", str(fd.get("id", "")))
+	var field_row := Kit.field_row(label, built.ctl, 96)
+	field_row.set_meta("field_id", str(fd.get("id", "")))
 	var tip := FieldWidgets.decl_tooltip(fd)
 	if tip != "":
-		row.tooltip_text = tip
+		field_row.tooltip_text = tip
 	var pickable := FieldWidgets.wants_canvas_pick(fd) and (not _project_scope or tk != "")
 	if pickable and not FieldWidgets.ordered_frame_pick(fd) and not bool(fd.get("multiple", false)) and host._form.can_pick_on_canvas(tk):
 		var pick := Kit.button("画布选…", func(): _pick_step_ref(fd, apply), "ghost")
@@ -1195,7 +1201,7 @@ func _step_field_row(fd: Dictionary, sfd: Dictionary, siblings: Array, shown: Di
 		if FieldWidgets.wants_cell_pick(fd):
 			pick.tooltip_text = "临时切到画布点格图里的一格（按多边形命中）；确认才写入这一步，取消不改当前值"
 		pick.add_theme_font_size_override("font_size", Th.FS_META)
-		row.add_child(pick)
+		field_row.add_child(pick)
 	if FieldWidgets.wants_frame_pick(fd) and FieldWidgets.frame_value_available(fd, built):
 		var pair := func() -> Array[String]:
 			var index: int = shown.index
@@ -1205,9 +1211,9 @@ func _step_field_row(fd: Dictionary, sfd: Dictionary, siblings: Array, shown: Di
 			var expected: Array = pair.call()
 			return _set_step_field(shown, key, value, rev,
 				func(fields: Dictionary): return RefFields.frame_scope(fd, siblings, fields) == expected)
-		FrameReference.add_reference_button(app, row, fd, pair, save, _resolve_options, _project_scope,
+		FrameReference.add_reference_button(app, field_row, fd, pair, save, _resolve_options, _project_scope,
 			_rebuild_steps_form_from_data, _reference_context, built.get("pick_values", Callable()))
-	return row
+	return field_row
 
 ## E1：步骤字段的画布选点。确认后按起手时的步骤令牌 + 版本写回：
 ## 期间步骤被增删/换序则丢弃（与拖拽同一套过期校验）。
@@ -1437,12 +1443,12 @@ func _fill_frame_preview() -> void:
 	var rel := str(_steps_preview_frames[idx])
 	var tex: Texture2D = EntityNodeRef.texture_of(manifest, rel)
 	if tex != null:
-		var tr := TextureRect.new()
-		tr.texture = tex
-		tr.custom_minimum_size = Vector2(48, 48)
-		tr.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-		tr.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-		_steps_frame_holder.add_child(tr)
+		var preview_texture := TextureRect.new()
+		preview_texture.texture = tex
+		preview_texture.custom_minimum_size = Vector2(48, 48)
+		preview_texture.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		preview_texture.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+		_steps_frame_holder.add_child(preview_texture)
 	_steps_frame_holder.add_child(Kit.text_label("%d / %d  %s" % [idx, n - 1, rel], Th.TEXT_MUTE, Th.FS_META))
 
 ## 显式量化单步（D2：吸附只作用于新输入或显式量化选中项）：
@@ -1488,6 +1494,15 @@ static func _num_text(v) -> String:
 	# 四位小数去尾零，不用两位：两位会把 1.234 显示成 1.23，失焦回写就把真实值截断了（V4 P1）
 	return ("%.4f" % f).rstrip("0").rstrip(".")
 
+static func _read_time(text: String) -> float:
+	if not text.is_valid_float():
+		return NAN
+	# Time inputs accept scientific notation, but oversized exponents warn inside Godot's float parser.
+	var exponent := text.findn("e")
+	if exponent >= 0 and absi(int(text.substr(exponent + 1))) > 308:
+		return NAN
+	return text.to_float()
+
 func _bind_time_input(edit: LineEdit, tok: Dictionary, key: String) -> void:
 	var rev := _steps_rev
 	var initial := edit.text
@@ -1498,11 +1513,12 @@ func _bind_time_input(edit: LineEdit, tok: Dictionary, key: String) -> void:
 		if key == "at" and value.is_empty():
 			_apply_time_patch(tok, {}, [key])
 			return
-		if not value.is_valid_float() or not is_finite(value.to_float()):
+		var time := _read_time(value)
+		if not is_finite(time):
 			edit.text = initial
 			app._set_status("请输入有效的时间数值")
 			return
-		_apply_time_patch(tok, {key: maxf(value.to_float(), 0.0)}, [])
+		_apply_time_patch(tok, {key: maxf(time, 0.0)}, [])
 	edit.text_submitted.connect(commit)
 	edit.focus_exited.connect(func(): commit.call(edit.text))
 

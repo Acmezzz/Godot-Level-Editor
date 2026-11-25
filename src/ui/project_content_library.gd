@@ -22,7 +22,10 @@ const Kit := preload("res://src/ui/ui_kit.gd")
 const FrameReference := preload("res://src/ui/map_game_preview.gd")
 const FrameDialog := preload("res://src/ui/game_frame_dialog.gd")
 
-var host
+# content_editor 持有该子控制器；反向只保留弱引用，切换项目时可释放。
+var _host_ref: WeakRef
+var host:
+	get: return _host_ref.get_ref()
 var app
 var manifest: Dictionary:
 	get: return host.manifest
@@ -30,7 +33,7 @@ var _last_kind := ""
 var _last_id := ""
 
 func _init(editor) -> void:
-	host = editor
+	_host_ref = weakref(editor)
 	app = editor.app
 
 func open() -> void:
@@ -698,6 +701,7 @@ func _open_item(kind: String, cid: String, context := "", field := "", draft := 
 	form.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.add_child(form)
 	var commits: Array = []
+	form.tree_exited.connect(func(): commits.clear())
 	var refresh := func():
 		for commit in commits:
 			if not bool(commit.call()):
@@ -847,16 +851,16 @@ func _build_field(form: VBoxContainer, fd: Dictionary, siblings: Array, values: 
 		return true
 	var options := func(d: Dictionary) -> Array:
 		return host._form.project_reference_options(d, context)
-	var frame_pick := func(row: Control, nested: Dictionary, nested_pair: Callable, save: Callable, read: Callable):
-		FrameReference.add_reference_button(app, row, nested, nested_pair, save, options, true, refresh, context, read)
+	var frame_pick := func(nested_row: Control, nested: Dictionary, nested_pair: Callable, save: Callable, read: Callable):
+		FrameReference.add_reference_button(app, nested_row, nested, nested_pair, save, options, true, refresh, context, read)
 	var built := Widgets.build(decl, values.get(key, fd.get("default", Widgets.default_for(fd))), use, options, "code", frame_pick)
 	var commit: Callable = built.get("commit", Callable())
 	if commit.is_valid():
 		commits.append(commit)
-	var row := Kit.field_row(str(fd.get("name", fd.get("id", key))), built.ctl, 92)
-	row.set_meta("field_id", str(fd.get("id", "")))
-	row.tooltip_text = Widgets.decl_tooltip(fd)
-	form.add_child(row)
+	var field_row := Kit.field_row(str(fd.get("name", fd.get("id", key))), built.ctl, 92)
+	field_row.set_meta("field_id", str(fd.get("id", "")))
+	field_row.tooltip_text = Widgets.decl_tooltip(fd)
+	form.add_child(field_row)
 	if Widgets.wants_frame_pick(fd) and Widgets.frame_value_available(fd, built):
-		FrameReference.add_reference_button(app, row, fd, pair, set_value, options, true, refresh, context,
+		FrameReference.add_reference_button(app, field_row, fd, pair, set_value, options, true, refresh, context,
 			built.get("pick_values", Callable()))

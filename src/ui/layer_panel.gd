@@ -2,7 +2,10 @@ extends RefCounted
 ## LayerPanel：层下拉 + 层管理弹窗（从 editor_layout.gd 拆出，宿主 = editor_layout）
 
 
-var host   # editor_layout 宿主
+# editor_layout 持有该子控制器；反向只保留弱引用，切换项目时可释放。
+var _host_ref: WeakRef
+var host:
+	get: return _host_ref.get_ref()
 var app    # 根应用（= host.app）
 const BasisFields := preload("res://src/ui/grid_basis_fields.gd")
 const TILE_GRID_PRESETS := [
@@ -11,7 +14,7 @@ const TILE_GRID_PRESETS := [
 	["独立三角", {"gridProjection": "orthogonal", "gridTopology": "triangles"}]]
 
 func _init(h) -> void:
-	host = h
+	_host_ref = weakref(h)
 	app = h.app
 
 ## 同名转发属性（读写穿透到宿主，搬动文本零改动）
@@ -256,13 +259,13 @@ func _layer_mgr_row(i: int, decl: Dictionary) -> Control:
 		_rebuild_layer_mgr()
 		app._editor_state_ctrl.sync_ui())
 	row.add_child(tile_grid)
-	var convert = app.UiKitScript.button("迁移格系…", func():
+	var migrate_button = app.UiKitScript.button("迁移格系…", func():
 		_layer_mgr.hide()
 		_open_grid_conversion(lid, configured), "ghost")
-	convert.name = "ConvertTileGrid_" + lid
-	convert.disabled = not app.canvas.layer_has_tiles(i)
-	convert.tooltip_text = "预览瓦片落点并复制到新层；保留源层。"
-	row.add_child(convert)
+	migrate_button.name = "ConvertTileGrid_" + lid
+	migrate_button.disabled = not app.canvas.layer_has_tiles(i)
+	migrate_button.tooltip_text = "预览瓦片落点并复制到新层；保留源层。"
+	row.add_child(migrate_button)
 	var up = app.UiKitScript.button("↑", func():
 		var at := _idx_of_lid(lid)
 		if at > 0:

@@ -51,9 +51,9 @@ func set_mode(mode: String) -> void:
 			b.set_pressed_no_signal(str(k) == mode)
 
 func refresh_map_label() -> void:
-	var name: String = app.cur_map_name if app.map_loaded else ""
-	_switch_btn.text = ("地图 ▾" if name == "" else name + "  ▾")
-	_switch_btn.tooltip_text = "切换地图及地图工具" if name == "" else "当前地图：" + name + "\n点击切换地图或打开地图工具"
+	var map_name: String = app.cur_map_name if app.map_loaded else ""
+	_switch_btn.text = ("地图 ▾" if map_name == "" else map_name + "  ▾")
+	_switch_btn.tooltip_text = "切换地图及地图工具" if map_name == "" else "当前地图：" + map_name + "\n点击切换地图或打开地图工具"
 
 func _on_mode(mode: String) -> void:
 	if _mode_btns[mode].button_pressed == false:

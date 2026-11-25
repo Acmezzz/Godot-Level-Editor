@@ -338,19 +338,22 @@ static func _collect(manifest: Dictionary, from_key: String, base: Dictionary, d
 					"%s %s" % [label, scope.label])
 		var desc := RefFields.describe(fd)
 		if desc.kind == "flow_target":
-			var multi: bool = desc.many
-			var current = values.get(field, fd.get("default", [] if multi else {}))
-			var targets: Array = current.duplicate() if multi and current is Array else ([] if multi else [current])
-			if multi:
+			var many_targets: bool = desc.many
+			var fallback: Variant = {}
+			if many_targets:
+				fallback = []
+			var current = values.get(field, fd.get("default", fallback))
+			var targets: Array = current.duplicate() if many_targets and current is Array else ([] if many_targets else [current])
+			if many_targets:
 				targets.append({})
-			var row := base.merged({"from": from_key, "field": field, "label": label, "step": step,
+			var slot := base.merged({"from": from_key, "field": field, "label": label, "step": step,
 				"decl": fd.duplicate(true), "shown_value": shown.duplicate(true) if shown is Dictionary or shown is Array else shown,
-				"shown_present": values.has(field), "multi": multi, "flow_target": true})
+				"shown_present": values.has(field), "multi": many_targets, "flow_target": true})
 			for i in targets.size():
 				var target = targets[i]
 				var address := _flow_address(target)
-				var edge := row.merged({"target": target, "fn": address[0], "value": address[1],
-					"index": i if multi and i < targets.size() - 1 else -1})
+				var edge := slot.merged({"target": target, "fn": address[0], "value": address[1],
+					"index": i if many_targets and i < targets.size() - 1 else -1})
 				graph.slots[from_key].append(edge)
 				if _typed_target_exists(manifest, catalog, fd, target, address):
 					edge["to"] = _key(edge.fn, edge.value)

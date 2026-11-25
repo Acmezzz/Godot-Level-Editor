@@ -30,10 +30,10 @@ func _init(initial: Array, build_commit: Callable) -> void:
 	add_child(numbers)
 	_add_number(numbers, _time, "时间", 0.0, 1.0, false)
 	_add_number(numbers, _value, "数值", 0.0, 1.0, true)
-	_time.value_changed.connect(func(value: float): _change_time(value))
-	_value.value_changed.connect(func(value: float):
+	_time.value_changed.connect(func(new_time: float): _change_time(new_time))
+	_value.value_changed.connect(func(new_value: float):
 		if selected >= 0:
-			keys[selected]["value"] = value
+			keys[selected]["value"] = new_value
 			_update_domain())
 	var actions := HBoxContainer.new()
 	add_child(actions)
@@ -132,9 +132,9 @@ func _update_domain() -> void:
 func _plot() -> Rect2:
 	return Rect2(Vector2(9, 9), _graph.size - Vector2(18, 18))
 
-func _point(time: float, value: float) -> Vector2:
+func _point(time: float, key_value: float) -> Vector2:
 	var plot := _plot()
-	return plot.position + Vector2(time / _domain.size.x, 1.0 - (value - _domain.position.y) / _domain.size.y) * plot.size
+	return plot.position + Vector2(time / _domain.size.x, 1.0 - (key_value - _domain.position.y) / _domain.size.y) * plot.size
 
 func _draw_graph() -> void:
 	var plot := _plot()

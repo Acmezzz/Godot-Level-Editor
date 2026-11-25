@@ -212,8 +212,8 @@ func render_timeline_sample(pop: PopupPanel, value: String, pixel: Vector2i, col
 	input.text_changed.emit(value)
 	check(frame.texture == null, "changing the sample clears the old game image")
 	input.text_submitted.emit(value)
-	var deadline := Time.get_ticks_msec() + 13500
-	while is_instance_valid(render) and render.disabled and Time.get_ticks_msec() < deadline:
+	var frame_deadline := Time.get_ticks_msec() + 13500
+	while is_instance_valid(render) and render.disabled and Time.get_ticks_msec() < frame_deadline:
 		await create_timer(0.08).timeout
 	if not is_instance_valid(frame) or frame.texture == null:
 		check(false, "game returned a frame at " + value)
@@ -354,7 +354,8 @@ func run():
 	var project := ProjectSettings.globalize_path(tmp)
 	DirAccess.make_dir_recursive_absolute(project.path_join("maps"))
 	for filename in ["project.godot", "main.tscn", "game.gd"]:
-		check(DirAccess.copy_absolute(ProjectSettings.globalize_path(RuntimeFixture + filename),
+		var source_file: String = filename + ".template" if filename == "project.godot" else filename
+		check(DirAccess.copy_absolute(ProjectSettings.globalize_path(RuntimeFixture + source_file),
 			project.path_join(filename)) == OK, "copy independent runtime " + filename)
 
 	DirAccess.make_dir_recursive_absolute(project.path_join("src/canvas"))
@@ -666,15 +667,15 @@ func run():
 	var continue_id := ""
 	var menu_id := ""
 	if preview != null:
-		var frame := preview.frame()
-		var drag := InputEventMouseButton.new()
-		drag.button_index = MOUSE_BUTTON_LEFT
-		drag.pressed = true
-		drag.position = frame.position + frame.size * Vector2(0.25, 0.25)
-		preview._gui_input(drag)
-		drag.pressed = false
-		drag.position = frame.position + frame.size * Vector2(0.75, 0.75)
-		preview._gui_input(drag)
+		var focus_frame := preview.frame()
+		var focus_drag := InputEventMouseButton.new()
+		focus_drag.button_index = MOUSE_BUTTON_LEFT
+		focus_drag.pressed = true
+		focus_drag.position = focus_frame.position + focus_frame.size * Vector2(0.25, 0.25)
+		preview._gui_input(focus_drag)
+		focus_drag.pressed = false
+		focus_drag.position = focus_frame.position + focus_frame.size * Vector2(0.75, 0.75)
+		preview._gui_input(focus_drag)
 		check(preview.hotspots.size() == 1, "drag produced a normalized hotspot")
 		var next_content: OptionButton = pop.find_child("ViewHotspotTarget", true, false)
 		for idx in next_content.item_count:
@@ -687,13 +688,13 @@ func run():
 		design.select(1)
 		design.item_selected.emit(1)
 		await process_frame
-		frame = preview.frame()
-		drag.pressed = true
-		drag.position = frame.position + frame.size * Vector2(0.25, 0.68)
-		preview._gui_input(drag)
-		drag.pressed = false
-		drag.position = frame.position + frame.size * Vector2(0.75, 0.85)
-		preview._gui_input(drag)
+		focus_frame = preview.frame()
+		focus_drag.pressed = true
+		focus_drag.position = focus_frame.position + focus_frame.size * Vector2(0.25, 0.68)
+		preview._gui_input(focus_drag)
+		focus_drag.pressed = false
+		focus_drag.position = focus_frame.position + focus_frame.size * Vector2(0.75, 0.85)
+		preview._gui_input(focus_drag)
 		var label: LineEdit = pop.find_child("LayoutElement_text", true, false)
 		label.text = "Continue"
 		label.text_changed.emit(label.text)
@@ -710,12 +711,12 @@ func run():
 				button_target.item_selected.emit(idx)
 				break
 		continue_id = str(preview.elements[0].id)
-		drag.pressed = true
-		drag.position = frame.position + frame.size * Vector2(0.25, 0.20)
-		preview._gui_input(drag)
-		drag.pressed = false
-		drag.position = frame.position + frame.size * Vector2(0.75, 0.32)
-		preview._gui_input(drag)
+		focus_drag.pressed = true
+		focus_drag.position = focus_frame.position + focus_frame.size * Vector2(0.25, 0.20)
+		preview._gui_input(focus_drag)
+		focus_drag.pressed = false
+		focus_drag.position = focus_frame.position + focus_frame.size * Vector2(0.75, 0.32)
+		preview._gui_input(focus_drag)
 		menu_id = str(preview.elements[1].id)
 		label = pop.find_child("LayoutElement_text", true, false)
 		label.text = "Menu"
@@ -1733,14 +1734,32 @@ func author_projection_copy(app, manifest: Dictionary) -> void:
 	select_metadata(collect(pop, "OptionButton")[0], "orthogonal")
 	press(pop, "预览转换")
 	var labels := collect(pop, "Label")
-	check(labels.any(func(label): return label.text.contains("格空间："))
-		and not FileAccess.file_exists(copy_path), "projection preview does not publish")
+	check(labels.any(func(label): return label.text.contains("请重选或断开格边引用"))
+		and not FileAccess.file_exists(copy_path)
+		and FileAccess.get_sha256(source_path) == source_hash,
+		"a six-neighbor edge that becomes diagonal in the target grid blocks publication without touching the source")
+	pop.hide()
+	var compatible := Edge.value_of(source.meta.code, Vector2i(3, 3), Vector2i(3, 4))
+	source.objects[0].props.edge = compatible
+	check(Maps.write(manifest, "projection_source", source), "publish a source with a shared edge valid in both grids")
+	source_hash = FileAccess.get_sha256(source_path)
+	await app._load_map_file(source_path)
+	app._map_file_ctrl.on_convert_projection()
+	pop = _visible_popup(app)
+	input = collect(pop, "LineEdit")[0]
+	input.text = "projection_copy"
+	input.text_changed.emit(input.text)
+	select_metadata(collect(pop, "OptionButton")[0], "orthogonal")
+	press(pop, "预览转换")
+	check(not FileAccess.file_exists(copy_path), "reviewing a valid conversion does not publish")
 	press(pop, "另存并转换")
 	for i in 12:
 		await process_frame
 	var copy := Maps.read(manifest, "projection_copy")
 	check(not copy.is_empty() and copy.meta.gridProjection == "orthogonal"
 		and copy.objects[0].props.edge.map == copy.meta.code
+		and Edge.edge_of(copy.objects[0].props.edge) == Edge.edge_of(compatible)
+		and Vector2i(int(copy.objects[0].props.edge.cell[0]), int(copy.objects[0].props.edge.cell[1])) == Vector2i(3, 3)
 		and FileAccess.get_sha256(source_path) == source_hash, "publish the reviewed copy while preserving its source")
 
 func author_rule_grids(app, manifest: Dictionary) -> void:
@@ -2075,14 +2094,14 @@ func author_tile_layer_conversion(app, manifest: Dictionary) -> void:
 	await app._load_map_file(path)
 	var cvs = app.canvas
 	var source: Dictionary = cvs.extract()
-	var floor: String = cvs.layer_id(1)
+	var floor_id: String = cvs.layer_id(1)
 	app._layout_ctrl._layer_ctrl._open_layer_manager()
 	var popups := collect(app, "PopupPanel").filter(func(p): return p.visible)
 	if popups.is_empty():
 		check(false, "open layer manager for migration")
 		return
 	var manager: PopupPanel = popups.back()
-	manager.find_child("ConvertTileGrid_" + floor, true, false).pressed.emit()
+	manager.find_child("ConvertTileGrid_" + floor_id, true, false).pressed.emit()
 	popups = collect(app, "PopupPanel").filter(func(p): return p.visible)
 	if popups.is_empty():
 		check(false, "open layer migration dialog")
@@ -2111,7 +2130,7 @@ func author_tile_layer_conversion(app, manifest: Dictionary) -> void:
 		return
 	var copy: String = cvs.layer_id(cvs.active_layer)
 	var cloned: Dictionary = cvs.extract()
-	check(cloned.tiles[copy] == source.tiles[floor] and cloned.tiles[floor] == source.tiles[floor]
+	check(cloned.tiles[copy] == source.tiles[floor_id] and cloned.tiles[floor_id] == source.tiles[floor_id]
 		and cloned.meta.cellGraph == source.meta.cellGraph and cloned.objects == source.objects
 		and cloned.collision == source.collision and cloned.meta.layers[2].offset == source.meta.layers[1].offset
 		and cvs.tile_grid_for_layer(cvs.active_layer).projection == "orthogonal"
@@ -2121,7 +2140,7 @@ func author_tile_layer_conversion(app, manifest: Dictionary) -> void:
 	var saved: Dictionary = await app._map_file_ctrl.commit_document("保存迁移图层")
 	check(saved.get("status") == "ok", "save layer migration")
 	await app._load_map_file(path)
-	check(cvs.extract().tiles.get(copy, []) == source.tiles[floor], "converted tiles reopen with preserved indices")
+	check(cvs.extract().tiles.get(copy, []) == source.tiles[floor_id], "converted tiles reopen with preserved indices")
 
 func author_world_region_move(app, manifest: Dictionary) -> void:
 	var path := Maps.path_for(manifest, "rule_hex")
@@ -2277,7 +2296,7 @@ func author_world_region_move(app, manifest: Dictionary) -> void:
 	check(plan.get("positions", []).size() == 3, "cross-layer preview plans two tile grids and root collision")
 	check(plan.get("spawn") == Vector2i.RIGHT and cvs._move_snap.graph_cells.size() == 2,
 		"preview includes opted in spawn and both graph spaces")
-	var root: Node2D = cvs.map_root
+	var map_container: Node2D = cvs.map_root
 	var steps: int = cvs.undo_step_count()
 	input._on_left_release(lower_px + step)
 	await process_frame
@@ -2317,11 +2336,11 @@ func author_world_region_move(app, manifest: Dictionary) -> void:
 		"moving cells keeps their IDs and all edges while translating each polygon in its own space")
 	var undo_ok: bool = await cvs.undo()
 	_check_world_move_restore(undo_ok, cvs.extract(), initial, "undo")
-	check(is_instance_valid(n) and cvs.map_root == root and cvs._ent_by_code_index().get(n.code) == n,
+	check(is_instance_valid(n) and cvs.map_root == map_container and cvs._ent_by_code_index().get(n.code) == n,
 		"move undo preserves the map root and coded instance")
 	var redo_ok: bool = await cvs.redo()
 	_check_world_move_restore(redo_ok, cvs.extract(), moved, "redo")
-	check(is_instance_valid(n) and cvs.map_root == root and cvs._ent_by_code_index().get(n.code) == n,
+	check(is_instance_valid(n) and cvs.map_root == map_container and cvs._ent_by_code_index().get(n.code) == n,
 		"move redo preserves the map root and coded instance")
 	press(app, "跨层搬动")
 	var saved: Dictionary = await app._map_file_ctrl.commit_document("保存跨层搬动")
@@ -2354,12 +2373,20 @@ func _check_world_move_restore(ok: bool, actual: Dictionary, expected: Dictionar
 	var diffs := []
 	for key in expected:
 		# Undo snapshots and disk round trips parse JSON numbers as floats.
-		var a := JSON.stringify(JSON.parse_string(JSON.stringify(actual.get(key))))
-		var b := JSON.stringify(JSON.parse_string(JSON.stringify(expected[key])))
+		var a := _move_comparison(key, actual.get(key))
+		var b := _move_comparison(key, expected[key])
 		if a != b:
 			diffs.append("%s: %s vs %s" % [key, a, b])
 	check(ok and actual.size() == expected.size() and diffs.is_empty(),
 		"one %s restores the entire cross-layer move: %s" % [op, "; ".join(diffs)])
+
+func _move_comparison(key: String, value: Variant) -> String:
+	var normalized = JSON.parse_string(JSON.stringify(value))
+	if key == "tiles" and normalized is Dictionary:
+		# A tile is identified by layer and cell; array order is not part of the map contract.
+		for rows: Array in normalized.values():
+			rows.sort_custom(func(a: Array, b: Array): return a[1] < b[1] if a[1] != b[1] else a[0] < b[0])
+	return JSON.stringify(normalized)
 func _render_pick_frame(app, label := "", preset := "portrait") -> PopupPanel:
 	var popups := collect(app, "PopupPanel").filter(func(p): return p.visible and p.find_child("MapGamePreviewRender", true, false) != null)
 	if popups.is_empty():
@@ -2399,7 +2426,8 @@ func _frame_pick_at_world(pop: PopupPanel, point: Vector2) -> Vector2:
 	for key in ["X", "Y", "Zoom"]:
 		var field: LineEdit = pop.find_child("MapGamePreviewCamera" + key, true, false)
 		values.append(float(field.placeholder_text if field.text.is_empty() else field.text))
-	return Vector2(0.5, 0.5) + (point - Vector2(values[0], values[1])) * values[2] / Vector2(720, 1280)
+	var frame: TextureRect = pop.find_child("MapGamePreviewFrame", true, false)
+	return Vector2(0.5, 0.5) + (point - Vector2(values[0], values[1])) * values[2] / frame.texture.get_size()
 
 func author_frame_picks(app, manifest: Dictionary) -> void:
 	var map := Maps.new_map("frame_pick", 10, 10, "orthogonal")
@@ -2492,7 +2520,7 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 	check(linked[0].get("props", {}).get("target", {}).get("inst") == doors[1].code, "confirm writes the instance port field")
 	app._set_mode("map")
 	var before_spawn: Array = cvs.extract().spawn
-	var root: Node2D = cvs.map_root
+	var map_container: Node2D = cvs.map_root
 	var steps: int = cvs.undo_step_count()
 	var mouse := InputEventMouseButton.new()
 	mouse.button_index = MOUSE_BUTTON_LEFT
@@ -2517,8 +2545,8 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 	apply.pressed.emit()
 	await process_frame
 	check(cvs.extract().spawn == [5, 3] and cvs.undo_step_count() == steps + 1, "spawn uses root coordinates from the perspective view")
-	check(await cvs.undo() and cvs.extract().spawn == before_spawn and cvs.map_root == root, "undo restores the root spawn in place")
-	check(await cvs.redo() and cvs.extract().spawn == [5, 3] and cvs.map_root == root, "redo reapplies the root spawn in place")
+	check(await cvs.undo() and cvs.extract().spawn == before_spawn and cvs.map_root == map_container, "undo restores the root spawn in place")
+	check(await cvs.redo() and cvs.extract().spawn == [5, 3] and cvs.map_root == map_container, "redo reapplies the root spawn in place")
 	var source_switch: EntityNode = cvs._ent_by_code_index()["PICK"]
 	cvs.commit_selection(source_switch)
 	cvs.place_kind = "object"
@@ -2545,7 +2573,7 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 	input._on_object_layer_press(handle.handle, mouse)
 	input._on_left_release(lower_port)
 	check(source_switch.props.target.inst == doors[0].code, "drag replaces the target with a compatible port")
-	check(await cvs.undo() and source_switch.props.target == previous and cvs.map_root == root, "one undo restores the wire in place")
+	check(await cvs.undo() and source_switch.props.target == previous and cvs.map_root == map_container, "one undo restores the wire in place")
 	check(await cvs.redo() and source_switch.props.target.inst == doors[0].code, "redo restores the changed wire")
 	cvs.commit_selection(source_switch)
 	input._on_object_layer_press(handle.handle, mouse)
@@ -2555,6 +2583,7 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 	input._on_left_release(upper_port)
 	check(source_switch.props.target == previous, "the wire reconnects to the transformed port on the upper layer")
 	destination.objects = [{"asset": "door", "code": "DIST", "layer": destination.meta.layers[0].id, "x": 1, "y": 1}]
+	destination.meta.cellGraph = {"cells": [{"id": "arrival", "polygon": [[55, 54], [70, 54], [60, 68]], "neighbors": []}]}
 	check(Maps.write(manifest, "frame_pick_destination", destination), "save the map used by the paired port")
 	app._set_mode("content", "PICK")
 	var backup: Button = editor.root.find_child("FrameReference_backup", true, false)
@@ -2671,14 +2700,21 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 		and Vector2(played_path[1][0], played_path[1][1]).distance_to(Vector2(136, 80)) < 0.02,
 		"the independent game transforms the saved local path using the chosen layer")
 	var picks: Array = result.get("picks", [])
-	check(report.get("status") == "ready" and picks.size() == 2 and picks[0].point == [32.0, 24.0]
+	check(report.get("status") == "ready" and picks.size() == 2 and picks[0].point == [24.0, 24.0]
 		and absf(float(picks[1].point[0]) - (48.0 + (48.0 + 32.0 / 7.0) * 1.5)) < 0.02
 		and absf(float(picks[1].point[1]) - (16.0 + (32.0 + 64.0 / 7.0) * 1.5)) < 0.02
-		and result.get("opened") == doors[1].code
+		and result.get("opened") == ""
 		and result.get("openedBackup") == "DIST"
 		and result.get("playerStart") == [88.0, 56.0]
 		and result.get("contours", []).size() == 1 and result.contours[0].props == outline.props,
-		"game reloads both view positions, the polygon, and the chosen ports: " + str(report))
+		"game reloads both view positions, the polygon and remote port, and honors the explicit zero activation count: " + str(report))
+	app._set_mode("content", "PICK")
+	count = editor.root.find_child("InstanceValue_activation_count", true, false)
+	count.value = 1.0
+	app._set_mode("map")
+	var active_report := await launch_and_read(app, false)
+	check(active_report.get("status") == "ready" and active_report.get("result", {}).get("opened") == doors[1].code,
+		"the game opens the authored local port when activation count is positive")
 	var upper_index: int = cvs._layer_index_of(upper)
 	await cvs.layer_del(upper_index)
 	check(cvs._ent_by_code_index()["PICK"].props.motion_layer == upper,
@@ -2724,7 +2760,8 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 func author_signal_room(app, project: String) -> void:
 	DirAccess.make_dir_recursive_absolute(project.path_join("editor"))
 	for filename in ["project.godot", "main.tscn", "game.gd"]:
-		check(DirAccess.copy_absolute(ProjectSettings.globalize_path("res://tests/screen_game/" + filename),
+		var source_file: String = filename + ".template" if filename == "project.godot" else filename
+		check(DirAccess.copy_absolute(ProjectSettings.globalize_path("res://tests/screen_game/" + source_file),
 			project.path_join(filename)) == OK, "install the separate screen game " + filename)
 	var launch := ["--path", "%projectpath%", "--audio-driver", "Dummy", "--"]
 	var manifest := {"_dir": project, "_maps_dir": project.path_join("maps"), "projectName": "Signal Room",
@@ -2909,7 +2946,8 @@ func author_signal_room(app, project: String) -> void:
 		and result.get("outlets") == ["accepted"]
 		and result.get("text") == "Signal verified",
 		"the second game follows both authored buttons from the selected start content: " + str(report))
-	await app._playtest_ctrl.on_play(Vector2i(-1, -1), true, {"function": "signal", "content": "project-watch"})
+	check(app._playtest_ctrl.play_content_entry({"function": "signal", "content": "project-watch"}),
+		"start the saved cancel branch using the declared content preview entry")
 	var cancellation := await wait_for_playtest(app._playtest_ctrl)
 	var cancelled: Dictionary = cancellation.get("result", {})
 	check(cancellation.get("status") == "ready" and cancelled.get("visited") == ["project-watch", "project-cancelled"]
@@ -3287,8 +3325,8 @@ func _author_signal_screen(app, id: String, caption: String, content: String, ma
 		var before := Store.file_digest(manifest_path)
 		var render: Button = pop.find_child("GameRenderPreview", true, false)
 		render.pressed.emit()
-		var deadline := Time.get_ticks_msec() + 13500
-		while render.disabled and Time.get_ticks_msec() < deadline:
+		var render_deadline := Time.get_ticks_msec() + 13500
+		while render.disabled and Time.get_ticks_msec() < render_deadline:
 			await create_timer(0.08).timeout
 		var picture: TextureRect = pop.find_child("GameRenderedFrame", true, false)
 		check(picture.texture != null and picture.texture.get_size() == Vector2(720, 480)

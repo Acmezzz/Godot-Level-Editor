@@ -308,6 +308,10 @@ static func open(app) -> void:
 	body.add_child(notice)
 	var state := {"index": -1, "commits": [], "edge": "", "space": null, "pending_target": false, "spaces": spaces,
 		"project": project, "map_code": str(cvs.cur_map_code())}
+	# Render and commit callbacks read this state; release them with the dialog.
+	pop.tree_exited.connect(func():
+		state.erase("render")
+		state.commits.clear())
 	var flush := func() -> bool:
 		for commit in state.commits:
 			if not bool(commit.call()):
@@ -724,8 +728,8 @@ static func _build_edge_fields(form: VBoxContainer, cell: Dictionary, cells: Arr
 		var id := Id.new_inst_code()
 		while not _edge_by_id(edges, id).is_empty():
 			id = Id.new_inst_code()
-		var props := Graph.edge_defaults(types, kind)
-		edges.append({"id": id, "from": cell.id, "to": cell.id, "type": kind, "props": props})
+		var default_props := Graph.edge_defaults(types, kind)
+		edges.append({"id": id, "from": cell.id, "to": cell.id, "type": kind, "props": default_props})
 		state.edge = id
 		notice.text = "已新建连接。可用下拉或在预览中点选目标格。"
 		state.render.call(state.index), "ghost"))

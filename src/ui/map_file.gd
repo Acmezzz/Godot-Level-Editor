@@ -1093,7 +1093,7 @@ func write_draft_now() -> bool:
 		EditorManifest.issued_codes(app.manifest) if bool(app.manifest.get("_codes_issued", false)) else {})
 	if path == "":
 		# 失败退避：半间隔后再试，状态栏只说一次当前问题
-		_last_autosave_msec = Time.get_ticks_msec() - AUTOSAVE_INTERVAL_MS / 2
+		_last_autosave_msec = Time.get_ticks_msec() - (AUTOSAVE_INTERVAL_MS >> 1)
 		app._set_status(" 草稿写入失败（%s）：稍后自动重试" % "editor 目录不可写")
 		return false
 	_last_autosave_msec = Time.get_ticks_msec()

@@ -92,6 +92,7 @@ func _init(host) -> void:
 ## 由 project_shell 调用：构建三区骨架并返回可挂进 _holder 的根节点。
 func build() -> Control:
 	root = Control.new()
+	root.tree_exited.connect(_release_view_callbacks)
 	root.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	root.size_flags_vertical = Control.SIZE_EXPAND_FILL
 
@@ -121,6 +122,12 @@ func build() -> Control:
 	split.add_child(_build_right())
 	cols.add_child(split)
 	return root
+
+func _release_view_callbacks() -> void:
+	# The view owns these callbacks; their closures can refer back to this controller.
+	_filter_refill = Callable()
+	_pending_commits.clear()
+	_steps.clear_view_callbacks()
 
 # ──────────── 左列：本图实例列表 ────────────
 
@@ -754,8 +761,8 @@ func _build_instance_values(spr: EntityNode) -> Control:
 		var paired: String = scope[0]
 		if paired != "":
 			decl["_mapKey"] = paired
-		var frame_pick := func(row: Control, nested: Dictionary, nested_pair: Callable, save: Callable, read: Callable):
-			FrameReference.add_reference_button(app, row, nested, nested_pair, save, _resolve_options, false,
+		var frame_pick := func(nested_row: Control, nested: Dictionary, nested_pair: Callable, save: Callable, read: Callable):
+			FrameReference.add_reference_button(app, nested_row, nested, nested_pair, save, _resolve_options, false,
 				_rebuild_right, "", read)
 		# 普通控件在撤销通知时可能还有待提交值；过期值应丢弃。
 		# 实景确认则必须让弹窗知道是否真的写入。
@@ -769,13 +776,13 @@ func _build_instance_values(spr: EntityNode) -> Control:
 				apply.call(v), _resolve_options, "id", frame_pick)
 		var control: Control = built.ctl
 		control.name = "InstanceValue_" + fid
-		var row := Kit.field_row(str(fd.get("name", fid)), control, 96)
-		row.tooltip_text = FieldWidgets.decl_tooltip(fd)
+		var field_row := Kit.field_row(str(fd.get("name", fid)), control, 96)
+		field_row.tooltip_text = FieldWidgets.decl_tooltip(fd)
 		if FieldWidgets.wants_frame_pick(fd) and FieldWidgets.frame_value_available(fd, built):
-			frame_pick.call(row, fd, pair, apply, built.get("pick_values", Callable()))
+			frame_pick.call(field_row, fd, pair, apply, built.get("pick_values", Callable()))
 		if fid == _field_focus:
-			Kit.highlight_field_row(row)
-		box.add_child(row)
+			Kit.highlight_field_row(field_row)
+		box.add_child(field_row)
 		_pending_commits.append(built.commit)
 	if box.get_child_count() > 1:
 		return box

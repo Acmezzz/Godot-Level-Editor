@@ -705,7 +705,7 @@ var _pick_session := {}
 ## 开始选点：切回画布、进入选点模式；回调只在确认/取消时各调一次。
 ## prev_view/prev_focus 用于「取消后回到原视图与原表单焦点」。
 ## want_types（E2）：声明的 of 白名单，画布只认这些资产类型（空 = 不限）。
-func _begin_canvas_pick(owner: String, accept: String, hint: String,
+func _begin_canvas_pick(pick_owner: String, accept: String, hint: String,
 		on_confirm: Callable, on_cancel: Callable, want_types: Array = []) -> bool:
 	if canvas == null or not map_loaded:
 		_set_status("选点需要先打开一张地图")
@@ -719,10 +719,10 @@ func _begin_canvas_pick(owner: String, accept: String, hint: String,
 		prev_view = "map"
 	# 焦点：取消后要回到「发起选点前正在输入的那个控件」（返回时恢复原表单与焦点）
 	var prev_focus: Control = get_viewport().gui_get_focus_owner()
-	_pick_session = {"owner": owner, "on_confirm": on_confirm, "on_cancel": on_cancel,
+	_pick_session = {"owner": pick_owner, "on_confirm": on_confirm, "on_cancel": on_cancel,
 		"prev_view": prev_view, "prev_focus": prev_focus}
 	_set_mode("map")
-	canvas.begin_pick_mode(owner, accept, hint, want_types)
+	canvas.begin_pick_mode(pick_owner, accept, hint, want_types)
 	_layout_ctrl._refresh_pick_bar()
 	var what := "一条格边" if accept == "edge" else ("一格" if accept == "cell" else ("端口" if accept == "port" else "实例"))
 	_set_status(hint + "：左键点%s，确认提交；Esc 取消" % what)

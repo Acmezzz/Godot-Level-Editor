@@ -54,10 +54,10 @@ static func invalidate_read_cache() -> void:
 
 ## 校验原始地图后再更新内存中的格式版本。
 static func decode_text(text: String, source := "", manifest := {}) -> Dictionary:
-	var parsed = JSON.parse_string(text)
-	if not (parsed is Dictionary):
+	var json := JSON.new()
+	if json.parse(text) != OK or not (json.data is Dictionary):
 		return {"ok": false, "data": {}, "errors": [{"path": source, "message": "JSON must be an object"}], "warnings": [], "migrated": false}
-	var data: Dictionary = parsed
+	var data: Dictionary = json.data
 	var errors: Array[Dictionary] = []
 	var warnings: Array[Dictionary] = []
 	for issue in MapValidator.validate(data, manifest):
@@ -348,8 +348,8 @@ static func _is_legacy_draft(path: String) -> bool:
 	var text := FileAccess.get_file_as_string(path)
 	if text == "":
 		return false   # 读不出就别猜：按普通地图处理，交给读取路径报错
-	var data = JSON.parse_string(text)
-	return data is Dictionary and str((data as Dictionary).get("_autosave_of", "")) != ""
+	var json := JSON.new()
+	return json.parse(text) == OK and json.data is Dictionary and str((json.data as Dictionary).get("_autosave_of", "")) != ""
 
 static func same_directory(a: String, b: String) -> bool:
 	return a.nocasecmp_to(b) == 0 if OS.get_name() == "Windows" else a == b

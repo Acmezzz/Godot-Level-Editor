@@ -190,8 +190,8 @@ func display_size() -> Vector2:
 	if sf.size() >= 2:
 		var w := int(props.get(str(sf[0]), 1))
 		var h := int(props.get(str(sf[1]), 1))
-		var cell := Vector2(grid_ref.tile) if grid_ref != null else Vector2.ONE * float(tile_px)
-		return Vector2(maxi(w, 1), maxi(h, 1)) * cell
+		var tile_extent := Vector2(grid_ref.tile) if grid_ref != null else Vector2.ONE * float(tile_px)
+		return Vector2(maxi(w, 1), maxi(h, 1)) * tile_extent
 	return base_size if base_size != Vector2.ZERO else Vector2(tile_px, tile_px)
 
 func _size_fields() -> Array:
@@ -423,9 +423,9 @@ func visual_type() -> String:
 ## 点集（Array of Vector2，局部像素、相对锚点、未翻转）：props.points 为真源，
 ## 缺省退回声明 visual.points（声明的缺省形状），都没有 = 空集。
 func points_local() -> Array:
-	var raw = props.get("points", null)
-	if raw is Array:
-		return _vec2s(raw)
+	var points_value = props.get("points", null)
+	if points_value is Array:
+		return _vec2s(points_value)
 	var v = (decl as Dictionary).get("visual", null)
 	if v is Dictionary:
 		var dv = (v as Dictionary).get("points", null)
@@ -433,9 +433,9 @@ func points_local() -> Array:
 			return _vec2s(dv)
 	return []
 
-func _vec2s(raw: Array) -> Array:
+func _vec2s(rows: Array) -> Array:
 	var out := []
-	for pt in raw:
+	for pt in rows:
 		var a := pt as Array
 		if a != null and a.size() >= 2 \
 				and (a[0] is float or a[0] is int) and (a[1] is float or a[1] is int):
@@ -453,9 +453,9 @@ func points_write(pts: Array) -> void:
 
 func holes_local() -> Array:
 	var out := []
-	var raw = props.get("holes", [])
-	if raw is Array:
-		for row in raw:
+	var hole_rows = props.get("holes", [])
+	if hole_rows is Array:
+		for row in hole_rows:
 			out.append(_vec2s(row) if row is Array else [])
 	return out
 
@@ -487,9 +487,9 @@ func hole_at(local: Vector2, holes: Array) -> int:
 
 func geometry_parts() -> Array:
 	var parts := [{"points": points_local(), "holes": holes_local()}]
-	var raw = props.get("parts", [])
-	if raw is Array:
-		for part in raw:
+	var part_rows = props.get("parts", [])
+	if part_rows is Array:
+		for part in part_rows:
 			if part is Dictionary and part.get("points") is Array:
 				var holes := []
 				var rows = part.get("holes", [])

@@ -171,7 +171,9 @@ static func parse_basis(meta: Dictionary) -> Dictionary:
 		if not ((a is int or a is float) and (b is int or b is float)):
 			return null
 		var u := Vector2(float(a), float(b))
-		return u if _finite2(u) else null
+		if _finite2(u):
+			return u
+		return null
 	var u2 = row.call((raw as Array)[0])
 	var v2 = row.call((raw as Array)[1])
 	if u2 == null or v2 == null:
@@ -517,22 +519,22 @@ func grid_lines(vis: Rect2, map_rect: Rect2i) -> PackedVector2Array:
 	var gmin := Vector2(minf(minf(g0.x, g1.x), minf(g2.x, g3.x)), minf(minf(g0.y, g1.y), minf(g2.y, g3.y)))
 	var gmax := Vector2(maxf(maxf(g0.x, g1.x), maxf(g2.x, g3.x)), maxf(maxf(g0.y, g1.y), maxf(g2.y, g3.y)))
 	var lo := Vector2i(floori(gmin.x), floori(gmin.y)) - Vector2i(1, 1)
-	var hi := Vector2i(ceilf(gmax.x), ceilf(gmax.y)) + Vector2i(1, 1)
+	var hi := Vector2i(ceili(gmax.x), ceili(gmax.y)) + Vector2i(1, 1)
 	if is_tri():
 		# B3 三角网格线 = 平行四边形网格 + 每个平行四边形格的对角线（x+y = c+c+1 那条，即
 		# 单位基里的 (c+1,c)→(c,c+1) 斜线，把格分成左下/右上两个三角）。
-		var i0 := maxi(lo.x, map_rect.position.x)
-		var i1 := mini(hi.x, map_rect.end.x)
-		var j0 := maxi(lo.y, map_rect.position.y)
-		var j1 := mini(hi.y, map_rect.end.y)
-		for i in range(i0, i1 + 1):
-			out.append(to_px(Vector2(i, j0)))
-			out.append(to_px(Vector2(i, j1)))
-		for j in range(j0, j1 + 1):
-			out.append(to_px(Vector2(i0, j)))
-			out.append(to_px(Vector2(i1, j)))
-		for i2 in range(i0, i1):
-			for j2 in range(j0, j1):
+		var first_col := maxi(lo.x, map_rect.position.x)
+		var end_col := mini(hi.x, map_rect.end.x)
+		var first_row := maxi(lo.y, map_rect.position.y)
+		var end_row := mini(hi.y, map_rect.end.y)
+		for i in range(first_col, end_col + 1):
+			out.append(to_px(Vector2(i, first_row)))
+			out.append(to_px(Vector2(i, end_row)))
+		for j in range(first_row, end_row + 1):
+			out.append(to_px(Vector2(first_col, j)))
+			out.append(to_px(Vector2(end_col, j)))
+		for i2 in range(first_col, end_col):
+			for j2 in range(first_row, end_row):
 				out.append(to_px(Vector2(i2 + 1, j2)))
 				out.append(to_px(Vector2(i2, j2 + 1)))
 			return out

@@ -12,16 +12,17 @@ const ClonePlan := preload("res://src/content/clone_plan.gd")
 const TMP := "user://test_map_convert_tmp"
 
 func _wipe() -> void:
-	if not DirAccess.dir_exists_absolute(TMP):
+	_remove_tree(TMP)
+
+func _remove_tree(path: String) -> void:
+	var dir := DirAccess.open(path)
+	if dir == null:
 		return
-	for f in DirAccess.get_files_at(TMP.path_join("maps")):
-		DirAccess.remove_absolute(TMP.path_join("maps").path_join(str(f)))
-	DirAccess.remove_absolute(TMP.path_join("maps"))
-	for f in DirAccess.get_files_at(TMP.path_join("content/route")):
-		DirAccess.remove_absolute(TMP.path_join("content/route").path_join(str(f)))
-	DirAccess.remove_absolute(TMP.path_join("content/route"))
-	DirAccess.remove_absolute(TMP.path_join("content"))
-	DirAccess.remove_absolute(TMP)
+	for name in dir.get_directories():
+		_remove_tree(path.path_join(name))
+	for name in dir.get_files():
+		DirAccess.remove_absolute(path.path_join(name))
+	DirAccess.remove_absolute(path)
 
 func _manifest() -> Dictionary:
 	return {"tileSize": 16, "assets": [

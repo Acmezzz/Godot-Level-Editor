@@ -163,7 +163,9 @@ static func layer_of_cell(g: Dictionary, id: String) -> String:
 
 static func cell_source_space(decl: Dictionary) -> Variant:
 	var source := str(decl.get("source", ""))
-	return source.substr(5) if source.begins_with("cell:") and source.length() > 5 else null
+	if source.begins_with("cell:") and source.length() > 5:
+		return source.substr(5)
+	return null
 
 static func cell_options(g: Dictionary, space_filter: Variant = null) -> Array:
 	var out: Array = []

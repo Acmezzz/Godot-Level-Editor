@@ -52,8 +52,8 @@ func _init() -> void:
 				print("PASS  ", path.get_file(), " :: ", mname)
 			else:
 				failed += 1
-	if not only.is_empty() and passed + failed == 0:
-		print("No matching test: ", args[0])
+	if passed + failed == 0:
+		print("No matching test: ", "all suites" if args.is_empty() else args[0])
 		failed = 1
 	OS.remove_logger(capture)
 	print("TESTS-DONE passed=%d failed=%d" % [passed, failed])

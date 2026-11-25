@@ -57,8 +57,8 @@ static func read_json(path: String) -> Dictionary:
 	var t := read_text(path)
 	if t == "":
 		return {}
-	var parsed = JSON.parse_string(t)
-	return parsed if parsed is Dictionary else {}
+	var json := JSON.new()
+	return json.data if json.parse(t) == OK and json.data is Dictionary else {}
 
 static func write_json(path: String, data: Dictionary) -> bool:
 	return write_text(path, JSON.stringify(data, "\t"))

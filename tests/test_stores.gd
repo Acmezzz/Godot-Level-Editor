@@ -353,12 +353,12 @@ func test_pending_log_partial_detection() -> void:
 	MapStore.write_json(a, {"v": 1})
 	MapStore.write_json(b, {"v": 1})
 	MapStore.write_json(c, {"v": 1})
-	var log := Recovery.begin_pending(m, "test", [
+	var receipt := Recovery.begin_pending(m, "test", [
 		{"path": a, "baseline": Recovery.digest(a), "expect": JSON.stringify({"v": 2}, "\t").sha256_text(), "kind": "map"},
 		{"path": b, "baseline": Recovery.digest(b), "expect": "", "kind": "content"},
 		{"path": c, "baseline": Recovery.digest(c), "expect": "", "kind": "manifest"},
 	])
-	ok(log != "", "登记成功")
+	ok(receipt != "", "登记成功")
 	# a 写成登记的版本；b 保持原样；c 被外部改动。
 	MapStore.write_json(a, {"v": 2})
 	MapStore.write_json(c, {"v": 9})
@@ -376,7 +376,7 @@ func test_pending_log_partial_detection() -> void:
 	# §4.4：manual 再分「外部改变」（内容对不上）与「可跳过」（目标不在且无基线）
 	eq((rec.get("external", []) as Array).size(), 1, "外部改动一条进 external")
 	eq((rec.get("skipped", []) as Array).size(), 0, "目标都在，没有可跳过项")
-	ok(Recovery.clear_pending(log), "清除日志")
+	ok(Recovery.clear_pending(receipt), "清除日志")
 	ok(Recovery.scan_pending(m).is_empty(), "清除后扫不到")
 	# 坏日志不能静默隐身：写出坏 JSON 后应扫到 status=corrupt
 	var bad := str(m._maps_dir).get_base_dir().path_join("editor/pending/pending-broken.json")
@@ -395,10 +395,10 @@ func test_pending_recovers_from_expected_digest() -> void:
 	var m := _fake_manifest()
 	var path := MapStore.path_for(m, "a")
 	var text := "{\"v\": 2}"
-	var log := Recovery.begin_pending(m, "中断", [
+	var receipt := Recovery.begin_pending(m, "中断", [
 		{"path": path, "expect": text.sha256_text(), "expect_absent": true},
 	])
-	ok(log != "", "登记预期摘要")
+	ok(receipt != "", "登记预期摘要")
 	eq(Recovery.scan_pending(m)[0].status, "stale", "未写的新文件仍可判为待写")
 	ok(Recovery.write_text(path, text), "写入登记的版本")
 	eq(Recovery.scan_pending(m)[0].status, "done", "用预期摘要识别已完成写入")

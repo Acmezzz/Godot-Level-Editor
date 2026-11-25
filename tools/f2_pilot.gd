@@ -14,11 +14,13 @@ const RefFields := preload("res://src/content/ref_fields.gd")
 const PILOT := "user://f2_pilot_project"
 
 var fails: Array[String] = []
+var checks := 0
 
 func _init() -> void:
 	call_deferred("_run")
 
 func _ok(cond: bool, msg: String) -> void:
+	checks += 1
 	if not cond:
 		fails.append(msg)
 
@@ -131,7 +133,7 @@ func _run() -> void:
 		and is_equal_approx(float((steps2[1] as Dictionary).get("at", -1.0)), 2.5),
 		"at 0 / 2.5 往返（timebase=seconds 原单位）")
 	# 实例引用字段的作用域解析：本图实例下拉应能列出两个落点且带码
-	var lst := RefFields.map_instances(m2, "试点图", ["spawner"])
+	var lst := RefFields.map_instances(m2, map_code, ["spawner"])
 	_ok(lst.size() == 3, "本图实例枚举 3 个（含区域载体）: " + str(lst.size()))
 	var codes: Array = []
 	for it in lst:
@@ -140,7 +142,7 @@ func _run() -> void:
 
 	_clean(PILOT)
 	if fails.is_empty():
-		print("F2_PILOT_OK checks=", 24)
+		print("F2_PILOT_OK checks=", checks)
 	else:
 		for f in fails:
 			print("F2_PILOT_FAIL ", f)

@@ -18,7 +18,7 @@ static func counts(d: Dictionary) -> Dictionary:
 	return {"tiles": tiles, "collision": (d.get("collision", []) as Array).size(),
 		"objects": (d.get("objects", []) as Array).size()}
 
-static func _layer_columns(d: Dictionary, width: int, root_columns: int) -> Dictionary:
+static func _layer_columns(d: Dictionary, width: int) -> Dictionary:
 	var columns := {}
 	for layer in d.get("meta", {}).get("layers", []):
 		if layer is Dictionary and layer.get("tileGrid") is Dictionary:
@@ -53,7 +53,7 @@ static func crop_counts(d: Dictionary, nw: int, nh: int, triangular := false) ->
 	if _keeps_extent(d, nw, nh):
 		return out
 	var columns := GridSpaceScript.cell_columns(nw, triangular)
-	var layers := _layer_columns(d, nw, columns)
+	var layers := _layer_columns(d, nw)
 	for lid in (d.get("tiles", {}) as Dictionary):
 		var cells = (d.get("tiles", {}) as Dictionary)[lid]
 		if not (cells is Array):
@@ -87,7 +87,7 @@ static func crop_data(d: Dictionary, nw: int, nh: int, triangular := false) -> v
 	if _keeps_extent(d, nw, nh):
 		return
 	var columns := GridSpaceScript.cell_columns(nw, triangular)
-	var layers := _layer_columns(d, nw, columns)
+	var layers := _layer_columns(d, nw)
 	var tiles_in = d.get("tiles", null)
 	if tiles_in is Dictionary:
 		for lid in (tiles_in as Dictionary):
@@ -226,14 +226,14 @@ static func _apply_map_size(app, nw: int, nh: int, pop: PopupPanel, proj: String
 		app._set_status(" 地图重建中，请稍后再试")
 		return
 	# 缩小先确认裁剪范围（E3：裁掉多少瓦片/碰撞/摆放物，应用前可见）
-	var plan := plan(d, nw, nh, triangular)
-	var crop: Dictionary = plan.crop
+	var resize_plan := plan(d, nw, nh, triangular)
+	var crop: Dictionary = resize_plan.crop
 	var cut: int = int(crop.tiles) + int(crop.collision) + int(crop.objects)
-	if cut > 0 or not plan.spawn.is_empty():
+	if cut > 0 or not resize_plan.spawn.is_empty():
 		var msg := "目标尺寸 %d×%d。将裁掉：瓦片 %d · 碰撞 %d · 摆放物 %d。" % [
 			nw, nh, int(crop.tiles), int(crop.collision), int(crop.objects)]
-		if not plan.spawn.is_empty():
-			msg += "\n出生点：%s → %s（最近界内格）。" % [plan.spawn.from, plan.spawn.to]
+		if not resize_plan.spawn.is_empty():
+			msg += "\n出生点：%s → %s（最近界内格）。" % [resize_plan.spawn.from, resize_plan.spawn.to]
 		msg += "\n\n应用后可用 Ctrl+Z 恢复地图。"
 		pop.hide()
 		var accepted: bool = await app._confirm_action("调整地图边界", msg, "应用尺寸")
@@ -247,7 +247,7 @@ static func _apply_map_size(app, nw: int, nh: int, pop: PopupPanel, proj: String
 		return
 	# 一笔可撤销快照：恢复原尺寸与边缘数据。
 	app.canvas.push_undo()
-	d = plan.map
+	d = resize_plan.map
 	# 逐图投影（B1）：空图可直接选；带内容的地图投影已冻结（弹窗里也禁用），
 	# 这里再加一道守卫——数据路径不允许绕过内容检查。
 	# 显式写入（含 orthogonal）：删键会让解析回落到项目缺省投影，

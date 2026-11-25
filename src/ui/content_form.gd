@@ -34,11 +34,14 @@ const CellGraph := preload("res://src/map/cell_graph.gd")
 const ReferenceIndex := preload("res://src/project/reference_index.gd")   # B2：删除入边全景统一入口
 const RIGHT_W := 360
 
-var host   # content_editor 宿主
+# content_editor 持有该子控制器；反向只保留弱引用，切换项目时可释放。
+var _host_ref: WeakRef
+var host:
+	get: return _host_ref.get_ref()
 var app    # 根应用（= host.app）
 
 func _init(h) -> void:
-	host = h
+	_host_ref = weakref(h)
 	app = h.app
 
 ## 同名转发属性（读写穿透到宿主，保住搬动文本零改动）
@@ -52,9 +55,6 @@ var _selected_fn: int:
 var _form_id_edit: LineEdit:
 	get: return host._form_id_edit
 	set(v): host._form_id_edit = v
-var _selected_ent: String:
-	get: return host._selected_ent
-	set(v): host._selected_ent = v
 var _preview: Control:
 	get: return host._preview
 var _r_badge: PanelContainer:
@@ -287,16 +287,16 @@ func _build_field_row(i: int, fn_id: String, fd: Dictionary, cur: Dictionary, si
 			return not paired or RefFields.paired_map_value(fd, siblings, values) == tk)
 	var options := func(decl: Dictionary) -> Array:
 		return _resolve_options(decl, bool(target.project_scope))
-	var frame_pick := func(row: Control, nested: Dictionary, pair: Callable, save: Callable, read: Callable):
-		FrameReference.add_reference_button(app, row, nested, pair, save, options, bool(target.project_scope), _rebuild_right, "", read)
+	var frame_pick := func(nested_row: Control, nested: Dictionary, pair: Callable, save: Callable, read: Callable):
+		FrameReference.add_reference_button(app, nested_row, nested, pair, save, options, bool(target.project_scope), _rebuild_right, "", read)
 	var built := FieldWidgets.build(d, val, apply, options, "code", frame_pick)
 	if built.get("commit") is Callable and (built.commit as Callable).is_valid():
 		_pending_commits.append(built.commit)
-	var row := Kit.field_row(label, built.ctl, 96)
+	var field_row := Kit.field_row(label, built.ctl, 96)
 	# E1：按声明显示能给出的说明（类型/范围/缺省/码）；契约没有独立说明/单位键，不发明
 	var tip := FieldWidgets.decl_tooltip(fd)
 	if tip != "":
-		row.tooltip_text = tip
+		field_row.tooltip_text = tip
 	var pickable := FieldWidgets.wants_canvas_pick(fd) and (not bool(target.project_scope) or tk != "")
 	if pickable and not FieldWidgets.ordered_frame_pick(fd) and not bool(fd.get("multiple", false)) and can_pick_on_canvas(tk):
 		var pick := Kit.button("画布选…", func():
@@ -305,14 +305,14 @@ func _build_field_row(i: int, fn_id: String, fd: Dictionary, cur: Dictionary, si
 			if not FieldWidgets.wants_cell_pick(fd) else \
 			"临时切到画布点格图里的一格（按多边形命中）；确认才写入，取消不改当前值"
 		pick.add_theme_font_size_override("font_size", Th.FS_META)
-		row.add_child(pick)
+		field_row.add_child(pick)
 	if FieldWidgets.wants_frame_pick(fd) and FieldWidgets.frame_value_available(fd, built):
 		var save := func(value) -> bool:
 			var scope: Array = resolve_scope.call()
 			return set_value.call(value, func(fields: Dictionary): return RefFields.frame_scope(fd, siblings, fields) == scope)
-		FrameReference.add_reference_button(app, row, fd, resolve_scope, save, options, bool(target.project_scope),
+		FrameReference.add_reference_button(app, field_row, fd, resolve_scope, save, options, bool(target.project_scope),
 			_rebuild_right, "", built.get("pick_values", Callable()))
-	return row
+	return field_row
 
 func _form_binding_matches(i: int, target: Dictionary) -> bool:
 	if not target.scope.call() or target.doc != app._map_file_ctrl.document_key() or target.entity != _current_spr():
@@ -323,7 +323,7 @@ func _form_binding_matches(i: int, target: Dictionary) -> bool:
 ## E1：为一个实例引用字段开画布选点（宿主 = app，会话管理与确认条都在那边）。
 ## 确认回调只写字段值；字段写盘走与手选下拉同一条 _set_field。
 ## C4：cell_id 字段走同一会话，accept="cell"（候选来自格图多边形，不走实例命中）。
-func _pick_entity_for(fd: Dictionary, commit: Callable) -> void:
+func _pick_entity_for(fd: Dictionary, commit_pick: Callable) -> void:
 	var fname := str(fd.get("name", str(fd.get("id", ""))))
 	var mode := FieldWidgets.pick_mode(fd)
 	var is_cell := mode == "cell"
@@ -342,7 +342,7 @@ func _pick_entity_for(fd: Dictionary, commit: Callable) -> void:
 		if code == "":
 			return
 		var value = FieldWidgets.decode_pick(mode, code)
-		if value == null or not commit.call(value):
+		if value == null or not commit_pick.call(value):
 			return
 		# 下拉控件还停在旧值：提交后重建右栏让新值上屏（用户主动确认的写盘）
 		_rebuild_right()
@@ -385,12 +385,12 @@ func project_reference_options(decl: Dictionary, context: String) -> Array:
 	var source := str(decl.get("source", ""))
 	if source == "editor:reference-maps":
 		var resolved := ReferenceIndex.resolve_map(manifest, context)
-		var options := ReferenceIndex.map_target_options(manifest).filter(func(map):
+		var map_options := ReferenceIndex.map_target_options(manifest).filter(func(map):
 			return map.name != resolved.key).map(func(map):
 			return {"v": map.code, "t": map.name})
-		if not options.is_empty():
-			options.push_front({"v": "", "t": "内容所属地图 · " + str(resolved.key if resolved.status == "ok" else context)})
-		return options
+		if not map_options.is_empty():
+			map_options.push_front({"v": "", "t": "内容所属地图 · " + str(resolved.key if resolved.status == "ok" else context)})
+		return map_options
 	if not (source.begins_with("entity_inst:") or source.begins_with("cell:") \
 			or source.begins_with("port:") or source.begins_with("edge:") or source == "layer:"):
 		return _resolve_options(decl, true)
