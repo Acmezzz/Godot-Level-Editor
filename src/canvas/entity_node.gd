@@ -564,8 +564,19 @@ func refresh_visual() -> void:
 		(display_size().x * 0.5 - anchor_off().x - sa.x) / sc.x if sc.x != 0.0 else 0.0,
 		(display_size().y * 0.5 - anchor_off().y - sa.y) / sc.y if sc.y != 0.0 else 0.0)
 	visible = visible_flag
+	queue_redraw()
 	# R-02：poly/path 呈现子节点随声明装配；点集/变换/翻转变化都经 refresh_visual → _sync_poly_view 重绘
 	_sync_poly_view()
+
+func _draw() -> void:
+	var visual = decl.get("visual")
+	if texture != null or not visual is Dictionary or visual.get("mode") != "rect" or visual_type() != "rect":
+		return
+	var col := Color(str(visual.get("color", "#4fc3f7")))
+	var alpha := float(visual.get("alpha", 0.35))
+	var bounds := Rect2(-sort_anchor() - anchor_off(), display_size())
+	draw_rect(bounds, Color(col, alpha), true)
+	draw_rect(bounds, Color(col, minf(1.0, alpha + 0.5)), false, 1.5)
 
 ## 帧动画预览：frames[] 多于 1 帧时按 8fps 循环换帧；换帧后 refresh_visual 重算
 ## fit/offset（帧尺寸不一致时也对）。游戏侧播放节奏自定，编辑器预览仅为确认帧序。

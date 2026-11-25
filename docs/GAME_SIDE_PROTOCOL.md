@@ -1372,13 +1372,14 @@ main.gd
 例如游戏声明该时机接受 `settlement` 内容时，编辑器可在项目清单写入：
 
 ```json
-{"eventLayers":{"LYR1":{"name":"共用结算","maps":["MAP1","MAP3"],"drawingMap":"DRW1","events":{"FIN1":{"function":"settlement","content":"project-results"}}}}}
+{"eventLayers":{"LYR1":{"name":"共用结算","maps":["MAP1","MAP3"],"drawingMap":"DRW1","drawOrder":1,"events":{"FIN1":{"function":"settlement","content":"project-results"}}}}}
 ```
 
 层的键、`maps` 中的地图码、`events` 中的时机码和目标 ID 才是身份；`name` 只用于展示。
 省略 `maps` 代表适用于全部地图，包括以后新增的地图；显式空数组不匹配任何地图。
 `drawingMap` 是可选的共享绘制地图码。游戏按基础地图码筛选所有适用图组，再按 `drawingMap` 查找 `meta.code` 相同的地图文件。每份图组绘制沿用普通地图格式，有独立的 `meta.layers`、`tiles`、`objects` 和 `collision`；分别按各文档的格空间解析，再组合到同一世界。不要把绘制文档当作基础地图递归匹配。没有 `drawingMap` 的层仍可共享事件，没有事件绑定的层仍可共享绘制与碰撞。
-共享层里的实例、图层和引用保留该绘制地图的身份；实例功能按 `drawingMap` 的地图码解析，基础地图触发的图组事件仍按基础地图码匹配。游戏自行控制图组何时显示、如何叠放及何时启用碰撞。编辑器实景 `mapFrame` 请求在 `subject.eventDrawings` 提供已解析的 `[{layer, map, data}]`，分别是事件层 ID、绘制地图码及完整地图文档（包括碰撞）。
+`drawOrder` 是可选的非零整数，缺省为 1。基础地图固定在 0。按数值升序从后往前绘制，同值按图组层 ID 升序；负数在基础地图后方，正数在前方。每个绘制文档保留自己的图层顺序，作为整体叠放。省略 `drawingMap` 的组不参与实际绘制。
+共享层里的实例、图层和引用保留该绘制地图的身份；实例功能按 `drawingMap` 的地图码解析，基础地图触发的图组事件仍按基础地图码匹配。游戏自行控制图组何时显示和启用碰撞。编辑器实景 `mapFrame` 请求在 `subject.eventDrawings` 提供从后往前排好的 `[{layer, map, drawOrder, data}]`：事件层 ID、绘制地图码、绘制顺序及完整地图文档（包括碰撞）。游戏把基础地图画在负数和正数之间。
 地图触发事件时，游戏按当前地图码选取匹配的层，并用时机码查 `events` 中的目标；
 各层可重叠，执行先后和冲突策略由游戏决定。没有地图的入口若要复用规则，也可由游戏读取未限定地图的层。
 `eventTargets` 与流程目标使用同一组域：`screens`、`maps`、`contentTypes`、`arrivalPorts`。

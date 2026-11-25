@@ -148,7 +148,6 @@ func _draw() -> void:
 	var exits: Array = []
 	var landings: Array = []
 	var boxes: Array = []
-	var zones: Array = []
 	for e in cvs.ents_shown():
 		var n := e as EntityNode
 		if n == null or n.asset == "":
@@ -188,10 +187,6 @@ func _draw() -> void:
 			landings.append(n)
 		# 实例实际占位（清单 editorSize 或 prefab 碰撞尺寸）：青色实框
 		boxes.append(_wr(n))
-		# 无贴图的 visual:rect 资产（内置事件区等）：按声明画彩色矩形，不再认 props.event/mode/once。
-		var vis = edecl.get("visual", null)
-		if n.texture == null and vis is Dictionary and str((vis as Dictionary).get("mode", "")) == "rect":
-			zones.append(n)
 	if not exits.is_empty():
 		var fnt: Font = ThemeDB.fallback_font   # Node2D 无 Control 主题接口，用引擎兜底字体
 		if fnt != null:
@@ -275,8 +270,6 @@ func _draw() -> void:
 		var c4 := r4.get_center()
 		cvs.draw_line(Vector2(r4.position.x, c4.y), Vector2(r4.end.x, c4.y), Color(0.35, 0.95, 0.95, 0.25), 1.0)
 		cvs.draw_line(Vector2(c4.x, r4.position.y), Vector2(c4.x, r4.end.y), Color(0.35, 0.95, 0.95, 0.25), 1.0)
-	# 无贴图的 visual:rect 资产：按声明画占位矩形，不再读 props.event/mode/once。
-	_draw_visual_rects(zones)
 	if cvs._region_sel.size.x > 0:
 		var selected_li: int = cvs._layer_index_of(cvs._region_layer)
 		if cvs._region_layer == "" or selected_li == cvs.active_layer:
@@ -463,20 +456,6 @@ func _draw_tile_ghost(tex: Texture2D, cell: Vector2i, cs: Vector2i, atl: Vector2
 		return
 	cvs.draw_texture_rect_region(tex, _wrect_local(tile_grid.cell_tex_rect(cell, cs), li),
 		Rect2(Vector2(atl) * Vector2(cs), Vector2(cs)), tint)
-
-## visual:rect 资产的画布呈现：颜色/alpha 读资产声明，尺寸走实例 rect()。
-## 不含 props.event/mode/once 分支——事件就是绑定了功能的实体，语义只在 functions[] 里。
-func _draw_visual_rects(nodes: Array) -> void:
-	for node in nodes:
-		var n := node as EntityNode
-		if n == null or not is_instance_valid(n):
-			continue
-		var vis: Dictionary = (n.decl.get("visual", {}) as Dictionary) if n.decl.get("visual", null) is Dictionary else {}
-		var col := Color(str(vis.get("color", "#4fc3f7")))
-		var alpha := float(vis.get("alpha", 0.35))
-		var rect := n.rect()
-		cvs.draw_rect(rect, Color(col, alpha), true)
-		cvs.draw_rect(rect, Color(col, minf(1.0, alpha + 0.5)), false, 1.5)
 
 func _draw_link_handles() -> void:
 	if cvs.gesture == cvs.Gesture.LINK_DRAG:

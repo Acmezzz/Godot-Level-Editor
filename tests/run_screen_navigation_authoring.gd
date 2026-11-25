@@ -753,7 +753,9 @@ func author_scoped_drawing(canvas: EditorCanvas, excluded: String, included: Str
 	press(popup(), "图组事件…")
 	await process_frame
 	var pop := popup()
+	var list := pop.find_child("DrawingOrder", true, false) as ItemList
 	press(pop, "新建层")
+	var layer_id: String = list.get_item_metadata(list.get_selected_items()[0])
 	collect(pop, "LineEdit")[0].text = "Course overlay"
 	for box in collect(pop, "CheckBox"):
 		if box.text == "适用于全部地图":
@@ -761,8 +763,31 @@ func author_scoped_drawing(canvas: EditorCanvas, excluded: String, included: Str
 		elif box.text.ends_with("[%s]" % included):
 			box.button_pressed = true
 	var selectors := collect(pop, "OptionButton")
-	var layer_id: String = selectors[0].get_selected_metadata()
 	choose(selectors.back(), JSON.stringify(target))
+	for i in 4:
+		press(pop, "新建层")
+		collect(pop, "LineEdit")[0].text = "Order group %d" % i
+	var expected_order: Array = range(list.item_count).map(func(i: int): return list.get_item_metadata(i))
+	# Move the second group above the first, the fourth below the map, and the actual drawing behind both.
+	list.select(1)
+	list.item_selected.emit(1)
+	press(pop, "上移")
+	var first = expected_order.pop_at(1)
+	expected_order.push_front(first)
+	list.select(3)
+	list.item_selected.emit(3)
+	press(pop, "下移")
+	press(pop, "下移")
+	var fourth = expected_order.pop_at(3)
+	expected_order.push_back(fourth)
+	list.select(3)
+	list.item_selected.emit(3)
+	press(pop, "下移")
+	press(pop, "下移")
+	expected_order.remove_at(3)
+	expected_order.push_back(layer_id)
+	check(range(list.item_count).map(func(i: int): return list.get_item_metadata(i)) == expected_order,
+		"the author can reorder five groups and put two behind the base map")
 	var previous_path: String = app.cur_map_path
 	press(pop, "保存并编辑绘制层")
 	for i in 30:
@@ -772,9 +797,14 @@ func author_scoped_drawing(canvas: EditorCanvas, excluded: String, included: Str
 	var row: Dictionary = app.manifest.get("eventLayers", {}).get(layer_id, {})
 	var drawing: String = row.get("drawingMap", "")
 	if not check(not drawing.is_empty() and canvas.cur_map_code() == drawing
-			and row.get("maps") == [included] and row.get("events", {}).get("NTCE") == target,
+			and row.get("maps") == [included] and row.get("events", {}).get("NTCE") == target
+			and row.get("drawOrder") == -2,
 			"save and open a shared drawing and typed event for the selected map only"):
 		return {}
+	var persisted: Dictionary = Manifest.load_from(app.manifest._dir).eventLayers
+	var persisted_order := preload("res://src/project/event_layers.gd").drawing_stack(persisted)
+	persisted_order.reverse()
+	check(persisted_order == expected_order, "five-group drawing order survives saving and reopening the project")
 	var base_before := FileAccess.get_file_as_string(previous_path)
 	await canvas.layer_add("Shared scenery")
 	var placed: EntityNode = canvas._tool_ops_ctrl.place_object(asset, 1, Vector2(24, 44), true)
@@ -804,7 +834,8 @@ func author_scoped_drawing(canvas: EditorCanvas, excluded: String, included: Str
 		"the shared collision belongs only to the reference document")
 	var subject := MapPreview.map_context(app)
 	var shared_collision: Array = subject.eventDrawings[0].data.collision
-	check(shared_collision.size() == 1 and Vector2i(int(shared_collision[0].x), int(shared_collision[0].y)) == cell
+	check(subject.eventDrawings[0].drawOrder == -2 and shared_collision.size() == 1
+		and Vector2i(int(shared_collision[0].x), int(shared_collision[0].y)) == cell
 		and subject.map.collision.is_empty(), "game preview receives separate base and shared collision data")
 	var viewport := canvas.get_viewport() as SubViewport
 	canvas.cam_pos = reference.grid.cell_center_px(cell)
@@ -819,6 +850,31 @@ func author_scoped_drawing(canvas: EditorCanvas, excluded: String, included: Str
 	var hidden := viewport.get_texture().get_image().get_pixelv(pixel)
 	check(shown.r - shown.g > hidden.r - hidden.g + 0.1,
 		"the shared collision adds a red overlay and hides with collision visibility (%s → %s)" % [shown, hidden])
+	var world: Vector2 = reference.grid.cell_center_px(cell) + Vector2(6, 6)
+	canvas.cam_pos = world
+	canvas._update_cam()
+	order_sample(canvas.map_root, world, Color.BLUE)
+	order_sample(reference.map_root, world, Color.RED)
+	canvas.show_grid = false
+	canvas.queue_redraw()
+	await process_frame
+	await RenderingServer.frame_post_draw
+	var base_pixel := viewport.get_texture().get_image().get_pixelv(pixel)
+	check(base_pixel.b > 0.9 and base_pixel.r < 0.1 and base_pixel.g < 0.1,
+		"the base map covers an overlapping group with a negative drawing order: %s" % base_pixel)
+	var rear: Dictionary = subject.eventDrawings[0]
+	var front := rear.merged({"drawOrder": 1}, true)
+	var top := rear.merged({"drawOrder": 2}, true)
+	canvas.show_drawing_context([rear, front, top])
+	order_sample(canvas._context_drawings[1].map_root, world, Color.RED)
+	order_sample(canvas._context_drawings[2].map_root, world, Color.LIME)
+	await process_frame
+	await RenderingServer.frame_post_draw
+	var front_pixel := viewport.get_texture().get_image().get_pixelv(pixel)
+	check(front_pixel.g > 0.9 and front_pixel.r < 0.1 and front_pixel.b < 0.1,
+		"the higher front group covers the lower front group and base map: %s" % front_pixel)
+	canvas.map_root.get_node("OrderSample").queue_free()
+	canvas.show_grid = true
 	app._map_file_ctrl.refresh_event_drawings()
 	check(not canvas._context_drawings[0].coll_view.visible, "rebuilding the references respects hidden collision")
 	canvas.set_layer_hidden(canvas.collision_index(), false)
@@ -829,6 +885,14 @@ func author_scoped_drawing(canvas: EditorCanvas, excluded: String, included: Str
 	canvas.show_event_context = true
 	app._map_file_ctrl.refresh_event_drawings()
 	return {"code": drawing, "instances": [instance], "collisionShapes": 1.0}
+
+func order_sample(parent: Node2D, position: Vector2, color: Color) -> void:
+	var sample := EntityNode.create({"assets": [{"id": "sample", "kind": "entity",
+		"visual": {"mode": "rect", "color": "#" + color.to_html(false), "alpha": 1.0}}]},
+		"sample", Vector2(8, 8), 16)
+	sample.name = "OrderSample"
+	sample.position = position
+	parent.add_child(sample)
 
 func add_screen(id: String, label: String, module: Dictionary, target: Dictionary) -> void:
 	Views.open(app)

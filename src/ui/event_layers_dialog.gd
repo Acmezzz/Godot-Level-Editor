@@ -23,35 +23,67 @@ static func open(app, layer_id := "", drawing_only := false) -> void:
 	var shell: Dictionary = app._popup_body("图组事件层", "多张地图可共用独立绘制、碰撞与事件。")
 	var pop: PopupPanel = shell.pop
 	var body: VBoxContainer = shell.body
-	var toolbar := Kit.hbox(6)
-	body.add_child(toolbar)
-	var select := OptionButton.new()
-	select.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	toolbar.add_child(select)
+	var columns := Kit.hbox(12)
+	columns.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	body.add_child(columns)
+	var stack := Kit.vbox(6)
+	stack.custom_minimum_size.x = 200
+	columns.add_child(stack)
+	stack.add_child(Kit.section_header("绘制顺序"))
+	stack.add_child(Kit.hint_label("上方遮挡下方，图组整组移动。", 200))
+	var list := ItemList.new()
+	list.name = "DrawingOrder"
+	list.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	list.custom_minimum_size.y = 184
+	stack.add_child(list)
+	var movement := Kit.hbox(6)
+	stack.add_child(movement)
+	var up := Kit.button("上移")
+	var down := Kit.button("下移")
+	movement.add_child(up)
+	movement.add_child(down)
+	var manage := Kit.hbox(6)
+	stack.add_child(manage)
+	var add := Kit.button("新建层")
+	var remove := Kit.button("删除层")
+	manage.add_child(add)
+	manage.add_child(remove)
+	var edit := Kit.button("保存并编辑绘制层")
+
 	var scroll := ScrollContainer.new()
 	scroll.custom_minimum_size.y = 260
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var fields := Kit.vbox(6)
 	fields.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	scroll.add_child(fields)
-	body.add_child(scroll)
+	columns.add_child(scroll)
 
+	var order := Layers.drawing_stack(draft)
+	order.reverse()
+	var selected_index := func() -> int: return list.get_selected_items()[0]
 	var selected := func() -> String:
-		return str(select.get_selected_metadata()) if select.selected >= 0 else ""
+		return order[selected_index.call()]
+	var update_actions := func():
+		var index: int = selected_index.call()
+		up.disabled = index == 0
+		down.disabled = index == order.size() - 1
+		remove.disabled = order[index] == ""
+		edit.disabled = remove.disabled
 	var show_layer := func():
 		for child in fields.get_children():
 			fields.remove_child(child)
 			child.queue_free()
 		var id: String = selected.call()
 		if id.is_empty():
-			fields.add_child(Kit.hint_label("点击「新建层」添加共享事件。", 450))
+			fields.add_child(Kit.hint_label("「普通地图」是绘制的分界。放在它上方的图组会盖住地图，放在它下方的图组会先画。", 370))
 			return
 		var row: Dictionary = draft[id]
 		var name := LineEdit.new()
 		name.text = str(row.get("name", id))
 		name.text_changed.connect(func(value: String):
 			row["name"] = value
-			select.set_item_text(select.selected, value if not value.is_empty() else id))
+			list.set_item_text(order.find(id), value if not value.is_empty() else id))
 		fields.add_child(Kit.field_row("层名称", name))
 		var drawing_code: String = row.get("drawingMap", "")
 		var resolved := Maps.resolve_map(source, drawing_code)
@@ -121,26 +153,47 @@ static func open(app, layer_id := "", drawing_only := false) -> void:
 					return true)
 			fields.add_child(Kit.field_row(event.get("name", code), field, 120))
 	var refresh := func(preferred: String):
-		select.clear()
-		var index := 0
-		for id in draft:
-			if id == preferred:
-				index = select.item_count
-			select.add_item(str(draft[id].get("name", id)))
-			select.set_item_metadata(select.item_count - 1, id)
-		select.select(index if not draft.is_empty() else -1)
-		show_layer.call()
-	select.item_selected.connect(func(_index: int): show_layer.call())
-	toolbar.add_child(Kit.button("新建层", func():
+		list.clear()
+		for id in order:
+			var index := list.add_item("普通地图（分界）" if id == "" else str(draft[id].get("name", id)))
+			list.set_item_metadata(index, id)
+		list.select(order.find(preferred))
+		list.ensure_current_is_visible()
+		update_actions.call()
+	var write_order := func():
+		var base := order.find("")
+		for i in order.size():
+			if i != base:
+				draft[order[i]]["drawOrder"] = base - i
+	var move := func(direction: int):
+		var index: int = selected_index.call()
+		var id := order[index]
+		var next := index + direction
+		order[index] = order[next]
+		order[next] = id
+		write_order.call()
+		refresh.call(id)
+	up.pressed.connect(move.bind(-1))
+	down.pressed.connect(move.bind(1))
+	list.item_selected.connect(func(_index: int):
+		update_actions.call()
+		show_layer.call())
+	add.pressed.connect(func():
 		var id := Ids.new_inst_code() + Ids.new_inst_code()
 		while draft.has(id):
 			id = Ids.new_inst_code() + Ids.new_inst_code()
-		draft[id] = {"name": "新事件层", "events": {}}
-		refresh.call(id)))
-	toolbar.add_child(Kit.button("删除层", func():
-		draft.erase(selected.call())
-		refresh.call("")))
-	refresh.call(layer_id)
+		draft[id] = {"name": "新图组", "events": {}}
+		order.push_front(id)
+		write_order.call()
+		refresh.call(id)
+		show_layer.call())
+	remove.pressed.connect(func():
+		var index: int = selected_index.call()
+		draft.erase(order.pop_at(index))
+		refresh.call(order[mini(index, order.size() - 1)])
+		show_layer.call())
+	refresh.call(layer_id if draft.has(layer_id) else order[0])
+	show_layer.call()
 
 	var current := func() -> bool:
 		return pop.visible and is_same(app.manifest, source) and source.get(Layers.KEY, {}) == before
@@ -184,6 +237,7 @@ static func open(app, layer_id := "", drawing_only := false) -> void:
 		pop.hide()
 		if edit_drawing and Maps.resolve_map(source, code).status == "ok":
 			app._map_file_ctrl.open_event_drawing.call_deferred(code)
-	body.add_child(Kit.button("保存并编辑绘制层", func(): publish.call(true)))
+	edit.pressed.connect(func(): publish.call(true))
+	body.add_child(edit)
 	body.add_child(Kit.popup_buttons(func(): publish.call(false), pop.hide, "保存事件层"))
-	app._open_popup(pop, Vector2i(650, 460))
+	app._open_popup(pop, Vector2i(730, 480))

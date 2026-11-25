@@ -6,6 +6,7 @@ const ContentStore := preload("res://src/content/content_store.gd")
 const ReferenceUsage := preload("res://src/project/reference_usage.gd")
 const Recovery := preload("res://src/map/recovery.gd")
 const ReferenceIndex := preload("res://src/project/reference_index.gd")
+const EventLayers := preload("res://src/project/event_layers.gd")
 
 const TMP := "user://test_stores_tmp"
 
@@ -56,25 +57,31 @@ func test_map_write_read_roundtrip() -> void:
 func test_shared_drawings_compose_overlapping_map_sets() -> void:
 	_wipe()
 	var m := _fake_manifest()
-	for group in ["X", "Y", "Z"]:
+	for group in ["X", "Y", "Z", "W", "V"]:
 		var data := MapStore.new_map(group, 8, 8)
 		data.meta.code = "GRP" + group
 		data.collision = [{"x": 1, "y": 2}]
 		ok(MapStore.write(m, group, data), "write independent drawing " + group)
 	m.eventLayers = {
-		"X": {"drawingMap": "GRPX", "maps": ["MAPA", "MAPB", "MAPC"]},
+		"X": {"drawingMap": "GRPX", "maps": ["MAPA", "MAPB", "MAPC"], "drawOrder": -1},
 		"Y": {"drawingMap": "GRPY", "maps": ["MAPB", "MAPC", "MAPD", "MAPE", "MAPF"]},
-		"Z": {"drawingMap": "GRPZ", "maps": ["MAPA", "MAPC", "MAPF"]},
+		"Z": {"drawingMap": "GRPZ", "maps": ["MAPA", "MAPC", "MAPF"], "drawOrder": -2},
+		"W": {"drawingMap": "GRPW", "maps": ["MAPC"], "drawOrder": 3},
+		"V": {"drawingMap": "GRPV", "maps": ["MAPC"], "drawOrder": 1},
 	}
-	var expected := {"A": ["X", "Z"], "B": ["X", "Y"], "C": ["X", "Y", "Z"],
-		"D": ["Y"], "E": ["Y"], "F": ["Y", "Z"]}
+	m.eventLayers = JSON.parse_string(JSON.stringify(m.eventLayers))
+	eq(EventLayers.issues(m), [], "JSON round trip accepts integer draw orders")
+	eq(EventLayers.drawing_stack(m.eventLayers), ["Z", "X", "", "V", "Y", "W"], "base map divides the drawing stack")
+	var expected := {"A": ["Z", "X"], "B": ["X", "Y"], "C": ["Z", "X", "V", "Y", "W"],
+		"D": ["Y"], "E": ["Y"], "F": ["Z", "Y"]}
 	for board in expected:
 		var drawings := ReferenceIndex.event_drawings(m, "MAP" + board)
 		eq(drawings.map(func(row): return row.layer), expected[board], "matching drawings on map " + board)
 		for drawing in drawings:
 			var cells: Array = drawing.data.collision
-			ok(drawing.data.meta.code == drawing.map and cells.size() == 1 and cells[0].x == 1 and cells[0].y == 2,
-				"each drawing keeps its own map code and collision data")
+			ok(drawing.data.meta.code == drawing.map and cells.size() == 1 and cells[0].x == 1 and cells[0].y == 2
+				and drawing.drawOrder == m.eventLayers[drawing.layer].get("drawOrder", 1),
+				"each drawing carries its order, map code and collision data")
 	m.eventLayers["Y"].erase("maps")
 	eq(ReferenceIndex.event_drawings(m, "MAPG").map(func(row): return row.layer), ["Y"], "an unscoped group applies to new maps")
 	eq(ReferenceIndex.event_drawings(m, "GRPX"), [], "a drawing does not recursively load another drawing")

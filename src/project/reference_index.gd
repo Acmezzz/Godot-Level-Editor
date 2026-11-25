@@ -19,7 +19,7 @@ static func event_drawings(manifest: Dictionary, map_code: String) -> Array[Dict
 			continue
 		var data := MapStore.read(manifest, resolved.key)
 		if not data.is_empty():
-			result.append({"layer": drawing.layer, "map": drawing.map, "data": data})
+			result.append(drawing.merged({"data": data}))
 	return result
 
 ## 按稳定地图码解析，返回对应文件名。

@@ -93,11 +93,11 @@ func refresh_event_drawings() -> void:
 			if resolved.status == "ok":
 				var data := MapStore.read(app.manifest, resolved.key)
 				if not data.is_empty():
-					documents.append({"map": _event_preview_base, "data": data})
+					documents.append({"map": _event_preview_base, "data": data, "drawOrder": -drawing.drawOrder})
 			break
 	elif app.canvas.show_event_context:
 		documents = ReferenceIndex.event_drawings(app.manifest, code)
-	app.canvas.show_drawing_context(documents, is_shared)
+	app.canvas.show_drawing_context(documents)
 
 ## 进入一次会影响当前文档的操作（新建/切图）：抬会话代数并返回本次代次。
 func _begin_doc_op() -> int:

@@ -23,6 +23,8 @@ const CellGraphScript := preload("res://src/map/cell_graph.gd")   # C4：有限�
 const MapViewData := preload("res://src/map/map_view_data.gd")
 const EdgeRefScript := preload("res://src/map/edge_ref.gd")   # §7.4：格边身份（规范代表边）
 const RefFieldsScript := preload("res://src/content/ref_fields.gd")   # §7.4：边候选与内容表单共用口径
+const Z_MAP := 2
+const Z_COLLISION := 6
 
 var active_layer := 0          # 0..N-1 = 层栈下标，N = 碰撞元层
 var place_kind := "tiles"      # 放置语义跟资产走："tiles"=涂瓦片 / "object"=摆实例（左栏驱动）
@@ -146,7 +148,8 @@ func _update_layer_parallax(camera: Vector2) -> void:
 			root.set_meta("base_pos", root.position)
 		root.position = off + (camera - center) * (1.0 - par)
 
-func show_drawing_context(documents: Array[Dictionary], behind: bool) -> void:
+## Documents arrive bottom to top. Within each side of the map, tree order stacks whole documents.
+func show_drawing_context(documents: Array[Dictionary]) -> void:
 	for drawing in _context_drawings:
 		remove_child(drawing)
 		drawing.queue_free()
@@ -157,9 +160,9 @@ func show_drawing_context(documents: Array[Dictionary], behind: bool) -> void:
 		drawing.manifest = manifest
 		drawing.thumbs = thumbs
 		drawing.ent_sizes = ent_sizes
-		drawing.z_index = -2 if behind else 0
 		add_child(drawing)
 		drawing.load_data(document.data, document.map)
+		drawing.map_root.z_index = Z_MAP + (-1 if document.drawOrder < 0 else 1)
 		drawing.set_layer_hidden(drawing.collision_index(), not is_layer_visible(collision_index()))
 		_context_drawings.append(drawing)
 		drawing._update_layer_parallax(cam_pos)
@@ -296,7 +299,8 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 		if gen != _rebuild_gen:
 			return
 	map_root = Node2D.new()
-	map_root.z_index = -1 if drawing_context_only else -2
+	map_root.z_as_relative = false
+	map_root.z_index = Z_MAP
 	map_root.name = "MapRoot"
 	add_child(map_root)
 	_build_tileset()
@@ -423,7 +427,8 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	map_root.add_child(collision)
 	coll_view = CollisionView.new()
 	coll_view.name = "CollisionView"
-	coll_view.z_index = 2
+	coll_view.z_as_relative = false
+	coll_view.z_index = Z_COLLISION
 	map_root.add_child(coll_view)
 	coll_view.layer = collision
 	coll_view.grid_ref = grid

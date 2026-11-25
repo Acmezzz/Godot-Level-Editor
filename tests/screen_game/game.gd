@@ -74,9 +74,15 @@ func _show_map_target(destination: Dictionary) -> void:
 			continue
 		cancel_target = {}
 		_clear_screen()
-		var pawns := _draw_relay(self, map, _relay_camera(size))
+		var camera := _relay_camera(size)
+		var drawings := _course_drawings(code)
+		var pawns := _draw_course(self, map, drawings, camera)
 		entered_board = {"board": code, "placed": pawns.keys()}
-		_mount_course_layers(code)
+		entered_board["sharedDrawings"] = drawings.map(func(row: Dictionary):
+			var instances: Array = row.data.objects.filter(func(object): return object.has("code"))
+			return {"code": row.map, "instances": instances.map(func(object): return object.code),
+				"collisionShapes": _mount_relay_collision(row.data, camera)})
+		_apply_course_events(code)
 		if destination.has("port"):
 			if not pawns.has(destination.inst):
 				_finish("The arrival instance is missing.")
@@ -137,9 +143,11 @@ func _show_map_target(destination: Dictionary) -> void:
 		return
 	_finish("Missing target map: " + code)
 
-func _mount_course_layers(code: String) -> void:
-	var drawings := []
-	for layer in manifest.get("eventLayers", {}).values():
+func _course_drawings(code: String) -> Array[Dictionary]:
+	var drawings: Array[Dictionary] = []
+	var layers: Dictionary = manifest.get("eventLayers", {})
+	for id in layers:
+		var layer: Dictionary = layers[id]
 		if layer.has("maps") and code not in layer.maps:
 			continue
 		var drawing_code: String = layer.get("drawingMap", "")
@@ -149,11 +157,17 @@ func _mount_course_layers(code: String) -> void:
 					continue
 				var drawing = JSON.parse_string(FileAccess.get_file_as_string("res://maps/" + file))
 				if drawing is Dictionary and drawing.get("meta", {}).get("code") == drawing_code:
-					var camera := _relay_camera(size)
-					var nodes := _draw_relay(self, drawing, camera, false)
-					var shapes := _mount_relay_collision(drawing, camera)
-					drawings.append({"code": drawing_code, "instances": nodes.keys(), "collisionShapes": shapes})
+					drawings.append({"layer": id, "map": drawing_code, "data": drawing,
+						"drawOrder": int(layer.get("drawOrder", 1))})
 					break
+	drawings.sort_custom(func(a: Dictionary, b: Dictionary) -> bool:
+		return a.layer < b.layer if a.drawOrder == b.drawOrder else a.drawOrder < b.drawOrder)
+	return drawings
+
+func _apply_course_events(code: String) -> void:
+	for layer in manifest.get("eventLayers", {}).values():
+		if layer.has("maps") and code not in layer.maps:
+			continue
 		var notice: Dictionary = layer.get("events", {}).get(manifest.triggers.course_entered.code, {})
 		if not notice.is_empty():
 			var content: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(
@@ -165,7 +179,6 @@ func _mount_course_layers(code: String) -> void:
 			add_child(label)
 			entered_board["courseNotice"] = label.text
 			entered_board["captionVisible"] = label.is_visible_in_tree()
-	entered_board["sharedDrawings"] = drawings
 
 func _decode(encoded: String) -> Dictionary:
 	return JSON.parse_string(Marshalls.base64_to_utf8(encoded))
@@ -494,7 +507,7 @@ func _preview(path: String) -> void:
 	if request.capability == "mapFrame":
 		var map: Dictionary = request.subject.map
 		var camera := _relay_camera(Vector2(extent))
-		var pawns := _draw_relay(surface, map, camera)
+		var pawns := _draw_course(surface, map, request.subject.get("eventDrawings", []), camera)
 		var relay_port := "receive"
 		for asset in request.subject.manifest.get("assets", []):
 			if asset.id == "relay" and asset.get("ports", []).any(func(port): return port.id == "wire"):
@@ -570,6 +583,20 @@ func _relay_regions(map: Dictionary, pawns: Dictionary, extent: Vector2, camera:
 func _relay_view(camera: Transform2D, layer: Dictionary) -> Transform2D:
 	return camera * _relay_layer(layer)
 
+func _draw_course(parent: Node, map: Dictionary, drawings: Array, camera: Transform2D) -> Dictionary:
+	var pawns := {}
+	var stack := drawings.duplicate()
+	var index := stack.find_custom(func(row: Dictionary) -> bool: return row.drawOrder > 0)
+	stack.insert(stack.size() if index < 0 else index, {"data": map, "drawOrder": 0})
+	for row in stack:
+		var is_base: bool = row.drawOrder == 0
+		var root := Node2D.new()
+		parent.add_child(root)
+		var nodes := _draw_relay(root, row.data, camera, is_base)
+		if is_base:
+			pawns = nodes
+	return pawns
+
 func _draw_relay(parent: Node, map: Dictionary, camera: Transform2D, draw_board := true) -> Dictionary:
 	var xform := _relay_view(camera, map.meta.layers[0])
 	for y in (int(map.meta.h) if draw_board else 0):
@@ -593,7 +620,8 @@ func _draw_relay(parent: Node, map: Dictionary, camera: Transform2D, draw_board 
 		var object_transform: Transform2D = layers.get(row.get("layer", ""), xform)
 		pawn.position = object_transform * _iso(Vector2(row.x, row.y) + Vector2(0.5, 0.5))
 		parent.add_child(pawn)
-		pawns[row.code] = pawn
+		if row.has("code"):
+			pawns[row.code] = pawn
 	return pawns
 
 func _mount_relay_collision(map: Dictionary, camera: Transform2D) -> int:
