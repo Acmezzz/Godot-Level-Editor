@@ -9,6 +9,7 @@ const Views := preload("res://src/ui/reference_view_library.gd")
 const Flow := preload("res://src/content/rel_graph.gd")
 const Store := preload("res://src/content/content_store.gd")
 const ScreenCanvas := preload("res://src/ui/screen_layout_canvas.gd")
+const MapPreview := preload("res://src/ui/map_game_preview.gd")
 const Generator := preload("res://src/ui/map_generator_dialog.gd")
 const MapFlowDialog := preload("res://src/ui/map_flow_dialog.gd")
 const Editor := preload("res://src/editor.tscn")
@@ -774,23 +775,60 @@ func author_scoped_drawing(canvas: EditorCanvas, excluded: String, included: Str
 			and row.get("maps") == [included] and row.get("events", {}).get("NTCE") == target,
 			"save and open a shared drawing and typed event for the selected map only"):
 		return {}
-	var placed: EntityNode = canvas._tool_ops_ctrl.place_object(asset, 0, Vector2(24, 44), true)
+	var base_before := FileAccess.get_file_as_string(previous_path)
+	await canvas.layer_add("Shared scenery")
+	var placed: EntityNode = canvas._tool_ops_ctrl.place_object(asset, 1, Vector2(24, 44), true)
 	if not check(placed != null, "place %s on the independent drawing (ready=%s layers=%s locked=%s placeable=%s)" % [
 			asset, canvas.is_map_ready(), canvas.layer_count(), canvas.is_layer_locked(0), canvas.is_placeable(asset)]):
 		return {}
 	var instance := placed.code
+	var cell := Vector2i(5, 5)
+	canvas._undo_history_ctrl.apply_collision_batch({cell: {"type": "solid", "shape": ""}})
 	var saved: Dictionary = await app._map_file_ctrl.commit_document("保存教学共享绘制层")
 	if not check(saved.get("status") == "ok", "publish the shared drawing object"):
 		return {}
+	check(FileAccess.get_file_as_string(previous_path) == base_before, "saving the group does not write its base map")
 	canvas.show_event_context = true
 	await app._map_file_ctrl.open_map_by_code(excluded)
 	check(canvas.cur_map_code() == excluded and canvas._context_drawings.is_empty(),
 		"an excluded map has no shared drawing context")
 	await app._map_file_ctrl.open_map_by_code(included)
-	check(canvas.cur_map_code() == included and canvas._context_drawings.size() == 1
+	if not check(canvas.cur_map_code() == included and canvas._context_drawings.size() == 1
 		and canvas._context_drawings[0].cur_map_code() == drawing,
-		"the included map mounts the saved shared drawing as a separate document")
-	return {"code": drawing, "instances": [instance]}
+		"the included map mounts the saved shared drawing as a separate document"):
+		return {}
+	var reference: EditorCanvas = canvas._context_drawings[0]
+	check(reference.layers_decl()[1].name == "Shared scenery" and reference._layer_entities(1).size() == 1,
+		"after opening the base map the reference has the saved layer and the object assigned to it")
+	check(reference.collision.get_used_cells() == [cell] and cell not in canvas.collision.get_used_cells(),
+		"the shared collision belongs only to the reference document")
+	var subject := MapPreview.map_context(app)
+	var shared_collision: Array = subject.eventDrawings[0].data.collision
+	check(shared_collision.size() == 1 and Vector2i(int(shared_collision[0].x), int(shared_collision[0].y)) == cell
+		and subject.map.collision.is_empty(), "game preview receives separate base and shared collision data")
+	var viewport := canvas.get_viewport() as SubViewport
+	canvas.cam_pos = reference.grid.cell_center_px(cell)
+	canvas._update_cam()
+	var pixel := Vector2i(Vector2(viewport.size) * 0.5)
+	await process_frame
+	await RenderingServer.frame_post_draw
+	var shown := viewport.get_texture().get_image().get_pixelv(pixel)
+	canvas.set_layer_hidden(canvas.collision_index(), true)
+	await process_frame
+	await RenderingServer.frame_post_draw
+	var hidden := viewport.get_texture().get_image().get_pixelv(pixel)
+	check(shown.r - shown.g > hidden.r - hidden.g + 0.1,
+		"the shared collision adds a red overlay and hides with collision visibility (%s → %s)" % [shown, hidden])
+	app._map_file_ctrl.refresh_event_drawings()
+	check(not canvas._context_drawings[0].coll_view.visible, "rebuilding the references respects hidden collision")
+	canvas.set_layer_hidden(canvas.collision_index(), false)
+	check(canvas._context_drawings[0].coll_view.visible, "showing collision also restores the shared reference")
+	canvas.show_event_context = false
+	app._map_file_ctrl.refresh_event_drawings()
+	check(canvas._context_drawings.is_empty(), "turning off references removes their drawing and collision together")
+	canvas.show_event_context = true
+	app._map_file_ctrl.refresh_event_drawings()
+	return {"code": drawing, "instances": [instance], "collisionShapes": 1.0}
 
 func add_screen(id: String, label: String, module: Dictionary, target: Dictionary) -> void:
 	Views.open(app)

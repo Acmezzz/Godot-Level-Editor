@@ -123,8 +123,11 @@ func _update_cam() -> void:
 	var half := vp.get_visible_rect().size * 0.5
 	vp.canvas_transform = Transform2D(0.0, Vector2(zoom, zoom), 0.0, half - cam_pos * zoom)
 	_update_layer_parallax(cam_pos)
+	if is_instance_valid(coll_view):
+		coll_view.queue_redraw()
 	for drawing in _context_drawings:
 		drawing._update_layer_parallax(cam_pos)
+		drawing.coll_view.queue_redraw()
 
 func _update_layer_parallax(camera: Vector2) -> void:
 	# 层参数预览：parallax ≠ 1 的层按相机位移反向平移（远景半速、0 = 固定）。
@@ -157,6 +160,7 @@ func show_drawing_context(documents: Array[Dictionary], behind: bool) -> void:
 		drawing.z_index = -2 if behind else 0
 		add_child(drawing)
 		drawing.load_data(document.data, document.map)
+		drawing.set_layer_hidden(drawing.collision_index(), not is_layer_visible(collision_index()))
 		_context_drawings.append(drawing)
 		drawing._update_layer_parallax(cam_pos)
 
@@ -508,7 +512,6 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	for i in layer_count() + 1:
 		_layer_ops_ctrl._apply_layer_shown(i)
 	if drawing_context_only:
-		coll_view.hide()
 		return
 
 	# 相机：撤销时保持视角，否则对准出生点
@@ -1830,6 +1833,9 @@ func _layer_display_node(i: int) -> Node2D:
 	return _layer_ops_ctrl._layer_display_node(i)
 func set_layer_hidden(i: int, now_hidden: bool) -> void:
 	_layer_ops_ctrl.set_layer_hidden(i, now_hidden)
+	if _is_grid_layer(i):
+		for drawing in _context_drawings:
+			drawing.set_layer_hidden(drawing.collision_index(), now_hidden)
 func is_layer_visible(i: int) -> bool:
 	return _layer_ops_ctrl.is_layer_visible(i)
 func set_layer_locked(i: int, locked: bool) -> void:

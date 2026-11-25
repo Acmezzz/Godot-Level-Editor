@@ -26,7 +26,7 @@
 | 可重用的规则、对话、技能、题目、卡组、任务 | `functions` 与对应的 `fields`；实体自带功能用 `assets[].functions` 引用功能 ID | 独立内容或实例绑定所指的内容文件；`function` 和 `fields` 使用执行码 |
 | 条件、事件时机、音频、按时间执行的演出 | `conditions`、`triggers`、`audio`、`steps`；功能启用演出用 `steps: true` | 实例绑定、内容字段和内容 `steps`。游戏决定触发、条件求值、音频播放、时间与分支执行 |
 | 地图专属规则或流程出口 | `mapContentSlots`、`mapOutputs` | 地图 `meta.contentSlots`、`meta.flowOutputs` |
-| 多张地图共享的事件及绘制 | 在 `triggers` 中声明 `eventTargets` | 作者保存的 `eventLayers` 以及可选的 `drawingMap` 对应地图 |
+| 多张地图共享的绘制、碰撞及事件 | 绘制和碰撞沿用地图格式；需要接事件时在 `triggers` 中声明 `eventTargets` | 作者保存的 `eventLayers` 以及可选的 `drawingMap` 对应文档 |
 | 标题、设置、背包、HUD、结算或其他游戏内界面 | `viewports` 和按需使用的 `screenModules` | 清单 `views[].layout`；模块参数 `props` 用字段 `id`，连线在 `outputs` |
 | 程序生成的地图和连续世界 | `mapGenerators`、生成能力 `generateMap`；作者编辑 `worldLayout` | 已发布地图、清单中的分块绑定；随机逻辑、流式挂载和替换策略由游戏运行时执行 |
 
@@ -61,8 +61,8 @@
 
 1. 游戏在 `triggers` 定义什么时候发事件，例如 `round_finished`，并以 `eventTargets` 声明可接到的内容类型、屏幕、地图或入场端口。
 2. 作者选择该层适用的地图、接事件目标，按需使用「保存并编辑绘制层」。省略 `maps` 表示无范围限制，`maps: []` 表示没有地图命中。
-3. 游戏按**当前基础地图码**选层，再按 **时机执行码**查 `events`。配置了 `drawingMap` 才按该码加载独立绘制文档，保留其自身地图/实例身份；不要递归将该共享绘制文档当作基础地图。运行时由游戏决定什么时候显示、何时执行，以及多层命中时的顺序。
-4. 验收至少测两个入口：一个命中并出现正确目标及绘制，另一个不命中。希望无地图的游戏共享某个事件时，由游戏显式消费无范围限制的层。详见[图组事件、正式入口及试玩协议](GAME_SIDE_PROTOCOL.md#entry-events-playtest)。
+3. 游戏按**当前基础地图码**选择全部匹配图组，再按**时机执行码**查 `events`。每个 `drawingMap` 是一份独立的地图文档，按普通地图格式读它自己的图层、瓦片、摆放物和碰撞；保留文档和实例身份，按各文档的格空间解析坐标，不递归匹配图组。游戏决定何时显示、启用碰撞、执行事件，以及多组命中时的顺序。
+4. 验收至少测两个入口：一个命中并加载相应绘制、碰撞和事件目标，另一个不命中。希望无地图的游戏共享某个事件时，由游戏显式消费无范围限制的层。详见[图组事件、正式入口及试玩协议](GAME_SIDE_PROTOCOL.md#entry-events-playtest)。
 
 ### 游戏界面和设置
 

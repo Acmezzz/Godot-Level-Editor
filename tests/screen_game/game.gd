@@ -149,8 +149,10 @@ func _mount_course_layers(code: String) -> void:
 					continue
 				var drawing = JSON.parse_string(FileAccess.get_file_as_string("res://maps/" + file))
 				if drawing is Dictionary and drawing.get("meta", {}).get("code") == drawing_code:
-					var nodes := _draw_relay(self, drawing, _relay_camera(size), false)
-					drawings.append({"code": drawing_code, "instances": nodes.keys()})
+					var camera := _relay_camera(size)
+					var nodes := _draw_relay(self, drawing, camera, false)
+					var shapes := _mount_relay_collision(drawing, camera)
+					drawings.append({"code": drawing_code, "instances": nodes.keys(), "collisionShapes": shapes})
 					break
 		var notice: Dictionary = layer.get("events", {}).get(manifest.triggers.course_entered.code, {})
 		if not notice.is_empty():
@@ -581,14 +583,30 @@ func _draw_relay(parent: Node, map: Dictionary, camera: Transform2D, draw_board 
 			diamond.color = Color("#19434e") if (x + y) % 2 == 0 else Color("#245464")
 			parent.add_child(diamond)
 	var pawns := {}
+	var layers := {}
+	for layer: Dictionary in map.meta.layers:
+		layers[layer.id] = _relay_view(camera, layer)
 	for row: Dictionary in map.objects:
 		var pawn := Polygon2D.new()
 		pawn.polygon = PackedVector2Array([Vector2(-7, 0), Vector2(0, -9), Vector2(7, 0), Vector2(0, 6)])
 		pawn.color = Color("#ffbe54") if row.asset == "relay" else Color("#67e8bb")
-		pawn.position = xform * _iso(Vector2(row.x, row.y) + Vector2(0.5, 0.5))
+		var object_transform: Transform2D = layers.get(row.get("layer", ""), xform)
+		pawn.position = object_transform * _iso(Vector2(row.x, row.y) + Vector2(0.5, 0.5))
 		parent.add_child(pawn)
 		pawns[row.code] = pawn
 	return pawns
+
+func _mount_relay_collision(map: Dictionary, camera: Transform2D) -> int:
+	var body := StaticBody2D.new()
+	for row: Dictionary in map.collision:
+		var shape := CollisionPolygon2D.new()
+		var points := PackedVector2Array()
+		for corner in [Vector2.ZERO, Vector2.RIGHT, Vector2.ONE, Vector2.DOWN]:
+			points.append(camera * _iso(Vector2(row.x, row.y) + corner))
+		shape.polygon = points
+		body.add_child(shape)
+	add_child(body)
+	return body.get_child_count()
 
 func _play_relay(map: Dictionary) -> void:
 	var relay: Dictionary = map.objects.filter(func(row): return row.asset == "relay")[0]

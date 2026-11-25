@@ -20,7 +20,7 @@ static func open(app, layer_id := "", drawing_only := false) -> void:
 	var events := Layers.types(source)
 	var map_options := Maps.map_target_options(source)
 	var drawing_codes := Layers.drawing_codes(source)
-	var shell: Dictionary = app._popup_body("图组事件层", "同一份绘制层和事件可用于全部地图或任意地图组合。")
+	var shell: Dictionary = app._popup_body("图组事件层", "多张地图可共用独立绘制、碰撞与事件。")
 	var pop: PopupPanel = shell.pop
 	var body: VBoxContainer = shell.body
 	var toolbar := Kit.hbox(6)

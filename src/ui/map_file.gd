@@ -84,10 +84,8 @@ func refresh_event_drawings() -> void:
 	var is_shared := code in EventLayers.drawing_codes(app.manifest)
 	if not is_shared:
 		_event_preview_base = code
-	if not app.canvas.show_event_context:
-		app.canvas.show_drawing_context([], false)
-	elif is_shared:
-		var bases: Array[Dictionary] = []
+	var documents: Array[Dictionary] = []
+	if app.canvas.show_event_context and is_shared:
 		for drawing in EventLayers.drawings_for_map(app.manifest, _event_preview_base):
 			if drawing.map != code:
 				continue
@@ -95,11 +93,11 @@ func refresh_event_drawings() -> void:
 			if resolved.status == "ok":
 				var data := MapStore.read(app.manifest, resolved.key)
 				if not data.is_empty():
-					bases.append({"map": _event_preview_base, "data": data})
+					documents.append({"map": _event_preview_base, "data": data})
 			break
-		app.canvas.show_drawing_context(bases, true)
-	else:
-		app.canvas.show_drawing_context(ReferenceIndex.event_drawings(app.manifest, code), false)
+	elif app.canvas.show_event_context:
+		documents = ReferenceIndex.event_drawings(app.manifest, code)
+	app.canvas.show_drawing_context(documents, is_shared)
 
 ## 进入一次会影响当前文档的操作（新建/切图）：抬会话代数并返回本次代次。
 func _begin_doc_op() -> int:

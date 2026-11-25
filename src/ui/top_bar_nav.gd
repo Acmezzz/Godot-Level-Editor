@@ -92,7 +92,7 @@ func _refresh_map_menu() -> void:
 	_switch_menu.add_item("编辑项目世界布局…", _MENU_WORLD)
 	_switch_menu.add_item("图组绘制层…", _MENU_EVENTS)
 	if app.map_loaded and not app.manifest.get(EventLayers.KEY, {}).is_empty():
-		_switch_menu.add_check_item("显示其他绘制层作为参照", _MENU_DRAWING_CONTEXT)
+		_switch_menu.add_check_item("显示其他绘制与碰撞作为参照", _MENU_DRAWING_CONTEXT)
 		_switch_menu.set_item_checked(_switch_menu.item_count - 1, app.canvas.show_event_context)
 	# 草稿恢复入口（A3）：只列真正有草稿的地图码，避免菜单变成大杂烩
 	var draft_keys: Array = preload("res://src/map/recovery.gd").list_drafts(app.manifest)

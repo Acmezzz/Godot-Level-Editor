@@ -53,6 +53,35 @@ func test_map_write_read_roundtrip() -> void:
 	eq((data.get("meta", {}) as Dictionary).get("layers", []).size(), 2, "层栈保真")
 	_wipe()
 
+func test_shared_drawings_compose_overlapping_map_sets() -> void:
+	_wipe()
+	var m := _fake_manifest()
+	for group in ["X", "Y", "Z"]:
+		var data := MapStore.new_map(group, 8, 8)
+		data.meta.code = "GRP" + group
+		data.collision = [{"x": 1, "y": 2}]
+		ok(MapStore.write(m, group, data), "write independent drawing " + group)
+	m.eventLayers = {
+		"X": {"drawingMap": "GRPX", "maps": ["MAPA", "MAPB", "MAPC"]},
+		"Y": {"drawingMap": "GRPY", "maps": ["MAPB", "MAPC", "MAPD", "MAPE", "MAPF"]},
+		"Z": {"drawingMap": "GRPZ", "maps": ["MAPA", "MAPC", "MAPF"]},
+	}
+	var expected := {"A": ["X", "Z"], "B": ["X", "Y"], "C": ["X", "Y", "Z"],
+		"D": ["Y"], "E": ["Y"], "F": ["Y", "Z"]}
+	for board in expected:
+		var drawings := ReferenceIndex.event_drawings(m, "MAP" + board)
+		eq(drawings.map(func(row): return row.layer), expected[board], "matching drawings on map " + board)
+		for drawing in drawings:
+			var cells: Array = drawing.data.collision
+			ok(drawing.data.meta.code == drawing.map and cells.size() == 1 and cells[0].x == 1 and cells[0].y == 2,
+				"each drawing keeps its own map code and collision data")
+	m.eventLayers["Y"].erase("maps")
+	eq(ReferenceIndex.event_drawings(m, "MAPG").map(func(row): return row.layer), ["Y"], "an unscoped group applies to new maps")
+	eq(ReferenceIndex.event_drawings(m, "GRPX"), [], "a drawing does not recursively load another drawing")
+	m.eventLayers["Y"].maps = []
+	eq(ReferenceIndex.event_drawings(m, "MAPD"), [], "an explicitly empty group matches no maps")
+	_wipe()
+
 func test_duplicate_map_reissue_code() -> void:
 	_wipe()
 	var m := _fake_manifest()
