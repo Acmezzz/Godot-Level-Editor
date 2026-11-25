@@ -1,4 +1,6 @@
-# bird-editor MCP
+# 开发用 Node 验证工具
+
+这里的 Node 服务器用于维护编辑器源码。Windows 编辑器 EXE 自己运行的内容制作 MCP 见 [EDITOR_MCP.md](../docs/EDITOR_MCP.md)。
 
 把本项目的日常验证操作封装成结构化 MCP 工具，供 ZCode 会话直接调用。零依赖 Node stdio server（JSON-RPC 按行分帧），不装任何包。
 

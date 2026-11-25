@@ -10,6 +10,7 @@
 |---|---|
 | [docs/EDITOR_FEATURES.md](docs/EDITOR_FEATURES.md) | **编辑器功能权威描述**：架构、全部功能、快捷键、已知边界 |
 | [docs/GAME_SIDE_STANDARD.md](docs/GAME_SIDE_STANDARD.md) | **游戏侧 AI 接入指南**：模块声明、数据读取及交付验收；详细字段见[数据协议参考](docs/GAME_SIDE_PROTOCOL.md) |
+| [docs/EDITOR_MCP.md](docs/EDITOR_MCP.md) | **关卡编辑器 EXE 的 MCP**：Codex 接入、工具参数、截图、草稿、试玩与发布 |
 
 ## 快速上手
 
@@ -40,10 +41,11 @@ src/
 ├── assets/                资产声明归一化、内置种类、碰撞类型池、图像探测
 ├── canvas/                画布宿主与控制器（绘制 / 输入 / 左右键语义执行 / 选区）
 ├── content/               功能/条件/步骤/音频/时机声明池、五段身份数、内容文件读写
+├── mcp/                   编辑器本体的内容制作 MCP
 └── ui/                    设计系统、布局骨架、三面板、各种弹窗
 tests/                     数据层回归、图形编辑工作流及独立游戏样例
 tools/                     发布验收(release_check.py)、截图、迁移与性能采样
-mcp/                       bird-editor MCP server（AI 协作验证链，见 mcp/README.md）
+mcp/                       开发期 Node 验证工具，不随 EXE 导出
 docs/                      EDITOR_FEATURES + GAME_SIDE_STANDARD
 ```
 

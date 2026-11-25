@@ -114,6 +114,13 @@ static func read_ex(m: Dictionary, kind: String, id: String) -> Dictionary:
 	var path := path_for(m, kind, id)
 	if path == "":
 		return {"status": "invalid", "data": {}, "error": "内容目录或 id 非法"}
+	var overlay: Dictionary = m.get("_content_overrides", {})
+	var key := kind + "/" + id
+	if overlay.has(key):
+		var row: Dictionary = overlay[key]
+		if row.get("deleted", false):
+			return {"status": "missing", "data": {}, "error": "已从草稿删除"}
+		return {"status": "ok", "data": row.data.duplicate(true), "digest": row.baseline, "error": ""}
 	if not FileAccess.file_exists(path):
 		return {"status": "missing", "data": {}, "error": "内容文件不存在"}
 	var f := FileAccess.open(path, FileAccess.READ)
@@ -195,14 +202,19 @@ static func list_ids(m: Dictionary, kind: String) -> Array:
 	if dir_path == "":
 		return out
 	var d := DirAccess.open(dir_path)
-	if d == null:
-		return out
-	for f in d.get_files():
+	for f in (d.get_files() if d != null else PackedStringArray()):
 		if not str(f).ends_with(".json"):
 			continue
 		var id := str(f).get_basename()
 		if is_valid_id(id):
 			out.append(id)
+	for row in m.get("_content_overrides", {}).values():
+		if row.function != kind:
+			continue
+		if row.get("deleted", false):
+			out.erase(row.content)
+		elif not out.has(row.content):
+			out.append(row.content)
 	out.sort()
 	return out
 

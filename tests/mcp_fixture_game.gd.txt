@@ -1,0 +1,62 @@
+extends Node2D
+
+var report := {}
+var elapsed := 0.0
+var last_frame := ""
+
+func _ready() -> void:
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--editor-preview="):
+			await _preview(arg.trim_prefix("--editor-preview="))
+			return
+		if arg.begins_with("--editor-playtest="):
+			report = JSON.parse_string(Marshalls.base64_to_utf8(arg.trim_prefix("--editor-playtest=")))
+	if not report.is_empty():
+		_write(report.path, report.merged({"status": "ready"}))
+
+func _draw() -> void:
+	draw_rect(get_viewport_rect(), Color.from_hsv(fmod(elapsed, 1.0), 0.8, 0.75))
+	draw_circle(get_viewport_rect().get_center(), 25, Color.WHITE)
+
+func _process(delta: float) -> void:
+	if report.is_empty():
+		return
+	elapsed += delta
+	queue_redraw()
+	var stem: String = str(report.path).get_basename() + ".frame"
+	var path := stem + ".request.json"
+	if not FileAccess.file_exists(path):
+		return
+	var sample = JSON.parse_string(FileAccess.get_file_as_string(path))
+	if not sample is Dictionary or sample.token != report.token or sample.id == last_frame:
+		return
+	last_frame = sample.id
+	await RenderingServer.frame_post_draw
+	var image := get_viewport().get_texture().get_image()
+	image.resize(int(sample.width), int(sample.height))
+	var tmp: String = sample.result + ".tmp"
+	if image.save_png(tmp) == OK:
+		DirAccess.rename_absolute(tmp, sample.result)
+
+func _preview(path: String) -> void:
+	var request: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(path))
+	var directory := path.get_base_dir()
+	var subject: Dictionary = request.subject
+	if request.capability == "generateMap":
+		var meta := {"code": subject.target.code, "name": subject.target.name,
+			"w": int(subject.parameters.width), "h": 12, "layers": [{"id": "DRAW", "name": "Generated", "visible": true}]}
+		_write(directory.path_join("map.json"), {"version": subject.target.version, "meta": meta, "tiles": {}, "objects": [], "collision": [], "spawn": [0, 0]})
+	else:
+		var image := Image.create_empty(int(request.viewport.w), int(request.viewport.h), false, Image.FORMAT_RGB8)
+		var moment: Dictionary = subject.get("time", {})
+		var color := Color("0090aa") if float(moment.get("seconds", 0.0)) < 0.5 else Color("f02050")
+		image.fill(color)
+		image.save_png(directory.path_join("frame.png"))
+		_write(directory.path_join("picks.json"), {"version": 1, "token": request.token, "regions": [
+			{"screen": [[0, 0], [80, 0], [0, 80]], "targets": {"map": subject.get("map", {}).get("meta", {}).get("code", "")}}]})
+	_write(directory.path_join("result.json"), {"version": 1, "token": request.token, "status": "ready"})
+	get_tree().quit()
+
+func _write(path: String, value: Dictionary) -> void:
+	var file := FileAccess.open(path, FileAccess.WRITE)
+	file.store_string(JSON.stringify(value))

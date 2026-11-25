@@ -1,6 +1,7 @@
 # Godot 4+ specific ignores
 .godot/
 /android/
+/dist/
 
 # 截图取证目录：开发期产物，不入库（tools/screenshot.gd 生成）
 tools/shots/

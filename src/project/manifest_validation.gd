@@ -239,7 +239,7 @@ static func _validate_playtest(data: Dictionary, issues: Array[Dictionary]) -> v
 		_add(issues, "error", "playtest.executable", "must be a path string")
 	elif exe is String and (exe as String).strip_edges() == "" and pt2.has("executable"):
 		_add(issues, "warning", "playtest.executable", "empty executable: playtest is disabled")
-	for feature in ["report", "projectEntry", "mapEntry", "viewEntry", "viewDraft", "contentEntryMap"]:
+	for feature in ["report", "projectEntry", "mapEntry", "viewEntry", "viewDraft", "contentEntryMap", "captureFrames"]:
 		if not pt2.has(feature):
 			continue
 		if not pt2[feature] is bool:
@@ -248,6 +248,8 @@ static func _validate_playtest(data: Dictionary, issues: Array[Dictionary]) -> v
 			_add(issues, "error", "playtest." + feature, "requires a structured executable launch")
 	if pt2.get("viewDraft") == true and pt2.get("report") != true:
 		_add(issues, "error", "playtest.viewDraft", "requires report: true to verify the loaded draft")
+	if pt2.get("captureFrames") == true and pt2.get("report") != true:
+		_add(issues, "error", "playtest.captureFrames", "requires report: true to identify the running session")
 	if pt2.has("mapEntryPorts"):
 		var types = pt2.mapEntryPorts
 		if pt2.get("mapEntry") != true or not types is Array or types.is_empty() \

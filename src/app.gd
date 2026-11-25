@@ -63,12 +63,26 @@ func _ready() -> void:
 	_load_prefs()
 	_picker_ctrl._load_projects()
 	_ensure_editor_controllers()
+	var mcp_port := 0
+	for arg in OS.get_cmdline_user_args():
+		if arg == "--bird-mcp":
+			mcp_port = 47821
+		elif arg.begins_with("--bird-mcp="):
+			mcp_port = arg.get_slice("=", 1).to_int()
+		elif arg.begins_with("--bird-project="):
+			cur_project_dir = arg.trim_prefix("--bird-project=").replace("\\", "/").simplify_path()
 	manifest = _load_last_project()
 	get_tree().auto_accept_quit = false
 	if manifest.is_empty() or manifest.has("_error"):
 		_picker_ctrl._show_picker(manifest.get("_error", ""))
 	else:
 		_enter_project(cur_project_dir, manifest)
+	if mcp_port > 0 and mcp_port <= 65535:
+		var server := preload("res://src/mcp/server.gd").new()
+		var error := server.start(self, mcp_port)
+		if error != OK:
+			server.free()
+			push_error("BIRD MCP 无法监听端口 %d：%s" % [mcp_port, error_string(error)])
 
 ## 首次进入或项目切换后重建编辑器控制器；选择页阶段不提前创建，
 ## 避免布局控制器在宿主没有项目上下文时被误用（A1/E00）。

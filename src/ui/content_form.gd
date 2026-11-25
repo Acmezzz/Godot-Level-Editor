@@ -379,13 +379,14 @@ func reference_context_selector(current: String, on_change: Callable) -> OptionB
 			selected[0] = i)
 	return select
 
-func project_reference_options(decl: Dictionary, context: String) -> Array:
+func project_reference_options(decl: Dictionary, context: String, snapshot := {}) -> Array:
+	var source_manifest: Dictionary = snapshot if not snapshot.is_empty() else manifest
 	if context == "" or str(decl.get("_mapKey", "")) != "":
-		return _resolve_options(decl, true)
+		return _resolve_options(decl, true, not snapshot.is_empty(), source_manifest)
 	var source := str(decl.get("source", ""))
 	if source == "editor:reference-maps":
-		var resolved := ReferenceIndex.resolve_map(manifest, context)
-		var map_options := ReferenceIndex.map_target_options(manifest).filter(func(map):
+		var resolved := ReferenceIndex.resolve_map(source_manifest, context)
+		var map_options := ReferenceIndex.map_target_options(source_manifest).filter(func(map):
 			return map.name != resolved.key).map(func(map):
 			return {"v": map.code, "t": map.name})
 		if not map_options.is_empty():
@@ -393,10 +394,10 @@ func project_reference_options(decl: Dictionary, context: String) -> Array:
 		return map_options
 	if not (source.begins_with("entity_inst:") or source.begins_with("cell:") \
 			or source.begins_with("port:") or source.begins_with("edge:") or source == "layer:"):
-		return _resolve_options(decl, true)
+		return _resolve_options(decl, true, not snapshot.is_empty(), source_manifest)
 	var scoped := decl.duplicate()
 	scoped["_mapKey"] = context
-	var options := _resolve_options(scoped, true)
+	var options := _resolve_options(scoped, true, not snapshot.is_empty(), source_manifest)
 	if source == "edge:coordinates" and not options.is_empty():
 		options[0]["code"] = ""
 		return options
@@ -410,14 +411,15 @@ func project_reference_options(decl: Dictionary, context: String) -> Array:
 		return local
 	return options
 
-func _resolve_options(decl: Dictionary, project_scope := false, saved_only := false) -> Array:
+func _resolve_options(decl: Dictionary, project_scope := false, saved_only := false, snapshot := {}) -> Array:
+	var source_manifest: Dictionary = snapshot if not snapshot.is_empty() else manifest
 	if str(decl.get("source", "")) == "editor:condition-schema":
-		return ConditionDecls.allowed_rows(manifest, decl)
+		return ConditionDecls.allowed_rows(source_manifest, decl)
 
 	var src := str(decl.get("source", ""))
 	if src == "editor:reference-maps":
 		var local := not project_scope and not saved_only and _map_ready()
-		var options := ReferenceIndex.map_target_options(manifest).filter(func(map):
+		var options := ReferenceIndex.map_target_options(source_manifest).filter(func(map):
 			return not local or map.name != app.canvas.cur_map_name).map(func(map):
 			return {"v": map.code, "t": map.name})
 		if local and not options.is_empty():
@@ -430,22 +432,22 @@ func _resolve_options(decl: Dictionary, project_scope := false, saved_only := fa
 				working_map = app.canvas.arrival_snapshot()
 			elif decl.domains.get("maps") == true:
 				working_map = {"meta": app.canvas.map_data.meta}
-		return StartupTargets.destination_options(manifest, decl.domains, working_map).map(func(option):
+		return StartupTargets.destination_options(source_manifest, decl.domains, working_map).map(func(option):
 			return {"v": JSON.stringify(option.target), "t": option.name})
 	if src == "view:":
-		return ReferenceIndex.view_ids(manifest).map(func(id: String): return {"v": id, "t": id})
+		return ReferenceIndex.view_ids(source_manifest).map(func(id: String): return {"v": id, "t": id})
 	if src.begins_with("content:"):
 		var kind := src.substr(8)
 		var out: Array = []
-		for cid in ContentStore.list_ids(manifest, kind):
-			var d := ContentStore.read(manifest, kind, str(cid))
+		for cid in ContentStore.list_ids(source_manifest, kind):
+			var d := ContentStore.read(source_manifest, kind, str(cid))
 			var nm := str(d.get("name", ""))
 			out.append({"v": str(cid), "t": ("%s  %s" % [str(cid), nm]) if nm != "" else str(cid)})
 		return out
 	if src.begins_with("entity:"):
 		var want := src.substr(7).split(",", false)
 		var out2: Array = []
-		for e in AssetDecl.of_kind_placed(manifest, "entity"):
+		for e in AssetDecl.of_kind_placed(source_manifest, "entity"):
 			var sid := str((e as Dictionary).get("id", ""))
 			if not want.is_empty() and not want.has(sid):
 				continue
@@ -459,7 +461,7 @@ func _resolve_options(decl: Dictionary, project_scope := false, saved_only := fa
 		if project_scope and map_key == "":
 			return []
 		if map_key != "" and (saved_only or not can_pick_on_canvas(map_key)):
-			return RefFields.map_instances(manifest, map_key, Array(want))
+			return RefFields.map_instances(source_manifest, map_key, Array(want))
 		var out4: Array = []
 		if _map_ready():
 			for e0 in app.canvas.ents_all():
@@ -489,9 +491,9 @@ func _resolve_options(decl: Dictionary, project_scope := false, saved_only := fa
 				if ent is EntityNode and ent.is_entity():
 					rows.append({"asset": ent.asset, "code": ent.code})
 			var map_code: String = app.canvas.cur_map_code()
-			return RefFields.port_options(manifest, map_code,
+			return RefFields.port_options(source_manifest, map_code,
 				rows, Array(pk))
-		return RefFields.port_candidates(manifest, pmap, Array(pk))
+		return RefFields.port_candidates(source_manifest, pmap, Array(pk))
 	if src.begins_with("cell:"):
 		# 有限格图使用配对地图，并可限定候选的局部空间。
 		var map_key := str(decl.get("_mapKey", ""))
@@ -501,9 +503,9 @@ func _resolve_options(decl: Dictionary, project_scope := false, saved_only := fa
 		if not saved_only and can_pick_on_canvas(map_key):
 			snap = app.canvas.map_data
 		elif map_key != "":
-			var rm := ReferenceIndex.resolve_map(manifest, map_key)
+			var rm := ReferenceIndex.resolve_map(source_manifest, map_key)
 			if rm.status == "ok":
-				snap = MapStore.read(manifest, str(rm.key))
+				snap = MapStore.read(source_manifest, str(rm.key))
 		var cg := CellGraph.graph_of(snap.get("meta", {}) as Dictionary)
 		return CellGraph.cell_options(cg, CellGraph.cell_source_space(decl))
 	if src.begins_with("edge:"):
@@ -514,16 +516,16 @@ func _resolve_options(decl: Dictionary, project_scope := false, saved_only := fa
 			return []
 		if src == "edge:coordinates":
 			if not saved_only and can_pick_on_canvas(emap):
-				return [RefFields.edge_context(app.canvas.map_data.meta, manifest)]
-			var map := RefFields.edge_map(manifest, emap) if emap != "" else {}
-			return [] if map.is_empty() else [RefFields.edge_context(map.meta, manifest)]
+				return [RefFields.edge_context(app.canvas.map_data.meta, source_manifest)]
+			var map := RefFields.edge_map(source_manifest, emap) if emap != "" else {}
+			return [] if map.is_empty() else [RefFields.edge_context(map.meta, source_manifest)]
 		if not saved_only and can_pick_on_canvas(emap):
 			return app.canvas._edge_candidates()
-		return RefFields.edge_candidates(manifest, emap) if emap != "" else []
+		return RefFields.edge_candidates(source_manifest, emap) if emap != "" else []
 	if src.begins_with("viewport:"):
 		# C5：具名参考画幅候选（清单 viewports：[{id, w, h}]）。缺声明 = 无候选（控件保留原值）。
 		var outv: Array = []
-		for vp in (manifest.get("viewports", []) as Array):
+		for vp in (source_manifest.get("viewports", []) as Array):
 			if vp is Dictionary and str((vp as Dictionary).get("id", "")) != "":
 				outv.append({"v": str((vp as Dictionary).get("id", "")), "t": "%s（%dx%d）" % [str((vp as Dictionary).get("id", "")), int((vp as Dictionary).get("w", 0)), int((vp as Dictionary).get("h", 0))]})
 		return outv
@@ -533,9 +535,9 @@ func _resolve_options(decl: Dictionary, project_scope := false, saved_only := fa
 		if not saved_only and (key != "" or not project_scope) and can_pick_on_canvas(key):
 			layers = app.canvas.layers_decl()
 		elif key != "":
-			var resolved := ReferenceIndex.resolve_map(manifest, key)
+			var resolved := ReferenceIndex.resolve_map(source_manifest, key)
 			if resolved.status == "ok":
-				layers = MapStore.read(manifest, str(resolved.key)).get("meta", {}).get("layers", [])
+				layers = MapStore.read(source_manifest, str(resolved.key)).get("meta", {}).get("layers", [])
 		var outl: Array = []
 		var li := 0
 		for L in layers:
@@ -545,8 +547,8 @@ func _resolve_options(decl: Dictionary, project_scope := false, saved_only := fa
 	if src == "audio:":
 		# 音频池来源：列音频声明（值=音频码，显示名），路径解释权在游戏侧。
 		var out5: Array = []
-		for aid in AudioDecls.audio(manifest):
-			var ad: Dictionary = (AudioDecls.audio(manifest) as Dictionary)[aid]
+		for aid in AudioDecls.audio(source_manifest):
+			var ad: Dictionary = (AudioDecls.audio(source_manifest) as Dictionary)[aid]
 			out5.append({"v": str(ad.get("code", "")), "t": str(ad.get("name", aid))})
 		return out5
 	if src.begins_with("asset:"):
@@ -557,7 +559,7 @@ func _resolve_options(decl: Dictionary, project_scope := false, saved_only := fa
 		var want_kind := rest if cut < 0 else rest.substr(0, cut)
 		var ids_s := "" if cut < 0 else rest.substr(cut + 1)
 		var want_ids: Array = Array(ids_s.split(",", false))
-		var assets := AssetDecl.all(manifest)
+		var assets := AssetDecl.all(source_manifest)
 		var out6: Array = []
 		for a in assets:
 			var ad: Dictionary = assets[a]
@@ -569,7 +571,7 @@ func _resolve_options(decl: Dictionary, project_scope := false, saved_only := fa
 			out6.append({"v": aid, "t": str(ad.get("name", aid))})
 		return out6
 	if src == "map":
-		return ReferenceIndex.map_target_options(manifest).map(func(row):
+		return ReferenceIndex.map_target_options(source_manifest).map(func(row):
 			return {"v": row.code, "t": row.name})
 	return []
 

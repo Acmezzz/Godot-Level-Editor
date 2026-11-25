@@ -156,7 +156,7 @@ static func code_index(m: Dictionary) -> Dictionary:
 		var n := str(mn)
 		var path := path_for(m, n)
 		paths[path] = true
-		var md := _read_cached(path, m, manifest_hash)
+		var md := _map_snapshot(m, n, path, manifest_hash)
 		if md.is_empty():
 			# 图名在目录里但内容读不出（坏 JSON / 校验不过）：不是「没有这张图」
 			unreadable.append(n)
@@ -232,6 +232,8 @@ static func path_for(m: Dictionary, name: String) -> String:
 
 ## 读地图 JSON；不存在/非法/解析失败都返回 {}
 static func read(m: Dictionary, name: String) -> Dictionary:
+	if m.get("_map_overrides", {}).has(name):
+		return m._map_overrides[name].duplicate(true)
 	var result := read_path(path_for(m, name), m)
 	var data = result.data if result.ok else {}
 	return data
@@ -333,14 +335,18 @@ static func _write_bytes(path: String, bytes: PackedByteArray) -> bool:
 static func list_maps(m: Dictionary) -> Array:
 	var out := []
 	var dir := DirAccess.open(str(m.get("_maps_dir", "")))
-	if dir == null:
-		return out
-	for f in dir.get_files():
+	for f in (dir.get_files() if dir != null else PackedStringArray()):
 		if not f.ends_with(".json"):
 			continue
 		if f.ends_with(".autosave.json") and _is_legacy_draft(str(m.get("_maps_dir", "")).path_join(f)):
 			continue
 		out.append(f.get_basename())
+	var overrides: Dictionary = m.get("_map_overrides", {})
+	for name in overrides:
+		if overrides[name].is_empty():
+			out.erase(name)
+		elif not out.has(name):
+			out.append(name)
 	out.sort()
 	return out
 
@@ -453,14 +459,19 @@ static func read_all(m: Dictionary, bad_out: Array = []) -> Dictionary:
 	var manifest_hash := m.hash()
 	for name in list_maps(m):
 		var path := path_for(m, name)
-		if path == "" or not FileAccess.file_exists(path):
+		if path == "" or (not m.get("_map_overrides", {}).has(name) and not FileAccess.file_exists(path)):
 			continue
-		var data := _read_cached(path, m, manifest_hash)
+		var data := _map_snapshot(m, name, path, manifest_hash)
 		if data.is_empty():
 			bad_out.append({"name": name, "reason": "无法读取或校验失败"})
 			continue
 		out[name] = data
 	return out
+
+static func _map_snapshot(m: Dictionary, name: String, path: String, manifest_hash: int) -> Dictionary:
+	if m.get("_map_overrides", {}).has(name):
+		return m._map_overrides[name]
+	return _read_cached(path, m, manifest_hash)
 
 ## R29：审计/破坏性操作读磁盘实际内容——不走 mtime+size 浏览缓存。
 ## 自检结果驱动「清除悬空引用」等写盘动作，旧结构会把好引用当悬空清掉。
