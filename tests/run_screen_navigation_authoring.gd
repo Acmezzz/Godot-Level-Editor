@@ -1,5 +1,5 @@
 extends SceneTree
-## Author and play a title → tutorial → map → results → conclusion route.
+## Author and play a title → settings → tutorial → map → results → conclusion route.
 
 const Manifest := preload("res://src/project/manifest.gd")
 const Maps := preload("res://src/map/map_store.gd")
@@ -47,6 +47,8 @@ func run() -> void:
 			"course": {"name": "Generated course rules", "contentTypes": ["course_rules"]}},
 		"mapGenerators": {"course": {"contentType": "course_rules",
 			"parameterFields": ["projection", "placements", "route", "elevation"]}},
+		"triggers": {"course_entered": {"name": "Course notice", "code": "NTCE",
+			"eventTargets": {"contentTypes": ["signal"]}}},
 		"preview": {"version": 1, "executable": OS.get_executable_path(), "capabilities": ["generateMap", "mapFrame"],
 			"args": ["--rendering-method", "gl_compatibility", "--audio-driver", "Dummy", "--path", "%projectpath%", "--"]},
 		"screenModules": {"course-door": {"outputs": {"accepted": {"name": "Enter", "arrivalPorts": ["arrival"]}},
@@ -57,6 +59,9 @@ func run() -> void:
 				"contentMapContext": "inherit"}}},
 			"map-results": {"outputs": {"accepted": {"name": "Continue", "contentTypes": ["course_rules"],
 				"contentMapContext": "inherit"}}},
+			"player-options": {"name": "Player settings", "outputs": {"accepted": {"name": "Apply", "screens": true}},
+				"fields": [{"id": "volume", "kind": "input", "type": "int", "min": 0, "max": 100, "step": 5, "default": 100},
+					{"id": "captions", "kind": "input", "type": "bool", "default": false}]},
 			"signal-latch": {"name": "Latch", "outputs": {"accepted": {"name": "Continue", "screens": true}}, "fields": [
 			{"id": "presses", "kind": "input", "type": "int", "min": 1, "default": 1}]}},
 		"functions": {"course_rules": {"code": "CRUL", "name": "Course rules", "fields": [
@@ -408,6 +413,7 @@ func run() -> void:
 		"the bound role can persist an explicit port on another map")
 	app._set_mode("content")
 	await add_screen("instructions", "Enter course", {"module": "course-door"}, copy_arrival)
+	await add_screen("settings", "Apply options", {"module": "player-options"}, {"view": "instructions"})
 	await add_screen("welcome", "Start tutorial", {"module": "signal-latch"}, {"view": "instructions"})
 	app.project_shell.content_editor._library._open_item("sequence", "project-epilogue", copy_code)
 	form = popup()
@@ -424,7 +430,7 @@ func run() -> void:
 	choose(flow.find_child("FlowSource", true, false), "@view\u0001welcome")
 	check(range(1, targets.item_count).all(func(i): return targets.get_item_metadata(i).has("view")),
 		"a typed screen outlet offers only screens without the global enable flag")
-	for id in ["debrief", "instructions"]:
+	for id in ["debrief", "settings"]:
 		choose(targets, {"view": id})
 		press(flow, "应用关系")
 		var welcome_view: Dictionary = manifest.views.filter(func(row): return row.view_id == "welcome")[0]
@@ -470,7 +476,7 @@ func run() -> void:
 	check(graph.edges.any(func(edge): return edge.from == router_key and edge.to == "signal\u0001project-finished"),
 		"graph reloads the mixed destination as an edge to the published target")
 	var edge_exists: bool = graph.edges.any(func(edge):
-		return edge.from == "@view\u0001welcome" and edge.to == "@view\u0001instructions" and edge.get("output") == "accepted")
+		return edge.from == "@view\u0001welcome" and edge.to == "@view\u0001settings" and edge.get("output") == "accepted")
 	check(edge_exists, "the project graph exposes the direct module transition")
 	check(graph.edges.any(func(edge): return edge.cid == "instructions" and edge.fn == Flow.MAP_KIND and edge.value == copy_code),
 		"the project graph links the teaching button to the authored map")
@@ -549,7 +555,12 @@ func run() -> void:
 	check(copy.objects[0].props.get("signal_port") == remote_port
 		and copy.objects[-1].props.get("signal_port") == remote_port,
 		"the original and copy keep the same explicit port on the other map")
-	var inbound := Usage.view_inbound_refs(manifest, "instructions", [])
+	var shared := await author_scoped_drawing(canvas, map_code, copy_code, current_host.asset,
+		{"function": "signal", "content": "project-finished"})
+	if shared.is_empty():
+		quit(1)
+		return
+	var inbound := Usage.view_inbound_refs(manifest, "settings", [])
 	check(not inbound.refs.is_empty() and "welcome" in inbound.refs[0], "the destination screen has the expected inbound reference")
 	var broken := manifest.duplicate(true)
 	var welcome: Dictionary = broken.views.filter(func(row): return row.view_id == "welcome")[0]
@@ -565,6 +576,10 @@ func run() -> void:
 	app._build_editor_ui()
 	app._set_mode("content")
 	check(app.manifest.startup.target == {"view": "welcome"}, "the authored screen is published as startup")
+	var settings: Dictionary = app.manifest.views.filter(func(row): return row.view_id == "settings")[0]
+	check(has_options(settings.layout.elements[0].props, 65, true)
+		and settings.layout.elements[0].outputs.accepted == {"view": "instructions"},
+		"reopen the authored settings module with its defaults and Apply destination")
 	press(app, "试玩项目")
 	var controller = app._playtest_ctrl
 	var end := Time.get_ticks_msec() + 12000
@@ -573,7 +588,12 @@ func run() -> void:
 		controller.poll_playtest()
 	var report: Dictionary = controller._play_report_result
 	var result: Dictionary = report.get("result", {})
-	check(report.get("status") == "ready" and result.get("screens") == ["welcome", "instructions", "results", "debrief"]
+	check(report.get("status") == "ready" and result.get("screens") == ["welcome", "settings", "instructions", "results", "debrief"]
+		and has_options(result.get("settingsBefore", {}), 65, true)
+		and has_options(result.get("settingsApplied", {}), 35, false)
+		and is_equal_approx(float(result.get("masterVolume", -1)), 0.35)
+		and result.get("captionVisible") == false
+		and result.get("courseNotice") == "Screen sequence complete" and result.get("sharedDrawings") == [shared]
 		and result.get("visited") == ["project-course-rules", "project-epilogue", "project-finished"]
 		and result.get("handoffTargets") == route
 		and result.get("endingActor") == pawn_code and result.get("endingBoard") == map_code
@@ -611,10 +631,33 @@ func run() -> void:
 	result = report.get("result", {})
 	check(report.get("status") == "ready" and result.get("board") == copy_code
 		and result.get("arrivalPort") == "door" and result.get("arrivalInstance") == new_host_code
+		and has_options(result.get("settingsOnBoot", {}), 35, false)
 		and result.get("screens") == ["results", "debrief"]
 		and result.get("text") == "Screen sequence complete"
 		and app.manifest.startup.target == {"view": "welcome"},
 		"the selected arrival starts the normal map flow without changing project startup: %s" % [report])
+	end = Time.get_ticks_msec() + 2000
+	while Playtest.is_alive(controller._play_pid) and Time.get_ticks_msec() < end:
+		await create_timer(0.05).timeout
+	app.project_shell.content_editor._library.open()
+	press(popup(), "流程关系…")
+	await process_frame
+	flow = popup()
+	choose(flow.find_child("FlowSource", true, false), "@map\u0001" + map_code)
+	choose(flow.find_child("FlowPlayMapEntry", true, false), {"map": map_code})
+	press(flow, "试玩所选地图")
+	end = Time.get_ticks_msec() + 8000
+	while controller._play_report_result.is_empty() and Time.get_ticks_msec() < end:
+		await create_timer(0.05).timeout
+		controller.poll_playtest()
+	report = controller._play_report_result
+	result = report.get("result", {})
+	check(report.get("status") == "ready" and result.get("board") == map_code
+		and result.get("sharedDrawings") == [] and not result.has("courseNotice"),
+		"the game omits both the shared drawing and event on the excluded map: %s" % [report])
+	end = Time.get_ticks_msec() + 2000
+	while Playtest.is_alive(controller._play_pid) and Time.get_ticks_msec() < end:
+		await create_timer(0.05).timeout
 	var arrival := {"map": copy_code, "inst": new_host_code, "port": "door"}
 	press(app, "启动入口…")
 	startup = popup()
@@ -700,6 +743,55 @@ func field_control(node: Node, id: String) -> OptionButton:
 			return row.get_child(1) as OptionButton
 	return null
 
+func has_options(values: Dictionary, volume: int, captions: bool) -> bool:
+	return values.get("volume") == volume and values.get("captions") == captions
+
+func author_scoped_drawing(canvas: EditorCanvas, excluded: String, included: String,
+		asset: String, target: Dictionary) -> Dictionary:
+	app.project_shell.content_editor._library.open()
+	press(popup(), "图组事件…")
+	await process_frame
+	var pop := popup()
+	press(pop, "新建层")
+	collect(pop, "LineEdit")[0].text = "Course overlay"
+	for box in collect(pop, "CheckBox"):
+		if box.text == "适用于全部地图":
+			box.button_pressed = false
+		elif box.text.ends_with("[%s]" % included):
+			box.button_pressed = true
+	var selectors := collect(pop, "OptionButton")
+	var layer_id: String = selectors[0].get_selected_metadata()
+	choose(selectors.back(), JSON.stringify(target))
+	var previous_path: String = app.cur_map_path
+	press(pop, "保存并编辑绘制层")
+	for i in 30:
+		await process_frame
+		if app.cur_map_path != previous_path:
+			break
+	var row: Dictionary = app.manifest.get("eventLayers", {}).get(layer_id, {})
+	var drawing: String = row.get("drawingMap", "")
+	if not check(not drawing.is_empty() and canvas.cur_map_code() == drawing
+			and row.get("maps") == [included] and row.get("events", {}).get("NTCE") == target,
+			"save and open a shared drawing and typed event for the selected map only"):
+		return {}
+	var placed: EntityNode = canvas._tool_ops_ctrl.place_object(asset, 0, Vector2(24, 44), true)
+	if not check(placed != null, "place %s on the independent drawing (ready=%s layers=%s locked=%s placeable=%s)" % [
+			asset, canvas.is_map_ready(), canvas.layer_count(), canvas.is_layer_locked(0), canvas.is_placeable(asset)]):
+		return {}
+	var instance := placed.code
+	var saved: Dictionary = await app._map_file_ctrl.commit_document("保存教学共享绘制层")
+	if not check(saved.get("status") == "ok", "publish the shared drawing object"):
+		return {}
+	canvas.show_event_context = true
+	await app._map_file_ctrl.open_map_by_code(excluded)
+	check(canvas.cur_map_code() == excluded and canvas._context_drawings.is_empty(),
+		"an excluded map has no shared drawing context")
+	await app._map_file_ctrl.open_map_by_code(included)
+	check(canvas.cur_map_code() == included and canvas._context_drawings.size() == 1
+		and canvas._context_drawings[0].cur_map_code() == drawing,
+		"the included map mounts the saved shared drawing as a separate document")
+	return {"code": drawing, "instances": [instance]}
+
 func add_screen(id: String, label: String, module: Dictionary, target: Dictionary) -> void:
 	Views.open(app)
 	var pop := popup()
@@ -736,6 +828,12 @@ func add_screen(id: String, label: String, module: Dictionary, target: Dictionar
 	caption.text_changed.emit(label)
 	if module.get("module") == "signal-latch":
 		pop.find_child("LayoutModuleField_presses", true, false).value = 2
+	if module.get("module") == "player-options":
+		var volume: SpinBox = pop.find_child("LayoutModuleField_volume", true, false)
+		var captions: CheckBox = pop.find_child("LayoutModuleField_captions", true, false)
+		check(volume.value == 100 and not captions.button_pressed, "the editor renders the module's declared defaults")
+		volume.value = 65
+		captions.button_pressed = true
 	if module.get("module") == "course-door":
 		var marker: Control = pop.find_child("LayoutModuleField_marker", true, false)
 		var map: OptionButton = marker.find_child("ReferenceTargetMap", true, false)

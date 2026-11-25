@@ -1,6 +1,8 @@
 extends Control
 ## Signal Room owns its UI, styling, state transitions and loading. No editor scripts are imported.
 
+const OPTIONS_FILE := "user://signal-options.cfg"
+
 var manifest: Dictionary
 var manifest_bytes: PackedByteArray
 var map_bytes: PackedByteArray
@@ -19,6 +21,9 @@ var screen_frames: Array[Dictionary] = []
 var cancel_target := {}
 var entered_board := {}
 var runtime_course := {}
+var options := ConfigFile.new()
+var options_report := {}
+var captions_enabled := false
 var verify := false
 
 func _ready() -> void:
@@ -33,6 +38,10 @@ func _ready() -> void:
 	manifest_bytes = FileAccess.get_file_as_bytes(manifest_path)
 	manifest = JSON.parse_string(manifest_bytes.get_string_from_utf8())
 	verify = args.has("--verify")
+	if options.load(OPTIONS_FILE) == OK:
+		options_report["settingsOnBoot"] = {"volume": options.get_value("player", "volume"),
+			"captions": options.get_value("player", "captions")}
+		_apply_options(options_report.settingsOnBoot)
 	if args.has("--editor-playtest"):
 		report = _decode(args["--editor-playtest"])
 	if args.get("--map", "") != "":
@@ -67,6 +76,7 @@ func _show_map_target(destination: Dictionary) -> void:
 		_clear_screen()
 		var pawns := _draw_relay(self, map, _relay_camera(size))
 		entered_board = {"board": code, "placed": pawns.keys()}
+		_mount_course_layers(code)
 		if destination.has("port"):
 			if not pawns.has(destination.inst):
 				_finish("The arrival instance is missing.")
@@ -126,6 +136,34 @@ func _show_map_target(destination: Dictionary) -> void:
 			_finish("", "Board entered")
 		return
 	_finish("Missing target map: " + code)
+
+func _mount_course_layers(code: String) -> void:
+	var drawings := []
+	for layer in manifest.get("eventLayers", {}).values():
+		if layer.has("maps") and code not in layer.maps:
+			continue
+		var drawing_code: String = layer.get("drawingMap", "")
+		if not drawing_code.is_empty():
+			for file in DirAccess.get_files_at("res://maps"):
+				if not file.ends_with(".json"):
+					continue
+				var drawing = JSON.parse_string(FileAccess.get_file_as_string("res://maps/" + file))
+				if drawing is Dictionary and drawing.get("meta", {}).get("code") == drawing_code:
+					var nodes := _draw_relay(self, drawing, _relay_camera(size), false)
+					drawings.append({"code": drawing_code, "instances": nodes.keys()})
+					break
+		var notice: Dictionary = layer.get("events", {}).get(manifest.triggers.course_entered.code, {})
+		if not notice.is_empty():
+			var content: Dictionary = JSON.parse_string(FileAccess.get_file_as_string(
+				"res://content/%s/%s.json" % [notice.function, notice.content]))
+			var label := Label.new()
+			label.text = content.fields.TEXT
+			label.position = Vector2(16, size.y - 36)
+			label.visible = captions_enabled
+			add_child(label)
+			entered_board["courseNotice"] = label.text
+			entered_board["captionVisible"] = label.is_visible_in_tree()
+	entered_board["sharedDrawings"] = drawings
 
 func _decode(encoded: String) -> Dictionary:
 	return JSON.parse_string(Marshalls.base64_to_utf8(encoded))
@@ -256,6 +294,18 @@ func _show_view(view_id: String, test_cancel := false, content_board := "") -> v
 				return
 			var button: Button = buttons[0]
 			await get_tree().process_frame
+			if view_id == "settings":
+				var slider: HSlider = get_node_or_null("PlayerOptions/Volume")
+				var captions: CheckButton = get_node_or_null("PlayerOptions/Captions")
+				if slider == null or captions == null or not slider.is_visible_in_tree() or not captions.is_visible_in_tree():
+					_finish("The authored settings controls are unavailable.")
+					return
+				options_report["settingsBefore"] = {"volume": slider.value, "captions": captions.button_pressed}
+				slider.grab_focus()
+				for i in 6:
+					await _press_action(&"ui_left")
+				captions.grab_focus()
+				await _press_action(&"ui_accept")
 			var click := InputEventAction.new()
 			if test_cancel and not cancel_target.is_empty():
 				click.action = &"ui_cancel"
@@ -267,16 +317,19 @@ func _show_view(view_id: String, test_cancel := false, content_board := "") -> v
 	_finish("Missing signal screen: " + view_id)
 
 func _verify_button(button: Button) -> void:
-	var click := InputEventAction.new()
-	click.action = &"ui_accept"
 	button.grab_focus()
 	for i in 4:
 		if not is_instance_valid(button) or not button.is_inside_tree():
 			break
-		for pressed in [true, false]:
-			click.pressed = pressed
-			Input.parse_input_event(click)
-			await get_tree().process_frame
+		await _press_action(&"ui_accept")
+
+func _press_action(action: StringName) -> void:
+	for pressed in [true, false]:
+		var input := InputEventAction.new()
+		input.action = action
+		input.pressed = pressed
+		Input.parse_input_event(input)
+		await get_tree().process_frame
 
 func _unhandled_input(event: InputEvent) -> void:
 	if not cancel_target.is_empty() and event.is_action_pressed("ui_cancel"):
@@ -309,6 +362,14 @@ func _draw_screen(parent: Node, layout: Dictionary, extent: Vector2, locale: Str
 		var item: Control
 		match row.kind:
 			"button", "module":
+				if row.get("module") == "player-options":
+					var panel := VBoxContainer.new()
+					panel.name = "PlayerOptions"
+					panel.position = bounds.position
+					panel.size = bounds.size
+					parent.add_child(panel)
+					buttons.append(_build_options(panel, row, caption))
+					continue
 				var button := Button.new()
 				button.text = caption
 				var latch: bool = row.get("module") == "signal-latch"
@@ -355,6 +416,42 @@ func _draw_screen(parent: Node, layout: Dictionary, extent: Vector2, locale: Str
 		item.size = bounds.size
 		parent.add_child(item)
 	return buttons
+
+func _build_options(panel: VBoxContainer, row: Dictionary, caption: String) -> Button:
+	var declared: Array = manifest.screenModules[row.module].fields
+	var props: Dictionary = row.get("props", {})
+	var volume := HSlider.new()
+	volume.name = "Volume"
+	volume.accessibility_name = "Master volume"
+	volume.min_value = declared[0].min
+	volume.max_value = declared[0].max
+	volume.step = declared[0].step
+	volume.value = float(options.get_value("player", "volume", props.get("volume", declared[0].default)))
+	panel.add_child(volume)
+	var captions := CheckButton.new()
+	captions.name = "Captions"
+	captions.text = "Show captions"
+	captions.button_pressed = bool(options.get_value("player", "captions", props.get("captions", declared[1].default)))
+	panel.add_child(captions)
+	var apply := Button.new()
+	apply.text = caption
+	panel.add_child(apply)
+	apply.pressed.connect(func():
+		var values := {"volume": int(volume.value), "captions": captions.button_pressed}
+		for key in values:
+			options.set_value("player", key, values[key])
+		if options.save(OPTIONS_FILE) != OK:
+			_finish("Could not save the player's options.")
+			return
+		_apply_options(values)
+		options_report["settingsApplied"] = values
+		options_report["masterVolume"] = AudioServer.get_bus_volume_linear(0)
+		_follow_target.call_deferred(row.outputs.accepted))
+	return apply
+
+func _apply_options(values: Dictionary) -> void:
+	AudioServer.set_bus_volume_linear(0, float(values.volume) / 100.0)
+	captions_enabled = values.captions
 
 func _screen_rectangles(elements: Array, extent: Vector2, profile: String) -> Dictionary:
 	var by_parent := {}
@@ -471,9 +568,9 @@ func _relay_regions(map: Dictionary, pawns: Dictionary, extent: Vector2, camera:
 func _relay_view(camera: Transform2D, layer: Dictionary) -> Transform2D:
 	return camera * _relay_layer(layer)
 
-func _draw_relay(parent: Node, map: Dictionary, camera: Transform2D) -> Dictionary:
+func _draw_relay(parent: Node, map: Dictionary, camera: Transform2D, draw_board := true) -> Dictionary:
 	var xform := _relay_view(camera, map.meta.layers[0])
-	for y in int(map.meta.h):
+	for y in (int(map.meta.h) if draw_board else 0):
 		for x in int(map.meta.w):
 			var diamond := Polygon2D.new()
 			var cell := Vector2(x, y)
@@ -522,7 +619,7 @@ func _finish(error: String, text := "", extra := {}) -> void:
 			"message": error, "mapDigest": _map_digest(), "manifestDigest": digest.finish().hex_encode(),
 			"result": {"visited": visited, "screens": screens, "buttons": opened_buttons,
 				"latchInputs": latch_inputs, "outlets": outlets, "text": text, "screenFrames": screen_frames}
-				.merged(entered_board).merged(runtime_course).merged(extra)}
+				.merged(entered_board).merged(runtime_course).merged(options_report).merged(extra)}
 		if draft_digest != "":
 			result["viewDigest"] = draft_digest
 		_write_json(path + ".tmp", result)

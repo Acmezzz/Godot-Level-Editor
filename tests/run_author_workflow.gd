@@ -1493,9 +1493,50 @@ func run():
 	await author_transformed_terrain(app, manifest)
 	await author_collision_batch(app, manifest)
 	await author_long_timeline(app, manifest)
+	await author_side_view_parallax(app, manifest)
 	await author_signal_room(app, project + "-signal")
 	print("WORKFLOW-DONE failures=", failures)
 	quit(1 if failures else 0)
+
+func author_side_view_parallax(app, manifest: Dictionary) -> void:
+	var path := Maps.path_for(manifest, "platform")
+	await app._load_map_file(path)
+	app._set_mode("map")
+	var canvas: EditorCanvas = app.canvas
+	var ground := canvas.layer_id(0)
+	await canvas.layer_add("Distant ridge")
+	await canvas.layer_add("Fixed frame")
+	var panel = app._layout_ctrl._layer_ctrl
+	panel._open_layer_manager()
+	var ids: Array[String] = [ground]
+	for sample in [["Distant ridge", "0.5"], ["Fixed frame", "0"]]:
+		var index := canvas.layers_decl().find_custom(func(row): return row.name == sample[0])
+		ids.append(canvas.layer_id(index))
+		var parameters: Control = panel._layer_mgr_rows.get_child(index * 2 + 1)
+		var input: LineEdit = collect(parameters, "LineEdit").filter(func(edit): return edit.tooltip_text.begins_with("视差"))[0]
+		input.text = sample[1]
+		input.text_submitted.emit(input.text)
+		for i in 16:
+			await process_frame
+			if not is_instance_valid(input):
+				break
+	panel._layer_mgr.hide()
+	var saved: Dictionary = await app._map_file_ctrl.commit_document("保存侧视图视差层")
+	check(saved.get("status") == "ok", "publish two new side-view parallax layers")
+	await app._load_map_file(path)
+	var indices := ids.map(func(id): return canvas.layers_decl().find_custom(func(row): return row.id == id))
+	check(indices.all(func(index): return index >= 0) and indices.map(func(index):
+		return float(canvas.layers_decl()[index].get("parallax", 1.0))) == [1.0, 0.5, 0.0],
+		"reopen the same normal, half-speed and fixed layers")
+	var viewport := canvas.get_viewport()
+	canvas.zoom = 1.0
+	canvas._update_cam()
+	var before := indices.map(func(index): return viewport.canvas_transform * canvas.to_layer_world(index, Vector2.ZERO))
+	canvas.cam_pos += Vector2(80, 0)
+	canvas._update_cam()
+	var after := indices.map(func(index): return viewport.canvas_transform * canvas.to_layer_world(index, Vector2.ZERO))
+	check(after[0] - before[0] == Vector2(-80, 0) and after[1] - before[1] == Vector2(-40, 0)
+		and after[2] == before[2], "side-view camera moves near, far and fixed layers by different screen distances")
 
 func author_long_timeline(app, manifest: Dictionary) -> void:
 	var steps: Array = [{"step": "NEXT", "at": 0, "duration": 10000}]

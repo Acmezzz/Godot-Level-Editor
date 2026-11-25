@@ -9,7 +9,7 @@
 | 文档 | 定位 |
 |---|---|
 | [docs/EDITOR_FEATURES.md](docs/EDITOR_FEATURES.md) | **编辑器功能权威描述**：架构、全部功能、快捷键、已知边界 |
-| [docs/GAME_SIDE_STANDARD.md](docs/GAME_SIDE_STANDARD.md) | **游戏侧开发规范**：清单/地图/内容三种数据的完整契约，怎么声明资产与功能，游戏侧怎么读 |
+| [docs/GAME_SIDE_STANDARD.md](docs/GAME_SIDE_STANDARD.md) | **游戏侧 AI 接入指南**：模块声明、数据读取及交付验收；详细字段见[数据协议参考](docs/GAME_SIDE_PROTOCOL.md) |
 
 ## 快速上手
 
