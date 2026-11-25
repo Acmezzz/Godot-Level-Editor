@@ -17,6 +17,7 @@ extends RefCounted
 const FrameReference := preload("res://src/ui/map_game_preview.gd")
 const Kit := preload("res://src/ui/ui_kit.gd")
 const Th := preload("res://src/ui/ui_theme.gd")
+const SpatialCheck := preload("res://src/project/spatial_reference_check.gd")
 const ContentStore := preload("res://src/content/content_store.gd")
 const ContentId := preload("res://src/content/content_id.gd")
 const ConditionDecls := preload("res://src/content/condition_decl.gd")
@@ -598,6 +599,13 @@ func _content_write(fn_id: String, cid: String, data: Dictionary, base_digest :=
 	if st is Dictionary:
 		(st as Dictionary)["data"] = data.duplicate(true)
 		return "ok"
+	if base_digest != "" and _map_ready() and app.canvas.modified_flag:
+		var live: Dictionary = app.canvas.extract()
+		var saved := MapStore.read(manifest, app.cur_map_name)
+		if not live.is_empty() and SpatialCheck.needs_map_save(manifest, fn_id, data, live, saved):
+			_staged_put(fn_id, cid, {"data": data, "doc": app._map_file_ctrl.document_key(),
+				"expect_absent": false, "baseline": base_digest, "requires_binding": false})
+			return "ok"
 	var res := ContentStore.write_ex(manifest, fn_id, cid, data, base_digest)
 	if bool(res.get("conflict", false)):
 		return "conflict"
@@ -654,7 +662,7 @@ func _set_field(i: int, fn_id: String, key: String, value, expected: Dictionary,
 ## digest_before 为空（新建/staged）不记——这类内容撤销等于放弃暂存，由暂存复核处理。
 func _record_content_delta(fn_id: String, cid: String, before: Dictionary, after: Dictionary,
 		digest_before: String) -> void:
-	if digest_before == "" or app == null or app.canvas == null:
+	if digest_before == "" or _staged_get(fn_id, cid) != null or app == null or app.canvas == null:
 		return
 	var path := ContentStore.path_for(manifest, fn_id, cid)
 	var digest_after := ContentStore.file_digest(path) if path != "" else ""
@@ -798,7 +806,8 @@ func bound_staged_rows(map_data: Dictionary) -> Array:
 		var row: Dictionary = _staged[key]
 		if row.doc != doc:
 			continue
-		if map_data.is_empty() or bindings.has([FunctionDecls.fn_code(manifest, row.fn_id), row.cid]):
+		if map_data.is_empty() or not row.get("requires_binding", true) \
+				or bindings.has([FunctionDecls.fn_code(manifest, row.fn_id), row.cid]):
 			rows.append(row)
 		else:
 			_staged.erase(key)
@@ -813,6 +822,8 @@ func consume_written_staged(rows: Array) -> void:
 		var cid := str(row.cid)
 		var staged = _staged_get(fn_id, cid)
 		if staged is Dictionary and staged.get("doc") == doc:
+			if staged.get("expect_absent", true):
+				app.canvas._undo_history_ctrl.published_contents[_staged_key(fn_id, cid)] = true
 			_staged_erase(fn_id, cid)
 
 func has_staged() -> bool:
@@ -830,7 +841,9 @@ func staged_rows_for_current_doc() -> Array:
 		if cid == "":
 			cid = str(key) if not str(key).contains("\u0001") else str(key).split("\u0001")[1]
 		out.append({"fn_id": str(st.get("fn_id", "")), "cid": cid,
-			"data": (st.get("data", {}) as Dictionary).duplicate(true)})
+			"data": (st.get("data", {}) as Dictionary).duplicate(true),
+			"requires_binding": st.get("requires_binding", true),
+			"expect_absent": st.get("expect_absent", true), "baseline": st.get("baseline", "")})
 	return out
 
 ## 当前文档的暂存内容 {内容ID: data}：整图复制要把未落盘的绑定内容一起带进副本
@@ -892,11 +905,11 @@ func restage_rows(rows: Array) -> int:
 						break
 				if ent != "":
 					break
-		if ent == "" and _map_ready():
+		if ent == "" and _map_ready() and r.get("requires_binding", true):
 			continue   # 绑定不在恢复后的画布上：这条不收（写盘只会造孤儿文件）
 		_staged_put(fn_id, cid, {"fn_id": fn_id, "data": dat,
 			"ent": ent, "doc": doc, "expect_absent": r.get("expect_absent", true),
-			"baseline": r.get("baseline", "")})
+			"baseline": r.get("baseline", ""), "requires_binding": r.get("requires_binding", true)})
 		n += 1
 	return n
 

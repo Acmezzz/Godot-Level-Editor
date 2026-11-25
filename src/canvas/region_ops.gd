@@ -626,7 +626,8 @@ func stage_cloned_contents(plan: Dictionary) -> void:
 		var existing := ContentStore.read_ex(cvs.manifest, pd.fn_id, pd.id)
 		var payload: Dictionary = pd.data.duplicate(true)
 		payload["id"] = pd.id
-		if existing.get("digest", "") == JSON.stringify(payload, "\t").sha256_text():
+		if existing.status == "ok" and (cvs._undo_history_ctrl.published_contents.has(ClonePlan.content_key(pd.fn_id, pd.id)) \
+				or existing.get("digest", "") == JSON.stringify(payload, "\t").sha256_text()):
 			continue
 		var owner := ""
 		for row in remapped:

@@ -423,3 +423,24 @@ func test_refused_content_returns_entry_to_stack() -> void:
 	eq(int(ContentStore.read(m, "f1", "C1").get("fields", {}).get("hp", 0)), 42, "盘面仍是外部值")
 	h.free()
 	_wipe()
+
+
+func test_nudge_keeps_add_separate_and_restores_deleted_order() -> void:
+	var ctx := _host()
+	var h: Host = ctx.host
+	var uh = ctx.undo
+	var lower := _ent(h, "LOWR", 0, 0)
+	var upper := _ent(h, "UPPR", 0, 0)
+	uh.inst_commit_add([upper])
+	var pre: Dictionary = uh.inst_rows([upper])
+	upper.position += Vector2(16, 0)
+	uh.inst_commit(pre.rows, true, true)
+	eq(uh.undo_stack.size(), 2, "微调不能合并进新增")
+	uh._restore_ents(uh.undo_stack.back(), false)
+	eq(upper.position, Vector2.ZERO, "撤销微调后实例仍在")
+	pre = uh.inst_rows([lower])
+	uh.record_instance_removal(pre.rows, {"LOWR": lower.get_index()})
+	lower.free()
+	uh._restore_ents(uh.undo_stack.back(), false)
+	eq(h.ents_all().map(func(n): return n.code), ["LOWR", "UPPR"], "撤销删除还原容器顺序")
+	h.free()

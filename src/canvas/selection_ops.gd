@@ -858,6 +858,10 @@ func delete_instances(victims: Array) -> bool:
 	var via_delta := bool(pre.get("ok", false))
 	if not via_delta:
 		cvs.push_undo()
+	var order := {}
+	if via_delta:
+		for v in victims:
+			order[v.code] = v.get_index()
 	for v in victims:
 		if is_instance_valid(v):
 			if cvs.selected_entity == v:
@@ -866,7 +870,7 @@ func delete_instances(victims: Array) -> bool:
 			(v.get_parent() as Node2D).remove_child(v)
 			v.free()
 	if via_delta:
-		cvs._undo_history_ctrl.record_instance_removal(pre.rows)
+		cvs._undo_history_ctrl.record_instance_removal(pre.rows, order)
 	cvs._mark_ents()
 	cvs.commit_selection(cvs.selected_entity, cvs.selected_multi)
 	return true

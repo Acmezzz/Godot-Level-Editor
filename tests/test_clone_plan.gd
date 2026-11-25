@@ -312,3 +312,31 @@ func test_duplicate_map_through_plan() -> void:
 	ok(ContentStore.read(m, "dlg", cid2).size() > 0, "副本内容文件已落盘")
 	ok(ContentStore.read(m, "dlg", "CID1").size() > 0, "原内容文件仍在")
 	_wipe()
+
+
+func test_whole_map_keeps_paired_instances_and_import_remaps_defaults() -> void:
+	var m := _manifest()
+	var edge := {"map": "SRC1", "cell": [0, 0], "edge": "0,0|1,0"}
+	m.assets[0].fields.append_array([
+		{"id": "port", "type": "port_ref", "mapField": "TMAP"},
+		{"id": "edge", "type": "edge_ref", "default": edge},
+		{"id": "maps", "type": "array", "of": "choice", "source": "map", "default": ["SRC1", "AWAY"]},
+	])
+	var source := MapStore.new_map("src", 8, 8)
+	source.meta.code = "SRC1"
+	var layer: String = source.meta.layers[0].id
+	source.objects = [
+		{"asset": "door", "code": "AAAA", "layer": layer, "x": 0, "y": 0, "props": {
+			"TMAP": "SRC1", "TGT": "BBBB", "port": {"map": "", "inst": "BBBB", "port": "in"}}},
+		{"asset": "door", "code": "BBBB", "layer": layer, "x": 1, "y": 0},
+	]
+	var plan := ClonePlan.whole_map_document({"data": source, "manifest": m}, "dst", "DST1")
+	eq(plan.status, "ok", "整图复制")
+	var rows: Array = plan.document.objects
+	eq(rows[0].props.TGT, rows[1].code, "配对实例指向副本")
+	eq(rows[0].props.port, {"map": "DST1", "inst": rows[1].code, "port": "in"}, "配对端口指向副本")
+	eq(rows[0].props.TMAP, "DST1", "配对图码指向副本")
+	ClonePlan.readdress_import(m, source, "SRC1", "IMP1")
+	eq(source.objects[0].props.edge.map, "IMP1", "默认格边保存为导入图覆盖值")
+	eq(source.objects[0].props.maps, ["IMP1", "AWAY"], "有序地图列表只替换源图码")
+	eq(edge.map, "SRC1", "清单默认值不变")

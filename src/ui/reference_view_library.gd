@@ -165,21 +165,9 @@ static func open(app, view_id := "", jump := {}) -> void:
 		refill_targets.call()
 		preview.queue_redraw()
 	var load_picture := func() -> bool:
-		var rel := image_path.text.strip_edges().replace("\\", "/")
-		if rel.begins_with("res://"):
-			rel = rel.substr(6)
-		preview.texture = null
-		notice.text = ""
-		if rel != "":
-			var file := str(source.get("_dir", "")).path_join(rel)
-			if rel.is_absolute_path() or ".." in rel.split("/") or not FileAccess.file_exists(file):
-				notice.text = "图片不存在，或路径超出项目目录。"
-			else:
-				var img := Image.new()
-				if img.load(file) == OK and not img.is_empty():
-					preview.texture = ImageTexture.create_from_image(img)
-				else:
-					notice.text = "无法读取该参考图片。"
+		var picture := _reference_picture(str(source.get("_dir", "")), image_path.text)
+		preview.texture = ImageTexture.create_from_image(picture.image) if picture.has("image") else null
+		notice.text = picture.get("error", "")
 		preview.queue_redraw()
 		return notice.text == ""
 	var stash := func():
@@ -429,7 +417,7 @@ static func open(app, view_id := "", jump := {}) -> void:
 	layout_mode.toggled.connect(func(enabled: bool): remove_hotspot.visible = not enabled)
 	body.add_child(buttons)
 	var prepare := func(draft_only: bool) -> Dictionary:
-		if not load_picture.call():
+		if draft_only and not load_picture.call():
 			return {}
 		var key := id.text.strip_edges()
 		stash.call()
@@ -442,6 +430,18 @@ static func open(app, view_id := "", jump := {}) -> void:
 			updated.append(view)
 		else:
 			updated[state.row] = view
+		if not draft_only:
+			for index in updated.size():
+				var row: Dictionary = updated[index]
+				var prior: int = baseline.find_custom(func(item): return item.view_id == row.view_id)
+				if prior >= 0 and row == baseline[prior]:
+					continue
+				var picture := _reference_picture(str(source.get("_dir", "")), row.get("image", ""))
+				if picture.has("error"):
+					list.select(index)
+					show_row.call(index if index < rows.size() else -1)
+					notice.text = "%s：%s" % [row.view_id, picture.error]
+					return {}
 		var candidate := source.merged({"views": updated}, true)
 		var errors: Array[Dictionary] = []
 		Validation._validate_views(candidate, errors)
@@ -495,3 +495,18 @@ static func open(app, view_id := "", jump := {}) -> void:
 			if row.get_meta("module_field", "") == field:
 				layout_scroll.ensure_control_visible.call_deferred(row)
 				break
+
+
+static func _reference_picture(project_dir: String, path: String) -> Dictionary:
+	var rel := path.strip_edges().replace("\\", "/")
+	if rel.begins_with("res://"):
+		rel = rel.substr(6)
+	if rel == "":
+		return {}
+	var file := project_dir.path_join(rel)
+	if rel.is_absolute_path() or ".." in rel.split("/") or not FileAccess.file_exists(file):
+		return {"error": "图片不存在，或路径超出项目目录。"}
+	var img := Image.new()
+	if img.load(file) != OK or img.is_empty():
+		return {"error": "无法读取该参考图片。"}
+	return {"image": img}

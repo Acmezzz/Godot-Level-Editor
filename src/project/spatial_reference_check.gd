@@ -8,6 +8,7 @@ const K := preload("res://src/core/constants.gd")
 const EdgeRef := preload("res://src/map/edge_ref.gd")
 const CellGraphScript := preload("res://src/map/cell_graph.gd")
 const ReferenceIndex := preload("res://src/project/reference_index.gd")
+const FlowTarget := preload("res://src/content/flow_target.gd")
 const MapFlow := preload("res://src/map/map_flow.gd")
 const ContentStore := preload("res://src/content/content_store.gd")
 const FunctionDecls := preload("res://src/content/function_decl.gd")
@@ -16,7 +17,7 @@ const Usage := preload("res://src/project/reference_usage.gd")
 
 static func map_links(manifest: Dictionary, data: Dictionary) -> Array:
 	var rows := ReferenceIndex.entity_property_refs(manifest, data,
-		["entity_inst", "port", "edge", "cell", "layer", "flow_target"])
+		["entity_inst", "port", "edge", "cell", "layer", "flow_target", "content"])
 	rows.append_array(MapFlow.references(manifest, data))
 	return rows
 
@@ -47,7 +48,6 @@ static func removed_targets(before: Dictionary, after: Dictionary) -> bool:
 static func blocked_removals(manifest: Dictionary, before: Dictionary, after: Dictionary, staged: Array) -> String:
 	if before.is_empty() or not removed_targets(before, after):
 		return ""
-	var code: String = after.meta.code
 	var sources := MapStore.read_all_fresh(manifest)
 	sources[after.meta.name] = after
 	var contexts := {}
@@ -63,8 +63,10 @@ static func blocked_removals(manifest: Dictionary, before: Dictionary, after: Di
 				var cid: String = binding.get("content", "")
 				if fn != "" and cid != "":
 					contexts.get_or_add([fn, cid], {})[name] = data
-		for ref in MapFlow.scoped_content(manifest, data):
-			contexts.get_or_add([ref.value.function, ref.value.content], {})[name] = data
+		for ref in refs:
+			var destination := _context_content(ref, "")
+			if not destination.is_empty():
+				contexts.get_or_add(destination, {})[name] = data
 
 	var project_refs := ReferenceIndex.view_module_refs(manifest)
 	var targets := [{"target": manifest.get("startup", {}).get("target", {}), "path": "startup.target"}]
@@ -77,22 +79,68 @@ static func blocked_removals(manifest: Dictionary, before: Dictionary, after: Di
 	if error != "":
 		return error
 
+	var items_by_key := {}
 	for kind in ContentStore.declared_kinds(manifest):
 		var items := ContentStore.read_all(manifest, kind)
-		for row in staged:
-			if row.fn_id == kind:
-				items[row.cid] = row.data
 		for cid in items:
-			var refs := _content_spatial_refs(manifest, kind, items[cid])
-			var maps: Dictionary = contexts.get([kind, cid], {})
-			error = _broken_link(manifest, {}, refs, before, after)
-			if error != "":
-				return "内容 %s/%s · %s" % [kind, cid, error]
-			for name in maps:
-				error = _broken_link(manifest, maps[name], refs, before, after)
-				if error != "":
-					return "%s · 内容 %s/%s · %s" % [name, kind, cid, error]
+			items_by_key[[kind, cid]] = _content_spatial_refs(manifest, kind, items[cid])
+	for row in staged:
+		items_by_key[[row.fn_id, row.cid]] = _content_spatial_refs(manifest, row.fn_id, row.data)
+	for key in items_by_key:
+		error = _broken_link(manifest, {}, items_by_key[key], before, after)
+		if error != "":
+			return "内容 %s/%s · %s" % [key[0], key[1], error]
+	var queue := []
+	for key in contexts:
+		for name in contexts[key]:
+			queue.append([key, name])
+	var visited := {}
+	var cursor := 0
+	while cursor < queue.size():
+		var item: Array = queue[cursor]
+		cursor += 1
+		if visited.has(item):
+			continue
+		visited[item] = true
+		var key: Array = item[0]
+		var name: String = item[1]
+		var refs: Array = items_by_key.get(key, [])
+		error = _broken_link(manifest, sources[name], refs, before, after)
+		if error != "":
+			return "%s · 内容 %s/%s · %s" % [name, key[0], key[1], error]
+		for ref in refs:
+			var destination := _context_content(ref, key[0])
+			if not destination.is_empty():
+				queue.append([destination, name])
 	return ""
+
+static func _context_content(ref: Dictionary, fn: String) -> Array:
+	if ref.decl.get("contentMapContext") != "inherit":
+		return []
+	if ref.kind == "flow_target" and FlowTarget.kind(ref.value) == "content":
+		return [ref.value.function, ref.value.content]
+	if ref.kind == "content":
+		var target_fn: String = ref.filter.get("fn", "")
+		return [target_fn if target_fn != "" else fn, ref.value]
+	return []
+
+## A new valid canvas link that the published map cannot resolve must wait for map save.
+static func needs_map_save(manifest: Dictionary, fn: String, data: Dictionary, live: Dictionary, saved: Dictionary) -> bool:
+	var code: String = live.meta.code
+	for ref in _content_spatial_refs(manifest, fn, data):
+		var target: String = ref.get("paired", "")
+		if ref.kind in ["port", "edge", "flow_target"] and ref.value is Dictionary:
+			target = RefFields.object_map_key(ref.value, target)
+		if not RefFields.map_key_local(target, code) or ref.kind not in ["entity_inst", "layer", "cell", "edge", "port", "flow_target"]:
+			continue
+		if link_problem(manifest, live, ref, {code: live}) != "":
+			continue
+		if saved.is_empty():
+			if ref.kind != "flow_target" or (ref.value is Dictionary and ref.value.has("port")):
+				return true
+		elif link_problem(manifest, saved, ref, {code: saved}) != "":
+			return true
+	return false
 
 static func _broken_link(manifest: Dictionary, source: Dictionary, refs: Array,
 		before: Dictionary, after: Dictionary) -> String:

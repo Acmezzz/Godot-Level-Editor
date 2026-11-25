@@ -392,11 +392,6 @@ static func _remap_props(manifest: Dictionary, values: Dictionary, fields: Array
 			continue
 		var id := str(field.get("id", ""))
 		var desc := RefFields.describe(field)
-		if desc.kind == "map" and spatial_refs.get("whole_map", false):
-			var map_value = values.get(id, field.get("default"))
-			var codes: Dictionary = spatial_refs.get("map_copy", {})
-			if map_value is String and codes.has(map_value):
-				values[id] = codes[map_value]
 		if desc.kind == "flow_target":
 			_remap_flow_map(field, id, values, spatial_refs, instance_map)
 			if spatial_refs.has("scoped_ids") and field.get("contentMapContext") == "inherit":
@@ -415,6 +410,7 @@ static func _remap_props(manifest: Dictionary, values: Dictionary, fields: Array
 		source_key, false, spatial_refs)
 	_remap_entity_ref_fields(values, fields, owner, instance_map, cross_code, source_codes,
 		conflicts, target_code, source_key, spatial_refs)
+	_remap_map_fields(values, fields, false, spatial_refs)
 
 ## 内容副本的引用重映射：fields 按键=字段码；steps[].fields 按步骤声明字段码。
 ## 只碰声明为引用（entity_inst / content）的键；其余值（含同形四位码）不动。
@@ -475,7 +471,7 @@ static func _remap_field_map(manifest: Dictionary, values, decls: Array, instanc
 		if kind in ["content", "flow_target"] and (spatial_refs.has("visit_scoped") or spatial_refs.has("scoped_ids")):
 			_remap_scoped_link(f, key, vals, decls, fn_id, desc, source_key,
 				target_code, spatial_refs, pairs_to_fill)
-		if kind == "flow_target" or not vals.has(key):
+		if kind == "flow_target":
 			continue
 		var id_map: Dictionary = cell_ids if cell else instance_map
 		if kind == "content":
@@ -484,11 +480,10 @@ static func _remap_field_map(manifest: Dictionary, values, decls: Array, instanc
 		# R10：先看配对地图字段的现值——目标不是源图的引用原样保留（跨图身份）。
 		var pair := str(f.get("mapField", ""))
 		if kind != "content" and pair != "" and source_key != "":
-			var pk := _key_of(decls, pair)
-			var pv := str(vals.get(pk, "")) if pk != "" and vals.has(pk) else ""
+			var pv := RefFields.effective_map_value(f, decls, vals, "code")
 			if pv != "" and pv != source_key:
 				continue
-		var v = vals[key]
+		var v = vals.get(key, f.get("default"))
 		if kind == "layer":
 			_keep_layer_scope(v, owner, str(f.get("id", "")), _key_of(decls, pair),
 				pairs_to_fill, conflicts, cross_code, target_code, spatial_refs)
@@ -533,6 +528,24 @@ static func _remap_field_map(manifest: Dictionary, values, decls: Array, instanc
 					owner, str(f.get("id", ""))]})
 	for k in pairs_to_fill:
 		vals[k] = pairs_to_fill[k]
+	_remap_map_fields(vals, decls, true, spatial_refs)
+
+static func _remap_map_fields(values: Dictionary, decls: Array, coded: bool, scope: Dictionary) -> void:
+	if not scope.get("whole_map", false):
+		return
+	var codes: Dictionary = scope.get("map_copy", {})
+	if codes.is_empty():
+		return
+	for field in decls:
+		if not field is Dictionary or RefFields.describe(field).kind != "map":
+			continue
+		var key: String = field.get("code", "") if coded else ""
+		if key == "":
+			key = field.id
+		var value = values.get(key, field.get("default"))
+		var mapped = value.map(func(item): return codes.get(item, item)) if value is Array else codes.get(value, value)
+		if mapped != value:
+			values[key] = mapped
 
 static func _remap_scoped_link(field: Dictionary, key: String, values: Dictionary, decls: Array,
 		fn: String, desc: Dictionary, source_key: String,
@@ -667,13 +680,13 @@ static func _remap_entity_ref_fields(vals: Dictionary, fdecls: Array, owner: Str
 		var cell := not cell_ids.is_empty() and kind == "cell"
 		if kind not in ["entity_inst", "layer"] and not cell:
 			continue
-		var vv = vals.get(fid, null)
+		var vv = vals.get(fid, f.get("default"))
 		if _is_empty_value(vv):
 			continue
 		var pair := str(f.get("mapField", ""))
 		# R10：先看配对地图字段的现值——目标不是源图的引用原样保留（跨图身份 (图码, 实例码)）。
 		if pair != "" and source_key != "":
-			var pv := str(vals.get(pair, ""))
+			var pv := RefFields.effective_map_value(f, fdecls, vals, "id")
 			if pv != "" and pv != source_key:
 				continue
 		if kind == "layer":
@@ -754,9 +767,10 @@ static func _remap_object_refs(vals: Dictionary, decls: Array, instance_map: Dic
 		var key := str(field.get("code", "")) if coded else ""
 		if key == "":
 			key = str(field.get("id", ""))
-		var raw = vals.get(key)
-		var entries: Array = raw if many and raw is Array else [raw] if not many else []
-		var paired := RefFields.paired_map_value(field, decls, vals, "code" if coded else "id")
+		var raw = vals.get(key, field.get("default"))
+		var mapped = raw.duplicate(true) if raw is Array or raw is Dictionary else raw
+		var entries: Array = mapped if many and mapped is Array else [mapped] if not many else []
+		var paired := RefFields.effective_map_value(field, decls, vals, "code" if coded else "id")
 		for value in entries:
 			if not value is Dictionary or value.is_empty():
 				continue
@@ -783,3 +797,5 @@ static func _remap_object_refs(vals: Dictionary, decls: Array, instance_map: Dic
 				value["map"] = cross_code
 			elif map_key != "" and target != "":
 				value["map"] = target
+		if mapped != raw:
+			vals[key] = mapped

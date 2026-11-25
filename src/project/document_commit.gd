@@ -53,6 +53,7 @@ static func apply(plan: Dictionary) -> Dictionary:
 		if log_path == "":
 			return {"error": "无法登记多文件写入", "written_contents": []}
 		plan["log_path"] = log_path
+		Recovery.clear_pending(plan.get("prior_log", ""))
 	var store := load("res://src/content/content_store.gd")
 	var written: Array = []
 	var error := ""
@@ -77,16 +78,47 @@ static func apply(plan: Dictionary) -> Dictionary:
 		error = "新地图已写，旧文件已变化或无法删除：%s" % plan.old_path
 	if error == "":
 		Recovery.clear_pending(log_path)
+		Recovery.clear_pending(plan.get("prior_log", ""))
 		plan.erase("log_path")
 		maps.invalidate_code_map()
 	return {"error": error, "written_contents": written}
 
 static func recover_log(plan: Dictionary) -> void:
-	if plan.entries.size() < 2:
-		return
-	for log in Recovery.scan_pending(plan.manifest):
+	var logs := Recovery.scan_pending(plan.manifest)
+	logs.reverse()
+	for log in logs:
 		if log.data.get("entries", []) == plan.entries:
 			plan["log_path"] = log.path
+			return
+		if plan.path == "" or plan.old_path != "":
+			continue
+		# A revised map can resume its content writes, but only against proven receipts.
+		var current_map: Dictionary = plan.entries.back()
+		if not log.entries.any(func(entry):
+			return entry.path == plan.path and entry.get("op", "write") == "write" \
+				and entry.baseline == current_map.baseline):
+			continue
+		var received := {}
+		var resumed := false
+		for entry in log.entries:
+			if entry.path != plan.path and (entry.state == "written" \
+					or (entry.state == "pending" and entry.has("original_baseline"))):
+				received[entry.path] = entry
+		for i in plan.contents.size():
+			var row: Dictionary = plan.contents[i]
+			var entry: Dictionary = plan.entries[i]
+			var prior: Dictionary = received.get(entry.path, {})
+			if prior.is_empty() or entry.baseline not in [prior.baseline, prior.expect, prior.get("original_baseline", prior.baseline)]:
+				continue
+			resumed = true
+			var digest: String = prior.expect if prior.state == "written" else prior.baseline
+			entry["original_baseline"] = prior.get("original_baseline", prior.baseline)
+			entry["baseline"] = digest
+			entry["expect_absent"] = false
+			row["baseline"] = digest
+			row["expect_absent"] = false
+		if resumed:
+			plan["prior_log"] = log.path
 			return
 
 static func preflight(plan: Dictionary) -> Dictionary:
@@ -96,8 +128,9 @@ static func preflight(plan: Dictionary) -> Dictionary:
 	for entry in plan.entries:
 		entries_by_path[entry.path] = entry
 		var observed := Recovery.observe(entry.path)
-		if log_path != "" and (observed.get("digest", "") == entry.get("expect", "!") \
-				or (entry.get("op") == "delete" and observed.state == "missing")):
+		var digest: String = observed.get("digest", "")
+		if (digest == entry.get("expect", "!") and (log_path != "" or digest == entry.get("baseline", ""))) \
+				or (log_path != "" and entry.get("op") == "delete" and observed.state == "missing"):
 			done[entry.path] = true
 		elif not can_write(observed, entry.get("baseline", ""), entry.get("expect_absent", false)):
 			return {"error": "写入目标已变化：%s" % entry.path}

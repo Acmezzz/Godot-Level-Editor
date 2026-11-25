@@ -410,14 +410,14 @@ func _shortcut_input(event: InputEvent) -> void:
 			_nudge_undo_msec = now
 			var pre: Dictionary = canvas._undo_history_ctrl.inst_rows(sel)
 			var via_delta := bool(pre.get("ok", false))
-			if not via_delta and fresh:
+			if not via_delta:
 				canvas.push_undo()
 			for s in sel:
 				var n := s as EntityNode
 				if n and is_instance_valid(n):
 					n.position += canvas.grid_dir_px(delta.x, delta.y)
 			if via_delta:
-				canvas._undo_history_ctrl.inst_commit(pre.get("rows", {}), not fresh)
+				canvas._undo_history_ctrl.inst_commit(pre.get("rows", {}), not fresh, true)
 			canvas._mark()
 			get_viewport().set_input_as_handled()
 			return

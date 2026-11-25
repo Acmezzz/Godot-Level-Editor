@@ -403,3 +403,71 @@ func test_pending_recovers_from_expected_digest() -> void:
 	ok(Recovery.write_text(path, text), "写入登记的版本")
 	eq(Recovery.scan_pending(m)[0].status, "done", "用预期摘要识别已完成写入")
 	_wipe()
+
+
+func test_revised_save_recovers_previously_written_content() -> void:
+	_wipe()
+	var m := _fake_manifest()
+	var dc := preload("res://src/project/document_commit.gd")
+	var map := MapStore.new_map("retry", 8, 8)
+	var rows := [{"fn_id": "dialog", "cid": "first", "data": {"name": "first version"}}]
+	var first := dc.prepare(m, "retry", map, rows)
+	MapStore.test_fail_prefix = MapStore.path_for(m, "retry")
+	var failed := dc.apply(first.plan)
+	MapStore.test_fail_prefix = ""
+	ok(failed.error != "", "地图写入失败")
+	eq(ContentStore.read(m, "dialog", "first").get("name"), "first version", "内容此前已写")
+	map.meta.w = 9
+	rows[0].data.name = "edited after failure"
+	var retry := dc.prepare(m, "retry", map, rows)
+	dc.recover_log(retry.plan)
+	eq(dc.apply(retry.plan).error, "", "编辑后可继续本次保存")
+	eq(MapStore.read(m, "retry").meta.w, 9, "写入调整后的地图")
+	eq(ContentStore.read(m, "dialog", "first").get("name"), "edited after failure", "只覆盖本次发布已写的版本")
+	eq(Recovery.scan_pending(m).size(), 0, "提交后清理日志")
+	_wipe()
+
+
+func test_case_only_map_rename_keeps_identity() -> void:
+	_wipe()
+	var m := _fake_manifest()
+	var data := MapStore.new_map("Map", 8, 8)
+	data.meta.code = "ABCD"
+	ok(MapStore.write(m, "Map", data), "原图已保存")
+	eq(MapStore.rename_map(m, "Map", "map"), "", "只改大小写")
+	eq(MapStore.list_maps(m), ["map"], "文件名大小写已更新")
+	var result := MapStore.read(m, "map")
+	eq(result.get("meta", {}).get("name"), "map", "同步图内名称")
+	eq(result.get("meta", {}).get("code"), "ABCD", "地图码不变")
+	_wipe()
+
+
+func test_inherited_content_links_protect_removed_port() -> void:
+	_wipe()
+	var m := _fake_manifest()
+	var spatial := preload("res://src/project/spatial_reference_check.gd")
+	var inherit_field := {"id": "next", "type": "flow_target", "contentTypes": ["dialog"],
+		"contentMapContext": "inherit"}
+	m.assets = [{"id": "door", "kind": "entity", "ports": [{"id": "in", "type": "go", "x": 0, "y": 0}],
+		"fields": [inherit_field]}]
+	m.functions = {"dialog": {"code": "DLOG", "fields": [inherit_field.merged({"code": "NEXT"}),
+		{"id": "port", "code": "PORT", "type": "port_ref"}]}}
+	var board := MapStore.new_map("board", 8, 8)
+	board.meta.code = "ABCD"
+	var layer: String = board.meta.layers[0].id
+	board.objects = [
+		{"asset": "door", "code": "AAAA", "layer": layer, "x": 0, "y": 0,
+			"props": {"next": {"function": "dialog", "content": "parent"}}},
+		{"asset": "door", "code": "BBBB", "layer": layer, "x": 1, "y": 0},
+	]
+	ok(MapStore.write(m, "board", board), "保存有目标实例的地图")
+	ok(ContentStore.write(m, "dialog", "parent",
+		{"fields": {"NEXT": {"function": "dialog", "content": "child"}}}), "继承内容转发上下文")
+	var child := {"fields": {"PORT": {"map": "", "inst": "BBBB", "port": "in"}}}
+	ok(ContentStore.write(m, "dialog", "child", child), "子内容引用本图端口")
+	var cropped := board.duplicate(true)
+	cropped.objects.pop_back()
+	ok(spatial.blocked_removals(m, board, cropped, []).contains("child"), "阻止经两级继承留下悬空端口")
+	ok(spatial.needs_map_save(m, "dialog", child, board, cropped), "新端口尚未存在于正式图时应暂存")
+	ok(not spatial.needs_map_save(m, "dialog", child, board, board), "目标在正式图时可即时写")
+	_wipe()

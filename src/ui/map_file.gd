@@ -677,6 +677,7 @@ func rename_map_now(old_name: String, new_name: String, allow_write_unsaved := f
 	var on_disk := old_path != "" and FileAccess.file_exists(old_path)
 	if is_current and app.canvas.doc_busy:
 		return "另一次文档操作正在进行"
+	var data_for_first_save := {}
 	if on_disk:
 		if is_current and sess.opened_digest == "":
 			return "原图缺少保存基线，请重新打开后再改名"
@@ -717,6 +718,7 @@ func rename_map_now(old_name: String, new_name: String, allow_write_unsaved := f
 		var result := DocumentCommit.apply(prep.plan)
 		if result.error != "":
 			return result.error
+		data_for_first_save = data
 		if ce != null:
 			ce.consume_written_staged(result.get("written_contents", []))
 	else:
@@ -731,9 +733,9 @@ func rename_map_now(old_name: String, new_name: String, allow_write_unsaved := f
 		# 刚才已把内容写进新文件：脏标记与自动保存计时归零，
 		# 否则状态栏还挂着「未保存」、两分钟后又多写一份 .autosave.json。
 		if not on_disk:
-			app.canvas.modified_flag = false
-			_last_autosave_msec = Time.get_ticks_msec()
-		app._playtest_ctrl.sync_map_preferences()
+			_finish_map_save(nn, new_path, data_for_first_save)
+		else:
+			app._playtest_ctrl.sync_map_preferences()
 	return ""
 
 ## 打开另一张地图：先选文件，再确认丢弃，最后载入。
@@ -788,7 +790,7 @@ func load_map_file(p: String, expected_digest := "") -> void:
 	# 否则保存会按当前项目拼路径，悄悄覆盖另一个文件。
 	var canon := str(p).simplify_path()
 	var maps_root := str(app.manifest.get("_maps_dir", "")).simplify_path()
-	var outside := maps_root != "" and not canon.begins_with(maps_root.path_join(""))
+	var outside := maps_root != "" and not MapStore.same_directory(canon.get_base_dir(), maps_root)
 	if data.has("_autosave_of"):
 		if not outside:
 			app._set_status("旧草稿请移出 maps 目录，再作为新地图导入。")

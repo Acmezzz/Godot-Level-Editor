@@ -351,6 +351,9 @@ static func _is_legacy_draft(path: String) -> bool:
 	var data = JSON.parse_string(text)
 	return data is Dictionary and str((data as Dictionary).get("_autosave_of", "")) != ""
 
+static func same_directory(a: String, b: String) -> bool:
+	return a.nocasecmp_to(b) == 0 if OS.get_name() == "Windows" else a == b
+
 ## 改名保留地图码和引用，计划内写入新名称后再删除旧文件。
 ## 返回错误信息，空串表示两个目标均已完成。
 static func rename_map(m: Dictionary, old_name: String, new_name: String, baseline := "") -> String:
@@ -369,6 +372,23 @@ static func rename_map(m: Dictionary, old_name: String, new_name: String, baseli
 		return "原图已被外部修改，请重新打开后再改名"
 	var renamed: Dictionary = original.data
 	renamed.meta.name = new_name
+	var dst := path_for(m, new_name)
+	if OS.get_name() == "Windows" and old_name.nocasecmp_to(new_name) == 0:
+		if new_name in list_maps(m):
+			return "同名地图已存在"
+		var temp := src + ".case-" + str(Time.get_ticks_usec())
+		if DirAccess.rename_absolute(src, temp) != OK:
+			return "无法移动原图"
+		if DirAccess.rename_absolute(temp, dst) != OK:
+			DirAccess.rename_absolute(temp, src)
+			return "无法写入新图名"
+		if not write_text(dst, MapFormat.encode(renamed)):
+			if DirAccess.rename_absolute(dst, temp) == OK:
+				DirAccess.rename_absolute(temp, src)
+			return "无法更新图内名称"
+		_cache.erase(src)
+		invalidate_code_map()
+		return ""
 	var DC := preload("res://src/project/document_commit.gd")
 	var prep := DC.prepare(m, new_name, renamed, [], old_name, original.digest)
 	if prep.has("error"):

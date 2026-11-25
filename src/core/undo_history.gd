@@ -15,11 +15,13 @@ func _init(host) -> void:
 const UNDO_MAX := 80
 var undo_stack: Array = []
 var redo_stack: Array = []
+var published_contents := {}
 
 ## 清空历史（换图/载图/草稿恢复时调用）：旧图的条目不能留到新图上。
 func clear_history() -> void:
 	undo_stack.clear()
 	redo_stack.clear()
+	published_contents.clear()
 
 func _snapshot() -> String:
 	return MapFormat.encode(cvs.extract(), true)
@@ -220,7 +222,7 @@ func inst_rows(nodes: Array) -> Dictionary:
 ## merge=true 用于连续同类改动（方向键 1 秒窗口）：栈顶已是同键集合的 entries 条目时，
 ## 只把它的 after 换成最新状态，before 保持窗口起点——整段微调合成一个撤销步。
 ## 返回 false = 没有任何真实差异（零副作用，不入栈）。
-func inst_commit(before: Dictionary, merge := false) -> bool:
+func inst_commit(before: Dictionary, merge := false, nudge := false) -> bool:
 	var idx: Dictionary = cvs._ent_by_code_index()
 	var ops: Array = []
 	for k0 in before.keys():
@@ -233,10 +235,11 @@ func inst_commit(before: Dictionary, merge := false) -> bool:
 		ops.append({"op": "del" if ar == null else "upd", "key": k, "before": b, "after": ar})
 	if ops.is_empty():
 		return false
-	if merge and not undo_stack.is_empty():
+	if merge and redo_stack.is_empty() and not undo_stack.is_empty():
 		var top = undo_stack[-1]
-		if top is Dictionary and str((top as Dictionary).get("kind", "")) == "ents" \
-				and _same_keys((top as Dictionary).get("ops", []), ops):
+		if top is Dictionary and top.get("kind") == "ents" and top.get("nudge", false) == nudge \
+				and top.ops.all(func(op): return op.op == "upd") and ops.all(func(op): return op.op == "upd") \
+				and _same_keys(top.ops, ops):
 			# 合并：before 保留窗口起点那份（栈顶记录的），after 换成最新状态
 			var prior := {}
 			for o in (top as Dictionary).get("ops", []):
@@ -247,13 +250,13 @@ func inst_commit(before: Dictionary, merge := false) -> bool:
 					(o2 as Dictionary)["before"] = prior[k2]
 			(top as Dictionary)["ops"] = ops
 			return true
-	_push_entry({"kind": "ents", "ops": ops})
+	_push_entry({"kind": "ents", "ops": ops, "nudge": nudge})
 	return true
 
-func record_instance_removal(rows: Dictionary) -> void:
+func record_instance_removal(rows: Dictionary, order: Dictionary) -> void:
 	var ops := []
 	for code in rows:
-		ops.append({"op": "del", "key": code, "before": rows[code], "after": null})
+		ops.append({"op": "del", "key": code, "before": rows[code], "after": null, "index": order[code]})
 	_push_entry({"kind": "ents", "ops": ops})
 
 ## 两组 ops 是否操作同一批实例码（合并窗口用）。
@@ -293,6 +296,7 @@ func _rows_equal(a, b) -> bool:
 ## 恢复实例差量：逐个 key 重建/改写/删除，只碰这几条，然后只标一次脏。
 func _restore_ents(entry: Dictionary, forward: bool) -> void:
 	var idx: Dictionary = cvs._ent_by_code_index()
+	var inserted := []
 	for o0 in (entry.get("ops", []) as Array):
 		var o: Dictionary = o0
 		var key := str(o.get("key", ""))
@@ -314,7 +318,12 @@ func _restore_ents(entry: Dictionary, forward: bool) -> void:
 		if cur != null:
 			_apply_row_to_node(cur as EntityNode, want as Dictionary)
 		else:
-			_node_from_row(want as Dictionary)   # 行自带实例码；场景图片没有码也就不进差量
+			var node := _node_from_row(want as Dictionary)
+			if not forward and o.has("index"):
+				inserted.append([node, o.index])
+	inserted.sort_custom(func(a, b): return a[1] < b[1])
+	for item in inserted:
+		item[0].get_parent().move_child(item[0], item[1])
 	if forward and entry.has("clone_contents"):
 		var rows: Array = entry.ops.map(func(op): return op.after)
 		cvs._region_ops_ctrl.stage_cloned_contents({"map_patch": {"objects": rows}, "pending_contents": entry.clone_contents})
