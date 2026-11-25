@@ -38,7 +38,7 @@ static func open(app, view_id := "", jump := {}) -> void:
 	preview.direct_views = source.get("directViewTargets") == true
 	preview.direct_maps = source.get("directMapTargets") == true
 	FrameDialog.keep_on_focus_loss(pop, preview.cancel_placement)
-	preview.custom_minimum_size = Vector2(500, 295)
+	preview.custom_minimum_size = Vector2(352, 270)
 	preview.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	var hotspot := OptionButton.new()
 	hotspot.name = "ViewHotspot"
@@ -50,7 +50,7 @@ static func open(app, view_id := "", jump := {}) -> void:
 	body.add_child(Kit.field_row("参考图片", image_path, 82))
 	var layout_mode := CheckButton.new()
 	layout_mode.name = "ViewLayoutMode"
-	layout_mode.text = "布局编辑"
+	layout_mode.text = "编辑屏幕布局"
 	var layout_tools := Kit.hbox(8)
 	layout_tools.add_child(layout_mode)
 	var adjust := CheckButton.new()
@@ -74,7 +74,8 @@ static func open(app, view_id := "", jump := {}) -> void:
 	game_frame.hide()
 	work.add_child(game_frame)
 	var layout_scroll := ScrollContainer.new()
-	layout_scroll.custom_minimum_size.x = 320
+	layout_scroll.custom_minimum_size.x = 340
+	layout_scroll.follow_focus = true
 	layout_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	layout_scroll.hide()
 	work.add_child(layout_scroll)
@@ -263,8 +264,7 @@ static func open(app, view_id := "", jump := {}) -> void:
 		if not enabled:
 			focus_test.button_pressed = false
 			adjust.button_pressed = false
-		render_layout.call()
-		pop.size = Vector2i(960, 650) if enabled else Vector2i(660, 620))
+		render_layout.call())
 	preview.picked.connect(func(i: int):
 		if preview.editing_layout:
 			preview.active_element = i
@@ -488,7 +488,7 @@ static func open(app, view_id := "", jump := {}) -> void:
 		layout_mode.button_pressed = true
 	elif jump.get("hotspot", -1) in range(preview.hotspots.size()):
 		refill_hotspots.call(jump.hotspot)
-	app._open_popup(pop, Vector2i(960, 650) if selected >= 0 else Vector2i(660, 620))
+	app._open_popup(pop, Vector2i(922, 646))
 	var field: String = jump.get("field", "")
 	if selected >= 0 and field != "":
 		for row in layout_form.get_children():

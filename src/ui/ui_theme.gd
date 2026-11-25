@@ -11,22 +11,22 @@ class_name UiTheme
 # —— 颜色令牌 ——
 # 背景由深到浅分三层，制造「凹陷画布 / 常规面板 / 浮起控件」的层级
 const BG_VOID := Color("#0b0e13")      # 画布底色（最深）
-const BG_BASE := Color("#12161d")      # 窗口底
-const BG_PANEL := Color("#171c24")     # 面板
-const BG_RAISED := Color("#1e242e")    # 输入框 / 按钮 / 卡片
+const BG_BASE := Color("#121820")      # 窗口底
+const BG_PANEL := Color("#1a222d")     # 面板
+const BG_RAISED := Color("#253141")    # 输入框 / 按钮 / 卡片
 const BG_HOVER := Color("#273040")     # 悬停
 const BG_ACTIVE := Color("#2f3a4d")    # 按下
 
 # 边框：低对比，只用来切分区域，不抢视觉
-const BORDER := Color("#242c38")
-const BORDER_HI := Color("#354052")
+const BORDER := Color("#344153")
+const BORDER_HI := Color("#53657a")
 
 # 文字三级层次
 const TEXT := Color("#e8edf5")
-const TEXT_DIM := Color("#9aa5b5")
+const TEXT_DIM := Color("#aebdce")
 # 启用态次级控件用中间亮度：比普通说明文字亮一档，避免「新建/打开/保存」被误读为禁用
 const TEXT_SOFT := Color("#b9c3d1")
-const TEXT_MUTE := Color("#697487")
+const TEXT_MUTE := Color("#8d9eb1")
 
 # 单一强调色（选中 / 主操作 / 焦点环）
 const ACCENT := Color("#4c9aff")
@@ -44,11 +44,11 @@ const R_CONTROL := 6
 const R_INNER := 4
 
 # 字号尺度
-const FS_META := 11
-const FS_SMALL := 12
-const FS_BASE := 13
-const FS_MD := 14
-const FS_LG := 17
+const FS_META := 12
+const FS_SMALL := 13
+const FS_BASE := 14
+const FS_MD := 15
+const FS_LG := 18
 
 const MAP_TERRAIN := Color(0.35, 0.65, 0.40, 0.95)
 
@@ -111,6 +111,7 @@ static func _style_button(th: Theme) -> void:
 	th.set_stylebox("normal", "Button", box(BG_RAISED, BORDER, R_CONTROL, 12, 6))
 	th.set_stylebox("hover", "Button", box(BG_HOVER, BORDER_HI, R_CONTROL, 12, 6))
 	th.set_stylebox("pressed", "Button", box(BG_ACTIVE, ACCENT, R_CONTROL, 12, 6))
+	th.set_stylebox("hover_pressed", "Button", box(BG_ACTIVE, ACCENT_HI, R_CONTROL, 12, 6))
 	var disabled := box(BG_RAISED, BORDER, R_CONTROL, 12, 6)
 	disabled.bg_color = Color(BG_RAISED, 0.45)
 	th.set_stylebox("disabled", "Button", disabled)
@@ -180,8 +181,9 @@ static func _style_button(th: Theme) -> void:
 	th.set_stylebox("normal", "ToggleButton", box(Color(0, 0, 0, 0), BORDER, R_INNER, 10, 5))
 	th.set_stylebox("hover", "ToggleButton", box(BG_HOVER, BORDER_HI, R_INNER, 10, 5))
 	th.set_stylebox("pressed", "ToggleButton", box(ACCENT_BG, ACCENT, R_INNER, 10, 5))
+	th.set_stylebox("hover_pressed", "ToggleButton", box(BG_ACTIVE, ACCENT_HI, R_INNER, 10, 5))
 	th.set_stylebox("focus", "ToggleButton", box(Color(0, 0, 0, 0), ACCENT_HI, R_INNER, 10, 5))
-	th.set_color("font_color", "ToggleButton", TEXT_MUTE)
+	th.set_color("font_color", "ToggleButton", TEXT_SOFT)
 	th.set_color("font_hover_color", "ToggleButton", TEXT_DIM)
 	th.set_color("font_pressed_color", "ToggleButton", ACCENT_HI)
 	th.set_color("font_hover_pressed_color", "ToggleButton", ACCENT_HI)
@@ -214,6 +216,10 @@ static func _style_inputs(th: Theme) -> void:
 	th.set_color("caret_color", "LineEdit", ACCENT)
 	th.set_color("selection_color", "LineEdit", Color(ACCENT, 0.3))
 	th.set_constant("minimum_character_width", "LineEdit", 4)
+	for state in ["normal", "focus", "read_only"]:
+		th.set_stylebox(state, "TextEdit", th.get_stylebox(state, "LineEdit"))
+	for key in ["font_color", "font_placeholder_color", "caret_color", "selection_color"]:
+		th.set_color(key, "TextEdit", th.get_color(key, "LineEdit"))
 
 	# OptionButton 继承 Button 的样式盒，只需补箭头留白与字体
 	th.set_constant("arrow_margin", "OptionButton", 8)
@@ -251,7 +257,7 @@ static func _style_inputs(th: Theme) -> void:
 	# 滚动条与进度条主题化——深底上不再回落引擎默认浅灰
 	for sbt in ["HScrollBar", "VScrollBar"]:
 		th.set_stylebox("scroll", sbt, flat(BG_PANEL, 4))
-		th.set_stylebox("grabber", sbt, box(BG_RAISED, BORDER, 4, 3, 3))
+		th.set_stylebox("grabber", sbt, box(BORDER_HI, BORDER, 4, 4, 4))
 		th.set_stylebox("grabber_highlight", sbt, box(BG_RAISED, ACCENT, 4, 3, 3))
 		th.set_stylebox("grabber_pressed", sbt, box(BG_RAISED, ACCENT_HI, 4, 3, 3))
 	th.set_stylebox("background", "ProgressBar", box(BG_PANEL, BORDER, 4, 3, 3))
@@ -261,6 +267,9 @@ static func _style_inputs(th: Theme) -> void:
 	th.set_stylebox("hover", "CheckButton", no_box)
 	th.set_stylebox("pressed", "CheckButton", no_box)
 	th.set_stylebox("hover_pressed", "CheckButton", no_box)
+	for control in ["CheckBox", "CheckButton"]:
+		th.set_stylebox("focus", control, box(Color.TRANSPARENT, ACCENT, R_INNER, 0, 0))
+		th.set_color("font_color", control, TEXT_SOFT)
 
 ## 勾选框图标：深底可见的空心框 / 强调色描边带对勾，16×16 自绘
 static func _checkbox_icon(checked: bool, muted := false) -> ImageTexture:
@@ -350,7 +359,7 @@ static func _style_containers(th: Theme) -> void:
 # —— 弹窗 / 提示 ——
 static func _style_popups(th: Theme) -> void:
 	# 浮起层：比面板浅一档 + 明显边框 + 投影，明确「浮在上面」
-	var pop_bg := box(BG_PANEL, BORDER_HI, R_CONTAINER, 14, 12, 1, 12)
+	var pop_bg := box(BG_PANEL, BORDER_HI, R_CONTAINER, 16, 14, 1, 12)
 	th.set_stylebox("panel", "PopupPanel", pop_bg)
 	th.set_stylebox("panel", "PopupMenu", box(BG_PANEL, BORDER_HI, R_CONTAINER, 6, 6, 1, 10))
 	th.set_stylebox("hover", "PopupMenu", box(ACCENT_BG, Color(0, 0, 0, 0), R_INNER, 6, 4))

@@ -137,7 +137,7 @@ func run() -> void:
 	check(app.manifest.eventLayers[layer_id].events.SCOR == rule_target
 		and form._delete_blocked_reason("score_rules", "project-double").contains("图组事件层"),
 		"the published event layer survives reloading and protects its referenced content")
-	press(app.project_shell, "试玩项目")
+	press(app, "试玩项目")
 	var controller = app._playtest_ctrl
 	var end := Time.get_ticks_msec() + 12000
 	while controller._play_report_result.is_empty() and Time.get_ticks_msec() < end:

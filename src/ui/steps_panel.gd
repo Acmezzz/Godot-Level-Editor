@@ -224,7 +224,7 @@ func _steps_mount(mem: Dictionary) -> void:
 	if _steps_dock_where == "popup":
 		var shell: Dictionary = app._popup_body(
 			"演出编辑：%s" % FunctionDecls.function_name(manifest, _steps_fn_id),
-			"步骤按 at/duration/track 排布；列表保序、时间轴可拖")
+			"在列表中排序。切到时间轴可以试听、拖动步骤和调整时长。")
 		_steps_pop = shell.pop
 		if GamePreview.supports(manifest, TIMELINE_FRAME):
 			FrameDialog.keep_on_focus_loss(_steps_pop)
@@ -256,6 +256,7 @@ func _steps_mount(mem: Dictionary) -> void:
 	body.add_child(_steps_form)
 	# 时间轴视图建一次、反复复用（set_steps 换数据源）；滚动容器兜住超宽/超高的排布
 	_steps_tl = TimelineView.new()
+	_steps_tl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_steps_tl.set_steps([], _step_name_of)
 	_steps_tl.picked.connect(func(idx: int): _steps_pick_tl(idx))
 	# 视图按起手时的结构版本发请求：宿主据此丢弃过期拖拽（D1）
@@ -303,16 +304,16 @@ func _steps_mount(mem: Dictionary) -> void:
 			_steps_tl.queue_redraw()
 		_on_playhead_changed(ph)
 	if _steps_dock_where == "popup":
-		app._open_popup(_steps_pop)
+		app._open_popup(_steps_pop, Vector2i(642, 0))
 
 ## 弹窗形态的头部行：标题右侧挂「停靠下方」（搬进内容页底部，同一控制器）
 func _build_steps_popup_head(body: VBoxContainer) -> void:
 	var row := Kit.hbox(8)
 	var dock_btn := Kit.button("停靠下方", func(): _dock_and_show("content"), "ghost")
 	dock_btn.tooltip_text = "把演出面板停靠到内容页底部：表单和步骤同屏对照（步骤与播放头不变）"
-	dock_btn.add_theme_font_size_override("font_size", Th.FS_META)
 	row.add_child(Kit.spacer())
 	row.add_child(dock_btn)
+	row.add_child(Kit.button("关闭", func(): _steps_pop.hide(), "ghost"))
 	body.add_child(row)
 
 ## 停靠形态的头部：标题 + 形态切换 + 收起（同一控制器，搬动不改数据）
@@ -552,8 +553,7 @@ func _build_steps_tabs(parent: Control) -> void:
 	_steps_tabs = Kit.hbox(6)
 	var grp := ButtonGroup.new()
 	for pair in [["列表", "list"], ["时间轴", "timeline"]]:
-		var b := Kit.button(str(pair[0]), func(): _set_steps_view(str(pair[1])), "ghost")
-		b.toggle_mode = true
+		var b := Kit.button(str(pair[0]), func(): _set_steps_view(str(pair[1])), "toggle")
 		b.button_group = grp
 		b.set_meta("view", str(pair[1]))
 		_steps_tabs.add_child(b)

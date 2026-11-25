@@ -482,7 +482,7 @@ func on_new() -> void:
 	if _name_memo != "" and not FileAccess.file_exists(EditorManifest.map_path(app.manifest, _name_memo)):
 		name_edit.text = _name_memo
 	name_edit.placeholder_text = "地图名"
-	body.add_child(UiKitScript.field_row("地图名", name_edit))
+	body.add_child(UiKitScript.field_row("地图名", name_edit, UiKitScript.LABEL_W_LONG))
 	# 高级设置：格投影。缺省 = 沿用项目解析（清单里瓦片资产的声明）。
 	var proj_sel := OptionButton.new()
 	proj_sel.name = "NewMapProjection"
@@ -526,13 +526,10 @@ func on_new() -> void:
 		create_map_from_dialog(name_edit, err_label, pop,
 			str(proj_sel.get_item_metadata(proj_sel.selected)),
 			str(topo_sel.get_item_metadata(topo_sel.selected)), basis.value)
-	var btn_row := UiKitScript.hbox(8)
-	btn_row.alignment = BoxContainer.ALIGNMENT_END
-	btn_row.add_child(UiKitScript.button("取消", func(): pop.hide(), "ghost"))
-	btn_row.add_child(UiKitScript.button("确定", submit, "primary"))
 	name_edit.text_submitted.connect(func(_t: String): submit.call())
-	body.add_child(btn_row)
+	body.add_child(UiKitScript.popup_buttons(submit, pop.hide, "创建地图"))
 	app._open_popup(pop)
+	name_edit.grab_focus()
 
 func _grid_description(projection: String, basis: Array) -> String:
 	return _proj_label(projection) if basis.is_empty() else "自定义 U=%s，V=%s（%s）" % [
@@ -574,7 +571,8 @@ func create_map_from_dialog(name_edit: LineEdit, err_label: Label, pop: PopupPan
 	if not await confirm_discard("新建"):
 		return
 	data.meta.code = MapStore.allocate_code(app.manifest, app.canvas.cur_map_code())
-	await _open_unsaved_map(n, data, "新建空地图")
+	if await _open_unsaved_map(n, data, "新建空地图"):
+		app._set_mode("map")
 
 func open_generated_map(n: String, data: Dictionary, guard: Callable) -> bool:
 	if not guard.call() or not await confirm_discard("打开生成地图") or not guard.call():
@@ -631,13 +629,12 @@ func on_rename() -> void:
 	err_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	err_label.custom_minimum_size = Vector2(app.POPUP_BODY_W, 0)
 	body.add_child(err_label)
-	var btn_row := UiKitScript.hbox(8)
-	btn_row.alignment = BoxContainer.ALIGNMENT_END
-	btn_row.add_child(UiKitScript.button("取消", func(): pop.hide(), "ghost"))
-	btn_row.add_child(UiKitScript.button("确定",
-		func(): rename_current_from_dialog(old_name, name_edit, err_label, pop), "primary"))
-	body.add_child(btn_row)
+	var submit := func(): rename_current_from_dialog(old_name, name_edit, err_label, pop)
+	name_edit.text_submitted.connect(func(_text: String): submit.call())
+	body.add_child(UiKitScript.popup_buttons(submit, pop.hide, "重命名"))
 	app._open_popup(pop)
+	name_edit.grab_focus()
+	name_edit.select_all()
 
 ## 重命名弹窗确定：校验 → MapStore.rename_map → 同步当前名/路径
 func rename_current_from_dialog(old_name: String, name_edit: LineEdit, err_label: Label, pop: PopupPanel) -> void:
@@ -701,6 +698,10 @@ func rename_map_now(old_name: String, new_name: String, allow_write_unsaved := f
 			return " 地图重建中，请稍后再试"
 		data.meta.name = nn
 		var rows: Array = ce.bound_staged_rows(data) if ce != null else []
+		var link_problem := SpatialCheck.staged_problem(app.manifest, data, rows)
+		if link_problem != "":
+			write_draft_now()
+			return "先重接或断开引用：" + link_problem
 		var prep := DocumentCommit.prepare(app.manifest, nn, data, rows)
 		if prep.has("error"):
 			return prep.error
@@ -743,6 +744,10 @@ func rename_map_now(old_name: String, new_name: String, allow_write_unsaved := f
 ## 用户在选图对话框按取消，改动与暂存已经被丢掉，画布却还停在原图（静默数据损失）。
 func on_open() -> void:
 	var fd := FileDialog.new()
+	fd.title = "打开地图文件"
+	fd.ok_button_text = "打开"
+	fd.cancel_button_text = "取消"
+	fd.display_mode = FileDialog.DISPLAY_LIST
 	fd.file_mode = FileDialog.FILE_MODE_OPEN_FILE
 	fd.access = FileDialog.ACCESS_FILESYSTEM
 	fd.current_dir = str(app.manifest.get("_maps_dir", ""))
@@ -767,6 +772,8 @@ func _open_chosen(p: String) -> void:
 	if not await confirm_discard("打开另一张地图"):
 		return
 	await load_map_file(p)
+	if app._in_project_view() and app.project_shell._view == "content":
+		app.project_shell.content_editor.refresh_list()
 
 func load_map_file(p: String, expected_digest := "") -> void:
 	# load_data 是协程（节点重建中间 await 一帧）：必须等它完成，否则切图刚返回时
@@ -922,6 +929,8 @@ func _save_document() -> String:
 		if data.is_empty():
 			app._set_status(" 保存中止：地图正在重建")
 			return "地图正在重建"
+	var rows: Array = ce.bound_staged_rows(data) if write_content else []
+	var saved_map := MapStore.read(app.manifest, name) if write_map or not rows.is_empty() else {}
 	if write_map:
 		if path == "":
 			app._set_status(" 保存中止：地图名不合法")
@@ -932,11 +941,16 @@ func _save_document() -> String:
 		if problem != "":
 			app._set_status(" 保存中止：" + problem)
 			return problem
-		problem = SpatialCheck.blocked_removals(app.manifest, MapStore.read(app.manifest, name), data,
-			ce.bound_staged_rows(data) if write_content else [])
+		problem = SpatialCheck.blocked_removals(app.manifest, saved_map, data, rows)
 		if problem != "":
 			write_draft_now()
 			app._set_status(" 先重接或断开引用：" + problem)
+			return problem
+	if not rows.is_empty():
+		var problem := SpatialCheck.staged_problem(app.manifest, data if write_map else saved_map, rows)
+		if problem != "":
+			write_draft_now()
+			app._set_status("先重接或断开引用：" + problem)
 			return problem
 
 	var guard := _commit_is_current.bind(sess.generation, sess.revision, app.manifest)
@@ -949,7 +963,6 @@ func _save_document() -> String:
 		observed = await _confirm_map_write(path, guard)
 		if observed.is_empty():
 			return "地图保存失败或取消"
-	var rows: Array = ce.bound_staged_rows(data) if write_content else []
 	if not write_map and rows.is_empty():
 		if bool(app.manifest.get("_codes_issued", false)) and not await app._save_manifest_file_async(guard):
 			return "清单保存失败或取消"

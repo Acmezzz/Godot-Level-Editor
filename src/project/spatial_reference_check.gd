@@ -128,10 +128,7 @@ static func _context_content(ref: Dictionary, fn: String) -> Array:
 static func needs_map_save(manifest: Dictionary, fn: String, data: Dictionary, live: Dictionary, saved: Dictionary) -> bool:
 	var code: String = live.meta.code
 	for ref in _content_spatial_refs(manifest, fn, data):
-		var target: String = ref.get("paired", "")
-		if ref.kind in ["port", "edge", "flow_target"] and ref.value is Dictionary:
-			target = RefFields.object_map_key(ref.value, target)
-		if not RefFields.map_key_local(target, code) or ref.kind not in ["entity_inst", "layer", "cell", "edge", "port", "flow_target"]:
+		if not _local_spatial_ref(ref, code):
 			continue
 		if link_problem(manifest, live, ref, {code: live}) != "":
 			continue
@@ -141,6 +138,32 @@ static func needs_map_save(manifest: Dictionary, fn: String, data: Dictionary, l
 		elif link_problem(manifest, saved, ref, {code: saved}) != "":
 			return true
 	return false
+
+static func _local_spatial_ref(ref: Dictionary, code: String) -> bool:
+	if ref.kind not in ["entity_inst", "layer", "cell", "edge", "port", "flow_target"]:
+		return false
+	var target: String = ref.get("paired", "")
+	if ref.kind in ["port", "edge", "flow_target"] and ref.value is Dictionary:
+		target = RefFields.object_map_key(ref.value, target)
+	return RefFields.map_key_local(target, code)
+
+## A target placed and undone in this session never appears in the saved map's removal set.
+## Check new/changed references in the content about to be published against the submitted map.
+static func staged_problem(manifest: Dictionary, data: Dictionary, rows: Array) -> String:
+	var code: String = data.get("meta", {}).get("code", "")
+	for row in rows:
+		var old := {}
+		if not row.get("expect_absent", true):
+			var published := ContentStore.read(manifest, row.fn_id, row.cid)
+			for ref in _content_spatial_refs(manifest, row.fn_id, published):
+				old[ref.path] = [ref.kind, ref.value, ref.get("paired", "")]
+		for ref in _content_spatial_refs(manifest, row.fn_id, row.data):
+			if not _local_spatial_ref(ref, code) or old.get(ref.path) == [ref.kind, ref.value, ref.get("paired", "")]:
+				continue
+			var error := link_problem(manifest, data, ref, {code: data})
+			if error != "":
+				return "内容 %s/%s · %s：%s" % [row.fn_id, row.cid, ref.path, error]
+	return ""
 
 static func _broken_link(manifest: Dictionary, source: Dictionary, refs: Array,
 		before: Dictionary, after: Dictionary) -> String:

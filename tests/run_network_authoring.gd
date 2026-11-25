@@ -46,7 +46,7 @@ func run() -> void:
 	app._map_file_ctrl.on_new()
 	var create := visible_popup()
 	create.find_child("NewMapName", true, false).text = "foundry"
-	press(create, "确定")
+	press(create, "创建地图")
 	for i in 12:
 		await process_frame
 		if app.cur_map_name == "foundry" and app.map_loaded:
@@ -99,7 +99,7 @@ func run() -> void:
 		and cloned_routes[0].inst != sink_a and cloned_routes[1].inst != sink_b,
 		"map duplication remaps each link to the copied depots")
 	app._set_mode("content")
-	press(app.project_shell, "启动入口…")
+	press(app, "启动入口…")
 	var startup := visible_popup()
 	var picker: OptionButton = startup.find_child("StartupTarget", true, false)
 	for i in picker.item_count:
@@ -107,7 +107,7 @@ func run() -> void:
 			picker.select(i)
 			break
 	press(startup, "保存启动入口")
-	press(app.project_shell, "试玩项目")
+	press(app, "试玩项目")
 	var controller = app._playtest_ctrl
 	var end := Time.get_ticks_msec() + 12000
 	while controller._play_report_result.is_empty() and Time.get_ticks_msec() < end:

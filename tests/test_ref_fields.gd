@@ -6,6 +6,24 @@ const FieldWidgets := preload("res://src/ui/field_widgets.gd")
 const ContentStore := preload("res://src/content/content_store.gd")
 const FunctionDecls := preload("res://src/content/function_decl.gd")
 const V := preload("res://src/project/manifest_validation.gd")
+const SpatialCheck := preload("res://src/project/spatial_reference_check.gd")
+
+func test_staged_port_target_undo() -> void:
+	var manifest := {"assets": [{"id": "door", "kind": "entity", "code": "DOOR",
+		"ports": [{"id": "in", "type": "entry", "x": 0, "y": 0}]}],
+		"functions": {"dialogue": {"code": "DLOG", "fields": [
+			{"id": "arrival", "code": "PORT", "kind": "input", "type": "port_ref", "of": "entry"}]}}}
+	var before := {"meta": {"code": "MAP1"}, "objects": []}
+	var placed := {"meta": {"code": "MAP1"}, "objects": [{"code": "NEW1", "asset": "door"}]}
+	var content := {"function": "DLOG", "fields": {"PORT": {"map": "MAP1", "inst": "NEW1", "port": "in"}}}
+	var rows := [{"fn_id": "dialogue", "cid": "opening", "data": content}]
+	ok(SpatialCheck.needs_map_save(manifest, "dialogue", content, placed, before), "新端口引用等待地图保存")
+	eq(SpatialCheck.staged_problem(manifest, placed, rows), "", "目标随地图提交时允许保存")
+	var problem := SpatialCheck.staged_problem(manifest, before, rows)
+	ok(problem.contains("dialogue/opening") and problem.contains("arrival") and problem.contains("NEW1"),
+		"撤销后即使正式地图没有删除目标，也能指出暂存内容及字段")
+	content.fields.PORT.map = "MAP2"
+	eq(SpatialCheck.staged_problem(manifest, before, rows), "", "本图保存不检查其他图的端口")
 
 ## —— C10：asset::id 保留空段（旧 split(":", false) 会把 ID 当 kind） ——
 func test_describe_asset_keeps_empty_kind() -> void:

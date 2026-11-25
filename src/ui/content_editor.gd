@@ -64,6 +64,8 @@ var _field_focus := ""
 
 # 左列
 var _left_title: Label = null
+var _instance_count: Label
+var _instance_scroll: ScrollContainer
 var _rows_box: VBoxContainer = null
 # 中列（只读预览控件，实现见 content_preview.gd）
 var _preview: Control = null
@@ -113,34 +115,42 @@ func build() -> Control:
 	steps_dock_slot.add_theme_stylebox_override("panel", Th.flat(Th.BG_BASE, 0))
 	stack.add_child(steps_dock_slot)
 	cols.add_child(_build_left())
-	cols.add_child(_build_middle())
-	cols.add_child(_build_right())
+	var split := HSplitContainer.new()
+	split.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	split.add_child(_build_middle())
+	split.add_child(_build_right())
+	cols.add_child(split)
 	return root
 
 # ──────────── 左列：本图实例列表 ────────────
 
 func _build_left() -> Control:
-	var box := PanelContainer.new()
-	box.custom_minimum_size = Vector2(LEFT_W, 0)
-	var sb := Th.box(Th.BG_PANEL, Th.BORDER, 0, 10, 10)
-	sb.set_border_width_all(0)
-	sb.border_width_right = 1
-	box.add_theme_stylebox_override("panel", sb)
-	var col := Kit.vbox(8)
+	var box := Kit.frame(SIDE_RIGHT, 12, 12)
+	box.custom_minimum_size.x = LEFT_W
+	var col := Kit.vbox(10)
 	box.add_child(col)
 
+	col.add_child(Kit.section_label("项目内容"))
+	col.add_child(Kit.button("打开项目内容库…", _library.open, "plain"))
+	var references := Kit.hbox(6)
+	var sizes := Kit.button("参考画幅…", func():
+		if commit_fields():
+			ViewportLibrary.open(app), "ghost")
+	var views := Kit.button("参考视图…", func():
+		if commit_fields():
+			ReferenceViewLibrary.open(app), "ghost")
+	for button in [sizes, views]:
+		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		references.add_child(button)
+	col.add_child(references)
+	col.add_child(Kit.divider())
 	var head := Kit.hbox(6)
-	_left_title = Kit.section_label("实例")
+	_left_title = Kit.clipped_label("地图实例", Th.TEXT, Th.FS_MD)
 	_left_title.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	head.add_child(_left_title)
+	_instance_count = Kit.text_label("", Th.TEXT_DIM, Th.FS_SMALL)
+	head.add_child(_instance_count)
 	col.add_child(head)
-	col.add_child(Kit.button("项目内容库…", _library.open, "ghost"))
-	col.add_child(Kit.button("参考画幅…", func():
-		if commit_fields():
-			ViewportLibrary.open(app), "ghost"))
-	col.add_child(Kit.button("参考视图…", func():
-		if commit_fields():
-			ReferenceViewLibrary.open(app), "ghost"))
 
 	# E2 筛选：名称/实例码 + 层 + 资产。列表长时按需收窄，不改数据、不动选中。
 	var frow := Kit.vbox(4)
@@ -154,9 +164,15 @@ func _build_left() -> Control:
 	var srow := Kit.hbox(4)
 	var layer_opt := OptionButton.new()
 	layer_opt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	layer_opt.fit_to_longest_item = false
+	layer_opt.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	layer_opt.custom_minimum_size.x = 88
 	layer_opt.tooltip_text = "按图层收窄实例列表（不影响画布选中）"
 	var asset_opt := OptionButton.new()
 	asset_opt.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	asset_opt.fit_to_longest_item = false
+	asset_opt.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	asset_opt.custom_minimum_size.x = 88
 	asset_opt.tooltip_text = "按资产类型收窄实例列表"
 	# 选项在每次刷新列表时按当前图重建（层/资产随切图变化）
 	var refill_opts := func():
@@ -207,6 +223,8 @@ func _build_left() -> Control:
 	_filter_refill = refill_opts
 
 	var scroll := ScrollContainer.new()
+	_instance_scroll = scroll
+	scroll.follow_focus = true
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	_rows_box = Kit.vbox(2)
@@ -214,7 +232,7 @@ func _build_left() -> Control:
 	scroll.add_child(_rows_box)
 	col.add_child(scroll)
 
-	col.add_child(Kit.hint_label("点画布上的实体选中同一行。", LEFT_W - 24))
+	col.add_child(Kit.hint_label("点击预览或列表选择实例。", LEFT_W - 24))
 	return box
 
 # ──────────── 中列：只读画布预览（实现在 src/ui/content_preview.gd） ────────────
@@ -243,14 +261,11 @@ func _build_middle() -> Control:
 # ──────────── 右列：实例与功能 ────────────
 
 func _build_right() -> Control:
-	var box := PanelContainer.new()
-	box.custom_minimum_size = Vector2(RIGHT_W, 0)
-	var sb := Th.box(Th.BG_PANEL, Th.BORDER, 0, 12, 10)
-	sb.set_border_width_all(0)
-	sb.border_width_left = 1
-	box.add_theme_stylebox_override("panel", sb)
+	var box := Kit.frame(SIDE_LEFT, 14, 12)
+	box.custom_minimum_size.x = RIGHT_W
 	var col := Kit.vbox(10)
 	box.add_child(col)
+	col.add_child(Kit.section_label("实例详情"))
 
 	var head := Kit.hbox(8)
 	_r_name = Kit.text_label("—", Th.TEXT, Th.FS_MD)
@@ -265,6 +280,7 @@ func _build_right() -> Control:
 	col.add_child(_r_badge)
 
 	var scroll := ScrollContainer.new()
+	scroll.follow_focus = true
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	_r_body = Kit.vbox(10)
@@ -485,8 +501,9 @@ func _rebuild_rows() -> void:
 	var all_n: int = _entities().size()
 	# 标题以画布实际加载的地图为准（app.cur_map_name 在切图协程里可能短暂超前/滞后）
 	var map_name := str(app.canvas.cur_map_name) if str(app.canvas.cur_map_name) != "" else "未命名"
-	_left_title.text = "%s 实例" % map_name if ents.size() == all_n \
-		else "%s 实例 %d/%d" % [map_name, ents.size(), all_n]
+	_left_title.text = "地图实例"
+	_left_title.tooltip_text = map_name
+	_instance_count.text = str(all_n) if ents.size() == all_n else "%d/%d" % [ents.size(), all_n]
 
 	if ents.is_empty():
 		if all_n == 0:
@@ -497,13 +514,30 @@ func _rebuild_rows() -> void:
 				"清空上方筛选条件，或换一个关键词"))
 		return
 	for row in ents:
-		_rows_box.add_child(_build_row(row))
+		var button := _build_row(row)
+		_rows_box.add_child(button)
+		if str(row.code) == _selected_ent and _is_view_visible() and not _filter_edit.has_focus():
+			var reveal := func():
+				if is_instance_valid(button) and _instance_scroll.is_ancestor_of(button):
+					_instance_scroll.ensure_control_visible(button)
+			reveal.call_deferred()
 
 ## 实例行：类型名 + 实例码。整行是按钮，点击走 select_inst（与画布双向同步）。
 func _build_row(row: Dictionary) -> Control:
 	var code := str(row.code)
 	var on := code == _selected_ent
-	var b := Kit.button("", func(): select_inst(code), "ghost")
+	var b := Kit.button("", Callable(), "ghost")
+	b.pressed.connect(func():
+		if code == _selected_ent:
+			return
+		var had_focus := b.has_focus()
+		select_inst(code)
+		if had_focus:
+			for child in _rows_box.get_children():
+				if child.get_meta("instance", "") == code:
+					child.grab_focus()
+					break)
+	b.set_meta("instance", code)
 	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	b.tooltip_text = "%s %s" % [str(row.name), code]
 	if on:
@@ -531,7 +565,7 @@ func _build_row(row: Dictionary) -> Control:
 	h.add_child(iid)
 
 	# 按钮内容行撑满高度：ghost 按钮默认按文字定高，空文字会塌成 0
-	b.custom_minimum_size = Vector2(0, 26)
+	b.custom_minimum_size = Vector2(0, 32)
 	# 悬停行 → 预览里高亮对应实例（与预览内悬停同一状态，青框）
 	b.mouse_entered.connect(func():
 		_preview.set_hover(code))
@@ -596,7 +630,8 @@ func _clear_all_for_empty() -> void:
 	_form_sig = ""
 	_form_block = null
 	_preview.set_hover("")
-	_left_title.text = "实例"
+	_left_title.text = "地图实例"
+	_instance_count.text = "0"
 	if _rows_box != null:
 		for c in _rows_box.get_children():
 			_rows_box.remove_child(c)

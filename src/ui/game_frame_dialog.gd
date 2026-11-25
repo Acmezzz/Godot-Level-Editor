@@ -304,6 +304,7 @@ static func open(app, capability: String, options: Dictionary, snapshot: Callabl
 				clear_selection.call()
 				notice.text = "选点未写入，请核对当前资产、图层或字段。")
 	var actions := Kit.hbox(8)
+	actions.set_meta("dialog_actions", true)
 	actions.add_child(Kit.spacer())
 	actions.add_child(Kit.button("关闭", pop.hide, "ghost"))
 	actions.add_child(render)

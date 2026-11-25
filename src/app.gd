@@ -642,6 +642,7 @@ func _set_map_loaded(loaded: bool) -> void:
 	_layout_ctrl._refresh_dirty_badge()
 	_layout_ctrl._refresh_tool_meta()
 	_layout_ctrl._refresh_sel_bar()
+	_layout_ctrl.update_work_toolbar(str(project_shell._view) if _in_project_view() else "map")
 
 # —— 模式切换：关卡 / 内容 / 资产 三个平级面板 + 旧的项目页外壳 ——
 var _map_view: VBoxContainer = null
@@ -791,6 +792,8 @@ func _sync_panel_buttons(mode: String) -> void:
 	for nb in _nav_bars:
 		if nb != null and is_instance_valid(nb):
 			nb.set_mode(mode)
+	if not _nav_bars.is_empty():
+		_layout_ctrl.update_work_toolbar(mode)
 
 ## 清单落盘；返回是否成功（await 结果）。地图保存前需要知道成功与否（D06）。
 func _manifest_write_payload(source: Dictionary) -> Dictionary:

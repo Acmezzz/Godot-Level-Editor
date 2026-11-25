@@ -1122,7 +1122,8 @@ func run():
 	canvas.stamp_asset = "free-ramp"
 	canvas.place_kind = "object"
 	canvas.snap_to_grid = false
-	press(app, "绘制轮廓 / 路径")
+	var geometry_menu: PopupMenu = app._layout_ctrl._geometry_menu.get_popup()
+	geometry_menu.id_pressed.emit(0)
 	var outline = canvas._geometry_draw
 	var initial_count: int = canvas.extract().objects.size()
 	for point in [Vector2(32.5, 68.0), Vector2(72.5, 40.0), Vector2(72.5, 72.0), Vector2(32.5, 72.0)]:
@@ -1136,7 +1137,7 @@ func run():
 	var ring_target: EntityNode = canvas._entity_at(shell_point)
 	check(ring_target != null and ring_target.asset == "free-ramp", "pick the drawn solid to edit its holes")
 	canvas.commit_selection(ring_target)
-	press(app, "绘制孔洞")
+	geometry_menu.id_pressed.emit(1)
 	for point in [Vector2(58,60), Vector2(65,60), Vector2(65,68), Vector2(58,68)]:
 		outline.add(canvas.to_layer_world(canvas.active_layer, point))
 	outline.finish()
@@ -1177,14 +1178,14 @@ func run():
 		"one undo restores the removed hole")
 	ring_target = canvas._entity_at(shell_point)
 	canvas.commit_selection(ring_target)
-	press(app, "绘制附加轮廓")
+	geometry_menu.id_pressed.emit(2)
 	for point in [Vector2(99,48), Vector2(125,48), Vector2(125,70), Vector2(99,70)]:
 		outline.add(canvas.to_layer_world(canvas.active_layer, point))
 	outline.finish()
 	var extra_point: Vector2 = canvas.to_layer_world(canvas.active_layer, Vector2(102, 51))
 	check(canvas._entity_at(extra_point) == ring_target and ring_target.geometry_parts().size() == 2,
 		"the disconnected contour belongs to the same selectable entity")
-	press(app, "绘制孔洞")
+	geometry_menu.id_pressed.emit(1)
 	for point in [Vector2(108,53), Vector2(116,53), Vector2(116,64), Vector2(108,64)]:
 		outline.add(canvas.to_layer_world(canvas.active_layer, point))
 	outline.finish()
@@ -1773,12 +1774,12 @@ func author_rule_grids(app, manifest: Dictionary) -> void:
 			if sample[0] == "tri":
 				vx.text = ux.text
 				vy.text = uy.text
-				press(pop, "确定")
+				press(pop, "创建地图")
 				check(pop.visible and collect(pop, "Label").any(func(label): return label.text.contains("不可逆")),
 					"singular basis is rejected before leaving the map dialog")
 			vx.text = str(sample[3][1][0])
 			vy.text = str(sample[3][1][1])
-		press(pop, "确定")
+		press(pop, "创建地图")
 		for i in 12:
 			await process_frame
 			if app.cur_map_name == name and app.map_loaded:
@@ -2962,7 +2963,7 @@ func _author_relay_map(app, manifest: Dictionary) -> void:
 	var popup := _visible_popup(app)
 	popup.find_child("NewMapName", true, false).text = "relay_deck"
 	select_metadata(popup.find_child("NewMapProjection", true, false), "isometric")
-	press(popup, "确定")
+	press(popup, "创建地图")
 	for i in 12:
 		await process_frame
 		if app.cur_map_name == "relay_deck" and app.map_loaded:

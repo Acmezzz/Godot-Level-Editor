@@ -1,10 +1,5 @@
 extends HBoxContainer
-## 共享顶栏片段：地图 ▾ + 三个模式按钮（关卡 / 内容 / 资产）。
-## 关卡视图顶栏与项目页顶栏都嵌这一个对象——「为什么两处做得不一样」的答案就是
-## 以前各建各的，现在这四样只有这一处实现。试玩 / 保存等各自顶栏的其它东西不在这里。
-##
-## 地图菜单每次弹出前用 MapStore.list_maps 重建：只列已有地图，点一个就切。
-## 切图是协程，await 完成后触发 after_switch（无论是否真的切成功；项目页用它留在当前视图）。
+## 工作区导航：切图菜单、当前地图名、关卡 / 内容 / 资产切换。
 
 const Kit := preload("res://src/ui/ui_kit.gd")
 const CellGraphEditor := preload("res://src/ui/cell_graph_editor.gd")
@@ -13,7 +8,6 @@ const EventLayers := preload("res://src/project/event_layers.gd")
 const EventLayerDialog := preload("res://src/ui/event_layers_dialog.gd")
 
 var app
-var after_switch: Callable   # 切图后宿主可选回调（项目页用它回到内容视图）
 
 var _switch_btn: Button
 var _switch_menu: PopupMenu
@@ -28,7 +22,9 @@ func build() -> void:
 	# —— 地图 ▾：只列已有地图，与「设置」分开 ——
 	_switch_btn = Kit.button("地图 ▾", Callable(), "plain")
 	_switch_btn.tooltip_text = "切换地图（只列已有地图文件）"
-	_switch_btn.custom_minimum_size = Vector2(104, 0)
+	_switch_btn.custom_minimum_size = Vector2(144, 0)
+	_switch_btn.clip_text = true
+	_switch_btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
 	add_child(_switch_btn)
 	_switch_menu = PopupMenu.new()
 	_switch_menu.id_pressed.connect(_on_map_selected)
@@ -38,6 +34,7 @@ func build() -> void:
 		_switch_menu.popup(Rect2i(at, Vector2i.ZERO)))
 	add_child(_switch_menu)
 
+	add_child(Kit.vdivider())
 	for spec in _mode_names:
 		var mode := str(spec[0])
 		var btn: Button = Kit.button(str(spec[1]), _on_mode.bind(mode), "toggle")
@@ -51,10 +48,21 @@ func set_mode(mode: String) -> void:
 	for k in _mode_btns.keys():
 		var b := _mode_btns[k] as Button
 		if b != null:
-			b.button_pressed = (str(k) == mode)
+			b.set_pressed_no_signal(str(k) == mode)
+
+func refresh_map_label() -> void:
+	var name: String = app.cur_map_name if app.map_loaded else ""
+	_switch_btn.text = ("地图 ▾" if name == "" else name + "  ▾")
+	_switch_btn.tooltip_text = "切换地图及地图工具" if name == "" else "当前地图：" + name + "\n点击切换地图或打开地图工具"
 
 func _on_mode(mode: String) -> void:
+	if _mode_btns[mode].button_pressed == false:
+		set_mode(mode)
+		return
+	var current := str(app.project_shell._view) if app._in_project_view() else "map"
 	app._set_mode(mode)
+	if (str(app.project_shell._view) if app._in_project_view() else "map") == current:
+		set_mode(current)
 
 ## 菜单按弹出时的地图码绑定，图名用于显示和打开还没有地图码的文件。
 var _menu_binds: Array = []
@@ -145,8 +153,7 @@ func draft_pick(draft_key: String, action: String) -> void:
 			var rec := preload("res://src/map/recovery.gd")
 			rec.remove_draft_key(app.manifest, draft_key)
 			app._set_status("已丢弃草稿：" + draft_key)
-	if after_switch.is_valid():
-		after_switch.call()
+	_refresh_active_view()
 
 func _on_map_selected(id: int) -> void:
 	if id == _MENU_REFRESH_MAPS:
@@ -174,14 +181,22 @@ func _on_map_selected(id: int) -> void:
 	if id < 0 or id >= _menu_binds.size():
 		return
 	var selected: Dictionary = _menu_binds[id]
+	if app.map_loaded and selected.name == app.cur_map_name:
+		return
 	var code: String = selected.code
 	if code in EventLayers.drawing_codes(app.manifest):
 		await app._map_file_ctrl.open_event_drawing(code)
+		_refresh_active_view()
 		return
 	if code.is_empty():
 		# An unissued legacy map is opened as a document before it receives its first code.
 		await app._map_file_ctrl.open_map_by_name(selected.name)
 	elif not await app._map_file_ctrl.open_map_by_code(code):
 		return
-	if after_switch.is_valid():
-		after_switch.call()
+	_refresh_active_view()
+
+
+func _refresh_active_view() -> void:
+	refresh_map_label()
+	if app._in_project_view() and app.project_shell._view == "content":
+		app.project_shell.content_editor.refresh_list()

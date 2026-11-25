@@ -20,36 +20,59 @@ func _open_popup(pop: PopupPanel, size := Vector2i.ZERO, parent: Window = null) 
 		pop.exclusive = true
 		parent.add_child(pop)
 	pop.popup_hide.connect(func(): pop.queue_free())
-	# 先按内容算出最小尺寸（此刻子控件还没排版，直接量会偏小），
-	# 再用 popup_centered() 让引擎按最小尺寸开窗——不带参数的 popup_centered()
-	# 会沿用上次窗口大小，必须显式给尺寸。
-	# 单次居中量取不准会裁切内容——两段式（先 1×1 弹出再按实际最小尺寸居中）。
-	# 两段式首帧会在左上角闪一下 1×1 的小窗。把第一段挪到屏幕外再量——
-	# 同一帧内接第二段居中，中间那次布局从未被绘制，闪烁消失。
-	pop.popup_centered(Vector2i(1, 1))
-	pop.position = Vector2i(-32000, -32000)
-	var want := pop.get_contents_minimum_size().ceil()
-	var vp = app.get_viewport_rect().size
-	want.x = minf(want.x, vp.x - 40)
-	want.y = minf(want.y, vp.y - 40)
-	if size != Vector2i.ZERO:
-		want = Vector2(size)
-	pop.popup_centered(Vector2i(want))
+	if not pop.has_meta("dialog_body"):
+		pop.popup_centered(size)
+		return
+	var body: VBoxContainer = pop.get_meta("dialog_body")
+	var scroll := body.get_parent() as ScrollContainer
+	var col := scroll.get_parent() as VBoxContainer
+	if body.get_child_count() > 0:
+		var actions := body.get_child(-1)
+		if actions.has_meta("dialog_actions"):
+			actions.reparent(col)
+	var measure := func() -> Vector2i:
+		var available: Vector2 = app.get_viewport_rect().size - Vector2(48, 48)
+		var padding := pop.get_theme_stylebox("panel", "PopupPanel").get_minimum_size()
+		scroll.custom_minimum_size = Vector2.ZERO
+		var chrome := col.get_combined_minimum_size() + padding
+		var natural := body.get_combined_minimum_size()
+		scroll.custom_minimum_size = Vector2(
+			maxf(0.0, minf(available.x - padding.x, natural.x + 8.0)),
+			maxf(0.0, minf(available.y - chrome.y - 12.0, natural.y + 4.0)))
+		var want := Vector2i((col.get_combined_minimum_size() + padding).ceil())
+		return want.max(size).min(Vector2i(available))
+	pop.popup_centered(measure.call())
+	body.minimum_size_changed.connect(func():
+		if pop.visible and not pop.is_queued_for_deletion():
+			var wanted: Vector2i = measure.call()
+			if wanted.x > pop.size.x or wanted.y > pop.size.y:
+				var centered := pop.position + (pop.size - wanted) / 2
+				pop.size = wanted
+				var limit := Vector2i(app.get_viewport_rect().size) - wanted - Vector2i(8, 8)
+				pop.position = centered.clamp(Vector2i(8, 8), limit.max(Vector2i(8, 8)))
+	, CONNECT_DEFERRED)
 
 ## 弹窗标准外壳：标题 + 副标题 + 内容区，保证所有面板视觉一致
 ## 内容列宽度固定（body_w），所有内部换行标签都以此为准，避免弹窗高度失控。
 
 func _popup_body(title: String, subtitle := "") -> Dictionary:
 	var pop := PopupPanel.new()
-	var col = app.UiKitScript.vbox(10)
+	var col = app.UiKitScript.vbox(12)
 	col.custom_minimum_size = Vector2(app.POPUP_BODY_W, 0)
 	pop.add_child(col)
-	col.add_child(app.UiKitScript.text_label(title, app.UiThemeScript.TEXT, app.UiThemeScript.FS_MD))
+	col.add_child(app.UiKitScript.text_label(title, app.UiThemeScript.TEXT, app.UiThemeScript.FS_LG))
 	if subtitle != "":
 		col.add_child(app.UiKitScript.hint_label(subtitle, app.POPUP_BODY_W))
+	var scroll := ScrollContainer.new()
+	scroll.follow_focus = true
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	col.add_child(scroll)
 	var body = app.UiKitScript.vbox(8)
 	body.custom_minimum_size = Vector2(app.POPUP_BODY_W, 0)
-	col.add_child(body)
+	body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	scroll.add_child(body)
+	pop.set_meta("dialog_body", body)
 	return {"pop": pop, "root": col, "body": body}
 
 ## 快捷键速查共 8 行（撤销 / 剪贴板 / 编辑 / 框选 / 文件 / 返回 / 视图 / 速查）。

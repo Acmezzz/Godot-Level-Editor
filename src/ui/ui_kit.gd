@@ -10,8 +10,8 @@ class_name UiKit
 static func section_label(text: String) -> Label:
 	var l := Label.new()
 	l.text = text
-	l.add_theme_font_size_override("font_size", UiTheme.FS_META)
-	l.add_theme_color_override("font_color", UiTheme.TEXT_MUTE)
+	l.add_theme_font_size_override("font_size", UiTheme.FS_MD)
+	l.add_theme_color_override("font_color", UiTheme.TEXT)
 	return l
 
 ## 正文标签（可调色，用于「继承 / 覆盖」这类语义标记）
@@ -26,7 +26,7 @@ static func text_label(text: String, color: Color = UiTheme.TEXT_DIM, size: int 
 ## wrap_w > 0 时会强制一个最小宽度：自动换行的 Label 在宽度未定时会被测成
 ## 近乎 0 宽、高度爆成几十行，进而把弹窗撑到一整屏。给死宽度即可避免。
 static func hint_label(text: String, wrap_w := 0) -> Label:
-	var l := text_label(text, UiTheme.TEXT_MUTE, UiTheme.FS_SMALL)
+	var l := text_label(text, UiTheme.TEXT_DIM, UiTheme.FS_SMALL)
 	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	if wrap_w > 0:
 		l.custom_minimum_size = Vector2(wrap_w, 0)
@@ -53,17 +53,32 @@ static func empty_state(icon: String, title: String, hint := "") -> VBoxContaine
 		var il := text_label(icon, UiTheme.TEXT_MUTE, 30)
 		il.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		box.add_child(il)
-	var tl := text_label(title, UiTheme.TEXT_DIM, UiTheme.FS_SMALL)
+	var tl := text_label(title, UiTheme.TEXT, UiTheme.FS_MD)
 	tl.name = "Title"
 	tl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	tl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	box.add_child(tl)
 	if hint != "":
-		var hl := text_label(hint, Color(UiTheme.TEXT_MUTE, 0.9), UiTheme.FS_META)
+		var hl := text_label(hint, UiTheme.TEXT_DIM, UiTheme.FS_SMALL)
+		hl.name = "Hint"
 		hl.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		hl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		box.add_child(hl)
 	return box
+
+static func frame(edge: Side, pad_x := 12, pad_y := 8) -> PanelContainer:
+	var panel := PanelContainer.new()
+	var style := UiTheme.box(UiTheme.BG_PANEL, UiTheme.BORDER, 0, pad_x, pad_y)
+	style.set_border_width_all(0)
+	style.set_border_width(edge, 1)
+	panel.add_theme_stylebox_override("panel", style)
+	return panel
+
+static func clipped_label(text: String, color: Color = UiTheme.TEXT, font_size := UiTheme.FS_BASE) -> Label:
+	var label := text_label(text, color, font_size)
+	label.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	label.tooltip_text = text
+	return label
 
 # —— 按钮 ——
 ## 按语义创建按钮：primary / ghost / icon / tool / toggle / icon_toggle / plain
@@ -122,11 +137,14 @@ static func vdivider() -> VSeparator:
 ## 「标签 + 控件」一行：标签固定宽度左对齐，控件撑满，保证多个字段视觉整齐
 static func field_row(label: String, control: Control, label_w := 72) -> HBoxContainer:
 	var h := hbox(8)
-	var l := text_label(label, UiTheme.TEXT_MUTE, UiTheme.FS_SMALL)
+	var l := text_label(label, UiTheme.TEXT_SOFT, UiTheme.FS_SMALL)
 	l.custom_minimum_size = Vector2(label_w, 0)
 	l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	h.add_child(l)
 	control.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	if control is OptionButton:
+		control.fit_to_longest_item = false
+		control.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	h.add_child(control)
 	return h
 
@@ -190,6 +208,7 @@ static func del_button(cb: Callable, tip := "删除这一项") -> Button:
 static func popup_buttons(on_ok: Callable, on_cancel: Callable,
 		ok_text := "确定", cancel_text := "取消") -> HBoxContainer:
 	var row := hbox(8)
+	row.set_meta("dialog_actions", true)
 	row.add_child(spacer())
 	row.add_child(button(cancel_text, on_cancel, "ghost"))
 	row.add_child(button(ok_text, on_ok, "primary"))

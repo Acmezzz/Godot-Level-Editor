@@ -41,14 +41,24 @@ func open() -> void:
 	var pop: PopupPanel = shell.pop
 	var body: VBoxContainer = shell.body
 	var kinds := OptionButton.new()
-	var controls := Kit.hbox(6)
+	var controls := Kit.hbox(8)
+	var search := LineEdit.new()
+	search.placeholder_text = "搜索名称或内容 ID"
+	search.clear_button_enabled = true
+	kinds.fit_to_longest_item = false
+	kinds.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	kinds.custom_minimum_size.x = 156
 	kinds.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	controls.add_child(kinds)
 	body.add_child(controls)
+	body.add_child(search)
 	var list := ItemList.new()
+	list.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	var result := Kit.hint_label("")
 	list.custom_minimum_size.y = 230
 	list.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	body.add_child(list)
+	body.add_child(result)
 	var kinds_data := Functions.functions(manifest)
 	var keys := kinds_data.keys()
 	keys.sort()
@@ -94,12 +104,16 @@ func open() -> void:
 		pop.hide()
 		_open_item.call_deferred(kind, "", "", "", draft), "ghost")
 	copy.tooltip_text = "复制独立内容及其演出步骤。保存时创建新 ID，原内容及外部引用保持不变。"
+	var edit_selected := Button.new()
+	edit_selected.text = "编辑所选"
+	edit_selected.theme_type_variation = "PrimaryButton"
 	var update_play := func():
 		play.visible = Playtest.allows_entry(manifest, selected_kind.call())
 		play.disabled = selected_entry.call().is_empty()
 		board_row.visible = Playtest.allows_content_map(manifest, selected_kind.call())
 		var selected := list.get_selected_items()
 		copy.disabled = selected.is_empty() or not reusable.has(selected[0])
+		edit_selected.disabled = selected.is_empty()
 	var refill := func():
 		list.clear()
 		eligible.clear()
@@ -108,6 +122,9 @@ func open() -> void:
 		for cid in Store.list_ids(manifest, kind):
 			var rd := Store.read_ex(manifest, kind, str(cid))
 			var label := str(rd.data.get("name", "")) if rd.status == "ok" else "[读取失败]"
+			var query := search.text.strip_edges().to_lower()
+			if not query.is_empty() and not (label + " " + cid).to_lower().contains(query):
+				continue
 			var idx := list.add_item("%s  %s" % [label, cid])
 			list.set_item_metadata(idx, cid)
 			if rd.status == "ok" and rd.data.get("scope") == "project" and rd.data.get("fields") is Dictionary:
@@ -116,6 +133,8 @@ func open() -> void:
 				eligible[idx] = true
 			if kind == _last_kind and cid == _last_id:
 				list.select(idx)
+		result.text = ("%d 条内容" % list.item_count) if list.item_count > 0 else \
+			("没有匹配的内容，试试另一个关键词。" if search.text.strip_edges() != "" else "该类型还没有内容，点击「新建」。")
 		update_play.call()
 	var edit := func(idx: int):
 		var kind: String = selected_kind.call()
@@ -124,11 +143,17 @@ func open() -> void:
 		_open_item.call_deferred(kind, cid)
 	kinds.item_selected.connect(func(_idx: int): refill.call())
 	list.item_activated.connect(edit)
+	search.text_changed.connect(func(_text: String): refill.call())
+	search.text_submitted.connect(func(_text: String):
+		if list.item_count > 0:
+			list.select(0)
+			list.grab_focus()
+			update_play.call())
 	list.item_selected.connect(func(_idx: int): update_play.call())
 	var add := Kit.button("新建…", func():
 		var kind: String = selected_kind.call()
 		pop.hide()
-		_open_item.call_deferred(kind, ""), "primary")
+		_open_item.call_deferred(kind, ""))
 	add.disabled = keys.is_empty()
 	controls.add_child(add)
 	controls.add_child(copy)
@@ -142,10 +167,16 @@ func open() -> void:
 	controls.add_child(play)
 	if keys.is_empty():
 		body.add_child(Kit.hint_label("游戏工程侧为项目声明功能后，这里才有可创建的内容类型。", 420))
-	body.add_child(Kit.popup_buttons(func():
+	var footer := Kit.hbox(8)
+	footer.set_meta("dialog_actions", true)
+	footer.add_child(Kit.spacer())
+	footer.add_child(Kit.button("关闭", pop.hide, "ghost"))
+	edit_selected.pressed.connect(func():
 		var selected := list.get_selected_items()
 		if not selected.is_empty():
-			edit.call(selected[0]), func(): pop.hide(), "编辑", "关闭"))
+			edit.call(selected[0]))
+	footer.add_child(edit_selected)
+	body.add_child(footer)
 	refill.call()
 	app._open_popup(pop)
 
@@ -155,7 +186,19 @@ func _open_flow() -> void:
 		"查看地图、实例、内容和屏幕的出口。实例出口可跳到地图中的字段修改；游戏决定何时跳转。")
 	var pop: PopupPanel = shell.pop
 	var body: VBoxContainer = shell.body
-	body.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	var columns := Kit.hbox(12)
+	columns.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	body.add_child(columns)
+	var edit_panel := PanelContainer.new()
+	edit_panel.custom_minimum_size.x = 326
+	columns.add_child(edit_panel)
+	var fields := Kit.vbox(8)
+	edit_panel.add_child(fields)
+	fields.add_child(Kit.section_label("设置连接"))
+	var graph := Kit.vbox(8)
+	graph.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	columns.add_child(graph)
+	graph.add_child(Kit.section_label("关系图"))
 	var node := OptionButton.new()
 	node.name = "FlowSource"
 	var slot := OptionButton.new()
@@ -181,31 +224,31 @@ func _open_flow() -> void:
 	target_search.placeholder_text = "按名称、类型或 ID 筛选可接目标"
 	node.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	target.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
-	body.add_child(Kit.field_row("查找来源", source_search, 82))
-	body.add_child(Kit.field_row("来源", node, 82))
-	body.add_child(Kit.field_row("引用字段", slot, 82))
-	body.add_child(Kit.field_row("筛选目标", target_search, 82))
-	body.add_child(Kit.field_row("目标", target, 82))
+	fields.add_child(Kit.field_row("查找来源", source_search, 82))
+	fields.add_child(Kit.field_row("来源", node, 82))
+	fields.add_child(Kit.field_row("引用字段", slot, 82))
+	fields.add_child(Kit.field_row("筛选目标", target_search, 82))
+	fields.add_child(Kit.field_row("目标", target, 82))
 	var content_map := OptionButton.new()
 	content_map.name = "FlowStartupContentMap"
 	var content_map_row := Kit.field_row("内容配对地图", content_map, 82)
 	content_map_row.hide()
-	body.add_child(content_map_row)
-	body.add_child(Kit.field_row("待修引用", broken, 82))
-	body.add_child(entry_row)
+	fields.add_child(content_map_row)
+	fields.add_child(Kit.field_row("待修引用", broken, 82))
+	fields.add_child(entry_row)
 	var neighbors_only := CheckButton.new()
 	neighbors_only.name = "FlowDirectOnly"
 	neighbors_only.text = "只显示当前项及直接关系"
-	body.add_child(neighbors_only)
+	graph.add_child(neighbors_only)
 	var links := ItemList.new()
 	links.name = "FlowDirectLinks"
 	links.custom_minimum_size.y = 78
 	links.tooltip_text = "双击前往相连内容或屏幕；选中后可定位引用字段。"
-	body.add_child(links)
-	var notice := Kit.hint_label("", 640)
+	fields.add_child(links)
+	var notice := Kit.hint_label("")
 	body.add_child(notice)
 	var scroll := ScrollContainer.new()
-	scroll.custom_minimum_size = Vector2(650, 200)
+	scroll.custom_minimum_size = Vector2(322, 322)
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	var view := RelGraphView.new()
 	view.name = "FlowCanvas"
@@ -213,7 +256,7 @@ func _open_flow() -> void:
 	view.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	view.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.add_child(view)
-	body.add_child(scroll)
+	graph.add_child(scroll)
 	var state := {"graph": {}, "index": {}, "slots": [], "source_positions": {}, "search_terms": {}, "saving": false}
 	var selected := func(opt: OptionButton) -> String:
 		return str(opt.get_selected_metadata()) if opt.selected >= 0 else ""
@@ -422,6 +465,7 @@ func _open_flow() -> void:
 			pick_edge.call(edge))
 	var actions := Kit.hbox(6)
 	body.add_child(actions)
+	actions.set_meta("dialog_actions", true)
 	actions.add_child(play_map)
 	play_map.pressed.connect(func():
 		var item: Dictionary = state.index.nodes.get(selected.call(node), {})
@@ -593,7 +637,7 @@ func _open_flow() -> void:
 		pop.hide()
 		open.call_deferred(), "ghost"))
 	refresh.call("")
-	app._open_popup(pop, Vector2i(750, mini(680, int(app.get_viewport_rect().size.y) - 40)))
+	app._open_popup(pop, Vector2i(962, 652))
 
 static func _flow_node_label(item: Dictionary, short := false) -> String:
 	match item.fn_id:
@@ -614,7 +658,7 @@ func _open_item(kind: String, cid: String, context := "", field := "", draft := 
 	if creating:
 		data.merge(draft, true)
 	var state := {"id": cid, "digest": str(rd.get("digest", "")), "new": creating, "map": context}
-	var title := "复制草稿" if not draft.is_empty() else "编辑"
+	var title := "复制草稿" if not draft.is_empty() else ("新建内容" if creating else "编辑内容")
 	var shell: Dictionary = app._popup_body(title + " · " + str(fn.get("name", kind)),
 		"保存写入内容文件。依赖其他字段的引用选项会在保存后更新。")
 	var pop: PopupPanel = shell.pop
@@ -734,7 +778,8 @@ func _open_item(kind: String, cid: String, context := "", field := "", draft := 
 		host.refresh_after_external_write(kind, save_id)
 		app._set_status("已保存项目内容：" + save_id)
 		return true
-	var actions := Kit.hbox(6)
+	var actions := Kit.hbox(8)
+	actions.set_meta("dialog_actions", true)
 	body.add_child(actions)
 	actions.add_child(Kit.button("保存", func():
 		if await store.call():

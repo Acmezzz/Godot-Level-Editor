@@ -555,7 +555,7 @@ func run() -> void:
 	welcome.layout.elements[0].outputs.accepted.view = "missing-screen"
 	check(ScreenReferences.view_reference_issues(broken, "welcome").any(func(issue): return issue.path.ends_with(".outputs.accepted")),
 		"diagnostics identify the particular missing destination")
-	press(app.project_shell, "启动入口…")
+	press(app, "启动入口…")
 	var startup := popup()
 	choose(startup.find_child("StartupTarget", true, false), {"view": "welcome"})
 	press(startup, "保存启动入口")
@@ -564,7 +564,7 @@ func run() -> void:
 	app._build_editor_ui()
 	app._set_mode("content")
 	check(app.manifest.startup.target == {"view": "welcome"}, "the authored screen is published as startup")
-	press(app.project_shell, "试玩项目")
+	press(app, "试玩项目")
 	var controller = app._playtest_ctrl
 	var end := Time.get_ticks_msec() + 12000
 	while controller._play_report_result.is_empty() and Time.get_ticks_msec() < end:
@@ -615,7 +615,7 @@ func run() -> void:
 		and app.manifest.startup.target == {"view": "welcome"},
 		"the selected arrival starts the normal map flow without changing project startup: %s" % [report])
 	var arrival := {"map": copy_code, "inst": new_host_code, "port": "door"}
-	press(app.project_shell, "启动入口…")
+	press(app, "启动入口…")
 	startup = popup()
 	choose(startup.find_child("StartupTarget", true, false), arrival)
 	press(startup, "保存启动入口")
@@ -623,7 +623,7 @@ func run() -> void:
 	app.manifest = Manifest.load_from(project)
 	app._build_editor_ui()
 	check(app.manifest.startup.target == arrival, "the new formal entrance persists through reload")
-	press(app.project_shell, "试玩项目")
+	press(app, "试玩项目")
 	controller = app._playtest_ctrl
 	end = Time.get_ticks_msec() + 8000
 	while controller._play_report_result.is_empty() and Time.get_ticks_msec() < end:
@@ -654,7 +654,7 @@ func run() -> void:
 	app._clear_project_session()
 	app.manifest = Manifest.load_from(project)
 	app._build_editor_ui()
-	press(app.project_shell, "试玩项目")
+	press(app, "试玩项目")
 	controller = app._playtest_ctrl
 	end = Time.get_ticks_msec() + 8000
 	while controller._play_report_result.is_empty() and Time.get_ticks_msec() < end:

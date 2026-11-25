@@ -20,6 +20,12 @@ var mounts_section: VBoxContainer
 var name_edit: LineEdit
 var thumb: TextureRect
 var _detail_hint: Label
+var _detail_scroll: ScrollContainer
+var _empty: VBoxContainer
+var _asset_count: Label
+var _asset_id: Label
+var _preview_label: Label
+var _selected_asset := ""
 var extra: VBoxContainer
 
 var _edef: Dictionary = {}
@@ -45,21 +51,20 @@ func build() -> void:
 	detail_view.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	add_child(detail_view)
 
-	var left_wrap := PanelContainer.new()
-	left_wrap.custom_minimum_size = Vector2(272, 0)
-	left_wrap.size_flags_horizontal = Control.SIZE_FILL
-	left_wrap.size_flags_vertical = Control.SIZE_EXPAND_FILL
-	var left_sb := Th.box(Th.BG_PANEL, Th.BORDER, 0, 10, 10)
-	left_sb.set_border_width_all(0)
-	left_sb.border_width_right = 1
-	left_wrap.add_theme_stylebox_override("panel", left_sb)
+	var left_wrap := Kit.frame(SIDE_RIGHT, 12, 12)
+	left_wrap.custom_minimum_size.x = 274
 	detail_view.add_child(left_wrap)
 	var left := Kit.vbox(8)
 	left_wrap.add_child(left)
-	left.add_child(Kit.section_label("图鉴"))
+	var list_head := Kit.hbox()
+	list_head.add_child(Kit.section_label("资产目录"))
+	list_head.add_child(Kit.spacer())
+	_asset_count = Kit.text_label("", Th.TEXT_DIM, Th.FS_SMALL)
+	list_head.add_child(_asset_count)
+	left.add_child(list_head)
 	# 过滤视图：名称/id 关键字过滤（资产多起来后的基本效率件）
 	_filter_edit = LineEdit.new()
-	_filter_edit.placeholder_text = "过滤：名称/id"
+	_filter_edit.placeholder_text = "搜索资产名称或 ID"
 	_filter_edit.clear_button_enabled = true
 	_filter_edit.text_changed.connect(func(_t: String): refresh_list())
 	left.add_child(_filter_edit)
@@ -67,14 +72,25 @@ func build() -> void:
 	asset_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	asset_list.icon_mode = ItemList.ICON_MODE_LEFT
 	asset_list.fixed_icon_size = Vector2i(40, 40)
-	asset_list.item_clicked.connect(_on_asset_pick)
+	asset_list.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	asset_list.item_selected.connect(func(idx: int):
+		_show_detail(str(asset_list.get_item_metadata(idx))))
 	left.add_child(asset_list)
 
+	var right := Kit.vbox()
+	right.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	right.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	detail_view.add_child(right)
+	_empty = Kit.empty_state("", "没有资产", "在游戏工程中声明资产后，回到这里查看。")
+	_empty.hide()
+	right.add_child(_empty)
 	var detail_scroll := ScrollContainer.new()
+	_detail_scroll = detail_scroll
+	detail_scroll.follow_focus = true
 	detail_scroll.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	detail_scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	detail_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	detail_view.add_child(detail_scroll)
+	right.add_child(detail_scroll)
 	var det_margin := MarginContainer.new()
 	det_margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	det_margin.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -82,6 +98,8 @@ func build() -> void:
 	det_margin.add_theme_constant_override("margin_right", 18)
 	det_margin.add_theme_constant_override("margin_top", 14)
 	det_margin.add_theme_constant_override("margin_bottom", 18)
+	detail_scroll.resized.connect(func():
+		det_margin.add_theme_constant_override("margin_right", maxi(18, int(detail_scroll.size.x) - 900)))
 	detail_scroll.add_child(det_margin)
 	var det := Kit.vbox(12)
 	det.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -93,30 +111,39 @@ func build() -> void:
 	_detail_hint = Kit.hint_label("没有匹配的资产", 320)
 	_detail_hint.visible = false
 	det.add_child(_detail_hint)
+	det.move_child(_detail_hint, 0)
 	var thumb_wrap := PanelContainer.new()
 	thumb_wrap.add_theme_stylebox_override("panel", Th.box(Th.BG_VOID, Th.BORDER, Th.R_CONTAINER, 8, 8))
 	hdr.add_child(thumb_wrap)
 	thumb = TextureRect.new()
-	thumb.custom_minimum_size = Vector2(160, 160)
+	thumb.custom_minimum_size = Vector2(144, 144)
 	thumb.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	thumb.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	thumb_wrap.add_child(thumb)
+	_preview_label = Kit.hint_label("无图片预览")
+	_preview_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_preview_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_preview_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	thumb_wrap.add_child(_preview_label)
 
 	var name_box := Kit.vbox(8)
 	name_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	name_box.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
 	hdr.add_child(name_box)
-	name_box.add_child(Kit.section_label("图鉴名称"))
+	name_box.add_child(Kit.section_label("资产详情"))
+	_asset_id = Kit.clipped_label("", Th.TEXT_DIM, Th.FS_SMALL)
+	name_box.add_child(_asset_id)
 	name_edit = LineEdit.new()
 	name_edit.add_theme_font_size_override("font_size", Th.FS_LG)
 	name_box.add_child(name_edit)
-	name_box.add_child(Kit.hint_label("名称即时写回清单，下次试玩生效"))
+	name_edit.placeholder_text = "资产显示名"
+	name_box.add_child(Kit.hint_label("修改显示名后，按 Enter 或离开输入框保存。"))
 
 	mounts_section = Kit.vbox(6)
 	det.add_child(mounts_section)
-	mounts_section.add_child(Kit.section_label("自带功能（挂载）"))
+	mounts_section.add_child(Kit.section_label("自带功能"))
 	mounts_section.add_child(Kit.hint_label(
-		"类型自带、实例不可删的功能：从清单 functions 声明池里挑，值在内容编辑器按实例填。", 460))
+		"所有此类实例都带有这些功能；在内容工作区为各实例填写参数。"))
 	mounts_box = Kit.vbox(6)
 	mounts_section.add_child(mounts_box)
 
@@ -134,7 +161,7 @@ func build() -> void:
 
 ## 名称提交（写盘）。写失败不留「看起来已保存」的假象：把名字退回提交前的值并重建详情。
 func _commit_name() -> void:
-	if _edef.is_empty() or _loading:
+	if _edef.is_empty() or _loading or str(_edef.get("name", _edef_name_before)) == _edef_name_before:
 		return
 	var sid := str(_edef.get("id", ""))
 	if await host._save_manifest_file_async():
@@ -156,9 +183,7 @@ func show_detail(sid: String) -> void:
 func refresh_list(focus_sid := "") -> void:
 	var keep := focus_sid
 	if keep == "":
-		var at := asset_list.get_selected_items()
-		if not at.is_empty():
-			keep = str(asset_list.get_item_metadata(at[0]))
+		keep = _selected_asset
 	asset_list.clear()
 	var focus_idx := -1
 	var idx := 0
@@ -182,11 +207,15 @@ func refresh_list(focus_sid := "") -> void:
 		if sid == keep:
 			focus_idx = idx
 		idx += 1
+	_asset_count.text = str(asset_list.item_count)
 	if focus_idx < 0 and asset_list.item_count > 0:
 		focus_idx = 0
 	if focus_idx >= 0:
 		asset_list.select(focus_idx)
+		asset_list.ensure_current_is_visible()
 		_show_detail(str(asset_list.get_item_metadata(focus_idx)))
+		if _filter_edit.text.strip_edges() != "" and keep != "":
+			_selected_asset = keep
 	else:
 		# 列表空（含「删掉最后一个资产」）：右栏必须走空态，否则名称框/挂载/分布/删除按钮
 		# 全部滞留上一项，残留闭包还会往已 erase 的字典里写。
@@ -209,15 +238,14 @@ func _matches_filter(sid: String, edef: Dictionary) -> bool:
 		return true
 	return sid.to_lower().contains(q) or AssetDecl.label_of_decl(edef, sid).to_lower().contains(q)
 
-func _on_asset_pick(idx: int, _at: Vector2 = Vector2.ZERO, mb: int = 0) -> void:
-	# 只认左键（与实体大纲列表同一约定）
-	if mb != MOUSE_BUTTON_LEFT:
-		return
-	_show_detail(str(asset_list.get_item_metadata(idx)))
-
 func _show_detail(sid: String) -> void:
 	# 清单原件（不是归一化副本）：名称/挂载的改动要直接写回 assets[]
 	_edef = AssetDecl.live_by_id(manifest, sid)
+	_detail_scroll.visible = not _edef.is_empty()
+	_empty.visible = _edef.is_empty()
+	_empty.get_node("Title").text = "没有匹配的资产" if _filter_edit.text.strip_edges() != "" else "还没有资产"
+	_empty.get_node("Hint").text = "清空搜索，或换一个关键词。" if _filter_edit.text.strip_edges() != "" \
+		else "在游戏工程中声明资产后，回到这里查看。"
 	if _edef.is_empty():
 		# 空匹配（例如详情里删掉了当前资产）不能留上一项的陈旧数据
 		name_edit.text = ""
@@ -230,6 +258,11 @@ func _show_detail(sid: String) -> void:
 		_detail_hint.text = "没有匹配的资产"
 		_detail_hint.visible = true
 		return
+	if _selected_asset != sid:
+		_detail_scroll.scroll_vertical = 0
+	_selected_asset = sid
+	_asset_id.text = "资产 ID · " + sid
+	_asset_id.tooltip_text = sid
 	_detail_hint.visible = false
 	if bool(_edef.get("disabled", false)):
 		_detail_hint.text = "已停用：不进调色板，但保留原 ID；重新启用即恢复。"
@@ -238,6 +271,7 @@ func _show_detail(sid: String) -> void:
 	_edef_name_before = str(_edef.get("name", sid))
 	name_edit.text = _edef_name_before
 	thumb.texture = _asset_texture(_edef)
+	_preview_label.visible = thumb.texture == null
 	_mount_rows(_edef)
 	for child in extra.get_children():
 		extra.remove_child(child)
@@ -316,7 +350,7 @@ func _add_config_section(sid: String) -> void:
 	# E3：图鉴 → 回画布保持所选资产（可直接开摆）
 	if AssetDecl.placeable(manifest, sid) and not bool(d.get("disabled", false)):
 		var row := Kit.hbox(6)
-		var go := Kit.button("回画布用这个资产", func(): _use_on_canvas(sid), "ghost")
+		var go := Kit.button("在地图上使用", func(): _use_on_canvas(sid), "plain")
 		go.tooltip_text = "切回关卡视图并把画布笔刷设成这个资产"
 		row.add_child(go)
 		box.add_child(row)
@@ -429,7 +463,7 @@ func _delete_asset_checked(sid: String) -> void:
 	refresh_list()
 	host._set_status("已删除资产 %s" % sid if erase_will_dangle else "已停用资产 %s（可恢复）" % sid)
 
-# —— 自带功能（挂载）编辑器 ——
+# —— 自带功能编辑器 ——
 ## 挂载 = 类型自带的 functions 声明 id 列表；实例绑定在放置/载图时自动补齐（C09）。
 ## 声明本体（fields/kind/type）在清单 functions 池，属开发契约——这里只挂载，不编辑声明。
 func _mount_rows(edef: Dictionary) -> void:
@@ -508,6 +542,8 @@ func _unmount(edef: Dictionary, mid: String) -> void:
 var _tex_cache := {}   # path→ImageTexture 缓存，同一图只读一次盘
 func _asset_texture(edef: Dictionary) -> Texture2D:
 	var rel := str(edef.get("thumb", ""))
+	if rel == "" and edef.get("kind") == "scene":
+		rel = str(edef.get("atlas" if edef.get("shape") == "tile" else "texture", ""))
 	if rel == "":
 		return null
 	var p: String = str(manifest.get("_dir", "")).path_join(rel)

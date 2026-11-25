@@ -3,6 +3,8 @@ extends RefCounted
 ## 函数体逐字节原样迁入；跨边界引用经 host（app）转发——
 ## 同名 const 重声明 + 同名转发属性 + 同名包装方法，搬动文本零改动。
 
+const Kit := preload("res://src/ui/ui_kit.gd")
+const Th := preload("res://src/ui/ui_theme.gd")
 const SettingsCfg := "user://settings.cfg"
 
 var host   # app 宿主
@@ -87,85 +89,64 @@ func _show_picker(err := "") -> void:
 	for c in get_children():
 		remove_child(c)
 		c.queue_free()
-	var v := VBoxContainer.new()
-	v.set_anchors_preset(Control.PRESET_FULL_RECT)
-	v.alignment = BoxContainer.ALIGNMENT_CENTER
-	v.add_theme_constant_override("separation", 10)
-	add_child(v)
-	var t := Label.new()
-	t.text = "关卡编辑器"
-	t.add_theme_font_size_override("font_size", 28)
-	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	v.add_child(t)
-	var hint := Label.new()
-	hint.text = "选一个游戏项目（内含 editor/editor_manifest.json）；可同时管理多个项目"
-	hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	v.add_child(hint)
-	if err != "":
-		var el := Label.new()
-		el.text = err
-		el.modulate = Color(1, 0.4, 0.4)
-		el.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		v.add_child(el)
-	if not project_dirs.is_empty():
-		# E3：项目多的长列表要有滚动路径（U05）。选择页整列铺满窗口、内容居中，
-		# 列表占据剩余高度并在其中滚动，不会把按钮顶出可视区。
-		var scroll := ScrollContainer.new()
-		scroll.custom_minimum_size = Vector2(520, 0)
-		scroll.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-		scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
-		scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-		v.add_child(scroll)
-		var list := VBoxContainer.new()
-		list.custom_minimum_size = Vector2(520, 0)
-		list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-		scroll.add_child(list)
-		for dir in project_dirs:
-			list.add_child(_project_row(str(dir)))
-		var row := HBoxContainer.new()
-		row.alignment = BoxContainer.ALIGNMENT_CENTER
-		var add := Button.new()
-		add.text = "打开其它项目文件夹…"
-		add.pressed.connect(_pick_project)
-		row.add_child(add)
-		v.add_child(row)
-	else:
-		var hb := HBoxContainer.new()
-		hb.alignment = BoxContainer.ALIGNMENT_CENTER
-		var btn := Button.new()
-		btn.text = "打开项目文件夹…"
-		btn.pressed.connect(_pick_project)
-		hb.add_child(btn)
-		v.add_child(hb)
+	var background := ColorRect.new()
+	background.color = Th.BG_BASE
+	background.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	add_child(background)
+	var center := CenterContainer.new()
+	center.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	add_child(center)
+	var card := PanelContainer.new()
+	card.custom_minimum_size.x = 640
+	card.add_theme_stylebox_override("panel", Th.box(Th.BG_PANEL, Th.BORDER, 12, 24, 20))
+	center.add_child(card)
 
-## 选择页的一行：项目名（+ 路径）+ 「打开」+「移除记录」。
-## 移除只删记录不动磁盘——用户可能只是临时不想看见它。
+	var v := Kit.vbox(14)
+	card.add_child(v)
+	v.add_child(Kit.text_label("2D 关卡编辑器", Th.TEXT, 26))
+	v.add_child(Kit.hint_label("打开游戏工程，编辑关卡、实例内容和资产。", 520))
+	if err != "":
+		v.add_child(Kit.wrap_label(err, 520, Th.ERR))
+	var head := Kit.hbox(12)
+	head.add_child(Kit.section_label("最近项目"))
+	head.add_child(Kit.spacer())
+	head.add_child(Kit.button("打开项目文件夹…", _pick_project, "primary"))
+	v.add_child(head)
+	if project_dirs.is_empty():
+		var empty := Kit.empty_state("", "还没有项目", "选择包含 editor/editor_manifest.json 的游戏工程目录。")
+		empty.custom_minimum_size.y = 106
+		v.add_child(empty)
+		return
+
+	var scroll := ScrollContainer.new()
+	scroll.custom_minimum_size.y = minf(float(project_dirs.size()) * 64.0, 320.0)
+	scroll.follow_focus = true
+	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	v.add_child(scroll)
+	var list := Kit.vbox(6)
+	list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	scroll.add_child(list)
+	for dir in project_dirs:
+		list.add_child(_project_row(str(dir)))
+
+## 移除只删最近项目记录，不修改工程文件。
 func _project_row(dir: String) -> Control:
-	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 8)
-	var info := VBoxContainer.new()
+	var card := PanelContainer.new()
+	card.add_theme_stylebox_override("panel", Th.box(Th.BG_BASE, Th.BORDER, Th.R_CONTROL, 12, 8))
+	var row := Kit.hbox(10)
+	card.add_child(row)
+	var info := Kit.vbox(3)
 	info.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var nm := Label.new()
-	nm.text = str(project_names.get(dir, dir.get_file()))
-	nm.add_theme_font_size_override("font_size", 16)
-	info.add_child(nm)
-	var path_lbl := Label.new()
-	path_lbl.text = dir
-	path_lbl.modulate = Color(1, 1, 1, 0.5)
-	path_lbl.add_theme_font_size_override("font_size", 11)
-	info.add_child(path_lbl)
 	row.add_child(info)
-	var open := Button.new()
-	open.text = "打开"
-	open.pressed.connect(func(): _open_project(dir))
-	row.add_child(open)
-	var forget := Button.new()
-	forget.text = "移除记录"
-	forget.pressed.connect(func():
+	info.add_child(Kit.clipped_label(str(project_names.get(dir, dir.get_file())), Th.TEXT, Th.FS_MD))
+	info.add_child(Kit.clipped_label(dir, Th.TEXT_DIM, Th.FS_SMALL))
+	row.add_child(Kit.button("打开", func(): _open_project(dir)))
+	var forget := Kit.button("移除记录", func():
 		_forget_project(dir)
-		_show_picker())
+		_show_picker(), "ghost")
+	forget.tooltip_text = "从最近项目中移除，工程文件保留"
 	row.add_child(forget)
-	return row
+	return card
 
 ## 从列表里选一个项目打开；清单坏了就回选择页并说明原因。
 func _open_project(dir: String) -> void:
@@ -178,6 +159,10 @@ func _open_project(dir: String) -> void:
 
 func _pick_project() -> void:
 	var fd := FileDialog.new()
+	fd.title = "打开项目文件夹"
+	fd.ok_button_text = "选择文件夹"
+	fd.cancel_button_text = "取消"
+	fd.display_mode = FileDialog.DISPLAY_LIST
 	fd.file_mode = FileDialog.FILE_MODE_OPEN_DIR
 	fd.access = FileDialog.ACCESS_FILESYSTEM
 	# 选完/取消都释放：否则每次点「打开项目」都会留下一个隐藏对话框

@@ -66,6 +66,9 @@ func _refresh_layer_panel() -> void:
 			app._editor_state_ctrl.apply("", i), "ghost")
 		sel_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		sel_btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		sel_btn.clip_text = true
+		sel_btn.custom_minimum_size.x = 100
+		sel_btn.tooltip_text = lname
 		sel_btn.add_theme_font_size_override("font_size", app.UiThemeScript.FS_SMALL)
 		if is_cur:
 			var sb = app.UiThemeScript.box(app.UiThemeScript.ACCENT_BG,
@@ -73,22 +76,27 @@ func _refresh_layer_panel() -> void:
 			sel_btn.add_theme_stylebox_override("normal", sb)
 			sel_btn.add_theme_color_override("font_color", app.UiThemeScript.TEXT)
 		row.add_child(sel_btn)
-		var vis_btn = app.UiKitScript.button("👁" if app.canvas.is_layer_visible(i) else "·", func():
+		var shown: bool = app.canvas.is_layer_visible(i)
+		var locked: bool = app.canvas.is_layer_locked(i)
+		var vis_btn = app.UiKitScript.button("显示" if shown else "隐藏", func():
 			app.canvas.set_layer_hidden(i, app.canvas.is_layer_visible(i))
-			_refresh_layer_panel(), "ghost")
-		vis_btn.tooltip_text = "显示 / 隐藏本层（👁 显示中 · · 已隐藏）"
+			_refresh_layer_panel(), "toggle")
+		vis_btn.button_pressed = shown
+		vis_btn.tooltip_text = "点击隐藏此层（仅编辑器）" if shown else "点击显示此层（仅编辑器）"
 		row.add_child(vis_btn)
-		var lock_btn = app.UiKitScript.button("🔒" if app.canvas.is_layer_locked(i) else "·", func():
+		var lock_btn = app.UiKitScript.button("锁定" if locked else "可编辑", func():
 			app.canvas.set_layer_locked(i, not app.canvas.is_layer_locked(i))
-			_refresh_layer_panel(), "ghost")
-		lock_btn.tooltip_text = "锁定 / 解锁本层（🔒 已锁定 · · 可编辑）"
+			_refresh_layer_panel(), "toggle")
+		lock_btn.button_pressed = locked
+		lock_btn.custom_minimum_size.x = 68
+		lock_btn.tooltip_text = "点击解锁此层" if locked else "点击锁定此层"
 		row.add_child(lock_btn)
 		_layer_menu_body.add_child(row)
 	# E3：滚动容器按行数给最小高度（ScrollContainer 自带最小高度是 0，弹窗会塌）。
 	# 超过 420px 才滚动，长列表因此有可达路径（U05）。
 	var mscroll := _layer_menu_body.get_parent() as ScrollContainer
 	if mscroll != null:
-		mscroll.custom_minimum_size.y = minf(float(app.canvas.layer_count() + 1) * 26.0 + 6.0, 420.0)
+		mscroll.custom_minimum_size.y = minf(_layer_menu_body.get_combined_minimum_size().y + 4.0, 420.0)
 
 ## 展开层下拉：定位在按钮正下方
 func _toggle_layer_menu() -> void:
@@ -99,8 +107,8 @@ func _toggle_layer_menu() -> void:
 		return
 	_refresh_layer_panel()
 	var at: Vector2 = _layer_btn.get_screen_position()
-	_layer_menu.position = Vector2i(at) + Vector2i(0, int(_layer_btn.size.y))
-	_layer_menu.popup()
+	_layer_menu.reset_size()
+	_layer_menu.popup(Rect2i(Vector2i(at) + Vector2i(0, int(_layer_btn.size.y)), _layer_menu.size))
 
 ## 层管理弹窗：每层一行（改名 / 运行时可见 / ↑↓ / 删除），底部新建层。
 ## 行操作走画布 layer_* API；meta.layers 同步更新，弹窗内容直接读它重填
@@ -125,11 +133,13 @@ func _open_layer_manager() -> void:
 	input.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_layer_mgr_input = input
 	row.add_child(input)
-	row.add_child(app.UiKitScript.button("新建层", func():
+	var create := func():
 		await app.canvas.layer_add(_layer_mgr_input.text)
 		_layer_mgr_input.clear()
 		_rebuild_layer_mgr()
-		app._editor_state_ctrl.sync_ui(), "primary"))
+		app._editor_state_ctrl.sync_ui()
+	input.text_submitted.connect(func(_text: String): create.call())
+	row.add_child(app.UiKitScript.button("新建层", create, "primary"))
 	_layer_mgr_body.add_child(row)
 	var close_btn: Button = app.UiKitScript.button("关闭", func(): _layer_mgr.hide(), "plain")
 	close_btn.size_flags_horizontal = Control.SIZE_SHRINK_END

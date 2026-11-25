@@ -1,20 +1,10 @@
 extends VBoxContainer
-## 项目工作台外壳：资产 / 内容两个全屏视图共用一个壳。
-##
-## 设计基线：资产 / 内容统一进项目工作台（旧的三全屏模式取消）。
-## 右上角与画布顶栏同一套「关卡 / 内容 / 资产」模式切换（Esc 回画布），
-## 底栏状态消息常驻，Ctrl+S 按当前视图分派保存目标。
-## 没有左侧页签栏——切换全靠右上角三个模式按钮。
-## 清单设置、背景图组、关卡清单与世界拓扑均已删除。
-##
-## 各视图只负责自己的内容区（原来是各自带顶栏的全屏界面，顶栏已收进本壳）。
+## 资产与内容工作区及其状态栏；顶栏与关卡工作区共享。
 
-const StartupDialog := preload("res://src/ui/startup_dialog.gd")
 const Kit := preload("res://src/ui/ui_kit.gd")
 const Th := preload("res://src/ui/ui_theme.gd")
 const AssetPanelScript := preload("res://src/ui/asset_panel.gd")
 const ContentEditorScript := preload("res://src/ui/content_editor.gd")
-const TopBarNavScript := preload("res://src/ui/top_bar_nav.gd")
 
 var app   # 宿主 app
 var manifest := {}
@@ -24,9 +14,7 @@ var content_editor = null
 
 var _view := "asset"
 var _holder: Control
-var _title: Label
 var _status: Label
-var _nav_bar   # 地图 ▾ + 三个模式按钮（与关卡视图顶栏共用同一个组件）
 
 func _init(host) -> void:
 	app = host
@@ -34,7 +22,6 @@ func _init(host) -> void:
 
 func build() -> void:
 	add_theme_constant_override("separation", 0)
-	add_child(_build_top_bar())
 	_holder = Control.new()
 	_holder.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_holder.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -42,43 +29,9 @@ func build() -> void:
 	add_child(_build_status_bar())
 	_build_views()
 
-## 顶栏：模式切换（关卡/内容/资产）+ 当前视图名 + 项目徽章 + 保存
-func _build_top_bar() -> PanelContainer:
-	var box := PanelContainer.new()
-	var sb := Th.box(Th.BG_BASE, Th.BORDER, 0, 12, 8)
-	sb.set_border_width_all(0)
-	sb.border_width_bottom = 1
-	box.add_theme_stylebox_override("panel", sb)
-	var bar := Kit.hbox(10)
-	box.add_child(bar)
-	_title = Kit.text_label("项目", Th.TEXT, Th.FS_LG)
-	bar.add_child(_title)
-	bar.add_child(Kit.badge(str(manifest.get("projectName", "?")), Th.ACCENT))
-	bar.add_child(Kit.spacer())
-	# 地图 ▾ + 三个模式按钮：与关卡视图顶栏共用同一个组件
-	_nav_bar = TopBarNavScript.new(app)
-	_nav_bar.after_switch = func(): show_view(_view)
-	_nav_bar.build()
-	app._nav_bars.append(_nav_bar)
-	bar.add_child(_nav_bar)
-	bar.add_child(Kit.vdivider())
-	var save := Kit.button("保存", func(): save_current(), "primary")
-	save.tooltip_text = "保存当前视图对应的数据（Ctrl+S）"
-	bar.add_child(save)
-	if manifest.has("startup"):
-		bar.add_child(Kit.button("启动入口…", func(): StartupDialog.open(app), "ghost"))
-	if bool(manifest.get("playtest", {}).get("projectEntry", false)):
-		bar.add_child(Kit.button("试玩项目", func():
-			app._playtest_ctrl.on_play(Vector2i(-1, -1), true), "ghost"))
-	return box
-
 ## 底栏：状态消息常驻，与画布状态栏同一套视觉
 func _build_status_bar() -> PanelContainer:
-	var box := PanelContainer.new()
-	var sb := Th.box(Th.BG_BASE, Th.BORDER, 0, 12, 5)
-	sb.set_border_width_all(0)
-	sb.border_width_top = 1
-	box.add_theme_stylebox_override("panel", sb)
+	var box := Kit.frame(SIDE_TOP, 12, 5)
 	var h := Kit.hbox(10)
 	box.add_child(h)
 	_status = Kit.text_label("就绪", Th.TEXT_DIM, Th.FS_SMALL)
@@ -103,23 +56,20 @@ func _build_views() -> void:
 ## 切视图（可横跳）。focus 用于资产/内容定位到某条资源
 func show_view(view: String, focus := "") -> void:
 	_view = view
-	# 按下态由 app 统一同步到两个顶栏导航条（_set_mode 是唯一真相，
-	# 这里补一次是为了 show_view 被直接调用时按钮也不脱节）
 	app._sync_panel_buttons(view)
 	# E1：停靠的演出面板跟着视图搬到对应停靠位（资产视图保持原位）
 	app._sync_steps_dock(view)
 	asset_panel.visible = view == "asset"
 	content_editor.root.visible = view == "content"
-	_title.text = "项目 · %s" % _label_of(view)
 	match view:
 		"asset":
 			# 图鉴是唯一页面：焦点定位或落到第一项
 			asset_panel.show_detail(focus)
-			_set_status("资产模板改动后点「保存」写回清单，下次试玩生效")
+			_set_status("资产名称和功能挂载应用后写入清单")
 		"content":
 			# focus 语义在此视图 = 实例 id（右栏定位），空则保留上次选中
 			content_editor.refresh_list(focus)
-			_set_status("编辑实例绑定，或从「项目内容库」创建和保存独立内容（Esc 回关卡编辑器）")
+			_set_status("编辑实例绑定，或打开项目内容库编辑独立内容")
 
 ## 静默切视图（E1 选点归来）：不重建内容表单/不动焦点——表单值在离开时已保留，
 ## 参考值的提交由宿主自己就地更新。只切可见性与按下态。
@@ -134,22 +84,13 @@ func show_view_quiet(view: String) -> void:
 	visible = view != "map"
 	asset_panel.visible = view == "asset"
 	content_editor.root.visible = view == "content"
-	_title.text = "项目 · %s" % _label_of(view)
-
-func _label_of(view: String) -> String:
-	if view == "content":
-		return "内容"
-	if view == "asset":
-		return "资产"
-	return "项目"
 
 ## 内容页走统一保存入口；资产页只写清单。
 func save_current() -> void:
 	match _view:
 		"content":
 			var res: Dictionary = await app._map_file_ctrl.commit_document("内容页保存")
-			if res.status != "ok":
-				_set_status(" 内容页保存未完成：" + str(res.error))
+			_set_status("地图和暂存内容已保存" if res.status == "ok" else "保存未完成：" + str(res.error))
 		_:
 			var ok: bool = await app._save_manifest_file_async()
 			_set_status("资产清单已保存" if ok else " 清单保存失败/取消：改动未落盘")
@@ -163,3 +104,4 @@ func remember_content_context() -> void:
 func _set_status(msg: String) -> void:
 	if _status != null:
 		_status.text = msg.strip_edges()
+		_status.tooltip_text = _status.text
