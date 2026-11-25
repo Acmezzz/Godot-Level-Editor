@@ -146,6 +146,9 @@ func _begin_region_move(pos: Vector2) -> void:
 		cvs._hint("当前图层已锁定：解锁后再移动区域")
 		return
 	var lid: String = cvs._region_layer
+	if lid == "" and not _root_region_aligned():
+		cvs._hint("图层与根格坐标不对齐，请切换到跨层区域工具。")
+		return
 	if _mixed_tile_grids() and (lid == "" or lid != cvs.layer_id(cvs.active_layer)):
 		cvs._hint("请选择瓦片层并在该层框选后再移动。")
 		return
@@ -349,6 +352,9 @@ func copy_region() -> bool:
 		return false
 	if _mixed_tile_grids():
 		return _copy_layer_region()
+	if not _root_region_aligned():
+		cvs._hint("图层与根格坐标不对齐，请切换到跨层区域工具。")
+		return false
 	var source: Dictionary = cvs.copy_content_source()
 	if source.is_empty():
 		return false
@@ -469,8 +475,14 @@ func region_clip_matches() -> bool:
 		var li: int = cvs.active_layer
 		return cvs.layer_id(li) != "" and not cvs._is_grid_layer(li) and cvs.place_kind != "object" \
 			and cvs.tile_grid_for_layer(li).geometry_key() == cvs._region_clip.geometry
-	return not _mixed_tile_grids() and bool(cvs._region_clip.get("tri", false)) == cvs.grid.is_tri() \
+	return _root_region_aligned() and not _mixed_tile_grids() and bool(cvs._region_clip.get("tri", false)) == cvs.grid.is_tri() \
 		and bool(cvs._region_clip.get("hex", false)) == cvs.grid.is_hex_geom()
+
+func _root_region_aligned() -> bool:
+	for i in cvs.layer_count():
+		if not cvs.layer_aligned_to_root(i):
+			return false
+	return true
 
 func _mixed_tile_grids() -> bool:
 	for tile_grid in cvs.tile_grids:
@@ -561,7 +573,7 @@ func _paste_region(origin: Vector2i) -> void:
 	var remapped: Array = (plan.get("map_patch", {}) as Dictionary).get("objects", [])
 	stage_cloned_contents(plan)
 	# 校验全过才动手：一条撤销步覆盖瓦片 + 碰撞 + 实例
-	cvs.push_undo()
+	cvs.push_undo(plan.pending_contents)
 	# 粘贴按 层id 维度重建（tiles = {层id: [[dx,dy,资产id,ax,ay]...]}）
 	# 层重映射：同图按 id 直配，跨图按层名，都不匹配则落最底层（末尾黄字提示）
 	var lnames: Dictionary = cvs._region_clip.get("layer_names", {})
@@ -611,7 +623,10 @@ func stage_cloned_contents(plan: Dictionary) -> void:
 		ce = cvs.app_host.project_shell.content_editor
 	for pc in (plan.get("pending_contents", []) as Array):
 		var pd: Dictionary = pc
-		if FileAccess.file_exists(ContentStore.path_for(cvs.manifest, pd.fn_id, pd.id)):
+		var existing := ContentStore.read_ex(cvs.manifest, pd.fn_id, pd.id)
+		var payload: Dictionary = pd.data.duplicate(true)
+		payload["id"] = pd.id
+		if existing.get("digest", "") == JSON.stringify(payload, "\t").sha256_text():
 			continue
 		var owner := ""
 		for row in remapped:

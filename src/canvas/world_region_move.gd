@@ -241,7 +241,7 @@ func paste_at(pos: Vector2) -> void:
 	if clone.status != "ok":
 		cvs._hint("跨层粘贴已取消：" + ClonePlan.conflicts_text(clone.conflicts))
 		return
-	cvs.push_undo()
+	cvs.push_undo(clone.pending_contents)
 	cvs._region_ops_ctrl.stage_cloned_contents(clone)
 	for i in target.groups.size():
 		_write_group(target.groups[i], target.positions[i])

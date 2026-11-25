@@ -147,11 +147,11 @@ static func view_module_refs(manifest: Dictionary) -> Array:
 	return out
 
 static func property_refs(manifest: Dictionary, decls: Array, values: Dictionary,
-		source := {}, prefix := "") -> Array:
+		source := {}, prefix := "", key_mode := "id") -> Array:
 	var out := []
 	# RefFields uses this index for map resolution.
 	_collect_module_fields(load("res://src/content/ref_fields.gd"), manifest, decls, values,
-		source, prefix, "", "id", out)
+		source, prefix, "", key_mode, out)
 	return out
 
 ## Only placed entities can supply executable references.
@@ -205,7 +205,7 @@ static func _collect_module_fields(fields: GDScript, manifest: Dictionary, decls
 		var code := str(decl.get("code", ""))
 		var key := code if key_mode == "code" and code != "" else id
 		var value = values.get(key, decl.get("default"))
-		var path := prefix + "." + key
+		var path := key if prefix == "" else prefix.trim_suffix(".") + "." + key
 		var field := id if root == "" else root
 		for scope in fields.nested_scopes(manifest, decl, value):
 			var sub_path := "%s[%d]" % [path, scope.path[0]]

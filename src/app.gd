@@ -93,6 +93,8 @@ func _load_last_project() -> Dictionary:
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_WM_CLOSE_REQUEST:
 		call_deferred("_handle_close_request")
+	elif what == NOTIFICATION_APPLICATION_FOCUS_IN:
+		MapStore.refresh_external_maps()
 
 func _handle_close_request() -> void:
 	if map_loaded and canvas and canvas.modified_flag:
@@ -801,7 +803,7 @@ func _manifest_write_payload(source: Dictionary) -> Dictionary:
 			asset.erase("atlas_abs")
 	return preload("res://src/assets/builtin_kinds.gd").strip_from(out)
 
-func _save_manifest_file_async(guard := Callable(), snapshot := {}, publish_key := "") -> bool:
+func _save_manifest_file_async(guard := Callable(), snapshot := {}, publish_key := "", before_write := Callable()) -> bool:
 	var source := manifest
 	var baseline := JSON.stringify(_manifest_write_payload(source), "\t") if publish_key != "" else ""
 	var out := _manifest_write_payload(source if snapshot.is_empty() else snapshot)
@@ -825,6 +827,8 @@ func _save_manifest_file_async(guard := Callable(), snapshot := {}, publish_key 
 		return false
 	if recovery.digest(p) != seen:
 		_set_status(" 清单保存中止：确认期间文件又被外部改写，请重新检查后再保存")
+		return false
+	if before_write.is_valid() and not before_write.call():
 		return false
 	# 清单写盘走 MapStore 原子写单入口
 	if not MapStore.write_text(p, txt):

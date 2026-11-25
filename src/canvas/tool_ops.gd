@@ -309,6 +309,9 @@ func generate_collision(strategy := "full", replace := false, one_way_top := fal
 	if src == null:
 		_hint("切到一个瓦片层再用自动碰撞（当前是碰撞元层）")
 		return 0
+	if not cvs.layer_aligned_to_root(src_idx):
+		_hint("源层有偏移、缩放或视差，不能直接生成根空间碰撞。")
+		return 0
 	var changes := {}
 	var added := 0
 	var state := {"type": "one_way" if strategy == "top" and one_way_top else "solid", "shape": "", "raw": {}}
@@ -334,7 +337,7 @@ func count_auto_collision(strategy := "full", replace := false, src_override := 
 	if cvs.has_independent_tile_grid(src_idx):
 		return 0
 	var src := _layer_node(src_idx) if src_idx >= 0 else null
-	if src == null:
+	if src == null or not cvs.layer_aligned_to_root(src_idx):
 		return 0   # 没有普通瓦片层可作来源（同 generate_collision）
 	var n := 0
 	for c in src.get_used_cells():

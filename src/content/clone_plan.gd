@@ -392,6 +392,11 @@ static func _remap_props(manifest: Dictionary, values: Dictionary, fields: Array
 			continue
 		var id := str(field.get("id", ""))
 		var desc := RefFields.describe(field)
+		if desc.kind == "map" and spatial_refs.get("whole_map", false):
+			var map_value = values.get(id, field.get("default"))
+			var codes: Dictionary = spatial_refs.get("map_copy", {})
+			if map_value is String and codes.has(map_value):
+				values[id] = codes[map_value]
 		if desc.kind == "flow_target":
 			_remap_flow_map(field, id, values, spatial_refs, instance_map)
 			if spatial_refs.has("scoped_ids") and field.get("contentMapContext") == "inherit":
@@ -613,10 +618,26 @@ static func _map_copy_codes(source: Dictionary, target: Dictionary) -> Dictionar
 	var copy: String = target.get("meta", {}).get("code", "")
 	return {code: copy} if code != "" and copy != "" else {}
 
+static func readdress_import(manifest: Dictionary, data: Dictionary, old_code: String, new_code: String) -> void:
+	if old_code.is_empty():
+		return
+	var ids := {}
+	for row in data.get("objects", []):
+		var code: String = row.get("code", "")
+		if code != "":
+			ids[code] = code
+	var scope := {"map_copy": {old_code: new_code}, "whole_map": true}
+	var objects: Array = data.get("objects", [])
+	for i in objects.size():
+		objects[i] = remap_row(objects[i], ids, {}, manifest, "", {}, null, new_code, old_code, scope)
+	var outputs := MapFlow.targets(data, MapFlow.OUTPUTS)
+	for id in outputs:
+		outputs[id] = _copied_map_target(outputs[id], scope.map_copy, ids, true)
+
 static func _copied_map_target(value: Variant, codes: Dictionary, instances: Dictionary, whole_map: bool) -> Variant:
 	if FlowTarget.kind(value) == "map" and codes.has(value.map):
 		if value.has("port"):
-			return {"map": codes[value.map], "inst": instances[value.inst], "port": value.port} if instances.has(value.inst) else value
+			return {"map": codes[value.map], "inst": instances.get(value.inst, value.inst), "port": value.port} if whole_map or instances.has(value.inst) else value
 		if whole_map:
 			return {"map": codes[value.map]}
 	return value

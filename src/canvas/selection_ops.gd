@@ -653,17 +653,19 @@ func copy_selection() -> bool:
 	cvs._clipboard_source = source
 	var center := Vector2.ZERO
 	for s in sel:
-		center += (s as EntityNode).position
+		var n := s as EntityNode
+		center += cvs.to_layer_world(cvs._layer_index_of(n.layer_id), n.position - n.sort_anchor())
 	center /= sel.size()
 	cvs._clipboard.clear()
 	cvs._last_copy_region = false   # 之后 Ctrl+V 走实例粘贴而不是区域粘贴
 	for s in sel:
 		var n := s as EntityNode
+		var anchor: Vector2 = cvs.to_layer_world(cvs._layer_index_of(n.layer_id), n.position - n.sort_anchor())
 		cvs._clipboard.append({
 			"asset": n.asset,
 			"code": n.code,
-			"dx": n.position.x - center.x,
-			"dy": n.position.y - center.y,
+			"dx": anchor.x - center.x,
+			"dy": anchor.y - center.y,
 			"layer": n.layer_id,
 			"transform": n.data_transform.duplicate(true),
 			"functions": n.functions.duplicate(true),
@@ -774,7 +776,7 @@ func paste_at(pos: Vector2) -> void:
 			can_delta = false
 			break
 	if not can_delta:
-		cvs.push_undo()
+		cvs.push_undo(plan.pending_contents)
 	# 建副本：数据取自重映射后的行；位置/变换/显隐取剪贴板原模板
 	var built: Array = []
 	for i in cvs._clipboard.size():
@@ -782,7 +784,7 @@ func paste_at(pos: Vector2) -> void:
 		var row: Dictionary = remapped[i] if i < remapped.size() else {}
 		var aid := str(t2.get("asset", ""))
 		var n: EntityNode = cvs.make_object(aid)
-		n.position = pos + Vector2(t2.get("dx", 0.0), t2.get("dy", 0.0))
+		n.position = cvs.to_layer_local(target, pos + Vector2(t2.get("dx", 0.0), t2.get("dy", 0.0)))
 		n.asset = aid
 		n.data_transform = (t2.get("transform", {}) as Dictionary).duplicate(true)
 		n.z_policy = str(t2.get("zPolicy", "auto"))
@@ -793,6 +795,7 @@ func paste_at(pos: Vector2) -> void:
 		if str(row.get("code", "")) != "":
 			raw["code"] = str(row.get("code", ""))
 		n.raw = raw
+		n.position += n.sort_anchor()
 		n.code = str(row.get("code", ""))
 		n.layer_id = cvs.layer_id(target)
 		cvs._place_in_layer(n, target)
@@ -815,7 +818,7 @@ func paste_at(pos: Vector2) -> void:
 		var added: Array = []
 		for b2 in built:
 			added.append(b2.node)
-		cvs._undo_history_ctrl.inst_commit_add(added)
+		cvs._undo_history_ctrl.inst_commit_add(added, plan.pending_contents)
 	cvs._mark_ents()
 	cvs.queue_redraw()
 	var n_contents: int = (plan.get("pending_contents", []) as Array).size()

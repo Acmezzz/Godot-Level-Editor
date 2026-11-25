@@ -997,8 +997,6 @@ func stage_clone(fn_id: String, cid: String, data: Dictionary, ent: String) -> v
 func bound_staged_rows(map_data: Dictionary) -> Array:
 	return _form.bound_staged_rows(map_data)
 
-func save_staged_content(map_data: Dictionary) -> String:
-	return _form.save_staged_content(map_data)
 
 ## 暂存感知的内容读写（steps_panel 用）：刚 staged 的新内容还没落盘，
 ## 直接 ContentStore.read 会读到空，编辑步骤就会丢掉。

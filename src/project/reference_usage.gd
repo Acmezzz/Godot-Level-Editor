@@ -11,7 +11,6 @@ const ContentStore := preload("res://src/content/content_store.gd")
 const FunctionDecls := preload("res://src/content/function_decl.gd")
 const ConditionDecls := preload("res://src/content/condition_decl.gd")
 const StepDecls := preload("res://src/content/step_decl.gd")
-const RefFields := preload("res://src/content/ref_fields.gd")
 const ReferenceIndex := preload("res://src/project/reference_index.gd")
 
 ## 检查正式地图和未保存画布，避免删除后任意一份数据变成悬空引用。
@@ -82,11 +81,11 @@ static func content_link_paths(manifest: Dictionary, source_fn: String, data: Di
 
 static func _content_links(manifest: Dictionary, source_fn: String, data: Dictionary) -> Array:
 	var out: Array = []
-	for section in _content_sections(manifest, source_fn, data):
+	for section in content_sections(manifest, source_fn, data):
 		_collect_content_links(manifest, section.decls, section.values, source_fn, section.prefix, out)
 	return out
 
-static func _content_sections(manifest: Dictionary, fn: String, data: Dictionary) -> Array:
+static func content_sections(manifest: Dictionary, fn: String, data: Dictionary) -> Array:
 	var decls := FunctionDecls.function_fields(manifest, fn).duplicate()
 	var conds = FunctionDecls.function_decl(manifest, fn).get("conditions")
 	if conds is Array:
@@ -146,54 +145,13 @@ static func draft_inbound_refs(manifest: Dictionary, cid: String, fn_id: String)
 	return out
 
 static func _collect_content_links(manifest: Dictionary, decls: Array, values, source_fn: String,
-		prefix: String, out: Array, depth := 0) -> void:
-	if not values is Dictionary or depth > 8:
-		return
-	for fd in decls:
-		if not fd is Dictionary:
-			continue
-		var id := str(fd.get("id", ""))
-		var key := str(fd.get("code", ""))
-		if key == "":
-			key = id
-		var desc := RefFields.describe(fd)
-		if not values.has(key) and desc.kind != "flow_target":
-			continue
-		var value = values.get(key, fd.get("default"))
-		var path := prefix + id
-		for scope in RefFields.nested_scopes(manifest, fd, value):
-			var subpath := path + "#%d." % int(scope.path[0])
-			if scope.path.size() == 2:
-				subpath += "fields."
-			_collect_content_links(manifest, scope.decls, scope.values, source_fn, subpath, out, depth + 1)
-		var ordered := RefFields.is_ordered_choice(fd)
-		var entries := _as_list(value)
-		if desc.kind == "flow_target":
-			var targets := entries if desc.many else [value]
-			for i in targets.size():
-				var target = targets[i]
-				var at := "%s[%d]" % [path, i] if desc.many else path
-				if FlowTarget.kind(target) == "content":
-					out.append({"fn": target.function, "cid": target.content, "path": at})
-			continue
-		if desc.kind != "content":
-			continue
-		var want_fn := str(desc.get("filter", {}).get("fn", ""))
-		if want_fn == "":
-			want_fn = source_fn
-		var distinct := {}
-		for i in entries.size():
-			var cid = entries[i]
-			if cid is String and cid != "" and (ordered or not distinct.has(cid)):
-				distinct[cid] = true
-				out.append({"fn": want_fn, "cid": cid, "path": "%s#%d" % [path, i] if ordered else path})
-
-static func _as_list(v) -> Array:
-	if v is Array:
-		return v
-	if v == null or str(v) == "":
-		return []
-	return [v]
+		prefix: String, out: Array) -> void:
+	for ref in ReferenceIndex.property_refs(manifest, decls, values if values is Dictionary else {}, {}, prefix, "code"):
+		if ref.kind == "flow_target" and FlowTarget.kind(ref.value) == "content":
+			out.append({"fn": ref.value.function, "cid": ref.value.content, "path": ref.path})
+		elif ref.kind == "content":
+			var fn := str(ref.filter.get("fn", ""))
+			out.append({"fn": source_fn if fn.is_empty() else fn, "cid": ref.value, "path": ref.path})
 
 static func asset_deletion_usage(manifest: Dictionary, asset_id: String, live: Dictionary, staged: Array) -> Dictionary:
 	var bad: Array = []
@@ -239,45 +197,19 @@ static func asset_content_refs(manifest: Dictionary, asset_id: String, bad: Arra
 			if row is Dictionary and str(row.get("fn_id", "")) == kind and row.get("data") is Dictionary:
 				items["草稿:" + str(row.get("cid", ""))] = row.data
 		for oid in items:
-			for section in _content_sections(manifest, kind, items[oid]):
-				for field in _fields_pointing(manifest, "asset", asset_id, section.decls, section.values):
-					out.append({"kind": str(kind), "id": str(oid), "field": section.prefix + field})
+			for section in content_sections(manifest, kind, items[oid]):
+				for field in _fields_pointing(manifest, "asset", asset_id, section.decls, section.values, true, section.prefix):
+					out.append({"kind": str(kind), "id": str(oid), "field": field})
 	return out
 
 static func _fields_pointing(manifest: Dictionary, kind: String, target: String, decls: Array, values,
-		coded := true, depth := 0) -> Array:
+		coded := true, prefix := "") -> Array:
 	var out: Array = []
-	if not (values is Dictionary) or depth > 8:
-		return out
-	var vals: Dictionary = values
-	for fd in decls:
-		if not (fd is Dictionary):
-			continue
-		var id := str(fd.get("id", ""))
-		var key := str(fd.get("code", "")) if coded else id
-		if key == "":
-			key = id
-		if not vals.has(key):
-			continue
-		for scope in RefFields.nested_scopes(manifest, fd, vals[key]):
-			var prefix := "%s#%d." % [id, scope.path[0]]
-			if scope.path.size() == 2:
-				prefix += "fields."
-			for sub in _fields_pointing(manifest, kind, target, scope.decls, scope.values, coded, depth + 1):
-				out.append(prefix + str(sub))
-		var desc := RefFields.describe(fd)
-		if desc.kind == "flow_target":
-			var targets := _as_list(vals[key]) if desc.many else [vals[key]]
-			for i in targets.size():
-				if targets[i] is Dictionary and targets[i].get(kind) == target:
-					out.append("%s[%d]" % [id, i] if desc.many else id)
-			continue
-		if desc.kind != kind:
-			continue
-		for v in _as_list(vals[key]):
-			if v is String and v == target:
-				out.append(str((fd as Dictionary).get("id", key)))
-				break
+	for ref in ReferenceIndex.property_refs(manifest, decls, values if values is Dictionary else {}, {}, prefix, "code" if coded else "id"):
+		if (ref.kind == kind or (kind == "asset" and ref.kind == "entity_type")) and ref.value == target:
+			out.append(ref.path)
+		elif ref.kind == "flow_target" and ref.value is Dictionary and ref.value.get(kind) == target:
+			out.append(ref.path)
 	return out
 
 static func view_inbound_refs(manifest: Dictionary, id: String, staged: Array,
@@ -308,9 +240,9 @@ static func view_inbound_refs(manifest: Dictionary, id: String, staged: Array,
 	if not live_map.is_empty():
 		scan_map.call(live_map, live_name)
 	var inspect := func(kind: String, cid: String, data: Dictionary):
-		for section in _content_sections(manifest, kind, data):
-			for field in _fields_pointing(manifest, "view", id, section.decls, section.values):
-				refs.append("%s.%s%s" % [cid, section.prefix, field])
+		for section in content_sections(manifest, kind, data):
+			for field in _fields_pointing(manifest, "view", id, section.decls, section.values, true, section.prefix):
+				refs.append("%s.%s" % [cid, field])
 	for kind in ContentStore.declared_kinds(manifest):
 		var folder := ContentStore.dir_for(manifest, kind)
 		if DirAccess.dir_exists_absolute(folder) and DirAccess.open(folder) == null:

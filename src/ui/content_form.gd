@@ -805,22 +805,6 @@ func bound_staged_rows(map_data: Dictionary) -> Array:
 	return rows
 
 
-## 已解绑的草稿丢弃。写入失败时保留失败条目和其后未写的条目。
-func save_staged_content(map_data: Dictionary) -> String:
-	for row in bound_staged_rows(map_data):
-		var baseline := str(row.get("baseline", ""))
-		if not row.expect_absent and baseline == "":
-			return "暂存内容缺少替换基线：%s" % row.cid
-		var result := ContentStore.write_ex(manifest, row.fn_id, row.cid, row.data,
-			baseline, false, row.expect_absent)
-		if result.get("conflict", false):
-			return "内容文件已被外部创建或改动：%s" % row.cid
-		if not result.get("ok", false):
-			return "无法写入内容：%s" % row.cid
-		_staged_erase(row.fn_id, row.cid)
-	return ""
-
-
 ## 消费冻结计划中已落盘的内容，失败目标继续留在工作副本里。
 func consume_written_staged(rows: Array) -> void:
 	var doc: String = app._map_file_ctrl.document_key()
@@ -895,13 +879,15 @@ func restage_rows(rows: Array) -> int:
 			continue
 		if _staged_get(fn_id, cid) != null:
 			continue
-		# 找回绑定身份：恢复后的画布上找 content==cid 的绑定行（复核用）
+		var fn_code := FunctionDecls.fn_code(manifest, fn_id)
+		if fn_code.is_empty():
+			continue
 		var ent := ""
 		if _map_ready():
 			for e0 in host._entities():
 				var r0: Dictionary = e0
 				for f0 in (r0.get("fns", []) as Array):
-					if f0 is Dictionary and str((f0 as Dictionary).get("content", "")) == cid:
+					if f0 is Dictionary and f0.get("fn") == fn_code and f0.get("content") == cid:
 						ent = str(r0.get("code", ""))
 						break
 				if ent != "":
@@ -909,7 +895,8 @@ func restage_rows(rows: Array) -> int:
 		if ent == "" and _map_ready():
 			continue   # 绑定不在恢复后的画布上：这条不收（写盘只会造孤儿文件）
 		_staged_put(fn_id, cid, {"fn_id": fn_id, "data": dat,
-			"ent": ent, "doc": doc})
+			"ent": ent, "doc": doc, "expect_absent": r.get("expect_absent", true),
+			"baseline": r.get("baseline", "")})
 		n += 1
 	return n
 

@@ -37,13 +37,17 @@ func _restore(snapshot) -> void:
 
 ## 整图快照入栈：全局操作（区域粘贴/层/尺寸/转换）与
 ## 无实例码的场景图片改动走这条。写入口在控制器上，画布只做转发不带状态。
-func push_undo() -> void:
+func push_undo(clone_contents := []) -> void:
 	if cvs.map_root == null or not is_instance_valid(cvs.map_root):
 		return
 	var snap := _snapshot()
 	if snap == "{}":
 		return   # 重建窗口哨兵（extract 返回 {}）：恢复它=清空整图，拒绝入栈
-	_push_entry(snap)
+	_push_entry(snap if clone_contents.is_empty() else {"snapshot": snap, "clone_contents": clone_contents})
+
+func _mirror_snapshot(entry: Variant) -> Variant:
+	var snap := _snapshot()
+	return {"snapshot": snap, "clone_contents": entry.clone_contents} if entry is Dictionary else snap
 
 ## 差量条目入栈（H01/§7.5 阶段二共用）：新操作一律清空 redo。
 func _push_entry(entry: Variant) -> void:
@@ -64,16 +68,18 @@ var refused_external := false
 ## 文档保存/切图期间（doc_busy）一律拒绝：写盘中途恢复快照会让落盘内容与画布不一致。
 func undo() -> bool:
 	refused_external = false
-	if cvs.doc_busy or _restoring or cvs.map_root == null or not is_instance_valid(cvs.map_root) or undo_stack.is_empty():
+	if cvs.doc_busy or _restoring or cvs.map_root == null or not is_instance_valid(cvs.map_root):
 		return false
 	if _stroke_open:
 		stroke_end()   # 笔画进行中撤销：先把已涂格定格成差量条目，再由下面的 undo 一并回滚
+	if undo_stack.is_empty():
+		return false
 	# 手势中途撤销（拖实例时按 Ctrl+Z）：先把预览值归位，否则差量写回后松手会把预览值再写上去
 	cvs.cancel_preview_gesture()
 	_restoring = true
 	var entry = undo_stack.pop_back()
 	# 整图快照只记「过去」，对向栈要存当前状态；差量条目自带双向数据，原样压回
-	var mirror = entry if _is_patch(entry) else _snapshot()
+	var mirror = entry if _is_patch(entry) else _mirror_snapshot(entry)
 	var ok := await _apply_entry(entry, false)
 	if not ok:
 		# 内容被外部改过：条目退回原栈，栈序不变，别给假反馈
@@ -91,7 +97,7 @@ func redo() -> bool:
 		return false
 	_restoring = true
 	var entry = redo_stack.pop_back()
-	var mirror = entry if _is_patch(entry) else _snapshot()
+	var mirror = entry if _is_patch(entry) else _mirror_snapshot(entry)
 	var ok := await _apply_entry(entry, true)
 	if not ok:
 		redo_stack.append(entry)
@@ -128,7 +134,9 @@ func _apply_entry(entry, forward: bool) -> bool:
 			"cell_graph":
 				_apply_cell_graph_state(d.after if forward else d.before)
 		return true
-	await _restore(entry)
+	await _restore(entry.snapshot if entry is Dictionary else entry)
+	if forward and entry is Dictionary:
+		cvs._region_ops_ctrl.stage_cloned_contents({"map_patch": cvs.extract(), "pending_contents": entry.clone_contents})
 	return true
 
 

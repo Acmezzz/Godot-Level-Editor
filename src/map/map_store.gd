@@ -138,12 +138,16 @@ static var _ci_key := "__never__"
 static func invalidate_code_map() -> void:
 	_ci_key = "__never__"
 
+static func refresh_external_maps() -> void:
+	invalidate_read_cache()
+	invalidate_code_map()
+
 static func code_index(m: Dictionary) -> Dictionary:
-	var names := list_maps(m)
 	var manifest_hash := m.hash()
-	var key := _cm_signature(m, names, manifest_hash)
+	var key := "%s:%s" % [m.get("_maps_dir", ""), manifest_hash]
 	if _ci_key == key:
 		return _ci_cache
+	var names := list_maps(m)
 	var by_name := {}
 	var by_code := {}
 	var unreadable: Array = []
@@ -178,16 +182,6 @@ static func code_map(m: Dictionary) -> Dictionary:
 
 ## 签名：图名清单 + 每图 mtime（不 open 文件）。图名清单抓新增/删除/改名，
 ## mtime 抓内容改动；同秒内的原地改写由写路径的 invalidate_code_map 兜住。
-static func _cm_signature(m: Dictionary, names: Array, manifest_hash: int) -> String:
-	var parts := PackedStringArray()
-	parts.append(str(m.get("_maps_dir", "")))
-	parts.append(str(manifest_hash))
-	parts.append(str(names.size()))
-	for mn in names:
-		var p := path_for(m, str(mn))
-		parts.append("%s@%d" % [str(mn), FileAccess.get_modified_time(p)])
-	return "|".join(parts)
-
 ## 每个可读文件的地图码；重复码也保留，以便解析时明确报告冲突。
 static func name_to_code(m: Dictionary) -> Dictionary:
 	return code_index(m).by_name
@@ -214,6 +208,7 @@ static func identity_error(m: Dictionary, name: String, data: Dictionary, move_f
 	var code := str(data.get("meta", {}).get("code", ""))
 	if code == "":
 		return ""
+	refresh_external_maps()
 	var matches := PackedStringArray()
 	for other in code_index(m).by_code.get(code, []):
 		if other != name and other != move_from:
@@ -364,8 +359,6 @@ static func rename_map(m: Dictionary, old_name: String, new_name: String, baseli
 		return "名称非法"
 	if old_name == new_name:
 		return ""
-	if FileAccess.file_exists(path_for(m, new_name)):
-		return "同名地图已存在"
 	var src := path_for(m, old_name)
 	if src == "" or not FileAccess.file_exists(src):
 		return "原图不存在"
@@ -380,6 +373,8 @@ static func rename_map(m: Dictionary, old_name: String, new_name: String, baseli
 	var prep := DC.prepare(m, new_name, renamed, [], old_name, original.digest)
 	if prep.has("error"):
 		return prep.error
+	if FileAccess.file_exists(path_for(m, new_name)):
+		DC.recover_log(prep.plan)
 	var res := DC.apply(prep.plan)
 	if res.error != "":
 		return res.error

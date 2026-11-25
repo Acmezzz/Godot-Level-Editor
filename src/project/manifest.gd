@@ -217,7 +217,7 @@ static func merge_issued_codes(m: Dictionary, codes: Dictionary, restore_reserve
 				"condf": items = DeclarationPool.items(m.get("conditions", null))
 				"stepf": items = DeclarationPool.items(m.get("steps", null))
 			for pair in items:
-				if str((pair.body as Dictionary).get("id", "")) != owner:
+				if str(pair.id) != owner:
 					continue
 				for fd in ((pair.body as Dictionary).get("fields", []) as Array):
 					if fd is Dictionary and str((fd as Dictionary).get("id", "")) == field_id:

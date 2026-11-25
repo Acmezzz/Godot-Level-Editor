@@ -2,14 +2,15 @@ extends RefCounted
 ## 地图文件生命周期控制器（顶栏「设置 ▾ / 地图 ▾」的动作都在这里）：
 ## 新建、打开、保存（commit_document 统一提交）、改名（纯改名、不迁移引用）、复制整张图、
 ## 另存并转换投影、尺寸调整和草稿恢复。
-## 写盘统一走 MapStore（.tmp 原子替换）。**卸载/替换/改名/复制四条路径的保证不同**：
-##   普通地图保存使用单文件原子替换；
-##   复制：多文件提交（内容先、地图后），日志留 editor/pending/ 供崩溃后判读；
-##   草稿：写 editor/drafts/，不碰正式图。
-## 各入口（本控制器 + 内容视图保存 + 清除悬空）一次会提交哪些文件、按什么顺序，
-## 由 docs/EDITOR_FEATURES.md §7.3「各入口提交哪些文件」唯一规定，此处不复述。
+## 先确认写入冲突，再发布清单、暂存内容与地图。多文件发布用 pending 日志记录摘要。
+## 草稿单独写入 editor/drafts/。
 ## 有未保存修改时新建/打开/切图/关窗口都要先确认；取消即中止。
 const ReferenceIndex := preload("res://src/project/reference_index.gd")
+const AssetDecl := preload("res://src/assets/asset_decl.gd")
+const FlowTarget := preload("res://src/content/flow_target.gd")
+const FunctionDecls := preload("res://src/content/function_decl.gd")
+const MapFlow := preload("res://src/map/map_flow.gd")
+const RefFields := preload("res://src/content/ref_fields.gd")
 const ClonePlan := preload("res://src/content/clone_plan.gd")
 const UiKitScript := preload("res://src/ui/ui_kit.gd")
 const BasisFields := preload("res://src/ui/grid_basis_fields.gd")
@@ -22,6 +23,7 @@ const MapConvert := preload("res://src/map/map_convert.gd")
 const DocumentSession := preload("res://src/project/document_session.gd")
 const DocumentCommit := preload("res://src/project/document_commit.gd")
 const EventLayers := preload("res://src/project/event_layers.gd")
+const SpatialCheck := preload("res://src/project/spatial_reference_check.gd")
 
 var app   # 宿主引用
 
@@ -34,8 +36,10 @@ var _last_autosave_msec := 0
 var _name_memo := ""
 var sess := DocumentSession.new()
 var _event_preview_base := ""
+var _copy_retry := {}
+var event_drawing_retry := {}
 
-func create_event_drawing(label: String, id: String) -> String:
+func plan_event_drawing(label: String, id: String) -> Dictionary:
 	var base := label.strip_edges()
 	if not EditorManifest.is_valid_map_name(base):
 		base = "共享绘制层_" + id
@@ -49,7 +53,27 @@ func create_event_drawing(label: String, id: String) -> String:
 	data.meta.code = code
 	if meta.has("gridBasis"):
 		data.meta.gridBasis = meta.gridBasis.duplicate()
-	return code if MapStore.write(app.manifest, name, data) else ""
+	return {"name": name, "data": data}
+
+func publish_event_drawing(plan: Dictionary, candidate: Dictionary) -> bool:
+	var path := MapStore.path_for(app.manifest, plan.name)
+	var expected := preload("res://src/map/map_format.gd").encode(plan.data).sha256_text()
+	var seen := Recovery.observe(path)
+	if plan.has("log_path") and seen.get("digest", "") == expected:
+		return true
+	if seen.state != "missing":
+		app._set_status("图组绘制层的目标文件已变化：" + plan.name)
+		return false
+	var manifest_path := str(app.manifest.get("_dir", "")).path_join("editor/editor_manifest.json")
+	var payload: Dictionary = app._manifest_write_payload(candidate)
+	plan["log_path"] = Recovery.begin_pending(app.manifest, "绑定图组绘制层 " + str(plan.name), [
+		{"path": path, "baseline": "", "expect_absent": true, "expect": expected},
+		{"path": manifest_path, "baseline": Recovery.digest(manifest_path), "expect": JSON.stringify(payload, "\t").sha256_text()},
+	])
+	if plan.log_path != "" and MapStore.write(app.manifest, plan.name, plan.data):
+		return true
+	app._set_status("无法写入图组绘制层：" + plan.name)
+	return false
 
 func open_event_drawing(code: String) -> void:
 	if await open_map_by_code(code):
@@ -111,7 +135,8 @@ func on_duplicate() -> void:
 	var pop: PopupPanel = shell.pop
 	var body: VBoxContainer = shell.body
 	var name_edit := LineEdit.new()
-	name_edit.text = _unique_map_name(old_name + "_copy")
+	name_edit.text = str(_copy_retry.get("name", "")) if _copy_retry.get("old") == old_name \
+		and is_same(_copy_retry.get("manifest"), app.manifest) else _unique_map_name(old_name + "_copy")
 	name_edit.placeholder_text = "新地图名"
 	body.add_child(UiKitScript.field_row("新名字", name_edit))
 	# E3：先预览 C2 计划（会复制多少实例/内容/瓦片、有哪些冲突），确认再落盘
@@ -125,6 +150,10 @@ func on_duplicate() -> void:
 		func(): duplicate_current_from_dialog(old_name, name_edit, err_label, pop), "primary")
 	var refresh_plan := func():
 		var nn: String = name_edit.text.strip_edges()
+		if not _copy_retry_plan(old_name, nn).is_empty():
+			plan_lbl.text = "继续上一次未完成的复制"
+			copy_btn.disabled = false
+			return
 		var prev := _plan_preview(old_name, nn)
 		var p: Dictionary = prev.get("plan", {})
 		if str(prev.get("err", "")) != "":
@@ -308,6 +337,10 @@ func convert_current_to_dialog(old_name: String, name_edit: LineEdit, err_label:
 		if not prep.has("plan"):
 			err_label.text = str(prep.get("error", "")) + "\n" + ClonePlan.conflicts_text(prep.get("conflicts", []))
 			return
+		var edge_problem := SpatialCheck.converted_edge_problem(app.manifest, prep.plan.data, prep.plan.contents)
+		if edge_problem != "":
+			err_label.text = "转换未发布；请重选或断开格边引用：" + edge_problem
+			return
 		holder.copy = prep.plan
 		publish.text = "另存并转换"
 		# 同一弹窗展示冻结计划，不写源图或内容。
@@ -343,15 +376,32 @@ func _write_map_copy(old_name: String, new_name: String, data: Dictionary, stage
 	if not guard.call() or app.canvas.doc_busy:
 		error_label.text = "文档已变化或正在提交，请重试"
 		return false
-	var prep := MapStore.prepare_duplicate(app.manifest, old_name, new_name, data, staged)
+	var retry := _copy_retry_plan(old_name, new_name)
+	var prep := MapStore.prepare_duplicate(app.manifest, old_name, new_name, data, staged) if retry.is_empty() else {"plan": retry}
 	if not prep.has("plan"):
 		error_label.text = str(prep.get("error", "")) + "\n" + ClonePlan.conflicts_text(prep.get("conflicts", []))
 		return false
-	return await _publish_map_copy(prep.plan, guard, error_label)
+	var ok := await _publish_map_copy(prep.plan, guard, error_label)
+	if ok:
+		if not retry.is_empty():
+			_copy_retry.clear()
+	elif prep.plan.has("log_path"):
+		_copy_retry = {"old": old_name, "name": new_name, "manifest": app.manifest, "plan": prep.plan}
+	return ok
+
+func _copy_retry_plan(old_name: String, new_name: String) -> Dictionary:
+	if _copy_retry.get("old") == old_name and _copy_retry.get("name") == new_name \
+			and is_same(_copy_retry.get("manifest"), app.manifest):
+		return _copy_retry.plan
+	return {}
 
 func _publish_map_copy(plan: Dictionary, guard: Callable, error_label: Label) -> bool:
 	if not guard.call() or app.canvas.doc_busy:
 		error_label.text = "文档已变化或正在提交，请重试"
+		return false
+	var checked := DocumentCommit.preflight(plan)
+	if checked.has("error"):
+		error_label.text = checked.error
 		return false
 	app.canvas.doc_busy = true
 	var ready := true
@@ -623,8 +673,6 @@ func rename_map_now(old_name: String, new_name: String, allow_write_unsaved := f
 	var new_path := EditorManifest.map_path(app.manifest, nn)
 	if new_path == "":
 		return "名称非法"
-	if FileAccess.file_exists(new_path):
-		return "同名地图已存在"
 	var is_current: bool = app.map_loaded and old_name == app.cur_map_name
 	var on_disk := old_path != "" and FileAccess.file_exists(old_path)
 	if is_current and app.canvas.doc_busy:
@@ -638,13 +686,6 @@ func rename_map_now(old_name: String, new_name: String, allow_write_unsaved := f
 	elif allow_write_unsaved and is_current:
 		if sess.opened_digest != "":
 			return "原图已被删除，请重新检查地图文件"
-		if bool(app.manifest.get("_codes_issued", false)):
-			var guard := _commit_is_current.bind(sess.generation, sess.revision, app.manifest)
-			app.canvas.doc_busy = true
-			var saved: bool = await app._save_manifest_file_async(guard)
-			_release_busy()
-			if not saved or not guard.call():
-				return "清单未保存或文档已变化"
 		# 原图未落盘（新建后还没保存）：改名必须真正落地，否则只改内存名 =
 		# 面板显示新名、磁盘上始终没文件，用户看到的「重命名」是假的。
 		var ce = null
@@ -662,11 +703,22 @@ func rename_map_now(old_name: String, new_name: String, allow_write_unsaved := f
 		var prep := DocumentCommit.prepare(app.manifest, nn, data, rows)
 		if prep.has("error"):
 			return prep.error
+		DocumentCommit.recover_log(prep.plan)
+		var checked := DocumentCommit.preflight(prep.plan)
+		if checked.has("error"):
+			return checked.error
+		if bool(app.manifest.get("_codes_issued", false)):
+			var guard := _commit_is_current.bind(sess.generation, sess.revision, app.manifest)
+			app.canvas.doc_busy = true
+			var saved: bool = await app._save_manifest_file_async(guard)
+			_release_busy()
+			if not saved or not guard.call():
+				return "清单未保存或文档已变化"
 		var result := DocumentCommit.apply(prep.plan)
-		if ce != null:
-			ce.consume_written_staged(result.get("written_contents", []))
 		if result.error != "":
 			return result.error
+		if ce != null:
+			ce.consume_written_staged(result.get("written_contents", []))
 	else:
 		return "原图不存在（先保存该地图）"
 	if is_current:
@@ -756,10 +808,19 @@ func load_map_file(p: String, expected_digest := "") -> void:
 		if _doc_stale(gen):
 			return
 		# R06：外部图的身份重新登记——源图码不进本项目（可能与现有图撞码），重发项目内新码。
+		var source_code: String = data.get("meta", {}).get("code", "")
 		if data.get("meta", null) is Dictionary:
 			(data["meta"] as Dictionary).erase("code")
 		MapStore.ensure_code(app.manifest, data)
-		if not MapStore.write(app.manifest, base, data):
+		ClonePlan.readdress_import(app.manifest, data, source_code, data.meta.code)
+		var links := _import_dependencies(data)
+		if not links.is_empty():
+			if not await app._confirm_action("核对导入地图的外部引用",
+				"这些依赖不会随图导入。请核对现有目标，或导入后重接：\n" + "\n".join(links), "继续导入"):
+				return
+			if _doc_stale(gen):
+				return
+		if FileAccess.file_exists(MapStore.path_for(app.manifest, base)) or not MapStore.write(app.manifest, base, data):
 			app._set_status("导入失败：无法写入 " + EditorManifest.map_path(app.manifest, base))
 			return
 		p = EditorManifest.map_path(app.manifest, base)
@@ -796,6 +857,36 @@ func _format_issues(issues: Array) -> String:
 	for issue in issues:
 		lines.append("%s: %s" % [str(issue.get("path", "map")), str(issue.get("message", "invalid data"))])
 	return "; ".join(lines)
+
+## 单图导入不会带上这些地图和内容依赖。
+func _import_dependencies(data: Dictionary) -> PackedStringArray:
+	var notes := PackedStringArray()
+	var code: String = data.meta.code
+	var refs := MapFlow.references(app.manifest, data)
+	var links: Array = Array(refs)
+	for obj in data.get("objects", []):
+		var decl := AssetDecl.by_id(app.manifest, obj.get("asset", ""))
+		links.append_array(ReferenceIndex.property_refs(app.manifest, decl.get("fields", []),
+			obj.get("props", {}), {}, str(obj.get("code", ""))))
+		for binding in obj.get("functions", []):
+			var cid: String = binding.get("content", "")
+			if cid != "":
+				var fn := FunctionDecls.fn_id_of(app.manifest, binding.get("fn", ""))
+				notes.append("%s · 内容 %s/%s" % [obj.get("code", ""), fn if fn != "" else binding.fn, cid])
+	for ref in links:
+		var value = ref.value
+		var key: String = ref.get("paired", "")
+		if ref.kind == "map":
+			key = str(value)
+		elif value is Dictionary:
+			key = RefFields.object_map_key(value, key)
+		if not RefFields.map_key_local(key, code):
+			notes.append("%s · 地图 %s" % [ref.path, key])
+		elif ref.kind == "flow_target" and FlowTarget.kind(value) == "content":
+			notes.append("%s · 内容 %s/%s" % [ref.path, value.function, value.content])
+		elif ref.kind == "content":
+			notes.append("%s · 内容 %s" % [ref.path, value])
+	return notes
 
 ## 先结束编辑手势，再按「清单 → 内容 → 地图」顺序保存。
 func commit_document(reason := "") -> Dictionary:
@@ -839,17 +930,49 @@ func _save_document() -> String:
 		if problem != "":
 			app._set_status(" 保存中止：" + problem)
 			return problem
+		problem = SpatialCheck.blocked_removals(app.manifest, MapStore.read(app.manifest, name), data,
+			ce.bound_staged_rows(data) if write_content else [])
+		if problem != "":
+			write_draft_now()
+			app._set_status(" 先重接或断开引用：" + problem)
+			return problem
 
 	var guard := _commit_is_current.bind(sess.generation, sess.revision, app.manifest)
+	var observed := {}
+	if write_map:
+		var problem := MapStore.write_error(app.manifest, data)
+		if problem != "":
+			app._set_status(" 保存中止：" + problem)
+			return problem
+		observed = await _confirm_map_write(path, guard)
+		if observed.is_empty():
+			return "地图保存失败或取消"
+	var rows: Array = ce.bound_staged_rows(data) if write_content else []
+	if not write_map and rows.is_empty():
+		if bool(app.manifest.get("_codes_issued", false)) and not await app._save_manifest_file_async(guard):
+			return "清单保存失败或取消"
+		return ""
+	var prep := DocumentCommit.prepare(app.manifest, name if write_map else "", data, rows,
+		"", "", observed.get("digest", ""))
+	if prep.has("error"):
+		app._set_status("保存中止：" + prep.error)
+		return prep.error
+	var plan: Dictionary = prep.plan
+	DocumentCommit.recover_log(plan)
+	var checked := DocumentCommit.preflight(plan)
+	if checked.has("error"):
+		app._set_status(checked.error)
+		return checked.error
 	if bool(app.manifest.get("_codes_issued", false)) and not await app._save_manifest_file_async(guard):
 		return "清单保存失败或取消"
-	if write_content:
-		var error: String = ce.save_staged_content(data)
-		if error != "":
-			app._set_status(" 保存中止：" + error)
-			return error
-	if write_map and not await _save_now(name, path, data, guard):
-		return "地图保存失败或取消"
+	var result := DocumentCommit.apply(plan)
+	if result.error != "":
+		app._set_status("保存失败：" + result.error)
+		return result.error
+	if ce != null:
+		ce.consume_written_staged(result.get("written_contents", []))
+	if write_map:
+		_finish_map_save(name, path, data)
 	return ""
 
 
@@ -890,33 +1013,27 @@ func save_all() -> bool:
 	var res: Dictionary = await commit_document("保存")
 	return str(res.get("status", "")) == "ok"
 
-## 写地图并更新当前文档的磁盘基线。
-func _save_now(n: String, path: String, data: Dictionary, guard: Callable) -> bool:
+## 确认覆盖并记录本次地图写入基线。
+func _confirm_map_write(path: String, guard: Callable) -> Dictionary:
 	var baseline := sess.opened_digest
 	var observed := Recovery.observe(path)
 	if observed.state == "unreadable" or (observed.state == "missing" and baseline != ""):
 		app._set_status(" 保存中止：地图写入目标已变化或不可读，请重新检查后再保存")
-		return false
+		return {}
 	if observed.state == "present" and observed.digest != baseline:
 		var title := "目标文件已存在" if baseline == "" else "外部改动"
 		if not await app._confirm_action(title, "磁盘上的地图与打开时不同。继续保存会覆盖它。", "覆盖保存"):
 			app._set_status(" 已取消保存（保留磁盘上的地图）")
-			return false
+			return {}
 		if Recovery.digest(path) != observed.digest:
 			app._set_status(" 保存中止：确认期间文件又被外部改写")
-			return false
+			return {}
 	if not guard.call():
 		app._set_status(" 保存中止：工作副本已变化，请重新提交")
-		return false
-	# 写盘收敛到 MapStore 单入口（.tmp 原子替换，中途崩溃不留半截 JSON）；
-	# 写前校验不过时把首个错误带回状态栏，避免只看到「保存失败」无从下手。
-	if not MapStore.write(app.manifest, n, data):
-		var why: String = MapStore.write_error(app.manifest, data)
-		if why == "":
-			why = MapStore.identity_error(app.manifest, n, data)
-		app._set_status(" 保存失败: %s%s" % [path, ("（%s）" % why) if why != "" else ""])
-		return false
-	# 基线前移（§4.4-2）：此后外部改动 = 相对这次写入的内容
+		return {}
+	return observed
+
+func _finish_map_save(n: String, path: String, data: Dictionary) -> void:
 	sess.opened_digest = Recovery.digest(path)
 	app.canvas.map_data["meta"] = data.meta
 	app.cur_map_name = n
@@ -926,7 +1043,6 @@ func _save_now(n: String, path: String, data: Dictionary, guard: Callable) -> bo
 	_last_autosave_msec = Time.get_ticks_msec()
 	# 正式保存成功后清掉草稿。
 	_drop_draft_for(n)
-	return true
 
 ## 自动保存草稿（A3）：写到 <项目>/editor/drafts/<地图码>.json，记录目标路径、
 ## 正式图基线摘要、地图快照、待提交文件与预留 ID，供崩溃/退出后整份恢复。
@@ -988,7 +1104,7 @@ func _resolve_draft_target(draft: Dictionary, draft_key: String) -> Dictionary:
 		return {"error": "正式图无法读取"}
 	if seen.state == "present" and resolved.status != "ok":
 		# A draft from before code issuance can only reopen the exact file it was based on.
-		if not code.is_empty() or seen.digest != draft.get("baseline", ""):
+		if seen.digest != draft.get("baseline", ""):
 			return {"error": "无法确认同名正式图属于这份草稿"}
 		var existing := MapStore.read(app.manifest, name_)
 		if existing.is_empty() or existing.get("meta", {}).get("code", "") != "":
@@ -1053,13 +1169,11 @@ func restore_draft_key(draft_key: String) -> bool:
 	app.canvas.modified_flag = true   # 草稿内容与磁盘不同：必须显式保存
 	# R03：待提交内容载荷重新暂存（绑定在恢复后的画布上才收，其余逐条报告）。
 	var pend: Array = draft.get("pendingContents", []) if draft.get("pendingContents", null) is Array else []
+	var got := 0
 	if not pend.is_empty() and app.project_shell != null and app.project_shell.content_editor != null:
-		var got: int = app.project_shell.content_editor.restage_rows(pend)
-		if got < pend.size():
-			app._set_status(" 草稿里 %d 条待提交内容未恢复（绑定已不在恢复后的画布上）" % (pend.size() - got))
-		elif got > 0:
-			app._set_status(" 已随草稿恢复 %d 条暂存内容（Ctrl+S 时落盘）" % got)
-	app._set_status(" 已恢复草稿 %s（Ctrl+S 写回正式图）" % map_name)
+		got = app.project_shell.content_editor.restage_rows(pend)
+	var detail := "" if pend.is_empty() else "；暂存内容恢复 %d/%d 条" % [got, pend.size()]
+	app._set_status(" 已恢复草稿 %s（Ctrl+S 写回正式图）%s" % [map_name, detail])
 	return true
 
 ## 冲突时保留草稿副本（原草稿保留，另存一份带时间戳的）

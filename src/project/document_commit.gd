@@ -1,16 +1,16 @@
 extends RefCounted
-## 写入新地图及其内容；已落盘地图改名时最后删除旧文件。
+## 预检并发布地图和暂存内容；改名时最后删除旧文件。
 
 const Recovery := preload("res://src/map/recovery.gd")
 const MapFormat := preload("res://src/map/map_format.gd")
 
 static func prepare(m: Dictionary, name_: String, data: Dictionary, contents: Array,
-		old_name := "", old_digest := "") -> Dictionary:
+		old_name := "", old_digest := "", map_baseline := "") -> Dictionary:
 	var maps := load("res://src/map/map_store.gd")
-	var path: String = maps.path_for(m, name_)
-	if path == "":
+	var path: String = maps.path_for(m, name_) if name_ != "" else ""
+	if name_ != "" and path == "":
 		return {"error": "地图路径非法"}
-	var error: String = maps.write_error(m, data)
+	var error: String = maps.write_error(m, data) if path != "" else ""
 	if error != "":
 		return {"error": error}
 	var store := load("res://src/content/content_store.gd")
@@ -24,8 +24,9 @@ static func prepare(m: Dictionary, name_: String, data: Dictionary, contents: Ar
 		payload["id"] = row.cid
 		entries.append({"path": content_path, "baseline": baseline, "expect_absent": row.get("expect_absent", true),
 			"expect": JSON.stringify(payload, "\t").sha256_text()})
-	entries.append({"path": path, "baseline": "", "expect_absent": true,
-		"expect": MapFormat.encode(data).sha256_text()})
+	if path != "":
+		entries.append({"path": path, "baseline": map_baseline, "expect_absent": map_baseline == "",
+			"expect": MapFormat.encode(data).sha256_text()})
 	var old_path: String = maps.path_for(m, old_name) if old_name != "" else ""
 	if old_name != "":
 		if old_path == "" or old_digest == "":
@@ -38,34 +39,71 @@ static func prepare(m: Dictionary, name_: String, data: Dictionary, contents: Ar
 static func apply(plan: Dictionary) -> Dictionary:
 	var m: Dictionary = plan.manifest
 	var maps := load("res://src/map/map_store.gd")
-	var problem: String = maps.identity_error(m, plan.name, plan.data, plan.old_name)
+	var problem: String = maps.identity_error(m, plan.name, plan.data, plan.old_name) if plan.path != "" else ""
 	if problem != "":
 		return {"error": problem}
-	if Recovery.observe(plan.path).state != "missing":
-		return {"error": "同名地图已存在或目标不可读：%s" % plan.path}
-	if plan.old_path != "" and Recovery.digest(plan.old_path) != plan.old_digest:
-		return {"error": "改名源文件已变化：%s" % plan.old_path}
-	var log_path := Recovery.begin_pending(m, "写入地图 " + str(plan.name), plan.entries)
-	if log_path == "":
-		return {"error": "无法登记多文件写入"}
+	var log_path := str(plan.get("log_path", ""))
+	var checked := preflight(plan)
+	if checked.has("error"):
+		return checked
+	var done: Dictionary = checked.done
+	var entries_by_path: Dictionary = checked.entries_by_path
+	if log_path == "" and plan.entries.size() > 1:
+		log_path = Recovery.begin_pending(m, "写入地图 " + str(plan.name), plan.entries)
+		if log_path == "":
+			return {"error": "无法登记多文件写入"}
+		plan["log_path"] = log_path
 	var store := load("res://src/content/content_store.gd")
 	var written: Array = []
 	var error := ""
 	for row in plan.contents:
+		if done.has(store.path_for(m, row.fn_id, row.cid)):
+			written.append({"fn_id": row.fn_id, "cid": row.cid})
+			continue
 		var result: Dictionary = store.write_ex(m, row.fn_id, row.cid, row.data,
 			str(row.get("baseline", "")), false, row.get("expect_absent", true))
 		if not result.ok:
 			error = ("内容目标已变化：%s" if result.conflict else "内容写入失败：%s") % row.cid
 			break
 		written.append({"fn_id": row.fn_id, "cid": row.cid})
-	if error == "":
-		if Recovery.observe(plan.path).state != "missing":
+	if error == "" and plan.path != "" and not done.has(plan.path):
+		var target: Dictionary = entries_by_path[plan.path]
+		if not can_write(Recovery.observe(plan.path), target.baseline, target.expect_absent):
 			error = "地图写入目标已变化：%s" % plan.path
 		elif not maps.write(m, plan.name, plan.data, plan.old_name):
 			error = "地图写入失败：%s" % plan.path
-		elif plan.old_path != "" and (Recovery.digest(plan.old_path) != plan.old_digest
-				or DirAccess.remove_absolute(plan.old_path) != OK):
-			error = "新地图已写，旧文件已变化或无法删除：%s" % plan.old_path
+	if error == "" and plan.old_path != "" and not done.has(plan.old_path) \
+			and (Recovery.digest(plan.old_path) != plan.old_digest or DirAccess.remove_absolute(plan.old_path) != OK):
+		error = "新地图已写，旧文件已变化或无法删除：%s" % plan.old_path
 	if error == "":
 		Recovery.clear_pending(log_path)
+		plan.erase("log_path")
+		maps.invalidate_code_map()
 	return {"error": error, "written_contents": written}
+
+static func recover_log(plan: Dictionary) -> void:
+	if plan.entries.size() < 2:
+		return
+	for log in Recovery.scan_pending(plan.manifest):
+		if log.data.get("entries", []) == plan.entries:
+			plan["log_path"] = log.path
+			return
+
+static func preflight(plan: Dictionary) -> Dictionary:
+	var log_path := str(plan.get("log_path", ""))
+	var done := {}
+	var entries_by_path := {}
+	for entry in plan.entries:
+		entries_by_path[entry.path] = entry
+		var observed := Recovery.observe(entry.path)
+		if log_path != "" and (observed.get("digest", "") == entry.get("expect", "!") \
+				or (entry.get("op") == "delete" and observed.state == "missing")):
+			done[entry.path] = true
+		elif not can_write(observed, entry.get("baseline", ""), entry.get("expect_absent", false)):
+			return {"error": "写入目标已变化：%s" % entry.path}
+	return {"done": done, "entries_by_path": entries_by_path}
+
+static func can_write(observed: Dictionary, baseline: String, expect_absent: bool) -> bool:
+	if expect_absent:
+		return observed.state == "missing"
+	return observed.state == "present" and observed.digest == baseline

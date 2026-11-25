@@ -8,6 +8,126 @@ const K := preload("res://src/core/constants.gd")
 const EdgeRef := preload("res://src/map/edge_ref.gd")
 const CellGraphScript := preload("res://src/map/cell_graph.gd")
 const ReferenceIndex := preload("res://src/project/reference_index.gd")
+const MapFlow := preload("res://src/map/map_flow.gd")
+const ContentStore := preload("res://src/content/content_store.gd")
+const FunctionDecls := preload("res://src/content/function_decl.gd")
+const EventLayers := preload("res://src/project/event_layers.gd")
+const Usage := preload("res://src/project/reference_usage.gd")
+
+static func map_links(manifest: Dictionary, data: Dictionary) -> Array:
+	var rows := ReferenceIndex.entity_property_refs(manifest, data,
+		["entity_inst", "port", "edge", "cell", "layer", "flow_target"])
+	rows.append_array(MapFlow.references(manifest, data))
+	return rows
+
+static func link_problem(manifest: Dictionary, source: Dictionary, ref: Dictionary, overrides := {}) -> String:
+	var kind: String = ref.kind
+	if kind == "flow_target":
+		if not ref.value is Dictionary or not ref.value.has("port") or not ref.value.has("map"):
+			return ""
+		kind = "port"
+	return problem(manifest, kind, source, ref.value, ref.decl, ref.get("paired", ""), overrides).get("message", "")
+
+static func removed_targets(before: Dictionary, after: Dictionary) -> bool:
+	var ids := func(map: Dictionary) -> Dictionary:
+		var result := {}
+		for row in map.get("objects", []):
+			if row.get("code", "") != "":
+				result[["entity", row.code, row.get("asset", "")]] = true
+		for layer in map.get("meta", {}).get("layers", []):
+			result[["layer", layer.id]] = true
+		for cell in CellGraphScript.cell_ids(map.get("meta", {}).get("cellGraph", {})):
+			result[["cell", cell]] = true
+		return result
+	var remaining: Dictionary = ids.call(after)
+	var old: Dictionary = ids.call(before)
+	return old.keys().any(func(key): return not remaining.has(key)) \
+		or before.meta.get("w", 0) > after.meta.get("w", 0) or before.meta.get("h", 0) > after.meta.get("h", 0)
+
+static func blocked_removals(manifest: Dictionary, before: Dictionary, after: Dictionary, staged: Array) -> String:
+	if before.is_empty() or not removed_targets(before, after):
+		return ""
+	var code: String = after.meta.code
+	var sources := MapStore.read_all_fresh(manifest)
+	sources[after.meta.name] = after
+	var contexts := {}
+	for name in sources:
+		var data: Dictionary = sources[name]
+		var refs := map_links(manifest, data)
+		var error := _broken_link(manifest, data, refs, before, after)
+		if error != "":
+			return "%s · %s" % [name, error]
+		for obj in data.get("objects", []):
+			for binding in obj.get("functions", []):
+				var fn := FunctionDecls.fn_id_of(manifest, binding.get("fn", ""))
+				var cid: String = binding.get("content", "")
+				if fn != "" and cid != "":
+					contexts.get_or_add([fn, cid], {})[name] = data
+		for ref in MapFlow.scoped_content(manifest, data):
+			contexts.get_or_add([ref.value.function, ref.value.content], {})[name] = data
+
+	var project_refs := ReferenceIndex.view_module_refs(manifest)
+	var targets := [{"target": manifest.get("startup", {}).get("target", {}), "path": "startup.target"}]
+	targets.append_array(ReferenceIndex.view_map_refs(manifest))
+	for ref in EventLayers.references(manifest):
+		targets.append({"target": ref.target, "path": "图组事件层 · " + ref.name})
+	for ref in targets:
+		project_refs.append({"kind": "flow_target", "value": ref.target, "path": ref.path, "decl": {}})
+	var error := _broken_link(manifest, {}, project_refs, before, after)
+	if error != "":
+		return error
+
+	for kind in ContentStore.declared_kinds(manifest):
+		var items := ContentStore.read_all(manifest, kind)
+		for row in staged:
+			if row.fn_id == kind:
+				items[row.cid] = row.data
+		for cid in items:
+			var refs := _content_spatial_refs(manifest, kind, items[cid])
+			var maps: Dictionary = contexts.get([kind, cid], {})
+			error = _broken_link(manifest, {}, refs, before, after)
+			if error != "":
+				return "内容 %s/%s · %s" % [kind, cid, error]
+			for name in maps:
+				error = _broken_link(manifest, maps[name], refs, before, after)
+				if error != "":
+					return "%s · 内容 %s/%s · %s" % [name, kind, cid, error]
+	return ""
+
+static func _broken_link(manifest: Dictionary, source: Dictionary, refs: Array,
+		before: Dictionary, after: Dictionary) -> String:
+	var code: String = after.meta.code
+	var old_source := before if source.get("meta", {}).get("code") == code else source
+	for ref in refs:
+		if link_problem(manifest, old_source, ref, {code: before}) != "":
+			continue
+		var error := link_problem(manifest, source, ref, {code: after})
+		if error != "":
+			return "%s：%s" % [ref.path, error]
+	return ""
+
+static func _content_spatial_refs(manifest: Dictionary, fn: String, data: Dictionary) -> Array:
+	var refs := []
+	for section in Usage.content_sections(manifest, fn, data):
+		refs.append_array(ReferenceIndex.property_refs(manifest, section.decls,
+			section.values if section.values is Dictionary else {}, {}, section.prefix, "code"))
+	return refs
+
+static func converted_edge_problem(manifest: Dictionary, document: Dictionary, contents: Array) -> String:
+	var refs := map_links(manifest, document)
+	for row in contents:
+		for ref in _content_spatial_refs(manifest, row.fn_id, row.data):
+			ref.path = "%s · %s" % [row.cid, ref.path]
+			refs.append(ref)
+	for ref in refs:
+		if ref.kind != "edge" or not ref.value is Dictionary:
+			continue
+		var key := RefFields.object_map_key(ref.value, ref.get("paired", ""))
+		if RefFields.map_key_local(key, document.meta.code):
+			var error := link_problem(manifest, document, ref)
+			if error != "":
+				return "%s：%s" % [ref.path, error]
+	return ""
 
 static func problem(manifest: Dictionary, kind: String, source: Dictionary,
 		value: Variant, field: Dictionary, paired: String, overrides: Dictionary) -> Dictionary:
@@ -157,7 +277,7 @@ static func _cell_ref_problem(manifest: Dictionary, data: Dictionary, cid: Strin
 			tgt_meta = MapStore.read(manifest, str(resolved.key)).get("meta", {})
 	var graph: Dictionary = tgt_meta.get("cellGraph", {}) if tgt_meta.get("cellGraph", {}) is Dictionary else {}
 	var ids: Array = CellGraphScript.cell_ids(graph)
-	if ids.is_empty():
+	if ids.is_empty() and not overrides.values().any(func(doc): return doc.get("meta", {}) == tgt_meta):
 		# 没有格图声明：无法判定这枚 cell_id 是否合法（不是「确证悬空」），不产清空项
 		return {"message": ""}
 	if not ids.has(cid):

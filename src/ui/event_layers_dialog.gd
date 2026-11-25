@@ -1,5 +1,6 @@
 extends RefCounted
 
+const Recovery := preload("res://src/map/recovery.gd")
 const Layers := preload("res://src/project/event_layers.gd")
 const Ids := preload("res://src/content/content_id.gd")
 const Maps := preload("res://src/project/reference_index.gd")
@@ -10,6 +11,12 @@ static func open(app, layer_id := "", drawing_only := false) -> void:
 	var source: Dictionary = app.manifest
 	var before: Dictionary = source.get(Layers.KEY, {})
 	var draft := before.duplicate(true)
+	var retry: Dictionary = app._map_file_ctrl.event_drawing_retry
+	if not is_same(retry.get("manifest"), source) or retry.get("before") != before:
+		retry.clear()
+	if not retry.is_empty():
+		draft = retry.draft.duplicate(true)
+		layer_id = retry.id
 	var events := Layers.types(source)
 	var map_options := Maps.map_target_options(source)
 	var drawing_codes := Layers.drawing_codes(source)
@@ -47,8 +54,22 @@ static func open(app, layer_id := "", drawing_only := false) -> void:
 			select.set_item_text(select.selected, value if not value.is_empty() else id))
 		fields.add_child(Kit.field_row("层名称", name))
 		var drawing_code: String = row.get("drawingMap", "")
+		var resolved := Maps.resolve_map(source, drawing_code)
 		fields.add_child(Kit.field_row("绘制层地图码", Kit.hint_label(
-			"用「保存并编辑绘制层」创建" if drawing_code == "" else drawing_code, 300)))
+			"用「保存并编辑绘制层」创建" if drawing_code == "" else (
+			drawing_code if resolved.status == "ok" else
+			"%s：%s，保存并编辑可重建" % [drawing_code, "地图码重复" if resolved.status == "ambiguous" else "地图缺失"]), 400)))
+		if drawing_code != "" and resolved.status != "ok":
+			var replacement := OptionButton.new()
+			replacement.add_item("选择现有地图作为绘制层…")
+			for option in map_options:
+				if option.code not in drawing_codes:
+					replacement.add_item("%s [%s]" % [option.name, option.code])
+					replacement.set_item_metadata(replacement.item_count - 1, option.code)
+			replacement.item_selected.connect(func(index: int):
+				if index > 0:
+					row["drawingMap"] = replacement.get_item_metadata(index))
+			fields.add_child(Kit.field_row("重新绑定", replacement))
 		var all_maps := CheckBox.new()
 		all_maps.text = "适用于全部地图"
 		all_maps.button_pressed = not row.has("maps")
@@ -126,28 +147,42 @@ static func open(app, layer_id := "", drawing_only := false) -> void:
 	var publish := func(edit_drawing: bool):
 		if not current.call():
 			return
-		var code := ""
-		if edit_drawing:
-			var id: String = selected.call()
-			if id == "":
+		var id: String = selected.call()
+		if edit_drawing and id == "":
+			return
+		var layer: Dictionary = draft.get(id, {})
+		var code: String = layer.get("drawingMap", "")
+		var plan: Dictionary = retry.get("plan", {})
+		var output := draft.duplicate(true)
+		if not plan.is_empty():
+			var pending_id: String = retry.id
+			if output.has(pending_id) and output[pending_id].get("drawingMap", "") == retry.get("previous_code", ""):
+				output[pending_id]["drawingMap"] = plan.data.meta.code
+				if id == pending_id:
+					code = plan.data.meta.code
+			else:
+				app._set_status("请先保存上一次未完成的绘制层绑定")
 				return
-			var layer: Dictionary = draft[id]
-			code = layer.get("drawingMap", "")
-			if code == "":
-				code = app._map_file_ctrl.create_event_drawing(str(layer.get("name", id)), id)
-				if code == "":
-					app._set_status("无法创建图组绘制层。")
-					return
-				layer["drawingMap"] = code
-		if draft != before:
+		elif edit_drawing and Maps.resolve_map(source, code).status != "ok":
+			plan = app._map_file_ctrl.plan_event_drawing(str(layer.get("name", id)), id)
+			output[id]["drawingMap"] = plan.data.meta.code
+			code = plan.data.meta.code
+			retry.merge({"plan": plan, "id": id, "previous_code": layer.get("drawingMap", ""),
+				"manifest": source, "before": before, "draft": draft}, true)
+		if output != before:
 			var candidate := source.duplicate()
-			candidate[Layers.KEY] = draft
-			if not await app._save_manifest_file_async(current, candidate, Layers.KEY):
+			candidate[Layers.KEY] = output
+			var write_drawing: Callable = Callable() if plan.is_empty() else app._map_file_ctrl.publish_event_drawing.bind(plan, candidate)
+			if not await app._save_manifest_file_async(current, candidate, Layers.KEY, write_drawing):
+				if str(plan.get("log_path", "")) == "":
+					retry.clear()
 				return
+			Recovery.clear_pending(plan.get("log_path", ""))
+			retry.clear()
 			if app.map_loaded:
 				app._map_file_ctrl.refresh_event_drawings()
 		pop.hide()
-		if edit_drawing:
+		if edit_drawing and Maps.resolve_map(source, code).status == "ok":
 			app._map_file_ctrl.open_event_drawing.call_deferred(code)
 	body.add_child(Kit.button("保存并编辑绘制层", func(): publish.call(true)))
 	body.add_child(Kit.popup_buttons(func(): publish.call(false), pop.hide, "保存事件层"))

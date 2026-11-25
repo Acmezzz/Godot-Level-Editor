@@ -78,6 +78,7 @@ func _refresh_map_menu() -> void:
 				_switch_menu.set_item_as_checkable(i, true)
 				_switch_menu.set_item_checked(i, true)
 	_switch_menu.add_separator()
+	_switch_menu.add_item("刷新地图文件", _MENU_REFRESH_MAPS)
 	_switch_menu.add_item("编辑当前地图格图…", _MENU_CELL_GRAPH)
 	_switch_menu.set_item_disabled(_switch_menu.item_count - 1, not app.map_loaded)
 	_switch_menu.add_item("编辑项目世界布局…", _MENU_WORLD)
@@ -97,6 +98,7 @@ const _MENU_CELL_GRAPH := 100001
 const _MENU_WORLD := 100002
 const _MENU_EVENTS := 100003
 const _MENU_DRAWING_CONTEXT := 100004
+const _MENU_REFRESH_MAPS := 100005
 
 ## 草稿列表弹窗：每份草稿给「恢复 / 查看正式图 / 丢弃」三个选择。
 func _open_draft_picker() -> void:
@@ -147,6 +149,12 @@ func draft_pick(draft_key: String, action: String) -> void:
 		after_switch.call()
 
 func _on_map_selected(id: int) -> void:
+	if id == _MENU_REFRESH_MAPS:
+		app.MapStore.refresh_external_maps()
+		if app.map_loaded:
+			app._map_file_ctrl.refresh_event_drawings()
+		app._set_status("已刷新地图文件索引")
+		return
 	if id == _MENU_DRAWING_CONTEXT:
 		app.canvas.show_event_context = not app.canvas.show_event_context
 		app._map_file_ctrl.refresh_event_drawings()

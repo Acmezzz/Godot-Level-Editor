@@ -646,6 +646,11 @@ func _layer_ents_or_collision(i: int) -> Node2D:
 func to_layer_local(i: int, world: Vector2) -> Vector2:
 	return layer_xform(i).affine_inverse() * world
 
+func layer_aligned_to_root(i: int) -> bool:
+	var layer: Dictionary = layers_decl()[i]
+	return MapViewData.layer_transform_of(layer).is_equal_approx(Transform2D.IDENTITY) \
+		and is_equal_approx(float(layer.get("parallax", 1.0)), 1.0)
+
 ## 层局部 → 世界
 func to_layer_world(i: int, local: Vector2) -> Vector2:
 	return layer_xform(i) * local
@@ -1705,8 +1710,8 @@ func _paste_region(origin: Vector2i) -> void:
 ## 调用方一律走 canvas.undo()/redo()/push_undo() 或 canvas._undo_history_ctrl 的差量入口。
 
 ## 整图快照入栈入口（全局操作与无码场景图片用）。名字保留给既有调用点，行为只在控制器里。
-func push_undo() -> void:
-	_undo_history_ctrl.push_undo()
+func push_undo(clone_contents := []) -> void:
+	_undo_history_ctrl.push_undo(clone_contents)
 
 func undo() -> bool:
 	return await _undo_history_ctrl.undo()
