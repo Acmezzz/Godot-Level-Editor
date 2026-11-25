@@ -25,7 +25,7 @@ func _wipe() -> void:
 
 func _manifest() -> Dictionary:
 	return {"tileSize": 16, "assets": [
-		{"id": "tree", "kind": "entity", "anchor": "bottom_center"},
+		{"id": "tree", "kind": "entity", "code": "TREE", "anchor": "bottom_center"},
 		{"id": "rock", "kind": "entity"},   # 缺 anchor = center
 	]}
 
@@ -124,7 +124,7 @@ func test_out_of_bounds_spawn_and_edge_values_on_the_frozen_copy() -> void:
 	var converted := MapConvert.plan(d, m, "orthogonal")
 	var prep := MapStore.prepare_duplicate(m, "src", "dst", converted.document,
 		{ClonePlan.content_key("route", "local"): local})
-	ok(prep.has("plan"), "冻结待写的副本及暂存流程：" + str(prep.get("error", "")))
+	ok(prep.has("plan"), "冻结待写的副本及暂存流程：" + str(prep.get("conflicts", prep.get("error", ""))))
 	if not prep.has("plan"):
 		_wipe()
 		return

@@ -262,7 +262,7 @@ func test_port_ref_describe_candidates_remap() -> void:
 	var werr := MapStore.write_error(m, md)
 	eq(werr, "", "map with gate instance: " + werr)
 	ok(MapStore.write(m, "m1", md), "map writes")
-	var cands := RefFields.port_candidates(m, "m1", ["in"])
+	var cands := RefFields.port_candidates(m, "M1", ["in"])
 	eq(cands.size(), 1, "type filter keeps only port A")
 	var got = JSON.parse_string(str((cands[0] as Dictionary).get("v", "")))
 	ok(got is Dictionary and str((got as Dictionary).get("inst", "")) == "AAAA" and str((got as Dictionary).get("port", "")) == "A", "candidate is {map, inst, port}: " + str(got))

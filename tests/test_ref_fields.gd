@@ -209,6 +209,7 @@ func test_same_cell_targets_distinguishable() -> void:
 	DirAccess.make_dir_recursive_absolute(TMP.path_join("maps"))
 	# 图 A：同一格 (5,5) 两个实例（叠放/多楼层）；图 B：同格另一个实例
 	var a := MapStore.new_map("A", 20, 20)
+	a.meta.code = "MAPA"
 	var lid := str(((a.meta.layers as Array)[0] as Dictionary).get("id", ""))
 	a["objects"] = [
 		{"asset": "door", "code": "AAA1", "x": 5.0, "y": 5.0, "layer": lid, "props": {}, "functions": []},
@@ -216,14 +217,15 @@ func test_same_cell_targets_distinguishable() -> void:
 	]
 	ok(MapStore.write(m, "A", a), "图 A 落盘")
 	var b := MapStore.new_map("B", 20, 20)
+	b.meta.code = "MAPB"
 	var lid2 := str(((b.meta.layers as Array)[0] as Dictionary).get("id", ""))
 	b["objects"] = [
 		{"asset": "door", "code": "CCC3", "x": 5.0, "y": 5.0, "layer": lid2, "props": {}, "functions": []},
 	]
 	ok(MapStore.write(m, "B", b), "图 B 落盘")
 	# 按地图区分：同格目标各归各图
-	var ra := RefFields.map_instances(m, "A", ["door"])
-	var rb := RefFields.map_instances(m, "B", ["door"])
+	var ra := RefFields.map_instances(m, a.meta.code, ["door"])
+	var rb := RefFields.map_instances(m, b.meta.code, ["door"])
 	eq(ra.size(), 2, "图 A 同格两个实例都在枚举里")
 	eq(rb.size(), 1, "图 B 只列自己的同格实例")
 	var codes_a := [str((ra[0] as Dictionary).get("v", "")), str((ra[1] as Dictionary).get("v", ""))]
@@ -234,7 +236,5 @@ func test_same_cell_targets_distinguishable() -> void:
 	var lb := str((ra[1] as Dictionary).get("t", ""))
 	ok(la != lb, "同格两行标签可区分: %s / %s" % [la, lb])
 	ok(la.contains("AAA1") or la.contains("BBB2"), "标签带实例码")
-	# 按地图码作键同样可用（ref 控件拿到的是码）
-	ok(RefFields.map_instances(m, str((a.meta as Dictionary).get("code", "")), ["door"]).size() == 2,
-		"地图码键与图名等价")
+	ok(RefFields.map_instances(m, "A", ["door"]).is_empty(), "引用不可用图名代替地图码")
 	_wipe()

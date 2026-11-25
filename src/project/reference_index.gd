@@ -205,10 +205,10 @@ static func _collect_module_fields(fields: GDScript, manifest: Dictionary, decls
 		var code := str(decl.get("code", ""))
 		var key := code if key_mode == "code" and code != "" else id
 		var value = values.get(key, decl.get("default"))
-		var path := key if prefix == "" else prefix.trim_suffix(".") + "." + key
+		var path := id if prefix == "" else prefix.trim_suffix(".") + "." + id
 		var field := id if root == "" else root
 		for scope in fields.nested_scopes(manifest, decl, value):
-			var sub_path := "%s[%d]" % [path, scope.path[0]]
+			var sub_path := ("%s#%d" if key_mode == "code" else "%s[%d]") % [path, scope.path[0]]
 			var condition: bool = scope.path.size() > 1
 			_collect_module_fields(fields, manifest, scope.decls, scope.values, source,
 				sub_path + (".fields" if condition else ""), field, "code" if condition else key_mode, out)

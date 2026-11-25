@@ -285,7 +285,8 @@ func test_map_copy_preserves_an_external_content_file() -> void:
 	var result := dc.apply(prep.plan)
 	ok(result.error != "", "拒绝覆盖新增的文件")
 	ok(not FileAccess.file_exists(MapStore.path_for(m, "copy")), "内容失败时不发布地图")
-	eq(result.written_contents, [{"fn_id": "dialog", "cid": "first"}], "只返回已写内容")
+	eq(result.written_contents, [], "预检发现冲突，未写入任何内容")
+	ok(not FileAccess.file_exists(ContentStore.path_for(m, "dialog", "first")), "没有留下部分写入的内容")
 	eq(ContentStore.read(m, "dialog", "second").name, "external", "保留外部数据")
 	_wipe()
 

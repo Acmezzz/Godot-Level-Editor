@@ -41,17 +41,17 @@ static func apply(plan: Dictionary) -> Dictionary:
 	var maps := load("res://src/map/map_store.gd")
 	var problem: String = maps.identity_error(m, plan.name, plan.data, plan.old_name) if plan.path != "" else ""
 	if problem != "":
-		return {"error": problem}
+		return {"error": problem, "written_contents": []}
 	var log_path := str(plan.get("log_path", ""))
 	var checked := preflight(plan)
 	if checked.has("error"):
-		return checked
+		return {"error": checked.error, "written_contents": []}
 	var done: Dictionary = checked.done
 	var entries_by_path: Dictionary = checked.entries_by_path
 	if log_path == "" and plan.entries.size() > 1:
 		log_path = Recovery.begin_pending(m, "写入地图 " + str(plan.name), plan.entries)
 		if log_path == "":
-			return {"error": "无法登记多文件写入"}
+			return {"error": "无法登记多文件写入", "written_contents": []}
 		plan["log_path"] = log_path
 	var store := load("res://src/content/content_store.gd")
 	var written: Array = []
