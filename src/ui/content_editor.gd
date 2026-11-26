@@ -515,7 +515,7 @@ func _rebuild_rows() -> void:
 	if ents.is_empty():
 		if all_n == 0:
 			_rows_box.add_child(Kit.empty_state("▦", "这张图没有实例",
-				"去关卡编辑器放几个实体再回来挂功能"))
+				"先在「关卡」视图摆放实体，再回来配置功能"))
 		else:
 			_rows_box.add_child(Kit.empty_state("⌕", "筛选没有命中",
 				"清空上方筛选条件，或换一个关键词"))
@@ -603,11 +603,11 @@ func select_inst(code: String) -> void:
 	if _preview != null:
 		_preview.set_highlight("")
 	# 自带功能（类型挂载）已在放置/载图时补齐（C09）：选中只刷新界面，不写数据
-	# 内容页隐藏时（关卡编辑器里点实体）不做整套左列/右栏重建，只记住选中，
+	# 内容页隐藏时（关卡视图里点实体）不做整套左列/右栏重建，只记住选中，
 	# 等切到内容视图时 refresh_list 再重建。
 	if not _is_view_visible():
 		return
-	# 选中同步到关卡画布：切回关卡编辑器时选中框落在同一实例上。
+	# 选中同步到关卡画布：切回关卡视图时选中框落在同一实例上。
 	# 画布上已有框选组（>1）时不能把 selected_multi 覆写成 [spr]——
 	# _box_select 会经 entity_selected 走到这里，覆写就等于「框选完立刻塌缩成单选」，
 	# 整组拖动随即失效（用户报的「能框选但不能移动」）。只把单选指针挪过去即可。

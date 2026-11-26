@@ -1,6 +1,6 @@
-# 2D 关卡编辑器
+# 2D游戏编辑器
 
-自用的 Godot 4.7.2 通用 2D 关卡编辑器。**不绑定任何具体游戏**：
+基于 Godot 4.7.2 的通用 2D 游戏内容编辑器。**不绑定任何具体游戏**：
 每个游戏工程只要按规范放入 `editor/editor_manifest.json`，编辑器打开即用；
 多个工程可在编辑器里按项目列表切换、并行开发。
 
@@ -10,12 +10,14 @@
 |---|---|
 | [docs/EDITOR_FEATURES.md](docs/EDITOR_FEATURES.md) | **编辑器功能权威描述**：架构、全部功能、快捷键、已知边界 |
 | [docs/GAME_SIDE_STANDARD.md](docs/GAME_SIDE_STANDARD.md) | **游戏侧 AI 接入指南**：模块声明、数据读取及交付验收；详细字段见[数据协议参考](docs/GAME_SIDE_PROTOCOL.md) |
-| [docs/EDITOR_MCP.md](docs/EDITOR_MCP.md) | **关卡编辑器 EXE 的 MCP**：Codex 接入、工具参数、截图、草稿、试玩与发布 |
+| [docs/EDITOR_MCP.md](docs/EDITOR_MCP.md) | **编辑器 EXE 的 MCP**：Codex 接入、工具参数、截图、草稿、试玩与发布 |
 
 ## 快速上手
 
+Windows 发布包：将 `2D游戏编辑器.exe` 与 `2D游戏编辑器.pck` 放在同一目录，双击 EXE。从源码启动则使用：
+
 ```
-godot --path "<Level Editor 目录>"     # 打开编辑器（主场景 src/editor.tscn）
+godot --path "<编辑器源码目录>"     # 从源码启动（主场景 src/editor.tscn）
 ```
 
 首次使用：启动页「打开项目文件夹…」选定游戏工程 → 读清单 → 开始编辑。
@@ -23,7 +25,7 @@ godot --path "<Level Editor 目录>"     # 打开编辑器（主场景 src/edito
 
 日常三条主线：
 
-1. **关卡编辑器**（默认视图）：左栏选图层与资产，画布**左键放置、右键擦除**。
+1. **关卡**（默认视图）：左栏选图层与资产，画布**左键放置、右键擦除**。
    混合层栈每层都可涂瓦片、放实体；碰撞元层涂类型/形状。
 2. **内容编辑器**（顶栏「内容」）：给实例挂功能、填内容。左列本图实例 / 中列只读预览 / 右列功能与内容表单。
 3. **资产目录**（顶栏「资产」）：实体图鉴；给类型挂「自带功能」，按图清点实例分布，删除前查引用。

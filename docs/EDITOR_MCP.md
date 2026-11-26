@@ -1,15 +1,15 @@
-# BIRD 关卡编辑器 MCP
+# 2D游戏编辑器 MCP
 
-这个 MCP 由关卡编辑器进程运行。Windows 导出包可以单独运行；开发用的 Godot IDE 插件、仓库里的 Node 驱动与本服务无关。MCP 的写入范围是游戏的地图、内容 JSON 和清单中供作者配置的部分，没有源文件读写、终端、脚本执行或任意路径写入工具。
+这个 MCP 由 2D游戏编辑器进程运行。Windows 导出包可以单独运行；开发用的 Godot IDE 插件、仓库里的 Node 驱动与本服务无关。MCP 的写入范围是游戏的地图、内容 JSON 和清单中供作者配置的部分，没有源文件读写、终端、脚本执行或任意路径写入工具。
 
 ## 启动和连接
 
-在 Godot 的「项目 → 导出」选择 **Windows Desktop** 并导出发布版。预设把 PCK 嵌入 x64 EXE，默认输出到 dist/BirdEditor.exe（先建 dist 目录，或在 Godot 里选现有输出目录）。仓库内置的开发插件在导出时移除自己的 autoload；发布包不含该插件。
+发布包包含 `2D游戏编辑器.exe` 和同名的 `2D游戏编辑器.pck`，两者必须放在同一目录。在 Godot 的「项目 → 导出」选择 **Windows Desktop** 可重新导出发布版，默认 EXE 路径是 `dist/2D游戏编辑器.exe`（先建 `dist` 目录，或在 Godot 里选现有输出目录）。仓库内置的开发插件在导出时移除自己的 autoload；发布包不含该插件。
 
 从 PowerShell 启动，例如：
 
 ~~~powershell
-& '.\dist\BirdEditor.exe' -- --bird-mcp '--bird-project=D:/Game/My Game'
+& '.\2D游戏编辑器.exe' -- --bird-mcp '--bird-project=D:/Game/My Game'
 codex mcp add bird-editor --url http://127.0.0.1:47821/mcp
 ~~~
 

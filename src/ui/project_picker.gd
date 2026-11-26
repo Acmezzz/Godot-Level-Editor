@@ -100,7 +100,7 @@ func _show_picker(err := "") -> void:
 
 	var v := Kit.vbox(14)
 	card.add_child(v)
-	v.add_child(Kit.text_label("2D 关卡编辑器", Th.TEXT, 26))
+	v.add_child(Kit.text_label(str(ProjectSettings.get_setting("application/config/name")), Th.TEXT, 26))
 	v.add_child(Kit.hint_label("打开游戏工程，编辑关卡、实例内容和资产。", 520))
 	if err != "":
 		v.add_child(Kit.wrap_label(err, 520, Th.ERR))

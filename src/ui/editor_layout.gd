@@ -58,7 +58,8 @@ func _build_editor_ui() -> void:
 	for c in app.get_children():
 		app.remove_child(c)
 		c.queue_free()
-	DisplayServer.window_set_title("关卡编辑器 — %s" % app.manifest.get("projectName", "?"))
+	DisplayServer.window_set_title("%s — %s" % [ProjectSettings.get_setting("application/config/name"),
+		app.manifest.get("projectName", "?")])
 	var workspace := app.UiKitScript.vbox(0) as VBoxContainer
 	workspace.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	app.add_child(workspace)

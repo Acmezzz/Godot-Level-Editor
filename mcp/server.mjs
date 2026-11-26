@@ -123,7 +123,7 @@ rl.on('line', (line) => {
       return {
         protocolVersion: (msg.params && msg.params.protocolVersion) || '2024-11-05',
         capabilities: { tools: {} },
-        serverInfo: { name: 'bird-editor', title: 'BIRD 关卡编辑器验证工具', version: '0.1.0' },
+        serverInfo: { name: 'bird-editor', title: '2D游戏编辑器验证工具', version: '0.1.0' },
       };
     }
     if (msg.method === 'tools/list') return { tools: TOOLS };

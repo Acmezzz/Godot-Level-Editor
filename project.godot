@@ -10,7 +10,10 @@ config_version=5
 
 [application]
 
-config/name="2D 关卡编辑器"
+config/name="2D游戏编辑器"
+; Preserve the existing user:// data after the display name changes.
+config/use_custom_user_dir=true
+config/custom_user_dir_name="Godot/app_userdata/2D 关卡编辑器"
 run/main_scene="res://src/editor.tscn"
 config/features=PackedStringArray("4.7")
 config/icon="res://icon.svg"

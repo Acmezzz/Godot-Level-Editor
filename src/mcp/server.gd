@@ -144,7 +144,7 @@ func _dispatch(client: Dictionary, message: Variant) -> void:
 				var version = params.get("protocolVersion")
 				response.result = {"protocolVersion": version if version in PROTOCOLS else PROTOCOLS[0],
 					"capabilities": {"tools": {}},
-					"serverInfo": {"name": "bird-editor", "title": "BIRD 关卡编辑器", "version": "1.0.0"},
+					"serverInfo": {"name": "bird-editor", "title": str(ProjectSettings.get_setting("application/config/name")), "version": "1.0.0"},
 					"instructions": "Start with describe_project. Edit an isolated draft; publish only its reviewed revision. Capture editor UI or render a game frame to see results. This server only edits game content data."}
 			"ping":
 				response.result = {}

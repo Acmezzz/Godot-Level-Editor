@@ -127,6 +127,7 @@ def run(editor, godot, logs):
                 else:
                     raise AssertionError(("MCP did not start", last_error))
                 assert initialized["serverInfo"]["name"] == "bird-editor"
+                assert initialized["serverInfo"]["title"] == "2D游戏编辑器"
                 rpc("notifications/initialized", response=False)
                 try:
                     rpc("ping", token=False)
@@ -259,7 +260,7 @@ def run(editor, godot, logs):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--editor", required=True, help="Exported BirdEditor.exe (or Godot for a source run)")
+    parser.add_argument("--editor", required=True, help="Exported 2D游戏编辑器.exe (or Godot for a source run)")
     parser.add_argument("--godot", required=True, help="Godot executable for the isolated game fixture")
     parser.add_argument("--logs", required=True, type=Path)
     config = parser.parse_args()

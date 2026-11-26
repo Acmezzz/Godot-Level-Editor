@@ -1,5 +1,5 @@
 extends Control
-## 独立关卡编辑器应用（Godot EXE）：
+## 独立 2D 游戏编辑器应用（Godot EXE）：
 ## 启动 → 读 user:// 项目列表 → 自动打开上次项目，否则进项目选择页；
 ## 选定项目后搭界面：顶栏（设置▾ / 地图▾+三模式 / 试玩）、左栏（层下拉+调色板）、画布、状态栏。
 ## 不绑定具体游戏：多个工程并行管理，顶栏「设置 ▾ → 切换项目…」切换。
@@ -666,8 +666,8 @@ var project_shell = null        # ProjectShell（项目页外壳，含三个视�
 # 视图面板由 project_shell 持有；这里保留别名方便既有调用点
 var asset_panel = null
 
-## 模式切换：mode = map（关卡编辑器）/ content（内容编辑器）/ asset（资产目录）。
-## 三个面板是平级关系，顶栏三个入口直接切，Esc 回关卡编辑器。
+## 模式切换：mode = map（关卡视图）/ content（内容编辑器）/ asset（资产目录）。
+## 三个面板是平级关系，顶栏三个入口直接切，Esc 回关卡视图。
 ## E1：离开画布/内容时记快照，归来按身份校验恢复（目标已删则显示空态）。
 func _set_mode(mode: String, focus_sid := "") -> void:
 	if canvas != null and mode != "map":
