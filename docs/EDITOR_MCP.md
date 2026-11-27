@@ -38,6 +38,8 @@ codex mcp add bird-editor --url http://127.0.0.1:47821/mcp
 
 查询列表可用 search、offset、limit。objects / tiles / collision 支持 region:[x,y,w,h]，这是当前数据域的格坐标。tiles 需要 layer；objects 可以按 layer 或 instance 查，返回 objectIndex 供定位无实例码的场景摆放物。ports 支持按 types 筛选。candidates 可传流转声明 domains，或字段原声明 field；使用 map 指定其空间上下文。inbound 支持 view 或 function/content。
 
+如果修改时提示找不到可编辑的地图，先调用无参 `validate`。不可读取的地图按文件名和出错字段返回原始校验原因。旧版碰撞数组需要先用源码仓库的 `tools/migrate_project.gd` 迁移，再重新打开工程。
+
 ### 批量编辑
 
 operations 的每个对象包含 op。写入数据时，字段、步骤、触发和连接都应采用游戏侧声明要求的键和值。比如功能入口用声明 ID，绑定保存时由编辑器转为执行码；内容 fields 的键使用执行码。编辑器替新资源分配稳定 ID。加 as 可选定批内别名，后续用 $别名引用；别名仅在同批有效。

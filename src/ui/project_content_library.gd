@@ -850,7 +850,7 @@ func _build_field(form: VBoxContainer, fd: Dictionary, siblings: Array, values: 
 			refresh.call_deferred()
 		return true
 	var options := func(d: Dictionary) -> Array:
-		return host._form.project_reference_options(d, context)
+		return host.project_reference_options(d, context)
 	var frame_pick := func(nested_row: Control, nested: Dictionary, nested_pair: Callable, save: Callable, read: Callable):
 		FrameReference.add_reference_button(app, nested_row, nested, nested_pair, save, options, true, refresh, context, read)
 	var built := Widgets.build(decl, values.get(key, fd.get("default", Widgets.default_for(fd))), use, options, "code", frame_pick)

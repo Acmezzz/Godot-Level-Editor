@@ -91,7 +91,7 @@ static func open(app, view_id := "", jump := {}) -> void:
 		"preview_size": "", "locale": "", "has_layout": false, "viewport_sizes": Layout.sizes(source),
 		"image_assets": Layout.image_assets(source), "project_dir": str(source.get("_dir", "")),
 		"render_revision": 0, "modules": Layout.modules(source), "module_commits": [], "manifest": source, "app": app,
-		"resolve_options": app.project_shell.content_editor._form._resolve_options.bind(true, true)}
+		"resolve_options": app.project_shell.content_editor.saved_reference_options}
 	pop.tree_exited.connect(func(): state.module_commits.clear())
 	var game_render := Kit.button("游戏渲染预览", Callable(), "ghost")
 	game_render.name = "GameRenderPreview"

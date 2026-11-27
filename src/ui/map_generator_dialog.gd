@@ -121,7 +121,7 @@ func _build_params(parameters: Dictionary) -> void:
 	_commits.clear()
 	_values = {}
 	var id: String = _picker.get_selected_metadata()
-	var resolve: Callable = _app.project_shell.content_editor._form.project_reference_options.bind("")
+	var resolve: Callable = _app.project_shell.content_editor.project_reference_options.bind("")
 	for field in Generators.fields_for(_source, id):
 		var key: String = field.id
 		var saved = parameters.get(key, Generators.default_value(field))

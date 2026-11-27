@@ -138,7 +138,7 @@ func _build_left() -> Control:
 	box.add_child(col)
 
 	col.add_child(Kit.section_label("项目内容"))
-	col.add_child(Kit.button("打开项目内容库…", _library.open, "plain"))
+	col.add_child(Kit.button("打开项目内容库…", open_project_library, "plain"))
 	var references := Kit.hbox(6)
 	var sizes := Kit.button("参考画幅…", func():
 		if commit_fields():
@@ -984,6 +984,19 @@ func refresh_after_external_write(fn_id: String, cid: String) -> void:
 
 # ──────────── 演出子面板（steps:true 的功能绑定） ────────────
 
+
+## 跨面板入口：内容库、声明驱动的引用选择和演出定位。
+func open_project_library() -> void:
+	_library.open()
+
+func project_reference_options(decl: Dictionary, context: String, snapshot := {}) -> Array:
+	return _form.project_reference_options(decl, context, snapshot)
+
+func saved_reference_options(decl: Dictionary) -> Array:
+	return _form.saved_reference_options(decl)
+
+func open_content_timeline(fn_id: String, cid: String, context: String, time: Variant = null) -> bool:
+	return _steps.open_timeline(fn_id, cid, context, time)
 
 ## —— 拆到 src/ui/fn_bind.gd / content_form.gd / steps_panel.gd（调用点保持不变） ——
 

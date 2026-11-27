@@ -69,7 +69,7 @@ func _resolve_fn(f: Dictionary) -> Dictionary:
 	return host._resolve_fn(f)
 func _resolve_options(decl: Dictionary) -> Array:
 	if _project_target:
-		return host._form.project_reference_options(decl, _reference_context)
+		return host.project_reference_options(decl, _reference_context)
 	return host._form._resolve_options(decl, _project_scope)
 func _rebuild_right() -> void:
 	host._rebuild_right()
@@ -176,6 +176,16 @@ func open_content(fn_id: String, cid: String, context := "", step_index := -1, f
 					if ancestor is ScrollContainer:
 						ancestor.ensure_control_visible.call_deferred(row)
 					break
+	return true
+
+## 供跨面板定位和截图：打开内容，再把时间轴滚动到指定播放头。
+func open_timeline(fn_id: String, cid: String, context: String, time: Variant = null) -> bool:
+	if not open_content(fn_id, cid, context) or not _set_steps_view("timeline"):
+		return false
+	if time != null:
+		_steps_tl.playhead = maxf(0.0, time)
+		_steps_tl.queue_redraw()
+		_steps_tl.follow_playhead.call_deferred()
 	return true
 
 func _mount_target() -> void:
@@ -622,16 +632,17 @@ func _open_game_frame() -> void:
 		"sample": {"unit": _steps_timebase(), "value": timeline.playhead},
 		"initial": "起始位置来自播放头；在此修改取样位置不会移动播放头。"}, capture, valid)
 
-func _set_steps_view(mode: String) -> void:
+func _set_steps_view(mode: String) -> bool:
 	if mode != "list" and mode != "timeline":
-		return
+		return false
 	# 切页签前先提交当前控件（D1）：待提交值属于旧下标，切完再落到新表单上会串步
 	if not host.commit_fields():
-		return
+		return false
 	_steps_view = mode
 	_rebuild_steps_all()
 	if mode == "timeline" and _steps_sel >= 0:
 		_steps_tl.reveal_step.call_deferred(_steps_sel)
+	return true
 
 func _sync_steps_tabs() -> void:
 	if _steps_tabs == null:

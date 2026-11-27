@@ -185,7 +185,6 @@ func _draw() -> void:
 		# 传送落点（青色描边）与出生 marker（绿十字）拉开色系
 		if str(edecl.get("role", "")) == "landing":
 			landings.append(n)
-		# 实例实际占位（清单 editorSize 或 prefab 碰撞尺寸）：青色实框
 		boxes.append(_wr(n))
 	if not exits.is_empty():
 		var fnt: Font = ThemeDB.fallback_font   # Node2D 无 Control 主题接口，用引擎兜底字体

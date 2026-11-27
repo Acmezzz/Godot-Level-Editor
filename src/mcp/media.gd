@@ -141,21 +141,15 @@ func _navigate(args: Dictionary) -> String:
 			if not flow.available(app):
 				return "当前地图没有可编辑的内容槽位或流程出口。"
 			flow.open(app)
-		"library": app.project_shell.content_editor._library.open()
+		"library": app.project_shell.content_editor.open_project_library()
 		"playtest": app._playtest_ctrl.open_configuration()
 		"timeline":
 			app._set_mode("content", str(args.get("instance", "")))
-			var steps = app.project_shell.content_editor._steps
 			if args.get("function", "") == "" or args.get("content", "") == "":
 				return "演出截图需要 function 和 content。"
-			if not steps.open_content(args.get("function", ""), args.get("content", ""), args.get("map", "")):
+			if not app.project_shell.content_editor.open_content_timeline(
+					args.function, args.content, args.get("map", ""), args.get("time")):
 				return "无法定位此演出内容。"
-			steps._set_steps_view("timeline")
-			if args.has("time") and is_instance_valid(steps._steps_tl):
-				var timeline = steps._steps_tl
-				timeline.playhead = maxf(0.0, args.time)
-				timeline.queue_redraw()
-				timeline.follow_playhead.call_deferred()
 		"": pass
 		_: return "未知编辑器面板：" + str(args.panel)
 	return ""

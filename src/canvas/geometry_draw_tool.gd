@@ -1,5 +1,5 @@
 extends RefCounted
-## Drafts points in the destination layer without touching the map until confirmation.
+## 在目标图层绘制轮廓预览，确认后才写入地图。
 
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
 const Geometry := preload("res://src/map/object_geometry.gd")

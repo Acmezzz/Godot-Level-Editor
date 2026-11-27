@@ -1729,9 +1729,9 @@ func _paste_region(origin: Vector2i) -> void:
 ## §7.5 阶段一：_snapshot/_restore/_push_undo 三个薄转发**已删除**——撤销状态归控制器，
 ## 调用方一律走 canvas.undo()/redo()/push_undo() 或 canvas._undo_history_ctrl 的差量入口。
 
-## 整图快照入栈入口（全局操作与无码场景图片用）。名字保留给既有调用点，行为只在控制器里。
-func push_undo(clone_contents := []) -> void:
-	_undo_history_ctrl.push_undo(clone_contents)
+## 整图快照入栈；已提取改动前的地图时可传入，避免再次遍历画布。
+func push_undo(clone_contents := [], before: Dictionary = {}) -> void:
+	_undo_history_ctrl.push_undo(clone_contents, before)
 
 func undo() -> bool:
 	return await _undo_history_ctrl.undo()

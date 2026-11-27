@@ -245,6 +245,23 @@ def run(editor, godot, logs):
                     {"op": "content.delete", "function": "scene", "content": ids["$content"]}])
                 assert not call("validate", draft=blocked)[0]["valid"]
                 call("publish", draft=blocked, revision=1, expect_error=True)
+                # Legacy maps must be rejected at load time with their original validation reason.
+                legacy = json.loads(path.read_text(encoding="utf-8"))
+                legacy.update(version=5, collision=[[5, 4]])
+                legacy["meta"].update(code="OLD5", name="旧碰撞地图")
+                (game / "maps/旧碰撞地图.json").write_text(json.dumps(legacy), encoding="utf-8")
+                null_tiles = json.loads(path.read_text(encoding="utf-8"))
+                null_tiles["meta"].update(code="NULL", name="空瓦片表")
+                null_tiles["tiles"] = None
+                (game / "maps/空瓦片表.json").write_text(json.dumps(null_tiles), encoding="utf-8")
+                check = call("manage_draft", action="create")[0]["id"]
+                call("apply_changes", draft=check, revision=0, expect_error=True, operations=[
+                    {"op": "collision.set", "map": "OLD5", "cells": [{"x": 5, "y": 4, "remove": True}]}])
+                assert call("manage_draft", action="open", draft=check)[0]["revision"] == 0
+                invalid, _ = call("validate")
+                assert any(issue["path"] == "maps.旧碰撞地图.collision[0]" and
+                           "migrate_project.gd" in issue["message"] for issue in invalid["issues"]), invalid
+                assert any(issue["path"] == "maps.空瓦片表.tiles" for issue in invalid["issues"]), invalid
                 print("MCP-DONE tools=11 publish=ok capture=ok playtest=ok conflict=ok", flush=True)
             finally:
                 if managed:

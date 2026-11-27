@@ -252,7 +252,7 @@ func _query(args: Dictionary, batch: Dictionary) -> Dictionary:
 				var options := Targets.destination_options(m, args.domains, working)
 				return _page(options, args)
 			if args.has("field"):
-				return _page(app.project_shell.content_editor._form.project_reference_options(args.field, code, m), args)
+				return _page(app.project_shell.content_editor.project_reference_options(args.field, code, m), args)
 			return {"error": "需要 domains 或 field。"}
 		"inbound":
 			if args.has("view"):
@@ -328,7 +328,11 @@ func _validate(args: Dictionary, batch: Dictionary) -> Dictionary:
 		for issue in Screens.view_reference_issues(m):
 			issues.append(issue.merged({"severity": "error"}))
 		for name in Maps.code_index(m).unreadable:
-			issues.append({"severity": "error", "path": "maps." + name, "message": "地图文件无法读取。"})
+			var path := Maps.path_for(m, name)
+			var result := Maps.read_path(path, m)
+			for error in result.errors:
+				var suffix := "" if error.path == path else "." + str(error.path)
+				issues.append({"severity": "error", "path": "maps." + name + suffix, "message": error.message})
 		for code in Maps.code_conflicts(m):
 			issues.append({"severity": "error", "path": "maps." + code, "message": "正式地图码重复。"})
 		for id in m.get("eventLayers", {}):

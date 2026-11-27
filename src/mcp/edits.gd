@@ -137,7 +137,7 @@ func _apply(batch: Dictionary, op: Dictionary) -> Dictionary:
 	var map_code := str(op.get("map", ""))
 	var row: Dictionary = drafts.map_of(batch, map_code)
 	if row.is_empty():
-		return {"error": "地图不存在：" + map_code}
+		return {"error": "找不到可编辑的地图：%s。请调用 validate 检查工程地图。" % map_code}
 	var map: Dictionary = row.data
 	batch.maps[map_code] = row
 	match name_:

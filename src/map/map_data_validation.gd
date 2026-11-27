@@ -53,7 +53,7 @@ static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 				_add(issues, "error", "meta." + section, "must be an object keyed by slot ID")
 		layer_ids = _validate_layers(meta, issues, manifest)
 	var tiles = data.get("tiles", null)
-	if tiles != null and not (tiles is Dictionary):
+	if data.has("tiles") and not (tiles is Dictionary):
 		_add(issues, "error", "tiles", "must be an object keyed by layer id")
 	elif tiles is Dictionary:
 		var known_assets := _asset_ids(manifest)

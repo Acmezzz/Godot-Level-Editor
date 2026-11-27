@@ -99,6 +99,9 @@ static func path_for(m: Dictionary, kind: String, id: String) -> String:
 ## read_ex 命中时返回深拷贝（调用方拿不到缓存原件）；write/rename/remove 显式失效。
 static var _cache := {}   # path -> {digest: String, data: Dictionary}
 
+static func clear_read_cache() -> void:
+	_cache.clear()
+
 ## 整体文本摘要（项目内统一算法：sha256）。
 static func file_digest(path: String) -> String:
 	var f := FileAccess.open(path, FileAccess.READ)

@@ -182,15 +182,15 @@ func is_layer_locked(i: int) -> bool:
 # —— 层管理：新建/删除/上下移（先 extract 快照 → 在快照上改 → load_data 重建） ——
 ## 顺序是硬约束：extract 按节点下标取瓦片、按声明序取层码，两者必须对齐——
 ## 不能「先改活体 meta 再 extract 反向同步」（会串层/丢瓦片）。
-## 撤销快照由 push_undo 在改动前压栈；重建窗口期（extract 返回 {}）放弃操作。
+## 改动前序列化同一份快照用于撤销；其后的修改只发生在提取出的文档上。
 ## 新层默认插到栈顶之下——新建即可画前景遮挡。
 func layer_add(name: String) -> void:
 	if map_root == null or not is_instance_valid(map_root):
 		return
-	cvs.push_undo()
 	var snap := extract()
 	if snap.is_empty():
 		return
+	cvs.push_undo([], snap)
 	var meta: Dictionary = snap.get("meta", {})
 	var L: Array = meta.get("layers", [])
 	var entry := {"id": ContentIdRef.new_inst_code(), "name": name if name != "" else "新层", "visible": true}
@@ -212,28 +212,22 @@ func layer_del(i: int) -> void:
 	var snap := extract()
 	if snap.is_empty():
 		return
-	var next := without_layer(snap, i)
-	cvs.push_undo()
-	await _load_snap_layers(next, layer_id(active_layer))
+	cvs.push_undo([], snap)
+	_remove_layer(snap, i)
+	await _load_snap_layers(snap, layer_id(active_layer))
 
-static func without_layer(snapshot: Dictionary, i: int) -> Dictionary:
-	var snap := snapshot.duplicate(true)
-	var meta: Dictionary = snap.get("meta", {})
-	var L: Array = meta.get("layers", [])
+static func _remove_layer(snap: Dictionary, i: int) -> void:
+	var meta: Dictionary = snap.meta
+	var L: Array = meta.layers
 	var lid: String = L[i].id
 	CellGraph.detach_layer(CellGraph.graph_of(meta), lid, MapViewData.layer_transform_of(L[i]))
 	L.remove_at(i)
-	meta["layers"] = L
-	snap["meta"] = meta
-	var tiles: Dictionary = snap.get("tiles", {})
-	tiles.erase(lid)
-	snap["tiles"] = tiles
+	snap.tiles.erase(lid)
 	var keep := []
 	for o in (snap.get("objects", []) as Array):
 		if o is Dictionary and str((o as Dictionary).get("layer", "")) != lid:
 			keep.append(o)
 	snap["objects"] = keep
-	return snap
 
 func layer_rename(i: int, name: String) -> void:
 	if not name.is_empty():
@@ -253,10 +247,10 @@ func layer_move(i: int, dir: int) -> void:
 	var nj := i + dir
 	if i < 0 or i >= L.size() or nj < 0 or nj >= L.size():
 		return
-	cvs.push_undo()
 	var snap := extract()
 	if snap.is_empty():
 		return
+	cvs.push_undo([], snap)
 	var active_id := layer_id(active_layer)
 	var meta: Dictionary = snap.get("meta", {})
 	var SL: Array = meta.get("layers", [])
@@ -287,10 +281,11 @@ func layer_set_tile_grid(i: int, spec: Dictionary) -> String:
 		var checked := GridSpace.resolve_tile_layer({"tileGrid": spec}, cvs.manifest, cvs.grid)
 		if not checked.issues.is_empty():
 			return str(checked.issues[0].message)
+	cvs.push_undo([], snapshot)
+	if not spec.is_empty():
 		row["tileGrid"] = spec.duplicate(true)
 	else:
 		row.erase("tileGrid")
-	cvs.push_undo()
 	await _load_snap_layers(snapshot, layer_id(active_layer))
 	return ""
 
@@ -334,6 +329,7 @@ func apply_tile_layer_copy(plan: Dictionary) -> bool:
 	if not plan.has("snapshot") or not cvs.is_map_ready() or cvs.doc_busy \
 			or not is_same(plan.source, map_data) or plan.revision != cvs.map_rev:
 		return false
+	# 预览计划已经写成改动后的文档；确认时从当前画布提取撤销快照。
 	cvs.push_undo()
 	await _load_snap_layers(plan.snapshot, plan.id)
 	return true
@@ -367,7 +363,7 @@ func _set_layer_field(i: int, key: String, value: Variant) -> void:
 	var snap := extract()
 	if snap.is_empty():
 		return
-	cvs.push_undo()
+	cvs.push_undo([], snap)
 	var layer: Dictionary = snap.meta.layers[i]
 	if value == null:
 		layer.erase(key)

@@ -11,6 +11,7 @@ const ImageProbe := preload("res://src/assets/image_probe.gd")
 const UiThemeScript := preload("res://src/ui/ui_theme.gd")
 const UiKitScript := preload("res://src/ui/ui_kit.gd")
 const MapStore := preload("res://src/map/map_store.gd")
+const ContentStore := preload("res://src/content/content_store.gd")
 const EdgeRef := preload("res://src/map/edge_ref.gd")   # §7.4：格边身份（选点确认后对准）
 
 var manifest := {}
@@ -171,7 +172,6 @@ func _switch_project() -> void:
 func _enter_project(dir: String, loaded_manifest: Dictionary) -> void:
 	_clear_project_session()
 	manifest = loaded_manifest
-	_ent_thumbs_cache.clear()
 	_picker_ctrl.remember_project(dir, str(manifest.get("projectName", "")))
 	_build_editor_ui()
 	_report_recovery_items()
@@ -217,6 +217,7 @@ func _report_recovery_items() -> void:
 
 ## 释放当前项目会话。控制器随界面一起失效，必须全部清空。
 func _clear_project_session() -> void:
+	ContentStore.clear_read_cache()
 	manifest = {}
 	cur_map_path = ""
 	_cur_map_name = ""

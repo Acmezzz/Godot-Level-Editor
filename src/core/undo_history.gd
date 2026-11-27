@@ -39,10 +39,10 @@ func _restore(snapshot) -> void:
 
 ## 整图快照入栈：全局操作（区域粘贴/层/尺寸/转换）与
 ## 无实例码的场景图片改动走这条。写入口在控制器上，画布只做转发不带状态。
-func push_undo(clone_contents := []) -> void:
+func push_undo(clone_contents := [], before: Dictionary = {}) -> void:
 	if cvs.map_root == null or not is_instance_valid(cvs.map_root):
 		return
-	var snap := _snapshot()
+	var snap := _snapshot() if before.is_empty() else MapFormat.encode(before, true)
 	if snap == "{}":
 		return   # 重建窗口哨兵（extract 返回 {}）：恢复它=清空整图，拒绝入栈
 	if clone_contents.is_empty():

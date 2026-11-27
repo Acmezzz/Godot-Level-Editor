@@ -411,6 +411,9 @@ func project_reference_options(decl: Dictionary, context: String, snapshot := {}
 		return local
 	return options
 
+func saved_reference_options(decl: Dictionary) -> Array:
+	return _resolve_options(decl, true, true)
+
 func _resolve_options(decl: Dictionary, project_scope := false, saved_only := false, snapshot := {}) -> Array:
 	var source_manifest: Dictionary = snapshot if not snapshot.is_empty() else manifest
 	if str(decl.get("source", "")) == "editor:condition-schema":
