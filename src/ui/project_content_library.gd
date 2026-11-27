@@ -105,7 +105,7 @@ func open() -> void:
 		draft.erase("id")
 		draft["name"] = str(draft.get("name", cid)) + "（副本）"
 		pop.hide()
-		_open_item.call_deferred(kind, "", "", "", draft), "ghost")
+		open_item.call_deferred(kind, "", "", "", draft), "ghost")
 	copy.tooltip_text = "复制独立内容及其演出步骤。保存时创建新 ID，原内容及外部引用保持不变。"
 	var edit_selected := Button.new()
 	edit_selected.text = "编辑所选"
@@ -143,7 +143,7 @@ func open() -> void:
 		var kind: String = selected_kind.call()
 		var cid := str(list.get_item_metadata(idx))
 		pop.hide()
-		_open_item.call_deferred(kind, cid)
+		open_item.call_deferred(kind, cid)
 	kinds.item_selected.connect(func(_idx: int): refill.call())
 	list.item_activated.connect(edit)
 	search.text_changed.connect(func(_text: String): refill.call())
@@ -156,7 +156,7 @@ func open() -> void:
 	var add := Kit.button("新建…", func():
 		var kind: String = selected_kind.call()
 		pop.hide()
-		_open_item.call_deferred(kind, ""))
+		open_item.call_deferred(kind, ""))
 	add.disabled = keys.is_empty()
 	controls.add_child(add)
 	controls.add_child(copy)
@@ -632,7 +632,7 @@ func _open_flow() -> void:
 				app._set_mode("map")
 				MapFlowDialog.open(app)
 		else:
-			_open_item.call_deferred(item.fn_id, item.cid)))
+			open_item.call_deferred(item.fn_id, item.cid)))
 	actions.add_child(Kit.button("重新扫描", func():
 		if is_same(app.manifest, source):
 			refresh.call(selected.call(node)), "ghost"))
@@ -649,7 +649,7 @@ static func _flow_node_label(item: Dictionary, short := false) -> String:
 		RelGraph.MAP_KIND: return "地图 · %s [%s]" % [item.name, item.cid]
 	return "%s · %s" % [item.name, item.cid] if short else "%s · %s · %s" % [item.fn_id, item.name, item.cid]
 
-func _open_item(kind: String, cid: String, context := "", field := "", draft := {}) -> void:
+func open_item(kind: String, cid: String, context := "", field := "", draft := {}) -> void:
 	var fn := Functions.function_decl(manifest, kind)
 	if fn.is_empty():
 		return

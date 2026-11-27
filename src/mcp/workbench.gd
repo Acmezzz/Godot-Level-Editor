@@ -216,7 +216,15 @@ func _query(args: Dictionary, batch: Dictionary) -> Dictionary:
 	var code: String = args.get("map", "")
 	match args.kind:
 		"live_map":
-			return {"data": app.canvas.extract()} if app.map_loaded else {"error": "当前未打开地图。"}
+			if not app.map_loaded:
+				return {"error": "当前未打开地图。"}
+			var canvas: EditorCanvas = app.canvas
+			var snapshot := canvas.extract(true)
+			if snapshot.is_empty():
+				if not canvas.is_map_ready():
+					return {"error": "画布正在重建，请稍后重试。"}
+				return {"error": "画布上的拖动尚未完成，请稍后重试。"}
+			return {"data": snapshot}
 		"maps": return _page(drafts.maps_of(batch), args)
 		"views":
 			var rows: Array = m.get("views", [])

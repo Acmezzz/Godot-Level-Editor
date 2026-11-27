@@ -70,7 +70,7 @@ func _resolve_fn(f: Dictionary) -> Dictionary:
 func _resolve_options(decl: Dictionary) -> Array:
 	if _project_target:
 		return host.project_reference_options(decl, _reference_context)
-	return host._form._resolve_options(decl, _project_scope)
+	return host.reference_options(decl, _project_scope)
 func _rebuild_right() -> void:
 	host._rebuild_right()
 

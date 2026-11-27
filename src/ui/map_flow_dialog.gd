@@ -52,8 +52,7 @@ static func open(app, focus_section := "", focus := "") -> void:
 		return true
 	var open_content := func(target: Dictionary, context: String):
 		if apply.call():
-			var library = app.project_shell.content_editor._library
-			library._open_item.call_deferred(target.function, target.content, context)
+			app.project_shell.content_editor.open_project_content.call_deferred(target.function, target.content, context)
 	for section in Flow.SECTIONS:
 		var saved := Flow.targets(source, section)
 		original[section] = saved.duplicate(true)

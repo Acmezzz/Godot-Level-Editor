@@ -1,5 +1,7 @@
 # 2D 游戏编辑器全面审查 R2（2026-11-28）
 
+> 项目复核见文末 §8：N1、N2 已处理。
+
 ## 0. 审查范围与方法
 
 - 基线：上一轮审查（[EDITOR_FULL_REVIEW_2026-11-28.md](EDITOR_FULL_REVIEW_2026-11-28.md) §1-§7）之后，项目以 `927ac6c`（22 文件，+136/−50）落实修复；本轮 = **diff 驱动复核 17 个 src 改动文件 + docs/tools 改动逐行读 + 其余 101 个未改动文件沿用上轮逐行基线**（两轮之间无其他提交，工作区干净）。
@@ -110,3 +112,9 @@ R1 用"有没有编辑入口"判定覆盖；R2 改用项目方在 §8 提出并�
 - `data.has("tiles")` 修复语义：显式 `tiles: null` 报 error、省略键仍可读，与测试断言 `maps.空瓦片表.tiles` 一致 ✓
 - content_editor 4 个公开包装的调用点全集（media/workbench/reference_view_library/map_generator_dialog/project_content_library/steps_panel）签名与语义等价 ✓
 - _ent_thumbs_cache.clear() 挪位：app.gd:238 位于 _clear_project_session 内（切工程必经）✓
+
+## 8. 项目复核与处理
+
+- **N1，确认并修复。** 「应用并编辑内容…」现在调用公开的 `open_project_content()`，仍在应用后打开指定功能的指定内容，并保留所属地图上下文。§3.2 原建议的 `open_project_library()` 只打开目录，会丢失此行为。屏幕与地图流程的图形用例覆盖了这条路径。
+- **N2，确认并修复。** 演出和内容表单通过 `ContentEditor.reference_options()` 走同一个引用解析入口。项目上下文与已保存数据仍走各自原有入口，解析规则不变。
+- 组模板、自动衔接、画布动画预览和多语言工作台列为制作体验或效率改进。现有内容可表达、可交给游戏侧运行，本轮不扩展协议或新增面板。

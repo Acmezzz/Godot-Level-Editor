@@ -662,8 +662,8 @@ func _restore_placement(n: EntityNode, row: Dictionary) -> int:
 	return ei
 
 func extract() -> Dictionary:
-	if cvs.map_root == null or not is_instance_valid(cvs.map_root):
-		return {}   # 重建窗口期（load_data 的 await 一帧）：不产出快照，防 free 后访问
+	if not cvs.is_map_ready():
+		return {}   # 重建期间不混读新地图数据和旧节点。
 	# 层栈瓦片：tiles = {层id: [[x,y,资产id,ax,ay,alt]...]}（第 3 位资产 id 字符串，
 	# 第 6 位 alt = 变换位 0-7，互转见 map_format.gd；清单重排不会破坏既有地图）
 	var tiles := {}

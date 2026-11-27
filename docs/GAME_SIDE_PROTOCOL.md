@@ -1053,7 +1053,7 @@ Godot 参考实现可复用 `MapViewData.object_transform_in_layer` 和 `layer_t
 |---|---|---|
 | `version` | 是 | 当前为 7；高于 7 = 编辑器打不开（报错），低于 7 = 警告并按当前结构读（跑迁移脚本升级） |
 | `meta` | 否 | 对象。编辑器读写 `name`/`w`/`h`/`code`/`layers` 与 `gridProjection`/`gridTopology`/`gridBasis`（格空间三件），以及独立于整数瓦片格的 `cellGraph`；**其他键原样保留**（游戏侧自定义键安全） |
-| `meta.w` / `meta.h` | 否 | 地图格尺寸，缺省 120×56 |
+| `meta.w` / `meta.h` | 否 | 地图宽、高的格数；若声明必须为正整数，缺省 120×56。改动这两个数值不会自动裁剪已有地图内容。 |
 | `meta.code` | 否 | 4 位地图身份码，编辑器缺省补发。改名不改变它 |
 | `meta.layers` | 是 | **图层栈**，见 2.3；数组序 = 栈序（底→顶） |
 | `meta.gridProjection` | 否 | 逐图投影（B1）：`orthogonal`（缺省）/ `isometric` / `hexagonal`。缺键 = 沿用项目解析（清单任一瓦片资产声明非正交即整项目按它） |

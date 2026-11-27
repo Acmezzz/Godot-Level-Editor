@@ -25,7 +25,7 @@ codex mcp add bird-editor --url http://127.0.0.1:47821/mcp
 | 工具 | 参数和行为 |
 | --- | --- |
 | describe_project | 无参返回已打开工程和清单。section 可单看声明，path 可切换到已有的最近工程。首次可在界面选择或通过启动参数指定。 |
-| query_content | kind 可取 maps、map、layers、objects、tiles、collision、ports、edges、cells、references、timeline、contents、content、views、world、groups、candidates、inbound、live_map。map 用地图码，function 用清单功能 ID，content 用完整内容 ID。提供 draft 时读候选状态；live_map 读人工画布工作副本。 |
+| query_content | kind 可取 maps、map、layers、objects、tiles、collision、ports、edges、cells、references、timeline、contents、content、views、world、groups、candidates、inbound、live_map。map 用地图码，function 用清单功能 ID，content 用完整内容 ID。提供 draft 时读候选状态；live_map 始终读人工画布工作副本。画布重建或位置、尺寸、顶点的拖动尚未完成时会提示稍后重试，并保留正在进行的操作。 |
 | manage_draft | action 为 list / create / open / save / diff / undo / redo / discard。保存随每次批改自动写入；open 和 save 返回现有快照的版本。diff 返回涉及的文档与候选内容，undo/redo/discard 要当前 revision。 |
 | apply_changes | draft、revision、operations。整批作为一次撤销；返回新版本、ID、别名与格式警告。 |
 | generate_map | 无 generator 列出可用生成器；仅给 generator 查参数与预设。给 name、draft、revision 执行；可提供 preset 和 parameters。给 sourceMap 则继承该地图的生成来源和参数，结果写为新的可编辑地图。 |
@@ -58,6 +58,8 @@ operations 的每个对象包含 op。写入数据时，字段、步骤、触发
 | startup.set | data.target 选入口，data.contentMap 选配对地图；null 可清除。入口可用类型由游戏侧 startup 声明决定。 |
 | slot.set | slot 指已有项目内容槽位，data.target 给 {function,content} 或 null。 |
 | project.set | section 为 views、worldLayout、eventLayers、viewports；value 替换该段作者数据。涉及 ID 的键也支持同批别名。 |
+
+`map.patch` 的 `meta.w`、`meta.h` 若设置具体值，必须为正整数。值为 `null` 时删除该键，读取时采用缺省尺寸。调小尺寸只改地图格数，会保留已有地图内容；要同时裁剪越界数据，请使用编辑器的「调整地图边界」。非法尺寸会使批次失败，并返回 `meta.w` 或 `meta.h` 的校验原因，草稿版本不变。
 
 ### 截屏、实景和试玩
 

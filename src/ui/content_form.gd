@@ -286,7 +286,7 @@ func _build_field_row(i: int, fn_id: String, fd: Dictionary, cur: Dictionary, si
 		return set_value.call(v, func(values: Dictionary):
 			return not paired or RefFields.paired_map_value(fd, siblings, values) == tk)
 	var options := func(decl: Dictionary) -> Array:
-		return _resolve_options(decl, bool(target.project_scope))
+		return reference_options(decl, bool(target.project_scope))
 	var frame_pick := func(nested_row: Control, nested: Dictionary, pair: Callable, save: Callable, read: Callable):
 		FrameReference.add_reference_button(app, nested_row, nested, pair, save, options, bool(target.project_scope), _rebuild_right, "", read)
 	var built := FieldWidgets.build(d, val, apply, options, "code", frame_pick)
@@ -364,7 +364,7 @@ func reference_context_selector(current: String, on_change: Callable) -> OptionB
 	select.tooltip_text = "只用来选择本图引用。已声明的配对地图优先，不会保存此选择。"
 	select.add_item("不指定")
 	select.set_item_metadata(0, "")
-	for option in _resolve_options({"source": "map"}):
+	for option in reference_options({"source": "map"}):
 		var key := str(option.v)
 		var i := select.item_count
 		select.add_item(str(option.t))
@@ -378,6 +378,9 @@ func reference_context_selector(current: String, on_change: Callable) -> OptionB
 		else:
 			selected[0] = i)
 	return select
+
+func reference_options(decl: Dictionary, project_scope := false) -> Array:
+	return _resolve_options(decl, project_scope)
 
 func project_reference_options(decl: Dictionary, context: String, snapshot := {}) -> Array:
 	var source_manifest: Dictionary = snapshot if not snapshot.is_empty() else manifest

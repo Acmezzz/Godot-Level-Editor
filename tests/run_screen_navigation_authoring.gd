@@ -275,7 +275,7 @@ func run() -> void:
 	choose(field_control(form, "retry"), JSON.stringify({"map": map_code}))
 	press(form, "保存")
 	form.hide()
-	app.project_shell.content_editor._library._open_item(host_target.function, host_target.content, map_code)
+	app.project_shell.content_editor.open_project_content(host_target.function, host_target.content, map_code)
 	form = popup()
 	choose(field_control(form, "host"), pawn_code)
 	press(form, "保存")
@@ -327,7 +327,7 @@ func run() -> void:
 		"publish both outlets together with the replacement door")
 	app._set_mode("content")
 	var editor = app.project_shell.content_editor
-	editor._library._open_item("signal", "project-finished")
+	editor.open_project_content("signal", "project-finished")
 	form = popup()
 	choose(form.find_child("ReferenceContextMap", true, false), map_code)
 	choose(field_control(form, "actor"), pawn_code)
@@ -392,7 +392,7 @@ func run() -> void:
 		and Store.read(manifest, host_target.function, host_target.content).fields.HOST == pawn_code
 		and Store.read(manifest, round_target.function, round_target.content).fields.ROLE == host_target,
 		"the copy owns both documents on the remapped path; the source documents are unchanged")
-	app.project_shell.content_editor._library._open_item(copy_role.function, copy_role.content, copy_code)
+	app.project_shell.content_editor.open_project_content(copy_role.function, copy_role.content, copy_code)
 	form = popup()
 	var bound_port: Control
 	for row in collect(form, "HBoxContainer"):
@@ -416,7 +416,7 @@ func run() -> void:
 	await add_screen("instructions", "Enter course", {"module": "course-door"}, copy_arrival)
 	await add_screen("settings", "Apply options", {"module": "player-options"}, {"view": "instructions"})
 	await add_screen("welcome", "Start tutorial", {"module": "signal-latch"}, {"view": "instructions"})
-	app.project_shell.content_editor._library._open_item("sequence", "project-epilogue", copy_code)
+	app.project_shell.content_editor.open_project_content("sequence", "project-epilogue", copy_code)
 	form = popup()
 	choose(field_control(form, "host"), copy_host)
 	press(form, "保存")

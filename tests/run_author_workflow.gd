@@ -12,6 +12,7 @@ const ReferenceViews = preload("res://src/ui/reference_view_library.gd")
 const ScreenLayoutCanvas = preload("res://src/ui/screen_layout_canvas.gd")
 const GraphEditor = preload("res://src/ui/cell_graph_editor.gd")
 const WorldLayout = preload("res://src/project/world_layout.gd")
+const Workbench := preload("res://src/mcp/workbench.gd")
 var failures := 0
 func _initialize():
 	create_timer(180.0).timeout.connect(func():
@@ -904,6 +905,19 @@ func run():
 		{"asset":"door","code":"DR01","x":4,"y":3,"layer":layer}]
 	check(Maps.write(manifest, "board", data), "write source board")
 	await app._load_map_file(Maps.path_for(manifest, "board"))
+	var mcp_workbench := Workbench.new(app)
+	var board_canvas: EditorCanvas = app.canvas
+	var reload := board_canvas.extract()
+	board_canvas.load_data(reload, "board", true)
+	check(board_canvas.extract().is_empty(), "a queued map root cannot produce a snapshot")
+	var during := await mcp_workbench.invoke("query_content", {"kind": "live_map"})
+	check(during.get("error") == "画布正在重建，请稍后重试。" and not during.has("data"),
+		"MCP reports a rebuilding canvas instead of exposing a map snapshot")
+	await process_frame
+	var after := await mcp_workbench.invoke("query_content", {"kind": "live_map"})
+	var live: Dictionary = after.get("data", {})
+	check(live.get("meta", {}).get("code") == reload.meta.code and live.get("objects", []).size() == 2,
+		"MCP reads the rebuilt canvas with both instances")
 	app._set_mode("content", "SW01")
 	press(ce.root, "画布选…")
 	check(app.canvas.pick_mode_accept == "port" and app.canvas.pick_mode_active, "opened port picking from instance form")
@@ -2570,6 +2584,12 @@ func author_frame_picks(app, manifest: Dictionary) -> void:
 	cvs.place_kind = "object"
 	cvs._canvas_input_ctrl._on_left_press(origin, mouse)
 	cvs._drag_spawn_to(target)
+	var preview_position: Vector2 = cvs.spawn.position
+	var mcp_workbench := Workbench.new(app)
+	var during_drag := await mcp_workbench.invoke("query_content", {"kind": "live_map"})
+	check(during_drag.get("error") == "画布上的拖动尚未完成，请稍后重试。"
+		and cvs.gesture == EditorCanvas.Gesture.SPAWN_DRAG and cvs.spawn.position == preview_position,
+		"MCP cannot read tentative spawn coordinates or interrupt the drag")
 	check(cvs.cancel_preview_gesture() and cvs.extract().spawn == before_spawn and cvs.undo_step_count() == steps,
 		"cancelled canvas spawn drag restores its original position and history")
 	app._layout_ctrl._on_map_menu_id(22)

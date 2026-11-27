@@ -203,8 +203,22 @@ def run(editor, godot, logs):
                 assert len(done["files"]) == 4
                 assert (game / "maps/生成地图.json").is_file()
                 assert hashlib.sha256(script.read_bytes()).hexdigest() == script_digest
+                original = call("query_content", kind="map", map=board)[0]["data"]
+                size_draft = call("manage_draft", action="create", name="尺寸检查")[0]["id"]
+                for width, height in [(0, -1), (1.5, "4")]:
+                    invalid, _ = call("apply_changes", draft=size_draft, revision=0, expect_error=True, operations=[
+                        {"op": "map.patch", "map": board, "data": {"meta": {"w": width, "h": height}}}])
+                    assert {issue["path"] for issue in invalid["issues"]} >= {"meta.w", "meta.h"}, invalid
+                assert call("manage_draft", action="open", draft=size_draft)[0]["revision"] == 0
+                call("apply_changes", draft=size_draft, revision=0, operations=[
+                    {"op": "map.patch", "map": board, "data": {"meta": {"w": 2, "h": 2}}}])
+                resized = call("query_content", kind="map", draft=size_draft, map=board)[0]["data"]
+                assert (resized["meta"]["w"], resized["meta"]["h"]) == (2, 2), resized["meta"]
+                assert resized["tiles"] == original["tiles"] and resized["collision"] == original["collision"]
                 _, media = call("capture_editor", target="canvas", map=board, instance=ids["$terminal"])
                 png(media[0], "published-canvas")
+                live = call("query_content", kind="live_map")[0]["data"]
+                assert live["meta"]["code"] == board and any(row["code"] == ids["$terminal"] for row in live["objects"])
                 popups = {"groups": "groups", "screens": "screens", "world": "world", "viewports": "viewports",
                           "startup": "startup", "flow": "flow", "library": "library", "playtest": "playtest-settings"}
                 for panel, name in popups.items():
@@ -262,7 +276,7 @@ def run(editor, godot, logs):
                 assert any(issue["path"] == "maps.旧碰撞地图.collision[0]" and
                            "migrate_project.gd" in issue["message"] for issue in invalid["issues"]), invalid
                 assert any(issue["path"] == "maps.空瓦片表.tiles" for issue in invalid["issues"]), invalid
-                print("MCP-DONE tools=11 publish=ok capture=ok playtest=ok conflict=ok", flush=True)
+                print("MCP-DONE tools=11 publish=ok capture=ok playtest=ok conflict=ok map_patch=ok live_map=ok", flush=True)
             finally:
                 if managed:
                     try:

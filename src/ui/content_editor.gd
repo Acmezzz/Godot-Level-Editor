@@ -762,7 +762,7 @@ func _build_instance_values(spr: EntityNode) -> Control:
 		if paired != "":
 			decl["_mapKey"] = paired
 		var frame_pick := func(nested_row: Control, nested: Dictionary, nested_pair: Callable, save: Callable, read: Callable):
-			FrameReference.add_reference_button(app, nested_row, nested, nested_pair, save, _resolve_options, false,
+			FrameReference.add_reference_button(app, nested_row, nested, nested_pair, save, reference_options, false,
 				_rebuild_right, "", read)
 		# 普通控件在撤销通知时可能还有待提交值；过期值应丢弃。
 		# 实景确认则必须让弹窗知道是否真的写入。
@@ -773,7 +773,7 @@ func _build_instance_values(spr: EntityNode) -> Control:
 			if scope_selector:
 				_set_prop_ref(fd, v)
 			else:
-				apply.call(v), _resolve_options, "id", frame_pick)
+				apply.call(v), reference_options, "id", frame_pick)
 		var control: Control = built.ctl
 		control.name = "InstanceValue_" + fid
 		var field_row := Kit.field_row(str(fd.get("name", fid)), control, 96)
@@ -862,7 +862,7 @@ func _build_ref_row(fd: Dictionary, props: Dictionary, fdecls: Array = []) -> Co
 		d["source"] = "entity_inst:" + str(fd.get("of", ""))
 		var target_map := RefFields.paired_map_value(fd, fdecls, props, "id")
 		if target_map != "":
-			d["_mapKey"] = target_map   # _resolve_options 据此枚举目标图实例
+			d["_mapKey"] = target_map   # 引用解析据此枚举目标图实例
 	var expected_map := str(d.get("_mapKey", ""))
 	var origin := _current_spr()
 	var apply := func(v) -> void:
@@ -870,7 +870,7 @@ func _build_ref_row(fd: Dictionary, props: Dictionary, fdecls: Array = []) -> Co
 				or RefFields.paired_map_value(fd, fdecls, origin.props, "id") != expected_map:
 			return
 		_set_prop_ref(fd, v)
-	built = FieldWidgets.build(d, cur, apply, _resolve_options)
+	built = FieldWidgets.build(d, cur, apply, reference_options)
 	built.ctl.name = "InstanceReference_" + fid
 	var row := Kit.field_row(str(fd.get("name", fid)), built.ctl, 96)
 	var tip := FieldWidgets.decl_tooltip(fd)
@@ -890,7 +890,7 @@ func _build_ref_row(fd: Dictionary, props: Dictionary, fdecls: Array = []) -> Co
 			await _set_prop_ref(fd, value)
 			return origin.props.get(fid) == value
 		var frame_pick := FrameReference.add_reference_button(app, row, d, pair, save,
-			_resolve_options, false, _rebuild_right, "", built.get("pick_values", Callable()))
+			reference_options, false, _rebuild_right, "", built.get("pick_values", Callable()))
 		if frame_pick != null:
 			frame_pick.name = "FrameReference_" + fid
 	# E1：问题抽屉跳「某字段悬空」——对应行加一次醒目标记（重建后即消失）
@@ -989,6 +989,12 @@ func refresh_after_external_write(fn_id: String, cid: String) -> void:
 func open_project_library() -> void:
 	_library.open()
 
+func open_project_content(fn_id: String, cid: String, context := "") -> void:
+	_library.open_item(fn_id, cid, context)
+
+func reference_options(decl: Dictionary, project_scope := false) -> Array:
+	return _form.reference_options(decl, project_scope)
+
 func project_reference_options(decl: Dictionary, context: String, snapshot := {}) -> Array:
 	return _form.project_reference_options(decl, context, snapshot)
 
@@ -1004,8 +1010,6 @@ func _build_fn_block() -> Control:
 	return _fnbind._build_fn_block()
 func _build_form_block() -> Control:
 	return _form._build_form_block()
-func _resolve_options(decl: Dictionary) -> Array:
-	return _form._resolve_options(decl)
 func _resolve_fn(f: Dictionary) -> Dictionary:
 	return _fnbind._resolve_fn(f)
 func _set_parallel(tok: Dictionary, v: bool) -> void:

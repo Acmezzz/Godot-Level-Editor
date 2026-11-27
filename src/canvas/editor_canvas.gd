@@ -710,9 +710,9 @@ func _freeze_projection() -> void:
 func _active_cell(pos: Vector2) -> Vector2i:
 	return tile_grid_for_layer(active_layer).pick_cell(_active_local(pos))
 
-## 地图已装载且 root 有效（E14：无图时输入/绘制提前返回，不碰坐标换算）
+## 地图节点可读；重建期间旧节点即使尚未销毁，也不再对应当前地图数据。
 func is_map_ready() -> bool:
-	return map_root != null and is_instance_valid(map_root)
+	return is_instance_valid(map_root) and not map_root.is_queued_for_deletion()
 
 ## 是否有内容（B1）：瓦片/碰撞/实例任一非空——投影切换守卫的依据。
 ## 普通设置只允许在空图上切投影；带内容的切换必须先做显式转换并保存副本。
@@ -1739,10 +1739,12 @@ func undo() -> bool:
 func redo() -> bool:
 	return await _undo_history_ctrl.redo()
 
-func extract() -> Dictionary:
-	# 只读提交状态（E05）：拖动/尺寸/顶点/出生点/区域搬迁在手势期间把候选值写在活体上，
-	# 保存、草稿与撤销快照直接读取会拿到半途坐标。提取前先取消未完成的预览手势归位。
-	cancel_preview_gesture()
+func extract(preserve_preview := false) -> Dictionary:
+	if not preserve_preview:
+		cancel_preview_gesture()
+	elif gesture in [Gesture.ENTITY_DRAG, Gesture.ENTITY_RESIZE, Gesture.ENTITY_VERTEX, Gesture.SPAWN_DRAG]:
+		# 这些手势会把尚未确认的值直接写到节点上。只读查询留待手势结束。
+		return {}
 	return _undo_history_ctrl.extract()
 
 func arrival_snapshot() -> Dictionary:
