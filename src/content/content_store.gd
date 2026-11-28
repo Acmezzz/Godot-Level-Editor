@@ -147,6 +147,9 @@ static func read_ex(m: Dictionary, kind: String, id: String) -> Dictionary:
 static func read(m: Dictionary, kind: String, id: String) -> Dictionary:
 	return read_ex(m, kind, id).data
 
+static func encode(id: String, data: Dictionary) -> String:
+	return JSON.stringify(data.merged({"id": id}, true), "\t")
+
 static func _decode(text: String, id: String) -> Dictionary:
 	var json := JSON.new()
 	if json.parse(text) != OK:
@@ -190,11 +193,9 @@ static func write_ex(m: Dictionary, kind: String, id: String, data: Dictionary,
 	if FileAccess.file_exists(path):
 		# 内容文件与地图同权——误写可回滚（3 层 .history，最新 .1）
 		Store.rotate_history(path)
-	var payload := data.duplicate(true)
-	payload["id"] = id
 	# 基线存在（替换已存在文件）的写入失败要可诊断；新建按 create-only 语义已在上面拦截。
 	_cache.erase(path)   # D3：写后失效（同秒重写也不吃脏缓存）
-	return {"ok": Store.write_json(path, payload), "conflict": false}
+	return {"ok": Store.write_text(path, encode(id, data)), "conflict": false}
 
 ## 列出某类资源的 id（不含扩展名，排序）。
 ## D3 修订：目录 mtime 在 Windows 上不可靠——list 不缓存（DirAccess 扫描本身很便宜），

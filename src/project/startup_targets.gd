@@ -67,7 +67,8 @@ static func needs_content_map(startup: Dictionary, target: Variant) -> bool:
 static func content_map_available(manifest: Dictionary, code: String) -> bool:
 	return code != "" and Refs.resolve_map_code(Maps.code_index(manifest), code).status == "ok"
 
-static func destination_available(manifest: Dictionary, domains: Dictionary, target: Variant, maps := {}) -> bool:
+static func destination_available(manifest: Dictionary, domains: Dictionary, target: Variant, maps := {},
+		read_content := Callable()) -> bool:
 	if not FlowTarget.allows(domains, target):
 		return false
 	if target.has("view"):
@@ -82,7 +83,9 @@ static func destination_available(manifest: Dictionary, domains: Dictionary, tar
 			return true
 		return _map_destination_available(manifest, domains, target, Maps.read(manifest, resolved.key))
 	var kind: String = target.function
-	return is_project_destination(Store.read(manifest, kind, target.content), Functions.fn_code(manifest, kind))
+	var data: Dictionary = read_content.call(kind, target.content).data if read_content.is_valid() \
+		else Store.read(manifest, kind, target.content)
+	return is_project_destination(data, Functions.fn_code(manifest, kind))
 
 static func _map_destination_available(manifest: Dictionary, domains: Dictionary, target: Dictionary, map: Dictionary) -> bool:
 	if map.get("meta", {}).get("code") != target.map:

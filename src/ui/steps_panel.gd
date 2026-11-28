@@ -84,8 +84,6 @@ var _steps_fn_id := ""        # 该绑定的功能 id
 ## E1：所属实例码。停靠面板会长时间占屏，换实例后身份校验必须能发现（空绑定尤甚）
 var _steps_ent := ""
 var _steps_cid := ""          # 该绑定的内容 ID（身份校验：绑定换内容 = 数据源失效）
-## R05：工作副本对应磁盘摘要（写回基线；暂存条目 digest 为空 = 不比对）。
-var _steps_base := ""
 ## R23：面板令牌的地图身份——切图后旧面板对不上就不再写值。
 var _project_manifest: Dictionary = {}
 var _project_target := false
@@ -620,12 +618,8 @@ func _open_game_frame() -> void:
 			return {"error": "演出内容无法读取。"}
 		var r := TimelineClock.from_decl(manifest, _steps_fn_id, data)
 		var clock := TimelineClock.new(r.get("timebase", "seconds"), r.get("cfg", {}))
-		var moment := {"value": raw, "unit": clock.timebase, "seconds": null}
-		var seconds := clock.seconds_at(raw)
-		if clock.is_ready() and is_finite(seconds):
-			moment["seconds"] = seconds
-		var subject := {"function": _steps_fn_id, "content": _steps_cid, "data": data, "time": moment,
-			"manifest": app._manifest_write_payload(manifest), "viewportId": preset}
+		var subject := {"function": _steps_fn_id, "content": _steps_cid, "data": data, "time": clock.sample(raw),
+			"manifest": EditorManifest.public_data(manifest), "viewportId": preset}
 		var context := {}
 		if not _project_target:
 			context = MapGamePreview.map_context(app) if app.map_loaded else {}
@@ -718,17 +712,24 @@ func _steps_identity_ok() -> bool:
 
 ## 工作副本读取：已绑定内容读磁盘/暂存；空绑定返回内存空壳（不落盘、不建 ID）。
 func _steps_data() -> Dictionary:
+	return _steps_read().data
+
+func _steps_read() -> Dictionary:
 	if not _steps_identity_ok():
-		return {}
+		return {"data": {}, "digest": ""}
 	if _steps_cid == "":
-		return {"id": "", "function": FunctionDecls.fn_code(manifest, _steps_fn_id),
-			"name": _steps_fn_id, "fields": {}, "steps": []}
-	# R05：读工作副本时记下磁盘摘要（写回基线）；staged 条目 digest 为空（不比对）。
-	var rd: Dictionary = host.read_content_staged_ex(_steps_fn_id, _steps_cid)
-	_steps_base = str(rd.get("digest", ""))
-	var data: Dictionary = rd.get("data", {})
-	_project_scope = _project_target or data.get("scope") == "project"
-	return data
+		return {"digest": "", "data": {"id": "", "function": FunctionDecls.fn_code(manifest, _steps_fn_id),
+			"name": _steps_fn_id, "fields": {}, "steps": []}}
+	var result: Dictionary = host.read_content_staged_ex(_steps_fn_id, _steps_cid)
+	_project_scope = _project_target or result.data.get("scope") == "project"
+	return result
+
+func _steps_edit() -> Dictionary:
+	var source := _steps_read()
+	source["before"] = source.data
+	source["data"] = source.data.duplicate(true)
+	return source
+
 
 func has_dock_focus(focus: Control) -> bool:
 	return is_instance_valid(_steps_dock) and _steps_dock.is_visible_in_tree() and focus != null \
@@ -759,9 +760,11 @@ func refresh_after_restore(fn_id: String, cid: String) -> void:
 		_reload_steps()
 
 ## 首次实际改动才预留内容 ID；已落盘的改动进入内容撤销栈。
-func _steps_write(data: Dictionary) -> bool:
+func _steps_write(edit: Dictionary) -> bool:
 	if not _steps_identity_ok():
 		return false
+	var data: Dictionary = edit.data
+	var before: Dictionary = edit.before if _steps_cid != "" else {}
 	if _steps_cid == "":
 		var cid := _ensure_content(_steps_i)
 		if cid == "":
@@ -771,15 +774,15 @@ func _steps_write(data: Dictionary) -> bool:
 		_steps_binding = _current_fns()[_steps_i]
 		if str(data.get("id", "")) == "":
 			data["id"] = cid
-	var before: Dictionary = host.read_content_staged_ex(_steps_fn_id, _steps_cid).data if _steps_base != "" else {}
-	var result: String = host.write_content_staged(_steps_fn_id, _steps_cid, data, _steps_base)
+	var digest: String = edit.digest
+	var result: String = host.write_content_staged(_steps_fn_id, _steps_cid, data, digest, before)
 	if result != "ok":
 		if result == "conflict":
 			host._form._content_conflict(_steps_cid)
-		else:
+		elif result != "invalid":
 			_ensure_failed()
 		return false
-	host._form._record_content_delta(_steps_fn_id, _steps_cid, before, data, _steps_base)
+	host._form._record_content_delta(_steps_fn_id, _steps_cid, before, data, digest)
 	return true
 
 ## 结构版本递增：增删/排序/复制后旧控件与旧拖拽请求一律失效（D1）。
@@ -929,8 +932,7 @@ func _copy_segment() -> void:
 func _retime_segment() -> void:
 	if not _flush_pending():
 		return
-	var data := _steps_data()
-	var steps: Array = data.get("steps", [])
+	var steps: Array = _steps_data().get("steps", [])
 	if steps.is_empty():
 		return
 	var rev := _steps_rev
@@ -947,7 +949,8 @@ func _retime_segment() -> void:
 	body.add_child(Kit.field_row("固定间隔", spacing, 92))
 	body.add_child(Kit.hint_label("单位：%s。范围外步骤保留原生效时间。" % _steps_timebase(), 340))
 	_segment_dialog("调整演出段落", "应用时间", body, func():
-		if rev != _steps_rev or not _steps_identity_ok() or _steps_data().get("steps", []) != steps:
+		var edit := _steps_edit()
+		if rev != _steps_rev or edit.data.get("steps", []) != steps:
 			return
 		first.apply()
 		last.apply()
@@ -971,8 +974,8 @@ func _retime_segment() -> void:
 				app._set_status("调整后有步骤早于零点或超出范围。")
 				return
 			result[i]["at"] = time
-		data["steps"] = result
-		if _steps_write(data):
+		edit.data["steps"] = result
+		if _steps_write(edit):
 			_steps_sel = begin
 			_bump_steps_rev()
 			_rebuild_steps_all()
@@ -1001,12 +1004,13 @@ func _paste_segment() -> void:
 		_run_row_command(revision, arr, _append_segment.bind(value)))
 
 func _append_segment(origin: float) -> void:
-	var data := _steps_data()
+	var edit := _steps_edit()
+	var data: Dictionary = edit.data
 	var arr: Array = data.get("steps", [])
 	var first := arr.size()
 	arr.append_array(StepTimeline.offset_segment(_copied_segment, origin))
 	data["steps"] = arr
-	if _steps_write(data):
+	if _steps_write(edit):
 		_steps_sel = first
 		_reveal_step_page()
 		_bump_steps_rev()
@@ -1121,7 +1125,8 @@ func _rebuild_steps_tl(arr: Array) -> void:
 func _on_step_change_requested(idx: int, revision: int, patch: Dictionary) -> void:
 	if revision != _steps_rev or not _steps_identity_ok():
 		return   # 过期拖拽：结构已变，按下标写回会落到别的步骤上
-	var data := _steps_data()
+	var edit := _steps_edit()
+	var data: Dictionary = edit.data
 	if data.is_empty():
 		return
 	var arr: Array = data.get("steps", []) if data.get("steps", []) is Array else []
@@ -1129,15 +1134,7 @@ func _on_step_change_requested(idx: int, revision: int, patch: Dictionary) -> vo
 		_bump_steps_rev()
 		_rebuild_steps_all()
 		return
-	var res: Dictionary = StepTimeline.apply_patch(arr, idx, patch)
-	if not bool(res.get("ok", false)):
-		return
-	data["steps"] = res.get("steps", arr)
-	if not _steps_write(data):
-		return
-	_steps_sel = idx
-	_bump_steps_rev()
-	_rebuild_steps_all()
+	_write_time_patch(edit, arr, idx, patch, [])
 
 ## 表单重建（数据自取）：时间轴点选后只换表单、不动视图。
 func _rebuild_steps_form_from_data() -> void:
@@ -1666,7 +1663,8 @@ func _bind_time_input(edit: LineEdit, tok: Dictionary, key: String) -> void:
 func _apply_time_patch(tok: Dictionary, patch: Dictionary, erase_keys: Array) -> void:
 	if tok.is_empty():
 		return
-	var data := _steps_data()
+	var edit := _steps_edit()
+	var data: Dictionary = edit.data
 	if data.is_empty():
 		return
 	var arr: Array = data.get("steps", []) if data.get("steps", []) is Array else []
@@ -1682,11 +1680,14 @@ func _apply_time_patch(tok: Dictionary, patch: Dictionary, erase_keys: Array) ->
 		for k in ["at", "duration"]:
 			if patch.has(k):
 				patch[k] = snappedf(maxf(float(patch[k]), 0.0), snapv)
-	var res: Dictionary = StepTimeline.apply_patch(arr, si, patch, erase_keys)
+	_write_time_patch(edit, arr, si, patch, erase_keys)
+
+func _write_time_patch(edit: Dictionary, arr: Array, si: int, patch: Dictionary, erase_keys: Array) -> void:
+	var res := StepTimeline.apply_patch(arr, si, patch, erase_keys)
 	if not bool(res.get("ok", false)):
 		return
-	data["steps"] = res.get("steps", arr)
-	if not _steps_write(data):
+	edit.data["steps"] = res.get("steps", arr)
+	if not _steps_write(edit):
 		return
 	_steps_sel = si
 	_bump_steps_rev()
@@ -1700,7 +1701,8 @@ static func _step_index_of(arr: Array, tok: Dictionary) -> int:
 func _set_step_field(shown: Dictionary, key: String, value, rev := -1, check_pair := Callable()) -> bool:
 	if key == "" or (rev >= 0 and rev != _steps_rev):
 		return false
-	var data := _steps_data()
+	var edit := _steps_edit()
+	var data: Dictionary = edit.data
 	if data.is_empty():
 		return false
 	var arr: Array = data.get("steps", []) if data.get("steps", []) is Array else []
@@ -1719,7 +1721,7 @@ func _set_step_field(shown: Dictionary, key: String, value, rev := -1, check_pai
 	sfd[key] = value
 	st["fields"] = sfd
 	data["steps"] = arr
-	if not _steps_write(data):
+	if not _steps_write(edit):
 		return false
 	# Compare later edits with the representation the workspace actually reads.
 	# JSON numbers read back as floats, including integers within records.
@@ -1753,7 +1755,8 @@ func _reload_steps() -> void:
 func _steps_add(code: String, at_playhead := false) -> void:
 	if code == "":
 		return
-	var data := _steps_data()
+	var edit := _steps_edit()
+	var data: Dictionary = edit.data
 	if data.is_empty():
 		return
 	var arr: Array = data.get("steps", []) if data.get("steps", []) is Array else []
@@ -1763,7 +1766,7 @@ func _steps_add(code: String, at_playhead := false) -> void:
 		step["at"] = roundf(time) if _steps_timebase() == "frame" else time
 	arr.append(step)
 	data["steps"] = arr
-	if not _steps_write(data):
+	if not _steps_write(edit):
 		return
 	_steps_sel = arr.size() - 1
 	_reveal_step_page()
@@ -1772,13 +1775,14 @@ func _steps_add(code: String, at_playhead := false) -> void:
 
 ## 删除后尽量保留原选中步骤；删掉选中项时选相邻项。
 func _steps_del(si: int) -> void:
-	var data := _steps_data()
+	var edit := _steps_edit()
+	var data: Dictionary = edit.data
 	var arr: Array = data.get("steps", []) if data.get("steps", []) is Array else []
 	if si < 0 or si >= arr.size():
 		return
 	arr.remove_at(si)
 	data["steps"] = arr
-	if not _steps_write(data):
+	if not _steps_write(edit):
 		return
 	var next_sel := _steps_sel - 1 if _steps_sel > si else _steps_sel
 	_steps_sel = mini(next_sel, arr.size() - 1)
@@ -1788,7 +1792,8 @@ func _steps_del(si: int) -> void:
 
 ## 上移/下移一格。
 func _steps_move(si: int, dir: int) -> void:
-	var data := _steps_data()
+	var edit := _steps_edit()
+	var data: Dictionary = edit.data
 	var arr: Array = data.get("steps", []) if data.get("steps", []) is Array else []
 	var nj := si + dir
 	if si < 0 or si >= arr.size() or nj < 0 or nj >= arr.size():
@@ -1797,7 +1802,7 @@ func _steps_move(si: int, dir: int) -> void:
 	arr[si] = arr[nj]
 	arr[nj] = tmp
 	data["steps"] = arr
-	if not _steps_write(data):
+	if not _steps_write(edit):
 		return
 	_steps_sel = nj
 	_reveal_step_page()
@@ -1807,14 +1812,15 @@ func _steps_move(si: int, dir: int) -> void:
 ## 复制步骤：整条深拷贝，插到下一步；
 ## 步骤码引用清单声明、跨内容共享，无需重映射。
 func _steps_dup(si: int) -> void:
-	var data := _steps_data()
+	var edit := _steps_edit()
+	var data: Dictionary = edit.data
 	var arr: Array = data.get("steps", []) if data.get("steps", []) is Array else []
 	if si < 0 or si >= arr.size() or not (arr[si] is Dictionary):
 		return
 	var cp: Dictionary = (arr[si] as Dictionary).duplicate(true)
 	arr.insert(si + 1, cp)
 	data["steps"] = arr
-	if not _steps_write(data):
+	if not _steps_write(edit):
 		return
 	_steps_sel = si + 1
 	_reveal_step_page()

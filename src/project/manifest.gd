@@ -17,6 +17,17 @@ const AudioDecls := preload("res://src/content/audio_decl.gd")
 const TriggerDecls := preload("res://src/content/trigger_decl.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
 
+static func public_data(source: Dictionary) -> Dictionary:
+	var out := source.duplicate()
+	for key in out.keys():
+		if str(key).begins_with("_"):
+			out.erase(key)
+	out = preload("res://src/assets/builtin_kinds.gd").strip_from(out)
+	for asset in (out.get("assets", []) as Array):
+		if asset is Dictionary:
+			asset.erase("atlas_abs")
+	return out
+
 ## 参数数组用的替换：原样内联，不加引号（A6）。
 ## OS.create_process 直接收 argv，引号会变成值的一部分；路径含空格正是数组分段的价值所在。
 static func substitute_vars_raw(arg: String, map_file: String, project_path: String) -> String:

@@ -12,7 +12,7 @@ const ReferenceIndex := preload("res://src/project/reference_index.gd")
 const SpatialCheck := preload("res://src/project/spatial_reference_check.gd")
 const ScreenLayout := preload("res://src/project/screen_layout.gd")
 
-static func view_reference_issues(manifest: Dictionary, view_id := "") -> Array:
+static func view_reference_issues(manifest: Dictionary, view_id := "", read_content := Callable()) -> Array:
 	var out := []
 	var contents := {}
 	var map_index := {}
@@ -21,7 +21,7 @@ static func view_reference_issues(manifest: Dictionary, view_id := "") -> Array:
 			continue
 		var key := [ref.fn, ref.cid]
 		if ref.has("domains"):
-			if StartupTargets.destination_available(manifest, ref.domains, ref.target):
+			if StartupTargets.destination_available(manifest, ref.domains, ref.target, {}, read_content):
 				if ref.has("context_map"):
 					if map_index.is_empty():
 						map_index = MapStore.code_index(manifest)
@@ -31,7 +31,8 @@ static func view_reference_issues(manifest: Dictionary, view_id := "") -> Array:
 				out.append(_view_issue(ref, _flow_target_message(ref.target)))
 			continue
 		if not contents.has(key):
-			contents[key] = ContentStore.read_ex(manifest, ref.fn, ref.cid).status
+			contents[key] = (read_content.call(ref.fn, ref.cid) if read_content.is_valid() \
+				else ContentStore.read_ex(manifest, ref.fn, ref.cid)).status
 		if contents[key] != "ok":
 			out.append(_view_issue(ref, "内容目标无法读取：%s/%s" % [ref.fn, ref.cid]))
 	var images := ScreenLayout.image_assets(manifest)
@@ -48,7 +49,7 @@ static func view_reference_issues(manifest: Dictionary, view_id := "") -> Array:
 		if view_id != "" and ref.view != view_id:
 			continue
 		if ref.has("domains"):
-			if not StartupTargets.destination_available(manifest, ref.domains, ref.target):
+			if not StartupTargets.destination_available(manifest, ref.domains, ref.target, {}, read_content):
 				out.append(_view_issue(ref, _flow_target_message(ref.target)))
 			continue
 		if map_index.is_empty():
@@ -62,7 +63,7 @@ static func view_reference_issues(manifest: Dictionary, view_id := "") -> Array:
 		var label := ""
 		match ref.kind:
 			"flow_target":
-				if not StartupTargets.destination_available(manifest, ref.decl, ref.value):
+				if not StartupTargets.destination_available(manifest, ref.decl, ref.value, {}, read_content):
 					out.append(_view_issue(ref, _flow_target_message(ref.value)))
 			"asset", "entity_type":
 				label = "资产"

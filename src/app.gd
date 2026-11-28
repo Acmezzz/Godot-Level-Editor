@@ -825,20 +825,10 @@ func _sync_panel_buttons(mode: String) -> void:
 		_layout_ctrl.update_work_toolbar(mode)
 
 ## 清单落盘；返回是否成功（await 结果）。地图保存前需要知道成功与否（D06）。
-func _manifest_write_payload(source: Dictionary) -> Dictionary:
-	var out := source.duplicate(true)
-	for key in out.keys():
-		if str(key).begins_with("_"):
-			out.erase(key)
-	for asset in (out.get("assets", []) as Array):
-		if asset is Dictionary:
-			asset.erase("atlas_abs")
-	return preload("res://src/assets/builtin_kinds.gd").strip_from(out)
-
 func _save_manifest_file_async(guard := Callable(), snapshot := {}, publish_key := "", before_write := Callable()) -> bool:
 	var source := manifest
-	var baseline := JSON.stringify(_manifest_write_payload(source), "\t") if publish_key != "" else ""
-	var out := _manifest_write_payload(source if snapshot.is_empty() else snapshot)
+	var baseline := JSON.stringify(EditorManifest.public_data(source), "\t") if publish_key != "" else ""
+	var out := EditorManifest.public_data(source if snapshot.is_empty() else snapshot)
 	var txt := JSON.stringify(out, "\t")
 	var p := str(source.get("_dir", "")).path_join("editor/editor_manifest.json")
 	var recovery := preload("res://src/map/recovery.gd")
@@ -854,7 +844,7 @@ func _save_manifest_file_async(guard := Callable(), snapshot := {}, publish_key 
 			return false
 	var expected_live := baseline if publish_key != "" else txt
 	if (guard.is_valid() and not guard.call()) or not is_same(manifest, source) \
-			or JSON.stringify(_manifest_write_payload(manifest), "\t") != expected_live:
+			or JSON.stringify(EditorManifest.public_data(manifest), "\t") != expected_live:
 		_set_status(" 清单保存中止：确认期间工作副本已变化")
 		return false
 	if recovery.digest(p) != seen:

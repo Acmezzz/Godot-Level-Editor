@@ -52,7 +52,7 @@ operations 的每个对象包含 op。写入数据时，字段、步骤、触发
 | map.patch / map.rename / map.delete | map；patch 的 data 可改 meta 中的参数（例如格图、流程数据、尺寸）和 spawn；rename 额外给 name。 |
 | layer.put / layer.delete / layer.move | map。put 省略 layer 新建，data 使用图层声明结构；修改、删除、移动指定 layer，move 给目标 index。删除前需移走图层上的瓦片和对象。 |
 | tiles.set / collision.set | map。tiles 额外传 layer；cells 是记录数组，每项包含整数 x、y。瓦片记录含 asset、atlas:[x,y] 和可选 alt；碰撞用地图格式中的 type 等字段。remove:true 擦除该格。 |
-| instance.put / instance.delete | map；新建用 data.asset，修改或删除用 instance，场景摆放物也可按 objectIndex 定位。编辑 data.layer、x/y、props、transform 等；可用 world:[x,y] 按世界像素定位。 |
+| instance.put / instance.delete | map；新建用 data.asset，修改或删除有实例码的摆放物用 instance；没有实例码的场景摆放物用 objectIndex。若同时提供两者，必须指向同一行。下标会随批内操作和草稿版本变化。可编辑 data.layer、x/y、props、transform，也可用 world:[x,y] 按世界像素定位。 |
 | binding.put / binding.delete | map、instance；新建给 function，已有绑定用 binding（存储字段 bindingId）。data 可改 content、trigger、order、parallel、enabled、name；index（从 0 开始）可重排绑定列表，data.order（从 1 开始）也可指定同一位置；同时提供时须一致。创建、移动或删除后按列表顺序更新执行顺序。trigger 使用该功能已声明的时机执行码，空字符串为默认时机；传声明 ID、未知码或此功能未开放的码会被拒绝。 |
 | content.put / content.delete | function、content（新建省略）。新建同时给 map 和 instance 可发放实例内容 ID；省略 map 时建立项目内容。data 可改 name、fields、steps 等。 |
 | view.put / view.delete | view，可在 put 中省略以分配新 ID；data 可写布局、元素、热区、导航与本地化等屏幕数据。 |

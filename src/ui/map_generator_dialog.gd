@@ -167,7 +167,7 @@ func _run() -> void:
 		if not Generators.valid_value(field, params[field.id]):
 			_status.text = "参数值无效：" + str(field.get("name", field.id))
 			return
-	var public: Dictionary = _app._manifest_write_payload(_source)
+	var public: Dictionary = EditorManifest.public_data(_source)
 	var code := Maps.allocate_code(_source, _app.canvas.cur_map_code() if _app.map_loaded else "")
 	_running = true
 	_generate.disabled = true
@@ -183,7 +183,7 @@ func _run() -> void:
 	for commit in _commits:
 		commit.call()
 	if id != _picker.get_selected_metadata() or params != _values or name_ != _name_input.text.strip_edges() \
-			or public != _app._manifest_write_payload(_source):
+			or public != EditorManifest.public_data(_source):
 		_status.text = "生成期间输入或清单有变动，请重新生成。"
 		return
 	if not reply.has("map_text"):
@@ -226,7 +226,7 @@ func _open_result() -> void:
 	var popup := _pop
 	var guard := func() -> bool:
 		return is_instance_valid(popup) and popup.visible and is_instance_valid(app) \
-			and is_same(app.manifest, source) and app._manifest_write_payload(source) == public
+			and is_same(app.manifest, source) and EditorManifest.public_data(source) == public
 	if not guard.call():
 		_invalidate()
 		_status.text = "清单已变动，请重新生成。"

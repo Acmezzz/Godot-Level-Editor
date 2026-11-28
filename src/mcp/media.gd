@@ -218,9 +218,10 @@ func render(args: Dictionary, batch: Dictionary) -> Dictionary:
 	if not Runner.supports(m, capability):
 		return {"error": "游戏工程未声明此预览能力：" + capability}
 	var profile: String = args.get("profile", "")
-	var snapshot: Dictionary = app._manifest_write_payload(m)
+	var snapshot: Dictionary = EditorManifest.public_data(m)
 	var code: String = args.get("map", "")
 	var body := {"manifest": snapshot, "viewportId": profile}
+	var staged := _staged(batch)
 	var clock := Clock.new("seconds", {})
 	if capability in ["mapFrame", "timelineFrame", "playtestFrame"] and code != "":
 		var row: Dictionary = drafts.map_of(batch, code)
@@ -230,7 +231,7 @@ func render(args: Dictionary, batch: Dictionary) -> Dictionary:
 		var center := bounds.get_center()
 		var zoom := minf(size.x / maxf(bounds.size.x, 1.0), size.y / maxf(bounds.size.y, 1.0)) * 0.9
 		body.merge({"map": row.data, "eventDrawings": drafts.event_drawings(batch, m, code),
-			"stagedContent": _staged(batch),
+			"stagedContent": staged,
 			"camera": args.get("camera", {"center": [center.x, center.y], "zoom": zoom})})
 	match capability:
 		"mapFrame":
@@ -266,10 +267,10 @@ func render(args: Dictionary, batch: Dictionary) -> Dictionary:
 			var overrides := {}
 			for id in batch.maps:
 				var row: Dictionary = batch.maps[id]
-				overrides[id] = {"map": row.data, "stagedContent": _staged(batch)} if not row.get("deleted", false) else {"deleted": true}
+				overrides[id] = {"map": row.data, "stagedContent": staged} if not row.get("deleted", false) else {"deleted": true}
 			body["overrides"] = overrides
 		"playtestFrame":
-			body.merge({"view": args.get("view", ""), "stagedContent": _staged(batch)})
+			body.merge({"view": args.get("view", ""), "stagedContent": staged})
 	var times: Array = args.get("times", [0.0])
 	if times.is_empty() or times.size() > 12 or not times.all(func(n): return _number(n) and n >= 0):
 		return {"error": "times 必须包含 1–12 个非负取样位置。"}
@@ -280,13 +281,9 @@ func render(args: Dictionary, batch: Dictionary) -> Dictionary:
 	var attachments := []
 	var keep := func() -> bool: return app.manifest.get("_dir") == m._dir
 	for moment in times:
-		var subject := body.duplicate(true)
+		var subject := body.duplicate()
 		if capability in ["timelineFrame", "playtestFrame"]:
-			var sec: float = moment if unit == "seconds" else clock.seconds_at(moment)
-			subject["time"] = {"value": clock.value_at(sec) if clock.is_ready() and unit != clock.timebase else moment,
-				"unit": clock.timebase if clock.is_ready() else unit, "seconds": null}
-			if is_finite(sec):
-				subject.time.seconds = sec
+			subject["time"] = clock.sample(moment, unit)
 		var result := await Runner.render(app.get_tree(), m, capability, subject, size, args.get("locale", ""), keep, profile)
 		if result.error != "":
 			return {"error": result.error, "frames": frames, "_media": attachments}

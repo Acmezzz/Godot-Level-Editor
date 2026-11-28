@@ -2,6 +2,7 @@ extends RefCounted
 ## Project-wide content authoring. The saved file is the same resource used by instance bindings.
 
 const Store := preload("res://src/content/content_store.gd")
+const ContentValues := preload("res://src/content/content_value_validation.gd")
 const Id := preload("res://src/content/content_id.gd")
 const Functions := preload("res://src/content/function_decl.gd")
 const Conditions := preload("res://src/content/condition_decl.gd")
@@ -616,8 +617,10 @@ func _open_flow() -> void:
 			refresh.call(edge.from)
 			notice.text = "源内容已删除或无法读取，未写入。"
 			return
-		var result := RelGraph.set_edge(func(_kind, _id): return rd.data,
-			func(kind, id, data): return Store.write_ex(source, kind, id, data, rd.digest).ok,
+		var result := RelGraph.set_edge(func(_kind, _id): return rd.data.duplicate(true),
+			func(kind, id, data):
+				return ContentValues.edit_problem(source, kind, data, rd.data) == "" \
+					and Store.write_ex(source, kind, id, data, rd.digest).ok,
 			edge.fn_id, edge.cid, edge.step, edge.field, want, edge.multi, edge.value, edge)
 		if result.status == "ok":
 			host.refresh_after_external_write(edge.fn_id, edge.cid)
@@ -668,7 +671,8 @@ func open_item(kind: String, cid: String, context := "", field := "", draft := {
 	var data: Dictionary = {"name": "", "fields": {}, "scope": "project"} if creating else rd.get("data", {})
 	if creating:
 		data.merge(draft, true)
-	var state := {"id": cid, "digest": str(rd.get("digest", "")), "new": creating, "map": context}
+	var state := {"id": cid, "digest": str(rd.get("digest", "")), "new": creating, "map": context,
+		"before": {} if creating else data.duplicate(true)}
 	var title := "复制草稿" if not draft.is_empty() else ("新建内容" if creating else "编辑内容")
 	var shell: Dictionary = app._popup_body(title + " · " + str(fn.get("name", kind)),
 		"保存写入内容文件。依赖其他字段的引用选项会在保存后更新。", true)
@@ -751,6 +755,10 @@ func open_item(kind: String, cid: String, context := "", field := "", draft := {
 		for commit in commits:
 			if not bool(commit.call()):
 				return false
+		var problem := ContentValues.edit_problem(source, kind, data, state.before)
+		if problem != "":
+			notice.text = problem
+			return false
 		if bool(source.get("_codes_issued", false)):
 			saving.active = true
 			var guard := func() -> bool:
@@ -781,6 +789,7 @@ func open_item(kind: String, cid: String, context := "", field := "", draft := {
 			return false
 		state.id = save_id
 		state.new = false
+		state.before = data.duplicate(true)
 		state.digest = Store.file_digest(Store.path_for(source, kind, save_id))
 		id_edit.text = save_id
 		id_edit.editable = false

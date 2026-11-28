@@ -8,6 +8,16 @@ const Conditions := preload("res://src/content/condition_decl.gd")
 const Curves := preload("res://src/content/keyframe_curve.gd")
 const Flow := preload("res://src/content/flow_target.gd")
 
+## Immediate edits may fix old content one field at a time. Publication uses check().
+static func edit_problem(m: Dictionary, fn: String, after: Dictionary, before: Dictionary) -> String:
+	var issues := check(m, fn, after)
+	if not issues.is_empty():
+		var old := check(m, fn, before)
+		for issue in issues:
+			if issue not in old:
+				return "%s：%s" % [issue.path, issue.message]
+	return ""
+
 static func check(m: Dictionary, fn: String, data: Dictionary) -> Array:
 	var issues := []
 	var values = data.get("fields", {})
@@ -83,8 +93,15 @@ static func _value(m: Dictionary, decl: Dictionary, value: Variant, path: String
 			expected = "已声明选项"
 	else:
 		match type:
-			"string", "asset_ref", "entity_ref", "viewport_ref":
+			"string", "asset_ref", "entity_ref":
 				ok = value is String
+			"viewport_ref":
+				var rect: bool = decl.get("rect", false)
+				var coordinates = value.get("rect" if rect else "point") if value is Dictionary else null
+				ok = value is Dictionary and (value.is_empty()
+					or (value.get("viewport", "") is String
+						and coordinates is Array and coordinates.size() == (4 if rect else 2)
+						and coordinates.all(func(v): return Curves.number(v) and v >= 0 and v <= 1)))
 			"int", "float", "range":
 				ok = Curves.number(value) and (type != "int" or value == floor(value))
 				if ok and Curves.number(decl.get("min")):

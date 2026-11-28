@@ -8,6 +8,8 @@ const Contents := preload("res://src/content/content_store.gd")
 const Functions := preload("res://src/content/function_decl.gd")
 const Assets := preload("res://src/assets/asset_decl.gd")
 const Grid := preload("res://src/canvas/grid_space.gd")
+const LayerStack := preload("res://src/map/layer_stack.gd")
+const MapView := preload("res://src/map/map_view_data.gd")
 
 const PROJECT_FIELDS := ["views", "worldLayout", "eventLayers", "viewports"]
 const MAP_MODES := ["map.patch", "map.rename", "map.delete", "layer.put", "layer.delete", "layer.move",
@@ -25,7 +27,8 @@ func apply(draft: Dictionary, ops: Array, batch := {}) -> Dictionary:
 		return {"error": "operations 不能为空。"}
 	if batch.is_empty():
 		batch = drafts.state(draft)
-	var previous: Dictionary = drafts.shallow_batch(batch)
+	var previous: Dictionary = batch
+	batch = drafts.shallow_batch(previous)
 	var handles := {}
 	var created := []
 	for i in ops.size():
@@ -33,7 +36,7 @@ func apply(draft: Dictionary, ops: Array, batch := {}) -> Dictionary:
 		if not raw is Dictionary or not raw.get("op") is String:
 			return {"error": "操作必须有 op。", "index": i}
 		var change: Dictionary = _replace_handles(raw, handles)
-		var result := _apply(batch, change)
+		var result := _apply(batch, change, previous.maps)
 		if result.has("error"):
 			result["index"] = i
 			return result
@@ -70,7 +73,7 @@ func _replace_handles(value: Variant, handles: Dictionary) -> Variant:
 		return out
 	return handles.get(value, value) if value is String else value
 
-func _apply(batch: Dictionary, op: Dictionary) -> Dictionary:
+func _apply(batch: Dictionary, op: Dictionary, original_maps := {}) -> Dictionary:
 	var name_: String = op.op
 	var data = op.get("data", {})
 	if not data is Dictionary:
@@ -139,7 +142,12 @@ func _apply(batch: Dictionary, op: Dictionary) -> Dictionary:
 	if name_ not in MAP_MODES:
 		return {"error": "未知操作：" + name_}
 	var map_code := str(op.get("map", ""))
-	var row: Dictionary = drafts.map_of(batch, map_code)
+	var row: Dictionary = batch.maps.get(map_code, {})
+	# A document is copied on first write; later edits in this batch own it.
+	if row.is_empty() or is_same(row, original_maps.get(map_code)):
+		row = drafts.map_of(batch, map_code)
+	elif row.get("deleted", false):
+		row = {}
 	if row.is_empty():
 		return {"error": "找不到可编辑的地图：%s。请调用 validate 检查工程地图。" % map_code}
 	var map: Dictionary = row.data
@@ -203,15 +211,14 @@ func _layer(map: Dictionary, op: Dictionary, data: Dictionary) -> Dictionary:
 		"layer.move":
 			var target = op.get("index")
 			if index >= 0 and _number(target) and target >= 0 and target < layers.size():
-				var row = layers.pop_at(index)
-				layers.insert(int(target), row)
+				LayerStack.move(layers, index, int(target), map.get("objects", []))
 				return {}
 		"layer.delete":
 			if index >= 0 and layers.size() > 1:
-				if not map.get("tiles", {}).get(id, []).is_empty() or map.get("objects", []).any(func(row): return row.get("layer") == id):
+				if not map.get("tiles", {}).get(id, []).is_empty() or map.get("objects", []).any(
+						func(row): return MapView.object_layer(row, layers) == id):
 					return {"error": "先移动或删除这一层的瓦片和摆放物。"}
-				layers.remove_at(index)
-				map.get("tiles", {}).erase(id)
+				LayerStack.remove(map, index)
 				return {}
 	return {"error": "图层或目标顺序无效：" + id}
 
@@ -257,12 +264,17 @@ func _instance(map: Dictionary, op: Dictionary, data: Dictionary) -> Dictionary:
 	var rows: Array = map.get_or_add("objects", [])
 	var id := str(op.get("instance", ""))
 	var index := _find(rows, "code", id) if id != "" else -1
-	if op.has("objectIndex") and _number(op.objectIndex):
-		index = int(op.objectIndex)
-		if index < 0 or index >= rows.size():
-			return {"error": "摆放物下标越界。"}
-	elif id != "" and index < 0:
+	if id != "" and index < 0:
 		return {"error": "实例不存在：" + id}
+	if op.has("objectIndex"):
+		if not _number(op.objectIndex) or op.objectIndex < 0 or op.objectIndex >= rows.size():
+			return {"error": "摆放物下标越界。"}
+		var at := int(op.objectIndex)
+		if id != "" and at != index:
+			return {"error": "实例码和下标指向不同的摆放物。"}
+		if id == "" and str(rows[at].get("code", "")) != "":
+			return {"error": "有实例码的摆放物须用实例码定位。"}
+		index = at
 	if op.op == "instance.delete":
 		if index < 0:
 			return {"error": "指定实例码，或无实例码场景摆放物的 objectIndex。"}
@@ -288,10 +300,9 @@ func _instance(map: Dictionary, op: Dictionary, data: Dictionary) -> Dictionary:
 		if layer_index < 0:
 			return {"error": "图层不存在。"}
 		var layer: Dictionary = map.meta.layers[layer_index]
-		var view := preload("res://src/map/map_view_data.gd")
 		var space: GridSpace = Grid.resolve(map.meta, manifest).grid
-		var local: Vector2 = view.layer_transform_of(layer).affine_inverse() * Vector2(op.world[0], op.world[1])
-		var coords := space.object_anchor_grid(local, EntityNode.anchor_unit_of(decl))
+		var local: Vector2 = MapView.layer_transform_of(layer).affine_inverse() * Vector2(op.world[0], op.world[1])
+		var coords := space.object_anchor_grid(local, MapView.anchor_unit(decl))
 		row["x"] = coords.x
 		row["y"] = coords.y
 	if decl.kind == "entity" and str(row.get("code", "")) == "":

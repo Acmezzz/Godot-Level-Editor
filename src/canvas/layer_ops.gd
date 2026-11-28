@@ -3,9 +3,8 @@ extends RefCounted
 
 
 const ContentIdRef := preload("res://src/content/content_id.gd")
-const CellGraph := preload("res://src/map/cell_graph.gd")
-const MapViewData := preload("res://src/map/map_view_data.gd")
 const TileLayerConvert := preload("res://src/map/tile_layer_convert.gd")
+const LayerStack := preload("res://src/map/layer_stack.gd")
 
 var cvs   # editor_canvas 宿主
 
@@ -214,21 +213,8 @@ func layer_del(i: int) -> void:
 	if snap.is_empty():
 		return
 	cvs.push_undo([], snap)
-	_remove_layer(snap, i)
+	LayerStack.remove(snap, i)
 	await _load_snap_layers(snap, layer_id(active_layer))
-
-static func _remove_layer(snap: Dictionary, i: int) -> void:
-	var meta: Dictionary = snap.meta
-	var L: Array = meta.layers
-	var lid: String = L[i].id
-	CellGraph.detach_layer(CellGraph.graph_of(meta), lid, MapViewData.layer_transform_of(L[i]))
-	L.remove_at(i)
-	snap.tiles.erase(lid)
-	var keep := []
-	for o in (snap.get("objects", []) as Array):
-		if o is Dictionary and str((o as Dictionary).get("layer", "")) != lid:
-			keep.append(o)
-	snap["objects"] = keep
 
 func layer_rename(i: int, name: String) -> void:
 	if not name.is_empty():
@@ -242,25 +228,29 @@ func layer_set_blend(i: int, blend: String) -> void:
 			await _set_layer_field(i, "blend", blend)
 
 func layer_move(i: int, dir: int) -> void:
-	if map_root == null or not is_instance_valid(map_root):
+	if not cvs.is_map_ready() or cvs.doc_busy:
 		return
-	var L := layers_decl()
-	var nj := i + dir
-	if i < 0 or i >= L.size() or nj < 0 or nj >= L.size():
+	var to := i + dir
+	if i < 0 or i >= layer_count() or to < 0 or to >= layer_count() or i == to:
 		return
-	var snap := extract()
-	if snap.is_empty():
-		return
-	cvs.push_undo([], snap)
-	var active_id := layer_id(active_layer)
-	var meta: Dictionary = snap.get("meta", {})
-	var SL: Array = meta.get("layers", [])
-	var tmp = SL[i]
-	SL[i] = SL[nj]
-	SL[nj] = tmp
-	meta["layers"] = SL
-	snap["meta"] = meta
-	await _load_snap_layers(snap, active_id)
+	cvs.cancel_preview_gesture()
+	cvs.end_gesture()
+	cvs._undo_history_ctrl.record_layer_move(i, to)
+	apply_layer_move(i, to)
+
+func apply_layer_move(from: int, to: int) -> void:
+	var active_id := _layer_key(active_layer)
+	# Live entities already have explicit layer IDs. Reorder projection arrays with the nodes.
+	LayerStack.move(layers_decl(), from, to)
+	var root: Node2D = layer_ents[from]
+	map_root.move_child(root, layer_ents[to].get_index())
+	for rows: Array in [layer_ents, layer_tiles, cvs.tri_views, cvs.tile_grids]:
+		rows.insert(to, rows.pop_at(from))
+	active_layer = collision_index() if active_id == "_collision" else _layer_index_of(active_id)
+	cvs._layer_has_tiles.clear()
+	cvs.vis_rev += 1
+	cvs._mark_map()
+	cvs.queue_redraw()
 
 ## 运行时初始可见（差分视图用）；编辑视图显隐走 set_layer_hidden，两回事。
 func layer_set_visible(i: int, v: bool) -> void:

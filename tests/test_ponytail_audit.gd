@@ -211,6 +211,43 @@ func test_mcp_binding_order_default_layer_and_disabled_assets() -> void:
 	ok(not work.edits._instance(data, {"op": "instance.put"}, {"asset": "marker", "x": 2, "y": 2}).has("error"), "恢复启用后可放")
 	_done(host, work)
 
+func test_mcp_map_batch_preserves_layer_and_undo_history() -> void:
+	var host := _host()
+	var work := Workbench.new(host)
+	var data := _map_data("Alpha", "MAPA")
+	data.meta.layers = [{"id": "ground", "name": "Ground"}, {"id": "above", "name": "Above"}]
+	data.objects = [{"asset": "marker", "code": "M001", "x": 3, "y": 4},
+		{"asset": "marker", "code": "M002", "layer": "above", "x": 5, "y": 6}]
+	ok(Maps.write(host.manifest, "Alpha", data), "正式地图含旧版隐式落层")
+	var draft: Dictionary = work.drafts.manage({"action": "create"})
+	var first: Dictionary = work.edits.apply(work.drafts.read(draft.id), [
+		{"op": "layer.move", "map": "MAPA", "layer": "above", "index": 0},
+		{"op": "instance.put", "map": "MAPA", "instance": "M001", "data": {"x": 9}}])
+	eq(first.get("revision"), 1, "第二条修改读到本批次的新层序")
+	var batch: Dictionary = work.drafts.state(work.drafts.read(draft.id))
+	var original_spawn: Array = batch.maps.MAPA.data.spawn.duplicate()
+	eq(batch.maps.MAPA.data.objects[0].layer, "ground", "旧摆放物仍在原层")
+	eq(batch.maps.MAPA.data.objects[0].x, 9, "同一批次中的后续修改已保存")
+	var second: Dictionary = work.edits.apply(work.drafts.read(draft.id), [
+		{"op": "map.patch", "map": "MAPA", "data": {"spawn": [4, 4]}}], batch)
+	eq(second.get("revision"), 2, "已有草稿地图可继续改")
+	eq(batch.maps.MAPA.data.spawn, original_spawn, "成功批次不改传入版本")
+	var undo: Dictionary = work.drafts.manage({"action": "undo", "draft": draft.id, "revision": 2})
+	var row: Dictionary = work.drafts.read(draft.id)
+	var failed: Dictionary = work.edits.apply(row, [
+		{"op": "map.patch", "map": "MAPA", "data": {"spawn": [8, 8]}},
+		{"op": "instance.delete", "map": "MAPA", "instance": "M001", "objectIndex": 1}], batch)
+	eq(failed.get("index"), 1, "码与下标冲突时不修改任一实例")
+	eq(batch.maps.MAPA.data.spawn, original_spawn, "失败批次不改传入版本")
+	eq(work.drafts.state(work.drafts.read(draft.id)), batch, "失败批次不改变草稿正文")
+	var redo: Dictionary = work.drafts.manage({"action": "redo", "draft": draft.id, "revision": undo.revision})
+	eq(redo.get("revision"), 4, "失败批次保留重做")
+	eq(work.drafts.state(work.drafts.read(draft.id)).maps.MAPA.data.spawn, [4.0, 4.0], "重做恢复成功批次")
+	var untouched: Dictionary = work.drafts.manage({"action": "create"})
+	ok(work.edits.apply(work.drafts.read(untouched.id), [
+		{"op": "layer.delete", "map": "MAPA", "layer": "ground"}]).has("error"), "不能删除仍有隐式摆放物的层")
+	_done(host, work)
+
 func test_steps_write_uses_content_history_without_a_map() -> void:
 	var fixture := _host()
 	var host := App.new()
@@ -227,9 +264,9 @@ func test_steps_write_uses_content_history_without_a_map() -> void:
 	steps._steps_cid = "project-timeline"
 	var id := "project-timeline"
 	ok(Store.write(host.manifest, "sequence", id, {"steps": []}), "初始演出")
-	var data: Dictionary = steps._steps_data()
-	data.steps = [{"step": "S001"}]
-	ok(steps._steps_write(data), "改动演出")
+	var edit: Dictionary = steps._steps_edit()
+	edit.data.steps = [{"step": "S001"}]
+	ok(steps._steps_write(edit), "改动演出")
 	canvas._undo_history_ctrl._push_entry({"kind": "ents"})
 	eq(canvas._undo_history_ctrl.undo_content_only(false, "sequence", id), "done", "独立撤销演出")
 	eq(Store.read(host.manifest, "sequence", id).steps, [], "写回原步骤")
@@ -239,6 +276,19 @@ func test_steps_write_uses_content_history_without_a_map() -> void:
 	ok(Store.write(host.manifest, "sequence", id, {"steps": [], "external": true}), "模拟外部写入")
 	eq(canvas._undo_history_ctrl.undo_content_only(false, "sequence", id), "refused", "拒绝覆盖外部内容")
 	eq(Store.read(host.manifest, "sequence", id).external, true, "外部数据保留")
+	ok(Store.write(host.manifest, "sequence", id, {"steps": [], "fields": {"DURA": "legacy"}}), "装载旧的无效字段")
+	var first: Dictionary = steps._steps_edit()
+	first.data.steps = [{"step": "S001", "fields": {"BOOL": "invalid"}}]
+	ok(not steps._steps_write(first), "拒绝引入新的错误")
+	first.data.steps[0].fields.BOOL = true
+	ok(steps._steps_write(first), "旧问题不阻止编辑其他字段")
+	var stale: Dictionary = steps._steps_edit()
+	stale.data.steps.clear()
+	var latest: Dictionary = steps._steps_edit()
+	latest.data.fields.DURA = 2
+	ok(steps._steps_write(latest), "修复旧字段")
+	ok(not steps._steps_write(stale), "另一笔写入后，不使用旧编辑覆盖内容")
+	eq(Store.read(host.manifest, "sequence", id).fields.DURA, 2, "保留最新编辑")
 	canvas.free()
 	host.free()
 	_wipe(fixture.manifest._dir)

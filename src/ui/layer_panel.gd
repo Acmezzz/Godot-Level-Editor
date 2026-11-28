@@ -269,7 +269,7 @@ func _layer_mgr_row(i: int, decl: Dictionary) -> Control:
 	var up = app.UiKitScript.button("↑", func():
 		var at := _idx_of_lid(lid)
 		if at > 0:
-			await app.canvas.layer_move(at, -1)
+			app.canvas.layer_move(at, -1)
 		_rebuild_layer_mgr()
 		app._editor_state_ctrl.sync_ui(), "ghost")
 	up.disabled = i == 0
@@ -278,7 +278,7 @@ func _layer_mgr_row(i: int, decl: Dictionary) -> Control:
 	var down = app.UiKitScript.button("↓", func():
 		var at := _idx_of_lid(lid)
 		if at >= 0 and at < app.canvas.layer_count() - 1:
-			await app.canvas.layer_move(at, 1)
+			app.canvas.layer_move(at, 1)
 		_rebuild_layer_mgr()
 		app._editor_state_ctrl.sync_ui(), "ghost")
 	down.disabled = i >= app.canvas.layer_count() - 1

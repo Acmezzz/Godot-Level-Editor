@@ -199,7 +199,7 @@ func _describe(args: Dictionary) -> Dictionary:
 			if manifest.has("_error"):
 				return {"error": manifest._error}
 			app._enter_project(path_, manifest)
-	var available: Dictionary = app._manifest_write_payload(app.manifest) if not app.manifest.has("_error") else {}
+	var available: Dictionary = EditorManifest.public_data(app.manifest) if not app.manifest.has("_error") else {}
 	var response := {"path": app.cur_project_dir,
 		"recent": app.project_dirs.map(func(p): return {"path": p, "name": app.project_names.get(p, p)}),
 		"map": app.canvas.cur_map_code() if app.map_loaded else "", "dirty": _editor_dirty()}
@@ -440,7 +440,7 @@ func _generate(args: Dictionary, draft: Dictionary, batch: Dictionary) -> Dictio
 		if not Generators.valid_value(field, params[field.id]):
 			return {"error": "无效的生成参数：" + str(field.id)}
 	var code: String = edits.new_map_code(batch)
-	var subject := {"generator": id, "parameters": params, "manifest": app._manifest_write_payload(drafts.candidate(batch)),
+	var subject := {"generator": id, "parameters": params, "manifest": EditorManifest.public_data(drafts.candidate(batch)),
 		"target": {"name": args.name, "code": code, "version": Maps.FORMAT_VERSION}}
 	var result := await Runner.render(app.get_tree(), m, Runner.GENERATE_MAP, subject, Vector2i.ZERO, "",
 		func() -> bool: return app.manifest.get("_dir") == m._dir)

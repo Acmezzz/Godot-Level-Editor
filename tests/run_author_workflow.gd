@@ -2291,6 +2291,24 @@ func author_tile_layer_conversion(app, manifest: Dictionary) -> void:
 	check(saved.get("status") == "ok", "save layer migration")
 	await app._load_map_file(path)
 	check(cvs.extract().tiles.get(copy, []) == source.tiles[floor_id], "converted tiles reopen with preserved indices")
+	var map_root: Node2D = cvs.map_root
+	var custom: Node2D = cvs.tri_views[1]
+	var tile_layer: TileMapLayer = cvs.layer_tiles[1]
+	var entity: EntityNode = cvs.ents_all()[0]
+	var before_move: Dictionary = cvs.extract()
+	cvs.active_layer = 1
+	cvs.layer_move(1, -1)
+	var moved: Dictionary = cvs.extract()
+	check(cvs.map_root == map_root and cvs.tri_views[0] == custom and cvs.layer_tiles[0] == tile_layer
+		and cvs.ents_all().has(entity) and cvs.active_layer == 0, "reorder preserves nodes and the active layer")
+	check(moved.meta.layers[0].id == floor_id and cvs.layer_ents[0].get_index() < cvs.layer_ents[1].get_index()
+		and moved.tiles == before_move.tiles and moved.objects == before_move.objects,
+		"the scene and stored order change together without moving content between layers")
+	check(await cvs.undo() and cvs.extract() == before_move and cvs.tri_views[1] == custom,
+		"reorder undo restores the order in place")
+	check(await cvs.redo() and cvs.extract() == moved and cvs.tri_views[0] == custom,
+		"reorder redo restores the new order in place")
+	await cvs.undo()
 
 func author_world_region_move(app, manifest: Dictionary) -> void:
 	var path := Maps.path_for(manifest, "rule_hex")

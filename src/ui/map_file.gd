@@ -65,7 +65,7 @@ func publish_event_drawing(plan: Dictionary, candidate: Dictionary) -> bool:
 		app._set_status("图组绘制层的目标文件已变化：" + plan.name)
 		return false
 	var manifest_path := str(app.manifest.get("_dir", "")).path_join("editor/editor_manifest.json")
-	var payload: Dictionary = app._manifest_write_payload(candidate)
+	var payload: Dictionary = EditorManifest.public_data(candidate)
 	plan["log_path"] = Recovery.begin_pending(app.manifest, "绑定图组绘制层 " + str(plan.name), [
 		{"path": path, "baseline": "", "expect_absent": true, "expect": expected},
 		{"path": manifest_path, "baseline": Recovery.digest(manifest_path), "expect": JSON.stringify(payload, "\t").sha256_text()},

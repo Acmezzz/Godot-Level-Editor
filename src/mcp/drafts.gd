@@ -217,7 +217,7 @@ func _save_snapshot(draft: Dictionary, batch: Dictionary, refs := {}, previous :
 		var prior_paths: Dictionary = refs.get(domain, {})
 		for id in batch[domain]:
 			var value = batch[domain][id]
-			if prior_paths.has(id) and old.has(id) and old[id] == value:
+			if prior_paths.has(id) and old.has(id) and (is_same(old[id], value) or old[id] == value):
 				index[id] = prior_paths[id]
 				continue
 			var text := JSON.stringify({"value": value}, "\t")
@@ -324,7 +324,7 @@ func plan(draft: Dictionary, batch: Dictionary) -> Dictionary:
 		if problem != "":
 			return {"error": problem}
 		var case_rename := Maps.is_case_only_rename(old, target)
-		_put(entries, payloads, target, row.baseline if old == target or case_rename else "", Format.encode(row.data))
+		Commit.add_write(entries, payloads, target, row.baseline if old == target or case_rename else "", Format.encode(row.data))
 		if case_rename:
 			entries.back()["case_from"] = old
 		elif old != "" and old != target:
@@ -337,17 +337,13 @@ func plan(draft: Dictionary, batch: Dictionary) -> Dictionary:
 			if row.baseline != "":
 				removed.append({"path": target, "baseline": row.baseline, "op": "delete"})
 		else:
-			_put(entries, payloads, target, row.baseline, JSON.stringify(row.data, "\t"))
+			Commit.add_write(entries, payloads, target, row.baseline, Contents.encode(row.content, row.data))
 	if not batch.project.is_empty() or manifest.has("_codes_issued"):
 		var target := str(manifest._dir).path_join("editor/editor_manifest.json")
-		var body: Dictionary = app._manifest_write_payload(candidate(batch))
-		_put(entries, payloads, target, draft.manifestDigest, JSON.stringify(body, "\t"))
+		var body: Dictionary = EditorManifest.public_data(candidate(batch))
+		Commit.add_write(entries, payloads, target, draft.manifestDigest, JSON.stringify(body, "\t"))
 	entries.append_array(removed)
 	return {"entries": entries, "payloads": payloads}
-
-func _put(entries: Array, payloads: Dictionary, target: String, baseline: String, text: String) -> void:
-	entries.append({"path": target, "baseline": baseline, "expect_absent": baseline == "", "expect": text.sha256_text()})
-	payloads[target] = text
 
 func publish(draft: Dictionary, pending: Dictionary, preflight := {}) -> Dictionary:
 	if preflight.is_empty():

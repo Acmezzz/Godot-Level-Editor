@@ -239,7 +239,7 @@ func _open_preview() -> void:
 		"initial": "缩放和中心来自世界布局画布，切换画幅改变可见范围。"}, _capture_preview, _is_open)
 
 func _capture_preview(preset: String) -> Dictionary:
-	var public: Dictionary = _app._manifest_write_payload(_source)
+	var public: Dictionary = EditorManifest.public_data(_source)
 	public["worldLayout"] = _draft.duplicate(true)
 	var camera := _surface.camera()
 	var session = _app._map_file_ctrl.sess

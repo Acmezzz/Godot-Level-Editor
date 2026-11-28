@@ -77,6 +77,16 @@ func value_at(seconds: float) -> float:
 		return _seconds_to_beats(maxf(seconds - beat_offset, 0.0))
 	return seconds
 
+## Normalize a preview sample; missing conversion does not invent seconds.
+func sample(value: float, unit := "") -> Dictionary:
+	var input_unit: String = timebase if unit == "" else unit
+	var sec := value if input_unit == "seconds" else (seconds_at(value) if is_ready() else NAN)
+	var sample_point := {"value": value_at(sec) if is_ready() and input_unit != timebase else value,
+		"unit": timebase if is_ready() else input_unit, "seconds": null}
+	if is_finite(sec):
+		sample_point.seconds = sec
+	return sample_point
+
 ## 拍 → 秒：以第 0 拍开段，逐段累加 (拍差 × 60 / BPM)。
 ## 首段起点非零（声明里第一段 beat > 0）：0 拍..首段起点这段没有变速记录，
 ## 按首段 BPM 外推——否则这段恒算 0 秒，正向/反向换算在起点前不可逆（V4 P1）。

@@ -12,7 +12,6 @@ const Targets := preload("res://src/project/startup_targets.gd")
 const Timeline := preload("res://src/content/step_timeline.gd")
 const Assets := preload("res://src/assets/asset_decl.gd")
 const Audio := preload("res://src/content/audio_decl.gd")
-const Flow := preload("res://src/content/flow_target.gd")
 const ContentValues := preload("res://src/content/content_value_validation.gd")
 
 static func check(m: Dictionary, args := {}) -> Dictionary:
@@ -20,6 +19,12 @@ static func check(m: Dictionary, args := {}) -> Dictionary:
 	var index := Maps.code_index(m)
 	var codes: Dictionary = index.map
 	var maps := {}
+	var contents := {}
+	var read_content := func(fn: String, cid: String) -> Dictionary:
+		var key := [fn, cid]
+		if not contents.has(key):
+			contents[key] = Contents.read_ex(m, fn, cid)
+		return contents[key]
 	var validate_map := preload("res://src/map/map_data_validation.gd")
 	for code in ([args.map] if args.has("map") else codes.keys()):
 		if not codes.has(code):
@@ -34,11 +39,11 @@ static func check(m: Dictionary, args := {}) -> Dictionary:
 		var refs := Spatial.map_links(m, source)
 		refs.append_array(Refs.entity_property_refs(m, source, ["map", "asset", "entity_type", "view", "audio"]))
 		for ref in refs:
-			var problem := _reference_problem(m, source, ref, maps)
+			var problem := _reference_problem(m, source, ref, maps, read_content)
 			if problem != "":
 				issues.append({"severity": "error", "path": "maps." + code + "." + ref.path, "message": problem, "reference": ref})
 	if not args.has("map"):
-		for issue in Screens.view_reference_issues(m):
+		for issue in Screens.view_reference_issues(m, "", read_content):
 			issues.append(issue.merged({"severity": "error"}))
 		for name in index.unreadable:
 			var path := Maps.path_for(m, name)
@@ -58,7 +63,7 @@ static func check(m: Dictionary, args := {}) -> Dictionary:
 				issues.append({"severity": "error", "path": "worldLayout.chunks." + code, "message": "世界分块所引用的地图不存在。"})
 		var startup: Dictionary = m.get("startup", {})
 		var entry: Dictionary = startup.get("target", {})
-		if not entry.is_empty() and not Targets.destination_available(m, startup, entry):
+		if not entry.is_empty() and not Targets.destination_available(m, startup, entry, maps, read_content):
 			issues.append({"severity": "error", "path": "startup.target", "message": "项目入口不存在。"})
 		if Targets.needs_content_map(startup, entry) and not Targets.content_map_available(m, startup.get("contentMap", "")):
 			issues.append({"severity": "error", "path": "startup.contentMap", "message": "配对地图不存在。"})
@@ -68,14 +73,14 @@ static func check(m: Dictionary, args := {}) -> Dictionary:
 		var project_refs: Array = preload("res://src/project/project_content_slots.gd").references(m)
 		project_refs.append_array(preload("res://src/project/event_layers.gd").references(m))
 		for ref in project_refs:
-			if not Targets.destination_available(m, ref.domains, ref.target):
+			if not Targets.destination_available(m, ref.domains, ref.target, maps, read_content):
 				issues.append({"severity": "error", "path": str(ref.get("path", ref.get("name", "project"))), "message": "项目或图组目标未声明或不可用。"})
 	for code in maps:
 		for obj in maps[code].get("objects", []):
 			for binding in obj.get("functions", []):
 				var cid: String = binding.get("content", "")
 				var fn := Functions.fn_id_of(m, binding.fn)
-				if cid != "" and fn != "" and Contents.read_ex(m, fn, cid).status != "ok":
+				if cid != "" and fn != "" and read_content.call(fn, cid).status != "ok":
 					issues.append({"severity": "error", "path": "maps." + code + ".objects." + str(obj.get("code", "")),
 						"message": "绑定内容不存在：" + fn + "/" + cid})
 	var content_items: Array = []
@@ -86,14 +91,14 @@ static func check(m: Dictionary, args := {}) -> Dictionary:
 				context_keys.append([fn, id])
 				if args.has("content") or args.has("map"):
 					continue
-				var readback := Contents.read_ex(m, fn, id)
+				var readback: Dictionary = read_content.call(fn, id)
 				if readback.status != "ok":
 					issues.append({"severity": "error", "path": "content.%s.%s" % [fn, id], "message": readback.error})
 				else:
 					content_items.append({"function": fn, "content": id, "data": readback.data})
 	if args.has("content"):
 		var fn: String = args.get("function", "")
-		var item := Contents.read_ex(m, fn, args.content)
+		var item: Dictionary = read_content.call(fn, args.content)
 		if item.status != "ok":
 			issues.append({"severity": "error", "path": "content." + args.content, "message": "内容不存在或无法读取。"})
 		else:
@@ -107,13 +112,8 @@ static func check(m: Dictionary, args := {}) -> Dictionary:
 			context_maps = {}
 			for code in codes:
 				context_maps[code] = Maps.read(m, codes[code])
-		var loaded := {}
-		for row in content_items:
-			if not row.get("deleted", false):
-				loaded[[row.function, row.content]] = row.data
 		binding_contexts = Spatial.content_contexts(m, context_maps, func(fn: String, cid: String) -> Array:
-			var key := [fn, cid]
-			var data: Dictionary = loaded[key] if loaded.has(key) else Contents.read(m, fn, cid)
+			var data: Dictionary = read_content.call(fn, cid).data
 			return Spatial.content_refs(m, fn, data) if not data.is_empty() else [], {}, context_keys)
 	for row in content_items:
 		if row.get("deleted", false):
@@ -134,7 +134,7 @@ static func check(m: Dictionary, args := {}) -> Dictionary:
 					contexts = [{}]
 				for ref in Refs.property_refs(m, section.decls, values, {"function": row.function}, section.prefix, "code"):
 					for source in contexts:
-						var problem := _reference_problem(m, source, ref, maps)
+						var problem := _reference_problem(m, source, ref, maps, read_content)
 						if problem != "":
 							var map_code: String = source.get("meta", {}).get("code", "")
 							issues.append({"severity": "error", "path": "content." + row.content + "." + ref.path,
@@ -144,7 +144,8 @@ static func check(m: Dictionary, args := {}) -> Dictionary:
 				issues.append({"severity": "warning", "path": "content." + row.content + ".steps", "message": warning})
 	return {"valid": not issues.any(func(issue): return issue.severity == "error"), "issues": issues}
 
-static func _reference_problem(m: Dictionary, source: Dictionary, ref: Dictionary, maps: Dictionary) -> String:
+static func _reference_problem(m: Dictionary, source: Dictionary, ref: Dictionary, maps: Dictionary,
+		read_content: Callable) -> String:
 	if Spatial.uses_paired_content_map(ref) and ref.get("paired", "") != "" \
 			and not Maps.code_map(m).has(ref.paired):
 		return "配对地图不存在或无法唯一解析：" + str(ref.paired)
@@ -165,10 +166,10 @@ static func _reference_problem(m: Dictionary, source: Dictionary, ref: Dictionar
 			var fn: String = ref.filter.get("fn", "")
 			if fn == "":
 				fn = ref.get("function", "")
-			if fn != "" and Contents.read_ex(m, fn, str(ref.value)).status != "ok":
+			if fn != "" and read_content.call(fn, str(ref.value)).status != "ok":
 				return "内容不存在：" + fn + "/" + str(ref.value)
 		"flow_target":
-			if Flow.kind(ref.value) == "" or not Targets.destination_available(m, ref.decl, ref.value, maps):
+			if not Targets.destination_available(m, ref.decl, ref.value, maps, read_content):
 				return "流程目标未声明或不存在：" + JSON.stringify(ref.value)
 		_:
 			return Spatial.link_problem(m, source, ref, maps)

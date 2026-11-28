@@ -19,6 +19,7 @@ const Kit := preload("res://src/ui/ui_kit.gd")
 const Th := preload("res://src/ui/ui_theme.gd")
 const SpatialCheck := preload("res://src/project/spatial_reference_check.gd")
 const ContentStore := preload("res://src/content/content_store.gd")
+const ContentValues := preload("res://src/content/content_value_validation.gd")
 const ContentId := preload("res://src/content/content_id.gd")
 const ConditionDecls := preload("res://src/content/condition_decl.gd")
 const AudioDecls := preload("res://src/content/audio_decl.gd")
@@ -602,7 +603,11 @@ func _content_read_ex(fn_id: String, cid: String) -> Dictionary:
 ## 写内容：暂存中的条目只更新内存（staged），已落盘的条目照旧即时写盘（field_edit 允许）。
 ## base_digest = 读到内容时的磁盘摘要；非空时写前比对，磁盘被外部改过就不覆盖（P04）。
 ## 返回 "ok" / "conflict" / "fail"。
-func _content_write(fn_id: String, cid: String, data: Dictionary, base_digest := "") -> String:
+func _content_write(fn_id: String, cid: String, data: Dictionary, base_digest: String, before: Dictionary) -> String:
+	var problem := ContentValues.edit_problem(manifest, fn_id, data, before)
+	if problem != "":
+		app._set_status(" 内容未写入 · " + problem)
+		return "invalid"
 	var st = _staged_get(fn_id, cid)
 	if st is Dictionary:
 		(st as Dictionary)["data"] = data.duplicate(true)
@@ -653,12 +658,13 @@ func _set_field(i: int, fn_id: String, key: String, value, expected: Dictionary,
 		return true
 	fields[key] = value
 	data["fields"] = fields
-	var wr := _content_write(fn_id, cid, data, str(rd.digest))
+	var wr := _content_write(fn_id, cid, data, str(rd.digest), before)
 	if wr == "conflict":
 		_content_conflict(cid)
 		return false
 	if wr != "ok":
-		_ensure_failed()
+		if wr != "invalid":
+			_ensure_failed()
 		return false
 	var stored: Dictionary = _content_read_ex(fn_id, cid).data.get("fields", fields)
 	expected.merge({"present": stored.has(key), "value": stored.get(key)}.duplicate(true), true)
@@ -707,12 +713,13 @@ func _commit_name(i: int, text: String, expected: Dictionary) -> bool:
 		return true
 	var before: Dictionary = data.duplicate(true)
 	data["name"] = nm
-	var wr := _content_write(fn_id, cid, data, str(rd.digest))
+	var wr := _content_write(fn_id, cid, data, str(rd.digest), before)
 	if wr == "conflict":
 		_content_conflict(cid)
 		return false
 	if wr != "ok":
-		_ensure_failed()
+		if wr != "invalid":
+			_ensure_failed()
 		return false
 	expected.merge({"bound": true, "value": nm}, true)
 	_record_content_delta(fn_id, cid, before, data, str(rd.digest))
@@ -1117,13 +1124,13 @@ func _rename_library_item(fn_id: String, cid: String, new_name: String) -> bool:
 		return false
 	if str(data.get("name", "")) == nm:
 		return false
-	data["name"] = nm
-	var wr := _content_write(fn_id, cid, data, str(rd.digest))
+	var wr := _content_write(fn_id, cid, data.merged({"name": nm}, true), str(rd.digest), data)
 	if wr == "conflict":
 		app._set_status(" 内容 %s 已被外部修改，改显示名未写入" % cid)
 		return false
 	if wr != "ok":
-		app._set_status(" 改显示名失败：内容文件不可写")
+		if wr != "invalid":
+			app._set_status(" 改显示名失败：内容文件不可写")
 		return false
 	# 绑定里冗余的 name 只影响列表显示：引用字段是 content ID，改名不动它
 	app._set_status(" 已改显示名：%s → %s（ID 与引用不变）" % [cid, nm])

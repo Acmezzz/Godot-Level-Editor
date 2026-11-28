@@ -1072,8 +1072,8 @@ func read_content_staged_ex(fn_id: String, cid: String) -> Dictionary:
 
 ## 暂存感知写回（R05）：base_digest 非空时写前比对，磁盘被外部改过不覆盖。
 ## 返回 ContentStore 口径的 "ok" / "conflict" / "fail"（不是布尔：冲突与失败要分开报）。
-func write_content_staged(fn_id: String, cid: String, data: Dictionary, base_digest := "") -> String:
-	return _form._content_write(fn_id, cid, data, base_digest)
+func write_content_staged(fn_id: String, cid: String, data: Dictionary, base_digest: String, before: Dictionary) -> String:
+	return _form._content_write(fn_id, cid, data, base_digest, before)
 
 func _ensure_failed() -> void:
 	_form._ensure_failed()

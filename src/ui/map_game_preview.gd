@@ -189,7 +189,7 @@ static func _saved_snapshot(preset: String, app, manifest: Dictionary, key: Stri
 	var center := bounds.get_center()
 	var zoom := minf(size.x / bounds.size.x, size.y / bounds.size.y) * 0.9
 	return {"subject": {"map": map, "eventDrawings": RefIndex.event_drawings(manifest, key),
-		"manifest": app._manifest_write_payload(manifest), "viewportId": preset,
+		"manifest": EditorManifest.public_data(manifest), "viewportId": preset,
 		"camera": {"center": [center.x, center.y], "zoom": zoom}, "stagedContent": []},
 		"default_size": default_size, "current": current}
 
@@ -321,7 +321,7 @@ static func _open(app, mode: String, choose: Callable, extra := {}, prepare := C
 		var subject := map_context(app)
 		if subject.is_empty():
 			return {"error": "地图正在重建，请稍后重试。"}
-		subject["manifest"] = app._manifest_write_payload(app.manifest)
+		subject["manifest"] = EditorManifest.public_data(app.manifest)
 		subject["viewportId"] = preset
 		var revision: int = session.revision
 		var current := func() -> bool: return session.revision == revision and context_matches(app, subject)

@@ -9,6 +9,7 @@ extends Node2D
 signal modified
 signal cursor_info(text: String)
 
+const CanvasSnapshot := preload("res://src/canvas/canvas_snapshot.gd")
 const K := preload("res://src/core/constants.gd")   # 共享常量统一在 core/constants.gd
 const TilesetCache := preload("res://src/canvas/tileset_cache.gd")   # PF-02：TileSet 构建缓存
 const INVISIBLE_CELL := K.INVISIBLE_CELL
@@ -478,7 +479,7 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	_ent_by_id_dirty = true
 	# 摆放物：objects[] 统一收场景图片与实体（数据形状一致，仅 entity 带 code）。
 	# 位置 = 浮点格坐标 + anchor 换算；transform/visible/zPolicy 缺省整键省略。
-	# 行→节点转换与撤销差量共用一份（_undo_history_ctrl._node_from_row），这里只补 C09 挂载。
+	# 行→节点转换与撤销差量共用一份（CanvasSnapshot.place_object），这里只补 C09 挂载。
 	var mount_filled := false
 	var missing_codes: Array[EntityNode] = []
 	var assets := AssetDecl.all(manifest)
@@ -490,7 +491,7 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 		var aid := str((e as Dictionary).get("asset", ""))
 		if aid == "":
 			continue
-		var n: EntityNode = _undo_history_ctrl._node_from_row(e, assets.get(aid, {}))
+		var n: EntityNode = CanvasSnapshot.place_object(self, e, assets.get(aid, {}))
 		if drawing_context_only:
 			continue
 		# C09：载图即补齐类型挂载（只在工作副本上，不碰选中事件）；缺的补一条 mounted 行并标脏
@@ -1246,7 +1247,7 @@ func duplicate_instances(placements: Array) -> bool:
 		if li < 0 or is_layer_locked(li) or not is_layer_visible(li):
 			_hint("副本目标图层已锁定、隐藏或不存在。")
 			return false
-		var row: Dictionary = _undo_history_ctrl._object_row(node)
+		var row: Dictionary = CanvasSnapshot.object_row(node)
 		rows.append(row)
 		can_delta = can_delta and row.has("code")
 	var source := copy_content_source()
@@ -1270,7 +1271,7 @@ func duplicate_instances(placements: Array) -> bool:
 	for i in placements.size():
 		var row: Dictionary = plan.map_patch.objects[i]
 		row["layer"] = layer_id(placements[i].layer)
-		var node: EntityNode = _undo_history_ctrl._node_from_row(row)
+		var node: EntityNode = CanvasSnapshot.place_object(self, row)
 		node.position = placements[i].anchor + node.sort_anchor()
 		copies.append(node)
 	if can_delta:
@@ -1746,7 +1747,7 @@ func extract(preserve_preview := false) -> Dictionary:
 	elif gesture in [Gesture.ENTITY_DRAG, Gesture.ENTITY_RESIZE, Gesture.ENTITY_VERTEX, Gesture.SPAWN_DRAG]:
 		# 这些手势会把尚未确认的值直接写到节点上。只读查询留待手势结束。
 		return {}
-	return _undo_history_ctrl.extract()
+	return CanvasSnapshot.extract(self)
 
 func arrival_snapshot() -> Dictionary:
 	var objects := []
@@ -1857,7 +1858,7 @@ func layer_del(i: int) -> void:
 func layer_rename(i: int, new_name: String) -> void:
 	await _layer_ops_ctrl.layer_rename(i, new_name)
 func layer_move(i: int, dir: int) -> void:
-	await _layer_ops_ctrl.layer_move(i, dir)
+	_layer_ops_ctrl.layer_move(i, dir)
 func layer_set_visible(i: int, v: bool) -> void:
 	await _layer_ops_ctrl.layer_set_visible(i, v)
 func layer_set_blend(i: int, blend: String) -> void:

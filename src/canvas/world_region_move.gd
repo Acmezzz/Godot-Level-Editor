@@ -1,6 +1,7 @@
 extends RefCounted
 ## Move or copy a canvas-space selection across the map's editable layers.
 
+const CanvasSnapshot := preload("res://src/canvas/canvas_snapshot.gd")
 const ClonePlan := preload("res://src/content/clone_plan.gd")
 const GraphClip := preload("res://src/map/cell_graph_clip.gd")
 const EdgeRef := preload("res://src/map/edge_ref.gd")
@@ -121,7 +122,7 @@ func copy(include_graph := false, include_spawn := false, follow_edges := false)
 	var anchors: Array[Vector2] = []
 	for n: EntityNode in snap.objects:
 		var li: int = cvs._layer_index_of(n.layer_id)
-		objects.append(cvs._undo_history_ctrl._object_row(n))
+		objects.append(CanvasSnapshot.object_row(n))
 		anchors.append(cvs.to_layer_world(li, n.position - n.sort_anchor()) - selection.position)
 		layer_names[n.layer_id] = cvs.layer_name(li)
 	var clip := {"world": true, "source": source, "layer_names": layer_names,
@@ -249,7 +250,7 @@ func paste_at(pos: Vector2) -> void:
 		var row: Dictionary = clone.map_patch.objects[i]
 		var li: int = target.layers[clip.objects[i].layer]
 		row["layer"] = cvs.layer_id(li)
-		var n: EntityNode = cvs._undo_history_ctrl._node_from_row(row)
+		var n: EntityNode = CanvasSnapshot.place_object(cvs, row)
 		n.position = cvs.to_layer_local(li, origin + clip.anchors[i]) + n.sort_anchor()
 	if target.has("graph"):
 		cvs.map_data.meta["cellGraph"] = target.graph
