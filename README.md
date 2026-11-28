@@ -11,6 +11,7 @@
 | [docs/EDITOR_FEATURES.md](docs/EDITOR_FEATURES.md) | **编辑器功能权威描述**：架构、全部功能、快捷键、已知边界 |
 | [docs/GAME_SIDE_STANDARD.md](docs/GAME_SIDE_STANDARD.md) | **游戏侧 AI 接入指南**：模块声明、数据读取及交付验收；详细字段见[数据协议参考](docs/GAME_SIDE_PROTOCOL.md) |
 | [docs/EDITOR_MCP.md](docs/EDITOR_MCP.md) | **编辑器 EXE 的 MCP**：Codex 接入、工具参数、截图、草稿、试玩与发布 |
+| [docs/EDITOR_SOURCE_INDEX.md](docs/EDITOR_SOURCE_INDEX.md) | **源码索引**：编辑器维护时查各文件职责 |
 
 ## 快速上手
 

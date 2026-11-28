@@ -4,7 +4,7 @@
 
 ## 启动和连接
 
-发布包包含 `2D游戏编辑器.exe` 和同名的 `2D游戏编辑器.pck`，两者必须放在同一目录。在 Godot 的「项目 → 导出」选择 **Windows Desktop** 可重新导出发布版，默认 EXE 路径是 `dist/2D游戏编辑器.exe`（先建 `dist` 目录，或在 Godot 里选现有输出目录）。仓库内置的开发插件在导出时移除自己的 autoload；发布包不含该插件。
+发布包包含 `2D游戏编辑器.exe` 和同名的 `2D游戏编辑器.pck`，两者必须放在同一目录。MCP 随 EXE 一起提供，无需另装插件或 Node.js。
 
 从 PowerShell 启动，例如：
 
@@ -72,6 +72,8 @@ operations 的每个对象包含 op。写入数据时，字段、步骤、触发
 - 试玩入口的 target：地图 {map} 或 {map,inst,port}，内容 {function,content} 或 {function,content,contentMap}，屏幕 {view}。默认使用正式内容；现有屏幕草稿试玩协议允许传 draft 捕获该屏幕快照，其余内容仍来自正式数据。其它未发布地图或演出可先用预览查看。status 返回游戏实际提供的加载回执。
 - 试玩实时截图为可选扩展。游戏若需要支持，应声明 playtest.report:true 和 playtest.captureFrames:true。游戏在现有 --editor-playtest= 参数解出回执 path 和 token 后，监听同目录的 <回执名去掉.json>.frame.request.json。请求形状为 {version:1,token,id,width,height,result}。核对 token，按指定画幅获取**本次运行**画面，先写临时 PNG 后改名到请求的 result 路径。编辑器读取后清理请求和结果。不接入扩展时，其它试玩和离线预览照常可用。
 
-## 验收
+## 源码仓库：重新导出与验收
 
-tools/release_check.py 跑完整编辑器回归；tools/test_authoring_mcp.py 通过真实 HTTP 连接由 --editor 指定的编辑器 EXE，使用独立临时游戏工程验证批量编辑、图片音频、生成、试玩、发布及冲突。--godot 用于启动测试夹具，发布版运行本身不需要安装 Godot。
+在 Godot 的「项目 → 导出」选择 **Windows Desktop**。默认 EXE 路径是 `dist/2D游戏编辑器.exe`（先创建 `dist`，也可选其他输出目录）。导出配置排除源码仓库的开发插件、工具和测试。
+
+`tools/release_check.py` 跑编辑器回归；`tools/test_authoring_mcp.py` 用 `--editor` 指定导出的 EXE，通过 HTTP 验证编辑、截图、试玩和发布。`--godot` 用于启动测试工程，运行发布版编辑器本身不需要安装 Godot。
