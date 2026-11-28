@@ -299,13 +299,11 @@ func _delete_layer(lid: String) -> void:
 	var editor = app.project_shell.content_editor
 	if not editor.commit_fields():
 		return
-	var session = app._map_file_ctrl.sess
-	var generation: int = session.generation
-	var revision: int = session.revision
+	var current: Callable = app._map_file_ctrl.document_guard()
 	_layer_mgr.hide()
 	if not await app._confirm_action("删除图层", "删除「%s」及其瓦片和实例。可用 Ctrl+Z 撤销。" % app.canvas.layer_name(at), "删除图层"):
 		return
-	if session.stale(generation) or session.revision != revision:
+	if not current.call():
 		app._set_status("地图已更改，请重新选择要删除的图层。")
 		return
 	await app.canvas.layer_del(at)

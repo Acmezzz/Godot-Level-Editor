@@ -31,8 +31,7 @@ var active_layer := 0          # 0..N-1 = 层栈下标，N = 碰撞元层
 var place_kind := "tiles"      # 放置语义跟资产走："tiles"=涂瓦片 / "object"=摆实例（左栏驱动）
 var paint_cell := Vector2i(0, 0)  # 当前瓦片（纯手动，不自动变形）
 
-## 瓦片笔刷变换（v7/E08）：alt = 0-7 的 D4 组合编号（map_format 组合表）。
-## R 在群上左乘 90°，X 左乘水平翻转——八个档位全可达，翻转在任何旋转档都有效。
+## D4 变换编号（0–7），旋转或翻转均接在现有变换之后。
 var tile_alt := 0
 
 func cycle_tile_rotation() -> void:
@@ -45,7 +44,6 @@ func toggle_tile_flip() -> void:
 	_hint("瓦片笔刷：%s（X 再翻，R 旋转）" % MapFormat.alt_label(tile_alt))
 	queue_redraw()
 
-## 吸管回填笔刷变换（E08）：吸取掉的瓦片带着它的 alt 回来，下一笔与原瓦片同向
 func set_tile_alt(alt: int) -> void:
 	tile_alt = alt & 7
 var brush_size := 1               # 笔刷边长（格）
@@ -61,8 +59,7 @@ var world_region_mode := false
 var _world_region_move
 var zoom := 2.0
 var manifest: Dictionary
-## E2：根 app 引用（引用字段写入口需要状态栏/确认框）。由 editor_layout 在挂树前注入；
-## 空 = 未注入（引用连线的写入口自动降级为不可用，其余编辑不受影响）。
+## 挂树前注入；无根应用时画布仍可用于预览。
 var app_host = null
 var map_data := {}
 var exit_map_names := {}
@@ -93,8 +90,7 @@ var atlas_texs: Array = []
 # 清单里 shape=tile 的资产（顺序 = TileSet source_id）与 id→source_id 映射
 var _tile_assets: Array = []
 var _src_of_asset := {}
-## 图集修订号：每次重建 TileSet（图集重载/清单变化）递增。缩略图缓存等按它失效
-## （只按资产 id + cell 做键会把旧图集的像素当新图集用，V4 P1）。
+## TileSet 重建后使跨画布的图集缩略图缓存失效。
 var atlas_rev := 0
 # 当前笔刷：资产 id + 图集内 cell（source_id 落笔时查）
 var paint_asset := ""
@@ -245,8 +241,7 @@ var _active_lid_before := ""
 # —— 装载地图数据 ——
 func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty := false) -> void:
 	_geometry_draw.cancel()
-	# E1：同图重建（撤销恢复/尺寸调整）按层码找回原激活层——必须在换掉 map_data
-	# **之前**取层码，否则读到的是新图的层栈配旧下标。
+	# 替换 map_data 前记住活动层码；新旧下标可能不同。
 	var same_map_reload := str(cur_map_name) == map_name and keep_cam
 	_active_lid_before = layer_id(active_layer) \
 		if same_map_reload and active_layer >= 0 and active_layer < layer_count() else ""
@@ -381,8 +376,7 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 		tn.tile_set = tile_set
 		tn.y_sort_enabled = ly
 		ysp.add_child(tn)
-		# B3：三角拓扑（半格三角）与斜基（gridBasis 平行四边形）都没有原生 tile_shape，
-		# 叠一个自绘视图；数据仍住在 tn（V4 P1：斜基此前走原生预设，格线与瓦片错位）
+		# 原生 TileMapLayer 存数据，自绘视图处理三角、斜基和独立格系。
 		var custom_view: bool = layer_grid != null and (layer_grid != grid or layer_grid.is_tri() or layer_grid.has_basis)
 		if custom_view:
 			var tv := TriTileViewScript.new()
@@ -416,8 +410,7 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	# 可视表达交给 CollisionView，由图层接口统一控制显隐，和地形/装饰/实体一致。
 	collision = TileMapLayer.new()
 	collision.name = "Collision"
-	# R20：碰撞层用编辑器自建内部 TileSet（一个 (4,0) 格的独立源），不再借用户图集——
-	# 坏图集只影响瓦片显示，不影响碰撞录入（set_cell 需要源上确有这个格）。
+	# 碰撞数据使用独立图集，不依赖游戏资产。
 	collision.tile_set = _collision_tileset()
 	collision.visible = false
 	collision.z_index = 2
@@ -743,9 +736,7 @@ func is_entity_shown(n: EntityNode) -> bool:
 	var li := _layer_index_of(n.layer_id)
 	return li < 0 or is_layer_visible(li)
 
-## 可见实例合集（绘制连线/出口/框选候选的公共入口）。
-## P01：按 (ents_rev, vis_rev, 层栈) 缓存——鼠标每动一像素都调它，
-## 原实现每次全量遍历 + 逐实例 _layer_index_of 线性查层。
+## 缓存可参与绘制、连线和框选的可见实例。
 func ents_shown() -> Array:
 	var key := "%d:%d:%d" % [ents_rev, vis_rev, layer_count()]
 	if key == _shown_key:
@@ -764,10 +755,7 @@ func is_layer_code_locked(lid: String) -> bool:
 	var li := _layer_index_of(lid)
 	return li >= 0 and is_layer_locked(li)
 
-## 放置/拖动落点：吸附开启时把「数据格坐标」四舍五入到整格（对齐锚点在格内的位置，
-## 与实例尺寸无关）。关闭时原样保留。
-## 六边形（B1）：格坐标 = 连续反算（不取最近中心），锚点偏移按包围盒内单位算，
-## 不再把正交的 +0.5 格偏量塞进六边中心坐标。
+## 吸附对齐实例锚点；六边格保留连续坐标换算。
 func snap_point(p: Vector2, n: EntityNode = null) -> Vector2:
 	var unit: Vector2 = n.anchor_unit() if n != null else Vector2(0.5, 0.5)
 	return snap_anchor_px(unit, p)
@@ -1340,9 +1328,7 @@ var map_rev := 0
 ## 实体集版本号：只有实体增删/改 id/meta 绑定时 +1。实例列表与预览实体数组以它为缓存键。
 var ents_rev := 0
 
-## ents_changed=false：只改了地形/装饰/碰撞，实体集没动——不必让实体索引失效。
-## 镜像视图刷新范围也按数据来源拆（P01）：普通瓦片涂改不该重建碰撞全层，
-## 碰撞涂改也不该重画三角瓦片自绘。窄入口见 _mark_tiles / _mark_collision。
+## 整图变更刷新各绘制镜像；只改一类数据时走对应入口。
 func _mark(ents_changed := true) -> void:
 	modified_flag = true
 	map_rev += 1
@@ -1350,11 +1336,8 @@ func _mark(ents_changed := true) -> void:
 	if ents_changed:
 		_ent_by_id_dirty = true   # 实体集变了，索引置脏
 		ents_rev += 1             # 下游缓存（内容编辑器实例/预览数组）随之失效
-	# 碰撞可视节点是数据的镜像，任何写入（涂刷/擦除/矩形/生成/粘贴/撤销）后都要重画。
-	# 统一在这里刷新，避免每个调用点各记一次、漏掉就出现「数据改了但红块没变」。
 	if coll_view and is_instance_valid(coll_view):
 		coll_view.refresh()
-	# 三角自绘层同样镜像瓦片数据（drop_cell/mark 后必须重画）
 	for tv in tri_views:
 		if tv != null and is_instance_valid(tv):
 			(tv as Node).refresh()
@@ -1368,9 +1351,7 @@ func _mark_map() -> void:
 	map_rev += 1
 	modified.emit()
 
-## P01：只改瓦片（地形/装饰）——碰撞数据没动，红块不必重建。
-## 方形瓦片由 TileMapLayer 自己在 set_cell/erase_cell 后重绘；
-## 三角拓扑下叠的自绘层仍需重建（数据住在 TileMapLayer 里，自绘层读不到变更通知）。
+## 原生瓦片自动重绘；自绘层需显式刷新。
 func _mark_tiles() -> void:
 	modified_flag = true
 	map_rev += 1
@@ -1381,7 +1362,6 @@ func _mark_tiles() -> void:
 			(tv as Node).refresh()
 	modified.emit()
 
-## P01：只改碰撞层——实体与瓦片都没动，只刷红块镜像。
 func _mark_collision() -> void:
 	modified_flag = true
 	map_rev += 1
@@ -1389,9 +1369,6 @@ func _mark_collision() -> void:
 		coll_view.refresh()
 	modified.emit()
 
-## 阶段三：只改实例（位置/变换/绑定/显隐/引用值）——瓦片与碰撞数据一个都没动，
-## 镜像视图（碰撞红块全层重建、三角瓦片自绘重建）完全不必碰。
-## 阶段三之前这些路径走 _mark()，一次拖动就把碰撞层整层重画一遍。
 func _mark_ents() -> void:
 	modified_flag = true
 	map_rev += 1
@@ -1399,8 +1376,7 @@ func _mark_ents() -> void:
 	ents_rev += 1
 	modified.emit()
 
-## 阶段三：按层失效——只重画指定层的三角瓦片自绘（其它层数据没动）。
-## li < 0 = 不知道/全量（退回全层重建）。
+## 失效这一层的瓦片存在缓存；自绘层由实际写入刷新。
 func _mark_tiles_layer(li: int) -> void:
 	modified_flag = true
 	map_rev += 1
@@ -1409,14 +1385,11 @@ func _mark_tiles_layer(li: int) -> void:
 
 	modified.emit()
 
-## 图层显隐版本号：ents_shown() 的可见集合缓存以它为键之一（层隐藏改变可见性
-## 但不改实体集，ents_rev 抓不到）。实例眼睛开关走 visible_flag → 调用方照常 _mark()。
+## 层显隐独立于实体数据版本。
 var vis_rev := 0
 var tile_rev := 0
 
-## —— 阶段三：按层计数缓存 ——
-## 图层面板据此判断该层能否直接换格系，还是需要另存转换副本。
-## 键 = 层下标；瓦片写入后由 _mark_tiles/_mark_tiles_layer 失效对应键。
+## 图层面板用该缓存判断能否直接换格系。
 var _layer_has_tiles := {}
 
 ## 该层是否有瓦片（缓存：一次 used_cells 扫描，之后 O(1)）。
@@ -1430,7 +1403,6 @@ func layer_has_tiles(li: int) -> bool:
 	_layer_has_tiles[li] = has
 	return has
 
-## 可见实例合集缓存：绘制每帧都取（P01 前是每帧全量遍历 + 逐实例查层）。
 var _shown_cache: Array = []
 var _shown_key := ""
 
@@ -1456,26 +1428,18 @@ func is_entity_code_local(code: String) -> bool:
 		return false
 	return _ent_by_code_index().has(code)
 
-# —— 撤销/重做 ——
-# 栈与记录器都在 src/core/undo_history.gd（§7.5 阶段一：画布不再持有可写历史状态）。
-# 这里只留只读快照转发给诊断/UI 用，写入口一律走 _undo_history_ctrl。
 func undo_step_count() -> int:
 	return _undo_history_ctrl.undo_stack.size()
 
 # —— 输入状态 ——
-## 手势互斥。原来平铺 8 个布尔位（_panning/_drag_paint/_drag_box/_drag_spawn/
-## _rmb_erase/_drag_entity/_move_active/_paste_mode），无互斥——拖实体时按中键会平移+拖动并行，
-## 拖出生点时按右键会拖动+擦除并行。现在只留一个枚举：起手即接管，松手即清零，
-## 任何新起手都会顶掉上一个手势（物理上不可能叠加）。
-## _paste_mode 是「模式」不是手势（跨点击存活），不在枚举里。
+## 同一时间只允许一个手势；跨点击的粘贴模式独立。
 enum Gesture { NONE, PAN, ENTITY_VERTEX, PAINT, BOX, SPAWN_DRAG, ERASE, ENTITY_DRAG, ENTITY_RESIZE, REGION_MOVE, LINK_DRAG }
 var gesture: int = Gesture.NONE
 ## 起手按键：中键松手只清中键起的平移，不会误杀 Space+左键的平移（反之亦然）。
 var gesture_button := 0
 
 func begin_gesture(g: int, button := 0) -> void:
-	# 起手前结算未结束的笔画（V4 P1）：中键平移/框选/拖实例会在涂刷笔画中途顶掉手势，
-	# 不结算的话已涂的格既不在撤销栈里、也不再属于任何笔画，Ctrl+Z 撤不回去。
+	# 切换手势前结算笔画，已涂的格子才能被撤销。
 	if g != Gesture.PAINT and g != Gesture.ERASE:
 		_undo_history_ctrl.stroke_end()
 	gesture = g
@@ -1486,10 +1450,7 @@ func end_gesture() -> void:
 	gesture_button = 0
 	_undo_history_ctrl.stroke_end()   # H01：涂/擦手势收尾定格差量条目（非涂擦手势时空操作）
 
-## 取消未完成的**预览型**手势并恢复原值（E05）：拖动/尺寸/顶点/出生点/区域搬迁
-## 在活体上写的是候选值，相机平移或保存读取前必须先归位，否则落点/草稿带着半途状态。
-## 涂刷/擦除是已提交的笔画，不在此列（它们各自在首个真实改动前压过撤销）。
-## 返回是否取消了某手势（调用方据此给状态栏反馈）。
+## 归位尚未确认的拖拽等预览；已画的笔画留给撤销。
 func cancel_preview_gesture() -> bool:
 	match gesture:
 		Gesture.BOX:

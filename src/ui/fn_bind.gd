@@ -261,7 +261,7 @@ func _copy_bindings() -> void:
 		return
 	var from := _current_spr()
 	var source := _current_fns().duplicate(true)
-	var generation: int = app._map_file_ctrl.sess.generation
+	var current: Callable = app._map_file_ctrl.document_guard(false)
 	var shell: Dictionary = app._popup_body("追加这组绑定",
 		"同图、同资产的实例可复用这组绑定。已有的单次功能会跳过；内容 ID 继续共享。", true)
 	var body: VBoxContainer = shell.body
@@ -278,7 +278,7 @@ func _copy_bindings() -> void:
 	body.add_child(notice)
 	list.multi_selected.connect(func(_i: int, _on: bool): notice.text = "已选 %d 个目标。" % list.get_selected_items().size())
 	var apply := func():
-		if app._map_file_ctrl.sess.stale(generation):
+		if not current.call():
 			return
 		var selected := list.get_selected_items()
 		if selected.is_empty():

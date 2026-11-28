@@ -1,10 +1,5 @@
 extends RefCounted
-## 地图文件生命周期控制器（顶栏「设置 ▾ / 地图 ▾」的动作都在这里）：
-## 新建、打开、保存（commit_document 统一提交）、改名（纯改名、不迁移引用）、复制整张图、
-## 另存并转换投影、尺寸调整和草稿恢复。
-## 先确认写入冲突，再发布清单、暂存内容与地图。多文件发布用 pending 日志记录摘要。
-## 草稿单独写入 editor/drafts/。
-## 有未保存修改时新建/打开/切图/关窗口都要先确认；取消即中止。
+## 管理地图文件与草稿；正式写入前检查外部修改。
 const ReferenceIndex := preload("res://src/project/reference_index.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
 const FlowTarget := preload("res://src/content/flow_target.gd")
@@ -20,7 +15,6 @@ const MapStore := preload("res://src/map/map_store.gd")
 const Recovery := preload("res://src/map/recovery.gd")
 const GridSpaceScript := preload("res://src/canvas/grid_space.gd")
 const MapConvert := preload("res://src/map/map_convert.gd")
-const DocumentSession := preload("res://src/project/document_session.gd")
 const DocumentCommit := preload("res://src/project/document_commit.gd")
 const EventLayers := preload("res://src/project/event_layers.gd")
 const SpatialCheck := preload("res://src/project/spatial_reference_check.gd")
@@ -34,7 +28,9 @@ const AUTOSAVE_INTERVAL_MS := 120000
 var _last_autosave_msec := 0
 ## 最近一次在新建/重命名弹窗里确认的名字（顶栏常驻名字框已移除，这里记住值供预填）
 var _name_memo := ""
-var sess := DocumentSession.new()
+var _generation := 0
+var _revision := 0
+var _opened_digest := ""
 var _event_preview_base := ""
 var _copy_retry := {}
 var event_drawing_retry := {}
@@ -153,11 +149,12 @@ func refresh_event_drawings() -> void:
 
 ## 进入一次会影响当前文档的操作（新建/切图）：抬会话代数并返回本次代次。
 func _begin_doc_op() -> int:
-	return sess.bump()
+	_generation += 1
+	return _generation
 
 ## 本次请求是否已过期（期间又切了图/退出了项目）。过期请求不得发布图名/路径。
 func _doc_stale(gen: int) -> bool:
-	return sess.stale(gen)
+	return gen != _generation
 
 ## 项目 maps 目录内的未占用名字（D03）：外部地图导入绝不覆盖同名项目图。
 func _unique_map_name(base: String) -> String:
@@ -189,7 +186,6 @@ func on_duplicate() -> void:
 		and is_same(_copy_retry.get("manifest"), app.manifest) else _unique_map_name(old_name + "_copy")
 	name_edit.placeholder_text = "新地图名"
 	body.add_child(UiKitScript.field_row("新名字", name_edit))
-	# E3：先预览 C2 计划（会复制多少实例/内容/瓦片、有哪些冲突），确认再落盘
 	var plan_lbl := UiKitScript.hint_label("", 460)
 	body.add_child(plan_lbl)
 	var err_label := UiKitScript.text_label("", UiThemeScript.WARN, UiThemeScript.FS_SMALL)
@@ -231,10 +227,7 @@ func on_duplicate() -> void:
 	body.add_child(btn_row)
 	app._open_popup(pop)
 
-## C2 计划预览（不写盘）：源 = 画布当前提交状态，目标 = 新图名。
-## 返回 {plan: <ClonePlan.build 结果>, err: ""}；名字非法时 err 给原因、plan 为空。
-## 预览与执行同一口径：源文档保留自己的地图码（组外引用要钉的是**源图码**，不是图名），
-## 未落盘的暂存内容一并参与，否则预览的「内容 N」与冲突和真正执行时不一致（V4 P1）。
+## 副本预览包含当前画布和尚未写盘的内容。
 func _plan_preview(old_name: String, nn: String) -> Dictionary:
 	if nn == "":
 		return {"plan": {}, "err": "先填新图名"}
@@ -289,7 +282,7 @@ func on_convert_projection() -> void:
 		app._set_status("地图重建中，请稍后再试")
 		return
 	var cur_proj := MapConvert.current_projection(data, app.manifest)
-	var guard := _commit_is_current.bind(sess.generation, sess.revision, app.manifest)
+	var guard := document_guard()
 	var shell: Dictionary = app._popup_body("另存并转换格空间",
 		"另存为副本并换算实例与出生点：原图不动。瓦片与碰撞没有唯一对应，保留原格号，转换后需在副本里核对。")
 	var pop: PopupPanel = shell.pop
@@ -414,7 +407,7 @@ func duplicate_current_from_dialog(old_name: String, name_edit: LineEdit, err_la
 	if data.is_empty():
 		err_label.text = "地图重建中，请稍后再试"
 		return
-	var guard := _commit_is_current.bind(sess.generation, sess.revision, app.manifest)
+	var guard := document_guard()
 	var nn := name_edit.text.strip_edges()
 	if not await _write_map_copy(old_name, nn, data, source.staged, guard, err_label):
 		return
@@ -474,7 +467,7 @@ func confirm_discard(action: String) -> bool:
 	# 确认框开着时冻结撤销/重做（A2）：期间 Ctrl+Z 把画布换掉，用户确认的就不是同一份内容
 	if app.canvas != null:
 		app.canvas.doc_busy = true
-	var guard := _commit_is_current.bind(sess.generation, sess.revision, app.manifest)
+	var guard := document_guard()
 	var answer := await _ask_discard(action)
 	_release_busy()
 	return answer and guard.call()
@@ -485,8 +478,7 @@ func _discard_previous_staging(doc: String) -> void:
 
 func _ask_discard(action: String) -> bool:
 	var message := "地图 %s 有未保存修改。\n继续%s将丢失这些修改。" % [app.cur_map_name, action]
-	# A2 staged：盘点随地图一起消失的待写项（含暂存内容与待写清单），
-	# 让「放弃」的代价可见——用户至少知道丢的是哪几类，而不是只看到地图脏。
+	# 同时列出将丢弃的暂存内容和待写清单。
 	var extra: Array = []
 	for p in _pending_targets():
 		if p == "content":
@@ -667,8 +659,8 @@ func _open_unsaved_map(n: String, data: Dictionary, action: String) -> bool:
 	app.cur_map_name = n
 	app.cur_map_path = EditorManifest.map_path(app.manifest, n)
 	# 新图：身份换到这张，基线清空（磁盘上还没有这份文件）
-	sess.opened_digest = ""
-	sess.revision = 0
+	_opened_digest = ""
+	_revision = 0
 	app._playtest_ctrl.sync_map_preferences()
 	app._set_map_loaded(true)
 	app.canvas._undo_history_ctrl.clear_history()
@@ -745,13 +737,13 @@ func rename_map_now(old_name: String, new_name: String, allow_write_unsaved := f
 		return "另一次文档操作正在进行"
 	var data_for_first_save := {}
 	if on_disk:
-		if is_current and sess.opened_digest == "":
+		if is_current and _opened_digest == "":
 			return "原图缺少保存基线，请重新打开后再改名"
-		var err: String = MapStore.rename_map(app.manifest, old_name, nn, sess.opened_digest if is_current else "")
+		var err: String = MapStore.rename_map(app.manifest, old_name, nn, _opened_digest if is_current else "")
 		if err != "":
 			return err
 	elif allow_write_unsaved and is_current:
-		if sess.opened_digest != "":
+		if _opened_digest != "":
 			return "原图已被删除，请重新检查地图文件"
 		# 原图未落盘（新建后还没保存）：改名必须真正落地，否则只改内存名 =
 		# 面板显示新名、磁盘上始终没文件，用户看到的「重命名」是假的。
@@ -779,7 +771,7 @@ func rename_map_now(old_name: String, new_name: String, allow_write_unsaved := f
 		if checked.has("error"):
 			return checked.error
 		if bool(app.manifest.get("_codes_issued", false)):
-			var guard := _commit_is_current.bind(sess.generation, sess.revision, app.manifest)
+			var guard := document_guard()
 			app.canvas.doc_busy = true
 			var saved: bool = await app._save_manifest_file_async(guard)
 			_release_busy()
@@ -799,18 +791,14 @@ func rename_map_now(old_name: String, new_name: String, allow_write_unsaved := f
 		app.cur_map_path = new_path
 		if app.canvas.map_data.has("meta"):
 			app.canvas.map_data["meta"]["name"] = nn
-		sess.opened_digest = Recovery.digest(new_path)
-		# 刚才已把内容写进新文件：脏标记与自动保存计时归零，
-		# 否则状态栏还挂着「未保存」、两分钟后又多写一份 .autosave.json。
+		_opened_digest = Recovery.digest(new_path)
 		if not on_disk:
 			_finish_map_save(nn, new_path, data_for_first_save)
 		else:
 			app._playtest_ctrl.sync_map_preferences()
 	return ""
 
-## 打开另一张地图：先选文件，再确认丢弃，最后载入。
-## 顺序是硬约束（V4 P1）：以前先 confirm_discard 再开文件选择器——
-## 用户在选图对话框按取消，改动与暂存已经被丢掉，画布却还停在原图（静默数据损失）。
+## 先选文件再确认丢弃：取消文件选择不能丢失当前编辑。
 func on_open() -> void:
 	var fd := FileDialog.new()
 	fd.title = "打开地图文件"
@@ -833,7 +821,6 @@ func on_open() -> void:
 
 ## 选定文件之后的打开流程：先读+校验（失败不动旧文档），再确认丢弃，最后载入。
 func _open_chosen(p: String) -> void:
-	# 读不出来就别问「要不要丢改动」——那等于逼用户丢掉能保住的工作
 	var probe: Dictionary = MapStore.read_path(p, app.manifest)
 	if not probe.get("ok", false):
 		app._set_status(" 打开失败: " + _format_issues(probe.get("errors", [])))
@@ -845,10 +832,7 @@ func _open_chosen(p: String) -> void:
 		app.project_shell.content_editor.refresh_list()
 
 func load_map_file(p: String, expected_digest := "") -> void:
-	# load_data 是协程（节点重建中间 await 一帧）：必须等它完成，否则切图刚返回时
-	# 实体还在重建中——内容页 after_switch 刷新会拿到半重建的画布（列表/点选全乱）。
-	# 文档代次（A2）：双击/连续切图时只有最后一次请求可以发布图名与路径。
-	# 未保存确认在上层入口（打开/侧栏）做；这里只做真实载入。
+	# 只允许最近一次载入在画布重建完毕后更新当前地图。
 	var previous_doc := document_key()
 	var gen := _begin_doc_op()
 	var result: Dictionary = MapStore.read_path(p, app.manifest)
@@ -862,8 +846,7 @@ func load_map_file(p: String, expected_digest := "") -> void:
 	if not result.warnings.is_empty():
 		app._set_status(" 地图已打开但有兼容警告: " + _format_issues(result.warnings))
 	var base := p.get_file().get_basename()
-	# 只认项目 maps 目录内的正式文件（D03）：项目外/别处的同名图必须显式导入，
-	# 否则保存会按当前项目拼路径，悄悄覆盖另一个文件。
+	# 项目外的地图必须导入，避免保存时覆盖项目同名文件。
 	var canon := str(p).simplify_path()
 	var maps_root := str(app.manifest.get("_maps_dir", "")).simplify_path()
 	var outside := maps_root != "" and not MapStore.same_directory(canon.get_base_dir(), maps_root)
@@ -882,10 +865,9 @@ func load_map_file(p: String, expected_digest := "") -> void:
 		if target != base:
 			app._set_status(" 项目内已有同名地图，导入为 " + target + ".json")
 		base = target
-		# 侧效前查代次（V4 P1）：确认期间又发起了别的切图请求，这次导入就不该再写盘
 		if _doc_stale(gen):
 			return
-		# R06：外部图的身份重新登记——源图码不进本项目（可能与现有图撞码），重发项目内新码。
+		# 导入时重新发码，并重映射本图引用。
 		var source_code: String = data.get("meta", {}).get("code", "")
 		if data.get("meta", null) is Dictionary:
 			(data["meta"] as Dictionary).erase("code")
@@ -922,8 +904,8 @@ func load_map_file(p: String, expected_digest := "") -> void:
 	app._set_map_loaded(true)
 	app.canvas._undo_history_ctrl.clear_history()
 	# 画布重建成功后，使用读入文件的摘要作为保存基线。
-	sess.opened_digest = baseline
-	sess.revision = 0
+	_opened_digest = baseline
+	_revision = 0
 	var tcount := 0
 	for lid in (data.get("tiles", {}) as Dictionary):
 		tcount += ((data.get("tiles", {}) as Dictionary)[lid] as Array).size()
@@ -1022,7 +1004,7 @@ func _save_document() -> String:
 			app._set_status("先重接或断开引用：" + problem)
 			return problem
 
-	var guard := _commit_is_current.bind(sess.generation, sess.revision, app.manifest)
+	var guard := document_guard()
 	var observed := {}
 	if write_map:
 		var problem := MapStore.write_error(app.manifest, data)
@@ -1072,9 +1054,17 @@ func document_key() -> String:
 	var code: String = app.canvas.cur_map_code()
 	return str(app.manifest.get("_dir", "")).path_join(code) if code != "" else ""
 
-func _commit_is_current(gen: int, revision: int, source: Dictionary) -> bool:
-	return not sess.stale(gen) and sess.revision == revision and is_same(source, app.manifest)
+## 检查延迟确认是否仍针对同一文档；只需身份的预览可容许继续编辑。
+func document_guard(check_revision := true) -> Callable:
+	var generation := _generation
+	var revision := _revision
+	var source: Dictionary = app.manifest
+	return func() -> bool:
+		return app._map_file_ctrl == self and is_same(app.manifest, source) \
+			and _generation == generation and (not check_revision or _revision == revision)
 
+func note_edit() -> void:
+	_revision += 1
 
 ## 待写项盘点（A2 staged）：清单补码 / 暂存内容 / 脏地图。
 ## 供放弃确认和保存失败提示使用。
@@ -1099,7 +1089,7 @@ func save_all() -> bool:
 
 ## 确认覆盖并记录本次地图写入基线。
 func _confirm_map_write(path: String, guard: Callable) -> Dictionary:
-	var baseline := sess.opened_digest
+	var baseline := _opened_digest
 	var observed := Recovery.observe(path)
 	if observed.state == "unreadable" or (observed.state == "missing" and baseline != ""):
 		app._set_status(" 保存中止：地图写入目标已变化或不可读，请重新检查后再保存")
@@ -1118,7 +1108,7 @@ func _confirm_map_write(path: String, guard: Callable) -> Dictionary:
 	return observed
 
 func _finish_map_save(n: String, path: String, data: Dictionary) -> void:
-	sess.opened_digest = Recovery.digest(path)
+	_opened_digest = Recovery.digest(path)
 	app.canvas.map_data["meta"] = data.meta
 	app.cur_map_name = n
 	app.cur_map_path = path
@@ -1149,9 +1139,8 @@ func write_draft_now() -> bool:
 	data.meta.name = name
 	var code := str((data.get("meta", {}) as Dictionary).get("code", ""))
 	var target := EditorManifest.map_path(app.manifest, name)
-	# R08：草稿基线 = 本会话打开/上次提交时的摘要（没有才退回当前磁盘摘要）——
-	# 外部改写发生在打开之后、写草稿之前时，磁盘摘要会把外部版本误记为本会话基线。
-	var baseline := sess.opened_digest
+	# 使用本会话的打开摘要，避免把外部编辑误记为草稿基线。
+	var baseline := _opened_digest
 	if baseline == "":
 		baseline = Recovery.digest(target)
 	# R03：待提交内容载荷 {fn_id, id, data} 进草稿；恢复时校验绑定后重新暂存。
@@ -1213,7 +1202,7 @@ func restore_draft_key(draft_key: String) -> bool:
 		app._set_status(" 草稿结构无效，无法恢复：" + map_name)
 		return false
 	# 恢复会把画布整份换掉：当前未保存改动同样要确认（与打开/切图一致）
-	var guard := _commit_is_current.bind(sess.generation, sess.revision, app.manifest)
+	var guard := document_guard()
 	if not await confirm_discard("恢复草稿"):
 		return false
 	var base := str(draft.get("baseline", ""))
@@ -1230,9 +1219,7 @@ func restore_draft_key(draft_key: String) -> bool:
 		app._set_status(" 草稿恢复中止：确认期间文档或正式图已变化")
 		return false
 	var previous_doc := document_key()
-	# V4 P0-2：草稿记录的预留码必须在装载画布**之前**合回清单。
-	# 装载会做 C09 挂载补齐、实例码生成与引用解析——这些都以当前清单码为准；
-	# 先装载再合并，画布上的绑定/字段键已经按启动时临时补发的新码算好了。
+	# 载图前恢复预留码，使挂载与引用拿到和草稿一致的身份。
 	var draft_codes = draft.get("codesMap", null)
 	if draft_codes is Dictionary and not (draft_codes as Dictionary).is_empty():
 		if EditorManifest.merge_issued_codes(app.manifest, draft_codes as Dictionary, true) > 0:
@@ -1246,8 +1233,8 @@ func restore_draft_key(draft_key: String) -> bool:
 	app.cur_map_name = map_name
 	app.cur_map_path = target
 	_name_memo = map_name
-	sess.opened_digest = accepted
-	sess.revision = 0
+	_opened_digest = accepted
+	_revision = 0
 	app._playtest_ctrl.sync_map_preferences()
 	app._set_map_loaded(true)
 	app.canvas._undo_history_ctrl.clear_history()
@@ -1291,7 +1278,7 @@ func open_draft_target(draft_key: String) -> void:
 	await load_map_file(str(resolved.path), str(resolved.observed.digest))
 
 func document_generation() -> int:
-	return sess.generation
+	return _generation
 
 ## Commit current edits before handing the game its exact published map identity.
 func prepare_playtest_document(project_entry: bool) -> Dictionary:
@@ -1299,17 +1286,16 @@ func prepare_playtest_document(project_entry: bool) -> Dictionary:
 		return {"error": " 无地图：先新建或打开一张地图"}
 	if not project_entry and app.cur_map_name == "":
 		return {"error": " 试玩前先「新建地图」并填名字"}
-	# 试玩只拿「成功提交后的项目内路径」（A2）：先走统一提交（清单码 → 内容 → 地图），
-	# 失败就停，避免游戏侧读到半套内容。
-	var gen := sess.generation
+	# 只把成功提交后的地图交给游戏。
+	var gen := _generation
 	var res: Dictionary = await commit_document("试玩前提交")
 	if str(res.get("status", "")) != "ok":
 		return {"error": " 试玩中止：" + str(res.get("error", "提交未完成"))}
-	if sess.stale(gen) or (app.map_loaded and app.canvas.modified_flag):
+	if _doc_stale(gen) or (app.map_loaded and app.canvas.modified_flag):
 		return {"error": " 试玩中止：提交期间文档已变化"}
 	var maps_root := str(app.manifest.get("_maps_dir", "")).simplify_path()
 	var play_path := "" if project_entry else str(app.cur_map_path).simplify_path()
-	var digest := "" if project_entry else sess.opened_digest
+	var digest := "" if project_entry else _opened_digest
 	if not project_entry and (digest == "" or Recovery.digest(play_path) != digest):
 		return {"error": " 试玩中止：磁盘地图与已提交版本不一致"}
 	if not project_entry and (maps_root == "" or play_path.get_base_dir() != maps_root):

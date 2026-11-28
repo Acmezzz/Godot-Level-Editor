@@ -1106,10 +1106,7 @@ func _content_scope_guard() -> Callable:
 	var ctrl = app._map_file_ctrl
 	if ctrl == null:
 		return func() -> bool: return false
-	var generation := int(ctrl.sess.generation)
-	var source: Dictionary = manifest
-	return func() -> bool:
-		return app._map_file_ctrl == ctrl and not ctrl.sess.stale(generation) and is_same(app.manifest, source)
+	return ctrl.document_guard(false)
 
 ## 返回是否真的改了（调用方据此刷新列表快照）。
 func _rename_library_item(fn_id: String, cid: String, new_name: String) -> bool:

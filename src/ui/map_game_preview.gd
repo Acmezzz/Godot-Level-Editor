@@ -289,9 +289,7 @@ static func open_reference(app, decl: Dictionary, resolve: Callable, commit: Cal
 	if local:
 		_open(app, mode, choose, parent, prepare)
 	else:
-		var session = app._map_file_ctrl.sess
-		var generation: int = session.generation
-		var valid := func() -> bool: return not session.stale(generation)
+		var valid: Callable = app._map_file_ctrl.document_guard(false)
 		var options := {"title": "实景选引用 · " + key, "button": "渲染目标地图",
 			"hint": "使用引用字段指定地图的已保存版本。确认后只写入当前字段。",
 			"prefix": "MapGamePreview", "default_label": "当前窗口大小", "pick_mode": mode, "pick": choose, "camera": true}
@@ -313,18 +311,17 @@ static func _open(app, mode: String, choose: Callable, extra := {}, prepare := C
 		app._set_status("打开地图并在游戏清单中声明 mapFrame 预览能力后可用。")
 		return
 	var canvas: EditorCanvas = app.canvas
-	var session = app._map_file_ctrl.sess
-	var generation: int = session.generation
+	var same_doc: Callable = app._map_file_ctrl.document_guard(false)
 	var valid := func() -> bool:
-		return app.map_loaded and is_instance_valid(canvas) and is_same(app.canvas, canvas) and not session.stale(generation)
+		return app.map_loaded and is_instance_valid(canvas) and is_same(app.canvas, canvas) and same_doc.call()
 	var capture := func(preset: String) -> Dictionary:
 		var subject := map_context(app)
 		if subject.is_empty():
 			return {"error": "地图正在重建，请稍后重试。"}
 		subject["manifest"] = EditorManifest.public_data(app.manifest)
 		subject["viewportId"] = preset
-		var revision: int = session.revision
-		var current := func() -> bool: return session.revision == revision and context_matches(app, subject)
+		var unchanged: Callable = app._map_file_ctrl.document_guard()
+		var current := func() -> bool: return unchanged.call() and context_matches(app, subject)
 		if prepare.is_valid():
 			var issue: String = prepare.call(subject.map, current)
 			if not issue.is_empty():

@@ -21,7 +21,8 @@ func test_decl_tooltip_from_declared_keys() -> void:
 
 ## E3：改尺寸裁剪——预览计数与实际裁剪同判据，扩大不裁
 func test_map_resize_crop() -> void:
-	var d := {"tiles": {"L1": [[0, 0, "a", 0, 0, 0], [5, 5, "a", 0, 0, 0],
+	var d := {"meta": {"w": 10, "h": 10},
+		"tiles": {"L1": [[0, 0, "a", 0, 0, 0], [5, 5, "a", 0, 0, 0],
 			[9, 1, "a", 0, 0, 0], ["bad"]]},
 		"collision": [{"x": 1, "y": 1}, {"x": 7, "y": 2}, [8, 0]],
 		"objects": [{"asset": "e", "code": "K1", "x": 2.5, "y": 1.0},
@@ -34,7 +35,10 @@ func test_map_resize_crop() -> void:
 	var grow := MapResize.crop_counts(d, 40, 40)
 	eq(int(grow.tiles) + int(grow.collision) + int(grow.objects), 0, "扩大不裁")
 	# 实际裁剪与预览同一判据：界外条目消失，界内条目与原有顺序保留
-	MapResize.crop_data(d, 6, 6)
+	var plan := MapResize.plan(d, 6, 6, false)
+	eq(plan.crop, crop, "实际裁剪和预览数量相同")
+	eq(MapResize.counts(d), {"tiles": 4, "collision": 3, "objects": 2}, "计划不改原图")
+	d = plan.map
 	eq((d.tiles.L1 as Array).size(), 2, "瓦片剩界内 2 条，残条被剔除")
 	eq(int((d.tiles.L1 as Array)[0][0]), 0, "界内第一条件原样在前")
 	eq((d.collision as Array).size(), 1, "碰撞只剩界内 1 条")
@@ -46,10 +50,11 @@ func test_triangular_resize_boundaries() -> void:
 		"collision": [{"x": 15, "y": 7}, [16, 7]], "objects": [{"x": 7.9, "y": 7}, {"x": 8.0, "y": 7}]}
 	var before := d.duplicate(true)
 	eq(MapResize.crop_counts(d, 13, 8, true), {"tiles": 0, "collision": 0, "objects": 0}, "扩大不裁")
-	MapResize.crop_data(d, 13, 8, true)
-	eq(d, before, "扩大保留已有界外数据")
+	var grown := MapResize.plan(d, 13, 8, true)
+	eq(grown.map.tiles, before.tiles, "扩大保留已有界外瓦片")
+	eq(grown.map.collision, before.collision, "扩大保留已有界外碰撞")
 	eq(MapResize.crop_counts(d, 8, 8, true), {"tiles": 2, "collision": 1, "objects": 1}, "三角列与连续坐标判界")
-	MapResize.crop_data(d, 8, 8, true)
+	d = MapResize.plan(d, 8, 8, true).map
 	eq(d.tiles.L, [[15, 7]], "保留最右三角瓦片")
 	eq(d.collision, [{"x": 15, "y": 7}], "保留最右三角碰撞")
 	eq(d.objects, [{"x": 7.9, "y": 7}], "摆放物仍用连续坐标")

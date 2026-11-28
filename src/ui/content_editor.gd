@@ -374,10 +374,7 @@ func remember_context() -> void:
 	else:
 		_remembered_binding.clear()
 
-## 只冲刷连续控件值（切视图/离开内容页）：不落 staged 新内容——新 ID/新绑定
-## 必须等正式保存或试玩（A2），否则来回切视图就凭空生成内容文件。
-## V4 P1：返回是否有任何一条写入失败。以前忽略结果，正式提交在控件值写失败时
-## 仍会继续往下提交地图——地图里带着没落盘的字段值。
+## 提交控件值；暂存内容仍等地图保存或试玩才写盘。
 func commit_fields() -> bool:
 	var pend := _pending_commits.duplicate()
 	for cb in pend:
@@ -387,8 +384,7 @@ func commit_fields() -> bool:
 				return false
 	return _steps._flush_pending()
 
-## 待提交的连续控件提交器（SpinBox / 多行文本）：拖值/输入期间只记内存，
-## 失焦或 commit() 才写内容文件。由 field_widgets.build() 产出，值未变时下游会幂等跳过。
+## 数值和文本控件可在失焦或显式提交时写入。
 var _pending_commits: Array = []
 
 # ──────────── 数据读取：只从画布实体读，不另存一份 ────────────
@@ -396,10 +392,7 @@ var _pending_commits: Array = []
 func _map_ready() -> bool:
 	return app.map_loaded and app.canvas != null and is_instance_valid(app.canvas)
 
-## 本图实例快照（保持画布放置顺序）：[{node, code, asset, name, fns}]
-## 只收实体（kind=entity）——场景实例不参与内容绑定，也不该出现在实例列表里。
-## 按 canvas.ents_rev 缓存——预览每次鼠标移动都调 _hit_at，原实现每个事件
-## 都重扫子树 + 重新排序（95×56 满图时每秒上万次临时数组分配）。绑定变更走 _mark() 抬 rev。
+## 仅缓存本图实体，场景摆放物不参与内容绑定。
 var _ents_cache: Array = []
 var _ents_rev := -1
 var _ents_map := ""
@@ -592,8 +585,7 @@ func _is_view_visible() -> bool:
 func select_inst(code: String) -> void:
 	if code == "" or _find_ent(code) == null:
 		return
-	# 切实例前只收集控件值（R01）：新绑定/新内容保持暂存，不跟切实例落盘——
-	# 落盘走正式提交（Ctrl+S / 试玩）。旧下标只对旧实例有效，冲刷必须先于换选中。
+	# 换实例前先提交旧表单值。
 	if not commit_fields():
 		return
 	_selected_ent = code
@@ -605,15 +597,10 @@ func select_inst(code: String) -> void:
 	app.canvas.queue_redraw()
 	if _preview != null:
 		_preview.set_highlight("")
-	# 自带功能（类型挂载）已在放置/载图时补齐（C09）：选中只刷新界面，不写数据
-	# 内容页隐藏时（关卡视图里点实体）不做整套左列/右栏重建，只记住选中，
-	# 等切到内容视图时 refresh_list 再重建。
+	# 内容页隐藏时只记住选中，由进入视图时刷新。
 	if not _is_view_visible():
 		return
-	# 选中同步到关卡画布：切回关卡视图时选中框落在同一实例上。
-	# 画布上已有框选组（>1）时不能把 selected_multi 覆写成 [spr]——
-	# _box_select 会经 entity_selected 走到这里，覆写就等于「框选完立刻塌缩成单选」，
-	# 整组拖动随即失效（用户报的「能框选但不能移动」）。只把单选指针挪过去即可。
+	# 与画布同步选中时保留已经形成的多选。
 	var spr := _find_ent(code)
 	if spr != null and app.canvas != null:
 		app.canvas.selected_entity = spr

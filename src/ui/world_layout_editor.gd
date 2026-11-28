@@ -242,9 +242,7 @@ func _capture_preview(preset: String) -> Dictionary:
 	var public: Dictionary = EditorManifest.public_data(_source)
 	public["worldLayout"] = _draft.duplicate(true)
 	var camera := _surface.camera()
-	var session = _app._map_file_ctrl.sess
-	var generation: int = session.generation
-	var revision: int = session.revision
+	var current: Callable = _app._map_file_ctrl.document_guard()
 	var overrides := {}
 	var code: String = _app.canvas.cur_map_code() if _app.map_loaded else ""
 	if _draft.chunks.has(code):
@@ -254,7 +252,7 @@ func _capture_preview(preset: String) -> Dictionary:
 		overrides[code] = {"map": context.map, "stagedContent": context.stagedContent}
 	var subject := {"manifest": public, "camera": camera, "viewportId": preset, "overrides": overrides}
 	return {"subject": subject, "default_size": _surface.size,
-		"current": func(): return not session.stale(generation) and session.revision == revision \
+		"current": func(): return current.call() \
 			and _draft == public.worldLayout and _surface.camera() == camera}
 
 class WorldCanvas extends Control:

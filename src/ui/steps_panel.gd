@@ -37,11 +37,9 @@ func _init(h) -> void:
 	_host_ref = weakref(h)
 	app = h.app
 
-## 同名转发属性（读写穿透到宿主，保住搬动文本零改动）
 var manifest: Dictionary:
 	get: return host.manifest
-## 本面板自己的待提交控件（步骤字段）。不能转发到宿主数组：换步骤/重建表单时清空
-## 本面板的待提交项，会把主表单还没冲刷的连续控件值一起丢掉（V4 P1）。
+## 步骤表单独立收集待提交值，重建时不影响主表单。
 var _pending_commits: Array = []
 
 func clear_view_callbacks() -> void:
@@ -56,7 +54,6 @@ func _flush_pending() -> bool:
 				return false
 	return true
 
-## 同名包装方法（真实实现经 host 转发）
 func _current_fns() -> Array:
 	return host._current_fns()
 func _ensure_content(i: int) -> String:
@@ -75,16 +72,13 @@ func _rebuild_right() -> void:
 	host._rebuild_right()
 
 var _steps_pop: PopupPanel = null
-## E1：可复用容器形态——"popup" 独立窗口 / "content" 内容页下方 / "canvas" 画布下方。
-## 三种形态共用同一控制器状态与工作副本，切换只换宿主容器，不重建数据。
+## 浮窗、内容页和画布停靠共用一份编辑状态。
 var _steps_dock_where := "popup"
 var _steps_dock: PanelContainer = null
 var _steps_i := -1            # 正在编辑的绑定行下标
 var _steps_fn_id := ""        # 该绑定的功能 id
-## E1：所属实例码。停靠面板会长时间占屏，换实例后身份校验必须能发现（空绑定尤甚）
 var _steps_ent := ""
 var _steps_cid := ""          # 该绑定的内容 ID（身份校验：绑定换内容 = 数据源失效）
-## R23：面板令牌的地图身份——切图后旧面板对不上就不再写值。
 var _project_manifest: Dictionary = {}
 var _project_target := false
 var _project_scope := false
@@ -94,12 +88,10 @@ var _steps_rev := 0           # 结构版本：增删/排序后递增，过期�
 var _steps_sel := -1          # 当前选中步骤下标；-1 = 无
 var _steps_page := 0
 const STEPS_PAGE_SIZE := 40
-## E1：恢复记忆下标时校验「还是同一步」——期间步骤被增删/换序就回落到无选中，
-## 不把下标悄悄挪到另一条步骤上（与 D1 的过期回调同一套身份原则）。
+## 重开时检查原步骤身份；不匹配则清空选中。
 var _steps_sel_expect := ""
 var _steps_list: VBoxContainer = null
 var _steps_form: VBoxContainer = null
-# 时间轴视图页签（第 4 批）：同一份 steps，两种呈现。
 var _steps_view := "list"     # "list" / "timeline"
 var _steps_tabs: HBoxContainer = null
 var _steps_tl_box: VBoxContainer = null
@@ -116,8 +108,7 @@ var _audio_preview: Node
 var _audio_button: Button
 var _steps_frame_holder: Control = null  # 参考帧预览行（播放头移动时只刷这一行）
 var _steps_playhead_label: Label = null  # 播放头读数（原始单位 → 秒；负秒 = 音频起点前）
-## E1：按 (功能码, 内容 ID) 记住上次的步骤下标/视图/播放头——关掉再开回到原处。
-## 只在同一份内容上恢复：换内容 = 另一份步骤数组，旧下标没有意义。
+## 同一份内容重开时恢复步骤、视图和播放头。
 var _steps_mem := {}
 
 static func _mem_key(fn_code: String, cid: String) -> String:
@@ -599,12 +590,10 @@ func _open_game_frame() -> void:
 		return
 	_stop_audio_preview()
 	var timeline := _steps_tl
-	var current_manifest := manifest
-	var session = app._map_file_ctrl.sess
-	var generation: int = session.generation
+	var same_doc: Callable = app._map_file_ctrl.document_guard(false)
 	var valid := func() -> bool:
 		return is_instance_valid(timeline) and is_same(_steps_tl, timeline) \
-			and is_same(manifest, current_manifest) and _steps_identity_ok() and not session.stale(generation)
+			and _steps_identity_ok() and same_doc.call()
 	var capture := func(preset: String, input: String) -> Dictionary:
 		var value := input.strip_edges()
 		if not value.is_valid_float():
@@ -629,9 +618,9 @@ func _open_game_frame() -> void:
 			subject["instance"] = _steps_ent
 			subject["bindingId"] = str(_steps_binding.get("bindingId", ""))
 			subject["bindingIndex"] = _steps_i
-		var revision: int = session.revision
+		var unchanged: Callable = app._map_file_ctrl.document_guard()
 		var matches := func() -> bool:
-			return session.revision == revision \
+			return unchanged.call() \
 				and (context.is_empty() or MapGamePreview.context_matches(app, context)) \
 				and (_steps_cid == "" or host.read_content_staged(_steps_fn_id, _steps_cid) == data)
 		return {"subject": subject, "default_size": Vector2(1280, 720), "current": matches,
@@ -691,9 +680,7 @@ func _steps_pick_tl(idx: int) -> void:
 	_rebuild_steps_list(_steps_data().get("steps", []))
 	_rebuild_steps_form_from_data()
 
-## 身份校验：还是同一个实例、绑定行还在、功能 id 与内容 ID 都还是开面板时的那个
-## （换实例/换内容 = 数据源失效）。空绑定也必须过实例这一关：下标 i 在另一个实例上
-## 可能照样合法，只比下标会把值写进别人的内容。
+## 绑定身份须同时匹配地图、实例和行；同一下标可能属于别的实例。
 func _steps_identity_ok() -> bool:
 	if _project_target:
 		return is_same(_project_manifest, app.manifest) and _steps_cid != ""
@@ -707,7 +694,6 @@ func _steps_identity_ok() -> bool:
 	var f: Dictionary = fns[_steps_i]
 	if str(_resolve_fn(f).get("id", "")) != _steps_fn_id:
 		return false
-	# 空绑定：会话内还没预留内容 ID，仍可写（首次实际改动才预留）
 	return is_same(f, _steps_binding) and str(f.get("content", "")) == _steps_cid
 
 ## 工作副本读取：已绑定内容读磁盘/暂存；空绑定返回内存空壳（不落盘、不建 ID）。
@@ -1295,10 +1281,7 @@ func _rebuild_steps_form(arr: Array) -> void:
 			row.editable = false
 			box.add_child(row)
 
-## 步骤字段行：复用 field_widgets，值取自步骤自己的 fields（键=字段码）。
-## 回调捕获**步骤稳定令牌 + 结构版本 + 绑定身份**（D1/V4 P1）：换序/切页签后迟到的
-## 回调按版本丢弃；版本没变但步序真的变了（外部合并暂存）时按令牌重新定位。
-## E1：同图实例引用给「画布选…」——选点会话写回走同一版本校验入口。
+## 字段写回使用展示时的步骤快照，拒绝过期回调。
 func _step_field_row(fd: Dictionary, sfd: Dictionary, siblings: Array, shown: Dictionary) -> Control:
 	var key := str(fd.get("code", ""))
 	var val = sfd.get(key, fd.get("default", FieldWidgets.default_for(fd)))
@@ -1351,10 +1334,7 @@ func _step_field_row(fd: Dictionary, sfd: Dictionary, siblings: Array, shown: Di
 			_rebuild_steps_form_from_data, _reference_context, built.get("pick_values", Callable()))
 	return field_row
 
-## E1：步骤字段的画布选点。确认后按起手时的步骤令牌 + 版本写回：
-## 期间步骤被增删/换序则丢弃（与拖拽同一套过期校验）。
-## accept 按字段种类走：entity_ref = 实例；§7.4 edge_ref = 格边（值解码回 {map, cell, edge}）；
-## C4 cell: 的 choice = 格图一格（值就是 cell_id 字符串）——与内容表单同一路径。
+## 画布选点和表单共用写回校验。
 func _pick_step_ref(fd: Dictionary, apply: Callable) -> void:
 	var fname := str(fd.get("name", str(fd.get("id", ""))))
 	var mode := FieldWidgets.pick_mode(fd)

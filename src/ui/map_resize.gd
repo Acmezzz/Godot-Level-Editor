@@ -6,7 +6,6 @@ extends RefCounted
 const GridSpaceScript := preload("res://src/canvas/grid_space.gd")
 const UiKitScript := preload("res://src/ui/ui_kit.gd")
 const K := preload("res://src/core/constants.gd")
-const DocumentSession := preload("res://src/project/document_session.gd")
 
 ## 现有条目计数：{tiles, collision, objects}
 static func counts(d: Dictionary) -> Dictionary:
@@ -34,9 +33,8 @@ static func spawn_change(d: Dictionary, nw: int, nh: int, triangular: bool) -> D
 
 static func plan(d: Dictionary, nw: int, nh: int, triangular: bool) -> Dictionary:
 	var result := d.duplicate(true)
-	var count := crop_counts(d, nw, nh, triangular)
+	var count := _crop(result, nw, nh, triangular, true)
 	var spawn := spawn_change(d, nw, nh, triangular)
-	crop_data(result, nw, nh, triangular)
 	if not spawn.is_empty():
 		result["spawn"] = [spawn.to.x, spawn.to.y]
 	result.meta["w"] = nw
@@ -47,87 +45,47 @@ static func _keeps_extent(d: Dictionary, nw: int, nh: int) -> bool:
 	var meta: Dictionary = d.get("meta", {})
 	return meta.has("w") and meta.has("h") and nw >= int(meta.w) and nh >= int(meta.h)
 
-## 扩大时保留原数据。瓦片/碰撞使用拓扑列数，摆放物使用连续基坐标。
 static func crop_counts(d: Dictionary, nw: int, nh: int, triangular := false) -> Dictionary:
+	return _crop(d, nw, nh, triangular, false)
+
+## 扩大时保留界外数据；瓦片和碰撞用拓扑列，摆放物用连续坐标。
+static func _crop(d: Dictionary, nw: int, nh: int, triangular: bool, apply: bool) -> Dictionary:
 	var out := {"tiles": 0, "collision": 0, "objects": 0}
 	if _keeps_extent(d, nw, nh):
 		return out
 	var columns := GridSpaceScript.cell_columns(nw, triangular)
 	var layers := _layer_columns(d, nw)
-	for lid in (d.get("tiles", {}) as Dictionary):
-		var cells = (d.get("tiles", {}) as Dictionary)[lid]
-		if not (cells is Array):
-			continue
-		for c in (cells as Array):
-			if not (c is Array) or (c as Array).size() < 2:
-				continue
-			if outside(int((c as Array)[0]), int((c as Array)[1]), layers.get(lid, columns), nh):
-				out.tiles = int(out.tiles) + 1
-	for ce in (d.get("collision", []) as Array):
-		if ce is Dictionary:
-			if outside(int((ce as Dictionary).get("x", 0)), int((ce as Dictionary).get("y", 0)), columns, nh):
-				out.collision = int(out.collision) + 1
-		elif ce is Array and (ce as Array).size() >= 2:
-			if outside(int((ce as Array)[0]), int((ce as Array)[1]), columns, nh):
-				out.collision = int(out.collision) + 1
-	for o in (d.get("objects", []) as Array):
-		if o is Dictionary and outside_float(float((o as Dictionary).get("x", 0.0)),
-				float((o as Dictionary).get("y", 0.0)), nw, nh):
-			out.objects = int(out.objects) + 1
+	var tiles: Dictionary = d.get("tiles", {})
+	for lid in tiles:
+		if tiles[lid] is Array:
+			out.tiles += _crop_rows(tiles[lid], Vector2i(layers.get(lid, columns), nh), "tiles", apply)
+	for kind in ["collision", "objects"]:
+		if d.get(kind) is Array:
+			out[kind] = _crop_rows(d[kind], Vector2i(columns if kind == "collision" else nw, nh), kind, apply)
 	return out
 
-static func outside(x: int, y: int, nw: int, nh: int) -> bool:
-	return x < 0 or y < 0 or x >= nw or y >= nh
-
-static func outside_float(x: float, y: float, nw: int, nh: int) -> bool:
-	return x < 0.0 or y < 0.0 or x >= float(nw) or y >= float(nh)
-
-## 就地裁掉边界外条目（层栈与 meta 其它键不动）。与 crop_counts 同一判据。
-static func crop_data(d: Dictionary, nw: int, nh: int, triangular := false) -> void:
-	if _keeps_extent(d, nw, nh):
-		return
-	var columns := GridSpaceScript.cell_columns(nw, triangular)
-	var layers := _layer_columns(d, nw)
-	var tiles_in = d.get("tiles", null)
-	if tiles_in is Dictionary:
-		for lid in (tiles_in as Dictionary):
-			var cells = (tiles_in as Dictionary)[lid]
-			if not (cells is Array):
-				continue
-			var keep: Array = []
-			for c in (cells as Array):
-				if c is Array and (c as Array).size() >= 2 \
-						and not outside(int((c as Array)[0]), int((c as Array)[1]), layers.get(lid, columns), nh):
-					keep.append(c)
-			(tiles_in as Dictionary)[lid] = keep
-	var coll_in = d.get("collision", null)
-	if coll_in is Array:
-		var keep2: Array = []
-		for ce in (coll_in as Array):
-			var cx := 0
-			var cy := 0
-			var ok_shape := false
-			if ce is Dictionary:
-				cx = int((ce as Dictionary).get("x", 0))
-				cy = int((ce as Dictionary).get("y", 0))
-				ok_shape = true
-			elif ce is Array and (ce as Array).size() >= 2:
-				cx = int((ce as Array)[0])
-				cy = int((ce as Array)[1])
-				ok_shape = true
-			if ok_shape and not outside(cx, cy, columns, nh):
-				keep2.append(ce)
-		d["collision"] = keep2
-	var objs_in = d.get("objects", null)
-	if objs_in is Array:
-		var keep3: Array = []
-		for o in (objs_in as Array):
-			if not (o is Dictionary):
-				continue
-			if not outside_float(float((o as Dictionary).get("x", 0.0)),
-					float((o as Dictionary).get("y", 0.0)), nw, nh):
-				keep3.append(o)
-		d["objects"] = keep3
+## 残缺条目不算界外；真正裁剪时才剔除。
+static func _crop_rows(rows: Array, size: Vector2i, kind: String, apply: bool) -> int:
+	var kept := []
+	var removed := 0
+	for row in rows:
+		var x: float
+		var y: float
+		if row is Array and kind != "objects" and row.size() >= 2:
+			x = float(int(row[0]))
+			y = float(int(row[1]))
+		elif row is Dictionary and kind != "tiles":
+			x = float(row.get("x", 0)) if kind == "objects" else float(int(row.get("x", 0)))
+			y = float(row.get("y", 0)) if kind == "objects" else float(int(row.get("y", 0)))
+		else:
+			continue
+		if x < 0 or y < 0 or x >= size.x or y >= size.y:
+			removed += 1
+		elif apply:
+			kept.append(row)
+	if apply:
+		rows.assign(kept)
+	return removed
 
 static func open(app) -> void:
 	if not app.map_loaded:
@@ -138,16 +96,11 @@ static func open(app) -> void:
 	if base.is_empty():   # 重建窗口哨兵：此刻读不到可裁剪的数据，别让预览数字是假的
 		app._set_status(" 地图重建中，请稍后再试")
 		return
-	var controller = app._map_file_ctrl
-	var sess: DocumentSession = controller.sess
-	var gen := sess.generation
-	var revision := sess.revision
+	var current: Callable = app._map_file_ctrl.document_guard()
 	var live_map: Dictionary = app.canvas.map_data
 	var triangular: bool = app.canvas.grid.is_tri()
 	var guard := func() -> bool:
-		return app.map_loaded and app._map_file_ctrl == controller \
-			and not sess.stale(gen) and sess.revision == revision \
-			and is_same(app.canvas.map_data, live_map)
+		return app.map_loaded and current.call() and is_same(app.canvas.map_data, live_map)
 	var shell: Dictionary = app._popup_body("地图尺寸",
 		"以格为单位。缩小会裁掉边界外的瓦片 / 碰撞 / 摆放物，确认框里先列数量；应用是一次可撤销操作。")
 	var pop: PopupPanel = shell.pop

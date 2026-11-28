@@ -299,13 +299,21 @@ func test_resolve_map_states() -> void:
 	eq(ReferenceIndex.resolve_map(m, "GOOD").key, "okmap", "只按地图码解析")
 	_wipe()
 
-## 新的地图操作使上一份文档的异步工作失效。
-func test_document_session_lifecycle() -> void:
-	var DS := preload("res://src/project/document_session.gd")
-	var s = DS.new()
-	var g1: int = s.bump()
-	var g2: int = s.bump()
-	ok(s.stale(g1) and not s.stale(g2), "旧代次过期、新代次有效")
+func test_document_guards_invalidate_delayed_actions() -> void:
+	var app := preload("res://src/app.gd").new()
+	var files := preload("res://src/ui/map_file.gd").new(app)
+	app._map_file_ctrl = files
+	var snapshot := files.document_guard()
+	var identity := files.document_guard(false)
+	ok(snapshot.call() and identity.call(), "操作针对当前文档")
+	files.note_edit()
+	ok(not snapshot.call() and identity.call(), "修改使快照失效但不改变文档身份")
+	files._begin_doc_op()
+	ok(not identity.call(), "切图使旧操作失效")
+	var current := files.document_guard()
+	app._map_file_ctrl = null
+	ok(not current.call(), "离开项目使旧操作失效")
+	app.free()
 
 
 func test_map_copy_preserves_an_external_content_file() -> void:

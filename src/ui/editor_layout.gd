@@ -626,7 +626,7 @@ func _on_cursor(t: String) -> void:
 func _on_modified() -> void:
 	if app.canvas.modified_flag:
 		if app._map_file_ctrl != null:
-			app._map_file_ctrl.sess.revision += 1
+			app._map_file_ctrl.note_edit()
 		_set_status("已修改 —— Ctrl+S 保存")
 		_refresh_dirty_badge()
 
