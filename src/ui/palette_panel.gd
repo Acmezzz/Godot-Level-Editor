@@ -9,6 +9,7 @@ extends RefCounted
 ## 画布落笔时用 asset id 查 source_id——磁盘数据也写 asset id，不再依赖清单数组序。
 
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
+const BuiltinKinds := preload("res://src/assets/builtin_kinds.gd")
 const EntityNodeRef := preload("res://src/canvas/entity_node.gd")
 const Catalog := preload("res://src/content/authoring_catalog.gd")
 const Kit := preload("res://src/ui/ui_kit.gd")
@@ -397,7 +398,7 @@ func fill_placeables(cat: String) -> void:
 			var nm2 := str(ad.get("name", ""))
 			var ie := el.add_item(nm2 if nm2 != "" else eid, tex)
 			var tip := "%s · %s" % [AssetDecl.category_of_decl(ad), eid]
-			if bool(ad.get("builtin", false)):
+			if BuiltinKinds.is_injected(app.manifest, eid):
 				tip += "\n内置种类：画布上按 visual 声明呈现"
 			el.set_item_tooltip(ie, tip)
 			el.set_item_metadata(ie, eid)

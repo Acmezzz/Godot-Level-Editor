@@ -476,7 +476,7 @@ func _build_palette_column() -> PanelContainer:
 		var default_type := str(type_opt.get_item_metadata(0))
 		if app.canvas != null:
 			app.canvas.collision_type = default_type
-	type_opt.tooltip_text = "这一笔画下去的碰撞类型；类型池与形状/颜色由清单 collisionTypes 声明"
+	type_opt.tooltip_text = "这一笔画下去的碰撞类型；类型和颜色由清单 collisionTypes 声明"
 	type_opt.item_selected.connect(func(i: int):
 		app.canvas.collision_type = str(type_opt.get_item_metadata(i))
 		app._set_status("碰撞类型：%s" % str(type_opt.get_item_text(i)))
@@ -484,7 +484,7 @@ func _build_palette_column() -> PanelContainer:
 	type_row.add_child(type_opt)
 	grid_hint.add_child(type_row)
 
-	# 形状：矩形 / r45 / l45（斜坡只对实心/单向有意义，其余类型仍按整格处理）
+	# 形状独立于类型，写在各个碰撞格上。
 	var shape_row: HBoxContainer = app.UiKitScript.hbox(8)
 	shape_row.add_child(app.UiKitScript.text_label("形状", app.UiThemeScript.TEXT_DIM, app.UiThemeScript.FS_SMALL))
 	var shape_opt := OptionButton.new()
@@ -492,7 +492,7 @@ func _build_palette_column() -> PanelContainer:
 	for spec in [["", "矩形（整格）"], ["r45", "斜坡 ◣（右高）"], ["l45", "斜坡 ◤（左高）"]]:
 		shape_opt.add_item(str(spec[1]))
 		shape_opt.set_item_metadata(shape_opt.item_count - 1, str(spec[0]))
-	shape_opt.tooltip_text = "实心/单向碰撞的格子形状；斜坡画成三角"
+	shape_opt.tooltip_text = "这一笔画下去的格子形状；斜坡画成三角"
 	shape_opt.item_selected.connect(func(i: int):
 		app.canvas.collision_shape = str(shape_opt.get_item_metadata(i))
 		app._set_status("碰撞形状：%s" % str(shape_opt.get_item_text(i)))

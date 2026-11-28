@@ -155,6 +155,9 @@ static func create(m: Dictionary, aid: String, size: Vector2, tile: int,
 ## 图片资产的贴图按绝对路径缓存（同一张图被多个实例复用，不重复读盘）
 static var _img_cache := {}
 
+static func clear_texture_cache() -> void:
+	_img_cache.clear()
+
 static func texture_of(m: Dictionary, rel: String) -> Texture2D:
 	if rel == "":
 		return null
@@ -584,8 +587,9 @@ func _draw() -> void:
 func _process(delta: float) -> void:
 	if _frames.size() > 1:
 		_frame_t += delta
-		if _frame_t >= 0.125:
-			_frame_t = 0.0
-			_frame_i = (_frame_i + 1) % _frames.size()
+		var elapsed_frames := floori(_frame_t * 8.0)
+		if elapsed_frames > 0:
+			_frame_t -= float(elapsed_frames) / 8.0
+			_frame_i = (_frame_i + elapsed_frames) % _frames.size()
 			texture = _frames[_frame_i]
 			refresh_visual()

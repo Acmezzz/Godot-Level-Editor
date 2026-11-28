@@ -1454,7 +1454,9 @@ func end_gesture() -> void:
 func cancel_preview_gesture() -> bool:
 	match gesture:
 		Gesture.BOX:
-			pass
+			end_gesture()
+			queue_redraw()
+			return false
 		Gesture.ENTITY_DRAG:
 			for i in _drag_entities.size():
 				if is_instance_valid(_drag_entities[i]):

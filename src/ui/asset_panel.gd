@@ -8,6 +8,7 @@ const Th := preload("res://src/ui/ui_theme.gd")
 const FunctionDecls := preload("res://src/content/function_decl.gd")
 const AssetScan := preload("res://src/project/asset_scan.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
+const BuiltinKinds := preload("res://src/assets/builtin_kinds.gd")
 const ReferenceUsage := preload("res://src/project/reference_usage.gd")   # 使用统计（C3）
 const Catalog := preload("res://src/content/authoring_catalog.gd")
 
@@ -205,12 +206,12 @@ func refresh_list(focus_sid := "") -> void:
 	var data: Dictionary = host.canvas.map_data if not _filter_used.disabled else {}
 	for row in Catalog.asset_rows(manifest, data):
 		var edef: Dictionary = row.decl
-		if bool((edef as Dictionary).get("builtin", false)):
+		var sid := str(edef.get("id", ""))
+		if BuiltinKinds.is_injected(manifest, sid):
 			continue
 		if (_filter_category.selected > 0 and row.category != _filter_category.get_item_text(_filter_category.selected)) \
 				or (_filter_used.button_pressed and not _filter_used.disabled and row.used == 0):
 			continue
-		var sid := str((edef as Dictionary).get("id", ""))
 		if not _matches_filter(sid, edef as Dictionary):
 			continue
 		asset_list.add_item(_list_label(sid, edef as Dictionary), _asset_texture(edef))
@@ -415,7 +416,7 @@ func _deletion_usage(sid: String) -> Dictionary:
 	return ReferenceUsage.asset_deletion_usage(manifest, sid, live, staged)
 
 func _delete_asset_checked(sid: String) -> void:
-	if bool(_edef.get("builtin", false)):
+	if BuiltinKinds.is_injected(manifest, sid):
 		host._set_status(" 内置种类由编辑器提供，不能删除")
 		return
 	var source := manifest

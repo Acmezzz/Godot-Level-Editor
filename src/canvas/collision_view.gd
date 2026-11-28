@@ -7,8 +7,7 @@ extends Node2D
 ## 所以碰撞层有一个专属的可视节点，和地形/装饰/实体层一样挂在图层节点上——
 ## 可见性/锁定由统一的图层接口控制；画布整体包在 SubViewport 里（editor_layout.gd）。
 ##
-## 颜色/形状按清单 `collisionTypes` 声明（缺省池 = 内置四类）；斜坡画三角形
-## （r45 右高 / l45 左高），一眼区分朝向。形状画法只认 rect/斜坡，其余声明形状暂按矩形画。
+## 颜色由清单 `collisionTypes` 决定，格子的 shape 为 r45/l45 时绘制斜坡。
 
 const MapViewData := preload("res://src/map/map_view_data.gd")
 const CollisionTypes := preload("res://src/assets/collision_types.gd")

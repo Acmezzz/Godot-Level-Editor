@@ -99,7 +99,7 @@ static func _operation_schema() -> Dictionary:
 		"objectIndex": {"type": "integer"}, "index": {"type": "integer"}, "world": {"type": "array"},
 		"data": {"type": "object", "description": "Patch using the matching document keys returned by query_content. For startup/slot use target; for instance.put use asset, layer, x, y, props and transform."},
 		"cells": {"type": "array", "description": "Each row is {x,y,asset,atlas:[col,row],alt} for tiles or {x,y,type} for collision. Use {x,y,remove:true} to erase."},
-		"section": _enum(Edits.PROJECT_FIELDS), "value": {"description": "Complete replacement for section."}}}
+		"section": _enum(Edits.PROJECT_FIELDS.keys()), "value": {"description": "Replace views/viewports with an array or worldLayout/eventLayers with an object."}}}
 
 static func known_tool(name: String) -> bool:
 	return catalog().any(func(tool): return tool.name == name)
@@ -140,7 +140,7 @@ func invoke(name: String, args: Dictionary) -> Dictionary:
 	if args.has("draft"):
 		draft = drafts.read(args.draft)
 		if draft.is_empty():
-			return {"error": "当前工程没有此草稿。"}
+			return {"error": "当前工程没有此草稿，或草稿文件已损坏。"}
 		if args.has("revision") and draft.revision != args.revision:
 			if name == "publish" and not args.get("previewOnly", false) and draft.revision == args.revision + 1 \
 					and draft.get("lastPublish", {}).get("publishedRevision") == args.revision:
@@ -188,7 +188,7 @@ static func _is_type(value: Variant, type: String) -> bool:
 func _describe(args: Dictionary) -> Dictionary:
 	if args.has("path"):
 		var path_: String = args.path.replace("\\", "/").simplify_path()
-		if path_ != app.cur_project_dir:
+		if path_ != app.cur_project_dir or app.manifest.is_empty():
 			if not app.project_dirs.any(func(p): return str(p).replace("\\", "/").simplify_path() == path_):
 				return {"error": "请在编辑器中首次打开该项目，或用 --bird-project 指定。"}
 			if _editor_dirty():
@@ -218,7 +218,8 @@ func _editor_dirty() -> bool:
 		or app.project_shell.content_editor.has_staged_for_current_doc()))
 
 func _playing() -> bool:
-	return app._playtest_ctrl._play_pid > 0 and Playtest.is_alive(app._playtest_ctrl._play_pid)
+	var ctrl = app._playtest_ctrl
+	return ctrl != null and ctrl._play_pid > 0 and Playtest.is_alive(ctrl._play_pid)
 
 func _query(args: Dictionary, batch: Dictionary) -> Dictionary:
 	var m: Dictionary = drafts.candidate(batch)

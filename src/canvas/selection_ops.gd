@@ -142,19 +142,19 @@ func _begin_entity_drag(n: EntityNode, pos: Vector2) -> void:
 	if cvs.is_layer_locked(cvs._layer_index_of(n.layer_id)):
 		cvs._hint("实例所在图层已锁定：解锁后再移动")
 		return
-	cvs._drag_entity = n
-	cvs._drag_entities = [n]
-	cvs._drag_origins = [n.position]
+	var targets := [n]
 	# 框选集合一起拖动（按住的是集合成员时）
 	if cvs.selected_multi.size() > 1 and cvs.selected_multi.has(n):
 		var group: Array = cvs._valid_multi()
 		if _selection_touches_locked(group):
 			cvs._hint("组内有成员所在图层已锁定：解锁后再移动")
 			return
-		cvs._drag_entities = group
-		cvs._drag_origins.clear()
-		for s in cvs._drag_entities:
-			cvs._drag_origins.append((s as EntityNode).position)
+		targets = group
+	cvs._drag_entity = n
+	cvs._drag_entities = targets
+	cvs._drag_origins.clear()
+	for s in targets:
+		cvs._drag_origins.append((s as EntityNode).position)
 	cvs._drag_grab = pos
 	cvs._drag_moved = false
 	cvs.begin_gesture(cvs.Gesture.ENTITY_DRAG, MOUSE_BUTTON_LEFT)

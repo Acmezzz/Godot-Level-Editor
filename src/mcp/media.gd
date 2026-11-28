@@ -422,7 +422,7 @@ func playtest(args: Dictionary, batch: Dictionary) -> Dictionary:
 		"capture":
 			if not running:
 				return {"error": "没有正在运行的试玩。"}
-			return await _live_frame(args, request)
+			return await _live_frame(args, request, pid)
 	var target: Dictionary = args.get("target", {})
 	var ok := false
 	if args.has("draft") and args.get("entry", "project") != "screen":
@@ -454,7 +454,7 @@ func playtest(args: Dictionary, batch: Dictionary) -> Dictionary:
 			ok = ctrl.play_view(id, snapshot)
 	return {"running": true, "pid": ctrl._play_pid} if ok else {"error": "无法从此入口试玩；检查游戏声明、入口和当前运行状态。"}
 
-func _live_frame(args: Dictionary, report: Dictionary) -> Dictionary:
+func _live_frame(args: Dictionary, report: Dictionary, pid: int) -> Dictionary:
 	if report.is_empty() or not app.manifest.get("playtest", {}).get("captureFrames", false):
 		return {"error": "游戏未声明 playtest.captureFrames；render_preview 可提供离线取样。"}
 	var size := _size(args, app.manifest)
@@ -468,8 +468,9 @@ func _live_frame(args: Dictionary, report: Dictionary) -> Dictionary:
 			"width": size.x, "height": size.y, "result": result_file}):
 		return {"error": "无法写入实时截图请求。"}
 	var deadline := Time.get_ticks_msec() + 5000
+	var ctrl = app._playtest_ctrl
 	while not FileAccess.file_exists(result_file) and Time.get_ticks_msec() < deadline \
-			and app._playtest_ctrl._play_pid > 0 and Playtest.is_alive(app._playtest_ctrl._play_pid):
+			and app._playtest_ctrl == ctrl and ctrl._play_pid == pid and Playtest.is_alive(pid):
 		await app.get_tree().create_timer(0.05).timeout
 	DirAccess.remove_absolute(capture_file)
 	var bytes := Runner._read_bounded(result_file, Runner.MAX_PNG)

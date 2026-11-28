@@ -6,6 +6,7 @@ const ConditionDecls := preload("res://src/content/condition_decl.gd")
 const StepDecls := preload("res://src/content/step_decl.gd")
 const TriggerDecls := preload("res://src/content/trigger_decl.gd")
 const CollisionTypes := preload("res://src/assets/collision_types.gd")
+const BuiltinKinds := preload("res://src/assets/builtin_kinds.gd")
 const ContentStore := preload("res://src/content/content_store.gd")
 const CellGraph := preload("res://src/map/cell_graph.gd")
 const ScreenLayout := preload("res://src/project/screen_layout.gd")
@@ -194,7 +195,8 @@ static func _validate_collision_types(data: Dictionary, issues: Array[Dictionary
 		var shape := str(body.get("shape", ""))
 		if shape != "" and not ["rect", "triangle_r", "triangle_l", "circle", "polygon"].has(shape):
 			_add(issues, "error", "collisionTypes", "invalid shape: " + shape)
-		if body.has("color") and not (body.color is String):
+		if body.has("color") and (not body.color is String or body.color.length() != 7 \
+				or not body.color.begins_with("#") or not Color.html_is_valid(body.color)):
 			_add(issues, "error", "collisionTypes", "color must be a #rrggbb string")
 
 ## 试玩声明（v7）：清单 playtest.flags/params 驱动试玩面板（替代写死的 dash/glide/hp）。
@@ -288,6 +290,7 @@ static func _validate_playtest(data: Dictionary, issues: Array[Dictionary]) -> v
 ## 挂载功能必须已声明、palette 条目结构。
 static func _validate_assets(data: Dictionary, project_dir: String, issues: Array[Dictionary]) -> void:
 	var assets: Array = data.get("assets", [])
+	var needs_builtin := not assets.any(func(asset): return asset is Dictionary and asset.get("id") == BuiltinKinds.TRIGGER_ID)
 	var ids := {}
 	var codes := {}
 	var atlas_sizes := {}
@@ -313,6 +316,8 @@ static func _validate_assets(data: Dictionary, project_dir: String, issues: Arra
 					_add(issues, "error", path + "." + key, "only entity assets can declare " + key)
 			_validate_scene_asset(ad, path, project_dir, issues, tile_size, atlas_sizes)
 		else:
+			if needs_builtin and ad.get("code") == BuiltinKinds.TRIGGER_CODE:
+				_add(issues, "error", path + ".code", "TZ99 is reserved for the built-in trigger_zone")
 			_validate_ports(ad, path, issues)
 			_validate_port_sources(ad, path, issues)
 			_validate_entity_asset(data, ad, path, codes, issues)

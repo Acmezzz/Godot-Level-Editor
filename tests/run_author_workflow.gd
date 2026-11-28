@@ -566,6 +566,33 @@ func run():
 			break
 	check(ce.commit_fields(), "second tempo committed")
 	ce._steps._steps_add("NEXT")
+	for button in collect(pop, "Button"):
+		if str(button.text).begins_with("▸ 时间与轨道"):
+			button.pressed.emit()
+			break
+	for item in collect(pop, "SpinBox"):
+		if item.is_visible_in_tree() and item.max_value == 99:
+			item.value = 1
+			item.value = 2
+			check(is_instance_valid(item) and not Store.read(manifest, "campaign", "project-acceptance").steps.back().has("track"),
+				"adjusting the track retains the input and defers writing")
+			item.get_line_edit().focus_exited.emit()
+			break
+	check(Store.read(manifest, "campaign", "project-acceptance").steps.back().get("track") == 2,
+		"leaving the track input commits its final value")
+	for button in collect(pop, "Button"):
+		if str(button.text).begins_with("▸ 时间与轨道"):
+			button.pressed.emit()
+			break
+	for item in collect(pop, "SpinBox"):
+		if item.is_visible_in_tree() and item.max_value == 99:
+			var line: LineEdit = item.get_line_edit()
+			line.text = "0"
+			line.text_changed.emit(line.text)
+			line.focus_exited.emit()
+			break
+	check(not Store.read(manifest, "campaign", "project-acceptance").steps.back().has("track"),
+		"leaving the text input applies the entered track without requiring Enter")
 	press(pop, "时间轴")
 	await process_frame
 	var timeline: TimelineView = ce._steps._steps_tl

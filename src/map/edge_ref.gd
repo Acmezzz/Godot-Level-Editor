@@ -21,12 +21,12 @@ static func canonical_edge(a: Vector2i, b: Vector2i) -> String:
 
 ## 边 ID → 两端点 [[x, y], [x, y]]；格式不合法返回空数组。
 static func parse_edge(s: String) -> Array:
-	var parts := s.split("|", false)
+	var parts := s.split("|")
 	if parts.size() != 2:
 		return []
 	var out: Array = []
 	for part in parts:
-		var xy := str(part).split(",", false)
+		var xy := str(part).split(",")
 		if xy.size() != 2:
 			return []
 		if not _is_int(xy[0]) or not _is_int(xy[1]):
@@ -38,8 +38,6 @@ static func _is_int(s: String) -> bool:
 	var t := s.strip_edges()
 	if t == "":
 		return false
-	if t.begins_with("-"):
-		t = t.substr(1)
 	return t.is_valid_int()
 
 ## 字段值：{map: 地图码（空 = 本图）, cell: [x, y] 规范格号, edge: 规范边 ID}。

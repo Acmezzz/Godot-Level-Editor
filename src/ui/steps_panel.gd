@@ -1254,13 +1254,15 @@ func _rebuild_steps_form(arr: Array) -> void:
 	box.add_child(Kit.divider())
 	box.add_child(Kit.section_header("第 %d 步：%s" % [_steps_sel + 1, str(decl.get("name", sc))]))
 	# 时间与轨道（D1）：与时间轴同一份数据、同一补丁入口；缺 at 显示「随前序」
-	box.add_child(_steps_time_row(arr, shown))
+	var time_row := _steps_time_row(arr, shown)
+	box.add_child(time_row.control)
 	var sfields: Array = decl.get("fields", [])
 	var sfd: Dictionary = st.get("fields", {}) if st.get("fields", {}) is Dictionary else {}
 	for fd in sfields:
 		if not (fd is Dictionary):
 			continue
 		box.add_child(_step_field_row(fd, sfd, sfields, shown))
+	_pending_commits.append(time_row.track_commit)
 	# 该步骤里有声明已删的键：只读保留
 	var known := {}
 	for fd2 in sfields:
@@ -1396,7 +1398,7 @@ func _step_seconds_hint(eff: Dictionary) -> String:
 
 ## 时间与轨道行（D1）：默认收起，展开后可输入起点 / 时长 / 轨号 / 阻塞。
 ## 起点留空 = 「随前序」（缺 at）；显式 0 = 从零开始。时长接受 0。
-func _steps_time_row(arr: Array, tok: Dictionary) -> Control:
+func _steps_time_row(arr: Array, tok: Dictionary) -> Dictionary:
 	var si := int(tok.index)
 	var box := Kit.vbox(2)
 	var eff: Dictionary = StepTimeline.effective(arr, si)
@@ -1440,9 +1442,17 @@ func _steps_time_row(arr: Array, tok: Dictionary) -> Control:
 	trk.custom_minimum_size = Vector2(60, 0)
 	trk.tooltip_text = "轨道号；同轨按起点排序，重叠只警告"
 	var rev_trk := _steps_rev
-	trk.value_changed.connect(func(v: float):
-		if rev_trk == _steps_rev:
-			_apply_time_patch(tok, {"track": int(v)}, []))
+	var initial_track := int(trk.value)
+	var flush_track := FieldWidgets.spin_text_flush(trk)
+	var track_commit := func() -> bool:
+		if rev_trk != _steps_rev:
+			return true
+		flush_track.call()
+		var track := int(trk.value)
+		if track == initial_track:
+			return true
+		return _apply_time_patch(tok, {"track": track}, [])
+	FieldWidgets.bind_spin_commit(trk, track_commit)
 	row.add_child(Kit.text_label("轨", Th.TEXT_DIM, Th.FS_META))
 	row.add_child(trk)
 	# 阻塞
@@ -1471,7 +1481,7 @@ func _steps_time_row(arr: Array, tok: Dictionary) -> Control:
 		align.tooltip_text = "把这一步的 at/duration 对齐到声明的每拍格数"
 		row.add_child(align)
 	body.add_child(row)
-	return box
+	return {"control": box, "track_commit": track_commit}
 
 ## D2 参考时钟块：声明缺项提示、小数帧待修（含一键量化）、参考帧缩略与音频名。
 ## 只服务于「按秒对齐」，不做游戏判定；缺项时时间仍按原单位编辑。
@@ -1640,18 +1650,18 @@ func _bind_time_input(edit: LineEdit, tok: Dictionary, key: String) -> void:
 
 ## 表单的时间编辑：与时间轴同一个补丁入口（StepTimeline.apply_patch + 同一写回）。
 ## tok 持有展示快照，顺序和正文仍匹配时才使用其中的下标。
-func _apply_time_patch(tok: Dictionary, patch: Dictionary, erase_keys: Array) -> void:
+func _apply_time_patch(tok: Dictionary, patch: Dictionary, erase_keys: Array) -> bool:
 	if tok.is_empty():
-		return
+		return false
 	var edit := _steps_edit()
 	var data: Dictionary = edit.data
 	if data.is_empty():
-		return
+		return false
 	var arr: Array = data.get("steps", []) if data.get("steps", []) is Array else []
 	var si := _step_index_of(arr, tok)
 	if si < 0:
 		app._set_status("步骤已变更，本次未写入")
-		return
+		return false
 	# D2：新输入的 at/duration 按声明粒度吸附（帧取整、拍按 subdivisionsPerBeat）；
 	# 秒基不吸附——手输的秒精度就是用户意图，不该被改
 	if _steps_clock != null and str(_steps_clock.timebase) != "seconds":
@@ -1660,18 +1670,19 @@ func _apply_time_patch(tok: Dictionary, patch: Dictionary, erase_keys: Array) ->
 		for k in ["at", "duration"]:
 			if patch.has(k):
 				patch[k] = snappedf(maxf(float(patch[k]), 0.0), snapv)
-	_write_time_patch(edit, arr, si, patch, erase_keys)
+	return _write_time_patch(edit, arr, si, patch, erase_keys)
 
-func _write_time_patch(edit: Dictionary, arr: Array, si: int, patch: Dictionary, erase_keys: Array) -> void:
+func _write_time_patch(edit: Dictionary, arr: Array, si: int, patch: Dictionary, erase_keys: Array) -> bool:
 	var res := StepTimeline.apply_patch(arr, si, patch, erase_keys)
 	if not bool(res.get("ok", false)):
-		return
+		return false
 	edit.data["steps"] = res.get("steps", arr)
 	if not _steps_write(edit):
-		return
+		return false
 	_steps_sel = si
 	_bump_steps_rev()
 	_rebuild_steps_all()
+	return true
 
 ## 使用展示时的顺序快照；同码步骤重排后拒绝旧回调。
 static func _step_index_of(arr: Array, tok: Dictionary) -> int:
@@ -1743,7 +1754,9 @@ func _steps_add(code: String, at_playhead := false) -> void:
 	var step := {"step": code, "fields": {}}
 	if at_playhead:
 		var time := maxf(0.0, _steps_tl.playhead)
-		step["at"] = roundf(time) if _steps_timebase() == "frame" else time
+		if _steps_clock != null and _steps_clock.timebase != "seconds":
+			time = snappedf(time, _steps_clock.snap_step())
+		step["at"] = time
 	arr.append(step)
 	data["steps"] = arr
 	if not _steps_write(edit):

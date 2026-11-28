@@ -127,10 +127,8 @@ static func new_map(name: String, w: int, h: int, proj := "", topo := "") -> Dic
 ##   by_name {图名: 码}；by_code {码: [图名...]}；map {唯一的码: 图名}。
 ##   unreadable [图名]（文件在、但读不出或结构校验不过 → 引用解析报 unreadable 而非 missing）
 ##   names [图名]（目录里的全部地图，含读不出的）
-## 带缓存（F1/P03）：签名 = 目录列举清单 + 各图 mtime，不再每图 open 取长度——
-## 20 图 × 每次调用曾要约 3 ms（打开 20 个文件），而绘制出口角标每帧都要这张表。
-## 目录列举能看见新增/删除/改名（文件系统的时间戳精度在目录项上比文件内容可靠），
-## mtime 能看见内容改动；写盘路径另调 invalidate_code_map() 显式失效兜住同秒写。
+## 按清单和地图目录缓存；编辑器写盘、应用回焦和关键查询显式失效，
+## 绘制出口角标时复用索引，不反复枚举全项目。
 static var _ci_cache := {}
 static var _ci_key := "__never__"
 

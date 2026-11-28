@@ -6,6 +6,16 @@ extends "res://tests/_suite_base.gd"
 const TriTileViewScript := preload("res://src/canvas/tri_tile_view.gd")
 const GridSpaceScript := preload("res://src/canvas/grid_space.gd")
 
+func test_grid_draws_diagonals_in_each_column() -> void:
+	var grid := GridSpaceScript.new(Vector2i(16, 16), "orthogonal")
+	grid.set_topology("triangles")
+	var lines := grid.grid_lines(Rect2(0, 0, 48, 32), Rect2i(0, 0, 3, 2))
+	var diagonals := 0
+	for i in range(0, lines.size(), 2):
+		if lines[i].x != lines[i + 1].x and lines[i].y != lines[i + 1].y:
+			diagonals += 1
+	eq(diagonals, 6, "每个四边形格都有一根对角线")
+
 ## 偶半格三角形：包围盒左上角 → UV 取切片左上；包围盒右下 → 切片右下
 func test_tri_uv_mapping() -> void:
 	var poly := PackedVector2Array([Vector2(0, 0), Vector2(16, 0), Vector2(0, 16)])

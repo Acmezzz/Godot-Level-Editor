@@ -128,7 +128,11 @@ static func tile_sets(m: Dictionary) -> Array:
 ## 清单没配 palette 时返回空数组，调用方自己按图集平铺。
 static func palette_of(m: Dictionary, aid: String) -> Array:
 	var out: Array = []
-	for p in by_id(m, aid).get("palette", []):
+	var palette: Array = by_id(m, aid).get("palette", [])
+	if palette.is_empty():
+		return out
+	var bottom := cell_size(m, aid).y
+	for p in palette:
 		if not (p is Dictionary):
 			continue
 		var cell: Array = (p as Dictionary).get("cell", [])
@@ -140,7 +144,7 @@ static func palette_of(m: Dictionary, aid: String) -> Array:
 			"name": str((p as Dictionary).get("name", "")),
 			"cat": str((p as Dictionary).get("cat", "")),
 			# ySortOrigin 缺省 = 切片底部（遮挡模型的瓦片排序点口径，见 REFACTOR_PLAN 3.7）
-			"ySortOrigin": int((p as Dictionary).get("ySortOrigin", cell_size(m, aid).y)),
+			"ySortOrigin": int((p as Dictionary).get("ySortOrigin", bottom)),
 		})
 	return out
 
@@ -156,8 +160,7 @@ static func declared_cell_size(c: Variant, fallback: Vector2i) -> Vector2i:
 		return Vector2i(int(c[0]), int(c[1]))
 	return fallback
 
-## 编辑器占位尺寸（像素），只看声明：editorSize → ZERO（prefab 碰撞形状的兜底在
-## manifest.entity_editor_size 里——那需要读文件，不属于纯声明归一化）。
+## 编辑器占位尺寸（像素）：只读 editorSize，缺省为零。
 static func editor_size(m: Dictionary, aid: String) -> Vector2:
 	return _editor_size_of_decl(by_id(m, aid))
 

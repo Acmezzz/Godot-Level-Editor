@@ -64,7 +64,7 @@
 | `entities` | — | 非法键：出现即校验报错；实体资产在 `assets[]`（`kind: "entity"`） |
 | `functions` | dict \| array | 功能声明，见 2.5 |
 | `triggers` | dict \| array | 时机池，见 2.5.4。可为图组事件声明 `eventTargets` |
-| `collisionTypes` | dict \| array | 碰撞类型池，见 2.8：画布画什么形状/颜色 + 游戏侧解释标签 gameplay |
+| `collisionTypes` | dict \| array | 碰撞类型池，见 2.8：画布颜色和游戏侧解释标签 gameplay |
 | `contentDir` | string | 内容根目录（相对工程根），缺省 `content`；不允许 `..` 或绝对路径 |
 | `playtest` | object | 可选。试玩面板声明驱动：`flags: [{id, name, arg}]`（勾选后启动参数**原样追加** arg）、`params: [{id, name, arg(含 %d), def, min, max}]`（数字参数，值 ≠ def 才追加）。值只存编辑器本地 prefs，键 = `<项目根>|<地图码>`。未声明 = 面板空态提示 |
 | `playtest.executable` | string | 可选。结构化启动：可执行文件路径，支持 `%projectpath%`/`%mapfile%`；配置后编辑器用 `OS.create_process()` **直接启动**，退出状态代表游戏本体 |
@@ -390,8 +390,8 @@ UTF-8 `map.json`（最多 4 MiB），再按通用协议写 `result.json`；此�
 | `name` | 否 | 左栏「图集列表」显示名；也是 palette 条目无 `cat` 时的兜底类别名 |
 | `palette` | 否 | 精选瓦片清单；**缺省/空 = 整张图集按网格全量铺开** |
 | `palette[].cell` | 是 | `[atlasX, atlasY]`，按该资产 `cell` 切分后的格子坐标 |
-| `palette[].name` | 否 | 显示名，缺省 `"x,y"` |
-| `palette[].cat` | 否 | 类别名；缺省用资产 `name` 作类别；再缺「未分类」 |
+| `palette[].name` | 否 | 显示名；未填时调色板显示为 `"x,y"` |
+| `palette[].cat` | 否 | 类别名；未填时调色板用资产 `name` 作类别，再缺则显示「未分类」 |
 
 **索引契约**：地图瓦片条目写**资产 id 字符串**，不写「图集在清单里的下标」。
 清单重排、插队、删除资产都不会让既有地图错位。
@@ -918,15 +918,14 @@ WAV 的 PCM 波形仅作概览；OGG、MP3 可试听与跳转。换算结果是�
 
 ### 2.7 内置实体种类 `trigger_zone`（显示名「事件」）
 
-由编辑器提供，**不需要游戏工程在清单里声明**；加载清单时自动并入（`builtin=true`），
-写盘前再剥掉，所以游戏工程的 `editor_manifest.json` 里看不到它。
+由编辑器提供，**不需要游戏工程在清单里声明**。清单未声明 `trigger_zone` 时，编辑器在内存中补入并保留实体码 `TZ99`；其他实体不能占用该码。游戏自行声明的 `trigger_zone` 优先并保留在清单中。保存只略过编辑器实际补入的条目。
 
 它**没有任何特殊语义**：就是一个 `visual.mode: rect`（`type` 缺省 `rect`）的实体资产，画布按 `visual.mode/color/alpha`
 画半透明矩形，尺寸走通用的 `sizeFields`。"这是事件"这件事只落在实例上挂的 `functions[]` 里
 （语义全在功能里），资产本身不认识"事件"。
 
 ```json
-{"id": "trigger_zone", "kind": "entity", "name": "事件", "builtin": true, "role": "trigger",
+{"id": "trigger_zone", "kind": "entity", "name": "事件", "role": "trigger",
  "code": "TZ99", "anchor": "top_left", "visual": {"mode": "rect", "color": "#4fc3f7", "alpha": 0.35},
  "sizeFields": ["w", "h"], "fields": []}
 ```
@@ -974,25 +973,25 @@ WAV 的 PCM 波形仅作概览；OGG、MP3 可试听与跳转。换算结果是�
 
 ### 2.8 碰撞类型池 `collisionTypes`（顶层声明池）
 
-碰撞**类型集**由清单声明；类型决定画布画什么（形状/颜色），语义归游戏侧：
+碰撞**类型集**由清单声明；类型决定画布颜色，游戏侧解释语义：
 
 ```json
 "collisionTypes": {
-  "solid":   {"name": "阻挡", "shape": "rect", "gameplay": "block"},
-  "one_way": {"name": "单向", "shape": "rect", "gameplay": "one_way"},
-  "ice":     {"name": "冰面", "shape": "rect", "gameplay": "slide", "color": "#88ccff"}
+  "solid":   {"name": "阻挡", "gameplay": "block"},
+  "one_way": {"name": "单向", "gameplay": "one_way"},
+  "ice":     {"name": "冰面", "gameplay": "slide", "color": "#88ccff"}
 }
 ```
 
 | 键 | 说明 |
 |---|---|
 | `name` | 编辑器下拉显示名 |
-| `shape` | 编辑器画什么：`rect` / `triangle_r` / `triangle_l` / `circle` / `polygon`（缺省 `rect`；画布目前只画 rect/斜坡，其余按矩形画） |
+| `shape` | 旧清单可保留：`rect` / `triangle_r` / `triangle_l` / `circle` / `polygon`。画布按地图 `collision[].shape` 绘制，不从类型继承形状。 |
 | `gameplay` | 游戏侧自己的解释标签，编辑器只存取不解释 |
 | `color` | 可选，画布色块颜色（`#rrggbb`）；未声明按 id 稳定取色 |
 
-缺省池 = 内置四类（solid/one_way/ladder/hazard）；**声明即整体覆盖**（不混搭内置）。
-碰撞条目的 `type` 写类型 id，校验只查形状与唯一性；未声明的类型 id 游戏侧自行降级。
+未声明或声明空池时用内置四类（solid/one_way/ladder/hazard）；非空声明整体替换内置池。
+碰撞条目的 `type` 写类型 id；未声明的类型 id 游戏侧自行降级。
 
 <a name="map-data"></a>
 
@@ -1171,11 +1170,9 @@ TILE_W/TILE_H = 清单 `tileSize`（标量或 `[w,h]` 矩形格），取自清�
 | `type` | 碰撞类型 id；语义归游戏侧 | `"solid"` |
 | `shape` | 形状：`""`（矩形）/ `r45` / `l45` | `""` |
 
-**类型集由清单 `collisionTypes` 声明**（见 §2.8）。缺省池是内置四类（solid/one_way/ladder/hazard），
-声明即整体覆盖；`gameplay` 是游戏侧自己的解释标签，编辑器只存取不解释。
-编辑器画布按声明的 `shape`/`color` 画色块；游戏侧按 `type` 分发行为。
+**类型集由清单 `collisionTypes` 声明**（见 §2.8）。画布按类型取颜色，按本格的 `shape` 绘制；游戏侧按 `type` 和 `shape` 实现碰撞行为。
 
-**形状**（只对 solid / one_way 有意义，其他类型按整格）：
+**形状**：
 
 | shape | 多边形（相对格左上，16×16） |
 |---|---|

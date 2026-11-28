@@ -11,7 +11,9 @@ const Grid := preload("res://src/canvas/grid_space.gd")
 const LayerStack := preload("res://src/map/layer_stack.gd")
 const MapView := preload("res://src/map/map_view_data.gd")
 
-const PROJECT_FIELDS := ["views", "worldLayout", "eventLayers", "viewports"]
+const PROJECT_FIELDS := {"views": TYPE_ARRAY, "worldLayout": TYPE_DICTIONARY,
+	"eventLayers": TYPE_DICTIONARY, "viewports": TYPE_ARRAY}
+const APPLIED := {"ok": true}
 const MAP_MODES := ["map.patch", "map.rename", "map.delete", "layer.put", "layer.delete", "layer.move",
 	"tiles.set", "collision.set", "instance.put", "instance.delete", "binding.put", "binding.delete"]
 
@@ -37,6 +39,8 @@ func apply(draft: Dictionary, ops: Array, batch := {}) -> Dictionary:
 			return {"error": "操作必须有 op。", "index": i}
 		var change: Dictionary = _replace_handles(raw, handles)
 		var result := _apply(batch, change, previous.maps)
+		if result.is_empty():
+			return {"error": "操作未完成，未保存批次。", "index": i}
 		if result.has("error"):
 			result["index"] = i
 			return result
@@ -80,10 +84,13 @@ func _apply(batch: Dictionary, op: Dictionary, original_maps := {}) -> Dictionar
 		return {"error": "data 必须是对象。"}
 	if name_ == "project.set":
 		var key := str(op.get("section", ""))
-		if key not in PROJECT_FIELDS:
-			return {"error": "section 不属于作者可编辑清单。", "allowed": PROJECT_FIELDS}
-		batch.project[key] = op.get("value")
-		return {}
+		if not PROJECT_FIELDS.has(key):
+			return {"error": "section 不属于作者可编辑清单。", "allowed": PROJECT_FIELDS.keys()}
+		var value = op.get("value")
+		if typeof(value) != PROJECT_FIELDS[key]:
+			return {"error": "%s 的 value 必须是%s。" % [key, "数组" if PROJECT_FIELDS[key] == TYPE_ARRAY else "对象"]}
+		batch.project[key] = value
+		return APPLIED
 	if name_ == "startup.set":
 		var startup: Dictionary = drafts.candidate(batch).get("startup", {}).duplicate(true)
 		for key in ["target", "contentMap"]:
@@ -93,7 +100,7 @@ func _apply(batch: Dictionary, op: Dictionary, original_maps := {}) -> Dictionar
 				else:
 					startup[key] = data[key]
 		batch.project["startup"] = startup
-		return {}
+		return APPLIED
 	if name_ == "slot.set":
 		var slots: Dictionary = drafts.candidate(batch).get("projectContentSlots", {})
 		var id := str(op.get("slot", ""))
@@ -104,7 +111,7 @@ func _apply(batch: Dictionary, op: Dictionary, original_maps := {}) -> Dictionar
 		else:
 			slots[id]["target"] = data.target
 		batch.project["projectContentSlots"] = slots
-		return {}
+		return APPLIED
 	if name_ in ["group.put", "group.delete"]:
 		var groups: Dictionary = drafts.candidate(batch).get("eventLayers", {})
 		var id := str(op.get("group", ""))
@@ -122,7 +129,7 @@ func _apply(batch: Dictionary, op: Dictionary, original_maps := {}) -> Dictionar
 					group[key] = data[key]
 			groups[id] = group
 		batch.project["eventLayers"] = groups
-		return {"id": id} if name_ == "group.put" else {}
+		return {"id": id} if name_ == "group.put" else APPLIED
 	if name_ == "view.put" or name_ == "view.delete":
 		return _view(batch, op, data)
 	if name_ in ["content.put", "content.delete"]:
@@ -186,7 +193,7 @@ func _apply(batch: Dictionary, op: Dictionary, original_maps := {}) -> Dictionar
 			return _instance(map, op, data)
 		"binding.put", "binding.delete":
 			return _binding(map, op, data)
-	return {}
+	return APPLIED
 
 func new_map_code(batch: Dictionary) -> String:
 	var code := Maps.allocate_code(manifest)
@@ -212,14 +219,14 @@ func _layer(map: Dictionary, op: Dictionary, data: Dictionary) -> Dictionary:
 			var target = op.get("index")
 			if index >= 0 and _number(target) and target >= 0 and target < layers.size():
 				LayerStack.move(layers, index, int(target), map.get("objects", []))
-				return {}
+				return APPLIED
 		"layer.delete":
 			if index >= 0 and layers.size() > 1:
 				if not map.get("tiles", {}).get(id, []).is_empty() or map.get("objects", []).any(
 						func(row): return MapView.object_layer(row, layers) == id):
 					return {"error": "先移动或删除这一层的瓦片和摆放物。"}
 				LayerStack.remove(map, index)
-				return {}
+				return APPLIED
 	return {"error": "图层或目标顺序无效：" + id}
 
 func _cells(map: Dictionary, op: Dictionary) -> Dictionary:
@@ -258,7 +265,7 @@ func _cells(map: Dictionary, op: Dictionary) -> Dictionary:
 		tile_sets[id] = indexed.values()
 	else:
 		map.collision = indexed.values()
-	return {}
+	return APPLIED
 
 func _instance(map: Dictionary, op: Dictionary, data: Dictionary) -> Dictionary:
 	var rows: Array = map.get_or_add("objects", [])
@@ -279,7 +286,7 @@ func _instance(map: Dictionary, op: Dictionary, data: Dictionary) -> Dictionary:
 		if index < 0:
 			return {"error": "指定实例码，或无实例码场景摆放物的 objectIndex。"}
 		rows.remove_at(index)
-		return {}
+		return APPLIED
 	var row: Dictionary = rows[index].duplicate(true) if index >= 0 else {}
 	var asset := str(data.get("asset", row.get("asset", "")))
 	var decl := Assets.by_id(manifest, asset)
@@ -334,7 +341,7 @@ func _binding(map: Dictionary, op: Dictionary, data: Dictionary) -> Dictionary:
 			return {"error": "需要已存在的普通绑定 ID。"}
 		bindings.remove_at(at)
 		Functions.renumber_bindings(bindings)
-		return {}
+		return APPLIED
 	var fn := str(op.get("function", ""))
 	var code := Functions.fn_code(manifest, fn)
 	var target_fn := Functions.fn_id_of(manifest, str(bindings[at].fn)) if at >= 0 else fn
@@ -383,7 +390,7 @@ func _content(batch: Dictionary, op: Dictionary, data: Dictionary) -> Dictionary
 			return {"error": "内容不存在。"}
 		existing["deleted"] = true
 		batch.contents[fn + "/" + id] = existing
-		return {}
+		return APPLIED
 	if existing.is_empty():
 		if id != "":
 			return {"error": "修改的内容 ID 不存在；新内容省略 content，由编辑器分配。"}

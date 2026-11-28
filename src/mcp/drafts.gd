@@ -20,7 +20,24 @@ func path(id: String) -> String:
 	return folder().path_join(id + ".json")
 
 func read(id: String) -> Dictionary:
-	return Recovery.read_json(path(id)) if Contents.is_valid_id(id) else {}
+	if not Contents.is_valid_id(id):
+		return {}
+	var draft := Recovery.read_json(path(id))
+	var history = draft.get("history", draft.get("snapshots"))
+	var cursor = draft.get("cursor")
+	var revision = draft.get("revision")
+	if draft.get("id") != id or not draft.get("name") is String or not draft.get("manifestDigest") is String \
+			or not _is_index(revision) or not _is_index(cursor) or not history is Array or cursor >= history.size():
+		return {}
+	if draft.has("history"):
+		if not history[int(cursor)] is Dictionary:
+			return {}
+	elif not history.all(func(key): return key is String and Contents.is_valid_id(key)):
+		return {}
+	return draft
+
+static func _is_index(value: Variant) -> bool:
+	return (value is float or value is int) and is_finite(float(value)) and value >= 0 and value == floorf(value)
 
 func state(draft: Dictionary) -> Dictionary:
 	if draft.is_empty():
@@ -111,7 +128,7 @@ func manage(args: Dictionary) -> Dictionary:
 		return _save_snapshot(fresh, state({}))
 	var draft := read(id)
 	if draft.is_empty():
-		return {"error": "草稿不存在：" + id}
+		return {"error": "草稿不存在或文件已损坏：" + id}
 	if action in ["open", "save", "diff"]:
 		var response := info(draft)
 		if action == "diff":

@@ -169,6 +169,21 @@ static func _value_commit(read_value: Callable, initial: Variant, on_set: Callab
 		last.value = value
 		return true
 
+static func spin_text_flush(sp: SpinBox) -> Callable:
+	var pending := [false]
+	sp.get_line_edit().text_changed.connect(func(_text: String): pending[0] = true)
+	sp.value_changed.connect(func(_value: float): pending[0] = false)
+	return func():
+		# 箭头已更新数值，但 Godot 延后刷新文本，不能从旧文本反写。
+		if pending[0]:
+			pending[0] = false
+			sp.apply()
+
+static func bind_spin_commit(sp: SpinBox, commit: Callable) -> void:
+	sp.get_line_edit().text_submitted.connect(func(_text: String): commit.call())
+	sp.get_line_edit().focus_exited.connect(func(): commit.call())
+	sp.focus_exited.connect(func(): commit.call())
+
 ## 构建控件。返回 {ctl: Control, commit: Callable}。
 ## commit 用于重建/切实例前统一提交连续控件（SpinBox/多行文本）的待写值；
 ## 离散控件即时提交。失败时保留控件值，由统一 commit 重试。
@@ -219,21 +234,17 @@ static func _build_input(decl: Dictionary, value, on_set: Callable,
 			sp.max_value = float(decl.get("max", 999999))
 			sp.value = float(value) if (value is int or value is float) else 0.0
 			sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-			var pending := {"v": sp.value}
-			sp.value_changed.connect(func(v: float):
-				if typ == "int":
-					pending.v = int(v)
-				else:
-					pending.v = v)
 			# 未改动就提交时什么都不做（A2）：否则「空表单按 Ctrl+S」会先建出内容 ID。
-			# 基线必须是「上次真正写出去的值」：拿建控件时的值比，用户写 7 之后再改回 5
-			# 会被判成「没变」而丢写（V4 P1）。拖动期间仍只记内存（连续控件纪律）。
-			var push := _value_commit(func(): return pending.v, pending.v, on_set)
-			sp.get_line_edit().text_submitted.connect(func(_t: String): push.call())
-			sp.get_line_edit().focus_exited.connect(func(): push.call())
-			# 失焦也要落盘：键盘输入走 SpinBox 自身行编辑，不会触发 text_submitted
-			# 的情形（直接点别处）同样要写出去
-			sp.focus_exited.connect(func(): push.call())
+			var read := func() -> Variant:
+				if typ == "int":
+					return int(sp.value)
+				return sp.value
+			var write := _value_commit(read, read.call(), on_set)
+			var flush := spin_text_flush(sp)
+			var push := func() -> bool:
+				flush.call()
+				return write.call()
+			bind_spin_commit(sp, push)
 			return {"ctl": sp, "commit": push}
 		"string":
 			if not (value is String) and value != null:
@@ -891,7 +902,12 @@ static func _build_viewport_ref(decl: Dictionary, value, on_set: Callable, optio
 	if not (value is Dictionary):
 		value = {}
 	var cur: Dictionary = (value as Dictionary).duplicate(true)
-	var commit := _value_commit(func(): return cur.duplicate(true), cur.duplicate(true), on_set)
+	var write := _value_commit(func(): return cur.duplicate(true), cur.duplicate(true), on_set)
+	var coords_flush: Array[Callable] = []
+	var commit := func() -> bool:
+		for flush in coords_flush:
+			flush.call()
+		return write.call()
 	var panel := Kit.vbox(4)
 	var d2: Dictionary = decl.duplicate(true)
 	d2["kind"] = KIND_CHOICE
@@ -907,7 +923,7 @@ static func _build_viewport_ref(decl: Dictionary, value, on_set: Callable, optio
 			cur[key] = fallback.duplicate()
 		return commit.call(), option_resolver)
 	panel.add_child(vpb.ctl)
-	# 归一化坐标 0..1：point 两轴 / rect 四轴（SpinBox 即改即写，幂等由下游保证）
+	# 坐标修改先合入同一个值，离开输入框或保存表单时提交。
 	if not arr is Array or arr.size() != dims or not arr.all(func(v): return (v is int or v is float) and is_finite(float(v)) and float(v) >= 0.0 and float(v) <= 1.0):
 		panel.free()
 		return _readonly(value, "画幅坐标格式无效", "保留原值，修正源数据后重读")
@@ -917,14 +933,12 @@ static func _build_viewport_ref(decl: Dictionary, value, on_set: Callable, optio
 		sp.min_value = 0.0
 		sp.max_value = 1.0
 		sp.step = 0.01
-		sp.value = float(arr[d]) if d < arr.size() else 0.0
+		sp.value = float(arr[d])
 		sp.value_changed.connect(func(v3):
-			var a2: Array = (cur.get(key, fallback) as Array).duplicate()
-			while a2.size() <= d:
-				a2.append(0.0)
-			a2[d] = v3
-			cur[key] = a2
-			commit.call())
+			var coords: Array = cur.get_or_add(key, fallback)
+			coords[d] = v3)
+		coords_flush.append(spin_text_flush(sp))
+		bind_spin_commit(sp, commit)
 		row.add_child(sp)
 	panel.add_child(row)
 	return {"ctl": panel, "commit": commit}

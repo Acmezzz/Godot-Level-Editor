@@ -182,6 +182,26 @@ func test_collision_types_decl() -> void:
 	var m3 := _good()
 	m3["collisionTypes"] = [{"id": "a"}, {"id": "a"}]
 	ok(_errs_of(m3).size() >= 1, "数组写法 id 重复报错")
+	m.collisionTypes.ice.color = "#88ccff"
+	eq(_errs_of(m).size(), 0, "六位十六进制颜色合法")
+	m.collisionTypes.ice.color = "not_a_color"
+	ok(not _errs_of(m).is_empty(), "非法颜色在导入时被拒绝")
+
+func test_injected_assets_are_the_only_assets_omitted() -> void:
+	var builtins := preload("res://src/assets/builtin_kinds.gd")
+	var manifest := _good()
+	var door: Dictionary = manifest.assets[1]
+	door.builtin = true
+	door.code = "TZ99"
+	ok(V.validate(manifest).any(func(issue): return str(issue.message).contains("reserved")), "内置实体码冲突在导入前报错")
+	door.code = "DOOR"
+	builtins.merge_into(manifest)
+	eq(EditorManifest.public_data(manifest).assets, _good().assets.slice(0, 1) + [door],
+		"只剥掉实际注入的事件；游戏侧同名标记随资产保留")
+	manifest = {"assets": [{"id": "trigger_zone", "kind": "entity", "code": "TZ99", "visual": {}}]}
+	eq(_errs_of(manifest), [], "游戏侧自己的事件可用原来的实体码")
+	builtins.merge_into(manifest)
+	eq(EditorManifest.public_data(manifest).assets, manifest.assets, "自定义事件不会被剥离")
 
 func test_playtest_structured_launch() -> void:
 	var m := _good()

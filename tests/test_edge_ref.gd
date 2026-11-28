@@ -28,6 +28,8 @@ func test_parse_edge() -> void:
 	eq(EdgeRef.parse_edge("1,0|2"), [], "端点缺 y = 非法")
 	eq(EdgeRef.parse_edge("a,b|1,2"), [], "非整数 = 非法")
 	eq(EdgeRef.parse_edge("1,2|3,4|5,6"), [], "三段 = 非法")
+	eq(EdgeRef.parse_edge("1,2||3,4"), [], "空端点不可忽略")
+	eq(EdgeRef.parse_edge("1,,2|3,4"), [], "空坐标不可忽略")
 
 ## 字段值：cell 恒等于规范边首端点（与 edge 自洽，不存两套口径）
 func test_value_of_self_consistent() -> void:

@@ -218,6 +218,7 @@ func _report_recovery_items() -> void:
 ## 释放当前项目会话。控制器随界面一起失效，必须全部清空。
 func _clear_project_session() -> void:
 	ContentStore.clear_read_cache()
+	EntityNode.clear_texture_cache()
 	manifest = {}
 	cur_map_path = ""
 	_cur_map_name = ""

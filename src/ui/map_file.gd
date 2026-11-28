@@ -194,32 +194,30 @@ func on_duplicate() -> void:
 	body.add_child(err_label)
 	var copy_btn: Button = UiKitScript.button("复制",
 		func(): duplicate_current_from_dialog(old_name, name_edit, err_label, pop), "primary")
-	var refresh_plan := func():
+	var prev := _plan_preview(old_name)
+	var plan_text := str(prev.get("err", ""))
+	var conflicts: Array = []
+	if plan_text.is_empty():
+		var p: Dictionary = prev.plan
+		var c := _counts(p.map_patch)
+		conflicts = p.conflicts
+		plan_text = "计划：实例 %d（新码）· 内容 %d（新 ID）· 瓦片 %d · 碰撞 %d · 摆放物 %d" % [
+			p.instance_map.size(), p.pending_contents.size(), c.tiles, c.collision, c.objects]
+		if not conflicts.is_empty():
+			plan_text += "\n⚠ 冲突 %d 条（复制会被拒绝）：\n%s" % [
+				conflicts.size(), ClonePlan.conflicts_text(conflicts)]
+	var preview_ready := prev.has("plan") and conflicts.is_empty()
+	var refresh_name := func():
 		var nn: String = name_edit.text.strip_edges()
 		if not _copy_retry_plan(old_name, nn).is_empty():
 			plan_lbl.text = "继续上一次未完成的复制"
 			copy_btn.disabled = false
 			return
-		var prev := _plan_preview(old_name, nn)
-		var p: Dictionary = prev.get("plan", {})
-		if str(prev.get("err", "")) != "":
-			plan_lbl.text = "预览：" + str(prev.get("err"))
-			copy_btn.disabled = true
-			return
-		var inst: int = (p.get("instance_map", {}) as Dictionary).size()
-		var contents: int = (p.get("pending_contents", []) as Array).size()
-		var c := _counts((p.get("map_patch", {}) as Dictionary))
-		var conflicts: Array = p.get("conflicts", [])
-		var head := "计划：实例 %d（新码）· 内容 %d（新 ID）· 瓦片 %d · 碰撞 %d · 摆放物 %d" % [
-			inst, contents, int(c.tiles), int(c.collision), int(c.objects)]
-		if conflicts.is_empty():
-			plan_lbl.text = head
-		else:
-			plan_lbl.text = head + "\n⚠ 冲突 %d 条（复制会被拒绝）：\n%s" % [
-				conflicts.size(), ClonePlan.conflicts_text(conflicts)]
-		copy_btn.disabled = not conflicts.is_empty()
-	name_edit.text_changed.connect(func(_t: String): refresh_plan.call())
-	refresh_plan.call()
+		var name_error := _copy_name_error(nn)
+		plan_lbl.text = plan_text if name_error.is_empty() else name_error
+		copy_btn.disabled = not preview_ready or not name_error.is_empty()
+	name_edit.text_changed.connect(func(_t: String): refresh_name.call())
+	refresh_name.call()
 	var btn_row := UiKitScript.hbox(8)
 	btn_row.alignment = BoxContainer.ALIGNMENT_END
 	btn_row.add_child(UiKitScript.button("取消", func(): pop.hide(), "ghost"))
@@ -227,21 +225,24 @@ func on_duplicate() -> void:
 	body.add_child(btn_row)
 	app._open_popup(pop)
 
-## 副本预览包含当前画布和尚未写盘的内容。
-func _plan_preview(old_name: String, nn: String) -> Dictionary:
+func _copy_name_error(nn: String) -> String:
 	if nn == "":
-		return {"plan": {}, "err": "先填新图名"}
+		return "先填新图名"
 	if not EditorManifest.is_valid_map_name(nn):
-		return {"plan": {}, "err": "地图名不合法：不能含 / \\ : * ? \" < > | 或以 . 开头"}
+		return "地图名不合法：不能含 / \\ : * ? \" < > | 或以 . 开头"
 	if FileAccess.file_exists(EditorManifest.map_path(app.manifest, nn)):
-		return {"plan": {}, "err": "同名地图已存在：换个名字"}
+		return "同名地图已存在：换个名字"
+	return ""
+
+## 预览只算一次；实际提交用最新画布和最终名称重新生成计划。
+func _plan_preview(old_name: String) -> Dictionary:
 	var data: Dictionary = app.canvas.extract()
 	if data.is_empty():
-		return {"plan": {}, "err": "地图重建中，请稍后再试"}
+		return {"err": "地图重建中，请稍后再试"}
 	# 预览只需要一份可解析的计划：目标码用占位（真正的新码由 duplicate_map 发行）
 	return {"plan": ClonePlan.whole_map_document(
-		{"data": data, "manifest": app.manifest, "map": old_name}, nn, "PREV",
-		_staged_by_key()), "err": ""}
+		{"data": data, "manifest": app.manifest, "map": old_name}, old_name, "PREV",
+		_staged_by_key())}
 
 ## 当前文档未落盘的暂存内容 {cid: data}（整图复制的输入；没有内容编辑器时为空）。
 func _staged_by_key() -> Dictionary:
@@ -508,8 +509,10 @@ func confirm_action(title: String, text: String, ok_text := "确定") -> bool:
 	var answer := [false]
 	dlg.confirmed.connect(func(): answer[0] = true)
 	dlg.popup_centered()
-	while dlg.visible:
+	while is_instance_valid(dlg) and dlg.is_inside_tree() and dlg.visible:
 		await app.get_tree().process_frame
+	if not is_instance_valid(dlg) or not dlg.is_inside_tree():
+		return false
 	dlg.queue_free()
 	return answer[0]
 

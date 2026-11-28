@@ -537,7 +537,7 @@ func grid_lines(vis: Rect2, map_rect: Rect2i) -> PackedVector2Array:
 			for j2 in range(first_row, end_row):
 				out.append(to_px(Vector2(i2 + 1, j2)))
 				out.append(to_px(Vector2(i2, j2 + 1)))
-			return out
+		return out
 	if is_hex_geom():
 		var hw := float(tile.x)
 		var hh := float(tile.y)

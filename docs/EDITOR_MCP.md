@@ -59,7 +59,7 @@ operations 的每个对象包含 op。写入数据时，字段、步骤、触发
 | group.put / group.delete | group，可在 put 中省略以分配新 ID；data 可写 name、maps、drawingMap、drawOrder、events。绘制文档可用同批 map.create 创建，图组的整组顺序以 drawOrder 表示，底图为 0。省略 maps 使图组应用于适用的普通地图。 |
 | startup.set | data.target 选入口，data.contentMap 选配对地图；null 可清除。入口可用类型由游戏侧 startup 声明决定。 |
 | slot.set | slot 指已有项目内容槽位，data.target 给 {function,content} 或 null。 |
-| project.set | section 为 views、worldLayout、eventLayers、viewports；value 替换该段作者数据。涉及 ID 的键也支持同批别名。 |
+| project.set | value 整体替换 section：views / viewports 用数组，eventLayers / worldLayout 用对象。清空列表用 `[]`，清空图组用 `{}`；涉及 ID 的键也支持同批别名。 |
 
 `map.patch` 的 `meta.w`、`meta.h` 若设置具体值，必须为正整数。值为 `null` 时删除该键，读取时采用缺省尺寸。调小尺寸只改地图格数，会保留已有地图内容；要同时裁剪越界数据，请使用编辑器的「调整地图边界」。非法尺寸会使批次失败，并返回 `meta.w` 或 `meta.h` 的校验原因，草稿版本不变。
 

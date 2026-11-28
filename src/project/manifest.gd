@@ -16,16 +16,20 @@ const StepDecls := preload("res://src/content/step_decl.gd")
 const AudioDecls := preload("res://src/content/audio_decl.gd")
 const TriggerDecls := preload("res://src/content/trigger_decl.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
+const BuiltinKinds := preload("res://src/assets/builtin_kinds.gd")
 
 static func public_data(source: Dictionary) -> Dictionary:
 	var out := source.duplicate()
 	for key in out.keys():
 		if str(key).begins_with("_"):
 			out.erase(key)
-	out = preload("res://src/assets/builtin_kinds.gd").strip_from(out)
-	for asset in (out.get("assets", []) as Array):
-		if asset is Dictionary:
+	out = out.duplicate(true)
+	var assets := []
+	for asset in out.get("assets", []):
+		if not BuiltinKinds.is_injected(source, str(asset.get("id", ""))):
 			asset.erase("atlas_abs")
+			assets.append(asset)
+	out["assets"] = assets
 	return out
 
 ## 参数数组用的替换：原样内联，不加引号（A6）。
@@ -93,7 +97,7 @@ static func load_from(project_dir: String) -> Dictionary:
 	data["_maps_dir"] = project_dir.path_join("maps")
 	data["_warnings"] = warnings
 	# 内置种类（如 trigger_zone）由编辑器提供，不需要游戏工程声明
-	preload("res://src/assets/builtin_kinds.gd").merge_into(data)
+	BuiltinKinds.merge_into(data)
 	# V4 P0-2：补码前的码快照——装载结束后与补码后的差集 = 本次会话临时发码。
 	var codes_before := issued_codes(data)
 	# 功能段 / 字段段：同样补发（保存清单时随 functions写回）。

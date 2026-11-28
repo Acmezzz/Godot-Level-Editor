@@ -142,6 +142,20 @@ def run(editor, godot, logs):
                 home = call("capture_editor")[1]
                 png(home[0], "window")
                 bad = call("manage_draft", action="create", name="发布预检回归")[0]["id"]
+                rejected, _ = call("apply_changes", draft=bad, revision=0, expect_error=True, operations=[
+                    {"op": "project.set", "section": "views", "value": []},
+                    {"op": "project.set", "section": "eventLayers", "value": None},
+                    {"op": "view.put", "view": "main"}])
+                assert rejected["index"] == 1, rejected
+                untouched, _ = call("manage_draft", action="diff", draft=bad)
+                assert untouched["revision"] == 0 and untouched["changes"]["project"] == {}, untouched
+                test_views = call("manage_draft", action="create", name="清空并重建屏幕")[0]["id"]
+                screen_batch, _ = call("apply_changes", draft=test_views, revision=0, operations=[
+                    {"op": "project.set", "section": "views", "value": []},
+                    {"op": "view.put", "view": "main", "data": {"layout": {"elements": []}}}])
+                screen_diff, _ = call("manage_draft", action="diff", draft=test_views)
+                assert screen_diff["changes"]["project"]["views"][0]["view_id"] == "main", screen_diff
+                call("manage_draft", action="discard", draft=test_views, revision=screen_batch["revision"])
                 malformed, _ = call("apply_changes", draft=bad, revision=0, operations=[
                     {"op": "content.put", "function": "scene", "data": {
                         "steps": [42, {"step": "UNKNOWN"}, {"step": "CUE0", "duration": -1}]}}])

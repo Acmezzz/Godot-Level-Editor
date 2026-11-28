@@ -200,7 +200,7 @@ func layer_add(name: String) -> void:
 		L.append(entry)
 	meta["layers"] = L
 	snap["meta"] = meta
-	await _load_snap_layers(snap, layer_id(active_layer))
+	await _load_snap_layers(snap, _layer_key(active_layer))
 
 ## 删层 = 删内容：快照上摘掉层声明，该层瓦片与 objects 条目一并过滤（撤销可回）。
 ## 拒绝时静默返回；调用方（层管理 UI）负责给状态栏反馈。
@@ -214,7 +214,7 @@ func layer_del(i: int) -> void:
 		return
 	cvs.push_undo([], snap)
 	LayerStack.remove(snap, i)
-	await _load_snap_layers(snap, layer_id(active_layer))
+	await _load_snap_layers(snap, _layer_key(active_layer))
 
 func layer_rename(i: int, name: String) -> void:
 	if not name.is_empty():
@@ -277,7 +277,7 @@ func layer_set_tile_grid(i: int, spec: Dictionary) -> String:
 		row["tileGrid"] = spec.duplicate(true)
 	else:
 		row.erase("tileGrid")
-	await _load_snap_layers(snapshot, layer_id(active_layer))
+	await _load_snap_layers(snapshot, _layer_key(active_layer))
 	return ""
 
 ## Builds the exact document shown in the migration preview, without changing the canvas.
@@ -360,10 +360,10 @@ func _set_layer_field(i: int, key: String, value: Variant) -> void:
 		layer.erase(key)
 	else:
 		layer[key] = value
-	await _load_snap_layers(snap, layer_id(active_layer))
+	await _load_snap_layers(snap, _layer_key(active_layer))
 
 ## 层操作收尾：按新快照重建，激活层跟随身份（同码层下标，层没了落最底层）。
 func _load_snap_layers(snap: Dictionary, active_id: String) -> void:
 	await load_data(snap, cur_map_name, true, true)
-	var ni := _layer_index_of(active_id)
+	var ni := collision_index() if active_id == "_collision" else _layer_index_of(active_id)
 	active_layer = ni if ni >= 0 else 0
