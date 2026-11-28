@@ -124,6 +124,10 @@ func _build_editor_ui() -> void:
 	start.add_child(app.UiKitScript.button("新建地图", func(): app._map_file_ctrl.on_new(), "primary"))
 	start.add_child(app.UiKitScript.button("打开地图文件…", func(): app._map_file_ctrl.on_open()))
 	empty_actions.add_child(start)
+	var review: Button = app.UiKitScript.button("查看 MCP 草稿…", func():
+		await preload("res://src/ui/mcp_draft_review.gd").open(app), "ghost")
+	review.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	empty_actions.add_child(review)
 	app._canvas_empty = empty_actions
 	app._canvas_empty.visible = false
 	canvas_wrap.add_child(app._canvas_empty)

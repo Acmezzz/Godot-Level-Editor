@@ -132,7 +132,7 @@ func _update_cam() -> void:
 		drawing.coll_view.queue_redraw()
 
 func _update_layer_parallax(camera: Vector2) -> void:
-	# 层参数预览：parallax ≠ 1 的层按相机位移反向平移（远景半速、0 = 固定）。
+	# 补偿视差后，平移相机时层在屏幕上的位移为 -相机位移 × parallax × zoom。
 	# offset/scale 在 load_data 时已作用到层容器；这里只补视差分量。
 	var meta: Dictionary = map_data.get("meta", {}) if map_data != null else {}
 	var mw := int(meta.get("w", 0)) * tile_w

@@ -210,11 +210,31 @@ def run(editor, godot, logs):
                         {"op": "map.patch", "map": board, "data": {"meta": {"w": width, "h": height}}}])
                     assert {issue["path"] for issue in invalid["issues"]} >= {"meta.w", "meta.h"}, invalid
                 assert call("manage_draft", action="open", draft=size_draft)[0]["revision"] == 0
-                call("apply_changes", draft=size_draft, revision=0, operations=[
+                shrunk, _ = call("apply_changes", draft=size_draft, revision=0, operations=[
                     {"op": "map.patch", "map": board, "data": {"meta": {"w": 2, "h": 2}}}])
+                tile_path = "tiles." + ids["$layer"]
+                assert any(w["path"] == tile_path and w["map"] == board and "1 格" in w["message"]
+                           for w in shrunk["warnings"]), shrunk
                 resized = call("query_content", kind="map", draft=size_draft, map=board)[0]["data"]
                 assert (resized["meta"]["w"], resized["meta"]["h"]) == (2, 2), resized["meta"]
                 assert resized["tiles"] == original["tiles"] and resized["collision"] == original["collision"]
+                bounds, _ = call("apply_changes", draft=size_draft, revision=1, operations=[
+                    {"op": "layer.put", "map": board, "as": "triangle", "data": {"name": "三角层", "tileGrid": {
+                        "gridProjection": "orthogonal", "gridTopology": "triangles"}}},
+                    {"op": "tiles.set", "map": board, "layer": "$triangle", "cells": [
+                        {"x": 3, "y": 1, "asset": "floor", "atlas": [0, 0]}]},
+                ])
+                tri_layer = bounds["aliases"]["$triangle"]
+                assert not any(w["path"] == "tiles." + tri_layer for w in bounds["warnings"]), bounds
+                bounds, _ = call("apply_changes", draft=size_draft, revision=2, operations=[
+                    {"op": "tiles.set", "map": board, "layer": tri_layer, "cells": [
+                        {"x": 4, "y": 1, "asset": "floor", "atlas": [0, 0]},
+                        {"x": -1, "y": 1, "asset": "floor", "atlas": [0, 0]}]},
+                ])
+                validation, _ = call("validate", draft=size_draft, map=board)
+                assert validation["valid"] and any(w["path"] == f"maps.{board}.tiles.{tri_layer}"
+                    and w["severity"] == "warning" and "2 格" in w["message"] for w in validation["issues"]), validation
+                assert call("query_content", kind="tiles", draft=size_draft, map=board, layer=tri_layer)[0]["total"] == 3
                 _, media = call("capture_editor", target="canvas", map=board, instance=ids["$terminal"])
                 png(media[0], "published-canvas")
                 live = call("query_content", kind="live_map")[0]["data"]
@@ -276,7 +296,7 @@ def run(editor, godot, logs):
                 assert any(issue["path"] == "maps.旧碰撞地图.collision[0]" and
                            "migrate_project.gd" in issue["message"] for issue in invalid["issues"]), invalid
                 assert any(issue["path"] == "maps.空瓦片表.tiles" for issue in invalid["issues"]), invalid
-                print("MCP-DONE tools=11 publish=ok capture=ok playtest=ok conflict=ok map_patch=ok live_map=ok", flush=True)
+                print("MCP-DONE tools=11 publish=ok capture=ok playtest=ok conflict=ok map_patch=ok live_map=ok tile_bounds=ok", flush=True)
             finally:
                 if managed:
                     try:

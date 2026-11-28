@@ -13,6 +13,7 @@ const ScreenLayoutCanvas = preload("res://src/ui/screen_layout_canvas.gd")
 const GraphEditor = preload("res://src/ui/cell_graph_editor.gd")
 const WorldLayout = preload("res://src/project/world_layout.gd")
 const Workbench := preload("res://src/mcp/workbench.gd")
+const Drafts := preload("res://src/mcp/drafts.gd")
 var failures := 0
 func _initialize():
 	create_timer(180.0).timeout.connect(func():
@@ -904,6 +905,7 @@ func run():
 		{"asset":"switch","code":"SW01","x":2,"y":2,"layer":layer},
 		{"asset":"door","code":"DR01","x":4,"y":3,"layer":layer}]
 	check(Maps.write(manifest, "board", data), "write source board")
+	await review_mcp_draft(app, manifest)
 	await app._load_map_file(Maps.path_for(manifest, "board"))
 	var mcp_workbench := Workbench.new(app)
 	var board_canvas: EditorCanvas = app.canvas
@@ -1512,6 +1514,62 @@ func run():
 	print("WORKFLOW-DONE failures=", failures)
 	quit(1 if failures else 0)
 
+func review_mcp_draft(app, manifest: Dictionary) -> void:
+	var store := Drafts.new(app)
+	var draft := store.manage({"action": "create", "name": "AI Review"})
+	check(draft.has("id"), "create the draft review fixture: " + str(draft))
+	if not draft.has("id"):
+		return
+	var batch := store.state({})
+	for pair in [["RVW1", "Unpublished Review"], ["RVW2", "Second Draft Map"]]:
+		var map_data := Maps.new_map(pair[1], 12, 10)
+		map_data.meta.code = pair[0]
+		batch.maps[pair[0]] = {"name": pair[1], "original": "", "baseline": "", "data": map_data}
+	var created := store.append(store.read(draft.id), batch)
+	check(created.get("revision") == 1, "save the draft review fixture: " + str(created))
+	var code := "RVW1"
+	var unpublished := Maps.path_for(manifest, "Unpublished Review")
+	var live_canvas: EditorCanvas = app.canvas
+	var live_map: Dictionary = live_canvas.map_data
+	var has_map: bool = app.map_loaded
+	app._set_mode("map")
+	var nav = app._layout_ctrl._nav_bar
+	nav._refresh_map_menu()
+	var menu: PopupMenu = nav._switch_menu
+	var preview_entry := menu.get_item_index(100006)
+	check(preview_entry >= 0 and menu.get_item_text(preview_entry) == "查看 MCP 草稿…", "draft review is available from the map menu")
+	menu.id_pressed.emit(100006)
+	var pop := app.find_child("MCPDraftReview", false, false) as PopupPanel
+	check(pop != null, "opens the draft review popup without opening a published map")
+	if pop == null:
+		return
+	var image := pop.find_child("MCPDraftPreview", true, false) as TextureRect
+	var maps := pop.find_child("MCPDraftMapPicker", true, false) as OptionButton
+	var refresh: Button = collect(pop, "Button").filter(func(button): return button.text == "刷新草稿")[0]
+	for i in 30:
+		if not refresh.disabled:
+			break
+		await process_frame
+	check(image.visible and image.texture != null and maps.item_count == 2 and maps.get_selected_metadata() == code,
+		"draft review renders the selected unpublished map and lists the other draft map: " + str([image.visible, maps.item_count, maps.get_selected_metadata()]))
+	var original_image := image.texture
+	batch.maps[code].name = "Renamed Draft Map"
+	batch.maps[code].data.meta.name = "Renamed Draft Map"
+	var edited := store.append(store.read(draft.id), batch)
+	check(edited.get("revision") == 2, "the AI can continue editing while the draft review is open")
+	refresh.pressed.emit()
+	for i in 30:
+		if not refresh.disabled:
+			break
+		await process_frame
+	check(maps.get_selected_metadata() == code and maps.text.begins_with("Renamed Draft Map")
+		and image.visible and image.texture != original_image,
+		"refresh shows the latest draft revision and retains the selected map ID")
+	check(app.canvas == live_canvas and app.map_loaded == has_map and is_same(app.canvas.map_data, live_map)
+		and not FileAccess.file_exists(unpublished) and not FileAccess.file_exists(Maps.path_for(manifest, "Renamed Draft Map")),
+		"review neither replaces the live canvas nor publishes a draft map")
+	pop.hide()
+
 func author_side_view_parallax(app, manifest: Dictionary) -> void:
 	var path := Maps.path_for(manifest, "platform")
 	await app._load_map_file(path)
@@ -1520,10 +1578,11 @@ func author_side_view_parallax(app, manifest: Dictionary) -> void:
 	var ground := canvas.layer_id(0)
 	await canvas.layer_add("Distant ridge")
 	await canvas.layer_add("Fixed frame")
+	await canvas.layer_add("Reverse field")
 	var panel = app._layout_ctrl._layer_ctrl
 	panel._open_layer_manager()
 	var ids: Array[String] = [ground]
-	for sample in [["Distant ridge", "0.5"], ["Fixed frame", "0"]]:
+	for sample in [["Distant ridge", "0.5"], ["Fixed frame", "0"], ["Reverse field", "-0.5"]]:
 		var index := canvas.layers_decl().find_custom(func(row): return row.name == sample[0])
 		ids.append(canvas.layer_id(index))
 		var parameters: Control = panel._layer_mgr_rows.get_child(index * 2 + 1)
@@ -1536,12 +1595,12 @@ func author_side_view_parallax(app, manifest: Dictionary) -> void:
 				break
 	panel._layer_mgr.hide()
 	var saved: Dictionary = await app._map_file_ctrl.commit_document("保存侧视图视差层")
-	check(saved.get("status") == "ok", "publish two new side-view parallax layers")
+	check(saved.get("status") == "ok", "publish side-view parallax layers through the editor")
 	await app._load_map_file(path)
 	var indices := ids.map(func(id): return canvas.layers_decl().find_custom(func(row): return row.id == id))
 	check(indices.all(func(index): return index >= 0) and indices.map(func(index):
-		return float(canvas.layers_decl()[index].get("parallax", 1.0))) == [1.0, 0.5, 0.0],
-		"reopen the same normal, half-speed and fixed layers")
+		return float(canvas.layers_decl()[index].get("parallax", 1.0))) == [1.0, 0.5, 0.0, -0.5],
+		"reopen the same normal, half-speed, fixed and reverse layers")
 	var viewport := canvas.get_viewport()
 	canvas.zoom = 1.0
 	canvas._update_cam()
@@ -1550,7 +1609,8 @@ func author_side_view_parallax(app, manifest: Dictionary) -> void:
 	canvas._update_cam()
 	var after := indices.map(func(index): return viewport.canvas_transform * canvas.to_layer_world(index, Vector2.ZERO))
 	check(after[0] - before[0] == Vector2(-80, 0) and after[1] - before[1] == Vector2(-40, 0)
-		and after[2] == before[2], "side-view camera moves near, far and fixed layers by different screen distances")
+		and after[2] == before[2] and after[3] - before[3] == Vector2(40, 0),
+		"moving the camera sends the reverse layer in the opposite direction at half speed")
 
 func author_long_timeline(app, manifest: Dictionary) -> void:
 	var steps: Array = [{"step": "NEXT", "at": 0, "duration": 10000}]

@@ -76,7 +76,7 @@
 | [workbench.gd](../src/mcp/workbench.gd) | 定义工具参数，提供工程描述、查询、校验、生成与发布入口。 |
 | [drafts.gd](../src/mcp/drafts.gd) | 管理按项目隔离的草稿、修订历史和发布基线。 |
 | [edits.gd](../src/mcp/edits.gd) | 把一批作者操作应用到候选地图、内容和清单，再统一校验。 |
-| [media.gd](../src/mcp/media.gd) | 定位编辑器面板、截取画面、请求游戏预览和管理试玩。 |
+| [media.gd](../src/mcp/media.gd) | 定位编辑器面板、截取画面、绘制草稿地图、请求游戏预览和管理试玩。 |
 
 ### 应用入口 · `src/`
 
@@ -210,6 +210,7 @@
 | [map_game_preview.gd](../src/ui/map_game_preview.gd) | 将地图工作副本交给游戏预览，接收资产摆放和引用选点。 |
 | [map_generator_dialog.gd](../src/ui/map_generator_dialog.gd) | 收集生成参数，调用游戏生成器并打开生成的地图。 |
 | [map_resize.gd](../src/ui/map_resize.gd) | 调整地图尺寸，预览并裁掉越界数据。 |
+| [mcp_draft_review.gd](../src/ui/mcp_draft_review.gd) | 选择、刷新和预览当前工程的 MCP 草稿地图，与人工画布分开。 |
 | [palette_panel.gd](../src/ui/palette_panel.gd) | 列出瓦片图集、图片和实体，供画布选用。 |
 | [playtest_controller.gd](../src/ui/playtest_controller.gd) | 协调试玩前的保存、游戏启动、配置和加载回执。 |
 | [popups.gd](../src/ui/popups.gd) | 提供共用弹窗外壳和快捷键速查。 |

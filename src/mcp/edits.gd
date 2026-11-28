@@ -48,9 +48,11 @@ func apply(draft: Dictionary, ops: Array) -> Dictionary:
 			created.append({"index": i, "objectIndex": result.objectIndex})
 	var checked: Dictionary = drafts.candidate(batch)
 	var issues := EditorManifest.validate(checked)
-	for item in batch.maps.values():
+	for code in batch.maps:
+		var item: Dictionary = batch.maps[code]
 		if not item.get("deleted", false):
-			issues.append_array(Validate.validate(item.data, checked))
+			for issue in Validate.validate(item.data, checked):
+				issues.append(issue.merged({"map": code}))
 	var errors := issues.filter(func(issue): return issue.severity == "error")
 	if not errors.is_empty():
 		return {"error": "批次未应用：数据格式无效。", "issues": errors}

@@ -25,7 +25,10 @@ func capture(args: Dictionary, batch: Dictionary) -> Dictionary:
 	if target == "draft_map":
 		if not args.has("draft"):
 			return {"error": "草稿画布需要 draft。"}
-		return await _draft_image(args, batch)
+		var frame := await draft_frame(args, batch)
+		if frame.has("error"):
+			return frame
+		return _image_result(frame.image, {"target": "draft_map", "map": args.get("map", "")})
 	if args.has("draft"):
 		return {"error": "草稿截图请使用 target: draft_map，草稿屏幕或演出请使用 render_preview。"}
 	if args.has("panel") or args.has("map"):
@@ -154,12 +157,13 @@ func _navigate(args: Dictionary) -> String:
 		_: return "未知编辑器面板：" + str(args.panel)
 	return ""
 
-func _draft_image(args: Dictionary, batch: Dictionary) -> Dictionary:
+func draft_frame(args: Dictionary, batch: Dictionary) -> Dictionary:
 	var code: String = args.get("map", "")
 	var row: Dictionary = drafts.map_of(batch, code)
 	if row.is_empty():
 		return {"error": "草稿地图不存在：" + code}
-	var size := _size(args, drafts.candidate(batch))
+	var candidate: Dictionary = drafts.candidate(batch)
+	var size := _size(args, candidate)
 	if not Runner.valid_size(size):
 		return {"error": "画幅大小无效。"}
 	var viewport := SubViewport.new()
@@ -167,7 +171,7 @@ func _draft_image(args: Dictionary, batch: Dictionary) -> Dictionary:
 	viewport.size = size
 	viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
 	var canvas := EditorCanvas.new()
-	canvas.manifest = drafts.candidate(batch)
+	canvas.manifest = candidate
 	canvas.app_host = app
 	canvas.ent_sizes = app._entity_sizes()
 	canvas.set_thumbs(app._entity_thumbs())
@@ -193,7 +197,7 @@ func _draft_image(args: Dictionary, batch: Dictionary) -> Dictionary:
 	await RenderingServer.frame_post_draw
 	var image := viewport.get_texture().get_image()
 	viewport.queue_free()
-	return _image_result(image, {"target": "draft_map", "map": code})
+	return {"image": image} if image != null and not image.is_empty() else {"error": "无法获取草稿画面。"}
 
 static func _set_camera(canvas: EditorCanvas, camera: Dictionary) -> void:
 	if camera.has("center") and _pair(camera.center):

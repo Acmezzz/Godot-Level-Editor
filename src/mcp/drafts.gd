@@ -26,20 +26,23 @@ func state(draft: Dictionary) -> Dictionary:
 	return draft.history[int(draft.cursor)].duplicate(true) if not draft.is_empty() else {"maps": {}, "contents": {}, "project": {}}
 
 func info(draft: Dictionary) -> Dictionary:
-	var batch := state(draft)
+	var batch: Dictionary = draft.history[int(draft.cursor)]
 	return {"id": draft.id, "name": draft.name, "revision": draft.revision,
 		"undo": draft.cursor > 0, "redo": draft.cursor + 1 < draft.history.size(),
 		"changed": {"maps": batch.maps.keys(), "contents": batch.contents.keys(), "project": batch.project.keys()}}
 
+func list_drafts() -> Array[Dictionary]:
+	var rows: Array[Dictionary] = []
+	for file in DirAccess.get_files_at(folder()):
+		var item := read(file.get_basename())
+		if not item.is_empty():
+			rows.append(info(item))
+	return rows
+
 func manage(args: Dictionary) -> Dictionary:
 	var action: String = args.get("action", "list")
 	if action == "list":
-		var rows := []
-		for file in DirAccess.get_files_at(folder()):
-			var item := read(file.get_basename())
-			if not item.is_empty():
-				rows.append(info(item))
-		return {"drafts": rows, "editorRecovery": Recovery.list_drafts(app.manifest)}
+		return {"drafts": list_drafts(), "editorRecovery": Recovery.list_drafts(app.manifest)}
 	var id: String = args.get("draft", "")
 	if action == "create":
 		id = Crypto.new().generate_random_bytes(12).hex_encode()

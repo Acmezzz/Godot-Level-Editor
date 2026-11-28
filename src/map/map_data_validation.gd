@@ -6,6 +6,7 @@ const CellGraph := preload("res://src/map/cell_graph.gd")
 const ViewData := preload("res://src/map/map_view_data.gd")
 const GridSpaceScript := preload("res://src/canvas/grid_space.gd")
 const MapFlow := preload("res://src/map/map_flow.gd")
+const K := preload("res://src/core/constants.gd")
 
 static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 	var issues: Array[Dictionary] = []
@@ -26,13 +27,21 @@ static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 		if data.has(key) and not (data[key] is Array):
 			_add(issues, "error", key, "must be an array")
 	var meta = data.get("meta", {})
-	var layer_ids := {}
+	var root_grid: GridSpace
+	var layer_grids := {}
+	var width := K.DEFAULT_MAP_W
+	var height := K.DEFAULT_MAP_H
+	var valid_bounds := true
 	if not (meta is Dictionary):
 		_add(issues, "error", "meta", "must be an object")
 	else:
 		for key in ["w", "h"]:
 			if meta.has(key) and (not _is_integral_number(meta[key]) or int(meta[key]) <= 0):
 				_add(issues, "error", "meta." + key, "must be a positive integer")
+				valid_bounds = false
+		if valid_bounds:
+			width = int(meta.get("w", width))
+			height = int(meta.get("h", height))
 		# 逐图投影（B1）：可选键，三种枚举；缺键 = 沿用项目解析
 		if meta.has("gridProjection") and not (str(meta.gridProjection) in ["orthogonal", "isometric", "hexagonal"]):
 			_add(issues, "error", "meta.gridProjection", "must be \"orthogonal\" / \"isometric\" / \"hexagonal\"")
@@ -51,22 +60,27 @@ static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 		for section in MapFlow.SECTIONS:
 			if not meta.get(section, {}) is Dictionary:
 				_add(issues, "error", "meta." + section, "must be an object keyed by slot ID")
-		layer_ids = _validate_layers(meta, issues, manifest)
+		root_grid = GridSpaceScript.resolve(meta, manifest).grid
+		layer_grids = _validate_layers(meta, issues, manifest, root_grid)
 	var tiles = data.get("tiles", null)
 	if data.has("tiles") and not (tiles is Dictionary):
 		_add(issues, "error", "tiles", "must be an object keyed by layer id")
 	elif tiles is Dictionary:
 		var known_assets := _asset_ids(manifest)
 		for lid in tiles:
+			var layer_path := "tiles." + str(lid)
 			var tile_cells := {}
-			if not layer_ids.is_empty() and not layer_ids.has(str(lid)):
-				_add(issues, "error", "tiles." + str(lid), "unknown layer id")
+			if not layer_grids.is_empty() and not layer_grids.has(str(lid)):
+				_add(issues, "error", layer_path, "unknown layer id")
 			if not (tiles[lid] is Array):
-				_add(issues, "error", "tiles." + str(lid), "must be an array")
+				_add(issues, "error", layer_path, "must be an array")
 			else:
+				var grid: GridSpace = layer_grids.get(str(lid), root_grid)
+				var outside := 0
+				var first_outside := Vector2i.ZERO
 				for j in (tiles[lid] as Array).size():
 					var cell = (tiles[lid] as Array)[j]
-					var p := "tiles.%s[%d]" % [str(lid), j]
+					var p := "%s[%d]" % [layer_path, j]
 					# 6 元（v7）：[x, y, 资产id, atlas_x, atlas_y, alt]——第 3 位是字符串资产 id，
 					# 第 6 位 = 变换位 0-7（bit0 水平翻转 / bit1 垂直翻转 / bit2 转置 90°），0 = 原样。
 					# JSON 数字一律是 float：格号/图集号/alt 都要求「有限且为整数」（R21），
@@ -87,21 +101,24 @@ static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 						if tile_cells.has(ck):
 							_add(issues, "error", p, "duplicate tile cell on layer %s: (%d,%d)" % [str(lid), int(cell[0]), int(cell[1])])
 						tile_cells[ck] = true
+						if valid_bounds and grid != null and not grid.cell_in_map(ck, width, height):
+							if outside == 0:
+								first_outside = ck
+							outside += 1
+				if outside > 0:
+					_add(issues, "warning", layer_path, "有 %d 格瓦片超出地图格范围（例如 %s），已保留。若非有意摆放，可扩大地图或擦除这些格。" % [outside, first_outside])
 	var spawn = data.get("spawn", [2, 2])
 	if not (spawn is Array) or spawn.size() != 2 or not _is_number_pair(spawn):
 		_add(issues, "error", "spawn", "must contain two numeric coordinates")
 	elif not _is_integral_number(spawn[0]) or not _is_integral_number(spawn[1]):
 		_add(issues, "error", "spawn", "must contain two integer cell coordinates")
-	elif meta is Dictionary:
-		var grid: GridSpace = GridSpaceScript.resolve(meta, manifest).get("grid")
-		var w := int(meta.get("w", 120)) if _is_integral_number(meta.get("w", 120)) else 120
-		var h := int(meta.get("h", 56)) if _is_integral_number(meta.get("h", 56)) else 56
-		if grid != null and not grid.cell_in_map(Vector2i(int(spawn[0]), int(spawn[1])), w, h):
+	elif valid_bounds and root_grid != null:
+		if not root_grid.cell_in_map(Vector2i(int(spawn[0]), int(spawn[1])), width, height):
 			_add(issues, "warning", "spawn", "spawn is outside the declared map bounds")
 	if data.has("entities"):
 		_add(issues, "error", "entities", "retired: use objects[] with asset/transform (run tools/migrate_project.gd)")
 	if data.get("objects", null) is Array:
-		_validate_objects(data.objects, manifest, layer_ids, issues)
+		_validate_objects(data.objects, manifest, layer_grids, issues)
 	if data.get("collision", null) is Array:
 		var coll_cells := {}   # R21：同格多碰撞 = 错误（命中判定会随数组序漂移）
 		for i in data.collision.size():
@@ -137,30 +154,28 @@ static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 	return issues
 
 ## meta.layers 用户层栈校验：非空数组、条目 id 非空且唯一、name 非空。
-## 返回合法层 id 集（供 tiles 键与 entities.layer 归属校验）；栈本身不合格时返回空集，
-## 关联检查（tiles 键 ⊆ 层集、entity.layer ∈ 层集）随之跳过，避免连坐噪音。
-
-static func _validate_layers(meta: Dictionary, issues: Array[Dictionary], manifest: Dictionary) -> Dictionary:
-	var ids := {}
+## 返回图层 ID 到生效瓦片格空间的映射，也用于归属校验。
+static func _validate_layers(meta: Dictionary, issues: Array[Dictionary], manifest: Dictionary, root_grid: GridSpace) -> Dictionary:
+	var grids := {}
 	if not meta.has("layers") or not (meta.layers is Array) or (meta.layers as Array).is_empty():
 		_add(issues, "error", "meta.layers", "must be a non-empty array of layer objects")
-		return ids
+		return grids
 	for i in (meta.layers as Array).size():
 		var ldef = meta.layers[i]
 		var p := "meta.layers[%d]" % i
 		if not (ldef is Dictionary):
 			_add(issues, "error", p, "must be an object")
 			continue
-		if ldef.has("tileGrid"):
-			for issue in GridSpaceScript.resolve_tile_layer(ldef, manifest, null).issues:
-				_add(issues, "error", p + "." + issue.path, issue.message)
+		var space := GridSpaceScript.resolve_tile_layer(ldef, manifest, root_grid)
+		for issue in space.issues:
+			_add(issues, "error", p + "." + issue.path, issue.message)
 		var lid := str(ldef.get("id", ""))
 		if lid == "":
 			_add(issues, "error", p + ".id", "must be a non-empty layer id")
-		elif ids.has(lid):
+		elif grids.has(lid):
 			_add(issues, "error", p + ".id", "duplicate layer id: " + lid)
 		else:
-			ids[lid] = true
+			grids[lid] = space.grid
 		if str(ldef.get("name", "")) == "":
 			_add(issues, "error", p + ".name", "must be a non-empty layer name")
 		if ldef.has("visible") and not (ldef.visible is bool):
@@ -178,7 +193,7 @@ static func _validate_layers(meta: Dictionary, issues: Array[Dictionary], manife
 		# 层混合模式（v7）：缺省 mix（省略）；add/mul 写盘
 		if ldef.has("blend") and not (str(ldef.blend) in ["mix", "add", "mul"]):
 			_add(issues, "error", p + ".blend", "must be \"mix\" / \"add\" / \"mul\"")
-	return ids
+	return grids
 
 ## objects[] 校验：场景实例与实体实例同形，差别只在 code（仅 entity 合法）。
 ## scene 实例带 code = 错误——直接拦住「给背景发码」这种误用。

@@ -22,6 +22,8 @@ codex mcp add bird-editor --url http://127.0.0.1:47821/mcp
 
 先调用 describe_project 确认当前工程、游戏声明和 ID。create 建草稿，逐批 apply_changes 或 generate_map；用 query_content 和 validate 检查候选状态，用 capture_editor 或 render_preview 看画面。publish 的 previewOnly 给出目标和基线，确认后用原 revision 正式提交。各种操作都作用于选中的游戏工程，切换工程时草稿不会跟到另一工程。
 
+人工复核时，从关卡空画布或顶栏「地图 ▾」进入「查看 MCP 草稿…」，选择草稿和地图。弹窗标明当前预览版本；AI 继续修改后可点「刷新草稿」。预览不切图、不写入正式文件。发布后，在「地图 ▾」选正式地图继续编辑。
+
 | 工具 | 参数和行为 |
 | --- | --- |
 | describe_project | 无参返回已打开工程和清单。section 可单看声明，path 可切换到已有的最近工程。首次可在界面选择或通过启动参数指定。 |
@@ -60,6 +62,8 @@ operations 的每个对象包含 op。写入数据时，字段、步骤、触发
 | project.set | section 为 views、worldLayout、eventLayers、viewports；value 替换该段作者数据。涉及 ID 的键也支持同批别名。 |
 
 `map.patch` 的 `meta.w`、`meta.h` 若设置具体值，必须为正整数。值为 `null` 时删除该键，读取时采用缺省尺寸。调小尺寸只改地图格数，会保留已有地图内容；要同时裁剪越界数据，请使用编辑器的「调整地图边界」。非法尺寸会使批次失败，并返回 `meta.w` 或 `meta.h` 的校验原因，草稿版本不变。
+
+瓦片可以保留在地图的名义格范围之外。`apply_changes` 和 `validate` 会按图层列出超界数量和一个坐标示例；它是警告，不阻止保存或发布。检查用的是该图层的格系：三角层有 `2 × w` 列。误放时可扩大地图，或用 `tiles.set` 的 `remove:true` 擦除。`layer.put` 的 `parallax` 接受有限数值，负值表示反向滚动。
 
 ### 截屏、实景和试玩
 

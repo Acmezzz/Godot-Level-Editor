@@ -32,8 +32,8 @@ async function groupComplex({ apply, call, shot, check, ids, draft }) {
   return ids;
 }
 
-async function groupE2e({ call, shot, check, logs, ids }) {
-  const [vdata] = await call("validate");
+async function groupE2e({ call, shot, check, draft }) {
+  const [vdata] = await call("validate", { draft });
   check("全工程 validate 全绿", vdata.valid === true, vdata.issues);
   const gen = await call("generate_map");
   check("生成器列出", Boolean(gen[0].available), gen[0]);
@@ -41,7 +41,6 @@ async function groupE2e({ call, shot, check, logs, ids }) {
   shot(media, "editor-window");
   const [, audio] = await call("preview_asset", { audio: "AUD0", start: 0.2, duration: 0.4 });
   check("音频裁切 RIFF", audio[0] && audio[0].mimeType === "audio/wav", audio);
-  return ids;
 }
 
 module.exports = { groupTriggers, groupComplex, groupE2e };

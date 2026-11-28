@@ -491,7 +491,7 @@ func _layer_mgr_params(i: int, decl: Dictionary) -> Control:
 		_rebuild_layer_mgr()
 		app._editor_state_ctrl.sync_ui())
 	row.add_child(ys)
-	row.add_child(_num_field(float(decl.get("parallax", 1.0)), "视差：1 = 正常，<1 = 远景半速，0 = 固定（回车提交）", func(v: float):
+	row.add_child(_num_field(float(decl.get("parallax", 1.0)), "视差：1 正常，0.5 半速，0 固定，负值反向，>1 加速（回车提交）", func(v: float):
 		var at := _idx_of_lid(lid)
 		if at < 0:
 			_rebuild_layer_mgr()

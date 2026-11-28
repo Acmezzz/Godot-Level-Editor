@@ -45,9 +45,9 @@ async function rpc(method, params, response = true) {
   return obj.result;
 }
 
-async function call(name, args = {}) {
+async function call(name, args = {}, expectError = false) {
   const result = await rpc("tools/call", { name, arguments: args });
-  if (result.isError) throw new Error(`${name}: ${JSON.stringify(result.structuredContent).slice(0, 300)}`);
+  if (result.isError !== expectError) throw new Error(`${name}: ${JSON.stringify(result.structuredContent).slice(0, 300)}`);
   return [result.structuredContent, (result.content || []).filter((r) => ["image", "audio"].includes(r.type))];
 }
 
@@ -115,8 +115,8 @@ async function main() {
     await cap({ target: "draft_map", draft, map: groups.ids.td, width: 640, height: 400 }, "td-graph");
     await cap({ width: 640, height: 400 }, "editor-window");
     await cap({ panel: "screens", view: "title", width: 520, height: 360 }, "screens-panel");
-    const [v] = await call("validate");
-    check("全工程 validate", v.valid === true, v.issues);
+    const [v] = await call("validate", { draft });
+    check("候选工程 validate", v.valid === true, v.issues);
     console.log("TIMES:", JSON.stringify(TIMES));
     console.log(`\n===== PASS ${PASS.length}  FAIL ${FAIL.length} =====`);
     if (FAIL.length) process.exitCode = 1;
