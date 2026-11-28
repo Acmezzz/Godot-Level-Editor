@@ -9,12 +9,15 @@ const FunctionDecls := preload("res://src/content/function_decl.gd")
 const AssetScan := preload("res://src/project/asset_scan.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
 const ReferenceUsage := preload("res://src/project/reference_usage.gd")   # 使用统计（C3）
+const Catalog := preload("res://src/content/authoring_catalog.gd")
 
 var manifest := {}
 var host = null  # 宿主 app（确认框复用其链路）
 
 var asset_list: ItemList
 var _filter_edit: LineEdit
+var _filter_category: OptionButton
+var _filter_used: CheckBox
 var mounts_box: VBoxContainer
 var mounts_section: VBoxContainer
 var name_edit: LineEdit
@@ -62,6 +65,15 @@ func build() -> void:
 	_asset_count = Kit.text_label("", Th.TEXT_DIM, Th.FS_SMALL)
 	list_head.add_child(_asset_count)
 	left.add_child(list_head)
+	_filter_category = OptionButton.new()
+	for label in ["全部类别", "瓦片", "图片", "实体"]:
+		_filter_category.add_item(label)
+	_filter_category.item_selected.connect(func(_i: int): refresh_list())
+	left.add_child(_filter_category)
+	_filter_used = CheckBox.new()
+	_filter_used.text = "只看当前地图已用"
+	_filter_used.toggled.connect(func(_on: bool): refresh_list())
+	left.add_child(_filter_used)
 	# 过滤视图：名称/id 关键字过滤（资产多起来后的基本效率件）
 	_filter_edit = LineEdit.new()
 	_filter_edit.placeholder_text = "搜索资产名称或 ID"
@@ -189,8 +201,14 @@ func refresh_list(focus_sid := "") -> void:
 	var idx := 0
 	# 图鉴 = 清单里的全部非内置资产（实体 + 场景/图集）：只列实体会让瓦片/装饰资产
 	# 在编辑器里既搜不到也看不了引用，删/停用也没有入口（V4 P1）。of_kind("") = 不限种类。
-	for edef in AssetDecl.of_kind(manifest, ""):
+	_filter_used.disabled = host == null or not host.map_loaded
+	var data: Dictionary = host.canvas.map_data if not _filter_used.disabled else {}
+	for row in Catalog.asset_rows(manifest, data):
+		var edef: Dictionary = row.decl
 		if bool((edef as Dictionary).get("builtin", false)):
+			continue
+		if (_filter_category.selected > 0 and row.category != _filter_category.get_item_text(_filter_category.selected)) \
+				or (_filter_used.button_pressed and not _filter_used.disabled and row.used == 0):
 			continue
 		var sid := str((edef as Dictionary).get("id", ""))
 		if not _matches_filter(sid, edef as Dictionary):
@@ -236,7 +254,7 @@ func _matches_filter(sid: String, edef: Dictionary) -> bool:
 	var q := str(_filter_edit.text).strip_edges().to_lower()
 	if q == "":
 		return true
-	return sid.to_lower().contains(q) or AssetDecl.label_of_decl(edef, sid).to_lower().contains(q)
+	return q in ("%s %s %s" % [sid, AssetDecl.label_of_decl(edef, sid), edef.get("tags", [])]).to_lower()
 
 func _show_detail(sid: String) -> void:
 	# 清单原件（不是归一化副本）：名称/挂载的改动要直接写回 assets[]

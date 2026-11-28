@@ -287,14 +287,12 @@ static func place(element: Dictionary, profile: String, bounds: Rect2, parent_re
 	var end := bounds.end - parent_rect.position - Vector2(a[2], a[3]) * parent_rect.size
 	set_geometry(element, profile, "offsets", [start.x, start.y, end.x, end.y])
 
-## Keep the rectangle in the design viewport and every authored layout profile.
+## Keep the rectangle in the design viewport and every named layout profile.
 static func reparent(elements: Array, moving: Array, parent: String, design: Vector2, viewport_sizes: Dictionary) -> void:
 	if moving.is_empty():
 		return
-	var profiles := {"": design}
-	for row in elements:
-		for profile in row.get("variants", {}):
-			profiles[profile] = viewport_sizes[profile]
+	var profiles := viewport_sizes.duplicate()
+	profiles[""] = design
 	var previous := {}
 	for profile in profiles:
 		previous[profile] = rectangles(elements, profiles[profile], profile, true)

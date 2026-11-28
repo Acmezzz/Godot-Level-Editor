@@ -12,7 +12,7 @@ static func open(app) -> void:
 	var baseline: Array = current.duplicate(true)
 	var rows := baseline.duplicate(true)
 	var shell: Dictionary = app._popup_body("项目参考画幅",
-		"画幅 ID 用于内容引用。修改宽高会保留内容中已有的归一化坐标。")
+		"画幅 ID 用于内容引用。修改宽高会保留内容中已有的归一化坐标。", true)
 	var pop: PopupPanel = shell.pop
 	var body: VBoxContainer = shell.body
 	var list := OptionButton.new()
@@ -61,6 +61,10 @@ static func open(app) -> void:
 		else:
 			updated.append({"id": key, "w": width.value, "h": height.value})
 		candidate["viewports"] = updated
+		for issue in EditorManifest.validate(candidate):
+			if issue.severity == "error" and (str(issue.path).begins_with("viewports") or ".layout" in str(issue.path)):
+				notice.text = "此画幅无法保存 · %s：%s" % [issue.path, issue.message]
+				return
 		var guard := func() -> bool:
 			return is_instance_valid(pop) and pop.visible and is_same(app.manifest, source) \
 				and source.get("viewports", []) == baseline

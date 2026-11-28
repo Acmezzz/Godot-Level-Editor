@@ -38,9 +38,9 @@ func _ready() -> void:
 	get_window().title = "BIRD authoring playtest"
 	add_child(sound)
 	manifest = _read(MANIFEST)
-	for name in DirAccess.get_files_at("res://maps"):
-		if name.ends_with(".json"):
-			var data := _read("res://maps/" + name)
+	for file_name in DirAccess.get_files_at("res://maps"):
+		if file_name.ends_with(".json"):
+			var data := _read("res://maps/" + file_name)
 			maps[data.meta.code] = data
 	var entry: Dictionary = {}
 	var map_path := ""
@@ -180,7 +180,7 @@ func _unhandled_key_input(event: InputEvent) -> void:
 
 func _take_edge(i: int) -> void:
 	var graph := _graph()
-	var choices: Array = graph.edges.filter(func(edge): return edge.from == cell)
+	var choices: Array = graph.edges.filter(func(link): return link.from == cell)
 	if i >= choices.size():
 		return
 	var edge: Dictionary = choices[i]

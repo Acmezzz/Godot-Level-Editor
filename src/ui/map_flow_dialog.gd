@@ -29,7 +29,7 @@ static func open(app, focus_section := "", focus := "") -> void:
 	var source := canvas.map_data
 	var manifest: Dictionary = app.manifest
 	var shell: Dictionary = app._popup_body("地图内容与出口",
-		"为地图绑定共用规则并设置流程出口。游戏执行规则和跳转；应用后随地图保存。")
+		"为地图绑定共用规则并设置流程出口。游戏执行规则和跳转；应用后随地图保存。", true)
 	var pop: PopupPanel = shell.pop
 	var body: VBoxContainer = shell.body
 	var scroll := ScrollContainer.new()

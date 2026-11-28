@@ -136,13 +136,17 @@ async function author(call, expect, out) {
     await call('capture_editor', { target: 'draft_map', draft, map: ids[name], width: 900, height: 560 }, `author-${name}-draft.png`);
   await call('publish', { draft, revision });
   const { id: testDraft } = await call('manage_draft', { action: 'create', name: '反例：时机码校验' });
-  const bad = await call('apply_changes', { draft: testDraft, revision: 0, operations: [
-    { op: 'binding.put', map: ids.side, instance: ids.beacon, binding: ids.binding, data: { trigger: 'interact' } },
-  ] });
+  let rejected = '';
+  try {
+    await call('apply_changes', { draft: testDraft, revision: 0, operations: [
+      { op: 'binding.put', map: ids.side, instance: ids.beacon, binding: ids.binding, data: { trigger: 'interact' } },
+    ] });
+  } catch (error) { rejected = error.message; }
+  expect('binding rejects the declaration ID and returns the allowed execution code', rejected.includes('USE0'), rejected);
   const badValidation = await call('validate', { draft: testDraft });
   await call('capture_editor', { target: 'draft_map', draft: testDraft, map: ids.side, width: 600, height: 420 }, 'author-unpublished-trigger.png');
-  await call('manage_draft', { action: 'discard', draft: testDraft, revision: bad.revision });
-  fs.writeFileSync(path.join(out, 'invalid-trigger-validation.json'), JSON.stringify(badValidation, null, 2));
+  await call('manage_draft', { action: 'discard', draft: testDraft, revision: 0 });
+  fs.writeFileSync(path.join(out, 'invalid-trigger-validation.json'), JSON.stringify({ rejected, ...badValidation }, null, 2));
   return ids;
 }
 

@@ -27,7 +27,7 @@ def fixture(base, godot):
         "startup": {"maps": True, "screens": True},
         "mapOutputs": {"next": {"name": "出口", "maps": True}},
         "assets": [
-            {"id": "floor", "kind": "scene", "shape": "tile", "atlas": "tile.png", "cell": 16},
+            {"id": "floor", "kind": "scene", "shape": "tile", "atlas": "tile.png", "cell": {"w": 16, "h": 16}},
             {"id": "terminal", "kind": "entity", "code": "TERM", "thumb": "tile.png", "visual": {}},
         ],
         "functions": {"scene": {"name": "Scene", "code": "SCNE", "timebase": "seconds", "steps": True, "fields": []}},
@@ -166,6 +166,8 @@ def run(editor, godot, logs):
                 assert cut["revision"] == 2
                 ids = cut["aliases"]
                 assert call("manage_draft", action="diff", draft=draft)[0]["changed"]["contents"]
+                summary = call("manage_draft", action="diff", draft=draft, summaryOnly=True)[0]
+                assert "changes" not in summary and not any(row["baselineConflict"] for row in summary["summary"])
                 rev = call("manage_draft", action="undo", draft=draft, revision=2)[0]["revision"]
                 assert call("query_content", kind="objects", draft=draft, map=board)[0]["total"] == 0
                 rev = call("manage_draft", action="redo", draft=draft, revision=rev)[0]["revision"]
@@ -180,6 +182,12 @@ def run(editor, godot, logs):
                 assert data["valid"], data
                 _, snap = call("capture_editor", target="draft_map", draft=draft, map=board, width=480, height=300)
                 png(snap[0], "draft-canvas", (480, 300))
+                for region, expected in [([0, 0, 32, 32], (32, 32)), ([470, 290, 32, 32], (10, 10))]:
+                    _, snap = call("capture_editor", target="draft_map", draft=draft, map=board,
+                                   width=480, height=300, rect=region)
+                    png(snap[0], f"draft-crop-{expected[0]}", expected)
+                call("capture_editor", target="draft_map", draft=draft, map=board,
+                     width=480, height=300, rect=[600, 600, 32, 32], expect_error=True)
                 samples, media = call("render_preview", capability="timelineFrame", draft=draft, map=board,
                     instance=ids["$terminal"], binding=ids["$binding"], function="scene", content=ids["$content"],
                     width=180, height=120, times=[0.25, 0.75])
@@ -203,6 +211,26 @@ def run(editor, godot, logs):
                 assert len(done["files"]) == 4
                 assert (game / "maps/生成地图.json").is_file()
                 assert hashlib.sha256(script.read_bytes()).hexdigest() == script_digest
+                assert call("query_content", kind="assets", map=board)[0]["total"] >= 2
+                assert call("query_content", kind="functions", map=board)[0]["total"] == 1
+                assert call("query_content", kind="objects")[0]["total"] == 1
+                assert call("query_content", kind="bindings")[0]["total"] == 1
+                assert call("query_content", kind="contents", function="scene", search="两帧")[0]["total"] == 1
+                if os.name == "nt":
+                    rename = call("manage_draft", action="create")[0]["id"]
+                    call("apply_changes", draft=rename, revision=0, operations=[
+                        {"op": "map.create", "name": "Alpha", "width": 10, "height": 10, "as": "alpha"}])
+                    alpha = next(row["map"] for row in call("query_content", kind="maps", draft=rename)[0]["items"]
+                                 if row["name"] == "Alpha")
+                    call("publish", draft=rename, revision=1)
+                    rev = call("manage_draft", action="open", draft=rename)[0]["revision"]
+                    call("apply_changes", draft=rename, revision=rev, operations=[
+                        {"op": "map.rename", "map": alpha, "name": "alpha"}])
+                    call("publish", draft=rename, revision=rev + 1, previewOnly=True)
+                    call("publish", draft=rename, revision=rev + 1)
+                    assert "alpha.json" in {p.name for p in (game / "maps").iterdir()}
+                    assert "Alpha.json" not in {p.name for p in (game / "maps").iterdir()}
+                    assert json.loads((game / "maps/alpha.json").read_text(encoding="utf8"))["meta"]["code"] == alpha
                 original = call("query_content", kind="map", map=board)[0]["data"]
                 size_draft = call("manage_draft", action="create", name="尺寸检查")[0]["id"]
                 for width, height in [(0, -1), (1.5, "4")]:
@@ -247,6 +275,15 @@ def run(editor, godot, logs):
                         assert any(row["text"] == "地图内容与出口" for row in paths["controls"])
                     _, media = call("capture_editor", target="popup")
                     png(media[0], f"popup-{name}")
+                overlay = call("manage_draft", action="create", name="手工表单冲突")[0]["id"]
+                call("apply_changes", draft=overlay, revision=0, operations=[
+                    {"op": "content.put", "function": "scene", "content": ids["$content"],
+                     "data": {"name": "AI 待审阅改名"}}])
+                call("capture_editor", panel="groups", target="tree")
+                call("publish", draft=overlay, revision=1, previewOnly=True)
+                rejected, _ = call("publish", draft=overlay, revision=1, expect_error=True)
+                assert "人工" in rejected["error"], rejected
+                assert call("query_content", kind="content", function="scene", content=ids["$content"])[0]["data"]["name"] == "两帧演出"
                 tree, _ = call("capture_editor", target="tree")
                 assert len(tree["controls"]) > 10
                 control = next(row["path"] for row in tree["controls"] if row["class"] == "Label"
@@ -272,6 +309,8 @@ def run(editor, godot, logs):
                     {"op": "map.patch", "map": board, "data": {"spawn": [3, 3]}}])
                 path = game / "maps/生成地图.json"
                 path.write_bytes(path.read_bytes() + b"\n")
+                changes = call("manage_draft", action="diff", draft=conflict, summaryOnly=True)[0]["summary"]
+                assert changes[0]["baselineConflict"] and changes[0]["fields"] == [], changes
                 call("publish", previewOnly=True, draft=conflict, revision=1, expect_error=True)
                 call("publish", draft=conflict, revision=1, expect_error=True)
                 blocked = call("manage_draft", action="create")[0]["id"]
@@ -296,7 +335,7 @@ def run(editor, godot, logs):
                 assert any(issue["path"] == "maps.旧碰撞地图.collision[0]" and
                            "migrate_project.gd" in issue["message"] for issue in invalid["issues"]), invalid
                 assert any(issue["path"] == "maps.空瓦片表.tiles" for issue in invalid["issues"]), invalid
-                print("MCP-DONE tools=11 publish=ok capture=ok playtest=ok conflict=ok map_patch=ok live_map=ok tile_bounds=ok", flush=True)
+                print("MCP-DONE tools=11 publish=ok capture=ok playtest=ok conflict=ok map_patch=ok live_map=ok tile_bounds=ok draft_crop=ok case_rename=ok open_form=ok queries=ok", flush=True)
             finally:
                 if managed:
                     try:

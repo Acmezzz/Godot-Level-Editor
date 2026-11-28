@@ -39,9 +39,10 @@ static func _map_content_usage(manifest: Dictionary, fn_id: String, cid: String,
 static func _map_content_refs(manifest: Dictionary, data: Dictionary, target: Dictionary,
 		fn_code: String) -> Array:
 	var rows: Array = []
-	for ref in _map_property_refs(manifest, data, ["flow_target"]):
-		if ref.value == target and not rows.has(ref.code):
-			rows.append(ref.code)
+	for ref in _map_property_refs(manifest, data, ["flow_target", "content"]):
+		if (ref.kind == "flow_target" and ref.value == target) or (ref.kind == "content" \
+				and ref.filter.get("fn", "") == target.function and ref.value == target.content):
+			rows.append("%s · %s" % [ref.code, ref.path])
 	if fn_code != "":
 		var assets := AssetDecl.all(manifest)
 		for obj in data.get("objects", []):
@@ -317,6 +318,7 @@ static func inbound_content(manifest: Dictionary, fn_id: String, cid: String,
 			"views": ReferenceIndex.view_content_refs(manifest).filter(func(ref): return ref.fn == fn_id and ref.cid == cid),
 			"project_slots": (ProjectSlots.references(manifest) + EventLayers.references(manifest)).filter(
 				func(ref): return ref.target == target),
+			"startup": [{"path": "startup.target", "target": target}] if manifest.get("startup", {}).get("target", {}) == target else [],
 			"drafts": draft_inbound_refs(manifest, cid, fn_id),
 		},
 	}

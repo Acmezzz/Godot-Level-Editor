@@ -28,7 +28,7 @@ func capture(args: Dictionary, batch: Dictionary) -> Dictionary:
 		var frame := await draft_frame(args, batch)
 		if frame.has("error"):
 			return frame
-		return _image_result(frame.image, {"target": "draft_map", "map": args.get("map", "")})
+		return _capture_result(frame.image, args, {"target": "draft_map", "map": args.get("map", "")})
 	if args.has("draft"):
 		return {"error": "草稿截图请使用 target: draft_map，草稿屏幕或演出请使用 render_preview。"}
 	if args.has("panel") or args.has("map"):
@@ -90,6 +90,9 @@ func capture(args: Dictionary, batch: Dictionary) -> Dictionary:
 		image = _crop(image, Rect2i(area.position * scale, area.size * scale))
 		if image == null:
 			return {"error": "控件在当前画面之外。"}
+	return _capture_result(image, args, {"target": subject})
+
+static func _capture_result(image: Image, args: Dictionary, info: Dictionary) -> Dictionary:
 	if args.has("rect"):
 		var rect: Array = args.rect
 		if rect.size() != 4 or not rect.all(_number):
@@ -97,7 +100,7 @@ func capture(args: Dictionary, batch: Dictionary) -> Dictionary:
 		image = _crop(image, Rect2i(int(rect[0]), int(rect[1]), int(rect[2]), int(rect[3])))
 		if image == null:
 			return {"error": "截图范围与画面没有交集。"}
-	return _image_result(image, {"target": subject})
+	return _image_result(image, info)
 
 func _collect(node: Node, root: Window, windows: Array[Window], items: Array) -> void:
 	if node is Window:

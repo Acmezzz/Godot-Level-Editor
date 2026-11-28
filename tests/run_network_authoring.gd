@@ -100,7 +100,9 @@ func run() -> void:
 		and cloned_routes[0].inst != sink_a and cloned_routes[1].inst != sink_b,
 		"map duplication remaps each link to the copied depots")
 	app._set_mode("content")
-	press(app, "启动入口…")
+	press(app, "检查与试玩…")
+	press(visible_popup(), "设置正式入口…")
+	await process_frame
 	var startup := visible_popup()
 	var picker: OptionButton = startup.find_child("StartupTarget", true, false)
 	for i in picker.item_count:

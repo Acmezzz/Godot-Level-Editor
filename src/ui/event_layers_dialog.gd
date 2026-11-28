@@ -7,7 +7,7 @@ const Maps := preload("res://src/project/reference_index.gd")
 const SlotField := preload("res://src/ui/destination_slot_field.gd")
 const Kit := preload("res://src/ui/ui_kit.gd")
 
-static func open(app, layer_id := "", drawing_only := false) -> void:
+static func open(app, layer_id := "") -> void:
 	var source: Dictionary = app.manifest
 	var before: Dictionary = source.get(Layers.KEY, {})
 	var draft := before.duplicate(true)
@@ -20,7 +20,7 @@ static func open(app, layer_id := "", drawing_only := false) -> void:
 	var events := Layers.types(source)
 	var map_options := Maps.map_target_options(source)
 	var drawing_codes := Layers.drawing_codes(source)
-	var shell: Dictionary = app._popup_body("图组事件层", "多张地图可共用独立绘制、碰撞与事件。")
+	var shell: Dictionary = app._popup_body("图组事件层", "多张地图可共用独立绘制、碰撞与事件。", true)
 	var pop: PopupPanel = shell.pop
 	var body: VBoxContainer = shell.body
 	var columns := Kit.hbox(12)
@@ -110,32 +110,60 @@ static func open(app, layer_id := "", drawing_only := false) -> void:
 		fields.add_child(maps)
 		maps.visible = row.has("maps")
 		var chosen: Array = row.get("maps", []).duplicate()
+		var options := {}
+		for map in map_options:
+			if map.code not in drawing_codes:
+				options[map.code] = map.name
+		var total_maps := options.size()
+		for code in chosen:
+			if not options.has(code):
+				options[code] = "地图已缺失或重码"
+		var scope_hint := Kit.hint_label("", 370)
+		fields.add_child(scope_hint)
+		var refresher := func():
+			var current_code: String = app.canvas.cur_map_code() if app.map_loaded else ""
+			var count := "全部地图（%d 张）" % total_maps if all_maps.button_pressed else "%d 张地图" % chosen.size()
+			scope_hint.text = "当前范围：%s%s" % [count, " · 含当前地图" if options.has(current_code) and Layers.applies_to(row, current_code) else ""]
+		refresher.call()
 		all_maps.toggled.connect(func(enabled: bool):
 			maps.visible = not enabled
 			if enabled:
 				row.erase("maps")
 			else:
 				row["maps"] = chosen)
-		var options := {}
-		for map in map_options:
-			if map.code not in drawing_codes:
-				options[map.code] = map.name
-		for code in chosen:
-			if not options.has(code):
-				options[code] = "地图已缺失或重码"
+		all_maps.toggled.connect(func(_enabled: bool): refresher.call())
+		var scope := LineEdit.new()
+		scope.placeholder_text = "查找地图名称或码"
+		maps.add_child(scope)
+		var chosen_only := CheckBox.new()
+		chosen_only.text = "只看已包含地图"
+		maps.add_child(chosen_only)
+		var scope_scroll := ScrollContainer.new()
+		scope_scroll.custom_minimum_size.y = 132
+		scope_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+		maps.add_child(scope_scroll)
+		var choices := Kit.vbox(2)
+		scope_scroll.add_child(choices)
+		var refill := func():
+			var q := scope.text.strip_edges().to_lower()
+			for box in choices.get_children():
+				box.visible = (not chosen_only.button_pressed or box.button_pressed) and (q == "" or q in box.text.to_lower())
 		for code in options:
 			var box := CheckBox.new()
 			box.text = "%s [%s]" % [options[code], code]
-			box.button_pressed = chosen.has(code)
+			box.button_pressed = code in chosen
 			box.toggled.connect(func(enabled: bool):
 				if enabled:
 					chosen.append(code)
 				else:
 					chosen.erase(code)
-				row["maps"] = chosen)
-			maps.add_child(box)
-		if drawing_only:
-			return
+				row["maps"] = chosen
+				refresher.call()
+				refill.call())
+			choices.add_child(box)
+		scope.text_changed.connect(func(_q): refill.call())
+		chosen_only.toggled.connect(func(_on): refill.call())
+		refill.call()
 		fields.add_child(Kit.section_header("事件"))
 		var values: Dictionary = row.get_or_add("events", {})
 		var codes := events.keys()

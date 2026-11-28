@@ -321,6 +321,10 @@ func _binding(map: Dictionary, op: Dictionary, data: Dictionary) -> Dictionary:
 		return {}
 	var fn := str(op.get("function", ""))
 	var code := Functions.fn_code(manifest, fn)
+	var target_fn := Functions.fn_id_of(manifest, str(bindings[at].fn)) if at >= 0 else fn
+	if data.has("trigger") and not Functions.allows_trigger(manifest, target_fn, data.trigger):
+		return {"error": "功能不支持时机码：%s" % str(data.trigger),
+			"allowed": Functions.trigger_options(manifest, target_fn).keys()}
 	if at < 0:
 		if code == "" or (not Functions.is_repeatable(manifest, fn) and bindings.any(func(item): return item.fn == code)):
 			return {"error": "功能未声明或不允许重复绑定：" + fn}

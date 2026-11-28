@@ -8,6 +8,19 @@ const FunctionDecls := preload("res://src/content/function_decl.gd")
 const V := preload("res://src/project/manifest_validation.gd")
 const SpatialCheck := preload("res://src/project/spatial_reference_check.gd")
 
+func test_inherit_map_contexts_from_slots_across_content_cycles() -> void:
+	var manifest := {"mapSlots": {"scene": {"contentTypes": ["story"], "contentMapContext": "inherit"}}}
+	var at_start := {"kind": "flow_target", "value": {"function": "story", "content": "start"},
+		"decl": {"contentMapContext": "inherit"}}
+	var maps := {"FIRST": {"meta": {"code": "FIRST"}}, "SECOND": {"meta": {"code": "SECOND"}}}
+	var visited := []
+	var result := SpatialCheck.content_contexts(manifest, maps, func(fn: String, cid: String) -> Array:
+		visited.append([fn, cid])
+		return [{"kind": "content", "decl": {"contentMapContext": "inherit"}, "filter": {},
+			"value": "later" if cid == "start" else "start"}], {"FIRST": [at_start], "SECOND": [at_start]})
+	eq(result[["story", "later"]].keys(), ["FIRST", "SECOND"], "inherited field is checked in each calling map")
+	eq(visited, [["story", "start"], ["story", "later"]], "cycles terminate; shared content only enumerates its fields once")
+
 func test_staged_port_target_undo() -> void:
 	var manifest := {"assets": [{"id": "door", "kind": "entity", "code": "DOOR",
 		"ports": [{"id": "in", "type": "entry", "x": 0, "y": 0}]}],

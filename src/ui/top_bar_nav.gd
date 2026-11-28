@@ -87,14 +87,17 @@ func _refresh_map_menu() -> void:
 				_switch_menu.set_item_as_checkable(i, true)
 				_switch_menu.set_item_checked(i, true)
 	_switch_menu.add_separator()
+	_switch_menu.add_item("浏览项目地图…", _MENU_MAP_BROWSER)
 	_switch_menu.add_item("刷新地图文件", _MENU_REFRESH_MAPS)
 	_switch_menu.add_item("编辑当前地图格图…", _MENU_CELL_GRAPH)
 	_switch_menu.set_item_disabled(_switch_menu.item_count - 1, not app.map_loaded)
 	_switch_menu.add_item("编辑项目世界布局…", _MENU_WORLD)
-	_switch_menu.add_item("图组绘制层…", _MENU_EVENTS)
+	_switch_menu.add_item("图组 · 绘制与事件…", _MENU_EVENTS)
 	if app.map_loaded and not app.manifest.get(EventLayers.KEY, {}).is_empty():
 		_switch_menu.add_check_item("显示其他绘制与碰撞作为参照", _MENU_DRAWING_CONTEXT)
 		_switch_menu.set_item_checked(_switch_menu.item_count - 1, app.canvas.show_event_context)
+		if app.canvas.cur_map_code() in EventLayers.drawing_codes(app.manifest):
+			_switch_menu.add_item("选择图组叠加参照…", _MENU_GROUP_PREVIEW)
 	# 草稿恢复入口（A3）：只列真正有草稿的地图码，避免菜单变成大杂烩
 	_switch_menu.add_separator()
 	_switch_menu.add_item("查看 MCP 草稿…", _MENU_MCP_DRAFTS)
@@ -109,6 +112,103 @@ const _MENU_EVENTS := 100003
 const _MENU_DRAWING_CONTEXT := 100004
 const _MENU_REFRESH_MAPS := 100005
 const _MENU_MCP_DRAFTS := 100006
+const _MENU_MAP_BROWSER := 100007
+const _MENU_GROUP_PREVIEW := 100008
+
+func open_map_browser() -> void:
+	var shell: Dictionary = app._popup_body("项目地图", "继续近期地图，浏览与当前地图相连或共用图组的地图。")
+	var pop: PopupPanel = shell.pop
+	var body: VBoxContainer = shell.body
+	var scope := OptionButton.new()
+	for label in ["全部地图", "近期打开", "与当前地图有关", "已固定"]:
+		scope.add_item(label)
+	body.add_child(scope)
+	var search := LineEdit.new()
+	search.placeholder_text = "地图名称或码"
+	body.add_child(search)
+	var list := ItemList.new()
+	list.custom_minimum_size = Vector2(480, 310)
+	body.add_child(list)
+	var names: Array = app.MapStore.list_maps(app.manifest)
+	var codes: Dictionary = app.MapStore.name_to_code(app.manifest)
+	var drawings := EventLayers.drawing_codes(app.manifest)
+	var current: String = app.canvas.cur_map_code() if app.map_loaded else ""
+	var related: Array = []
+	if current != "":
+		for ref in preload("res://src/map/map_flow.gd").references(app.manifest, app.canvas.map_data):
+			if ref.value is Dictionary and ref.value.has("map"):
+				related.append(ref.value.map)
+		for row in app.manifest.get(EventLayers.KEY, {}).values():
+			if current in row.get("maps", []):
+				related.append_array(row.maps)
+				related.append(row.get("drawingMap", ""))
+	var key: String = "authoring:" + app.cur_project_dir
+	var prefs: Dictionary = app._prefs.get_or_add(key, {})
+	var recent: Array = prefs.get("maps", [])
+	var pinned: Array = prefs.get_or_add("pinned", [])
+	var refill := func():
+		list.clear()
+		var ordered := names.duplicate()
+		ordered.sort_custom(func(a, b): return str(a).naturalnocasecmp_to(str(b)) < 0)
+		if scope.selected == 1:
+			ordered = recent
+		var q := search.text.strip_edges().to_lower()
+		for name_ in ordered:
+			if name_ not in names:
+				continue
+			var code: String = codes.get(name_, "")
+			if (scope.selected == 2 and code not in related) or (scope.selected == 3 and code not in pinned):
+				continue
+			var caption: String = "%s%s · %s%s" % ["★ " if code in pinned else "", name_, code,
+				" · 图组绘制" if code in drawings else (" · 当前" if code == current and code != "" else "")]
+			if q != "" and q not in caption.to_lower():
+				continue
+			var i := list.add_item(caption)
+			list.set_item_metadata(i, {"name": name_, "code": code})
+		if list.item_count > 0:
+			list.select(0)
+	var selected := func() -> Dictionary:
+		var indices := list.get_selected_items()
+		return list.get_item_metadata(indices[0]) if not indices.is_empty() else {}
+	var open := func():
+		var row: Dictionary = selected.call()
+		if row.is_empty():
+			return
+		pop.hide()
+		if row.code in drawings:
+			await app._map_file_ctrl.open_event_drawing(row.code)
+		elif row.code != "":
+			await app._map_file_ctrl.open_map_by_code(row.code)
+		else:
+			await app._map_file_ctrl.open_map_by_name(row.name)
+		_refresh_active_view()
+	var actions := Kit.hbox(6)
+	actions.add_child(Kit.button("固定 / 取消固定", func():
+		var row: Dictionary = selected.call()
+		if row.get("code", "") == "":
+			return
+		if row.code in pinned:
+			pinned.erase(row.code)
+		else:
+			pinned.append(row.code)
+		app._save_prefs()
+		refill.call(), "ghost"))
+	actions.add_child(Kit.button("参照其素材…", func():
+		var row: Dictionary = selected.call()
+		if not row.is_empty():
+			pop.hide()
+			app._set_mode("map")
+			app._palette_ctrl.open_browser(app.MapStore.read(app.manifest, row.name), row.name), "ghost"))
+	body.add_child(actions)
+	body.add_child(Kit.popup_buttons(open, pop.hide, "打开地图"))
+	scope.item_selected.connect(func(_i: int): refill.call())
+	search.text_changed.connect(func(_q: String): refill.call())
+	search.text_submitted.connect(func(_q: String): open.call())
+	list.item_activated.connect(func(_i: int): open.call())
+	scope.select(1 if not recent.is_empty() else 0)
+	refill.call()
+	app._open_popup(pop)
+	search.grab_focus()
 
 ## 草稿列表弹窗：每份草稿给「恢复 / 查看正式图 / 丢弃」三个选择。
 func _open_draft_picker() -> void:
@@ -158,6 +258,9 @@ func draft_pick(draft_key: String, action: String) -> void:
 	_refresh_active_view()
 
 func _on_map_selected(id: int) -> void:
+	if id == _MENU_GROUP_PREVIEW:
+		app._map_file_ctrl.choose_event_preview_base()
+		return
 	if id == _MENU_MCP_DRAFTS:
 		await DraftReview.open(app)
 		return
@@ -172,7 +275,10 @@ func _on_map_selected(id: int) -> void:
 		app._map_file_ctrl.refresh_event_drawings()
 		return
 	if id == _MENU_EVENTS:
-		EventLayerDialog.open(app, "", true)
+		EventLayerDialog.open(app)
+		return
+	if id == _MENU_MAP_BROWSER:
+		open_map_browser()
 		return
 	if id == _MENU_WORLD:
 		WorldEditor.open(app)

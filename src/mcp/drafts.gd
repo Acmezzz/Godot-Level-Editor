@@ -1,5 +1,5 @@
 extends RefCounted
-## Project-scoped batch drafts. Each history entry is a snapshot of the changed documents.
+## Project-scoped draft headers point to independently readable revision snapshots.
 
 const Recovery := preload("res://src/map/recovery.gd")
 const Maps := preload("res://src/map/map_store.gd")
@@ -23,13 +23,40 @@ func read(id: String) -> Dictionary:
 	return Recovery.read_json(path(id)) if Contents.is_valid_id(id) else {}
 
 func state(draft: Dictionary) -> Dictionary:
-	return draft.history[int(draft.cursor)].duplicate(true) if not draft.is_empty() else {"maps": {}, "contents": {}, "project": {}}
+	if draft.is_empty():
+		return {"maps": {}, "contents": {}, "project": {}}
+	if draft.has("history"):
+		return draft.history[int(draft.cursor)].duplicate(true)
+	return Recovery.read_json(_snapshot_path(draft.id, draft.snapshots[int(draft.cursor)]))
 
 func info(draft: Dictionary) -> Dictionary:
-	var batch: Dictionary = draft.history[int(draft.cursor)]
+	var changed: Dictionary = draft.changed if draft.has("changed") else _changed(state(draft))
 	return {"id": draft.id, "name": draft.name, "revision": draft.revision,
-		"undo": draft.cursor > 0, "redo": draft.cursor + 1 < draft.history.size(),
-		"changed": {"maps": batch.maps.keys(), "contents": batch.contents.keys(), "project": batch.project.keys()}}
+		"undo": draft.cursor > 0, "redo": draft.cursor + 1 < (draft.history if draft.has("history") else draft.snapshots).size(),
+		"changed": changed}
+
+static func _changed(batch: Dictionary) -> Dictionary:
+	return {"maps": batch.maps.keys(), "contents": batch.contents.keys(), "project": batch.project.keys()}
+
+func _snapshot_path(id: String, revision: String) -> String:
+	return folder().path_join(id).path_join(revision + ".json")
+
+func _remove_snapshots(id: String, revisions: Array) -> void:
+	for revision in revisions:
+		DirAccess.remove_absolute(_snapshot_path(id, revision))
+
+func _split_legacy(draft: Dictionary) -> bool:
+	if not draft.has("history"):
+		return true
+	var keys := []
+	for i in draft.history.size():
+		var key := "legacy-%d" % i
+		if not Recovery.write_json(_snapshot_path(draft.id, key), draft.history[i]):
+			return false
+		keys.append(key)
+	draft.erase("history")
+	draft["snapshots"] = keys
+	return true
 
 func list_drafts() -> Array[Dictionary]:
 	var rows: Array[Dictionary] = []
@@ -47,40 +74,114 @@ func manage(args: Dictionary) -> Dictionary:
 	if action == "create":
 		id = Crypto.new().generate_random_bytes(12).hex_encode()
 		var fresh := {"id": id, "name": args.get("name", "MCP"), "revision": 0,
-			"manifestDigest": app.manifest._manifest_digest, "cursor": 0, "history": [state({})]}
-		return _saved(fresh)
+			"manifestDigest": app.manifest._manifest_digest, "cursor": 0, "snapshots": []}
+		return _save_snapshot(fresh, state({}))
 	var draft := read(id)
 	if draft.is_empty():
 		return {"error": "草稿不存在：" + id}
 	if action in ["open", "save", "diff"]:
 		var response := info(draft)
 		if action == "diff":
-			response["changes"] = state(draft)
+			var batch := state(draft)
+			if batch.is_empty():
+				return {"error": "草稿的当前版本不可读。"}
+			response["changes"] = batch
+			response["summary"] = difference(batch, draft.manifestDigest)
+			if args.get("summaryOnly", false):
+				response.erase("changes")
 		return response
 	if draft.revision != args.get("revision"):
 		return {"error": "草稿版本已变化。", "current": info(draft)}
 	match action:
 		"discard":
-			return {"discarded": id} if DirAccess.remove_absolute(path(id)) == OK else {"error": "无法移除草稿。"}
+			if DirAccess.remove_absolute(path(id)) != OK:
+				return {"error": "无法移除草稿。"}
+			_remove_snapshots(id, draft.get("snapshots", []))
+			DirAccess.remove_absolute(folder().path_join(id))
+			return {"discarded": id}
 		"undo", "redo":
 			var next := int(draft.cursor) + (-1 if action == "undo" else 1)
-			if next < 0 or next >= draft.history.size():
+			if next < 0 or next >= (draft.history if draft.has("history") else draft.snapshots).size():
 				return {"error": "没有可用的历史记录。"}
+			if not _split_legacy(draft):
+				return {"error": "无法拆分旧草稿的历史记录。"}
 			draft.cursor = next
 			draft.revision += 1
-			return _saved(draft)
+			return _saved(draft, state(draft))
 		_:
 			return {"error": "未知草稿操作。"}
 
-func append(draft: Dictionary, batch: Dictionary) -> Dictionary:
-	var history: Array = draft.history
-	history.resize(int(draft.cursor) + 1)
-	history.append(batch)
-	draft.cursor = history.size() - 1
-	draft.revision += 1
-	return _saved(draft)
+func difference(batch: Dictionary, manifest_digest: String) -> Array:
+	var result := []
+	for code in batch.maps:
+		var row: Dictionary = batch.maps[code]
+		var previous := Recovery.observe(Maps.path_for(app.manifest, row.original)) if row.original != "" else {}
+		var matches: bool = previous.get("digest", "") == row.baseline
+		var decoded := Maps.decode_text(previous.text, row.original, app.manifest) if matches and row.original != "" else {}
+		_diff_document(result, {"kind": "map", "id": code, "name": row.name}, decoded.get("data", {}), row, matches)
+	for key in batch.contents:
+		var row: Dictionary = batch.contents[key]
+		var previous := Contents.read_ex(app.manifest, row.function, row.content)
+		var matches: bool = previous.get("digest", "") == row.baseline
+		_diff_document(result, {"kind": "content", "id": row.content, "function": row.function}, previous.get("data", {}), row, matches)
+	var project_matches: bool = batch.project.is_empty() or (app.manifest._manifest_digest == manifest_digest \
+		and Recovery.digest(str(app.manifest._dir).path_join("editor/editor_manifest.json")) == manifest_digest)
+	for key in batch.project:
+		var fields := []
+		if project_matches:
+			_field_diff(app.manifest.get(key), batch.project[key], key, fields)
+		result.append({"kind": "project", "id": key, "operation": "update", "fields": fields, "baselineConflict": not project_matches})
+	return result
 
-func _saved(draft: Dictionary) -> Dictionary:
+static func _diff_document(result: Array, label: Dictionary, previous: Dictionary, row: Dictionary, matches: bool) -> void:
+	var fields := []
+	var operation := "delete" if row.get("deleted", false) else ("create" if row.get("baseline", "") == "" else "update")
+	if operation == "update" and matches:
+		_field_diff(previous, row.data, "", fields)
+	result.append(label.merged({"operation": operation, "fields": fields, "baselineConflict": not matches}))
+
+static func _field_diff(before: Variant, after: Variant, field: String, changes: Array) -> void:
+	if before == after:
+		return
+	if before is Dictionary and after is Dictionary:
+		var keys: Dictionary = before.duplicate()
+		keys.merge(after)
+		for key in keys:
+			_field_diff(before.get(key), after.get(key), str(key) if field == "" else field + "." + str(key), changes)
+	elif before is Array and after is Array and before.size() == after.size() and before.size() <= 256:
+		for i in before.size():
+			_field_diff(before[i], after[i], "%s[%d]" % [field, i], changes)
+	else:
+		changes.append({"path": field, "before": _diff_value(before), "after": _diff_value(after)})
+
+static func _diff_value(value: Variant) -> Variant:
+	if (value is Array or value is Dictionary) and value.size() > 12:
+		return {"count": value.size(), "sample": value.slice(0, 5) if value is Array else value.keys().slice(0, 5)}
+	return value
+
+func append(draft: Dictionary, batch: Dictionary) -> Dictionary:
+	if not _split_legacy(draft):
+		return {"error": "无法拆分旧草稿的历史记录。"}
+	var discarded: Array = draft.snapshots.slice(int(draft.cursor) + 1)
+	draft.snapshots.resize(int(draft.cursor) + 1)
+	draft.revision += 1
+	var result := _save_snapshot(draft, batch)
+	if not result.has("error"):
+		_remove_snapshots(draft.id, discarded)
+	return result
+
+func _save_snapshot(draft: Dictionary, batch: Dictionary) -> Dictionary:
+	var key := str(int(draft.revision))
+	if not Recovery.write_json(_snapshot_path(draft.id, key), batch):
+		return {"error": "无法写入草稿版本。"}
+	draft.snapshots.append(key)
+	draft.cursor = draft.snapshots.size() - 1
+	return _saved(draft, batch)
+
+func _saved(draft: Dictionary, batch: Dictionary) -> Dictionary:
+	if batch.is_empty():
+		return {"error": "草稿版本不可读。"}
+	draft["changed"] = _changed(batch)
 	return info(draft) if Recovery.write_json(path(draft.id), draft) else {"error": "无法写入草稿。"}
 
 func candidate(batch: Dictionary) -> Dictionary:
@@ -151,6 +252,7 @@ func plan(draft: Dictionary, batch: Dictionary) -> Dictionary:
 	var payloads := {}
 	var removed := []
 	var occupied_names := {}
+	var by_code: Dictionary = Maps.code_index(manifest).by_code
 	for code in batch.maps:
 		var row: Dictionary = batch.maps[code]
 		var old := Maps.path_for(manifest, row.original) if row.original != "" else ""
@@ -163,11 +265,14 @@ func plan(draft: Dictionary, batch: Dictionary) -> Dictionary:
 		if target == "" or occupied_names.has(target_key):
 			return {"error": "地图名非法或重复：" + str(row.name)}
 		occupied_names[target_key] = true
-		var problem := Maps.identity_error(manifest, row.name, row.data, row.original)
+		var problem := Maps.identity_error_in(by_code, row.name, row.data, row.original)
 		if problem != "":
 			return {"error": problem}
-		_put(entries, payloads, target, row.baseline if old == target else "", Format.encode(row.data))
-		if old != "" and old != target:
+		var case_rename := Maps.is_case_only_rename(old, target)
+		_put(entries, payloads, target, row.baseline if old == target or case_rename else "", Format.encode(row.data))
+		if case_rename:
+			entries.back()["case_from"] = old
+		elif old != "" and old != target:
 			removed.append({"path": old, "baseline": row.baseline, "op": "delete"})
 	for row in batch.contents.values():
 		var target := Contents.path_for(manifest, row.function, row.content)
@@ -208,20 +313,31 @@ func publish(draft: Dictionary, pending: Dictionary) -> Dictionary:
 			if not Commit.can_write(Recovery.observe(target), entry.baseline, entry.get("expect_absent", false)):
 				return {"error": "写入目标已变化：" + target, "files": written, "pending": receipt_path}
 			var remove: bool = entry.get("op") == "delete"
-			if entry.baseline != "" and not Maps.rotate_history(target) and remove:
+			if entry.baseline != "" and remove and not Maps.rotate_history(target):
 				return {"error": "无法保留删除前的历史：" + target, "files": written, "pending": receipt_path}
-			var ok := DirAccess.remove_absolute(target) == OK if remove else Maps.write_text(target, pending.payloads[target])
+			if entry.baseline != "" and not remove:
+				Maps.rotate_history(target)
+			var ok: bool
+			if remove:
+				ok = DirAccess.remove_absolute(target) == OK
+			elif entry.has("case_from"):
+				ok = Maps.write_case_rename(entry.case_from, target, pending.payloads[target]) == ""
+			else:
+				ok = Maps.write_text(target, pending.payloads[target])
 			if not ok:
 				return {"error": "发布未完成：" + target, "files": written, "pending": receipt_path}
 		written.append(target)
 	Recovery.clear_pending(receipt_path)
 	Maps.refresh_external_maps()
 	var published_revision: int = int(draft.revision)
-	draft.history = [state({})]
-	draft.cursor = 0
+	var discarded: Array = draft.get("snapshots", [])
+	draft.erase("history")
+	draft["snapshots"] = []
 	draft.revision += 1
 	draft.manifestDigest = Recovery.digest(str(app.manifest._dir).path_join("editor/editor_manifest.json"))
-	var result := _saved(draft)
+	var result := _save_snapshot(draft, state({}))
+	if not result.has("error"):
+		_remove_snapshots(draft.id, discarded)
 	return result.merged({"files": written, "publishedRevision": published_revision}, true)
 
 func check_plan(pending: Dictionary) -> Dictionary:

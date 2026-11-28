@@ -114,15 +114,29 @@ func _build_editor_ui() -> void:
 	empty_actions.alignment = BoxContainer.ALIGNMENT_CENTER
 	empty_actions.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	empty_actions.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	var empty: Control = app.UiKitScript.empty_state("", "还没有打开地图",
-		"创建一张地图，或打开游戏工程中的已有文件。")
+	var map_count: int = app.MapStore.list_maps(app.manifest).size()
+	var empty: Control = app.UiKitScript.empty_state("", "%d 张项目地图" % map_count if map_count > 0 else "开始制作",
+		"打开项目中的地图继续制作，或直接进入内容和屏幕界面。")
 	empty.size_flags_vertical = Control.SIZE_SHRINK_CENTER
 	empty_actions.add_child(empty)
 	var start: HBoxContainer = app.UiKitScript.hbox(8)
 	start.alignment = BoxContainer.ALIGNMENT_CENTER
 	start.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	if map_count > 0:
+		var recent: Array = app._prefs.get("authoring:" + app.cur_project_dir, {}).get("maps", [])
+		if not recent.is_empty() and recent[0] in app.MapStore.list_maps(app.manifest):
+			start.add_child(app.UiKitScript.button("继续 " + str(recent[0]), func():
+				await app._map_file_ctrl.open_map_by_name(recent[0]), "primary"))
+		start.add_child(app.UiKitScript.button("浏览项目地图…", func(): _nav_bar.open_map_browser()))
 	start.add_child(app.UiKitScript.button("新建地图", func(): app._map_file_ctrl.on_new(), "primary"))
-	start.add_child(app.UiKitScript.button("打开地图文件…", func(): app._map_file_ctrl.on_open()))
+	var content_actions: HBoxContainer = app.UiKitScript.hbox(8)
+	content_actions.alignment = BoxContainer.ALIGNMENT_CENTER
+	content_actions.add_child(app.UiKitScript.button("项目内容…", func():
+		app._set_mode("content")
+		app.project_shell.content_editor.open_project_library()))
+	content_actions.add_child(app.UiKitScript.button("屏幕界面…", func():
+		preload("res://src/ui/reference_view_library.gd").open(app, "", {"layout": true})))
+	empty_actions.add_child(content_actions)
 	empty_actions.add_child(start)
 	var review: Button = app.UiKitScript.button("查看 MCP 草稿…", func():
 		await preload("res://src/ui/mcp_draft_review.gd").open(app), "ghost")
@@ -226,8 +240,8 @@ func _build_global_bar() -> PanelContainer:
 	var cfg: Button = app.UiKitScript.button("试玩配置…", func(): app._playtest_ctrl.open_configuration(), "ghost")
 	var play: Button = app.UiKitScript.button("试玩地图", func(): app._playtest_ctrl.on_play(), "primary")
 	play.tooltip_text = "保存并试玩当前地图"
-	var start: Button = app.UiKitScript.button("启动入口…",
-		func(): preload("res://src/ui/startup_dialog.gd").open(app), "ghost")
+	var start: Button = app.UiKitScript.button("检查与试玩…",
+		func(): app._playtest_ctrl.open_release_check(), "ghost")
 	var project_play: Button = app.UiKitScript.button("试玩项目", func():
 		app._playtest_ctrl.on_play(Vector2i(-1, -1), true), "ghost")
 	for button in [cfg, play, start, project_play]:
@@ -247,7 +261,7 @@ func update_work_toolbar(mode: String) -> void:
 	_work_actions.config.disabled = not app.map_loaded
 	_work_actions.map_play.visible = on_map
 	_work_actions.map_play.disabled = not app.map_loaded
-	_work_actions.startup.visible = not on_map and app.manifest.has("startup")
+	_work_actions.startup.visible = true
 	_work_actions.project_play.visible = not on_map and bool(app.manifest.get("playtest", {}).get("projectEntry", false))
 	_save_button.tooltip_text = ("保存资产清单" if mode == "asset" else "保存地图和暂存内容") + "（Ctrl+S）"
 	_save_button.theme_type_variation = "Button" if on_map else "PrimaryButton"
@@ -390,6 +404,7 @@ func _build_palette_column() -> PanelContainer:
 		_palette_buttons[spec[0]] = button
 		asset_row.add_child(button)
 	v.add_child(asset_row)
+	v.add_child(app.UiKitScript.button("浏览 / 比较素材…", func(): app._palette_ctrl.open_browser(), "ghost"))
 
 	# 弹层内容按清单重建：每层一行 = 层名 + 👁 + 🔒，显隐/锁定内联在项里（不占额外高度）。
 	# 本控制器是 RefCounted（没有 add_child），弹层挂到窗口根——和所有其他弹窗一致。

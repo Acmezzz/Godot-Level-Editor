@@ -17,6 +17,7 @@ const Timeline := preload("res://src/content/step_timeline.gd")
 const Generators := preload("res://src/project/map_generators.gd")
 const Runner := preload("res://src/project/game_preview.gd")
 const Assets := preload("res://src/assets/asset_decl.gd")
+const Catalog := preload("res://src/content/authoring_catalog.gd")
 const Audio := preload("res://src/content/audio_decl.gd")
 const Flow := preload("res://src/content/flow_target.gd")
 const CellGraph := preload("res://src/map/cell_graph.gd")
@@ -47,14 +48,14 @@ static func catalog() -> Array[Dictionary]:
 	return [
 		_tool("describe_project", "Read project declarations, IDs, capabilities and recent projects; open a project from recent projects by path.", {"path": "string", "section": "string"}, []),
 		_tool("query_content", "Read published or draft data. Map keys are stable map codes. Content keys are function ID and content ID.", {
-			"kind": _enum(["maps", "map", "layers", "objects", "tiles", "collision", "ports", "edges", "cells", "references", "timeline",
+			"kind": _enum(["assets", "functions", "bindings", "maps", "map", "layers", "objects", "tiles", "collision", "ports", "edges", "cells", "references", "timeline",
 				"contents", "content", "views", "world", "groups", "candidates", "inbound", "live_map"]),
 			"draft": "string", "map": "string", "layer": "string", "instance": "string", "function": "string",
 			"content": "string", "view": "string", "types": "array", "domains": "object", "field": "object", "region": "array",
-				"search": "string", "offset": "integer", "limit": "integer"}, ["kind"], true),
+			"asset": "string", "trigger": "string", "mapCodes": "array", "search": "string", "offset": "integer", "limit": "integer"}, ["kind"], true),
 		_tool("manage_draft", "Create, reopen, list, diff, undo, redo or discard persistent batch drafts. Undo, redo and discard require the current revision.", {
 			"action": _enum(["list", "create", "open", "save", "diff", "undo", "redo", "discard"]),
-			"draft": "string", "name": "string", "revision": "integer"}, ["action"]),
+			"draft": "string", "name": "string", "revision": "integer", "summaryOnly": "boolean"}, ["action"]),
 		_tool("apply_changes", "Apply a batch to a draft as one undo step. Use map.create/patch/rename/delete, layer.put/delete/move, tiles.set, collision.set, instance.put/delete, binding.put/delete, content.put/delete, view.put/delete, group.put/delete, slot.set, startup.set or project.set. New IDs may be reused as $alias by specifying as on a previous operation. See MCP documentation for operands.", {
 			"draft": "string", "revision": "integer", "operations": {"type": "array", "items": _operation_schema()}}, ["draft", "revision", "operations"]),
 		_tool("generate_map", "List generator fields and presets, then generate a new editable map in a draft. Regenerate from sourceMap parameters into a new map.", {
@@ -144,6 +145,8 @@ func invoke(name: String, args: Dictionary) -> Dictionary:
 		if args.has("revision") and draft.revision != args.revision:
 			return {"error": "草稿版本已变化。", "current": drafts.info(draft)}
 	var batch: Dictionary = drafts.state(draft)
+	if batch.is_empty():
+		return {"error": "草稿的当前版本不可读。"}
 	match name:
 		"query_content": return _query(args, batch)
 		"apply_changes": return edits.apply(draft, args.operations)
@@ -181,7 +184,7 @@ func _describe(args: Dictionary) -> Dictionary:
 			if not app.project_dirs.any(func(p): return str(p).replace("\\", "/").simplify_path() == path_):
 				return {"error": "请在编辑器中首次打开该项目，或用 --bird-project 指定。"}
 			if _editor_dirty():
-				return {"error": "编辑器有未保存地图，请先保存或关闭。"}
+				return {"error": "编辑器有未完成的人工作业，请先保存或关闭编辑表单。"}
 			if _playing():
 				return {"error": "请先结束当前试玩，再切换工程。"}
 			var manifest := EditorManifest.load_from(path_)
@@ -203,8 +206,8 @@ func _describe(args: Dictionary) -> Dictionary:
 	return response
 
 func _editor_dirty() -> bool:
-	return app.map_loaded and (app.canvas.modified_flag or app.canvas.doc_busy \
-		or app.project_shell.content_editor.has_staged_for_current_doc())
+	return app._has_open_editor_form() or (app.map_loaded and (app.canvas.modified_flag or app.canvas.doc_busy \
+		or app.project_shell.content_editor.has_staged_for_current_doc()))
 
 func _playing() -> bool:
 	return app._playtest_ctrl._play_pid > 0 and Playtest.is_alive(app._playtest_ctrl._play_pid)
@@ -226,6 +229,27 @@ func _query(args: Dictionary, batch: Dictionary) -> Dictionary:
 				return {"error": "画布上的拖动尚未完成，请稍后重试。"}
 			return {"data": snapshot}
 		"maps": return _page(drafts.maps_of(batch), args)
+		"assets", "functions":
+			var working: Dictionary = drafts.map_of(batch, code).get("data", {}) if code != "" else {}
+			if code != "" and working.is_empty():
+				return {"error": "地图不存在：" + code}
+			if args.kind == "assets":
+				var rows := Catalog.asset_rows(m, working)
+				for row in rows:
+					var decl: Dictionary = row.decl
+					row["tags"] = decl.get("tags", [])
+					row["disabled"] = decl.get("disabled", false)
+					row.erase("decl")
+				return _page(rows, args)
+			var existing: Array = []
+			if args.has("instance"):
+				for obj in working.get("objects", []):
+					if obj.get("code") == args.instance:
+						existing = obj.get("functions", [])
+						break
+			return _page(Catalog.functions(m, existing, working, args.get("trigger", "")), args)
+		"objects", "bindings":
+			return _objects(m, batch, args)
 		"views":
 			var rows: Array = m.get("views", [])
 			if not args.has("view"):
@@ -237,18 +261,13 @@ func _query(args: Dictionary, batch: Dictionary) -> Dictionary:
 		"world": return {"data": m.get("worldLayout", {})}
 		"groups": return {"data": m.get("eventLayers", {}), "drawings": drafts.event_drawings(batch, m, code) if code != "" else []}
 		"contents":
-			var ids := {}
+			var rows := []
 			for kind in ([fn] if fn != "" else Contents.declared_kinds(m)):
 				for id in Contents.list_ids(m, kind):
-					ids[kind + "/" + id] = {"function": kind, "content": id}
-			for key in batch.contents:
-				var resource: Dictionary = batch.contents[key]
-				if fn == "" or fn == resource.function:
-					if resource.get("deleted", false):
-						ids.erase(key)
-					else:
-						ids[key] = {"function": resource.function, "content": resource.content, "name": resource.data.get("name", "")}
-			return _page(ids.values(), args)
+					var item := Contents.read_ex(m, kind, id)
+					rows.append({"function": kind, "content": id, "name": item.data.get("name", "") if item.status == "ok" else "",
+						"status": item.status})
+			return _page(rows, args)
 		"content", "timeline":
 			var body: Dictionary = drafts.content_of(batch, fn, cid)
 			if body.is_empty():
@@ -280,16 +299,47 @@ func _query(args: Dictionary, batch: Dictionary) -> Dictionary:
 		"edges": return _page(Fields.edge_candidates_of(data, m), args)
 		"cells": return _page(CellGraph.cell_options(CellGraph.graph_of(data.meta)), args)
 		"references": return _page(Spatial.map_links(m, data), args)
-		"objects":
-			var objects := []
-			for i in data.get("objects", []).size():
-				var item: Dictionary = data.objects[i]
-				if (layer == "" or item.layer == layer) and (not args.has("instance") or item.get("code") == args.instance):
-					objects.append(item.merged({"objectIndex": i}, true))
-			return _page(objects, args)
 		"tiles": return _page(data.get("tiles", {}).get(layer, []), args)
 		"collision": return _page(data.get("collision", []), args)
 	return {"error": "未知查询。"}
+
+func _objects(m: Dictionary, batch: Dictionary, args: Dictionary) -> Dictionary:
+	var rows := []
+	var map_codes: Array = args.get("mapCodes", [])
+	if args.has("map"):
+		map_codes = [args.map]
+	elif map_codes.is_empty():
+		map_codes = drafts.maps_of(batch).map(func(row): return row.map)
+	var layer: String = args.get("layer", "")
+	var fn: String = args.get("function", "")
+	var asset: String = args.get("asset", "")
+	var fn_code := Functions.fn_code(m, fn)
+	for code in map_codes:
+		if not code is String:
+			return {"error": "mapCodes 必须是地图码数组。"}
+		var map: Dictionary = drafts.map_of(batch, code)
+		if map.is_empty():
+			return {"error": "地图不存在：" + code}
+		var data: Dictionary = map.data
+		for i in data.get("objects", []).size():
+			var item: Dictionary = data.objects[i]
+			if (layer != "" and item.layer != layer) or (asset != "" and item.asset != asset) \
+					or (args.has("instance") and item.get("code") != args.instance):
+				continue
+			var base := {"map": code, "mapName": map.name, "objectIndex": i, "assetName": Assets.label(m, item.asset)}
+			var bindings: Array = item.get("functions", [])
+			if args.kind == "objects":
+				if fn == "" or bindings.any(func(binding): return binding.get("fn") == fn_code):
+					rows.append(item.merged(base, true))
+				continue
+			for index in bindings.size():
+				var binding: Dictionary = bindings[index]
+				if (fn != "" and binding.fn != fn_code) or (args.has("trigger") and binding.get("trigger", "") != args.trigger) \
+						or (args.has("content") and binding.get("content", "") != args.content):
+					continue
+				rows.append(binding.merged(base.merged({"instance": item.get("code", ""), "sequence": index + 1,
+					"function": Functions.fn_id_of(m, binding.fn), "asset": item.asset, "layer": item.layer}), true))
+	return _page(rows, args)
 
 func _page(rows: Array, args: Dictionary) -> Dictionary:
 	if args.has("region"):
@@ -365,7 +415,6 @@ func _validate(args: Dictionary, batch: Dictionary) -> Dictionary:
 		for ref in project_refs:
 			if not Targets.destination_available(m, ref.domains, ref.target):
 				issues.append({"severity": "error", "path": str(ref.get("path", ref.get("name", "project"))), "message": "项目或图组目标未声明或不可用。"})
-	var binding_contexts := {}
 	for code in maps:
 		for obj in maps[code].get("objects", []):
 			for binding in obj.get("functions", []):
@@ -374,8 +423,23 @@ func _validate(args: Dictionary, batch: Dictionary) -> Dictionary:
 				if cid != "" and fn != "" and Contents.read_ex(m, fn, cid).status != "ok":
 					issues.append({"severity": "error", "path": "maps." + code + ".objects." + str(obj.get("code", "")),
 						"message": "绑定内容不存在：" + fn + "/" + cid})
-				if cid != "" and fn != "":
-					binding_contexts.get_or_add([fn, cid], {})[code] = maps[code]
+	var binding_contexts := {}
+	if not args.has("map") or args.has("content"):
+		var context_maps := maps
+		if args.has("map"):
+			context_maps = {}
+			for row in drafts.maps_of(batch):
+				var item: Dictionary = drafts.map_of(batch, row.map)
+				if not item.is_empty():
+					context_maps[row.map] = item.data
+		binding_contexts = Spatial.content_contexts(m, context_maps, func(fn: String, cid: String) -> Array:
+			var result := []
+			var item := Contents.read_ex(m, fn, cid)
+			if item.status == "ok":
+				for section in Usage.content_sections(m, fn, item.data):
+					result.append_array(Refs.property_refs(m, section.decls,
+						section.values if section.values is Dictionary else {}, {}, section.prefix, "code"))
+			return result)
 	var content_items: Array = []
 	if args.has("content"):
 		var item: Dictionary = drafts.content_of(batch, args.get("function", ""), args.content)
@@ -410,8 +474,10 @@ func _validate(args: Dictionary, batch: Dictionary) -> Dictionary:
 					for source in contexts:
 						var problem := _reference_problem(m, source, ref, maps)
 						if problem != "":
-							issues.append({"severity": "error", "path": "content." + row.content + "." + ref.path, "message": problem})
-							break
+							var map_code: String = source.get("meta", {}).get("code", "")
+							issues.append({"severity": "error", "path": "content." + row.content + "." + ref.path,
+								"message": problem if map_code == "" else "%s · %s" % [map_code, problem], "map": map_code,
+								"function": row.function, "content": row.content, "reference": ref})
 			for warning in Timeline.warnings(row.data.get("steps", [])):
 				issues.append({"severity": "warning", "path": "content." + row.content + ".steps", "message": warning})
 	return {"valid": not issues.any(func(issue): return issue.severity == "error"), "issues": issues}
@@ -444,8 +510,8 @@ static func _reference_problem(m: Dictionary, source: Dictionary, ref: Dictionar
 	return ""
 
 func _publish(args: Dictionary, draft: Dictionary, batch: Dictionary) -> Dictionary:
-	if _editor_dirty():
-		return {"error": "当前编辑器有未保存的人工作业，请先处理。"}
+	if not args.get("previewOnly", false) and _editor_dirty():
+		return {"error": "当前编辑器有人工作业或编辑表单，请先保存或关闭后再发布。"}
 	if not args.get("previewOnly", false) and _playing():
 		return {"error": "请先结束试玩，再发布和重新加载工程。"}
 	var checked := _validate({}, batch)

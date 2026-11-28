@@ -10,6 +10,8 @@ extends RefCounted
 
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
 const EntityNodeRef := preload("res://src/canvas/entity_node.gd")
+const Catalog := preload("res://src/content/authoring_catalog.gd")
+const Kit := preload("res://src/ui/ui_kit.gd")
 
 var app   # 宿主
 var _cat := ""          # 当前视图："" = 类别视图；非空 = 资产视图（该类别名）
@@ -29,6 +31,141 @@ func set_category(cat: String) -> void:
 
 func current_category() -> String:
 	return _place_category
+
+func open_browser(reference_data := {}, reference_name := "") -> void:
+	var snap: Dictionary = reference_data if not reference_data.is_empty() else (app.canvas.extract(true) if app.map_loaded else {})
+	if not app.map_loaded:
+		app._set_status("先打开或新建一张地图，再选取要摆放的素材。")
+		return
+	var shell: Dictionary = app._popup_body("浏览素材", "选取后返回当前地图和图层。参照来源：" +
+		(reference_name if reference_name != "" else str(app.cur_map_name)))
+	var pop: PopupPanel = shell.pop
+	var body: VBoxContainer = shell.body
+	var controls := Kit.hbox(6)
+	body.add_child(controls)
+	var category := OptionButton.new()
+	for label in ["全部类别", "瓦片", "图片", "实体"]:
+		category.add_item(label)
+	category.select(["", "tiles", "images", "entities"].find(_place_category))
+	controls.add_child(category)
+	var used_only := CheckBox.new()
+	used_only.text = "只看参照图已用"
+	used_only.button_pressed = not reference_data.is_empty()
+	controls.add_child(used_only)
+	var favorites_only := CheckBox.new()
+	favorites_only.text = "收藏"
+	controls.add_child(favorites_only)
+	var search := LineEdit.new()
+	search.placeholder_text = "名称、类别、标签或 ID"
+	body.add_child(search)
+	var list := ItemList.new()
+	list.custom_minimum_size = Vector2(570, 320)
+	list.icon_mode = ItemList.ICON_MODE_TOP
+	list.fixed_icon_size = Vector2i(56, 56)
+	list.max_columns = 4
+	list.fixed_column_width = 130
+	list.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
+	body.add_child(list)
+	var hint := Kit.hint_label("", 540)
+	body.add_child(hint)
+	var rows := Catalog.asset_rows(app.manifest, snap)
+	var tags := {}
+	for row in rows:
+		var values = row.decl.get("tags", [])
+		if values is Array:
+			for tag in values:
+				if tag is String and tag != "":
+					tags[tag] = true
+	var label_picker := OptionButton.new()
+	label_picker.fit_to_longest_item = false
+	label_picker.add_item("所有标签")
+	if not tags.is_empty():
+		var labels := tags.keys()
+		labels.sort()
+		for label in labels:
+			label_picker.add_item(label)
+		controls.add_child(label_picker)
+	else:
+		label_picker.hide()
+		controls.add_child(label_picker)
+	var prefs: Dictionary = app._prefs.get_or_add("authoring:" + app.cur_project_dir, {})
+	var favorites: Array = prefs.get_or_add("assets", [])
+	var favorite := Kit.button("收藏 / 取消收藏", Callable(), "ghost")
+	body.add_child(favorite)
+	var thumbs: Dictionary = app._entity_thumbs()
+	var show := func(i: int):
+		var row: Dictionary = list.get_item_metadata(i)
+		var d: Dictionary = row.decl
+		hint.text = "%s · %s · %s%s" % [row.name, row.category, row.id,
+			" · 参照图已用 %d" % row.used if row.used > 0 else ""]
+		if d.has("size"):
+			hint.text += " · 尺寸 %s" % str(d.size)
+		if d.has("anchor"):
+			hint.text += " · 锚点 %s" % str(d.anchor)
+	var refill := func():
+		list.clear()
+		hint.text = "没有匹配的素材，试试查看全部类别。"
+		var q := search.text.strip_edges().to_lower()
+		for row in rows:
+			var d: Dictionary = row.decl
+			if d.get("disabled", false) or (used_only.button_pressed and row.used == 0) \
+					or (favorites_only.button_pressed and row.id not in favorites) \
+					or (category.selected > 0 and row.category != category.get_item_text(category.selected)):
+				continue
+			if label_picker.selected > 0:
+				var asset_tags = d.get("tags", [])
+				if not asset_tags is Array or label_picker.get_item_text(label_picker.selected) not in asset_tags:
+					continue
+			if q != "" and q not in ("%s %s %s %s" % [row.name, row.id, row.category, d.get("tags", [])]).to_lower():
+				continue
+			var icon := thumbs.get(row.id) as Texture2D
+			if row.category == "瓦片":
+				var pal := AssetDecl.palette_of(app.manifest, row.id)
+				icon = _tex(row.id, pal[0].cell if not pal.is_empty() else Vector2i.ZERO)
+			elif icon == null and d.get("texture", "") != "":
+				icon = EntityNodeRef.texture_of(app.manifest, str(d.texture))
+			if icon == null:
+				icon = _visual_icon(d)
+			var n := list.add_item(("★ " if row.id in favorites else "") + row.name, icon)
+			list.set_item_tooltip(n, "%s · %s" % [row.category, row.id])
+			list.set_item_metadata(n, row)
+		if list.item_count > 0:
+			list.select(0)
+			show.call(0)
+	var choose := func():
+		var selected := list.get_selected_items()
+		if selected.is_empty():
+			return
+		var row: Dictionary = list.get_item_metadata(selected[0])
+		pop.hide()
+		app.asset_panel._use_on_canvas(row.id)
+	search.text_changed.connect(func(_q: String): refill.call())
+	search.text_submitted.connect(func(_q: String): choose.call())
+	category.item_selected.connect(func(_i: int): refill.call())
+	used_only.toggled.connect(func(_on: bool): refill.call())
+	favorites_only.toggled.connect(func(_on: bool): refill.call())
+	label_picker.item_selected.connect(func(_i: int): refill.call())
+	favorite.pressed.connect(func():
+		var selected := list.get_selected_items()
+		if selected.is_empty():
+			return
+		var i := selected[0]
+		var row: Dictionary = list.get_item_metadata(i)
+		if row.id in favorites:
+			favorites.erase(row.id)
+		else:
+			favorites.append(row.id)
+		app._save_prefs()
+		if favorites_only.button_pressed:
+			refill.call()
+		else:
+			list.set_item_text(i, ("★ " if row.id in favorites else "") + row.name))
+	list.item_selected.connect(show)
+	list.item_activated.connect(func(_i: int): choose.call())
+	body.add_child(Kit.popup_buttons(choose, pop.hide, "在当前地图使用"))
+	refill.call()
+	app._open_popup(pop)
+	search.grab_focus()
 
 func fill_all() -> void:
 	_cat = ""

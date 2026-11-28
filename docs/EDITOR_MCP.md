@@ -27,8 +27,8 @@ codex mcp add bird-editor --url http://127.0.0.1:47821/mcp
 | 工具 | 参数和行为 |
 | --- | --- |
 | describe_project | 无参返回已打开工程和清单。section 可单看声明，path 可切换到已有的最近工程。首次可在界面选择或通过启动参数指定。 |
-| query_content | kind 可取 maps、map、layers、objects、tiles、collision、ports、edges、cells、references、timeline、contents、content、views、world、groups、candidates、inbound、live_map。map 用地图码，function 用清单功能 ID，content 用完整内容 ID。提供 draft 时读候选状态；live_map 始终读人工画布工作副本。画布重建或位置、尺寸、顶点的拖动尚未完成时会提示稍后重试，并保留正在进行的操作。 |
-| manage_draft | action 为 list / create / open / save / diff / undo / redo / discard。保存随每次批改自动写入；open 和 save 返回现有快照的版本。diff 返回涉及的文档与候选内容，undo/redo/discard 要当前 revision。 |
+| query_content | kind 可取 assets、functions、bindings、maps、map、layers、objects、tiles、collision、ports、edges、cells、references、timeline、contents、content、views、world、groups、candidates、inbound、live_map。map 用地图码，function 用清单功能 ID，content 用完整内容 ID。提供 draft 时读候选状态；live_map 始终读人工画布工作副本。画布重建或位置、尺寸、顶点的拖动尚未完成时会提示稍后重试，并保留正在进行的操作。 |
+| manage_draft | action 为 list / create / open / save / diff / undo / redo / discard。每次成功批改持久化为独立版本。diff 给出涉及的对象、字段路径及可比较的前后值；summaryOnly:true 省略完整候选文档，基线不匹配时标记 baselineConflict 并省略该项字段比较。undo/redo/discard 要当前 revision。 |
 | apply_changes | draft、revision、operations。整批作为一次撤销；返回新版本、ID、别名与格式警告。 |
 | generate_map | 无 generator 列出可用生成器；仅给 generator 查参数与预设。给 name、draft、revision 执行；可提供 preset 和 parameters。给 sourceMap 则继承该地图的生成来源和参数，结果写为新的可编辑地图。 |
 | capture_editor | target 为 window / popup / canvas / control / tree / draft_map。window 默认。tree 返回当前可见路径和坐标；可以把控件路径放到 control，或把弹窗路径放到 window 并指定 target:popup。rect 可按像素再裁剪；delayMs 可在定位后稍候。 |
@@ -36,9 +36,9 @@ codex mcp add bird-editor --url http://127.0.0.1:47821/mcp
 | preview_asset | asset 查看声明、贴图、图形或动画。cell 选图集格；frames 传动画下标数组。audio 用执行码或声明 ID，返回时长与可播放附件。PCM WAV 支持波形与按秒传 start / duration 裁切；OGG、MP3 返回原始音频附件。 |
 | validate | 无参检查工程清单、地图和主要引用；有 draft 时加入候选、修改内容以及发布冲突检查。map 或 function/content 可指定检查对象。游戏逻辑仍通过试玩验证。 |
 | playtest | action 为 start / status / capture / stop。start 的 entry 为 project / map / content / screen；target 见下文。 |
-| publish | draft、revision。previewOnly:true 只报告待写入的文件和校验结果；正式发布比对基线、保留文件历史、写入提交记录并刷新编辑器。发布成功清空这份草稿的改动。 |
+| publish | draft、revision。previewOnly:true 只报告待写入的文件和校验结果；正式发布比对基线、保留文件历史、写入提交记录并刷新编辑器。如果有打开的人工编辑表单或待保存的地图内容，请先在编辑器保存或关闭相应编辑，再正式发布；此时仍可只读预检。发布成功清空这份草稿的改动。 |
 
-查询列表可用 search、offset、limit。objects / tiles / collision 支持 region:[x,y,w,h]，这是当前数据域的格坐标。tiles 需要 layer；objects 可以按 layer 或 instance 查，返回 objectIndex 供定位无实例码的场景摆放物。ports 支持按 types 筛选。candidates 可传流转声明 domains，或字段原声明 field；使用 map 指定其空间上下文。inbound 支持 view 或 function/content。
+查询列表可用 search、offset、limit。assets 传 map 时给出当前图的实际使用量；functions 可传 map、instance、trigger，返回候选及理由。objects / bindings 可传 map 或 mapCodes 限定跨图范围，也可按 asset、layer、function 或 instance 筛选；bindings 另支持按 content、trigger 筛选并返回真实 sequence。contents 支持用显示名查正式或草稿内容。objects / tiles / collision 支持 region:[x,y,w,h]，这是当前数据域的格坐标。tiles 需要 layer；objects 的 objectIndex 可定位无实例码的场景摆放物。ports 支持按 types 筛选。candidates 可传流转声明 domains，或字段原声明 field；使用 map 指定其空间上下文。inbound 支持 view 或 function/content。
 
 如果修改时提示找不到可编辑的地图，先调用无参 `validate`。不可读取的地图按文件名和出错字段返回原始校验原因。旧版碰撞数组需要先用源码仓库的 `tools/migrate_project.gd` 迁移，再重新打开工程。
 
@@ -53,7 +53,7 @@ operations 的每个对象包含 op。写入数据时，字段、步骤、触发
 | layer.put / layer.delete / layer.move | map。put 省略 layer 新建，data 使用图层声明结构；修改、删除、移动指定 layer，move 给目标 index。删除前需移走图层上的瓦片和对象。 |
 | tiles.set / collision.set | map。tiles 额外传 layer；cells 是记录数组，每项包含整数 x、y。瓦片记录含 asset、atlas:[x,y] 和可选 alt；碰撞用地图格式中的 type 等字段。remove:true 擦除该格。 |
 | instance.put / instance.delete | map；新建用 data.asset，修改或删除用 instance，场景摆放物也可按 objectIndex 定位。编辑 data.layer、x/y、props、transform 等；可用 world:[x,y] 按世界像素定位。 |
-| binding.put / binding.delete | map、instance；新建给 function，已有绑定用 binding（存储字段 bindingId）。data 可改 content、trigger、order、parallel、enabled、name；index 可重排绑定列表。 |
+| binding.put / binding.delete | map、instance；新建给 function，已有绑定用 binding（存储字段 bindingId）。data 可改 content、trigger、order、parallel、enabled、name；index 可重排绑定列表。trigger 使用该功能已声明的时机执行码，空字符串为默认时机；传声明 ID、未知码或此功能未开放的码会被拒绝。 |
 | content.put / content.delete | function、content（新建省略）。新建同时给 map 和 instance 可发放实例内容 ID；省略 map 时建立项目内容。data 可改 name、fields、steps 等。 |
 | view.put / view.delete | view，可在 put 中省略以分配新 ID；data 可写布局、元素、热区、导航与本地化等屏幕数据。 |
 | group.put / group.delete | group，可在 put 中省略以分配新 ID；data 可写 name、maps、drawingMap、drawOrder、events。绘制文档可用同批 map.create 创建，图组的整组顺序以 drawOrder 表示，底图为 0。省略 maps 使图组应用于适用的普通地图。 |

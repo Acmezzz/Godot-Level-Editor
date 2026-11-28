@@ -126,6 +126,7 @@ func _place_in_layer(n: EntityNode, li: int) -> void:
 		n.reparent(box, false)
 	else:
 		box.add_child(n)
+	n.use_parent_material = true
 
 ## 图层「看得到的那个节点」：碰撞层看 coll_view（红块），其余看数据节点本身。
 ## 可见性/隐藏一律作用在这个节点上，保证所有图层的显示逻辑走同一条路。

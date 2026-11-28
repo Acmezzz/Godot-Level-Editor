@@ -136,6 +136,18 @@ func test_layout_viewport_variants_share_identity_and_resolve_visibility() -> vo
 		["layout.elements[0].variants.missing", "layout.elements[0].variants.narrow.offsets",
 			"layout.elements[0].variants.wide"], "reject unknown profiles, invalid offsets and non-geometry overrides")
 
+func test_reparent_preserves_named_viewport_without_existing_variant() -> void:
+	var label := {"id": "label", "kind": "text", "anchors": [0, 0, 0, 0], "offsets": [100, 0, 200, 30]}
+	var group := {"id": "group", "kind": "panel", "anchors": [0.5, 0, 0.5, 0], "offsets": [0, 0, 200, 180]}
+	var elements := [label, group]
+	var design := Vector2(1280, 720)
+	var narrow := Vector2(640, 720)
+	var before: Rect2 = ScreenLayout.rectangles(elements, narrow, "narrow").label
+	ScreenLayout.reparent(elements, [label], "group", design, {"narrow": narrow})
+	eq(ScreenLayout.rectangles(elements, narrow, "narrow").label, before, "new parent does not offset an inherited viewport")
+	ScreenLayout.reparent(elements, [label], "", design, {"narrow": narrow})
+	eq(ScreenLayout.rectangles(elements, narrow, "narrow").label, before, "unparent keeps the same viewport geometry")
+
 func test_focus_skips_clipped_target_and_cleans_removed_links() -> void:
 	var layout := {"focusStart": "start", "elements": [
 		{"id": "start", "kind": "button", "anchors": [0, 0, 0.2, 0.2], "focus": {"right": "hidden"}},

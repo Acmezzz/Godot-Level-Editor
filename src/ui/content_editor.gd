@@ -77,9 +77,7 @@ var _r_body: VBoxContainer = null
 # 表单里需要就地更新的那处：首次改动创建内容后只改 ID 文本，不重建表单（重建会丢焦点）
 var _form_id_edit: LineEdit = null
 ## 「+ 添加功能」弹层：控制器级单例，跨 _rebuild_right 复用
-## 「+ 添加功能」弹层单例：fn_bind 经 host._add_menu 复用
 @warning_ignore("unused_private_class_variable")
-var _add_menu: PopupMenu = null
 
 func _init(host) -> void:
 	app = host
@@ -139,13 +137,16 @@ func _build_left() -> Control:
 
 	col.add_child(Kit.section_label("项目内容"))
 	col.add_child(Kit.button("打开项目内容库…", open_project_library, "plain"))
+	col.add_child(Kit.button("屏幕界面…", func():
+		if commit_fields():
+			ReferenceViewLibrary.open(app, "", {"layout": true}), "plain"))
 	var references := Kit.hbox(6)
 	var sizes := Kit.button("参考画幅…", func():
 		if commit_fields():
 			ViewportLibrary.open(app), "ghost")
 	var views := Kit.button("参考视图…", func():
 		if commit_fields():
-			ReferenceViewLibrary.open(app), "ghost")
+			ReferenceViewLibrary.open(app, "", {"layout": false}), "ghost")
 	for button in [sizes, views]:
 		button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		references.add_child(button)
@@ -424,6 +425,7 @@ func _entities() -> Array:
 			"asset": n.asset,
 			"layer": n.layer_id,
 			"name": str(app._scene_name(n.asset)),
+			"position": n.position,
 			"fns": n.functions,
 		})
 	# 保持画布放置顺序（撤销恢复也稳定），不做字符串排序
@@ -546,7 +548,9 @@ func _build_row(row: Dictionary) -> Control:
 					break)
 	b.set_meta("instance", code)
 	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	b.tooltip_text = "%s %s" % [str(row.name), code]
+	var layer_index: int = app.canvas._layer_index_of(row.layer)
+	var location := "%s · %s" % [app._layer_label(layer_index), str(Vector2i(row.position))]
+	b.tooltip_text = "%s · %s\n%s" % [str(row.name), code, location]
 	if on:
 		b.add_theme_stylebox_override("normal",
 			Th.box(Th.ACCENT_BG, Th.ACCENT, Th.R_INNER, 6, 4))
@@ -561,7 +565,7 @@ func _build_row(row: Dictionary) -> Control:
 	h.offset_right = -6
 	b.add_child(h)
 
-	var nm := Kit.text_label(str(row.name), Th.TEXT if on else Th.TEXT_SOFT, Th.FS_SMALL)
+	var nm := Kit.text_label("%s\n%s" % [str(row.name), location], Th.TEXT if on else Th.TEXT_SOFT, Th.FS_SMALL)
 	nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	nm.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS
 	nm.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -572,7 +576,7 @@ func _build_row(row: Dictionary) -> Control:
 	h.add_child(iid)
 
 	# 按钮内容行撑满高度：ghost 按钮默认按文字定高，空文字会塌成 0
-	b.custom_minimum_size = Vector2(0, 32)
+	b.custom_minimum_size = Vector2(0, 42)
 	# 悬停行 → 预览里高亮对应实例（与预览内悬停同一状态，青框）
 	b.mouse_entered.connect(func():
 		_preview.set_hover(code))
@@ -717,6 +721,11 @@ func _rebuild_right() -> void:
 	_r_id.text = "%s.%s" % [str(app.cur_map_name), code]
 	_r_badge.visible = false
 
+	_r_body.add_child(_build_fn_block())
+	if _selected_fn >= 0 and _selected_fn < _current_fns().size():
+		_r_body.add_child(Kit.divider())
+		_form_block = _build_form_block()
+		_r_body.add_child(_form_block)
 	var params := _build_instance_values(spr)
 	if params != null:
 		_r_body.add_child(params)
@@ -725,11 +734,6 @@ func _rebuild_right() -> void:
 	if refs != null:
 		_r_body.add_child(refs)
 		_r_body.add_child(Kit.divider())
-	_r_body.add_child(_build_fn_block())
-	if _selected_fn >= 0 and _selected_fn < _current_fns().size():
-		_r_body.add_child(Kit.divider())
-		_form_block = _build_form_block()
-		_r_body.add_child(_form_block)
 	_form_sig = sig0
 
 func _build_instance_values(spr: EntityNode) -> Control:

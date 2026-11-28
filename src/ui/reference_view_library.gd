@@ -26,7 +26,7 @@ static func open(app, view_id := "", jump := {}) -> void:
 	baseline = baseline.duplicate(true)
 	var rows: Array = baseline.duplicate(true)
 	var shell: Dictionary = app._popup_body("项目参考视图",
-		"拖动绘制热点，点击选中。热点可指向内容或项目支持的屏幕和地图；游戏决定如何显示参考图和响应点击。")
+		"拖动绘制热点，点击选中。热点可指向内容或项目支持的屏幕和地图；游戏决定如何显示参考图和响应点击。", true)
 	var pop: PopupPanel = shell.pop
 	var window: WeakRef = weakref(pop)
 	var body: VBoxContainer = shell.body
@@ -489,6 +489,8 @@ static func open(app, view_id := "", jump := {}) -> void:
 		layout_mode.button_pressed = true
 	elif jump.get("hotspot", -1) in range(preview.hotspots.size()):
 		refill_hotspots.call(jump.hotspot)
+	elif jump.get("layout", not preview.elements.is_empty()):
+		layout_mode.button_pressed = true
 	app._open_popup(pop, Vector2i(922, 646))
 	var field: String = jump.get("field", "")
 	if selected >= 0 and field != "":

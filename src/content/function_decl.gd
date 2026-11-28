@@ -8,6 +8,7 @@ class_name FunctionDecl
 ## 原先 JSON.stringify 整池是每次访问的成本，池越大越慢；见 declaration_pool.gd）。
 const ContentId := preload("res://src/content/content_id.gd")
 const PoolPrint := preload("res://src/content/declaration_pool.gd")
+const Triggers := preload("res://src/content/trigger_decl.gd")
 
 static var _cache: Dictionary = {}
 static var _cache_key := ""
@@ -92,6 +93,18 @@ static func fn_has_steps(m: Dictionary, fn_id: String) -> bool:
 static func fn_triggers(m: Dictionary, fn_id: String) -> Array:
 	var t = function_decl(m, fn_id).get("triggers", [])
 	return t if t is Array else []
+
+static func trigger_options(m: Dictionary, fn_id: String) -> Dictionary:
+	var choices := {}
+	for id in fn_triggers(m, fn_id):
+		var row := Triggers.trigger_decl(m, str(id))
+		var code := str(row.get("code", ""))
+		if code != "":
+			choices[code] = str(row.get("name", id))
+	return choices
+
+static func allows_trigger(m: Dictionary, fn_id: String, value: Variant) -> bool:
+	return value is String and (value == "" or trigger_options(m, fn_id).has(value))
 
 ## 功能 id（人类名）→ 执行码；缺失返回空串。
 static func fn_code(m: Dictionary, fn_id: String) -> String:

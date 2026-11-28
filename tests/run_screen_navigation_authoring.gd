@@ -568,7 +568,9 @@ func run() -> void:
 	welcome.layout.elements[0].outputs.accepted.view = "missing-screen"
 	check(ScreenReferences.view_reference_issues(broken, "welcome").any(func(issue): return issue.path.ends_with(".outputs.accepted")),
 		"diagnostics identify the particular missing destination")
-	press(app, "启动入口…")
+	press(app, "检查与试玩…")
+	press(popup(), "设置正式入口…")
+	await process_frame
 	var startup := popup()
 	choose(startup.find_child("StartupTarget", true, false), {"view": "welcome"})
 	press(startup, "保存启动入口")
@@ -660,7 +662,9 @@ func run() -> void:
 	while Playtest.is_alive(controller._play_pid) and Time.get_ticks_msec() < end:
 		await create_timer(0.05).timeout
 	var arrival := {"map": copy_code, "inst": new_host_code, "port": "door"}
-	press(app, "启动入口…")
+	press(app, "检查与试玩…")
+	press(popup(), "设置正式入口…")
+	await process_frame
 	startup = popup()
 	choose(startup.find_child("StartupTarget", true, false), arrival)
 	press(startup, "保存启动入口")

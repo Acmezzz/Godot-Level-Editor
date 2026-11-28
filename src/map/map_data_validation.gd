@@ -8,7 +8,7 @@ const GridSpaceScript := preload("res://src/canvas/grid_space.gd")
 const MapFlow := preload("res://src/map/map_flow.gd")
 const K := preload("res://src/core/constants.gd")
 
-static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
+static func validate(data: Dictionary, manifest := {}, strict_bindings := true) -> Array[Dictionary]:
 	var issues: Array[Dictionary] = []
 	if not data.has("version"):
 		_add(issues, "error", "version", "version is required")
@@ -118,7 +118,7 @@ static func validate(data: Dictionary, manifest := {}) -> Array[Dictionary]:
 	if data.has("entities"):
 		_add(issues, "error", "entities", "retired: use objects[] with asset/transform (run tools/migrate_project.gd)")
 	if data.get("objects", null) is Array:
-		_validate_objects(data.objects, manifest, layer_grids, issues)
+		_validate_objects(data.objects, manifest, layer_grids, issues, strict_bindings)
 	if data.get("collision", null) is Array:
 		var coll_cells := {}   # R21：同格多碰撞 = 错误（命中判定会随数组序漂移）
 		for i in data.collision.size():
@@ -197,7 +197,7 @@ static func _validate_layers(meta: Dictionary, issues: Array[Dictionary], manife
 
 ## objects[] 校验：场景实例与实体实例同形，差别只在 code（仅 entity 合法）。
 ## scene 实例带 code = 错误——直接拦住「给背景发码」这种误用。
-static func _validate_objects(objects: Array, manifest: Dictionary, layer_ids: Dictionary, issues: Array[Dictionary]) -> void:
+static func _validate_objects(objects: Array, manifest: Dictionary, layer_ids: Dictionary, issues: Array[Dictionary], strict_bindings: bool) -> void:
 	var known := {}
 	for definition in manifest.get("assets", []):
 		if definition is Dictionary:
@@ -275,13 +275,13 @@ static func _validate_objects(objects: Array, manifest: Dictionary, layer_ids: D
 				if o.functions != []:
 					_add(issues, "error", path + ".functions", "scene placements cannot carry function bindings")
 			else:
-				_validate_functions(o.functions, path + ".functions", manifest, issues)
+				_validate_functions(o.functions, path + ".functions", manifest, issues, strict_bindings)
 
 ## 实例 functions 数组结构校验——[{fn, content, name, order, parallel}]。
 ## 空 content = 还没绑定内容（内容编辑器里会按需生成），不是错误；未知码只警告，
 ## 因为项目侧可以先放数据再补声明（清单声明是开发契约，不是硬白名单）。
 ## fn 在磁盘上一律是功能的执行码，按码查声明，无人类名回退。
-static func _validate_functions(raw, path: String, manifest: Dictionary, issues: Array[Dictionary]) -> void:
+static func _validate_functions(raw, path: String, manifest: Dictionary, issues: Array[Dictionary], strict_bindings: bool) -> void:
 	if not (raw is Array):
 		_add(issues, "error", path, "must be an array")
 		return
@@ -295,9 +295,10 @@ static func _validate_functions(raw, path: String, manifest: Dictionary, issues:
 			_add(issues, "error", p, "must be an object")
 			continue
 		var fn_raw := str((item as Dictionary).get("fn", ""))
+		var fn_id := FunctionDecls.fn_id_of(manifest, fn_raw) if has_manifest else ""
 		if fn_raw == "":
 			_add(issues, "error", p + ".fn", "must name a function")
-		elif has_manifest and FunctionDecls.fn_id_of(manifest, fn_raw) == "":
+		elif has_manifest and fn_id == "":
 			_add(issues, "warning", p + ".fn",
 				"function code is not declared in the manifest: " + fn_raw)
 		if item.has("bindingId"):
@@ -319,6 +320,8 @@ static func _validate_functions(raw, path: String, manifest: Dictionary, issues:
 			_add(issues, "error", p + ".parallel", "must be a boolean")
 		if (item as Dictionary).has("trigger") and not ((item as Dictionary).trigger is String):
 			_add(issues, "error", p + ".trigger", "must be a trigger code string")
+		elif fn_id != "" and not FunctionDecls.allows_trigger(manifest, fn_id, item.get("trigger", "")):
+			_add(issues, "error" if strict_bindings else "warning", p + ".trigger", "功能不支持时机码：%s" % item.trigger)
 		if (item as Dictionary).has("enabled") and not ((item as Dictionary).enabled is bool):
 			_add(issues, "error", p + ".enabled", "must be a boolean")
 

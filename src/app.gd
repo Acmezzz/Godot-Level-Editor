@@ -650,6 +650,14 @@ func _set_map_loaded(loaded: bool) -> void:
 	else:
 		tile_list.modulate = Color(1, 1, 1, 1)
 		ent_list.modulate = Color(1, 1, 1, 1)
+		if cur_map_name != "" and FileAccess.file_exists(cur_map_path):
+			var authoring: Dictionary = _prefs.get_or_add("authoring:" + cur_project_dir, {})
+			var recent: Array = authoring.get_or_add("maps", [])
+			if recent.is_empty() or recent[0] != cur_map_name:
+				recent.erase(cur_map_name)
+				recent.push_front(cur_map_name)
+				recent.resize(mini(12, recent.size()))
+				_save_prefs()
 		_map_file_ctrl.refresh_event_drawings()
 		_editor_state_ctrl.sync_ui()
 		# 地图载入后：清掉引导态，换成「未选中实体」的提示
@@ -879,8 +887,15 @@ func _set_status(msg: String) -> void:
 func _open_popup(pop: PopupPanel, popup_size := Vector2i.ZERO, parent: Window = null) -> void:
 	_layout_ctrl._open_popup(pop, popup_size, parent)
 
-func _popup_body(title: String, subtitle := "") -> Dictionary:
-	return _layout_ctrl._popup_body(title, subtitle)
+func _popup_body(title: String, subtitle := "", editing := false) -> Dictionary:
+	var shell: Dictionary = _layout_ctrl._popup_body(title, subtitle)
+	if editing:
+		shell.pop.set_meta("editor_form", true)
+	return shell
+
+func _has_open_editor_form() -> bool:
+	return get_children().any(func(node):
+		return node is PopupPanel and node.visible and node.has_meta("editor_form"))
 
 ## 快捷键速查弹窗（? 键 / 状态栏「?」入口）
 func _open_shortcut_help() -> void:

@@ -22,7 +22,7 @@ static func open(app) -> void:
 	var source: Dictionary = app.manifest
 	var startup: Dictionary = source.startup
 	var shell: Dictionary = app._popup_body("正式启动入口",
-		"游戏正常启动时读取已保存的入口。选择一项已发布的内容、屏幕或地图；未设置时使用游戏自己的默认流程。")
+		"游戏正常启动时读取已保存的入口。选择一项已发布的内容、屏幕或地图；未设置时使用游戏自己的默认流程。", true)
 	var pop: PopupPanel = shell.pop
 	var options := OptionButton.new()
 	options.name = "StartupTarget"

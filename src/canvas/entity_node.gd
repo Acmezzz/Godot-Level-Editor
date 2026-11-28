@@ -526,6 +526,7 @@ func _sync_poly_view() -> void:
 		var pv2 = PolyViewScript.new()
 		pv2.name = "PolyView"
 		pv2.node = self
+		pv2.use_parent_material = true
 		add_child(pv2)
 		pv = pv2
 	elif not want and pv != null:

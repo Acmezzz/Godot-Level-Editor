@@ -275,23 +275,26 @@ func message_for_binding(form: Control, value: String) -> void:
 
 func author_reactions(ce) -> void:
 	var panel: Control = ce._r_body
-	# The initial row is furnished by the asset declaration. The extra row comes from the actual add menu.
+	var first: Button = panel.find_child("BindingRow1", true, false)
+	check(first != null, "switch starts with one mounted reaction")
+	if first == null:
+		return
+	first.pressed.emit()
 	var inherited_options: Array = collect(panel, "OptionButton").filter(
 		func(item): return item.item_count == 3 and item.get_item_metadata(1) == "TUCH")
 	check(inherited_options.size() == 1, "switch starts with one mounted reaction")
 	if inherited_options.size() != 1:
 		return
 	select_metadata(inherited_options[0], "TUCH")
-	var rows: Array = collect(panel, "Button").filter(func(item): return item.tooltip_text == "点击展开这一项的内容表单")
-	rows[0].pressed.emit()
 	message_for_binding(ce._form_block, "entered")
 	press(panel, "+ 添加功能 …")
-	var menu: PopupMenu = ce._add_menu
-	for i in menu.item_count:
-		if menu.get_item_metadata(i) == "reaction":
-			menu.hide()
-			menu.id_pressed.emit(i)
-			break
+	var candidate: PopupPanel = _visible_popup(ce.app)
+	for list in collect(candidate, "ItemList"):
+		for i in list.item_count:
+			if list.get_item_metadata(i).id == "reaction":
+				list.select(i)
+				list.item_activated.emit(i)
+				break
 	var live: Array = ce._current_fns()
 	check(live.size() == 2 and live[0].get("mounted", false) and not live[1].get("mounted", false),
 		"same function gains one independent row without duplicating mount")

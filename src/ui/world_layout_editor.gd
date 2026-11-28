@@ -29,7 +29,7 @@ static func open(app) -> void:
 		app._set_status("世界布局格式无效，未改动清单")
 		return
 	var shell: Dictionary = app._popup_body("项目世界布局",
-		"选择地图添加分块，拖动分块或输入像素坐标。滚轮缩放，中键平移。")
+		"选择地图添加分块，拖动分块或输入像素坐标。滚轮缩放，中键平移。", true)
 	var ui := new()
 	ui._app = app
 	ui._pop = shell.pop
@@ -107,10 +107,15 @@ func _refresh_list() -> void:
 	for code in _draft.chunks:
 		if not _names.has(code):
 			keys.append(code)
-	keys.sort_custom(func(a, b): return str(_names.get(a, a)).naturalnocasecmp_to(str(_names.get(b, b))) < 0)
+	var drawings := preload("res://src/project/event_layers.gd").drawing_codes(_source)
+	keys.sort_custom(func(a, b):
+		return str(_names.get(a, a)).naturalnocasecmp_to(str(_names.get(b, b))) < 0 \
+			if (a in drawings) == (b in drawings) else a not in drawings)
 	_options.clear()
 	for code in keys:
 		var title := "%s · %s" % [_names.get(code, "地图缺失或重码"), code]
+		if code in drawings:
+			title = "图组绘制 · " + title
 		_options.add_item(("● " if _draft.chunks.has(code) else "") + title)
 		_options.set_item_metadata(_options.item_count - 1, code)
 	_surface.names = _names

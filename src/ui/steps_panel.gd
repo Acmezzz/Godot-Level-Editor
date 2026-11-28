@@ -183,8 +183,7 @@ func open_timeline(fn_id: String, cid: String, context: String, time: Variant = 
 	if not open_content(fn_id, cid, context) or not _set_steps_view("timeline"):
 		return false
 	if time != null:
-		_steps_tl.playhead = maxf(0.0, time)
-		_steps_tl.queue_redraw()
+		_set_preview_position(maxf(0.0, time))
 		_steps_tl.follow_playhead.call_deferred()
 	return true
 
@@ -240,7 +239,7 @@ func _steps_mount(mem: Dictionary) -> void:
 	if _steps_dock_where == "popup":
 		var shell: Dictionary = app._popup_body(
 			"演出编辑：%s" % FunctionDecls.function_name(manifest, _steps_fn_id),
-			"在列表中排序。切到时间轴可以试听、拖动步骤和调整时长。")
+			"在列表中排序。切到时间轴可以试听、拖动步骤和调整时长。", true)
 		_steps_pop = shell.pop
 		if GamePreview.supports(manifest, TIMELINE_FRAME):
 			FrameDialog.keep_on_focus_loss(_steps_pop)
@@ -266,8 +265,14 @@ func _steps_mount(mem: Dictionary) -> void:
 		else:
 			select.free()
 	_build_steps_tabs(body)
-	body.add_child(_steps_list)
 	body.add_child(_steps_tl_box)
+	var step_list_scroll := ScrollContainer.new()
+	step_list_scroll.custom_minimum_size.y = 186
+	step_list_scroll.follow_focus = true
+	step_list_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	_steps_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	step_list_scroll.add_child(_steps_list)
+	body.add_child(step_list_scroll)
 	body.add_child(Kit.divider())
 	body.add_child(_steps_form)
 	# 时间轴视图建一次、反复复用（set_steps 换数据源）；滚动容器兜住超宽/超高的排布
@@ -678,6 +683,7 @@ func _steps_pick_tl(idx: int) -> void:
 	if _steps_tl != null and is_instance_valid(_steps_tl):
 		_steps_tl.sel = idx
 		_steps_tl.queue_redraw()
+	_rebuild_steps_list(_steps_data().get("steps", []))
 	_rebuild_steps_form_from_data()
 
 ## 身份校验：还是同一个实例、绑定行还在、功能 id 与内容 ID 都还是开面板时的那个
@@ -755,9 +761,10 @@ func _rebuild_steps_all() -> void:
 		_steps_sel_expect = ""
 	_sync_steps_clock(data)
 	if _steps_view == "timeline":
-		_steps_list.visible = false
+		_steps_list.visible = true
 		_steps_tl_box.visible = true
 		_rebuild_steps_tl(arr)
+		_rebuild_steps_list(arr)
 	else:
 		_steps_tl_box.visible = false
 		_steps_list.visible = true
@@ -766,6 +773,7 @@ func _rebuild_steps_all() -> void:
 
 ## 列表分页仅限制创建的控件，步骤序号、复制范围和写入均对应完整数组。
 var _steps_list_snapshot: Array = []
+var _step_times: Array = []
 var _steps_binding: Dictionary = {}
 var _copied_segment: Array = []
 var _segment_scope: Array = []
@@ -774,6 +782,7 @@ func _rebuild_steps_list(arr: Array) -> void:
 	if _steps_list == null:
 		return
 	_steps_list_snapshot = arr.duplicate(true)
+	_step_times = StepTimeline.to_timeline(arr)
 	for c in _steps_list.get_children():
 		_steps_list.remove_child(c)
 		c.queue_free()
@@ -786,6 +795,9 @@ func _rebuild_steps_list(arr: Array) -> void:
 	paste.disabled = _copied_segment.is_empty() or _segment_scope != _current_segment_scope()
 	paste.tooltip_text = "追加已复制的步骤；可在同项目、同功能及同地图作用域内复用"
 	actions.add_child(paste)
+	var shift := Kit.button("调整一段的时间…", _retime_segment, "ghost")
+	shift.disabled = arr.is_empty()
+	actions.add_child(shift)
 	if arr.is_empty():
 		_steps_list.add_child(Kit.hint_label("（空演出：添加步骤开始排）", 320))
 	var last_page := maxi(0, ceili(float(arr.size()) / STEPS_PAGE_SIZE) - 1)
@@ -868,6 +880,58 @@ func _copy_segment() -> void:
 		_segment_scope = _current_segment_scope()
 		app._set_status("已复制 %d 个步骤" % _copied_segment.size())
 		_rebuild_steps_list(arr))
+
+func _retime_segment() -> void:
+	if not _flush_pending():
+		return
+	var data := _steps_data()
+	var steps: Array = data.get("steps", [])
+	if steps.is_empty():
+		return
+	var rev := _steps_rev
+	var first := _segment_range_input(steps.size(), maxi(1, _steps_sel + 1))
+	var last := _segment_range_input(steps.size(), steps.size())
+	var shift := LineEdit.new()
+	shift.text = "0"
+	var spacing := LineEdit.new()
+	spacing.placeholder_text = "留空保留现有间隔"
+	var body := Kit.vbox(8)
+	body.add_child(Kit.field_row("首步序号", first, 92))
+	body.add_child(Kit.field_row("末步序号", last, 92))
+	body.add_child(Kit.field_row("偏移量", shift, 92))
+	body.add_child(Kit.field_row("固定间隔", spacing, 92))
+	body.add_child(Kit.hint_label("单位：%s。范围外步骤保留原生效时间。" % _steps_timebase(), 340))
+	_segment_dialog("调整演出段落", "应用时间", body, func():
+		if rev != _steps_rev or not _steps_identity_ok() or _steps_data().get("steps", []) != steps:
+			return
+		first.apply()
+		last.apply()
+		var delta := _read_time(shift.text)
+		var span := _read_time(spacing.text) if spacing.text.strip_edges() != "" else -1.0
+		if not is_finite(delta) or not is_finite(span) or (spacing.text.strip_edges() != "" and span < 0):
+			app._set_status("输入有效偏移和非负间隔。")
+			return
+		var begin := int(minf(first.value, last.value)) - 1
+		var end := int(maxf(first.value, last.value)) - 1
+		var timeline := StepTimeline.to_timeline(steps)
+		var origin: float = timeline[begin].get("at", 0.0)
+		var result := steps.duplicate(true)
+		for i in result.size():
+			if timeline[i].is_empty():
+				continue
+			var time: float = timeline[i].at
+			if i in range(begin, end + 1):
+				time = (time if span < 0 else origin + (i - begin) * span) + delta
+			if time < 0 or not is_finite(time):
+				app._set_status("调整后有步骤早于零点或超出范围。")
+				return
+			result[i]["at"] = time
+		data["steps"] = result
+		if _steps_write(data):
+			_steps_sel = begin
+			_bump_steps_rev()
+			_rebuild_steps_all()
+			app._set_status("已调整第 %d–%d 步" % [begin + 1, end + 1]))
 
 func _paste_segment() -> void:
 	if not _flush_pending():
@@ -1047,15 +1111,21 @@ func _steps_row(si: int, st: Dictionary) -> Control:
 	var nm := str(decl.get("name", sc)) if known else "（未声明的步骤 %s）" % sc
 	var sel := _steps_sel == si
 	var row := Kit.hbox(4)
-	var mark := Kit.text_label("%d. %s" % [si + 1, nm],
-		Th.TEXT if sel else Th.TEXT_DIM, Th.FS_SMALL)
+	var clock: Dictionary = _step_times[si] if si in range(_step_times.size()) else {}
+	var summary := ""
+	var values = st.get("fields", {})
+	if values is Dictionary:
+		for value in values.values():
+			if value is String and value != "":
+				summary = " · " + value.get_slice("\n", 0)
+				break
+	var mark := Kit.button("%s%d. %s · %s · 轨 %d%s" % [
+		"▸ " if sel else "", si + 1, nm, _num_text(float(clock.get("at", 0.0))), int(clock.get("track", 0)) + 1, summary],
+		func(): _steps_pick(si), "ghost")
 	mark.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	# 行可点：点步骤名选中该步，右侧表单跟着换（不必先按 ↑↓ 才能选）
-	mark.mouse_filter = Control.MOUSE_FILTER_STOP
-	mark.gui_input.connect(func(ev: InputEvent):
-		if ev is InputEventMouseButton and (ev as InputEventMouseButton).pressed \
-				and (ev as InputEventMouseButton).button_index == MOUSE_BUTTON_LEFT:
-			_steps_pick(si))
+	mark.clip_text = true
+	mark.alignment = HORIZONTAL_ALIGNMENT_LEFT
+	mark.tooltip_text = mark.text
 	row.add_child(mark)
 	if not known:
 		row.add_child(Kit.hint_label("⚠", 20))
@@ -1090,6 +1160,8 @@ func _steps_pick(si: int) -> void:
 	_steps_sel = si
 	_reveal_step_page()
 	_rebuild_steps_all()
+	if _steps_view == "timeline":
+		_steps_tl.reveal_step.call_deferred(si)
 
 ## 当前步骤表单：步骤类型选择 + 该步骤声明的字段 + 未声明键只读保留。
 ## 字段改动即时写盘，不重建表单（保持输入焦点，与主表单同一纪律）。
@@ -1119,13 +1191,24 @@ func _rebuild_steps_form(arr: Array) -> void:
 		if _flush_pending():
 			_steps_add(str(pick.get_item_metadata(pick.selected))))
 	add_row.add_child(add_btn)
+	var at_head := Kit.button("在播放头添加", func():
+		if pick.selected >= 0 and _flush_pending():
+			_steps_add(str(pick.get_item_metadata(pick.selected)), true))
+	at_head.tooltip_text = "在当前播放头时间放置新步骤，保留原有步骤时间"
+	add_row.add_child(at_head)
 	var reload_btn := Kit.button("重读步骤", _reload_steps, "ghost")
 	reload_btn.tooltip_text = "放弃尚未写入的步骤输入，重读当前内容"
 	add_row.add_child(reload_btn)
 	box.add_child(add_row)
 	# 时间轴警告（负 at/duration、同轨重叠）：只提示不阻断
-	for wtext in StepTimeline.warnings(arr):
-		box.add_child(Kit.hint_label("⚠ " + str(wtext), 320))
+	var warnings := StepTimeline.warnings(arr)
+	if not warnings.is_empty():
+		var details := Kit.vbox(3)
+		details.hide()
+		box.add_child(Kit.button("时间提示（%d）…" % warnings.size(), func(): details.visible = not details.visible, "ghost"))
+		for wtext in warnings:
+			details.add_child(Kit.hint_label("⚠ " + str(wtext), 320))
+		box.add_child(details)
 	var shown := {"steps": arr.duplicate(true), "index": _steps_sel}
 	# D2：参考时钟（缺项 / 小数帧待修 / 参考帧与音频）
 	box.add_child(_steps_clock_box(arr, shown))
@@ -1622,14 +1705,18 @@ func _reload_steps() -> void:
 	_bump_steps_rev()
 	_rebuild_steps_all()
 
-func _steps_add(code: String) -> void:
+func _steps_add(code: String, at_playhead := false) -> void:
 	if code == "":
 		return
 	var data := _steps_data()
 	if data.is_empty():
 		return
 	var arr: Array = data.get("steps", []) if data.get("steps", []) is Array else []
-	arr.append({"step": code, "fields": {}})
+	var step := {"step": code, "fields": {}}
+	if at_playhead:
+		var time := maxf(0.0, _steps_tl.playhead)
+		step["at"] = roundf(time) if _steps_timebase() == "frame" else time
+	arr.append(step)
 	data["steps"] = arr
 	if not _steps_write(data):
 		return

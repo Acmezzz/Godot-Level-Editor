@@ -60,7 +60,7 @@ static func decode_text(text: String, source := "", manifest := {}) -> Dictionar
 	var data: Dictionary = json.data
 	var errors: Array[Dictionary] = []
 	var warnings: Array[Dictionary] = []
-	for issue in MapValidator.validate(data, manifest):
+	for issue in MapValidator.validate(data, manifest, false):
 		if str(issue.severity) == "error":
 			errors.append(issue)
 		else:
@@ -205,12 +205,15 @@ static func allocate_code(m: Dictionary, extra_occupied := "") -> String:
 	return code
 
 static func identity_error(m: Dictionary, name: String, data: Dictionary, move_from := "") -> String:
+	refresh_external_maps()
+	return identity_error_in(code_index(m).by_code, name, data, move_from)
+
+static func identity_error_in(by_code: Dictionary, name: String, data: Dictionary, move_from := "") -> String:
 	var code := str(data.get("meta", {}).get("code", ""))
 	if code == "":
 		return ""
-	refresh_external_maps()
 	var matches := PackedStringArray()
-	for other in code_index(m).by_code.get(code, []):
+	for other in by_code.get(code, []):
 		if other != name and other != move_from:
 			matches.append(str(other))
 	if matches.is_empty():
@@ -250,6 +253,8 @@ static func write(m: Dictionary, name: String, data: Dictionary, move_from := ""
 	if not validate_for_write(data, m) or identity_error(m, name, data, move_from) != "":
 		return false
 	DirAccess.make_dir_recursive_absolute(path.get_base_dir())
+	if FileAccess.file_exists(path):
+		rotate_history(path)
 	if not write_text(path, MapFormat.encode(data)):
 		return false
 	invalidate_code_map()
@@ -379,22 +384,10 @@ static func rename_map(m: Dictionary, old_name: String, new_name: String, baseli
 	var renamed: Dictionary = original.data
 	renamed.meta.name = new_name
 	var dst := path_for(m, new_name)
-	if OS.get_name() == "Windows" and old_name.nocasecmp_to(new_name) == 0:
+	if is_case_only_rename(src, dst):
 		if new_name in list_maps(m):
 			return "同名地图已存在"
-		var temp := src + ".case-" + str(Time.get_ticks_usec())
-		if DirAccess.rename_absolute(src, temp) != OK:
-			return "无法移动原图"
-		if DirAccess.rename_absolute(temp, dst) != OK:
-			DirAccess.rename_absolute(temp, src)
-			return "无法写入新图名"
-		if not write_text(dst, MapFormat.encode(renamed)):
-			if DirAccess.rename_absolute(dst, temp) == OK:
-				DirAccess.rename_absolute(temp, src)
-			return "无法更新图内名称"
-		_cache.erase(src)
-		invalidate_code_map()
-		return ""
+		return write_case_rename(src, dst, MapFormat.encode(renamed))
 	var DC := preload("res://src/project/document_commit.gd")
 	var prep := DC.prepare(m, new_name, renamed, [], old_name, original.digest)
 	if prep.has("error"):
@@ -406,6 +399,24 @@ static func rename_map(m: Dictionary, old_name: String, new_name: String, baseli
 		return res.error
 	_cache.erase(src)
 	invalidate_code_map()   # 改名换了文件：码表按图名做键，必须重算
+	return ""
+
+static func is_case_only_rename(src: String, dst: String) -> bool:
+	return OS.get_name() == "Windows" and src != dst and src.nocasecmp_to(dst) == 0
+
+static func write_case_rename(src: String, dst: String, text: String) -> String:
+	var temp := src + ".case-" + str(Time.get_ticks_usec())
+	if DirAccess.rename_absolute(src, temp) != OK:
+		return "无法移动原图"
+	if DirAccess.rename_absolute(temp, dst) != OK:
+		DirAccess.rename_absolute(temp, src)
+		return "无法写入新图名"
+	if not write_text(dst, text):
+		if DirAccess.rename_absolute(dst, temp) == OK:
+			DirAccess.rename_absolute(temp, src)
+		return "无法更新图内名称"
+	_cache.erase(src)
+	invalidate_code_map()
 	return ""
 
 ## 复制地图（C2）：整图走 ClonePlan——实例码与附属内容全部独立、组内引用重映射，

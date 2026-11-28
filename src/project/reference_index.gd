@@ -213,8 +213,6 @@ static func _collect_module_fields(fields: GDScript, manifest: Dictionary, decls
 			_collect_module_fields(fields, manifest, scope.decls, scope.values, source,
 				sub_path + (".fields" if condition else ""), field, "code" if condition else key_mode, out)
 		var ref_decl: Dictionary = fields.array_element_decl(decl) if decl.get("type") == "array" else decl
-		if ref_decl.get("kind") == "input" and ref_decl.get("type") not in ["asset_ref", "port_ref", "edge_ref", "flow_target"]:
-			continue
 		var desc: Dictionary = fields.describe(ref_decl)
 		if desc.kind == "flow_target":
 			var targets: Array = value if decl.get("type") == "array" and value is Array else [value]

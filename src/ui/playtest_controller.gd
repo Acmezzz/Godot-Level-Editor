@@ -16,6 +16,7 @@ var _play_started_msec: int = 0
 var _play_program := ""
 var _play_report_request := {}
 var _play_report_result := {}
+var last_run := {}
 
 func _init(host, map_files: RefCounted) -> void:
 	app = host
@@ -25,6 +26,9 @@ func on_play(spawn_tiles: Vector2i = Vector2i(-1, -1), project_entry := false) -
 	if not _can_start_playtest():
 		return
 	if project_entry and not bool(app.manifest.get("playtest", {}).get("projectEntry", false)):
+		return
+	if app.manifest.get("playtest", {}).is_empty():
+		app._set_status("此游戏还未声明试玩可执行文件。")
 		return
 	var input: Dictionary = await files.prepare_playtest_document(project_entry)
 	if input.has("error"):
@@ -121,6 +125,7 @@ func _start_playtest(play_path: String, digest: String, args: PackedStringArray,
 	_play_program = str(play_res.get("program", ""))
 	_play_report_request = request
 	_play_report_result = {}
+	last_run = {"entry": subject, "file": play_path, "digest": digest, "state": "进程已启动"}
 	var track_note := "" if Playtest.tracking_available() else "（此平台无法跟踪进程退出）"
 	app._set_status("试玩启动: %s %s%s" % [_play_program.get_file(), subject, track_note])
 	return true
@@ -138,7 +143,8 @@ func poll_playtest() -> void:
 	if not _play_report_request.is_empty() and _play_report_result.is_empty():
 		_play_report_result = Playtest.read_report(_play_report_request)
 		if not _play_report_result.is_empty():
-			app._set_status(_play_report_summary())
+			last_run.state = _play_report_summary()
+			app._set_status(last_run.state)
 	if not Playtest.tracking_available() or Playtest.is_alive(_play_pid):
 		return
 	var secs := int((Time.get_ticks_msec() - _play_started_msec) / 1000.0)
@@ -149,9 +155,109 @@ func poll_playtest() -> void:
 	Playtest.clear_view_draft(_play_report_request)
 	var who := prog.get_file()
 	if not _play_report_request.is_empty():
-		app._set_status("试玩 %s 已退出 · %s" % [who, _play_report_summary()])
+		last_run.state = "已退出 · " + _play_report_summary()
 	else:
-		app._set_status("试玩 %s 已退出（运行 %d 秒）" % [who, secs])
+		last_run.state = "已退出（%d 秒）· 未声明加载回执" % secs
+	app._set_status("试玩 %s %s" % [who, last_run.state])
+
+func open_release_check() -> void:
+	var startup: Dictionary = app.manifest.get("startup", {})
+	var target: Dictionary = startup.get("target", {})
+	var shell: Dictionary = app._popup_body("检查与试玩",
+		"先保存内容并检查结构，再从正式入口试玩。发布包由游戏侧打包与独立验证。")
+	var pop: PopupPanel = shell.pop
+	var body: VBoxContainer = shell.body
+	body.add_child(_check_label("正式入口：" + (str(target.get("view", target.get("map", target.get("content", JSON.stringify(target))))) if not target.is_empty() else "由游戏决定")))
+	if not last_run.is_empty():
+		body.add_child(_check_label("最近试玩：%s · %s%s" % [last_run.entry, last_run.state,
+			" · 数据 " + str(last_run.digest).left(8) if last_run.digest != "" else ""]))
+	var actions := UiKitScript.hbox(6)
+	body.add_child(actions)
+	var run := UiKitScript.button("试玩正式入口", func():
+		pop.hide()
+		on_play(Vector2i(-1, -1), true))
+	run.disabled = app.manifest.get("playtest", {}).get("projectEntry") != true
+	actions.add_child(run)
+	if app.manifest.has("startup"):
+		actions.add_child(app.UiKitScript.button("设置正式入口…", func():
+			pop.hide()
+			preload("res://src/ui/startup_dialog.gd").open.call_deferred(app), "ghost"))
+	if app.map_loaded:
+		actions.add_child(app.UiKitScript.button("当前地图试玩参数…", func():
+			pop.hide()
+			open_configuration.call_deferred(), "ghost"))
+	body.add_child(_check_label("检查读取正式文件；游戏侧动态行为请在试玩和发布包中确认。"))
+	var list := ItemList.new()
+	list.custom_minimum_size = Vector2(620, 290)
+	body.add_child(list)
+	var info := _check_label("")
+	body.add_child(info)
+	var workbench: RefCounted = load("res://src/mcp/workbench.gd").new(app)
+	var refresh := func():
+		list.clear()
+		var checked: Dictionary = await workbench.invoke("validate", {})
+		var issues: Array = checked.get("issues", [])
+		for issue in issues:
+			var caption := "%s · %s：%s" % ["需修复" if issue.severity == "error" else "查看", issue.path, issue.message]
+			var i := list.add_item(caption)
+			list.set_item_tooltip(i, caption)
+			list.set_item_metadata(i, issue)
+		info.text = "正式数据通过结构检查（%d 条提示）" % issues.size() if checked.get("valid", false) else "结构检查未通过。"
+	var locate := func(i: int):
+		var issue: Dictionary = list.get_item_metadata(i)
+		info.text = list.get_item_text(i)
+		var path: String = issue.path
+		if issue.has("function") and issue.has("content"):
+			pop.hide()
+			app._set_mode("content")
+			var editor = app.project_shell.content_editor
+			var ref_path: String = issue.get("reference", {}).get("path", "")
+			if ref_path.begins_with("steps["):
+				var tail := ref_path.substr(6)
+				editor._steps.open_content(issue.function, issue.content, issue.get("map", ""), int(tail.get_slice("]", 0)),
+					tail.get_slice("].", 1))
+			else:
+				editor.open_project_content(issue.function, issue.content, issue.get("map", ""))
+			return
+		if path.begins_with("views["):
+			var idx := int(path.substr(6).get_slice("]", 0))
+			var views: Array = app.manifest.get("views", [])
+			if idx in range(views.size()):
+				pop.hide()
+				var view: Dictionary = views[idx]
+				var elements: Array = view.get("layout", {}).get("elements", [])
+				var at := path.find(".elements[")
+				var item := int(path.substr(at + 10).get_slice("]", 0)) if at >= 0 else -1
+				var jump := {"element": elements[item].get("id", "")} if item in range(elements.size()) else {}
+				preload("res://src/ui/reference_view_library.gd").open.call_deferred(app, view.view_id, jump)
+				return
+		var parts: PackedStringArray = str(issue.path).split(".")
+		if parts[0] in ["startup", "viewports", "eventLayers"]:
+			pop.hide()
+			match parts[0]:
+				"startup": preload("res://src/ui/startup_dialog.gd").open.call_deferred(app)
+				"viewports": preload("res://src/ui/viewport_library.gd").open.call_deferred(app)
+				"eventLayers": preload("res://src/ui/event_layers_dialog.gd").open.call_deferred(app, parts[1] if parts.size() > 1 else "")
+			return
+		var code: String = issue.get("map", parts[1] if parts.size() > 1 and parts[0] == "maps" else "")
+		if code == "":
+			return
+		pop.hide()
+		if not await app._map_file_ctrl.open_map_by_code(code):
+			return
+		var ref: Dictionary = issue.get("reference", {})
+		if ref.has("map_section"):
+			preload("res://src/ui/map_flow_dialog.gd").open(app, ref.map_section, ref.field)
+		elif ref.get("code", "") != "":
+			app._set_mode("content")
+			app.project_shell.content_editor.select_inst(ref.code)
+	list.item_activated.connect(locate)
+	body.add_child(app.UiKitScript.popup_buttons(refresh, pop.hide, "检查已保存数据"))
+	app._open_popup(pop, Vector2i(720, 560))
+	await refresh.call()
+
+func _check_label(text: String) -> Label:
+	return UiKitScript.hint_label(text, 570)
 
 func _play_report_summary() -> String:
 	match str(_play_report_result.get("status", "")):
@@ -181,7 +287,8 @@ func open_configuration() -> void:
 	var body: VBoxContainer = shell.body
 	if flags.is_empty() and params.is_empty():
 		body.add_child(app.UiKitScript.hint_label(
-			"清单未声明 playtest 项——在 editor_manifest.json 加 \"playtest\" 后重开清单（示例见 GAME_SIDE_STANDARD §试玩）。",
+			"试玩已接入；游戏未提供可在此调整的参数。" if not pt.is_empty() else
+			"游戏尚未接入试玩。请在清单声明 playtest 后重新打开工程。",
 			app.POPUP_BODY_W))
 	var states := {}   # {id: Callable} 应用时逐项收集（勾选=布尔，数字=整数）
 	for f in flags:

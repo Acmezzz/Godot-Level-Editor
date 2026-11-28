@@ -290,6 +290,8 @@ static func _validate_assets(data: Dictionary, project_dir: String, issues: Arra
 	var assets: Array = data.get("assets", [])
 	var ids := {}
 	var codes := {}
+	var atlas_sizes := {}
+	var tile_size := preload("res://src/canvas/grid_space.gd").tile_size_of(data)
 	for i in assets.size():
 		var a = assets[i]
 		var path := "assets[%d]" % i
@@ -309,13 +311,17 @@ static func _validate_assets(data: Dictionary, project_dir: String, issues: Arra
 			for key in ["code", "functions", "ports"]:
 				if ad.has(key):
 					_add(issues, "error", path + "." + key, "only entity assets can declare " + key)
-			_validate_scene_asset(ad, path, project_dir, issues)
+			_validate_scene_asset(ad, path, project_dir, issues, tile_size, atlas_sizes)
 		else:
 			_validate_ports(ad, path, issues)
 			_validate_port_sources(ad, path, issues)
 			_validate_entity_asset(data, ad, path, codes, issues)
 
-static func _validate_scene_asset(ad: Dictionary, path: String, project_dir: String, issues: Array[Dictionary]) -> void:
+static func _positive_int(value: Variant) -> bool:
+	return (value is int or value is float) and value > 0 and float(value) == floorf(float(value))
+
+static func _validate_scene_asset(ad: Dictionary, path: String, project_dir: String, issues: Array[Dictionary],
+		tile_size: Vector2i, atlas_sizes: Dictionary) -> void:
 	var shape := str(ad.get("shape", "tile"))
 	if shape != "tile" and shape != "image":
 		_add(issues, "error", path + ".shape", "scene shape must be \"tile\" or \"image\"")
@@ -323,12 +329,25 @@ static func _validate_scene_asset(ad: Dictionary, path: String, project_dir: Str
 	var atlas := str(ad.get("atlas", ""))
 	var texture := str(ad.get("texture", ""))
 	if shape == "tile":
+		var cell = ad.get("cell")
+		if ad.has("cell") and not ((cell is Dictionary and _positive_int(cell.get("w")) and _positive_int(cell.get("h"))) \
+				or (cell is Array and cell.size() == 2 and cell.all(_positive_int))):
+			_add(issues, "warning", path + ".cell", "use positive integers in {w, h}; invalid values fall back to tileSize")
 		if atlas == "":
 			_add(issues, "error", path + ".atlas", "tile shape needs an atlas")
 		elif project_dir != "" and atlas.contains(".."):
 			_add(issues, "error", path + ".atlas", "path cannot traverse outside the project")
 		elif project_dir != "" and not FileAccess.file_exists(project_dir.path_join(atlas)):
 			_add(issues, "warning", path + ".atlas", "atlas file not found on disk")
+		elif project_dir != "":
+			var file := project_dir.path_join(atlas).simplify_path()
+			if not atlas_sizes.has(file):
+				var img := Image.new()
+				atlas_sizes[file] = img.get_size() if img.load(file) == OK else Vector2i.ZERO
+			var size: Vector2i = atlas_sizes[file]
+			var slicing := preload("res://src/assets/asset_decl.gd").declared_cell_size(cell, tile_size)
+			if size != Vector2i.ZERO and (slicing.x > size.x or slicing.y > size.y):
+				_add(issues, "warning", path + ".cell", "slice %s is larger than atlas %s" % [slicing, size])
 		if ad.has("palette"):
 			if not (ad.palette is Array):
 				_add(issues, "error", path + ".palette", "must be an array")

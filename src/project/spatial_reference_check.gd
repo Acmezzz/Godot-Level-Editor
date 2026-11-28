@@ -50,23 +50,18 @@ static func blocked_removals(manifest: Dictionary, before: Dictionary, after: Di
 		return ""
 	var sources := MapStore.read_all_fresh(manifest)
 	sources[after.meta.name] = after
-	var contexts := {}
+	var contexts_by_code := {}
+	var links_by_code := {}
 	for name in sources:
 		var data: Dictionary = sources[name]
 		var refs := map_links(manifest, data)
 		var link_issue := _broken_link(manifest, data, refs, before, after)
 		if link_issue != "":
 			return "%s · %s" % [name, link_issue]
-		for obj in data.get("objects", []):
-			for binding in obj.get("functions", []):
-				var fn := FunctionDecls.fn_id_of(manifest, binding.get("fn", ""))
-				var cid: String = binding.get("content", "")
-				if fn != "" and cid != "":
-					contexts.get_or_add([fn, cid], {})[name] = data
-		for ref in refs:
-			var destination := _context_content(ref, "")
-			if not destination.is_empty():
-				contexts.get_or_add(destination, {})[name] = data
+		var code: String = data.meta.get("code", "")
+		var key := code if code != "" else ":" + str(name)
+		contexts_by_code[key] = data
+		links_by_code[key] = refs
 
 	var project_refs := ReferenceIndex.view_module_refs(manifest)
 	var targets := [{"target": manifest.get("startup", {}).get("target", {}), "path": "startup.target"}]
@@ -90,28 +85,13 @@ static func blocked_removals(manifest: Dictionary, before: Dictionary, after: Di
 		error = _broken_link(manifest, {}, items_by_key[key], before, after)
 		if error != "":
 			return "内容 %s/%s · %s" % [key[0], key[1], error]
-	var queue := []
+	var contexts := content_contexts(manifest, contexts_by_code, func(fn: String, cid: String) -> Array:
+		return items_by_key.get([fn, cid], []), links_by_code)
 	for key in contexts:
-		for name in contexts[key]:
-			queue.append([key, name])
-	var visited := {}
-	var cursor := 0
-	while cursor < queue.size():
-		var item: Array = queue[cursor]
-		cursor += 1
-		if visited.has(item):
-			continue
-		visited[item] = true
-		var key: Array = item[0]
-		var name: String = item[1]
-		var refs: Array = items_by_key.get(key, [])
-		error = _broken_link(manifest, sources[name], refs, before, after)
-		if error != "":
-			return "%s · 内容 %s/%s · %s" % [name, key[0], key[1], error]
-		for ref in refs:
-			var destination := _context_content(ref, key[0])
-			if not destination.is_empty():
-				queue.append([destination, name])
+		for data in contexts[key].values():
+			error = _broken_link(manifest, data, items_by_key.get(key, []), before, after)
+			if error != "":
+				return "%s · 内容 %s/%s · %s" % [data.meta.get("name", data.meta.get("code", "")), key[0], key[1], error]
 	return ""
 
 static func _context_content(ref: Dictionary, fn: String) -> Array:
@@ -123,6 +103,51 @@ static func _context_content(ref: Dictionary, fn: String) -> Array:
 		var target_fn: String = ref.filter.get("fn", "")
 		return [target_fn if target_fn != "" else fn, ref.value]
 	return []
+
+## Index explicit map contexts, following only destinations declared to inherit them.
+static func content_contexts(manifest: Dictionary, maps: Dictionary, refs_for: Callable, map_refs := {}) -> Dictionary:
+	var contexts := {}
+	var queue := []
+	var enqueue := func(key: Array, code: String):
+		if key.is_empty() or key[0] == "" or not maps.has(code):
+			return
+		var by_map: Dictionary = contexts.get_or_add(key, {})
+		if not by_map.has(code):
+			by_map[code] = maps[code]
+			queue.append([key, code])
+	for code in maps:
+		var map: Dictionary = maps[code]
+		for object in map.get("objects", []):
+			for binding in object.get("functions", []):
+				var cid: String = binding.get("content", "")
+				if cid != "":
+					enqueue.call([FunctionDecls.fn_id_of(manifest, binding.get("fn", "")), cid], code)
+		var links: Array = map_refs[code] if map_refs.has(code) else map_links(manifest, map)
+		for ref in links:
+			enqueue.call(_context_content(ref, ""), code)
+	for ref in ReferenceIndex.view_content_refs(manifest):
+		if ref.has("context_map"):
+			enqueue.call([ref.fn, ref.cid], ref.context_map)
+	var startup: Dictionary = manifest.get("startup", {})
+	var entry: Dictionary = startup.get("target", {})
+	if FlowTarget.kind(entry) == "content" and startup.get("contentMap", "") != "":
+		enqueue.call([entry.function, entry.content], startup.contentMap)
+	var forwarded := {}
+	var i := 0
+	while i < queue.size():
+		var item: Array = queue[i]
+		i += 1
+		var key: Array = item[0]
+		if not forwarded.has(key):
+			var destinations := []
+			for ref in refs_for.call(key[0], key[1]):
+				var target := _context_content(ref, key[0])
+				if not target.is_empty():
+					destinations.append(target)
+			forwarded[key] = destinations
+		for target in forwarded[key]:
+			enqueue.call(target, item[1])
+	return contexts
 
 ## A new valid canvas link that the published map cannot resolve must wait for map save.
 static func needs_map_save(manifest: Dictionary, fn: String, data: Dictionary, live: Dictionary, saved: Dictionary) -> bool:
@@ -214,6 +239,8 @@ static func problem(manifest: Dictionary, kind: String, source: Dictionary,
 				else:
 					var resolved := ReferenceIndex.resolve_map(manifest, paired)
 					target = MapStore.read(manifest, str(resolved.key)) if resolved.status == "ok" else {}
+				if target.is_empty():
+					return {"message": "目标地图不存在或不可读：%s" % paired}
 			if target.is_empty():
 				return {}
 			var where := "目标图 %s" % paired if paired != "" else "本图"

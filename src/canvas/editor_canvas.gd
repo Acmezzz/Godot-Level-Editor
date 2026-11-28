@@ -400,17 +400,13 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 		# 层参数预览：offset/scale 作用在层容器；parallax 在 _update_cam 里叠加相机位移
 		root.transform = MapViewData.layer_transform_of(ld)
 		root.set_meta("parallax", float(ld.get("parallax", 1.0)))
-		# 层混合模式（v7/E11）：材质挂到**实际绘制内容的子节点**（Below/YSort/Above/瓦片层），
-		# 根节点只是容器不画东西——挂根上子节点不继承，混合模式等于没生效。
 		var blend := str(ld.get("blend", "mix"))
 		if blend == "add" or blend == "mul":
+			var mat := CanvasItemMaterial.new()
+			mat.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD if blend == "add" else CanvasItemMaterial.BLEND_MODE_MUL
 			for dn in [below, ysp, tn, above, tri_views.back()]:
-				if dn == null:
-					continue
-				var mat := CanvasItemMaterial.new()
-				mat.blend_mode = CanvasItemMaterial.BLEND_MODE_ADD if blend == "add" \
-					else CanvasItemMaterial.BLEND_MODE_MUL
-				(dn as CanvasItem).material = mat
+				if dn != null:
+					(dn as CanvasItem).material = mat
 		map_root.add_child(root)
 		layer_tiles.append(tn)
 		layer_ents.append(root)

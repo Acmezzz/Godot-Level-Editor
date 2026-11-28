@@ -79,6 +79,50 @@ func open_event_drawing(code: String) -> void:
 	if await open_map_by_code(code):
 		app._set_mode("map")
 
+func choose_event_preview_base() -> void:
+	var code: String = app.canvas.cur_map_code()
+	var rows := ReferenceIndex.map_target_options(app.manifest).filter(func(map):
+		return EventLayers.drawings_for_map(app.manifest, map.code).any(func(group): return group.map == code))
+	var shell: Dictionary = app._popup_body("图组叠加参照", "在当前图组上预览一张适用地图及其他覆盖图组，编辑目标仍是当前图组。")
+	var pop: PopupPanel = shell.pop
+	var body: VBoxContainer = shell.body
+	var filter := LineEdit.new()
+	filter.placeholder_text = "地图名称或码"
+	body.add_child(filter)
+	var list := ItemList.new()
+	list.custom_minimum_size = Vector2(450, 250)
+	body.add_child(list)
+	var choose := func():
+		if list.get_selected_items().is_empty():
+			return
+		_event_preview_base = list.get_item_metadata(list.get_selected_items()[0])
+		app.canvas.show_event_context = true
+		refresh_event_drawings()
+		app._set_status("图组叠加参照：" + list.get_item_text(list.get_selected_items()[0]))
+		pop.hide()
+	var fill := func():
+		list.clear()
+		var q := filter.text.strip_edges().to_lower()
+		for map in rows:
+			var label := "%s · %s" % [map.name, map.code]
+			if q != "" and q not in label.to_lower():
+				continue
+			var i := list.add_item(label)
+			list.set_item_metadata(i, map.code)
+			if map.code == _event_preview_base:
+				list.select(i)
+		if list.item_count > 0 and list.get_selected_items().is_empty():
+			list.select(0)
+	if rows.is_empty():
+		body.add_child(app.UiKitScript.hint_label("此图组没有可预览的普通地图。请先保存图组适用范围。", 420))
+	body.add_child(app.UiKitScript.popup_buttons(choose, pop.hide, "预览叠加"))
+	filter.text_changed.connect(func(_q): fill.call())
+	filter.text_submitted.connect(func(_q): choose.call())
+	list.item_activated.connect(func(_i): choose.call())
+	fill.call()
+	app._open_popup(pop)
+	filter.grab_focus()
+
 func refresh_event_drawings() -> void:
 	var code: String = app.canvas.cur_map_code()
 	var is_shared := code in EventLayers.drawing_codes(app.manifest)
@@ -94,6 +138,10 @@ func refresh_event_drawings() -> void:
 				var data := MapStore.read(app.manifest, resolved.key)
 				if not data.is_empty():
 					documents.append({"map": _event_preview_base, "data": data, "drawOrder": -drawing.drawOrder})
+			for other in ReferenceIndex.event_drawings(app.manifest, _event_preview_base):
+				if other.map != code:
+					documents.append({"map": other.map, "data": other.data, "drawOrder": other.drawOrder - drawing.drawOrder})
+			documents.sort_custom(func(a, b): return a.drawOrder < b.drawOrder)
 			break
 	elif app.canvas.show_event_context:
 		documents = ReferenceIndex.event_drawings(app.manifest, code)
@@ -471,7 +519,7 @@ func confirm_action(title: String, text: String, ok_text := "确定") -> bool:
 
 ## 新建地图时确定投影、拓扑和可选的像素基向量。
 func on_new() -> void:
-	var shell: Dictionary = app._popup_body("新建地图", "名字同时作文件名与显示名。格空间设置随地图保存。")
+	var shell: Dictionary = app._popup_body("新建地图", "名字同时作文件名与显示名。格空间设置随地图保存。", true)
 	var pop: PopupPanel = shell.pop
 	var body: VBoxContainer = shell.body
 	var name_edit := LineEdit.new()
@@ -501,8 +549,24 @@ func on_new() -> void:
 	topo_sel.set_item_metadata(0, "")
 	topo_sel.add_item("三角形（每列两半格）")
 	topo_sel.set_item_metadata(1, "triangles")
-	body.add_child(UiKitScript.field_row("格拓扑", topo_sel, UiKitScript.LABEL_W_LONG))
-	var basis_editor := BasisFields.add_to(body, "NewMap", GridSpaceScript.tile_size_of(app.manifest))
+	var width := SpinBox.new()
+	var height := SpinBox.new()
+	var dimensions := UiKitScript.hbox(6)
+	for value in [width, height]:
+		value.min_value = 1
+		value.max_value = 100000
+		value.allow_greater = true
+		value.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		dimensions.add_child(value)
+	width.value = K.DEFAULT_MAP_W
+	height.value = K.DEFAULT_MAP_H
+	body.add_child(UiKitScript.field_row("宽 × 高（格）", dimensions, UiKitScript.LABEL_W_LONG))
+	var advanced := UiKitScript.vbox(6)
+	body.add_child(UiKitScript.button("高级格空间设置…", func(): advanced.visible = not advanced.visible, "ghost"))
+	body.add_child(advanced)
+	advanced.hide()
+	advanced.add_child(UiKitScript.field_row("格拓扑", topo_sel, UiKitScript.LABEL_W_LONG))
+	var basis_editor := BasisFields.add_to(advanced, "NewMap", GridSpaceScript.tile_size_of(app.manifest))
 	var refresh_topology := func():
 		var pj := str(proj_sel.get_item_metadata(proj_sel.selected))
 		if pj == "":
@@ -516,6 +580,8 @@ func on_new() -> void:
 	refresh_topology.call()
 	body.add_child(err_label)
 	var submit := func():
+		width.apply()
+		height.apply()
 		var basis := BasisFields.read(basis_editor)
 		if not basis.ok:
 			err_label.text = basis.error
@@ -523,7 +589,7 @@ func on_new() -> void:
 			return
 		create_map_from_dialog(name_edit, err_label, pop,
 			str(proj_sel.get_item_metadata(proj_sel.selected)),
-			str(topo_sel.get_item_metadata(topo_sel.selected)), basis.value)
+			str(topo_sel.get_item_metadata(topo_sel.selected)), basis.value, Vector2i(int(width.value), int(height.value)))
 	name_edit.text_submitted.connect(func(_t: String): submit.call())
 	body.add_child(UiKitScript.popup_buttons(submit, pop.hide, "创建地图"))
 	app._open_popup(pop)
@@ -543,7 +609,7 @@ func _proj_label(p: String) -> String:
 
 ## 新建弹窗确定：校验 → 未保存确认 → 载入空图
 func create_map_from_dialog(name_edit: LineEdit, err_label: Label, pop: PopupPanel,
-		proj := "", topo := "", basis: Array = []) -> void:
+		proj := "", topo := "", basis: Array = [], dimensions := Vector2i(K.DEFAULT_MAP_W, K.DEFAULT_MAP_H)) -> void:
 	var n: String = name_edit.text.strip_edges()
 	if n == "":
 		err_label.text = "先填地图名"
@@ -554,7 +620,8 @@ func create_map_from_dialog(name_edit: LineEdit, err_label: Label, pop: PopupPan
 	if FileAccess.file_exists(EditorManifest.map_path(app.manifest, n)):
 		err_label.text = "同名地图已存在：换个名字，或直接打开它"
 		return
-	var data := MapStore.new_map(n, K.DEFAULT_MAP_W, K.DEFAULT_MAP_H, proj, topo)
+	var data := MapStore.new_map(n, dimensions.x, dimensions.y, proj, topo)
+	data.spawn = [mini(2, dimensions.x - 1), mini(2, dimensions.y - 1)]
 	if not basis.is_empty():
 		data.meta["gridBasis"] = basis
 	var issues: Array = GridSpaceScript.resolve(data.meta, app.manifest).issues
@@ -1053,6 +1120,7 @@ func _finish_map_save(n: String, path: String, data: Dictionary) -> void:
 	app.cur_map_path = path
 	app._playtest_ctrl.sync_map_preferences()
 	app.canvas.modified_flag = false
+	app._layout_ctrl._refresh_dirty_badge()
 	_last_autosave_msec = Time.get_ticks_msec()
 	# 正式保存成功后清掉草稿。
 	_drop_draft_for(n)

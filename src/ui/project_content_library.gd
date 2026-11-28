@@ -160,6 +160,14 @@ func open() -> void:
 	add.disabled = keys.is_empty()
 	controls.add_child(add)
 	controls.add_child(copy)
+	controls.add_child(Kit.button("使用处 / 改绑…", func():
+		var selected := list.get_selected_items()
+		if selected.is_empty():
+			return
+		var fn: String = selected_kind.call()
+		var id: String = list.get_item_metadata(selected[0])
+		pop.hide()
+		preload("res://src/ui/content_usage_dialog.gd").open.call_deferred(app, fn, id), "ghost"))
 	var relations := Kit.button("流程关系…", func():
 		pop.hide()
 		_open_flow.call_deferred())
@@ -186,7 +194,7 @@ func open() -> void:
 func _open_flow() -> void:
 	var source := manifest
 	var shell: Dictionary = app._popup_body("项目流程关系",
-		"查看地图、实例、内容和屏幕的出口。实例出口可跳到地图中的字段修改；游戏决定何时跳转。")
+		"查看地图、实例、内容和屏幕的出口。实例出口可跳到地图中的字段修改；游戏决定何时跳转。", true)
 	var pop: PopupPanel = shell.pop
 	var body: VBoxContainer = shell.body
 	var columns := Kit.hbox(12)
@@ -663,7 +671,7 @@ func open_item(kind: String, cid: String, context := "", field := "", draft := {
 	var state := {"id": cid, "digest": str(rd.get("digest", "")), "new": creating, "map": context}
 	var title := "复制草稿" if not draft.is_empty() else ("新建内容" if creating else "编辑内容")
 	var shell: Dictionary = app._popup_body(title + " · " + str(fn.get("name", kind)),
-		"保存写入内容文件。依赖其他字段的引用选项会在保存后更新。")
+		"保存写入内容文件。依赖其他字段的引用选项会在保存后更新。", true)
 	var pop: PopupPanel = shell.pop
 	FrameDialog.keep_on_focus_loss(pop)
 	var body: VBoxContainer = shell.body
