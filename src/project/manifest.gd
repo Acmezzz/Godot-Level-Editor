@@ -278,18 +278,6 @@ static func map_path(m: Dictionary, name: String) -> String:
 		return ""
 	return path
 
-## ---- 角色声明 ----
-## role = 编辑器连接语义标签（画布标记用）；清单资产条目声明 role: portal/exit/landing/trigger。
-## 零兼容：只认清单声明，不按资产 id 猜——没声明 role 的资产就是普通资产。
-
-## 实体类型的连接语义；未声明返回空串（普通资产）
-static func role_of(m: Dictionary, sid: String) -> String:
-	return AssetDecl.role_of(m, sid)
-
-## 该资产类型是否具有给定连接语义（普通资产恒 false）
-static func has_role(m: Dictionary, sid: String, role: String) -> bool:
-	return AssetDecl.has_role(m, sid, role)
-
 ## 某个资产在编辑器画布上的占位尺寸（像素）。
 ## 优先级：清单 editorSize → 0（消费方按 1 格兜底）
 static func entity_editor_size(_m: Dictionary, edef: Dictionary) -> Vector2:

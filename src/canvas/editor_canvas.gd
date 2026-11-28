@@ -481,20 +481,25 @@ func load_data(data: Dictionary, map_name: String, keep_cam := false, keep_dirty
 	# 行→节点转换与撤销差量共用一份（_undo_history_ctrl._node_from_row），这里只补 C09 挂载。
 	var mount_filled := false
 	var missing_codes: Array[EntityNode] = []
+	var assets := AssetDecl.all(manifest)
+	var function_pool := FunctionDeclsRef.functions(manifest)
+	var mounts_by_asset := {}
 	for e in data.get("objects", []):
 		if not (e is Dictionary):
 			continue
 		var aid := str((e as Dictionary).get("asset", ""))
 		if aid == "":
 			continue
-		var n: EntityNode = _undo_history_ctrl._node_from_row(e)
+		var n: EntityNode = _undo_history_ctrl._node_from_row(e, assets.get(aid, {}))
 		if drawing_context_only:
 			continue
 		# C09：载图即补齐类型挂载（只在工作副本上，不碰选中事件）；缺的补一条 mounted 行并标脏
 		if n.is_entity():
 			if n.code.is_empty():
 				missing_codes.append(n)
-			var fill := FunctionDeclsRef.fill_bindings(manifest, aid, n.functions)
+			if not mounts_by_asset.has(aid):
+				mounts_by_asset[aid] = FunctionDeclsRef.entity_mounts(manifest, aid)
+			var fill := FunctionDeclsRef.fill_mounts(function_pool, mounts_by_asset[aid], n.functions)
 			if bool(fill.get("changed", false)):
 				n.functions = fill.get("functions", [])
 				mount_filled = true
@@ -614,9 +619,6 @@ func finish_spawn_drag() -> void:
 
 # —— 坐标换算 ——
 ## 转发：选区命中跨层（顶层向下取第一个）；tool_ops 擦除用单层版
-func _entity_hit(pos: Vector2) -> EntityNode:
-	return _selection_ops_ctrl._entity_hit(pos)
-
 ## 指定层的实体命中（擦除只认当前层；层隐藏时直接无命中）
 func _entity_hit_on(li: int, pos: Vector2) -> EntityNode:
 	if li < 0 or li >= layer_count() or not is_layer_visible(li):
@@ -625,6 +627,9 @@ func _entity_hit_on(li: int, pos: Vector2) -> EntityNode:
 
 func _cell_of(pos: Vector2) -> Vector2i:
 	return _active_cell(pos)
+
+func uses_custom_tile_view(index: int) -> bool:
+	return index >= 0 and index < tri_views.size() and tri_views[index] != null
 
 func tile_grid_for_layer(i: int) -> GridSpace:
 	return tile_grids[i] if i >= 0 and i < tile_grids.size() else grid
@@ -1862,8 +1867,8 @@ func layer_set_param(i: int, key: String, v) -> void:
 func _load_snap_layers(snap: Dictionary, active_id: String) -> void:
 	await _layer_ops_ctrl._load_snap_layers(snap, active_id)
 ## 图片和实体共用画布节点；只有实体进入实例码索引。
-func make_object(aid: String) -> EntityNode:
-	return EntityNode.create(manifest, aid, entity_display_size(aid), tile_w, thumbs, grid)
+func make_object(aid: String, decl: Variant = null) -> EntityNode:
+	return EntityNode.create(manifest, aid, entity_display_size(aid), tile_w, thumbs, grid, decl)
 
 func entity_display_size(aid: String) -> Vector2:
 	var size: Vector2 = ent_sizes.get(aid, Vector2.ZERO)

@@ -5,6 +5,7 @@ extends RefCounted
 ## 因此原样保留并逐项报数，由制作者在副本里核对或清空。
 ## 本模块不写盘、不改入参：新图名、新地图码与副本的实例/内容身份由 C2 管线（duplicate_map）发行。
 
+const MapViewData := preload("res://src/map/map_view_data.gd")
 const AssetDecl := preload("res://src/assets/asset_decl.gd")
 
 const PRESETS := ["orthogonal", "isometric", "hexagonal"]
@@ -57,7 +58,7 @@ static func plan(data: Dictionary, manifest: Dictionary, target: String, target_
 		var decl: Dictionary = AssetDecl.by_id(manifest, aid) if not manifest.is_empty() else {}
 		if decl.is_empty():
 			warnings.append("实例 %s 的资产 %s 不在清单：按中心锚点换算" % [str(r.get("code", "?")), aid])
-		var unit := _anchor_unit(decl)
+		var unit := MapViewData.anchor_unit(decl)
 		var px := src_g.object_anchor_px(Vector2(float(xv), float(yv)), unit)
 		var g := dst_g.object_anchor_grid(px, unit)
 		if not px.is_finite() or not g.is_finite():
@@ -109,14 +110,6 @@ static func _grid_metadata(meta: Dictionary) -> Dictionary:
 		if meta.has(key):
 			out[key] = meta[key]
 	return out.duplicate(true)
-
-static func _anchor_unit(decl: Dictionary) -> Vector2:
-	match str(decl.get("anchor", "center")):
-		"top_left":
-			return Vector2.ZERO
-		"bottom_center":
-			return Vector2(0.5, 1.0)
-	return Vector2(0.5, 0.5)
 
 static func _count_tiles(data: Dictionary) -> int:
 	var n := 0

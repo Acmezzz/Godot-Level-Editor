@@ -259,26 +259,28 @@ func _save_prefs() -> bool:
 	push_warning("偏好写盘失败: " + PREFS_PATH)
 	return false
 
-## D1：实体缩略图按项目目录缓存——启动/换图不再重复读盘；打开项目时清缓存
+## The current project keeps one texture per referenced thumbnail file.
 var _ent_thumbs_cache := {}
 
 func _entity_thumbs() -> Dictionary:
-	# 键带项目数据版本号——清单新增资产/换 thumb 后保存会让版本号 +1，
-	# 缓存自动失效，不必重启编辑器。
-	var dk := str(manifest.get("_dir", "")) + "#" + str(MapStore.project_rev)
-	if _ent_thumbs_cache.has(dk):
-		return _ent_thumbs_cache[dk]
+	var live := {}
 	var out := {}
 	for a in manifest.get("assets", []):
-		if not (a is Dictionary):
+		if not a is Dictionary or str(a.get("thumb", "")) == "":
 			continue
-		var tpath: String = manifest["_dir"].path_join(str((a as Dictionary).get("thumb", "")))
-		if FileAccess.file_exists(tpath):
-			var img := Image.load_from_file(tpath)
-			if img != null:
-				out[str((a as Dictionary).get("id", ""))] = ImageTexture.create_from_image(
-					ImageProbe.trim_alpha(img))
-	_ent_thumbs_cache[dk] = out
+		var path: String = manifest["_dir"].path_join(a.thumb)
+		if not live.has(path) and FileAccess.file_exists(path):
+			var stamp := [FileAccess.get_modified_time(path), FileAccess.get_size(path)]
+			var cached: Dictionary = _ent_thumbs_cache.get(path, {})
+			if cached.get("stamp") == stamp:
+				live[path] = cached
+			else:
+				var img := Image.load_from_file(path)
+				if img != null and not img.is_empty():
+					live[path] = {"stamp": stamp, "texture": ImageTexture.create_from_image(ImageProbe.trim_alpha(img))}
+		if live.has(path):
+			out[str(a.get("id", ""))] = live[path].texture
+	_ent_thumbs_cache = live
 	return out
 
 ## 资产占位尺寸：清单 editorSize 优先，其次从 prefab 的碰撞形状读取
@@ -308,6 +310,8 @@ func _shortcut_input(event: InputEvent) -> void:
 	var focus := get_viewport().gui_get_focus_owner()
 	var k := (event as InputEventKey).keycode
 	var ctrl := (event as InputEventKey).ctrl_pressed
+	var content_editor = project_shell.content_editor if project_shell != null else null
+	var steps = content_editor._steps if content_editor != null else null
 	# E1 选点会话独占 Esc/Enter：画布在 SubViewport 里收不到键盘，只能在这里接。
 	# Esc = 取消（不提交、回原视图）；Enter = 确认当前候选（没候选时不响应）。
 	if canvas != null and canvas.pick_mode_active:
@@ -320,6 +324,9 @@ func _shortcut_input(event: InputEvent) -> void:
 				_end_canvas_pick(true)
 				get_viewport().set_input_as_handled()
 			return
+	if steps != null and steps.has_dock_focus(focus) and steps.undo_shortcut(event, focus):
+		get_viewport().set_input_as_handled()
+		return
 	# —— 项目页（资产/内容/清单）接管：Esc 返回画布，Ctrl+S 保存当前视图 ——
 	# 放在输入框守卫之前：项目页的 Esc 语义是「离开项目页」，输入框也不该吞掉它；
 	# 其余键全部放行给视图内部的控件（表单/列表/搜索框）。
@@ -332,15 +339,14 @@ func _shortcut_input(event: InputEvent) -> void:
 			project_shell.save_current()
 			get_viewport().set_input_as_handled()
 			return
-		# 内容视图的 Ctrl+Z 只撤内容字段差量（ContentKey）：地图条目一条都不动。
-		# 输入框里让位给控件自己的文本撤销；栈顶不是内容改动就放行（不吞键）。
-		if ctrl and k == KEY_Z and not (focus is LineEdit or focus is TextEdit) \
+		if ctrl and k in [KEY_Z, KEY_Y] and not (focus is LineEdit or focus is TextEdit) \
 				and project_shell._view == "content" and canvas != null:
-			match canvas._undo_history_ctrl.undo_content_only():
+			var forward := k == KEY_Y or (event as InputEventKey).shift_pressed
+			match canvas._undo_history_ctrl.undo_content_only(forward):
 				"done":
-					_set_status(" 已撤销内容字段改动")
+					_set_status(" 已重做内容改动" if forward else " 已撤销内容改动")
 				"refused":
-					_set_status(" 该内容文件已被外部修改：未回滚（请重开后再改）")
+					_set_status(" 该内容文件已被外部修改：未恢复（请重开后再改）")
 				_:
 					return
 			get_viewport().set_input_as_handled()

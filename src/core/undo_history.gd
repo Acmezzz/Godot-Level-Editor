@@ -5,6 +5,7 @@ var cvs   # 宿主引用
 
 const Constants := preload("res://src/core/constants.gd")
 const ContentStore := preload("res://src/content/content_store.gd")
+const MapViewData := preload("res://src/map/map_view_data.gd")
 const MapFormat := preload("res://src/map/map_format.gd")
 
 func _init(host) -> void:
@@ -399,24 +400,27 @@ func _refresh_content_ui(fn_id: String, cid: String) -> void:
 		return
 	ce.refresh_after_external_write(fn_id, cid)
 
-## 内容视图的 Ctrl+Z：只撤栈顶的内容差量，地图改动一条都不碰。
-## 返回 "done" / "not_content" / "refused"（盘面被外部改过 → 拒绝回滚，条目退回原栈）。
-func undo_content_only() -> String:
-	if cvs.doc_busy or _restoring or undo_stack.is_empty():
+## Content panels can undo/redo without touching unrelated map entries.
+func undo_content_only(forward := false, fn_id := "", cid := "") -> String:
+	if cvs.doc_busy or _restoring:
 		return "not_content"
-	var top = undo_stack[-1]
-	if not (top is Dictionary) or str((top as Dictionary).get("kind", "")) != "content":
-		return "not_content"
-	_restoring = true
-	undo_stack.pop_back()
-	redo_stack.append(top)
-	var ok := _restore_content(top, false)
-	_restoring = false
-	if not ok:
-		redo_stack.pop_back()   # 没撤成：条目回到原位，别给假反馈
-		undo_stack.append(top)
-		return "refused"
-	return "done"
+	var from := redo_stack if forward else undo_stack
+	var to := undo_stack if forward else redo_stack
+	for i in range(from.size() - 1, -1, -1):
+		var entry = from[i]
+		if not entry is Dictionary or entry.get("kind") != "content":
+			continue
+		if fn_id != "" and (entry.fn != fn_id or entry.cid != cid):
+			continue
+		_restoring = true
+		var ok := _restore_content(entry, forward)
+		_restoring = false
+		if not ok:
+			return "refused"
+		from.remove_at(i)
+		to.append(entry)
+		return "done"
+	return "not_content"
 
 ## undo/redo 恢复差量条目：逐格写回 before/after（资产缺失的源按空格恢复）。
 func _restore_delta(entry: Dictionary, forward: bool) -> void:
@@ -638,8 +642,8 @@ func _object_row(n: EntityNode) -> Dictionary:
 
 ## 行 → 活体节点（load_data 的 objects 装载与实例差量恢复共用）。
 ## 保留行里的 ID；载图会在所有已有 ID 就位后集中补码和挂载。
-func _node_from_row(row: Dictionary) -> EntityNode:
-	var n: EntityNode = cvs.make_object(str(row.get("asset", "")))
+func _node_from_row(row: Dictionary, decl: Variant = null) -> EntityNode:
+	var n: EntityNode = cvs.make_object(str(row.get("asset", "")), decl)
 	var ei := _restore_placement(n, row)
 	cvs._place_in_layer(n, ei)
 	return n
@@ -655,7 +659,7 @@ func _restore_placement(n: EntityNode, row: Dictionary) -> int:
 		if has_identity and row.get("functions") is Array else []
 	n.z_policy = str(row.get("zPolicy", "auto"))
 	n.visible_flag = bool(row.get("visible", true))
-	var ei := maxi(0, cvs._layer_index_of(str(row.get("layer", ""))))
+	var ei := maxi(0, cvs._layer_index_of(MapViewData.object_layer(row, cvs.layers_decl())))
 	n.layer_id = cvs.layer_id(ei)
 	n.refresh_visual()
 	n.apply_grid(float(row.get("x", 0)), float(row.get("y", 0)))

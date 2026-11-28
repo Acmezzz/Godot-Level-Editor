@@ -140,7 +140,6 @@ static func invalidate_code_map() -> void:
 
 static func refresh_external_maps() -> void:
 	invalidate_read_cache()
-	invalidate_code_map()
 
 static func code_index(m: Dictionary) -> Dictionary:
 	var manifest_hash := m.hash()

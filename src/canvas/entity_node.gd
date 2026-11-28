@@ -127,10 +127,10 @@ var _frame_t := 0.0
 
 ## 建一个摆放物节点（视觉贴图取 thumb；图片场景资产退回资产 texture）
 static func create(m: Dictionary, aid: String, size: Vector2, tile: int,
-		thumbs: Dictionary = {}, grid: GridSpace = null) -> EntityNode:
+		thumbs: Dictionary = {}, grid: GridSpace = null, declaration: Variant = null) -> EntityNode:
 	var n := EntityNode.new()
 	n.asset = aid
-	n.decl = AssetDecl.by_id(m, aid)
+	n.decl = AssetDecl.by_id(m, aid) if declaration == null else declaration
 	n.tile_px = tile
 	n.grid_ref = grid
 	n.base_size = size if size != Vector2.ZERO else Vector2(tile, tile)

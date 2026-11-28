@@ -301,17 +301,19 @@ func _draw() -> void:
 		for t in cvs._move_snap.get("collision", []):
 			var mc: Vector2i = cvs.grid.cell_from_offset(morg, cvs.grid.relative_cell(Vector2i(int(t[0]), int(t[1])), cvs._region_sel.position))
 			cvs.draw_colored_polygon(cvs.grid.cell_polygon(mc), Color(1.0, 0.25, 0.25, 0.45))
+		var moving_assets := AssetDecl.all(cvs.manifest) if not cvs._move_snap.get("ents", []).is_empty() else {}
 		for e0 in cvs._move_snap.get("ents", []):
 			# 快照条目 {dx,dy,asset,...}：按区域原点 + 偏移画（快照只存数据，不存节点）
 			var d0: Dictionary = e0
 			var gaid := str(d0.get("asset", ""))
 			var gprops0: Dictionary = d0.get("props", {}) if d0.get("props", {}) is Dictionary else {}
-			var gsz0: Vector2 = AssetDecl.instance_size(cvs.manifest, gaid, gprops0, Vector2(cvs.grid.tile))
+			var ad0: Dictionary = moving_assets.get(gaid, {})
+			var gsz0 := AssetDecl.instance_size_of_decl(ad0, gprops0, Vector2(cvs.grid.tile))
 			# dx/dy 是连续格坐标偏移：基准点由格号折回连续坐标（三角拓扑 = 平行四边形列）
 			var gbase0: Vector2 = cvs.grid.cell_origin_continuous(morg)
 			var ep: Vector2 = gbase0 \
 				+ Vector2(float(d0.get("dx", 0.0)), float(d0.get("dy", 0.0)))
-			var gu := EntityNode.anchor_unit_of(AssetDecl.by_id(cvs.manifest, gaid))
+			var gu := EntityNode.anchor_unit_of(ad0)
 			var anchor0: Vector2 = cvs.grid.to_px(ep + gu)
 			if cvs.grid.is_hex_geom():
 				anchor0 = cvs.grid.region_origin_px(morg) + d0.get("pixel_offset", Vector2.ZERO)
@@ -357,13 +359,15 @@ func _draw() -> void:
 			var cc = cvs.grid.cell_from_offset(org, Vector2i(int(t[0]), int(t[1])))
 			cvs.draw_colored_polygon(cvs.grid.cell_polygon(cc), Color(1.0, 0.25, 0.25, 0.35))
 	# 实例幽灵：区域碎片里的实例也预览（按资产声明的实例尺寸，不只是 1 格）
+		var pasted_assets := AssetDecl.all(cvs.manifest) if not cvs._region_clip.get("ents", []).is_empty() else {}
 		for t in cvs._region_clip.get("ents", []):
 			var gaid2 := str(t.get("asset", ""))
 			var gprops: Dictionary = t.get("props", {}) if t.get("props", {}) is Dictionary else {}
-			var gsz: Vector2 = AssetDecl.instance_size(cvs.manifest, gaid2, gprops, Vector2(cvs.grid.tile))
+			var ad2: Dictionary = pasted_assets.get(gaid2, {})
+			var gsz := AssetDecl.instance_size_of_decl(ad2, gprops, Vector2(cvs.grid.tile))
 			# dx/dy 是格坐标（浮点）：与落位后的 apply_grid 同一口径
 			var eg: Vector2 = cvs.grid.cell_origin_continuous(org) + Vector2(float(t.get("dx", 0.0)), float(t.get("dy", 0.0)))
-			var gu2 := EntityNode.anchor_unit_of(AssetDecl.by_id(cvs.manifest, gaid2))
+			var gu2 := EntityNode.anchor_unit_of(ad2)
 			var anchor2: Vector2 = cvs.grid.to_px(eg + gu2)
 			if cvs.grid.is_hex_geom():
 				anchor2 = cvs.grid.region_origin_px(org) + t.get("pixel_offset", Vector2.ZERO)
@@ -374,7 +378,6 @@ func _draw() -> void:
 			er = _wrect_local(er, eli2)
 			var tex: Texture2D = cvs.thumbs.get(gaid2)
 			if tex == null:
-				var ad2 := AssetDecl.by_id(cvs.manifest, gaid2)
 				if str(ad2.get("shape", "")) == "image":
 					tex = EntityNode.texture_of(cvs.manifest, str(ad2.get("texture", "")))
 			if tex != null:

@@ -20,10 +20,12 @@ var manifest: Dictionary:
 func _init(store: RefCounted) -> void:
 	drafts = store
 
-func apply(draft: Dictionary, ops: Array) -> Dictionary:
+func apply(draft: Dictionary, ops: Array, batch := {}) -> Dictionary:
 	if ops.is_empty():
 		return {"error": "operations 不能为空。"}
-	var batch: Dictionary = drafts.state(draft)
+	if batch.is_empty():
+		batch = drafts.state(draft)
+	var previous: Dictionary = drafts.shallow_batch(batch)
 	var handles := {}
 	var created := []
 	for i in ops.size():
@@ -56,7 +58,7 @@ func apply(draft: Dictionary, ops: Array) -> Dictionary:
 	var errors := issues.filter(func(issue): return issue.severity == "error")
 	if not errors.is_empty():
 		return {"error": "批次未应用：数据格式无效。", "issues": errors}
-	return drafts.append(draft, batch).merged({"ids": created, "aliases": handles, "warnings": issues})
+	return drafts.append(draft, batch, previous).merged({"ids": created, "aliases": handles, "warnings": issues})
 
 func _replace_handles(value: Variant, handles: Dictionary) -> Variant:
 	if value is Array:
@@ -236,6 +238,8 @@ func _cells(map: Dictionary, op: Dictionary) -> Dictionary:
 			indexed.erase(pos)
 		elif tiles:
 			var ad := Assets.by_id(manifest, str(cell.get("asset", "")))
+			if ad.get("disabled", false):
+				return {"error": "该图集已停用：" + str(ad.id)}
 			if ad.get("shape") != "tile" or not _pair(cell.get("atlas")):
 				return {"error": "瓦片需要已声明的图集资产和 atlas [x,y]。"}
 			indexed[pos] = [pos.x, pos.y, ad.id, cell.atlas[0], cell.atlas[1], cell.get("alt", 0)]
@@ -267,7 +271,7 @@ func _instance(map: Dictionary, op: Dictionary, data: Dictionary) -> Dictionary:
 	var row: Dictionary = rows[index].duplicate(true) if index >= 0 else {}
 	var asset := str(data.get("asset", row.get("asset", "")))
 	var decl := Assets.by_id(manifest, asset)
-	if decl.is_empty() or decl.get("shape") == "tile":
+	if decl.is_empty() or decl.get("shape") == "tile" or (index < 0 and decl.get("disabled", false)):
 		return {"error": "该资产不能作为摆放物：" + asset}
 	if index >= 0 and asset != row.asset:
 		return {"error": "替换资产类型请移除旧摆放物后新建。"}
@@ -318,6 +322,7 @@ func _binding(map: Dictionary, op: Dictionary, data: Dictionary) -> Dictionary:
 		if at < 0 or bindings[at].get("mounted", false):
 			return {"error": "需要已存在的普通绑定 ID。"}
 		bindings.remove_at(at)
+		Functions.renumber_bindings(bindings)
 		return {}
 	var fn := str(op.get("function", ""))
 	var code := Functions.fn_code(manifest, fn)
@@ -325,7 +330,20 @@ func _binding(map: Dictionary, op: Dictionary, data: Dictionary) -> Dictionary:
 	if data.has("trigger") and not Functions.allows_trigger(manifest, target_fn, data.trigger):
 		return {"error": "功能不支持时机码：%s" % str(data.trigger),
 			"allowed": Functions.trigger_options(manifest, target_fn).keys()}
-	if at < 0:
+	var inserting := at < 0
+	var position: int = bindings.size() if inserting else at
+	var size: int = bindings.size() + int(inserting)
+	if op.has("index"):
+		if not _number(op.index) or op.index < 0 or op.index >= size:
+			return {"error": "绑定位置越界。"}
+		position = int(op.index)
+	if data.has("order"):
+		if not _number(data.order) or data.order < 1 or data.order > size:
+			return {"error": "绑定顺序从 1 开始，须在当前绑定列表内。"}
+		if op.has("index") and position != int(data.order) - 1:
+			return {"error": "index 与 data.order 指向不同的绑定位置。"}
+		position = int(data.order) - 1
+	if inserting:
 		if code == "" or (not Functions.is_repeatable(manifest, fn) and bindings.any(func(item): return item.fn == code)):
 			return {"error": "功能未声明或不允许重复绑定：" + fn}
 		id = Functions.new_binding_id(bindings)
@@ -334,10 +352,12 @@ func _binding(map: Dictionary, op: Dictionary, data: Dictionary) -> Dictionary:
 	for key in data:
 		if key not in ["content", "trigger", "order", "parallel", "enabled", "name"]:
 			return {"error": "绑定字段不可编辑：" + str(key)}
-		bindings[at][key] = data[key]
-	if op.has("index") and _number(op.index) and op.index >= 0 and op.index < bindings.size():
-		var item = bindings.pop_at(at)
-		bindings.insert(int(op.index), item)
+		if key != "order":
+			bindings[at][key] = data[key]
+	if position != at:
+		bindings.insert(position, bindings.pop_at(at))
+	if inserting or op.has("index") or data.has("order"):
+		Functions.renumber_bindings(bindings)
 	return {"id": id}
 
 func _content(batch: Dictionary, op: Dictionary, data: Dictionary) -> Dictionary:

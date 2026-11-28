@@ -481,7 +481,9 @@ func _layer_mgr_params(i: int, decl: Dictionary) -> Control:
 	var ys := CheckBox.new()
 	ys.text = "y排序"
 	ys.button_pressed = bool(decl.get("ySort", false))
-	ys.tooltip_text = "层内 y-sort（瓦片与 auto 实体按 y 排序；改动重建全图）"
+	var custom_tiles: bool = app.canvas.uses_custom_tile_view(i)
+	ys.tooltip_text = ("自定义格层只对自动排序的实例生效。瓦片整层绘制；需要遮挡时请用前后图层。"
+		if custom_tiles else "在本层内按 Y 坐标排序瓦片和自动排序的实例。")
 	ys.toggled.connect(func(on: bool):
 		var at := _idx_of_lid(lid)
 		if at < 0:
@@ -491,6 +493,11 @@ func _layer_mgr_params(i: int, decl: Dictionary) -> Control:
 		_rebuild_layer_mgr()
 		app._editor_state_ctrl.sync_ui())
 	row.add_child(ys)
+	if custom_tiles:
+		var hint := Label.new()
+		hint.text = "仅实例"
+		hint.tooltip_text = ys.tooltip_text
+		row.add_child(hint)
 	row.add_child(_num_field(float(decl.get("parallax", 1.0)), "视差：1 正常，0.5 半速，0 固定，负值反向，>1 加速（回车提交）", func(v: float):
 		var at := _idx_of_lid(lid)
 		if at < 0:

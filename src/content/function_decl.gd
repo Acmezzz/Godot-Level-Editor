@@ -122,6 +122,11 @@ static func is_repeatable(m: Dictionary, fn_id: String) -> bool:
 	var value = function_decl(m, fn_id).get("repeatable")
 	return value is bool and value
 
+static func renumber_bindings(rows: Array) -> void:
+	for i in rows.size():
+		if rows[i] is Dictionary:
+			rows[i]["order"] = i + 1
+
 ## IDs are unique within an instance, so cloning a map or entity can preserve them.
 static func new_binding_id(rows: Array) -> String:
 	var used := {}
@@ -180,8 +185,10 @@ static func entity_mounts(m: Dictionary, sid: String) -> Array:
 ## 同码多条且标记不唯一时不猜继承行（返回 ambiguous）。
 ## 返回 {functions, changed, ambiguous}；functions 与传入数组不共享引用。
 static func fill_bindings(m: Dictionary, asset_id: String, fns: Array) -> Dictionary:
+	return fill_mounts(functions(m), entity_mounts(m, asset_id), fns)
+
+static func fill_mounts(pool: Dictionary, mounts: Array, fns: Array) -> Dictionary:
 	var out: Array = fns.duplicate(true)
-	var mounts := entity_mounts(m, asset_id)
 	if mounts.is_empty():
 		return {"functions": out, "changed": false, "ambiguous": []}
 	var changed := false
@@ -194,13 +201,11 @@ static func fill_bindings(m: Dictionary, asset_id: String, fns: Array) -> Dictio
 		elif i == -1:
 			var row := {"fn": code, "content": "", "name": "", "order": 0,
 				"parallel": false, "mounted": true}
-			if is_repeatable(m, str(mt.id)):
+			if pool.get(mt.id, {}).get("repeatable") == true:
 				row["bindingId"] = new_binding_id(out)
 			out.append(row)
 			changed = true
 	if not changed:
 		return {"functions": out, "changed": false, "ambiguous": ambiguous}
-	for k in out.size():
-		if out[k] is Dictionary:
-			(out[k] as Dictionary)["order"] = k + 1
+	renumber_bindings(out)
 	return {"functions": out, "changed": true, "ambiguous": ambiguous}

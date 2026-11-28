@@ -354,7 +354,39 @@ func author_branches(pop: PopupPanel, map_code: String) -> void:
 		if range(opt.item_count).any(func(i): return opt.get_item_metadata(i) == map_code):
 			select_metadata(opt, map_code)
 
+func check_shared_drawing_order() -> void:
+	var app := preload("res://src/app.gd").new()
+	var canvas := EditorCanvas.new()
+	var dir := "user://test-workflow-group-order"
+	app.manifest = {"_dir": dir, "_maps_dir": dir, "tileSize": 16, "eventLayers": {
+		"a": {"drawOrder": 1, "drawingMap": "GRPA"},
+		"b": {"drawOrder": 1, "drawingMap": "GRPB"}}}
+	app.canvas = canvas
+	canvas.manifest = app.manifest
+	canvas.app_host = app
+	for row in [["Base", "BASE"], ["Group A", "GRPA"], ["Group B", "GRPB"]]:
+		var data := Maps.new_map(row[0], 12, 12)
+		data.meta.code = row[1]
+		check(Maps.write(app.manifest, row[0], data), "write fixture drawing " + row[0])
+	root.add_child(canvas)
+	await canvas.load_data(Maps.read(app.manifest, "Base"), "Base")
+	var files := preload("res://src/ui/map_file.gd").new(app)
+	files.refresh_event_drawings()
+	var layers := canvas._context_drawings
+	check(layers.size() == 2 and layers[0].cur_map_code() == "GRPA" and layers[1].cur_map_code() == "GRPB",
+		"normal map draws equal drawOrder groups A then B")
+	await canvas.load_data(Maps.read(app.manifest, "Group B"), "Group B")
+	files.refresh_event_drawings()
+	layers = canvas._context_drawings
+	check(layers.size() == 2 and layers[1].cur_map_code() == "GRPA"
+		and layers[1].map_root.z_index < canvas.map_root.z_index,
+		"editing B keeps equal drawOrder group A behind")
+	canvas.queue_free()
+	await process_frame
+	app.free()
+
 func run():
+	await check_shared_drawing_order()
 	var tmp := "user://workflow-" + str(Time.get_ticks_usec()) + "-" + str(randi())
 	var project := ProjectSettings.globalize_path(tmp)
 	DirAccess.make_dir_recursive_absolute(project.path_join("maps"))

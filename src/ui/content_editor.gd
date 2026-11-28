@@ -35,7 +35,6 @@ const K := preload("res://src/core/constants.gd")
 const INSTANCE_REF_TYPES := ["entity_ref", "map_ref", "edge_ref", "port_ref"]
 
 ## 序号圈字符；超出后回落到数字
-const ORD := ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨"]
 const LEFT_W := 220
 const RIGHT_W := 360
 
@@ -969,6 +968,7 @@ func _refresh_all() -> void:
 ## 内容文件被编辑器自己改写（撤销/重做回滚内容字段）后同步界面。
 ## 只在这份内容正开着时重建右栏——重建会丢输入焦点，别的条目不碰。
 func refresh_after_external_write(fn_id: String, cid: String) -> void:
+	_steps.refresh_after_restore(fn_id, cid)
 	var fns := _current_fns()
 	var i := _selected_fn
 	if i >= 0 and i < fns.size() and fns[i] is Dictionary:

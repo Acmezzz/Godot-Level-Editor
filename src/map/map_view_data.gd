@@ -11,6 +11,10 @@ static func object_segment(policy: String) -> int:
 		"above": return 2
 	return 1
 
+static func object_layer(row: Dictionary, layers: Array) -> String:
+	var layer: String = row.get("layer", "")
+	return layer if layer != "" else str(layers[0].id)
+
 static func collision_polygon(poly: PackedVector2Array, shape: String) -> PackedVector2Array:
 	if shape != "r45" and shape != "l45":
 		return poly

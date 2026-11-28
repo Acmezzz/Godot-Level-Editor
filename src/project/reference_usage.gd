@@ -96,12 +96,13 @@ static func content_sections(manifest: Dictionary, fn: String, data: Dictionary)
 				decls.append_array(fields)
 	var out: Array = [{"decls": decls, "values": data.get("fields"), "prefix": ""}]
 	var steps = data.get("steps")
-	if steps is Array:
+	if steps is Array and not steps.is_empty():
+		var by_code := StepDecls.by_code(manifest)
 		for i in steps.size():
 			var step = steps[i]
 			if not step is Dictionary:
 				continue
-			var sd := StepDecls.step_by_code(manifest, str(step.get("step", "")))
+			var sd: Dictionary = by_code.get(str(step.get("step", "")), {})
 			var fields = sd.get("fields")
 			if fields is Array:
 				out.append({"decls": fields, "values": step.get("fields"), "prefix": "steps[%d]." % i})
@@ -172,6 +173,7 @@ static func asset_deletion_usage(manifest: Dictionary, asset_id: String, live: D
 
 static func _asset_map_count(manifest: Dictionary, asset_id: String, data: Dictionary) -> int:
 	var count := 0
+	var assets := AssetDecl.all(manifest)
 	for cells in (data.get("tiles", {}) as Dictionary).values():
 		for cell in cells as Array:
 			if cell is Array and cell.size() >= 3 and str(cell[2]) == asset_id:
@@ -179,7 +181,7 @@ static func _asset_map_count(manifest: Dictionary, asset_id: String, data: Dicti
 	for obj in data.get("objects", []) as Array:
 		if obj is Dictionary:
 			var aid := str(obj.get("asset", ""))
-			var decl := AssetDecl.by_id(manifest, aid)
+			var decl: Dictionary = assets.get(aid, {})
 			if aid == asset_id or not _fields_pointing(manifest, "asset", asset_id, decl.get("fields", []), obj.get("props", {}), false).is_empty():
 				count += 1
 	return count

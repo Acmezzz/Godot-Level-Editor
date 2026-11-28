@@ -130,19 +130,23 @@ func refresh_event_drawings() -> void:
 		_event_preview_base = code
 	var documents: Array[Dictionary] = []
 	if app.canvas.show_event_context and is_shared:
-		for drawing in EventLayers.drawings_for_map(app.manifest, _event_preview_base):
-			if drawing.map != code:
-				continue
+		var stack := EventLayers.drawing_stack(app.manifest.get("eventLayers", {}))
+		var group_drawings := ReferenceIndex.event_drawings(app.manifest, _event_preview_base)
+		var selected := group_drawings.find_custom(func(drawing): return drawing.map == code)
+		if selected >= 0:
+			var current := stack.find(group_drawings[selected].layer)
+			var by_layer := {}
+			for drawing in group_drawings:
+				by_layer[drawing.layer] = drawing
 			var resolved := ReferenceIndex.resolve_map(app.manifest, _event_preview_base)
 			if resolved.status == "ok":
 				var data := MapStore.read(app.manifest, resolved.key)
 				if not data.is_empty():
-					documents.append({"map": _event_preview_base, "data": data, "drawOrder": -drawing.drawOrder})
-			for other in ReferenceIndex.event_drawings(app.manifest, _event_preview_base):
-				if other.map != code:
-					documents.append({"map": other.map, "data": other.data, "drawOrder": other.drawOrder - drawing.drawOrder})
-			documents.sort_custom(func(a, b): return a.drawOrder < b.drawOrder)
-			break
+					by_layer[""] = {"map": _event_preview_base, "data": data}
+			for i in stack.size():
+				var layer := stack[i]
+				if by_layer.has(layer) and by_layer[layer].map != code:
+					documents.append(by_layer[layer].merged({"drawOrder": i - current}, true))
 	elif app.canvas.show_event_context:
 		documents = ReferenceIndex.event_drawings(app.manifest, code)
 	app.canvas.show_drawing_context(documents)

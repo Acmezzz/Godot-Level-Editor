@@ -24,6 +24,7 @@ static func open(app) -> void:
 	var shell: Dictionary = app._popup_body("正式启动入口",
 		"游戏正常启动时读取已保存的入口。选择一项已发布的内容、屏幕或地图；未设置时使用游戏自己的默认流程。", true)
 	var pop: PopupPanel = shell.pop
+	preload("res://src/ui/game_frame_dialog.gd").keep_on_focus_loss(pop)
 	var options := OptionButton.new()
 	options.name = "StartupTarget"
 	options.add_item("（由游戏决定）")

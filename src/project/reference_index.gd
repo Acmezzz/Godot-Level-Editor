@@ -214,18 +214,19 @@ static func _collect_module_fields(fields: GDScript, manifest: Dictionary, decls
 				sub_path + (".fields" if condition else ""), field, "code" if condition else key_mode, out)
 		var ref_decl: Dictionary = fields.array_element_decl(decl) if decl.get("type") == "array" else decl
 		var desc: Dictionary = fields.describe(ref_decl)
+		var paired: String = fields.effective_map_value(ref_decl, decls, values, key_mode) \
+			if desc.kind in ["entity_inst", "port", "edge", "cell", "layer"] or ref_decl.get("contentMapContext") == "paired" else ""
 		if desc.kind == "flow_target":
 			var targets: Array = value if decl.get("type") == "array" and value is Array else [value]
 			for i in targets.size():
 				var target = targets[i]
 				if target != null and not (target is Dictionary and target.is_empty()):
 					var target_path := "%s[%d]" % [path, i] if value is Array else path
-					out.append(source.merged({"kind": desc.kind, "value": target, "path": target_path, "field": field, "decl": decl}))
+					out.append(source.merged({"kind": desc.kind, "value": target, "path": target_path, "field": field, "decl": ref_decl, "paired": paired}))
 			continue
 		var spatial: bool = desc.kind in ["entity_inst", "port", "edge", "cell", "layer"]
 		if not spatial and desc.kind not in ["content", "asset", "entity_type", "view", "audio", "map"]:
 			continue
-		var paired: String = fields.effective_map_value(ref_decl, decls, values, key_mode) if spatial else ""
 		var pending: Array = [[value, path]]
 		while not pending.is_empty():
 			var part: Array = pending.pop_back()

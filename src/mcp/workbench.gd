@@ -3,10 +3,11 @@ extends RefCounted
 const Drafts := preload("res://src/mcp/drafts.gd")
 const Edits := preload("res://src/mcp/edits.gd")
 const Media := preload("res://src/mcp/media.gd")
+const ProjectCheck := preload("res://src/project/project_data_check.gd")
 const Refs := preload("res://src/project/reference_index.gd")
 const Usage := preload("res://src/project/reference_usage.gd")
 const Spatial := preload("res://src/project/spatial_reference_check.gd")
-const Screens := preload("res://src/project/screen_reference_validation.gd")
+const MapViewData := preload("res://src/map/map_view_data.gd")
 const Maps := preload("res://src/map/map_store.gd")
 const Contents := preload("res://src/content/content_store.gd")
 const Recovery := preload("res://src/map/recovery.gd")
@@ -18,8 +19,6 @@ const Generators := preload("res://src/project/map_generators.gd")
 const Runner := preload("res://src/project/game_preview.gd")
 const Assets := preload("res://src/assets/asset_decl.gd")
 const Catalog := preload("res://src/content/authoring_catalog.gd")
-const Audio := preload("res://src/content/audio_decl.gd")
-const Flow := preload("res://src/content/flow_target.gd")
 const CellGraph := preload("res://src/map/cell_graph.gd")
 
 var app
@@ -143,13 +142,22 @@ func invoke(name: String, args: Dictionary) -> Dictionary:
 		if draft.is_empty():
 			return {"error": "当前工程没有此草稿。"}
 		if args.has("revision") and draft.revision != args.revision:
+			if name == "publish" and not args.get("previewOnly", false) and draft.revision == args.revision + 1 \
+					and draft.get("lastPublish", {}).get("publishedRevision") == args.revision:
+				return drafts.last_publish(draft)
 			return {"error": "草稿版本已变化。", "current": drafts.info(draft)}
+		if name in ["publish", "apply_changes", "generate_map"]:
+			var completed: Dictionary = drafts.completed_publish(draft)
+			if not completed.is_empty():
+				if name == "publish" and not args.get("previewOnly", false):
+					return drafts.finish_publish(draft, completed.files, completed.pending)
+				return {"error": "正式文件已发布，请用当前版本重试 publish 完成草稿整理。", "published": true}
 	var batch: Dictionary = drafts.state(draft)
 	if batch.is_empty():
 		return {"error": "草稿的当前版本不可读。"}
 	match name:
 		"query_content": return _query(args, batch)
-		"apply_changes": return edits.apply(draft, args.operations)
+		"apply_changes": return edits.apply(draft, args.operations, batch)
 		"generate_map": return await _generate(args, draft, batch)
 		"capture_editor": return await media.capture(args, batch)
 		"render_preview": return await media.render(args, batch)
@@ -314,6 +322,10 @@ func _objects(m: Dictionary, batch: Dictionary, args: Dictionary) -> Dictionary:
 	var fn: String = args.get("function", "")
 	var asset: String = args.get("asset", "")
 	var fn_code := Functions.fn_code(m, fn)
+	var assets := Assets.all(m)
+	var functions := {}
+	for declaration in Functions.functions(m).values():
+		functions[declaration.code] = declaration.id
 	for code in map_codes:
 		if not code is String:
 			return {"error": "mapCodes 必须是地图码数组。"}
@@ -323,10 +335,12 @@ func _objects(m: Dictionary, batch: Dictionary, args: Dictionary) -> Dictionary:
 		var data: Dictionary = map.data
 		for i in data.get("objects", []).size():
 			var item: Dictionary = data.objects[i]
-			if (layer != "" and item.layer != layer) or (asset != "" and item.asset != asset) \
+			var effective_layer := MapViewData.object_layer(item, data.meta.layers)
+			if (layer != "" and effective_layer != layer) or (asset != "" and item.asset != asset) \
 					or (args.has("instance") and item.get("code") != args.instance):
 				continue
-			var base := {"map": code, "mapName": map.name, "objectIndex": i, "assetName": Assets.label(m, item.asset)}
+			var base := {"map": code, "mapName": map.name, "objectIndex": i, "assetName": Assets.label_of_decl(assets.get(item.asset, {}), item.asset),
+				"layer": effective_layer}
 			var bindings: Array = item.get("functions", [])
 			if args.kind == "objects":
 				if fn == "" or bindings.any(func(binding): return binding.get("fn") == fn_code):
@@ -338,7 +352,7 @@ func _objects(m: Dictionary, batch: Dictionary, args: Dictionary) -> Dictionary:
 						or (args.has("content") and binding.get("content", "") != args.content):
 					continue
 				rows.append(binding.merged(base.merged({"instance": item.get("code", ""), "sequence": index + 1,
-					"function": Functions.fn_id_of(m, binding.fn), "asset": item.asset, "layer": item.layer}), true))
+					"function": functions.get(binding.fn, ""), "asset": item.asset}), true))
 	return _page(rows, args)
 
 func _page(rows: Array, args: Dictionary) -> Dictionary:
@@ -359,155 +373,7 @@ func _page(rows: Array, args: Dictionary) -> Dictionary:
 	return {"items": rows.slice(offset, offset + limit), "total": rows.size(), "offset": offset}
 
 func _validate(args: Dictionary, batch: Dictionary) -> Dictionary:
-	var m: Dictionary = drafts.candidate(batch)
-	var issues := EditorManifest.validate(m)
-	var codes: Dictionary = {}
-	for row in drafts.maps_of(batch):
-		codes[row.map] = true
-	var maps := {}
-	var validate_map := preload("res://src/map/map_data_validation.gd")
-	for code in ([args.map] if args.has("map") else codes.keys()):
-		var row: Dictionary = drafts.map_of(batch, code)
-		if row.is_empty():
-			issues.append({"severity": "error", "path": "maps." + str(code), "message": "地图不存在或无法读取。"})
-			continue
-		maps[code] = row.data
-		for issue in validate_map.validate(row.data, m):
-			issues.append(issue.merged({"path": "maps." + code + "." + str(issue.path)}, true))
-	for code in maps:
-		var source: Dictionary = maps[code]
-		var refs := Spatial.map_links(m, source)
-		refs.append_array(Refs.entity_property_refs(m, source, ["map", "asset", "entity_type", "view", "audio"]))
-		for ref in refs:
-			var problem := _reference_problem(m, source, ref, maps)
-			if problem != "":
-				issues.append({"severity": "error", "path": "maps." + code + "." + ref.path, "message": problem, "reference": ref})
-	if not args.has("map"):
-		for issue in Screens.view_reference_issues(m):
-			issues.append(issue.merged({"severity": "error"}))
-		for name in Maps.code_index(m).unreadable:
-			var path := Maps.path_for(m, name)
-			var result := Maps.read_path(path, m)
-			for error in result.errors:
-				var suffix := "" if error.path == path else "." + str(error.path)
-				issues.append({"severity": "error", "path": "maps." + name + suffix, "message": error.message})
-		for code in Maps.code_conflicts(m):
-			issues.append({"severity": "error", "path": "maps." + code, "message": "正式地图码重复。"})
-		for id in m.get("eventLayers", {}):
-			var group: Dictionary = m.eventLayers[id]
-			var drawing: String = group.get("drawingMap", "")
-			if (drawing != "" and not codes.has(drawing)) or group.get("maps", []).any(func(code): return not codes.has(code)):
-				issues.append({"severity": "error", "path": "eventLayers." + id, "message": "图组所引用的地图不存在。"})
-		for code in m.get("worldLayout", {}).get("chunks", {}):
-			if not codes.has(code):
-				issues.append({"severity": "error", "path": "worldLayout.chunks." + code, "message": "世界分块所引用的地图不存在。"})
-		var startup: Dictionary = m.get("startup", {})
-		var entry: Dictionary = startup.get("target", {})
-		if not entry.is_empty() and not Targets.destination_available(m, startup, entry):
-			issues.append({"severity": "error", "path": "startup.target", "message": "项目入口不存在。"})
-		if Targets.needs_content_map(startup, entry) and not Targets.content_map_available(m, startup.get("contentMap", "")):
-			issues.append({"severity": "error", "path": "startup.contentMap", "message": "配对地图不存在。"})
-		for ref in Refs.view_content_refs(m):
-			if ref.has("context_map") and not codes.has(ref.context_map):
-				issues.append({"severity": "error", "path": ref.path, "message": "配对地图不存在。"})
-		var project_refs: Array = preload("res://src/project/project_content_slots.gd").references(m)
-		project_refs.append_array(preload("res://src/project/event_layers.gd").references(m))
-		for ref in project_refs:
-			if not Targets.destination_available(m, ref.domains, ref.target):
-				issues.append({"severity": "error", "path": str(ref.get("path", ref.get("name", "project"))), "message": "项目或图组目标未声明或不可用。"})
-	for code in maps:
-		for obj in maps[code].get("objects", []):
-			for binding in obj.get("functions", []):
-				var cid: String = binding.get("content", "")
-				var fn := Functions.fn_id_of(m, binding.fn)
-				if cid != "" and fn != "" and Contents.read_ex(m, fn, cid).status != "ok":
-					issues.append({"severity": "error", "path": "maps." + code + ".objects." + str(obj.get("code", "")),
-						"message": "绑定内容不存在：" + fn + "/" + cid})
-	var binding_contexts := {}
-	if not args.has("map") or args.has("content"):
-		var context_maps := maps
-		if args.has("map"):
-			context_maps = {}
-			for row in drafts.maps_of(batch):
-				var item: Dictionary = drafts.map_of(batch, row.map)
-				if not item.is_empty():
-					context_maps[row.map] = item.data
-		binding_contexts = Spatial.content_contexts(m, context_maps, func(fn: String, cid: String) -> Array:
-			var result := []
-			var item := Contents.read_ex(m, fn, cid)
-			if item.status == "ok":
-				for section in Usage.content_sections(m, fn, item.data):
-					result.append_array(Refs.property_refs(m, section.decls,
-						section.values if section.values is Dictionary else {}, {}, section.prefix, "code"))
-			return result)
-	var content_items: Array = []
-	if args.has("content"):
-		var item: Dictionary = drafts.content_of(batch, args.get("function", ""), args.content)
-		if item.is_empty():
-			issues.append({"severity": "error", "path": "content." + args.content, "message": "内容不存在。"})
-		content_items = [item] if not item.is_empty() else []
-	elif not args.has("map"):
-		for fn in Contents.declared_kinds(m):
-			for id in Contents.list_ids(m, fn):
-				var readback := Contents.read_ex(m, fn, id)
-				if readback.status != "ok":
-					issues.append({"severity": "error", "path": "content.%s.%s" % [fn, id], "message": readback.error})
-				else:
-					content_items.append({"function": fn, "content": id, "data": readback.data})
-		content_items.append_array(batch.contents.values().filter(func(row): return row.get("deleted", false)))
-	for row in content_items:
-		if row.get("deleted", false):
-			var incoming := Usage.inbound_content(m, row.function, row.content)
-			if not incoming.complete or incoming.edges.values().any(func(rows): return not rows.is_empty()):
-				issues.append({"severity": "error", "path": "content." + row.content, "message": "内容仍有引用。", "references": incoming})
-		else:
-			if not row.data.get("fields", {}) is Dictionary or not row.data.get("steps", []) is Array:
-				issues.append({"severity": "error", "path": "content.%s.%s" % [row.function, row.content],
-					"message": "fields 须为对象，steps 须为数组。"})
-				continue
-			for section in Usage.content_sections(m, row.function, row.data):
-				var values: Dictionary = section.values if section.values is Dictionary else {}
-				var contexts: Array = binding_contexts.get([row.function, row.content], {}).values()
-				if contexts.is_empty():
-					contexts = [{}]
-				for ref in Refs.property_refs(m, section.decls, values, {"function": row.function}, section.prefix, "code"):
-					for source in contexts:
-						var problem := _reference_problem(m, source, ref, maps)
-						if problem != "":
-							var map_code: String = source.get("meta", {}).get("code", "")
-							issues.append({"severity": "error", "path": "content." + row.content + "." + ref.path,
-								"message": problem if map_code == "" else "%s · %s" % [map_code, problem], "map": map_code,
-								"function": row.function, "content": row.content, "reference": ref})
-			for warning in Timeline.warnings(row.data.get("steps", [])):
-				issues.append({"severity": "warning", "path": "content." + row.content + ".steps", "message": warning})
-	return {"valid": not issues.any(func(issue): return issue.severity == "error"), "issues": issues}
-
-static func _reference_problem(m: Dictionary, source: Dictionary, ref: Dictionary, maps: Dictionary) -> String:
-	match ref.kind:
-		"view":
-			if not Refs.view_ids(m).has(ref.value):
-				return "屏幕不存在：" + str(ref.value)
-		"audio":
-			if Audio.by_code(m, str(ref.value)).is_empty():
-				return "音频不存在：" + str(ref.value)
-		"asset", "entity_type":
-			var item := Assets.by_id(m, str(ref.value))
-			var kind: String = "entity" if ref.kind == "entity_type" else ref.filter.get("kind", "")
-			var ids: Array = ref.filter.get("ids", [])
-			if item.is_empty() or (kind != "" and item.kind != kind) or (not ids.is_empty() and ref.value not in ids):
-				return "资源不存在或不符合字段声明：" + str(ref.value)
-		"content":
-			var fn: String = ref.filter.get("fn", "")
-			if fn == "":
-				fn = ref.get("function", "")
-			if fn != "" and Contents.read_ex(m, fn, str(ref.value)).status != "ok":
-				return "内容不存在：" + fn + "/" + str(ref.value)
-		"flow_target":
-			if Flow.kind(ref.value) == "" or not Targets.destination_available(m, ref.decl, ref.value, maps):
-				return "流程目标未声明或不存在：" + JSON.stringify(ref.value)
-		_:
-			return Spatial.link_problem(m, source, ref, maps)
-	return ""
+	return ProjectCheck.check(drafts.candidate(batch), args)
 
 func _publish(args: Dictionary, draft: Dictionary, batch: Dictionary) -> Dictionary:
 	if not args.get("previewOnly", false) and _editor_dirty():
@@ -526,8 +392,8 @@ func _publish(args: Dictionary, draft: Dictionary, batch: Dictionary) -> Diction
 	if args.get("previewOnly", false):
 		return {"entries": plan.entries, "revision": draft.revision, "issues": checked.issues}
 	var current: String = app.canvas.cur_map_code() if app.map_loaded else ""
-	var result: Dictionary = drafts.publish(draft, plan)
-	if not result.has("error") and not result.files.is_empty():
+	var result: Dictionary = drafts.publish(draft, plan, preflight)
+	if result.get("published", false) and not result.files.is_empty():
 		var root: String = app.manifest._dir
 		var reloaded := EditorManifest.load_from(root)
 		if not reloaded.has("_error"):
@@ -589,5 +455,6 @@ func _generate(args: Dictionary, draft: Dictionary, batch: Dictionary) -> Dictio
 	map.meta.name = args.name
 	map.meta.code = code
 	Generators.remember(map, id, params)
+	var previous: Dictionary = drafts.shallow_batch(batch)
 	batch.maps[code] = {"name": args.name, "original": "", "baseline": "", "data": map}
-	return drafts.append(draft, batch).merged({"map": code, "warnings": decoded.warnings})
+	return drafts.append(draft, batch, previous).merged({"map": code, "warnings": decoded.warnings})

@@ -424,9 +424,7 @@ func _delete_fn(i: int) -> void:
 		return
 	fns.remove_at(i)
 	# order 之后重排：序号是执行顺序的唯一真相，删除后不能留空洞
-	for k in fns.size():
-		if fns[k] is Dictionary:
-			(fns[k] as Dictionary)["order"] = k + 1
+	FunctionDecls.renumber_bindings(fns)
 	_selected_fn = -1
 	_write_fns(spr, fns)
 	_refresh_all()
@@ -454,9 +452,7 @@ func _move_fn(i: int, dir: int) -> void:
 	var t = fns[i]
 	fns[i] = fns[j]
 	fns[j] = t
-	for k in fns.size():
-		if fns[k] is Dictionary:
-			(fns[k] as Dictionary)["order"] = k + 1
+	FunctionDecls.renumber_bindings(fns)
 	if _selected_fn == i:
 		_selected_fn = j
 	elif _selected_fn == j:
@@ -495,8 +491,7 @@ func _add_fn(fn_id: String, after := -1, trigger := "") -> void:
 		next["trigger"] = trigger
 	_selected_fn = fns.size() if after < 0 else after + 1
 	fns.insert(_selected_fn, next)
-	for i in fns.size():
-		fns[i]["order"] = i + 1
+	FunctionDecls.renumber_bindings(fns)
 	_binding_filter = "__all"
 	_recent_functions.erase(fn_id)
 	_recent_functions.push_front(fn_id)

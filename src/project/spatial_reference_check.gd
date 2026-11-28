@@ -78,15 +78,15 @@ static func blocked_removals(manifest: Dictionary, before: Dictionary, after: Di
 	for kind in ContentStore.declared_kinds(manifest):
 		var items := ContentStore.read_all(manifest, kind)
 		for cid in items:
-			items_by_key[[kind, cid]] = _content_spatial_refs(manifest, kind, items[cid])
+			items_by_key[[kind, cid]] = content_refs(manifest, kind, items[cid])
 	for row in staged:
-		items_by_key[[row.fn_id, row.cid]] = _content_spatial_refs(manifest, row.fn_id, row.data)
+		items_by_key[[row.fn_id, row.cid]] = content_refs(manifest, row.fn_id, row.data)
 	for key in items_by_key:
 		error = _broken_link(manifest, {}, items_by_key[key], before, after)
 		if error != "":
 			return "内容 %s/%s · %s" % [key[0], key[1], error]
 	var contexts := content_contexts(manifest, contexts_by_code, func(fn: String, cid: String) -> Array:
-		return items_by_key.get([fn, cid], []), links_by_code)
+		return items_by_key.get([fn, cid], []), links_by_code, items_by_key.keys())
 	for key in contexts:
 		for data in contexts[key].values():
 			error = _broken_link(manifest, data, items_by_key.get(key, []), before, after)
@@ -95,8 +95,6 @@ static func blocked_removals(manifest: Dictionary, before: Dictionary, after: Di
 	return ""
 
 static func _context_content(ref: Dictionary, fn: String) -> Array:
-	if ref.decl.get("contentMapContext") != "inherit":
-		return []
 	if ref.kind == "flow_target" and FlowTarget.kind(ref.value) == "content":
 		return [ref.value.function, ref.value.content]
 	if ref.kind == "content":
@@ -104,8 +102,11 @@ static func _context_content(ref: Dictionary, fn: String) -> Array:
 		return [target_fn if target_fn != "" else fn, ref.value]
 	return []
 
-## Index explicit map contexts, following only destinations declared to inherit them.
-static func content_contexts(manifest: Dictionary, maps: Dictionary, refs_for: Callable, map_refs := {}) -> Dictionary:
+static func uses_paired_content_map(ref: Dictionary) -> bool:
+	return ref.decl.get("contentMapContext") == "paired" and not _context_content(ref, "").is_empty()
+
+## Follow only links that declare how to supply a map; each (content, map) is processed once.
+static func content_contexts(manifest: Dictionary, maps: Dictionary, refs_for: Callable, map_refs := {}, content_keys := []) -> Dictionary:
 	var contexts := {}
 	var queue := []
 	var enqueue := func(key: Array, code: String):
@@ -115,6 +116,21 @@ static func content_contexts(manifest: Dictionary, maps: Dictionary, refs_for: C
 		if not by_map.has(code):
 			by_map[code] = maps[code]
 			queue.append([key, code])
+	var forward := func(ref: Dictionary, fn: String, code: String):
+		match ref.decl.get("contentMapContext"):
+			"inherit":
+				if code != "":
+					enqueue.call(_context_content(ref, fn), code)
+			"paired":
+				enqueue.call(_context_content(ref, fn), ref.get("paired", ""))
+	var refs_by_content := {}
+	var read_refs := func(key: Array) -> Array:
+		if not refs_by_content.has(key):
+			refs_by_content[key] = refs_for.call(key[0], key[1])
+		return refs_by_content[key]
+	for key in content_keys:
+		for ref in read_refs.call(key):
+			forward.call(ref, key[0], "")
 	for code in maps:
 		var map: Dictionary = maps[code]
 		for object in map.get("objects", []):
@@ -124,7 +140,7 @@ static func content_contexts(manifest: Dictionary, maps: Dictionary, refs_for: C
 					enqueue.call([FunctionDecls.fn_id_of(manifest, binding.get("fn", "")), cid], code)
 		var links: Array = map_refs[code] if map_refs.has(code) else map_links(manifest, map)
 		for ref in links:
-			enqueue.call(_context_content(ref, ""), code)
+			forward.call(ref, "", code)
 	for ref in ReferenceIndex.view_content_refs(manifest):
 		if ref.has("context_map"):
 			enqueue.call([ref.fn, ref.cid], ref.context_map)
@@ -132,27 +148,19 @@ static func content_contexts(manifest: Dictionary, maps: Dictionary, refs_for: C
 	var entry: Dictionary = startup.get("target", {})
 	if FlowTarget.kind(entry) == "content" and startup.get("contentMap", "") != "":
 		enqueue.call([entry.function, entry.content], startup.contentMap)
-	var forwarded := {}
 	var i := 0
 	while i < queue.size():
 		var item: Array = queue[i]
 		i += 1
 		var key: Array = item[0]
-		if not forwarded.has(key):
-			var destinations := []
-			for ref in refs_for.call(key[0], key[1]):
-				var target := _context_content(ref, key[0])
-				if not target.is_empty():
-					destinations.append(target)
-			forwarded[key] = destinations
-		for target in forwarded[key]:
-			enqueue.call(target, item[1])
+		for ref in read_refs.call(key):
+			forward.call(ref, key[0], item[1])
 	return contexts
 
 ## A new valid canvas link that the published map cannot resolve must wait for map save.
 static func needs_map_save(manifest: Dictionary, fn: String, data: Dictionary, live: Dictionary, saved: Dictionary) -> bool:
 	var code: String = live.meta.code
-	for ref in _content_spatial_refs(manifest, fn, data):
+	for ref in content_refs(manifest, fn, data):
 		if not _local_spatial_ref(ref, code):
 			continue
 		if link_problem(manifest, live, ref, {code: live}) != "":
@@ -180,9 +188,9 @@ static func staged_problem(manifest: Dictionary, data: Dictionary, rows: Array) 
 		var old := {}
 		if not row.get("expect_absent", true):
 			var published := ContentStore.read(manifest, row.fn_id, row.cid)
-			for ref in _content_spatial_refs(manifest, row.fn_id, published):
+			for ref in content_refs(manifest, row.fn_id, published):
 				old[ref.path] = [ref.kind, ref.value, ref.get("paired", "")]
-		for ref in _content_spatial_refs(manifest, row.fn_id, row.data):
+		for ref in content_refs(manifest, row.fn_id, row.data):
 			if not _local_spatial_ref(ref, code) or old.get(ref.path) == [ref.kind, ref.value, ref.get("paired", "")]:
 				continue
 			var error := link_problem(manifest, data, ref, {code: data})
@@ -202,7 +210,7 @@ static func _broken_link(manifest: Dictionary, source: Dictionary, refs: Array,
 			return "%s：%s" % [ref.path, error]
 	return ""
 
-static func _content_spatial_refs(manifest: Dictionary, fn: String, data: Dictionary) -> Array:
+static func content_refs(manifest: Dictionary, fn: String, data: Dictionary) -> Array:
 	var refs := []
 	for section in Usage.content_sections(manifest, fn, data):
 		refs.append_array(ReferenceIndex.property_refs(manifest, section.decls,
@@ -212,7 +220,7 @@ static func _content_spatial_refs(manifest: Dictionary, fn: String, data: Dictio
 static func converted_edge_problem(manifest: Dictionary, document: Dictionary, contents: Array) -> String:
 	var refs := map_links(manifest, document)
 	for row in contents:
-		for ref in _content_spatial_refs(manifest, row.fn_id, row.data):
+		for ref in content_refs(manifest, row.fn_id, row.data):
 			ref.path = "%s · %s" % [row.cid, ref.path]
 			refs.append(ref)
 	for ref in refs:

@@ -46,12 +46,17 @@ static func step_decl(m: Dictionary, sid: String) -> Dictionary:
 static func step_name(m: Dictionary, sid: String) -> String:
 	return str(step_decl(m, sid).get("name", sid))
 
+static func by_code(m: Dictionary) -> Dictionary:
+	var index := {}
+	for decl: Dictionary in steps(m).values():
+		index[decl.code] = decl
+	return index
+
 ## 执行码 → 步骤声明（内容 steps[].step 存码）；未知码返回空字典。
 static func step_by_code(m: Dictionary, code: String) -> Dictionary:
 	if code == "":
 		return {}
-	for sid in steps(m):
-		var d: Dictionary = steps(m)[sid]
+	for d: Dictionary in steps(m).values():
 		if str((d as Dictionary).get("code", "")) == code:
 			return d
 	return {}

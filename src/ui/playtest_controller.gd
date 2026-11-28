@@ -192,10 +192,10 @@ func open_release_check() -> void:
 	body.add_child(list)
 	var info := _check_label("")
 	body.add_child(info)
-	var workbench: RefCounted = load("res://src/mcp/workbench.gd").new(app)
 	var refresh := func():
 		list.clear()
-		var checked: Dictionary = await workbench.invoke("validate", {})
+		preload("res://src/map/map_store.gd").refresh_external_maps()
+		var checked := preload("res://src/project/project_data_check.gd").check(app.manifest)
 		var issues: Array = checked.get("issues", [])
 		for issue in issues:
 			var caption := "%s · %s：%s" % ["需修复" if issue.severity == "error" else "查看", issue.path, issue.message]
@@ -254,7 +254,7 @@ func open_release_check() -> void:
 	list.item_activated.connect(locate)
 	body.add_child(app.UiKitScript.popup_buttons(refresh, pop.hide, "检查已保存数据"))
 	app._open_popup(pop, Vector2i(720, 560))
-	await refresh.call()
+	refresh.call()
 
 func _check_label(text: String) -> Label:
 	return UiKitScript.hint_label(text, 570)

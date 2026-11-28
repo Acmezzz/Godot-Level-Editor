@@ -141,6 +141,14 @@ def run(editor, godot, logs):
                 assert info["manifest"].get("projectName") == "MCP 集成验收", info
                 home = call("capture_editor")[1]
                 png(home[0], "window")
+                bad = call("manage_draft", action="create", name="发布预检回归")[0]["id"]
+                malformed, _ = call("apply_changes", draft=bad, revision=0, operations=[
+                    {"op": "content.put", "function": "scene", "data": {
+                        "steps": [42, {"step": "UNKNOWN"}, {"step": "CUE0", "duration": -1}]}}])
+                invalid, _ = call("validate", draft=bad)
+                assert not invalid["valid"] and len(invalid["issues"]) == 3, invalid
+                call("publish", draft=bad, revision=malformed["revision"], expect_error=True)
+                call("manage_draft", action="discard", draft=bad, revision=malformed["revision"])
                 draft = call("manage_draft", action="create", name="内容验收")[0]["id"]
                 assert call("generate_map")[0]["available"]
                 gen, _ = call("generate_map", draft=draft, revision=0, generator="room", name="生成地图",
@@ -208,7 +216,9 @@ def run(editor, godot, logs):
                 planned, _ = call("publish", previewOnly=True, draft=draft, revision=rev)
                 assert len(planned["entries"]) == 4 and not (game / "maps").exists()
                 done, _ = call("publish", draft=draft, revision=rev)
-                assert len(done["files"]) == 4
+                assert done["published"] and len(done["files"]) == 4
+                repeated, _ = call("publish", draft=draft, revision=rev)
+                assert repeated["publishedRevision"] == rev and repeated["files"] == done["files"]
                 assert (game / "maps/生成地图.json").is_file()
                 assert hashlib.sha256(script.read_bytes()).hexdigest() == script_digest
                 assert call("query_content", kind="assets", map=board)[0]["total"] >= 2

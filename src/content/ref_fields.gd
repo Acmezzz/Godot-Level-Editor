@@ -173,7 +173,7 @@ static func array_element_decl(decl: Dictionary) -> Dictionary:
 	var of := str(decl.get("of", "string"))
 	if of == "choice":
 		var d: Dictionary = {"kind": "choice"}
-		for k in ["options", "source", "multiple", "allowEmpty", "mapField", "_mapKey"]:
+		for k in ["options", "source", "multiple", "allowEmpty", "mapField", "_mapKey", "contentMapContext"]:
 			if decl.get(k, null) != null:
 				d[k] = (decl.get(k) as Variant).duplicate(true) if (decl.get(k) is Array or decl.get(k) is Dictionary) \
 					else decl.get(k)
@@ -186,7 +186,7 @@ static func array_element_decl(decl: Dictionary) -> Dictionary:
 		return {"kind": "record", "type": "record",
 			"fields": (decl.get("fields", []) as Array).duplicate(true)}
 	var out := {"kind": "input", "type": of}
-	for k in ["min", "max", "step", "dims", "assetKind", "mapField", "_mapKey", "maps", "screens", "contentTypes", "arrivalPorts"]:
+	for k in ["min", "max", "step", "dims", "assetKind", "mapField", "_mapKey", "maps", "screens", "contentTypes", "arrivalPorts", "contentMapContext"]:
 		if decl.get(k, null) != null:
 			# 逐元素独立声明副本（C1）：数组/字典值不能与父声明共享引用
 			out[k] = decl.get(k).duplicate(true) if (decl.get(k) is Array or decl.get(k) is Dictionary) \

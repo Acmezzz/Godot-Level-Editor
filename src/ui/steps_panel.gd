@@ -241,6 +241,10 @@ func _steps_mount(mem: Dictionary) -> void:
 			"演出编辑：%s" % FunctionDecls.function_name(manifest, _steps_fn_id),
 			"在列表中排序。切到时间轴可以试听、拖动步骤和调整时长。", true)
 		_steps_pop = shell.pop
+		var popup := _steps_pop
+		popup.window_input.connect(func(event: InputEvent):
+			if popup == _steps_pop and undo_shortcut(event, popup.gui_get_focus_owner()):
+				popup.set_input_as_handled())
 		if GamePreview.supports(manifest, TIMELINE_FRAME):
 			FrameDialog.keep_on_focus_loss(_steps_pop)
 		body = shell.body
@@ -333,6 +337,7 @@ func _build_steps_popup_head(body: VBoxContainer) -> void:
 	var dock_btn := Kit.button("停靠下方", func(): _dock_and_show("content"), "ghost")
 	dock_btn.tooltip_text = "把演出面板停靠到内容页底部：表单和步骤同屏对照（步骤与播放头不变）"
 	row.add_child(Kit.spacer())
+	_add_history_buttons(row)
 	row.add_child(dock_btn)
 	row.add_child(Kit.button("关闭", func(): _steps_pop.hide(), "ghost"))
 	body.add_child(row)
@@ -343,6 +348,7 @@ func _build_steps_head(head: HBoxContainer) -> void:
 	head.add_child(Kit.section_header("演出编辑：%s" %
 		FunctionDecls.function_name(manifest, _steps_fn_id)))
 	head.add_child(Kit.spacer())
+	_add_history_buttons(head)
 	var cv_btn := Kit.button("停靠画布", func(): _dock_and_show("canvas"), "ghost")
 	cv_btn.tooltip_text = "搬动画布下方并切到关卡视图：边看实例边对步骤（内容表单让位，数据不变）"
 	cv_btn.add_theme_font_size_override("font_size", Th.FS_META)
@@ -359,6 +365,10 @@ func _build_steps_head(head: HBoxContainer) -> void:
 	head.add_child(pop_btn)
 	head.add_child(Kit.button("收起", func(): _steps_close_dock(), "ghost"))
 	_sync_steps_head()
+
+func _add_history_buttons(row: HBoxContainer) -> void:
+	row.add_child(Kit.button("撤销", func(): _restore_edit(false), "ghost"))
+	row.add_child(Kit.button("重做", func(): _restore_edit(true), "ghost"))
 
 ## 当前所在项置灰（停靠形态下头部不重建，只同步可用态）
 func _sync_steps_head() -> void:
@@ -527,6 +537,7 @@ func _ensure_dock(where: String) -> Dictionary:
 	outer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	outer.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	outer.mouse_filter = Control.MOUSE_FILTER_STOP
+	outer.focus_mode = Control.FOCUS_CLICK
 	var col := Kit.vbox(6)
 	outer.add_child(col)
 	var head := Kit.hbox(8)
@@ -719,7 +730,35 @@ func _steps_data() -> Dictionary:
 	_project_scope = _project_target or data.get("scope") == "project"
 	return data
 
-## 工作副本写回：**首次实际改动时才预留内容 ID**（D1）；内容写盘失败给可见反馈。
+func has_dock_focus(focus: Control) -> bool:
+	return is_instance_valid(_steps_dock) and _steps_dock.is_visible_in_tree() and focus != null \
+		and (focus == _steps_dock or _steps_dock.is_ancestor_of(focus))
+
+func undo_shortcut(event: InputEvent, focus: Control) -> bool:
+	if not event is InputEventKey or not event.pressed or event.echo or not event.ctrl_pressed \
+			or event.keycode not in [KEY_Z, KEY_Y] or focus is LineEdit or focus is TextEdit:
+		return false
+	_restore_edit(event.keycode == KEY_Y or event.shift_pressed)
+	return true
+
+func _restore_edit(forward: bool) -> void:
+	if _steps_cid == "" or not _steps_identity_ok() or not _flush_pending():
+		return
+	match app.canvas._undo_history_ctrl.undo_content_only(forward, _steps_fn_id, _steps_cid):
+		"done":
+			app._set_status(" 已重做演出改动" if forward else " 已撤销演出改动")
+		"refused":
+			app._set_status(" 内容文件已被外部修改：未恢复")
+		_:
+			app._set_status(" 没有可重做的演出改动" if forward else " 没有可撤销的演出改动")
+
+func refresh_after_restore(fn_id: String, cid: String) -> void:
+	if fn_id == _steps_fn_id and cid == _steps_cid and _steps_identity_ok() \
+			and (is_instance_valid(_steps_pop) or is_instance_valid(_steps_dock)):
+		_pending_commits.clear()
+		_reload_steps()
+
+## 首次实际改动才预留内容 ID；已落盘的改动进入内容撤销栈。
 func _steps_write(data: Dictionary) -> bool:
 	if not _steps_identity_ok():
 		return false
@@ -732,9 +771,15 @@ func _steps_write(data: Dictionary) -> bool:
 		_steps_binding = _current_fns()[_steps_i]
 		if str(data.get("id", "")) == "":
 			data["id"] = cid
-	if str(host.write_content_staged(_steps_fn_id, _steps_cid, data, _steps_base)) != "ok":
-		_ensure_failed()
+	var before: Dictionary = host.read_content_staged_ex(_steps_fn_id, _steps_cid).data if _steps_base != "" else {}
+	var result: String = host.write_content_staged(_steps_fn_id, _steps_cid, data, _steps_base)
+	if result != "ok":
+		if result == "conflict":
+			host._form._content_conflict(_steps_cid)
+		else:
+			_ensure_failed()
 		return false
+	host._form._record_content_delta(_steps_fn_id, _steps_cid, before, data, _steps_base)
 	return true
 
 ## 结构版本递增：增删/排序/复制后旧控件与旧拖拽请求一律失效（D1）。

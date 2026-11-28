@@ -46,42 +46,75 @@ static func apply(plan: Dictionary) -> Dictionary:
 	var checked := preflight(plan)
 	if checked.has("error"):
 		return {"error": checked.error, "written_contents": []}
-	var done: Dictionary = checked.done
-	var entries_by_path: Dictionary = checked.entries_by_path
-	if log_path == "" and plan.entries.size() > 1:
-		log_path = Recovery.begin_pending(m, "写入地图 " + str(plan.name), plan.entries)
-		if log_path == "":
-			return {"error": "无法登记多文件写入", "written_contents": []}
-		plan["log_path"] = log_path
-		Recovery.clear_pending(plan.get("prior_log", ""))
 	var store := load("res://src/content/content_store.gd")
-	var written: Array = []
-	var error := ""
+	var content_by_path := {}
 	for row in plan.contents:
-		if done.has(store.path_for(m, row.fn_id, row.cid)):
+		content_by_path[store.path_for(m, row.fn_id, row.cid)] = row
+	var writer := func(entry: Dictionary) -> String:
+		if content_by_path.has(entry.path):
+			var row: Dictionary = content_by_path[entry.path]
+			var saved: Dictionary = store.write_ex(m, row.fn_id, row.cid, row.data,
+				str(row.get("baseline", "")), false, row.get("expect_absent", true))
+			return "" if saved.ok else ("内容目标已变化：%s" if saved.conflict else "内容写入失败：%s") % row.cid
+		if entry.get("op") == "delete":
+			return "" if DirAccess.remove_absolute(entry.path) == OK else "新地图已写，无法删除旧文件：%s" % entry.path
+		return "" if maps.write(m, plan.name, plan.data, plan.old_name) else "地图写入失败：%s" % entry.path
+	var result := apply_files(m, plan, checked.merged({"log_path": log_path}),
+		"写入地图 " + str(plan.name), {}, writer, plan.get("prior_log", ""), plan.entries.size() > 1)
+	var written := []
+	for path in result.get("files", []):
+		if content_by_path.has(path):
+			var row: Dictionary = content_by_path[path]
 			written.append({"fn_id": row.fn_id, "cid": row.cid})
-			continue
-		var result: Dictionary = store.write_ex(m, row.fn_id, row.cid, row.data,
-			str(row.get("baseline", "")), false, row.get("expect_absent", true))
-		if not result.ok:
-			error = ("内容目标已变化：%s" if result.conflict else "内容写入失败：%s") % row.cid
-			break
-		written.append({"fn_id": row.fn_id, "cid": row.cid})
-	if error == "" and plan.path != "" and not done.has(plan.path):
-		var target: Dictionary = entries_by_path[plan.path]
-		if not can_write(Recovery.observe(plan.path), target.baseline, target.expect_absent):
-			error = "地图写入目标已变化：%s" % plan.path
-		elif not maps.write(m, plan.name, plan.data, plan.old_name):
-			error = "地图写入失败：%s" % plan.path
-	if error == "" and plan.old_path != "" and not done.has(plan.old_path) \
-			and (Recovery.digest(plan.old_path) != plan.old_digest or DirAccess.remove_absolute(plan.old_path) != OK):
-		error = "新地图已写，旧文件已变化或无法删除：%s" % plan.old_path
+	var error: String = result.get("error", "")
 	if error == "":
-		Recovery.clear_pending(log_path)
+		Recovery.clear_pending(result.pending)
 		Recovery.clear_pending(plan.get("prior_log", ""))
 		plan.erase("log_path")
 		maps.invalidate_code_map()
+	elif result.get("pending", "") != "":
+		plan["log_path"] = result.pending
 	return {"error": error, "written_contents": written}
+
+## Apply an already checked file plan. Domain writers keep their own serialization/repair rules.
+static func apply_files(m: Dictionary, plan: Dictionary, checked: Dictionary, reason: String,
+		context := {}, writer := Callable(), prior_log := "", require_receipt := true) -> Dictionary:
+	var log_path: String = checked.log_path
+	if log_path == "" and require_receipt:
+		log_path = Recovery.begin_pending(m, reason, plan.entries, context)
+		if log_path == "":
+			return {"error": "无法登记发布。"}
+		Recovery.clear_pending(prior_log)
+	var written := []
+	for entry in plan.entries:
+		var target: String = entry.path
+		if not checked.done.has(target):
+			var error := ""
+			if not can_write(Recovery.observe(target), entry.baseline, entry.get("expect_absent", false)):
+				error = "写入目标已变化：" + target
+			elif writer.is_valid():
+				error = writer.call(entry)
+			else:
+				error = _write_payload(entry, plan.payloads)
+			if error != "":
+				return {"error": error, "files": written, "pending": log_path}
+		written.append(target)
+	return {"files": written, "pending": log_path}
+
+static func _write_payload(entry: Dictionary, payloads: Dictionary) -> String:
+	var maps := load("res://src/map/map_store.gd")
+	var target: String = entry.path
+	var remove: bool = entry.get("op") == "delete"
+	if entry.baseline != "" and not maps.rotate_history(target) and remove:
+		return "无法保留删除前的历史：" + target
+	var ok: bool
+	if remove:
+		ok = DirAccess.remove_absolute(target) == OK
+	elif entry.has("case_from"):
+		ok = maps.write_case_rename(entry.case_from, target, payloads[target]) == ""
+	else:
+		ok = maps.write_text(target, payloads[target])
+	return "" if ok else "发布未完成：" + target
 
 static func recover_log(plan: Dictionary) -> void:
 	var logs := Recovery.scan_pending(plan.manifest)

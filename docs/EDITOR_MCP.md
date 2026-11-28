@@ -36,7 +36,7 @@ codex mcp add bird-editor --url http://127.0.0.1:47821/mcp
 | preview_asset | asset 查看声明、贴图、图形或动画。cell 选图集格；frames 传动画下标数组。audio 用执行码或声明 ID，返回时长与可播放附件。PCM WAV 支持波形与按秒传 start / duration 裁切；OGG、MP3 返回原始音频附件。 |
 | validate | 无参检查工程清单、地图和主要引用；有 draft 时加入候选、修改内容以及发布冲突检查。map 或 function/content 可指定检查对象。游戏逻辑仍通过试玩验证。 |
 | playtest | action 为 start / status / capture / stop。start 的 entry 为 project / map / content / screen；target 见下文。 |
-| publish | draft、revision。previewOnly:true 只报告待写入的文件和校验结果；正式发布比对基线、保留文件历史、写入提交记录并刷新编辑器。如果有打开的人工编辑表单或待保存的地图内容，请先在编辑器保存或关闭相应编辑，再正式发布；此时仍可只读预检。发布成功清空这份草稿的改动。 |
+| publish | draft、revision。previewOnly:true 只报告待写入的文件和校验结果；正式发布比对基线、保留文件历史、写入提交记录并刷新编辑器。如果有打开的人工编辑表单或待保存的地图内容，请先在编辑器保存或关闭相应编辑，再正式发布；此时仍可只读预检。发布成功清空这份草稿的改动。若正式文件已写但草稿尚未整理，返回 published:true、publishedRevision 和 cleanupPending:true；用同一 revision 重试，只会继续整理草稿。 |
 
 查询列表可用 search、offset、limit。assets 传 map 时给出当前图的实际使用量；functions 可传 map、instance、trigger，返回候选及理由。objects / bindings 可传 map 或 mapCodes 限定跨图范围，也可按 asset、layer、function 或 instance 筛选；bindings 另支持按 content、trigger 筛选并返回真实 sequence。contents 支持用显示名查正式或草稿内容。objects / tiles / collision 支持 region:[x,y,w,h]，这是当前数据域的格坐标。tiles 需要 layer；objects 的 objectIndex 可定位无实例码的场景摆放物。ports 支持按 types 筛选。candidates 可传流转声明 domains，或字段原声明 field；使用 map 指定其空间上下文。inbound 支持 view 或 function/content。
 
@@ -53,7 +53,7 @@ operations 的每个对象包含 op。写入数据时，字段、步骤、触发
 | layer.put / layer.delete / layer.move | map。put 省略 layer 新建，data 使用图层声明结构；修改、删除、移动指定 layer，move 给目标 index。删除前需移走图层上的瓦片和对象。 |
 | tiles.set / collision.set | map。tiles 额外传 layer；cells 是记录数组，每项包含整数 x、y。瓦片记录含 asset、atlas:[x,y] 和可选 alt；碰撞用地图格式中的 type 等字段。remove:true 擦除该格。 |
 | instance.put / instance.delete | map；新建用 data.asset，修改或删除用 instance，场景摆放物也可按 objectIndex 定位。编辑 data.layer、x/y、props、transform 等；可用 world:[x,y] 按世界像素定位。 |
-| binding.put / binding.delete | map、instance；新建给 function，已有绑定用 binding（存储字段 bindingId）。data 可改 content、trigger、order、parallel、enabled、name；index 可重排绑定列表。trigger 使用该功能已声明的时机执行码，空字符串为默认时机；传声明 ID、未知码或此功能未开放的码会被拒绝。 |
+| binding.put / binding.delete | map、instance；新建给 function，已有绑定用 binding（存储字段 bindingId）。data 可改 content、trigger、order、parallel、enabled、name；index（从 0 开始）可重排绑定列表，data.order（从 1 开始）也可指定同一位置；同时提供时须一致。创建、移动或删除后按列表顺序更新执行顺序。trigger 使用该功能已声明的时机执行码，空字符串为默认时机；传声明 ID、未知码或此功能未开放的码会被拒绝。 |
 | content.put / content.delete | function、content（新建省略）。新建同时给 map 和 instance 可发放实例内容 ID；省略 map 时建立项目内容。data 可改 name、fields、steps 等。 |
 | view.put / view.delete | view，可在 put 中省略以分配新 ID；data 可写布局、元素、热区、导航与本地化等屏幕数据。 |
 | group.put / group.delete | group，可在 put 中省略以分配新 ID；data 可写 name、maps、drawingMap、drawOrder、events。绘制文档可用同批 map.create 创建，图组的整组顺序以 drawOrder 表示，底图为 0。省略 maps 使图组应用于适用的普通地图。 |

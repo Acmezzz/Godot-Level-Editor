@@ -380,13 +380,3 @@ func _tiles(li: int, layer_id: String) -> Array:
 	_tiles_cache[li] = out
 	_tiles_rev[li] = rev
 	return out
-
-## 多边形过层变换（Transform2D 乘点为仿射，含 offset/scale）。
-static func _xformed(xf: Transform2D, poly: PackedVector2Array) -> PackedVector2Array:
-	if xf == Transform2D.IDENTITY:
-		return poly
-	var out := PackedVector2Array()
-	out.resize(poly.size())
-	for i in poly.size():
-		out[i] = xf * (poly[i] as Vector2)
-	return out

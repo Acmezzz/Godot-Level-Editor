@@ -93,6 +93,9 @@ class Host extends Node2D:
 		var i := layer_ids.find(lid)
 		return i if i >= 0 else 0
 
+	func layers_decl() -> Array:
+		return [{"id": "L1"}, {"id": "L2"}]
+
 	func layer_id(_i: int) -> String:
 		return "L1"
 
@@ -101,7 +104,7 @@ class Host extends Node2D:
 		if n.get_parent() == null:
 			layer_ents[0].add_child(n)
 
-	func make_object(_aid: String) -> EntityNode:
+	func make_object(_aid: String, _decl: Variant = null) -> EntityNode:
 		var n := EntityNode.new()
 		n.decl = {"kind": "entity"}
 		return n

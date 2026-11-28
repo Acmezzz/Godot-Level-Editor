@@ -159,7 +159,10 @@ static func declared_cell_size(c: Variant, fallback: Vector2i) -> Vector2i:
 ## 编辑器占位尺寸（像素），只看声明：editorSize → ZERO（prefab 碰撞形状的兜底在
 ## manifest.entity_editor_size 里——那需要读文件，不属于纯声明归一化）。
 static func editor_size(m: Dictionary, aid: String) -> Vector2:
-	var es = by_id(m, aid).get("editorSize", null)
+	return _editor_size_of_decl(by_id(m, aid))
+
+static func _editor_size_of_decl(decl: Dictionary) -> Vector2:
+	var es = decl.get("editorSize", null)
 	if es is Array and (es as Array).size() >= 2:
 		return Vector2(float((es as Array)[0]), float((es as Array)[1]))
 	return Vector2.ZERO
@@ -167,13 +170,19 @@ static func editor_size(m: Dictionary, aid: String) -> Vector2:
 ## 尺寸字段名：声明 `sizeFields: ["w","h"]` 的资产，尺寸写在实例 props 的这两个键里
 ## （事件区这类「实例各自定大小」的资产）。未声明返回空数组。
 static func size_fields(m: Dictionary, aid: String) -> Array:
-	var sf = by_id(m, aid).get("sizeFields", null)
+	return _size_fields_of_decl(by_id(m, aid))
+
+static func _size_fields_of_decl(decl: Dictionary) -> Array:
+	var sf = decl.get("sizeFields", null)
 	return sf if sf is Array and (sf as Array).size() >= 2 else []
 
 ## 实例实际显示尺寸：声明了 sizeFields 就读 props，否则用声明的 editorSize。
 ## `cell` = 画布格像素尺寸（Vector2，矩形格宽高可不同）。
 static func instance_size(m: Dictionary, aid: String, props: Dictionary, cell: Vector2) -> Vector2:
-	var sf := size_fields(m, aid)
+	return instance_size_of_decl(by_id(m, aid), props, cell)
+
+static func instance_size_of_decl(decl: Dictionary, props: Dictionary, cell: Vector2) -> Vector2:
+	var sf := _size_fields_of_decl(decl)
 	if sf.size() >= 2:
 		var w := int(props.get(str(sf[0]), 1))
 		var h := int(props.get(str(sf[1]), 1))
@@ -182,7 +191,7 @@ static func instance_size(m: Dictionary, aid: String, props: Dictionary, cell: V
 		if h <= 0:
 			h = 1
 		return Vector2(w, h) * cell
-	var sz := editor_size(m, aid)
+	var sz := _editor_size_of_decl(decl)
 	return sz if sz != Vector2.ZERO else cell
 
 ## 是否可放进画布（图集瓦片 / 图片 / 实体都算；停用条目不参与）。
@@ -193,12 +202,6 @@ static func placeable(m: Dictionary, aid: String) -> bool:
 	if str(d.get("kind", "")) == "entity":
 		return true
 	return str(d.get("kind", "")) == "scene"
-
-## 资产类型的连接语义（role: portal/exit/landing/trigger）；未声明返回空串。
-static func role_of(m: Dictionary, aid: String) -> String:
-	return str(by_id(m, aid).get("role", ""))
-static func has_role(m: Dictionary, aid: String, role: String) -> bool:
-	return role_of(m, aid) == role
 
 ## 该资产类型自带的挂载功能：[{id, code}]（只返回已声明的，未声明的由校验报错）。
 static func mounts(m: Dictionary, aid: String) -> Array:

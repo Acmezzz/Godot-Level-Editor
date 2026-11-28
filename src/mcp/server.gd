@@ -2,7 +2,6 @@ extends Node
 ## Local, stateless MCP HTTP transport. All editor calls run on the scene thread.
 
 const API := preload("res://src/mcp/workbench.gd")
-const DEFAULT_PORT := 47821
 const MAX_HEADER := 16384
 const MAX_BODY := 16 * 1024 * 1024
 const PROTOCOLS := ["2025-11-25", "2025-06-18", "2025-03-26"]

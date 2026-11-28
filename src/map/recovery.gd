@@ -184,7 +184,7 @@ static func _log_stamp() -> String:
 # ──────────── 多文件提交日志：editor/pending/<stamp>.json ────────────
 
 ## 首次改写前登记：各目标基线与预期结果。返回日志路径，"" = 登记失败（调用方应中止提交）。
-static func begin_pending(m: Dictionary, reason: String, entries: Array) -> String:
+static func begin_pending(m: Dictionary, reason: String, entries: Array, context := {}) -> String:
 	var dir := _dir(m, PENDING_DIR)
 	if dir == "":
 		return ""
@@ -195,6 +195,7 @@ static func begin_pending(m: Dictionary, reason: String, entries: Array) -> Stri
 		"startedAt": Time.get_unix_time_from_system(),
 		"entries": entries,   # [{path, baseline, expect, kind, id}]
 	}
+	payload.merge(context)
 	return path if write_json(path, payload) else ""
 
 static func clear_pending(log_path: String) -> bool:
